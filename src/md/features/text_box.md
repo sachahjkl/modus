@@ -8,11 +8,11 @@ The cause was the same each time. A program placed a text at a fixed column and 
 
 The purpose of this design is one rule and one implementation of it, in the interface package, so that a program has no reason to place such a text by hand.
 
-The guide: [`docs/INTERFACE.md`](../../docs/INTERFACE.md), "The text in a box".
+The guide: [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "The text in a box".
 
 ## Constraints
 
-- **A text is never cut in silence.** This is a rule of the system for each text ([`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md), "A text is never cut in silence"): a text is whole, or it ends with the cut mark, or it is refused. A window is one more place where it holds.
+- **A text is never cut in silence.** This is a rule of the system for each text ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "A text is never cut in silence"): a text is whole, or it ends with the cut mark, or it is refused. A window is one more place where it holds.
 - **The package never allocates** and keeps no state between two frames. A text that takes more lines cannot be laid out once and kept by the package.
 - **A text is measured in the font that draws it.** The interface font is proportional; the font of the cells is not. A break at a count of characters is wrong in the interface font.
 - **The values are paths and names.** A path of a source has no space. A name of the system has complete words joined by `_`. A break rule that knows only the space breaks such a text in the middle of a word, or not at all.
