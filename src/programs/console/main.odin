@@ -246,7 +246,16 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 				break
 			}
 			stoppable := running && intrinsics.atomic_load_explicit(&work.call_stoppable, .Relaxed) != 0
-			pressed := terminal.key(&output) or_break
+			given := terminal.input(&output) or_break
+			if given.kind == .List_First {
+				// The scroll bar of the completion list: a line that
+				// runs has no list, so the record then means nothing.
+				if !running {
+					completion_view_move(given.list_first)
+				}
+				continue
+			}
+			pressed := given.key
 			if !running {
 				key(pressed)
 				continue

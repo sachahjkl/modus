@@ -111,6 +111,37 @@ the_runs_of_a_result :: proc(t: ^testing.T) {
 	testing.expect_value(t, name_hash("memory") == name_hash("memorx"), false)
 }
 
+// A Provider_Setting entry has no parameter, and only such an entry says
+// that the machine uses its value.
+@(test)
+a_provider_setting_entry_is_checked :: proc(t: ^testing.T) {
+	entry: Entry
+	entry.kind = .Provider_Setting
+	entry.name_length = u8(copy(entry.name[:], "set strategy to eevdf"))
+	entry.signature_length = u8(copy(entry.signature[:], "set strategy to eevdf"))
+	testing.expect_value(t, entry_problem(&entry), Problem.None)
+	entry.flags = {.In_Use}
+	testing.expect_value(t, entry_problem(&entry), Problem.None)
+	entry.parameter_count = 1
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+	entry.parameter_count = 0
+	entry.setting_value = 1 // It names no setting of the settings contract.
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+	entry.setting_value = 0
+	entry.kind = .Command
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+	entry.kind = .Setting // The value in use of a setting is in the settings page, not in a flag.
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+	entry.flags = {}
+	testing.expect_value(t, entry_problem(&entry), Problem.None)
+	// A flag that the contract does not know is refused as a kind.
+	entry.flags = transmute(Entry_Flags)u8(1 << 2)
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+	entry.flags = {}
+	entry.kind = Entry_Kind(u8(max(Entry_Kind)) + 1)
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+}
+
 // A Setting entry names a setting and a value that the machine has.
 @(test)
 a_setting_entry_is_checked :: proc(t: ^testing.T) {

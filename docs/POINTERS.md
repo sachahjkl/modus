@@ -65,9 +65,9 @@ One enum of the system, `Pointer_Shape` in `src/library/contract/pointer_picture
 
 | Number | Name | CSS name | Where the system uses it today |
 |---|---|---|---|
-| 0 | `arrow` | `default` | the desktop, the bar, the frame of a window, a surface by default |
-| 1 | `text` | `text` | the input band of the palette; the surface of the terminal (a request of the program `terminal`) |
-| 2 | `pointing_hand` | `pointer` | the close button of a window, the buttons of the bar, a line of an open menu |
+| 0 | `arrow` | `default` | the desktop, the bar, the frame of a window, a surface by default; a scroll bar, also in the window of a terminal and in the palette |
+| 1 | `text` | `text` | the input band of the palette; the text of the terminal (a request of the program `terminal`) |
+| 2 | `pointing_hand` | `pointer` | the close button of a window, the buttons of the bar, a line of an open menu, an entry of the palette and a candidate of its form |
 | 3 | `move` | `move` | a title bar, and a window while the pointer moves it |
 | 4 | `grab` | `grab` | a request of a program |
 | 5 | `grabbing` | `grabbing` | a request of a program |
@@ -96,14 +96,16 @@ display.pointer_shape_set(&window, .Text)
 - A number out of the enum is ignored.
 - The compositor writes one line on the log for each request: `compositor: <title> asks for the pointer shape text over its surface`.
 
-Two programs ask today: `terminal` (the shape `text` over its surface) and `pointers` (the shape of the tile under the pointer).
+Two programs ask today: `terminal` and `pointers` (the shape of the tile under the pointer).
+
+**A surface with two shapes.** A surface has one shape at a time, and its program changes it when the pointer crosses a part that needs another one. The program `terminal` asks for `text` over its text, and for `arrow` while the pointer is over one of its scroll bars (the lines, the completion list) or while a scroll bar holds the press: a scroll bar is a control, not text. It asks only when the shape changes, so the log has one line for each crossing. The compositor shows the new shape after it read the request: for one frame the pointer can have the shape of before.
 
 ### How the compositor chooses the shape
 
 `pointer_shape_under` (`src/programs/compositor/pointer_picture.odin`) gives the shape for the place of the pointer. The first rule that holds wins:
 
 1. While the pointer drags a window: `move`.
-2. While the palette is open: `text` over its input band, `pointing_hand` over an entry of its list, `arrow` elsewhere.
+2. While the palette is open: `text` over its input band, `pointing_hand` over an entry of its list and over a candidate of its form, `arrow` elsewhere, also over the scroll bar of the list.
 3. Over a line of an open menu, or over a button of the bar: `pointing_hand`.
 4. Over the rest of the bar: `arrow`.
 5. Over the window in front at that place: `pointing_hand` over its close button, `move` over its title bar, the shape that its program asked for over its surface, `arrow` over its border.

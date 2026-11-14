@@ -426,7 +426,13 @@ List_Rows_Options :: struct {
 	chosen_color: graphics.Color, // The fill of the chosen row. 0: COLOR_CHOSEN.
 	chosen_hint:  string, // On the chosen row, this text takes the place of right_text, in white ("enter: start").
 	first:        int, // The index of the first row given in the whole list: the place of the thumb of the scroll bar at the right.
-	total:        int, // The rows of the whole list. More than the rows of the area: a scroll bar at the right, which shows the place and takes no input.
+	total:        int, // The rows of the whole list. More than the rows of the area: a scroll bar at the right, which shows the place of the rows.
+	// Not 0: the scroll bar takes the pointer, under this identity, and
+	// `scrolled` gets what the pointer did. The caller owns the view: it
+	// gives the rows from scrolled.first in its next frame. 0: the scroll
+	// bar shows the place and takes no input.
+	scroll_bar:   Element_Identity,
+	scrolled:     ^Scroll_Bar_Result, // Where the list writes what the pointer did to its scroll bar. nil: the caller does not read it.
 }
 
 LIST_ROW_ICON_X :: 16 // From the left of a row to its icon, and to the text of a heading.
@@ -459,9 +465,11 @@ draw_kind_icon :: proc "contextless" (table: ^Draw_Table, x, y: int, icon: ^kind
 // detail after a name that is code, and a dim text at the right; the
 // chosen row filled, with its icon and its text in white, and at its
 // right its hint when the caller gives one, else the same text as the
-// other rows. It takes no input: the caller owns the choice and gives only the
-// rows that the area shows, so the work is the rows on the screen, not the
-// rows of the list. It gives the count of the rows that it drew.
+// other rows. The caller owns the choice and gives only the rows that the
+// area shows, so the work is the rows on the screen, not the rows of the
+// list. The rows take no input; the scroll bar takes the pointer when the
+// caller names it (List_Rows_Options.scroll_bar). It gives the count of the
+// rows that it drew.
 list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row, options: List_Rows_Options) -> int {
 	table := frame.table
 	shown_count := min(len(rows), area.height / TABLE_LINE, LIST_MEASURE_CAPACITY)
@@ -536,10 +544,20 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 		}
 	}
 	if scroll_width != 0 && options.total > 0 {
-		// The caller owns the choice and the pointer: the bar shows the
-		// place of the rows, with no input.
+		// The caller owns the choice and the view. A caller that names
+		// the scroll bar gets what the pointer did to it; for another one
+		// the bar shows the place of the rows, with no input.
 		bar_length := visible_rows * TABLE_LINE
-		scroll_bar_draw(table, {area.x + area.width - scroll_width, area.y, scroll_width, bar_length}, .Vertical, scroll_bar_geometry(bar_length, scroll_width, {total = options.total, visible = visible_rows, first = options.first}))
+		bar_area := Area{area.x + area.width - scroll_width, area.y, scroll_width, bar_length}
+		range := Scroll_Range{total = options.total, visible = visible_rows, first = options.first}
+		if options.scroll_bar != 0 {
+			moved := scroll_bar(frame, bar_area, options.scroll_bar, .Vertical, range)
+			if options.scrolled != nil {
+				options.scrolled^ = moved
+			}
+		} else {
+			scroll_bar_draw(table, bar_area, .Vertical, scroll_bar_geometry(bar_length, scroll_width, range))
+		}
 	}
 	return shown_count
 }

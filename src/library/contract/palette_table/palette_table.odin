@@ -30,7 +30,7 @@ import "base:intrinsics"
 import "modus:contract/settings"
 
 MAGIC :: 0x544C4150 // "PALT", little-endian.
-VERSION :: 2 // A new field or a new meaning of a field is a new version.
+VERSION :: 3 // A new field or a new meaning of a field is a new version.
 
 ENTRY_CAPACITY :: 256 // The entries of a table: the commands of a console at most.
 NAME_CAPACITY :: 64 // The bytes of the name of an entry.
@@ -51,11 +51,17 @@ Entry_Kind :: enum u8 {
 	Command = 0, // A command of the provider itself.
 	Export  = 1, // An export of a module or of a service, which the provider calls.
 	Setting = 2, // One value of one setting of the machine (modus:contract/settings): the provider sets it.
+	// One value of a state of the machine that is no setting of
+	// modus:contract/settings, and that the provider sets: one scheduling
+	// strategy. The panel shows it as it shows a Setting entry. No page
+	// holds the value in use: the provider says it with the flag In_Use.
+	Provider_Setting = 3,
 }
 
 // The facts of an entry that are true or false.
 Entry_Flag :: enum u8 {
 	Destroys = 0, // The entry destroys something: the panel asks for a second Enter before it sends the choice.
+	In_Use   = 1, // A Provider_Setting entry: the machine uses this value now, as the provider read it when it wrote the table. On each other kind the flag is refused.
 }
 Entry_Flags :: bit_set[Entry_Flag;u8]
 
@@ -145,6 +151,11 @@ Command :: enum u32 {
 	// Manual asks for the page of the manual of a module. values[0..3]:
 	// its name, 31 bytes at most, zero bytes after it.
 	Manual = 4,
+	// Refresh says that the panel opened. The provider reads again the
+	// facts of its entries that change with no line of its own (the value
+	// in use of a Provider_Setting) and writes its table again when one
+	// changed. It has no value and no answer: a new table says the change.
+	Refresh = 5,
 }
 
 // What the provider does with a chosen entry.
@@ -213,7 +224,7 @@ Problem :: enum u8 {
 	Bad_Length       = 7, // An entry: a length or a count past its field, or an empty name.
 	Bad_Byte         = 8, // An entry: a byte of a text under 32 or over 126.
 	Bad_Signature    = 9, // An entry: the signature does not start with the name.
-	Bad_Setting      = 10, // A Setting entry that names no setting or no value of it, or that has parameters; or another entry that names a setting.
+	Bad_Setting      = 10, // A Setting entry that names no setting or no value of it, or that has parameters; or another entry that names a setting; a Provider_Setting entry that has parameters; the flag In_Use on an entry that is no Provider_Setting.
 }
 
 // The name of each problem, as a log writes it.
@@ -243,7 +254,7 @@ printable :: proc "contextless" (bytes: []u8) -> bool {
 }
 
 // The bits of the flags that the contract knows: each other bit of a table is refused.
-ENTRY_FLAGS_KNOWN :: u8(1 << u8(Entry_Flag.Destroys))
+ENTRY_FLAGS_KNOWN :: u8(1 << u8(Entry_Flag.Destroys)) | u8(1 << u8(Entry_Flag.In_Use))
 
 // entry_problem checks one entry of a copy.
 entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
@@ -255,6 +266,9 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 			return .Bad_Setting
 		}
 	} else if entry.setting != 0 || entry.setting_value != 0 {
+		return .Bad_Setting
+	}
+	if entry.kind == .Provider_Setting && entry.parameter_count != 0 || entry.kind != .Provider_Setting && .In_Use in entry.flags {
 		return .Bad_Setting
 	}
 	if entry.name_length == 0 || int(entry.name_length) > NAME_CAPACITY || int(entry.signature_length) > SIGNATURE_CAPACITY || int(entry.about_length) > ABOUT_CAPACITY || int(entry.parameter_count) > PARAMETER_CAPACITY {

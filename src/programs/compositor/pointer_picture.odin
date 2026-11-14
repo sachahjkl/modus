@@ -131,12 +131,17 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 		return .Move
 	}
 	if palette_is_open() {
-		// The input band is a text; an entry of the list can be pressed.
+		// The input band is a text; an entry of the list and a candidate
+		// of a form can be pressed. The scroll bar of the list is on no
+		// row: the pointer over it is the arrow.
 		left, top := palette_place()
 		if palette.part_at(left, top, pointer_x, pointer_y) == .Input_Band {
 			return .Text
 		}
 		if palette.row_is_entry(&palette_panel, palette.row_at(&palette_panel, left, top, pointer_x, pointer_y)) {
+			return .Pointing_Hand
+		}
+		if palette.candidate_at(&palette_panel, left, top, pointer_x, pointer_y) != palette.NO_ROW {
 			return .Pointing_Hand
 		}
 		return .Arrow

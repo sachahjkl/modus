@@ -58,17 +58,134 @@ part_at :: proc "contextless" (panel_x, panel_y, x, y: int) -> Part {
 	return .Rest
 }
 
+// rows_right gives the x after the last pixel of the rows of a list of a
+// count of rows: the border of the panel, or the scroll bar of a list that
+// does not show each row. A point at the right of it is on no row.
+@(private)
+rows_right :: proc "contextless" (panel_x, row_count: int) -> int {
+	return panel_x + PANEL_WIDTH - BORDER - (row_count > LIST_ROWS ? interface.LIST_ROW_SCROLL_WIDTH : 0)
+}
+
 // row_at gives the row of the list at a point of the screen, or NO_ROW: a
-// row that the panel shows now, an entry or a heading.
+// row that the panel shows now, an entry or a heading. A point on the
+// scroll bar is on no row.
 row_at :: proc "contextless" (panel: ^Panel, panel_x, panel_y, x, y: int) -> int {
-	if part_at(panel_x, panel_y, x, y) != .List || x < panel_x + BORDER || x >= panel_x + PANEL_WIDTH - BORDER {
+	if panel.list == nil || panel.state != .Search && panel.state != .Confirm || panel.form.active {
 		return NO_ROW
 	}
-	if panel.list == nil || panel.state != .Search && panel.state != .Confirm || panel.form.active {
+	if part_at(panel_x, panel_y, x, y) != .List || x < panel_x + BORDER || x >= rows_right(panel_x, panel.list.row_count) {
 		return NO_ROW
 	}
 	row := panel.first_row + (y - panel_y - LIST_TOP) / ROW_HEIGHT
 	return row < panel.list.row_count ? row : NO_ROW
+}
+
+// candidate_at gives the candidate of the form at a point of the screen,
+// as an index in the shown candidates, or NO_ROW: the panel is not in a
+// form, or the point is on no candidate.
+candidate_at :: proc "contextless" (panel: ^Panel, panel_x, panel_y, x, y: int) -> int {
+	form := &panel.form
+	if panel.state != .Arguments || !form.active {
+		return NO_ROW
+	}
+	if part_at(panel_x, panel_y, x, y) != .List || x < panel_x + BORDER || x >= rows_right(panel_x, form.shown_count) {
+		return NO_ROW
+	}
+	shown := candidates_first(form) + (y - panel_y - LIST_TOP) / ROW_HEIGHT
+	return shown < form.shown_count ? shown : NO_ROW
+}
+
+// The name of the scroll bar of the panel, for its identity: the list of
+// the entries and the candidates of a form are never on the screen
+// together, so one name serves both.
+SCROLL_BAR_NAME :: "the scroll bar of the palette"
+
+// scroll_bar_identity gives the identity of the scroll bar of the panel in
+// the interface state of its owner.
+scroll_bar_identity :: proc "contextless" () -> interface.Element_Identity {
+	return interface.identity(SCROLL_BAR_NAME)
+}
+
+// scroll_bar_area gives the area of the scroll bar that takes the pointer
+// now, for a panel whose corner is at (panel_x, panel_y): the bar of the
+// entries in the search, of the candidates in a form. shown is false when
+// the rows fit, and in each other state: the panel then has no scroll bar
+// that the pointer moves.
+scroll_bar_area :: proc "contextless" (panel: ^Panel, panel_x, panel_y: int) -> (area: interface.Area, shown: bool) {
+	total := 0
+	#partial switch panel.state {
+	case .Search:
+		if panel.list != nil && !panel.form.active {
+			total = panel.list.row_count
+		}
+	case .Arguments:
+		if panel.form.active {
+			total = panel.form.shown_count
+		}
+	}
+	if total <= LIST_ROWS {
+		return {}, false
+	}
+	return {rows_right(panel_x, total), panel_y + LIST_TOP, interface.LIST_ROW_SCROLL_WIDTH, LIST_HEIGHT}, true
+}
+
+// view_scrolled applies what the pointer did to the scroll bar in the last
+// draw of the panel (Panel.scrolled): the view goes to the first row that
+// the scroll bar asks for, and the choice goes with it, to the nearest
+// entry that the view shows. The palette runs the row that is drawn: a
+// choice outside the view is an entry that Enter runs and that no frame
+// shows. It gives true when the view moved: the owner draws the
+// panel again.
+view_scrolled :: proc "contextless" (panel: ^Panel) -> bool {
+	moved := panel.scrolled
+	panel.scrolled = {}
+	if !moved.changed {
+		return false
+	}
+	#partial switch panel.state {
+	case .Search:
+		list := panel.list
+		if list == nil || list.row_count <= LIST_ROWS {
+			return false
+		}
+		first := clamp(moved.first, 0, list.row_count - LIST_ROWS)
+		if first == panel.first_row {
+			return false
+		}
+		panel.first_row = first
+		last := first + LIST_ROWS - 1
+		if panel.choice < first {
+			for row in first ..= last {
+				if row_is_entry(panel, row) {
+					panel.choice = row
+					break
+				}
+			}
+		} else if panel.choice > last {
+			for row := last; row >= first; row -= 1 {
+				if row_is_entry(panel, row) {
+					panel.choice = row
+					break
+				}
+			}
+		}
+		return true
+	case .Arguments:
+		form := &panel.form
+		if !form.active || form.shown_count <= LIST_ROWS {
+			return false
+		}
+		first := clamp(moved.first, 0, form.shown_count - LIST_ROWS)
+		if first == candidates_first(form) {
+			return false
+		}
+		form.candidate_first = first
+		if form.candidate_choice >= 0 {
+			form.candidate_choice = clamp(form.candidate_choice, first, first + LIST_ROWS - 1)
+		}
+		return true
+	}
+	return false
 }
 
 // kind_words gives what a kind is, in words: the text at the right of a row.
@@ -170,8 +287,12 @@ entry_about :: proc "contextless" (builder: ^interface.Text_Builder, list: ^List
 }
 
 // setting_in_use says if a Setting entry is the value that the machine
-// uses now, from the values that the owner of the panel gave.
+// uses now: for a setting of the machine, from the values that the owner of
+// the panel gave; for a value that only the provider knows, from its mark.
 setting_in_use :: proc "contextless" (panel: ^Panel, entry: ^Entry) -> bool {
+	if entry.mark == .In_Use {
+		return true
+	}
 	given := given_of(panel.list, entry)
 	if given == nil || given.kind != .Setting || int(given.setting) >= len(panel.settings_in_use) {
 		return false
@@ -329,6 +450,9 @@ RESULT_LINES_TOP :: 40 // From the top of the list area to the first line of a r
 panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: int) {
 	table := frame.table
 	list := panel.list
+	// What the pointer did to the scroll bar is of this draw only: a draw
+	// that has no scroll bar leaves nothing for view_scrolled.
+	panel.scrolled = {}
 	with_form := panel.form.active && panel.state != .Result
 	prefix, _ := prefix_of(typed_text(panel))
 	if with_form {
@@ -418,6 +542,11 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 		options := interface.List_Rows_Options{chosen = chosen_shown, first = first, total = list.row_count}
 		if panel.state == .Confirm {
 			options.chosen_color = graphics.COLOR_STOP_PROGRAM
+		} else {
+			// The scroll bar takes the pointer in the search. The question
+			// of an entry that destroys keeps its row: its bar only shows.
+			options.scroll_bar = scroll_bar_identity()
+			options.scrolled = &panel.scrolled
 		}
 		interface.list_of_rows(frame, list_area, rows[:shown_count], options)
 		if list.row_count == 0 {
@@ -493,6 +622,94 @@ Band_Class :: enum u8 {
 	Value, // What the input typed.
 }
 
+BAND_CAPACITY :: 512 // The characters of the band of a form: more than a name and six fields of 48 characters with their names.
+BAND_CELL_WIDTH :: graphics.CELL_WIDTH * INPUT_SCALE // One character of the band.
+BAND_CARET_WIDTH :: 2 * INPUT_SCALE // The caret of the band.
+
+// The band of a form as characters: what the drawing draws and what the
+// pointer points at. One layout serves both, so a press never lands on a
+// place that the drawing shows elsewhere.
+@(private)
+Band_Layout :: struct {
+	characters:   [BAND_CAPACITY]u8, // The call: "revoke(name: plasma, grant: )".
+	classes:      [BAND_CAPACITY]Band_Class, // What each character is.
+	count:        int, // The characters in use.
+	caret:        int, // The character that the caret is before.
+	field_starts: [FIELD_CAPACITY]int, // The first character of each field: of its name, or of its value when it has no name.
+	value_starts: [FIELD_CAPACITY]int, // The first character of the value of each field.
+	value_counts: [FIELD_CAPACITY]int, // The characters of the value of each field.
+	first:        int, // The first character that the band shows: a call wider than the band shows the part that holds the caret.
+	last:         int, // The character after the last one that the band shows.
+}
+
+@(private)
+band_put :: proc "contextless" (band: ^Band_Layout, text: string, class: Band_Class) {
+	for index in 0 ..< len(text) {
+		if band.count < BAND_CAPACITY {
+			band.characters[band.count] = text[index]
+			band.classes[band.count] = class
+			band.count += 1
+		}
+	}
+}
+
+// form_band_layout makes the characters of the band of a form, the places
+// of its fields, and the part that the band shows.
+@(private)
+form_band_layout :: proc "contextless" (form: ^Form, band: ^Band_Layout) {
+	band.count, band.caret = 0, 0
+	band_put(band, entry_name(&form.entry), .Name)
+	band_put(band, "(", .Quiet)
+	for field in 0 ..< min(form.field_count, FIELD_CAPACITY) {
+		if field > 0 {
+			band_put(band, ", ", .Quiet)
+		}
+		band.field_starts[field] = band.count
+		if name := field_name(form, field); name != "" {
+			band_put(band, name, field == form.current ? Band_Class.Label : Band_Class.Quiet)
+			band_put(band, ": ", .Quiet)
+		}
+		band.value_starts[field] = band.count
+		if field == form.current {
+			band.caret = band.count + clamp(form.fields[field].caret, 0, form.fields[field].count)
+		}
+		band_put(band, field_text(form, field), .Value)
+		band.value_counts[field] = band.count - band.value_starts[field]
+	}
+	band_put(band, ")", .Quiet)
+	band.caret = min(band.caret, band.count)
+	fit := (PANEL_WIDTH - 2 * interface.TEXT_INPUT_LINE_MARGIN - BAND_CARET_WIDTH) / BAND_CELL_WIDTH
+	band.first = band.count > fit ? clamp(band.caret - fit + 4, 0, band.count - fit) : 0
+	band.last = min(band.first + fit, band.count)
+}
+
+// form_place_at gives the field of a form and the place of the caret in it
+// for a point of the input band, for a panel whose left side is at
+// panel_x: the place between two characters that is nearest to the point.
+// A point on the name of a parameter gives the start of its field; a point
+// on the punctuation after a field gives its end. ok is false for a point
+// on the name of the command, or outside the part of the call that the band
+// shows.
+form_place_at :: proc "contextless" (form: ^Form, panel_x, x: int) -> (field: int, caret: int, ok: bool) {
+	band: Band_Layout
+	form_band_layout(form, &band)
+	text_x := panel_x + interface.TEXT_INPUT_LINE_MARGIN
+	if x < text_x {
+		return 0, 0, false
+	}
+	place := band.first + (x - text_x + BAND_CELL_WIDTH / 2) / BAND_CELL_WIDTH
+	fields := min(form.field_count, FIELD_CAPACITY)
+	if place > band.last || fields == 0 || place < band.field_starts[0] {
+		return 0, 0, false
+	}
+	for index := fields - 1; index >= 0; index -= 1 {
+		if place >= band.field_starts[index] {
+			return index, clamp(place - band.value_starts[index], 0, band.value_counts[index]), true
+		}
+	}
+	return 0, 0, false
+}
+
 // form_band_draw draws the input band of a form: the call as code, at the
 // scale of the typed part: the name of the command, then each parameter
 // with its name and what the input typed in it, and the caret in the
@@ -501,46 +718,17 @@ Band_Class :: enum u8 {
 @(private)
 form_band_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, x, y: int) {
 	table := frame.table
-	characters: [512]u8
-	classes: [512]Band_Class
-	count, caret := 0, 0
-	put :: proc "contextless" (into: ^[512]u8, kinds: ^[512]Band_Class, used: ^int, text: string, class: Band_Class) {
-		for index in 0 ..< len(text) {
-			if used^ < len(into) {
-				into[used^] = text[index]
-				kinds[used^] = class
-				used^ += 1
-			}
-		}
-	}
-	put(&characters, &classes, &count, entry_name(&form.entry), .Name)
-	put(&characters, &classes, &count, "(", .Quiet)
-	for field in 0 ..< form.field_count {
-		if field > 0 {
-			put(&characters, &classes, &count, ", ", .Quiet)
-		}
-		if name := field_name(form, field); name != "" {
-			put(&characters, &classes, &count, name, field == form.current ? Band_Class.Label : Band_Class.Quiet)
-			put(&characters, &classes, &count, ": ", .Quiet)
-		}
-		if field == form.current {
-			caret = count + clamp(form.fields[field].caret, 0, form.fields[field].count)
-		}
-		put(&characters, &classes, &count, field_text(form, field), .Value)
-	}
-	put(&characters, &classes, &count, ")", .Quiet)
+	band: Band_Layout
+	form_band_layout(form, &band)
+	characters, classes := &band.characters, &band.classes
+	caret, first, last := band.caret, band.first, band.last
 
-	cell_width := graphics.CELL_WIDTH * INPUT_SCALE
 	text_height := graphics.CELL_HEIGHT * INPUT_SCALE
-	caret_width := 2 * INPUT_SCALE
 	interface.draw_rectangle(table, x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT - 2, graphics.COLOR_TRACK)
 	interface.draw_rectangle(table, x, y + INPUT_BAND_HEIGHT - 2, PANEL_WIDTH, 2, graphics.COLOR_TITLE)
 	text_x := x + interface.TEXT_INPUT_LINE_MARGIN
 	text_y := y + (INPUT_BAND_HEIGHT - text_height) / 2
-	fit := (PANEL_WIDTH - 2 * interface.TEXT_INPUT_LINE_MARGIN - caret_width) / cell_width
-	first := count > fit ? clamp(caret - fit + 4, 0, count - fit) : 0
-	last := min(first + fit, count)
-	interface.draw_rectangle(table, text_x + (caret - first) * cell_width, text_y, caret_width, text_height, graphics.COLOR_TITLE)
+	interface.draw_rectangle(table, text_x + (caret - first) * BAND_CELL_WIDTH, text_y, BAND_CARET_WIDTH, text_height, graphics.COLOR_TITLE)
 	font := interface.Font{scale = INPUT_SCALE}
 	// One text record for each run of one class.
 	start := first
@@ -560,7 +748,7 @@ form_band_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, x, y
 		case .Value:
 			color = graphics.COLOR_WHITE
 		}
-		interface.draw_text(table, text_x + (start - first) * cell_width, text_y, string(characters[start:end]), color, font)
+		interface.draw_text(table, text_x + (start - first) * BAND_CELL_WIDTH, text_y, string(characters[start:end]), color, font)
 		start = end
 	}
 }
@@ -603,12 +791,13 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 	}
 	candidates_icon, candidates_color := candidate_icon(form.candidate_kind)
 	choice := form.candidate_choice
-	first := choice >= LIST_ROWS ? choice - LIST_ROWS + 1 : 0
+	first := candidates_first(form)
 	shown_count := clamp(form.shown_count - first, 0, LIST_ROWS)
 	for index in 0 ..< shown_count {
 		rows[index] = {kind = .Entry, name = candidate_name(form, first + index), icon = candidates_icon, icon_color = candidates_color, right_text = words}
 	}
-	interface.list_of_rows(frame, list_area, rows[:shown_count], {chosen = choice - first, first = first, total = form.shown_count})
+	chosen_shown := choice >= first && choice < first + shown_count ? choice - first : NO_ROW
+	interface.list_of_rows(frame, list_area, rows[:shown_count], {chosen = chosen_shown, first = first, total = form.shown_count, scroll_bar = scroll_bar_identity(), scrolled = &panel.scrolled})
 	if form.shown_count == 0 {
 		prompt: interface.Text_Builder
 		interface.text_put(&prompt, "type the value of ")

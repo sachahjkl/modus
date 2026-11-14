@@ -170,11 +170,49 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 // changes no table. Only the thread that writes the table uses it.
 palette_next_entries: [palette_table.ENTRY_CAPACITY]palette_table.Entry
 
+PALETTE_STRATEGY_VALUE_CAPACITY :: 16 // The bytes of the name of a strategy as a value of the command `strategy`.
+
+// palette_strategy_value gives the name of a scheduling strategy as the
+// command `strategy` takes it: the name of the kernel contract in lower
+// case, with "_" for a space: "round_robin", "fair", "eevdf". The program
+// `scheduler` reads the same names (its export `strategy_set`). A name
+// that does not fit gives "".
+palette_strategy_value :: proc "contextless" (buffer: ^[PALETTE_STRATEGY_VALUE_CAPACITY]u8, strategy: op.Strategy) -> string {
+	name := op.STRATEGY_NAMES[strategy]
+	if len(name) > len(buffer) {
+		return ""
+	}
+	for index in 0 ..< len(name) {
+		character := name[index]
+		switch {
+		case character >= 'A' && character <= 'Z':
+			character += 'a' - 'A'
+		case character == ' ':
+			character = '_'
+		}
+		buffer[index] = character
+	}
+	return string(buffer[:len(name)])
+}
+
+// palette_strategy_in_use gives the scheduling strategy that the machine
+// uses now, from the system report, or None when the report is refused:
+// no entry then has the mark.
+palette_strategy_in_use :: proc "contextless" () -> op.Strategy {
+	report: op.System_Report
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
+		return .None
+	}
+	return report.strategy
+}
+
 // palette_table_write writes the entry table from the command table of
-// now, when it differs from the table before. The writer adds 1 to the
-// change count before the change and 1 after it, and wakes the reader.
-// The first thread calls it at the start; after that, only the thread
-// that runs the lines, after each line.
+// now and the scheduling strategy of now, when it differs from the table
+// before. The writer adds 1 to the change count before the change and 1
+// after it, and wakes the reader. One thread writes at a time: the first
+// thread at the start, and when the panel opens while no line runs
+// (Refresh); the thread that runs the lines after each line, before the
+// first thread learns that the line ended.
 palette_table_write :: proc "contextless" () {
 	if !palette_active() {
 		return
@@ -214,6 +252,37 @@ palette_table_write :: proc "contextless" () {
 			palette_next_entries[count] = entry
 			count += 1
 		}
+	}
+	// One entry for each scheduling strategy: "set strategy to eevdf". Its
+	// help is the line that the console runs for it. The strategy is a
+	// state of the kernel that no page holds: the console reads it in the
+	// system report, and marks the entry of the strategy in use.
+	strategy_in_use := palette_strategy_in_use()
+	for strategy in op.Strategy {
+		if strategy == .None || count == palette_table.ENTRY_CAPACITY {
+			continue
+		}
+		value_buffer: [PALETTE_STRATEGY_VALUE_CAPACITY]u8
+		value := palette_strategy_value(&value_buffer, strategy)
+		entry := palette_table.Entry{kind = .Provider_Setting, result = .Integer}
+		if strategy == strategy_in_use {
+			entry.flags += {.In_Use}
+		}
+		name := system.Writer{buffer = entry.name[:]}
+		system.write_part(&name, "set strategy to ")
+		system.write_part(&name, value)
+		about := system.Writer{buffer = entry.about[:]}
+		system.write_part(&about, "strategy(\"")
+		system.write_part(&about, value)
+		system.write_part(&about, "\")")
+		if value == "" || name.dropped != 0 || about.dropped != 0 {
+			continue
+		}
+		entry.name_length = u8(name.count)
+		entry.signature_length = u8(copy(entry.signature[:], entry.name[:name.count]))
+		entry.about_length = u8(about.count)
+		palette_next_entries[count] = entry
+		count += 1
 	}
 	header := (^palette_table.Header)(raw_data(palette_memory))
 	size := count * size_of(palette_table.Entry)
@@ -319,6 +388,12 @@ palette_turn :: proc "contextless" () {
 		case .Candidates:
 			palette_candidates_give(record)
 			continue
+		case .Refresh:
+			// The panel opened: the strategy can have changed with no
+			// line of the console. No line runs now, so this thread is
+			// the one writer of the table.
+			palette_table_write()
+			continue
 		case .Manual:
 			palette_manual_page(record)
 		case .Choose:
@@ -396,9 +471,9 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 	}
 	name := string(entry.name[:entry.name_length])
 	palette_manual = false
-	if entry.kind == .Setting {
-		// The line of a setting is the help of its entry, which the
-		// console wrote itself.
+	if entry.kind == .Setting || entry.kind == .Provider_Setting {
+		// The line of a setting, and of a scheduling strategy, is the
+		// help of its entry, which the console wrote itself.
 		palette_line_run(record.tag, string(entry.about[:entry.about_length]))
 		return
 	}
@@ -612,6 +687,21 @@ palette_commands_add :: proc "contextless" () {
 	command("manual_page", {.Text}, .Integer, "show the page of a module in the manual: manual.show()", proc "contextless" (arguments: []Value) -> Value {
 		return bound_call("manual", "show", arguments)
 	})
+	// Sets the scheduling strategy of the machine: the export
+	// `strategy_set` of the service `scheduler`, under a short name. It
+	// gives the number of the strategy that the machine used before.
+	//
+	// - `name`: `round_robin`, `fair` or `eevdf`.
+	//
+	// The console holds no right to change the strategy: the program
+	// `scheduler` holds it, and must run. The command starts no program.
+	// The palette of the desktop runs it for an entry such as "set
+	// strategy to eevdf".
+	//
+	// Errors: those of `connect("scheduler")`, and those of the export.
+	command("strategy", {.Text}, .Integer, "set the scheduling strategy: scheduler.strategy_set()", proc "contextless" (arguments: []Value) -> Value {
+		return bound_call("scheduler", "strategy_set", arguments)
+	})
 	// The names of the parameters of the built-in commands that the form
 	// of the palette asks for: a field says what it takes. help() and
 	// describe() show them too.
@@ -633,6 +723,7 @@ palette_commands_add :: proc "contextless" () {
 		{"describe", {"name", ""}},
 		{"setting", {"name", "value"}},
 		{"manual_page", {"name", ""}},
+		{"strategy", {"name", ""}},
 	}
 	for item in named {
 		if found := palette_command_named(item.command); found != nil && found.run != nil {

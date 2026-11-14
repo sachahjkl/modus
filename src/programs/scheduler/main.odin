@@ -86,10 +86,14 @@
 // - **Schedule**: the right to change the strategy of the whole machine,
 //   and the weight and the request of any thread. A change touches every
 //   program, so this right is rare.
+// - **Serve**: the program is a service. Its export `strategy_set` sets
+//   the strategy for a caller that holds no right over the machine: the
+//   console runs it as `strategy("eevdf")`, and the palette of the desktop
+//   for the entry "set strategy to eevdf". The calls run after the checks,
+//   in the loop of the window. Its exports `share` and `policy` are
+//   commands of the console too.
 // - **Image**: the boot image, to start the four programs of the shares
 //   from its own file.
-// - **Serve**: its two exports are commands of the console, and entries of
-//   the palette after `connect("scheduler")`.
 //
 // **What a reader sees**: one tile for each strategy with its numbers, and
 // the strategy in use. The key S, or the button after the tiles, opens the
@@ -107,6 +111,7 @@ package scheduler
 
 import "base:intrinsics"
 import "modus:contract/errors"
+import "modus:contract/isolated"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -1838,6 +1843,92 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 	interface.window_frame_end(&drawing, frame, window)
 }
 
+STRATEGY_NAME_LIMIT :: 16 // The bytes of the name of a strategy in a call of strategy_set.
+
+// strategy_name_is says if a text names a strategy: the name of the kernel
+// contract, without the case of the letters, with "_" or a space between
+// two words. "round_robin", "Round Robin" and "round robin" name one
+// strategy; "eevdf" names EEVDF.
+strategy_name_is :: proc "contextless" (text: string, name: string) -> bool {
+	if len(text) != len(name) {
+		return false
+	}
+	lower :: proc "contextless" (character: u8) -> u8 {
+		switch {
+		case character >= 'A' && character <= 'Z':
+			return character + ('a' - 'A')
+		case character == '_':
+			return ' '
+		}
+		return character
+	}
+	for index in 0 ..< len(text) {
+		if lower(text[index]) != lower(name[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// strategy_set sets the scheduling strategy of the whole machine, by its
+// name. The result is the number of the strategy that the machine used
+// before (1 round robin, 2 fair, 3 EEVDF).
+//
+// The program `scheduler` holds the right Schedule on the machine; a
+// caller holds none. The console calls this export for its command
+// `strategy`, and the palette of the desktop for an entry such as "set
+// strategy to eevdf". The program serves its calls after its checks, in
+// the loop of its window: the checks change the strategy themselves.
+//
+// - **name**: `round_robin`, `fair` or `eevdf`; 16 bytes at most. The case
+//   of the letters does not count, and a space is the same as `_`.
+//
+// The caller must act for the principal (**Acts_For_Principal**): the
+// console has that grant. The program uses its own right for a caller, so
+// it serves only a caller whose requests are those of the principal; the
+// root service gives that grant, shows it and revokes it.
+//
+// It fails with -1 and an error record, and the strategy does not change:
+//
+// - `No_Grant`: the caller does not act for the principal;
+// - `Too_Long`: the name has more than 16 bytes;
+// - `Bad_Value`: the name is no strategy;
+// - `Refused`: the kernel refused the change; the record holds its status.
+//   A caller that loads the module as a library gets this error: it holds
+//   no machine handle with the right Schedule.
+//
+// Example: `scheduler.strategy_set("fair")`.
+@(export, link_name = "strategy_set")
+strategy_set :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
+	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
+		return errors.fail(error, -1, .No_Grant, .Acts_For_Principal)
+	}
+	// A copy of the name: the caller can change the call region during
+	// the call.
+	name_buffer: [STRATEGY_NAME_LIMIT]u8
+	if len(name^) > len(name_buffer) {
+		return errors.fail(error, -1, .Too_Long, .Bytes, 1, i64(len(name^)), STRATEGY_NAME_LIMIT)
+	}
+	given := string(name_buffer[:copy(name_buffer[:], name^)])
+	wanted := op.Strategy.None
+	for strategy in strategies {
+		if strategy_name_is(given, op.STRATEGY_NAMES[strategy]) {
+			wanted = strategy
+		}
+	}
+	if wanted == .None {
+		return errors.fail(error, -1, .Bad_Value, .None, 1)
+	}
+	before, status := system.strategy_set(machine, wanted)
+	if status != .Ok {
+		return errors.fail(error, -1, .Refused, .None, 0, 0, 0, i64(status))
+	}
+	if before != wanted {
+		system.log("scheduler: the strategy is now ", op.STRATEGY_NAMES[wanted], ", it was ", op.STRATEGY_NAMES[before])
+	}
+	return i64(before)
+}
+
 choose :: proc "contextless" (index: int) {
 	if index < 0 || index >= STRATEGY_COUNT {
 		return
@@ -1855,7 +1946,8 @@ choose :: proc "contextless" (index: int) {
 // it: `fail` keeps the first problem, and the result line says it. After
 // the measures it gives the machine back the strategy of its start. Then it
 // draws every 500 ms; the keys 1, 2 and 3, or a click on a tile, change the
-// strategy of the machine.
+// strategy of the machine, and a call of `strategy_set` does the same for
+// a caller.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// A program of the case of the shares has this file and no window: it
@@ -1969,6 +2061,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				policy_toggle()
 			}
 		}
+		// The calls of the callers that waited: strategy_set, share and policy.
+		system.service_run(&service)
 		// The counts of the processors change: the window shows them each 500 ms.
 		draw(&window, system_report(), processors)
 		// The thread waits for an event of the window or a call of a
@@ -1977,6 +2071,5 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
 		system.wait_end(&wait, system.time() + 500)
-		system.service_run(&service)
 	}
 }

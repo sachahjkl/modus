@@ -28,6 +28,7 @@ Form :: struct {
 	shown:            [palette_table.CANDIDATE_CAPACITY]u8, // The candidates that the text of the field matches, in their order.
 	shown_count:      int, // The shown candidates in use.
 	candidate_choice: int, // The chosen one, as an index in `shown`; NO_ROW with none.
+	candidate_first:  int, // The first shown candidate that the list area shows. The choice and the scroll bar move it.
 	// The owner asked the provider for the candidates of the current field,
 	// and no answer came yet. Tab then waits: it never goes to the next
 	// field while a candidate that it can take is on its way.
@@ -202,7 +203,62 @@ form_candidates_clear :: proc "contextless" (form: ^Form) {
 	form.candidate_count = 0
 	form.shown_count = 0
 	form.candidate_choice = NO_ROW
+	form.candidate_first = 0
 	form.candidate_kind = .None
+}
+
+// candidates_first gives the first shown candidate that the list area
+// shows, inside the candidates of now.
+candidates_first :: proc "contextless" (form: ^Form) -> int {
+	return clamp(form.candidate_first, 0, max(form.shown_count - LIST_ROWS, 0))
+}
+
+// candidates_follow_choice moves the candidates that the list area shows so
+// that they hold the chosen one.
+@(private)
+candidates_follow_choice :: proc "contextless" (form: ^Form) {
+	choice := form.candidate_choice
+	if choice < 0 {
+		form.candidate_first = 0
+		return
+	}
+	if choice < form.candidate_first {
+		form.candidate_first = choice
+	}
+	if choice >= form.candidate_first + LIST_ROWS {
+		form.candidate_first = choice - LIST_ROWS + 1
+	}
+	form.candidate_first = candidates_first(form)
+}
+
+// form_candidate_set chooses a shown candidate that the pointer is over.
+// It gives true when the choice changed. The candidate is one that the
+// list area shows: the view does not move.
+form_candidate_set :: proc "contextless" (form: ^Form, shown: int) -> bool {
+	if shown < 0 || shown >= form.shown_count || shown == form.candidate_choice {
+		return false
+	}
+	form.candidate_choice = shown
+	return true
+}
+
+// form_caret_put puts the caret in a field, at a place in its text: a
+// press of the pointer in the input band (form_place_at). It gives true
+// when the field changed: the candidates of the field before leave, and
+// the owner asks the provider for those of the new field.
+form_caret_put :: proc "contextless" (panel: ^Panel, field: int, caret: int) -> (field_changed: bool) {
+	form := &panel.form
+	if field < 0 || field >= form.field_count {
+		return false
+	}
+	field_changed = field != form.current
+	if field_changed {
+		form.current = field
+		form_candidates_clear(form)
+	}
+	form.message_length = 0
+	form.fields[field].caret = clamp(caret, 0, form.fields[field].count)
+	return field_changed
 }
 
 // form_candidates_set gives the form the candidates of its current field,
@@ -258,6 +314,7 @@ form_candidates_filter :: proc "contextless" (form: ^Form) {
 			form.candidate_choice = place
 		}
 	}
+	candidates_follow_choice(form)
 }
 
 // form_tab says what Tab does in a form: it waits while the candidates of
@@ -287,6 +344,7 @@ form_candidate_move :: proc "contextless" (form: ^Form, step: int) -> bool {
 		return false
 	}
 	form.candidate_choice = (form.candidate_choice + step + form.shown_count) % form.shown_count
+	candidates_follow_choice(form)
 	return true
 }
 

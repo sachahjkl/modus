@@ -34,6 +34,12 @@ palette_records_now, palette_records_before: [512]interface.Draw_Record
 palette_text_now, palette_text_before: [4096]u8
 palette_now, palette_before: interface.Draw_Table
 palette_interface_state: interface.Interface_State
+// The pointer, as the next frame of the panel reads it: the scroll bar of
+// the panel is an element of the interface package, and takes its presses
+// and its drags from here. palette_pointer fills it; a frame clears the
+// press and the release that it read.
+palette_input: interface.Input
+palette_scroll_dragged: bool // The thumb that is held now moved the view: its release writes one line of the log.
 
 // The ranking thread. The loop of the compositor never makes a list: it
 // writes a request (the typed part, the windows, the remembered choices)
@@ -225,6 +231,11 @@ palette_wait :: proc "contextless" (wait: ^system.Wait) {
 // the wait: a table of the provider that changed asks for a new list; a
 // published list is adopted; an answer of the provider is shown.
 palette_turn :: proc "contextless" () {
+	// A held arrow button of the scroll bar takes its next step at a time
+	// of the clock: the frame of that time moves the view.
+	if step := palette_wake(); step != 0 && system.time() >= step {
+		palette_refresh()
+	}
 	if palette_provider_ring.head != nil {
 		header := (^palette_table.Header)(raw_data(palette_ranking.table))
 		if generation := intrinsics.atomic_load_explicit(&header.change_count, .Acquire); generation != palette_generation_seen {
@@ -275,6 +286,16 @@ palette_turn :: proc "contextless" () {
 			palette_act(.Run, .Enter, 0, "")
 		}
 	}
+}
+
+// palette_wake gives the time of the next step of a held arrow button of
+// the scroll bar of the panel, in milliseconds of the clock of the system,
+// or 0: the loop of the compositor has no wake for the palette.
+palette_wake :: proc "contextless" () -> u64 {
+	if !palette_is_open() {
+		return 0
+	}
+	return palette_interface_state.scroll_bar_repeat_at
 }
 
 // palette_frame_drawn tells the panel that a frame showed it: Enter runs
@@ -555,6 +576,16 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			damage_menu()
 		}
 		palette.panel_open(panel)
+		// The pointer is where it is now, with no press of an open before.
+		palette_interface_state = {}
+		palette_input = {pointer_x = pointer_x, pointer_y = pointer_y, pointer_known = true}
+		palette_scroll_dragged = false
+		// The provider reads again the facts of its entries that change
+		// with no line of its own, and writes a new table when one did. A
+		// full ring sends nothing: the table of the last line stays.
+		if palette_provider_ring.head != nil {
+			system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Refresh)})
+		}
 		system.log_in("surfaces", .Info, "compositor: the palette is open")
 		palette_refresh()
 	case .Close:
@@ -850,35 +881,106 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 // list that changes under a still pointer keeps its choice). A press and a
 // release on one row run it. A press outside the panel closes it; a press
 // inside the panel that is on no row does nothing.
+//
+// In a form, a press in the input band puts the caret in the field under
+// the pointer, at the character under it; a move over a candidate chooses
+// it, and a press and a release on one candidate take it, as Tab does.
+//
+// The scroll bar of the list is an element of the interface package: a
+// press on it, and each move while it holds the press, builds a frame of
+// the panel with the pointer, and the element moves the view. While the
+// scroll bar holds the press, the pointer chooses and runs no row.
 palette_pointer :: proc "contextless" (moved, pressed, released: bool) {
 	panel := &palette_panel
 	left, top := palette_place()
-	row := palette.row_at(panel, left, top, pointer_x, pointer_y)
-	if moved && panel.state == .Search && palette.choice_set(panel, row) {
-		palette_choice_log()
+	given := &palette_input
+	given.pointer_x, given.pointer_y = pointer_x, pointer_y
+	given.pointer_known = true
+	if pressed {
+		given.press_x, given.press_y = pointer_x, pointer_y
+	}
+	given.pressed ||= pressed
+	given.released ||= released
+	given.button_held = buttons & display.BUTTON_LEFT != 0
+	bar_area, bar_shown := palette.scroll_bar_area(panel, left, top)
+	bar_identity := palette.scroll_bar_identity()
+	// The pointer is over the scroll bar, holds it, or leaves it lit: the
+	// panel needs a frame for it.
+	bar_wants_frame := interface.scroll_bar_wants_frame(&palette_interface_state, given, bar_area, bar_identity)
+	if palette_interface_state.pressed == bar_identity || pressed && bar_shown && interface.area_contains(bar_area, pointer_x, pointer_y) {
+		panel.pressed_row = palette.NO_ROW
 		palette_refresh()
+		return
+	}
+	row := palette.row_at(panel, left, top, pointer_x, pointer_y)
+	candidate := palette.candidate_at(panel, left, top, pointer_x, pointer_y)
+	changed := false
+	if moved {
+		if panel.state == .Search && palette.choice_set(panel, row) {
+			palette_choice_log()
+			changed = true
+		}
+		if panel.state == .Arguments && palette.form_candidate_set(&panel.form, candidate) {
+			changed = true
+		}
 	}
 	if pressed {
-		if palette.part_at(left, top, pointer_x, pointer_y) == .Outside {
+		part := palette.part_at(left, top, pointer_x, pointer_y)
+		if part == .Outside {
 			palette_close("a press of the pointer outside it")
 			return
 		}
-		panel.pressed_row = palette.row_is_entry(panel, row) ? row : palette.NO_ROW
+		if panel.state == .Arguments {
+			panel.pressed_row = candidate
+			if part == .Input_Band {
+				if field, caret, in_a_field := palette.form_place_at(&panel.form, left, pointer_x); in_a_field {
+					// Tab that waited for the candidates of the field
+					// before waits for nothing more.
+					palette_tab_waits = false
+					if palette.form_caret_put(panel, field, caret) {
+						palette_candidates_ask()
+					}
+					system.log_in("surfaces", .Info, "compositor: a press puts the caret of the palette in the field ", u64(field), ", after ", u64(caret), " characters")
+					changed = true
+				}
+			}
+		} else {
+			panel.pressed_row = palette.row_is_entry(panel, row) ? row : palette.NO_ROW
+		}
 	}
 	if released {
 		pressed_row := panel.pressed_row
 		panel.pressed_row = palette.NO_ROW
-		if pressed_row == palette.NO_ROW || pressed_row != row {
-			return
-		}
 		#partial switch panel.state {
 		case .Search:
-			palette.choice_set(panel, row)
-			palette_act(.Run, .Other, 0, "")
+			if pressed_row != palette.NO_ROW && pressed_row == row {
+				palette.choice_set(panel, row)
+				interface.input_clear(given)
+				palette_act(.Run, .Other, 0, "")
+				return
+			}
 		case .Confirm:
-			// The row that asks: the second Enter. Another row: back.
-			palette_act(row == panel.choice ? palette.Action.Confirm : palette.Action.Back, .Other, 0, "")
+			if pressed_row != palette.NO_ROW && pressed_row == row {
+				// The row that asks: the second Enter. Another row: back.
+				interface.input_clear(given)
+				palette_act(row == panel.choice ? palette.Action.Confirm : palette.Action.Back, .Other, 0, "")
+				return
+			}
+		case .Arguments:
+			if pressed_row != palette.NO_ROW && pressed_row == candidate {
+				palette.form_candidate_set(&panel.form, candidate)
+				if palette.form_candidate_take(&panel.form) {
+					system.log_in("surfaces", .Info, "compositor: the palette takes the candidate ", palette.field_text(&panel.form, panel.form.current))
+				}
+				changed = true
+			}
 		}
+	}
+	if changed || bar_wants_frame {
+		palette_refresh()
+	} else {
+		// No frame reads this press or this release.
+		interface.input_clear(given)
 	}
 }
 
@@ -895,11 +997,35 @@ palette_refresh :: proc "contextless" () {
 			palette_panel.settings_in_use[int(setting)] = u8(in_use.values[setting])
 		}
 	}
-	nothing: interface.Input
-	built := interface.frame_begin(&palette_now, &palette_interface_state, &nothing)
 	left, top := palette_place()
-	palette.panel_draw(&built, &palette_panel, left, top)
-	interface.frame_end(&built)
+	// The frame reads the pointer for the scroll bar of the panel, and the
+	// clock for a held arrow button. When the scroll bar moved the view,
+	// the rows of that frame are those of the view before: a second frame
+	// draws the rows of the new view. The second frame has no press, so
+	// it moves nothing more.
+	for _ in 0 ..< 2 {
+		built := interface.frame_begin(&palette_now, &palette_interface_state, &palette_input, system.time())
+		palette.panel_draw(&built, &palette_panel, left, top)
+		interface.frame_end(&built)
+		interface.input_clear(&palette_input)
+		scrolled := palette_panel.scrolled
+		moved := palette.view_scrolled(&palette_panel)
+		if moved {
+			palette_scroll_dragged ||= scrolled.held == .Thumb
+			if scrolled.pressed_now != .None && scrolled.pressed_now != .Thumb {
+				system.log_in("surfaces", .Info, "compositor: the scroll bar of the palette: a press on ", palette_scroll_part_words(scrolled.pressed_now), ", the rows from ", u64(scrolled.first))
+			}
+		}
+		if scrolled.drag_ended {
+			if palette_scroll_dragged {
+				system.log_in("surfaces", .Info, "compositor: the scroll bar of the palette: a drag of the thumb, the rows from ", u64(scrolled.first))
+			}
+			palette_scroll_dragged = false
+		}
+		if !moved {
+			break
+		}
+	}
 	if palette_now.full {
 		system.log_in("surfaces", .Warning, "compositor: the draw table of the palette is full: records are missing")
 	}
@@ -909,6 +1035,22 @@ palette_refresh :: proc "contextless" () {
 		damage_add(rectangle.left, rectangle.top, rectangle.right - rectangle.left, rectangle.bottom - rectangle.top)
 	}
 	interface.draw_table_copy(&palette_before, &palette_now)
+}
+
+// palette_scroll_part_words gives the words of the log for a part of the
+// scroll bar of the panel.
+palette_scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part) -> string {
+	#partial switch part {
+	case .Arrow_Back:
+		return "the arrow up"
+	case .Arrow_Forward:
+		return "the arrow down"
+	case .Track_Back:
+		return "the track above the thumb"
+	case .Track_Forward:
+		return "the track under the thumb"
+	}
+	return "the thumb"
 }
 
 PALETTE_LOG_NAMES :: 4 // The first rows that the log names: the line stays one line of the log.
@@ -964,6 +1106,10 @@ palette_close :: proc "contextless" (cause: string) {
 		palette_answer_awaited = 0
 	}
 	palette.panel_close(&palette_panel)
+	// A scroll bar that held the press holds nothing in the next open.
+	palette_interface_state = {}
+	interface.input_clear(&palette_input)
+	palette_scroll_dragged = false
 	palette_enter_waits = false
 	damage_palette()
 	interface.draw_table_clear(&palette_before)
