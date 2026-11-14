@@ -8,7 +8,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **A module states the budget that it asks for.** The description of a module holds the pages, the threads and the programs that it asks for, and the tool adds what it can count: the pages of the module and of its imports, of each thread and of the pictures of its window. The starter grants the request or less, so a developer adds a program with no change of the root service, and no amount is a guess.
+- **A module states the budget that it asks for.** The description of a module holds the pages, the threads and the programs that it asks for, and the tool adds what it can count: the pages of the module and of its imports, of each thread and of the pictures of its window. The starter grants the request or less, so a developer adds a program with no change of the root service, and no amount is a guess. [Design](src/md/features/module_budget_request.md)
 - **A window for the debugger.** The debugger gets a window over the exports that the console uses today: the threads, the stack, the variables and the source lines. A step over a call stops after the call returns, not inside it.
 - **Kind icons in the completion list of the console.** Each row of the completion list shows the kind icon of its name, as each row of the palette does. A reader tells a command from a module or a variable before reading the name.
 - **Grants for a disk program.** A principal gives a disk program a grant or a larger budget with a command, and revokes it. A program that a developer adds then does more than write in its window. [Design](src/md/features/programs_from_a_disk.md)
