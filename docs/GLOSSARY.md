@@ -3725,7 +3725,7 @@ A surface is a memory object that one program draws into and the compositor show
 
 A surface keeps the pixels out of the kernel and out of the rings: the program writes pixels in its own memory, and the compositor reads the same memory. No pixel goes through a ring or through the kernel.
 
-A program opens a surface with `display.open(ctx, width, height, title, two_pictures)`. This needs the grant of the display, a ring to the compositor in its context; without it the call fails with `No_Grant`. A width or a height is 1 to 2048 pixels (`SURFACE_LIMIT`). The call makes a memory object for one picture or two, maps it, gives the compositor a handle with **Read** only through the ring, and sends `Surface_Create`. Then the program draws a picture and sends `Present` with the rectangle that changed. The compositor sends the input of the window back as completion records of the same ring: keys, pointer events, and `Settings_Changed`.
+A program opens a surface with `display.open(ctx, width, height, title)`. This needs the grant of the display, a ring to the compositor in its context; without it the call fails with `No_Grant`. A width or a height is 1 to 2048 pixels (`SURFACE_LIMIT`). The call makes a memory object for two pictures, maps it, gives the compositor a handle with **Read** only through the ring, and sends `Surface_Create`. Then the program draws a picture and sends `Present` with the rectangle that changed. The compositor sends the input of the window back as completion records of the same ring: keys, pointer events, and `Settings_Changed`.
 
 A surface is not a framebuffer: the framebuffer is the memory of the screen that the firmware gave, and only the compositor writes it. A program cannot write another program's surface or the screen.
 
@@ -3735,15 +3735,27 @@ Do not use: window buffer, framebuffer (reserved for the UEFI one).
 
 ### Picture
 
-A picture is one complete image in the memory of a surface; a surface has one picture or two.
+A picture is one complete image in the memory of a surface; a surface has two pictures.
 
-With one picture, the compositor can read the picture while the program draws, and the screen can show a part of the new image with a part of the old one. With two pictures, the program draws one while the compositor reads the other, and `Present` names the picture that is complete; the next frame draws in the other one. A program asks for two pictures with the argument `two_pictures` of `display.open`. The interface package keeps one draw table for each picture, because the picture that a frame draws holds the frame of two frames before.
+The program draws one picture while the compositor reads the other, and `Present` names the picture that is complete; the next frame draws in the other one. The picture that a frame draws holds the frame of two frames before. The interface package keeps, for each picture, the rectangles where it differs from the last frame that was presented, and draws them again with the rectangles that changed.
 
 A picture is not a picture resource or a picture record: a picture record shows pixels of a picture that the program holds in its own memory, inside its surface.
 
 The design: `src/library/support/display`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: back buffer, front buffer, swap chain.
+
+### Whole frame
+
+A whole frame is a picture of a window that reaches the screen complete: the screen never shows a picture that a program is drawing.
+
+It is a rule of the system for every window, and a program writes no code for it. A surface has two pictures. The program draws the picture that the compositor does not read, and only after the compositor took the picture before (`display.canvas_free`, `display.canvas_wait`). The compositor shows a surface after its first `Present`. A program that stops in the middle of a draw leaves its last complete picture on the screen.
+
+The compositor counts, for each window, the `Present` records that named the picture that it already read: `pictures_drawn_again` in a row of `compositor.windows()`. It is 0 for a program that keeps the rule. The rule does not stop a hostile program, which holds the right to write both pictures: such a program spoils its own window, and no other.
+
+The design: `src/md/infrastructure/whole_frame.md`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
+
+Do not use: tear-free, double buffering, vertical synchronization.
 
 ### Compositor
 

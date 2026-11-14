@@ -119,8 +119,15 @@ Client :: struct {
 	ring_memory: system.Handle, // 0: the slot is free.
 	ring:        ring.Ring,
 	surface:     graphics.Canvas, // pixels is nil until the program creates its surface.
-	pictures:    [^]graphics.Color, // The memory of the surface: one picture or two. surface is one of them.
-	picture_count: u64,
+	pictures:    [^]graphics.Color, // The memory of the surface: two pictures. surface is one of them.
+	shown:       int, // The picture that surface is: the one that the last Present named.
+	// The proof that the window shows whole frames: the frames that read a
+	// picture of the window, and the Present records that named the
+	// picture that the compositor already read. A program that draws in
+	// the picture on the screen has no other complete picture to name.
+	frames:      u64,
+	pictures_drawn_again: u64,
+	presents_refused: u64, // The Present records whose picture number names no picture of the surface.
 	x, y:        int,
 	title:       system.Name,
 	pointer_shape: pointer_pictures.Pointer_Shape, // The shape that the program asked for over its surface (pointer_picture.odin).
@@ -539,22 +546,47 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if client.ring.head == nil {
 				continue
 			}
-			for record in system.receive(&client.ring.commands) {
+			// One turn takes the records that the ring holds at its start,
+			// and no more: a program that writes records as fast as this
+			// loop reads them must not keep this loop from the frame, the
+			// input and the other windows. The records that come during
+			// the turn end the next wait at once.
+			taken := false
+			for _ in 0 ..< system.records_of_turn(&client.ring.commands) {
+				record := system.receive(&client.ring.commands) or_break
+				taken = true
 				#partial switch display.Command(record.kind) {
 				case .Surface_Create:
 					surface_create(index, record)
 				case .Present:
 					if client.surface.pixels != nil {
 						// The program names the picture that is complete.
-						if record.values[0] < client.picture_count {
-							client.surface.pixels = client.pictures[int(record.values[0]) * client.surface.width * client.surface.height:]
+						// From here on the compositor reads only that one,
+						// and the program draws the other. A number that
+						// names no picture is refused and counted: the
+						// window keeps the last picture that was named,
+						// and shows none before a first one.
+						picture := record.values[0]
+						if picture >= display.PICTURE_COUNT {
+							client.presents_refused += 1
+							continue
 						}
+						if client.presents > 0 && int(picture) == client.shown {
+							client.pictures_drawn_again += 1
+						}
+						client.shown = int(picture)
+						client.surface.pixels = client.pictures[client.shown * client.surface.width * client.surface.height:]
 						// The program can name the rectangle that changed; the
 						// numbers are its own: they are cut to the surface.
 						left, top := int(min(record.values[1], u64(client.surface.width))), int(min(record.values[2], u64(client.surface.height)))
+						// The first picture of the window: the screen shows
+						// none of it yet, so each pixel of it changed.
+						if client.presents == 0 {
+							left, top = 0, 0
+						}
 						// Width 0: from (left, top) to the end of the surface.
 						changed_width, changed_height := client.surface.width - left, client.surface.height - top
-						if record.values[3] != 0 {
+						if record.values[3] != 0 && client.presents > 0 {
 							changed_width = int(min(record.values[3], u64(client.surface.width - left)))
 							changed_height = int(min(record.values[4], u64(client.surface.height - top)))
 						}
@@ -567,6 +599,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case .Pointer_Shape:
 					pointer_shape_request(&client, record) // pointer_picture.odin
 				}
+			}
+			// The program can wait until this loop took its last picture
+			// (display.canvas_wait): it draws the next one in the picture
+			// that this loop read until now. No frame is drawn between
+			// the record and this wake.
+			if taken && client.ring.head != nil {
+				system.wake_writer(&client.ring.commands)
 			}
 		}
 		palette_turn() // A list of the ranking thread, an answer of the palette provider.
@@ -689,8 +728,10 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	if kind != .Memory || .Read not_in rights || client.surface.pixels != nil || width == 0 || height == 0 || width > display.SURFACE_LIMIT || height > display.SURFACE_LIMIT {
 		return
 	}
+	// A surface has two pictures: the program draws one while this service
+	// reads the other. Memory for less is refused.
 	size := system.memory_size(memory) * system.PAGE_SIZE
-	if size < width * height * size_of(graphics.Color) {
+	if size < display.PICTURE_COUNT * width * height * size_of(graphics.Color) {
 		return
 	}
 	address, status := system.memory_map(memory, {}) // Read only.
@@ -698,7 +739,6 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 		return
 	}
 	client.pictures = ([^]graphics.Color)(address)
-	client.picture_count = size >= 2 * width * height * size_of(graphics.Color) ? 2 : 1
 	client.surface = {pixels = client.pictures, width = int(width), height = int(height), stride = int(width)}
 	client.title = system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
 	client.x = PLACE_X + placed % 8 * PLACE_STEP_X
@@ -876,6 +916,19 @@ draw :: proc "contextless" (now: u64) {
 	screen_build(now, display.interface_font_of())
 	for area in damage[:damage_count] {
 		draw_area(area, now)
+	}
+	// The windows that this frame read a picture of.
+	for &client in clients {
+		if client.surface.pixels == nil || client.presents == 0 {
+			continue
+		}
+		left, top := client.x + BORDER, client.y + TITLE_HEIGHT
+		for area in damage[:damage_count] {
+			if area.left < left + client.surface.width && left < area.right && area.top < top + client.surface.height && top < area.bottom {
+				client.frames += 1
+				break
+			}
+		}
 	}
 	damage_count = 0
 	// The screen shows each change that the compositor received.
@@ -1136,8 +1189,15 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		client := &clients[order[position]]
 		focus := position == order_count - 1
 		frame_records(table, client, client.x, client.y, focus, client == pointer_close)
-		screen_pictures[position] = client.surface
-		interface.draw_picture(table, client.x + BORDER, client.y + TITLE_HEIGHT, position, 0)
+		// A window shows a picture that its program presented, or none:
+		// before the first Present, the program draws in the memory of
+		// the surface, and the window has the background color.
+		if client.presents > 0 {
+			screen_pictures[position] = client.surface
+			interface.draw_picture(table, client.x + BORDER, client.y + TITLE_HEIGHT, position, 0)
+		} else {
+			interface.draw_rectangle(table, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height, graphics.COLOR_BACKGROUND)
+		}
 	}
 
 	// The bar: the mark of the system, the two buttons, the date and the time

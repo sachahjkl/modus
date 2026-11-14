@@ -56,8 +56,8 @@ import module "modus:contract/module"
 import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before, records_second: [512]interface.Draw_Record
-text_now, text_before, text_second: [8192]u8 // The second: the table of the second picture of the surface.
+records_now, records_before: [512]interface.Draw_Record
+text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 
 CELL_WIDTH :: graphics.CELL_WIDTH
@@ -350,7 +350,7 @@ page_build :: proc "contextless" () {
 // draw builds a frame of the window with the interface package.
 draw :: proc "contextless" (window: ^display.Window) {
 	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:], records_second[:], text_second[:])
+		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	}
 	frame := interface.window_frame_begin(&drawing, window)
 	draw_records(frame.table)
@@ -533,7 +533,7 @@ signature :: proc "c" (name: ^string, export: i64, result: ^[]u8) -> i64 {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
-	window, ok := display.open(ctx, WIDTH, HEIGHT, "manual", two_pictures = true)
+	window, ok := display.open(ctx, WIDTH, HEIGHT, "manual")
 	if !ok {
 		system.stop(1)
 	}
@@ -561,13 +561,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			changed = text_moved_by_scroll_bar
 			text_moved_by_scroll_bar = false
 		}
+		// A picture that waits for the compositor: display.canvas_free said
+		// no, and the wait then ends when the compositor has read the ring
+		// of the window. The question comes before the wait list, which
+		// reads its answer. With a free canvas, the page that the scroll
+		// bar moved is drawn in the next turn, with no wait. A held arrow
+		// button of the scroll bar takes its next step at a time of the
+		// clock: the wait ends there at the latest.
+		deadline := changed && display.canvas_free(&window) ? system.time() : system.WAIT_FOREVER
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
-		// A picture that waits for the compositor: look again soon. A held
-		// arrow button of the scroll bar takes its next step at a time of
-		// the clock: the wait ends there at the latest.
-		deadline := changed ? system.time() + 2 : system.WAIT_FOREVER
 		step_time, step_due := interface.window_scroll_bar_wake(&drawing)
 		if step_due {
 			deadline = min(deadline, step_time)

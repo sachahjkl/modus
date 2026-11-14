@@ -280,46 +280,73 @@ kept_counts :: proc "contextless" () -> (records, bytes: u64) {
 }
 before_count, before_text_count: u64
 
+// What each of the two pictures of the surface owes against the frame
+// before (interface.Picture_Debts): this program draws through the module
+// by hand, so it keeps the debts that the window layer keeps for a program.
+picture_debts: interface.Picture_Debts
+
 // present draws the frame through the module: the damage by difference
-// with the frame before, then the records in each damage rectangle.
+// with the frame before, then the records in each rectangle that the
+// picture of the surface must draw again. The canvas is the picture that
+// the compositor does not read, after it took the picture before; it
+// holds the frame of two frames before, so it draws the changed rectangles
+// and its debt.
 present :: proc "contextless" (window: ^display.Window) {
+	if !display.canvas_wait(window) {
+		return
+	}
 	start := system.nanoseconds()
 	kept_records, kept_bytes := kept_counts()
 	now_table := system.Table_To_Read(interface.Draw_Record){records = &records_now[0], count = kept_records, capacity = kept_records}
 	now_text := system.Bytes_To_Read{bytes = &text_now[0], count = kept_bytes, capacity = kept_bytes}
-	rectangles: [interface.DAMAGE_CAPACITY]Damage_Rectangle
-	count: i64
-	if !drawn_before || window.two {
-		rectangles[0] = {0, 0, WIDTH, HEIGHT}
-		count = 1
-	} else {
+	changed: interface.Damage
+	changed_known := drawn_before
+	if changed_known {
 		before_table := system.Table_To_Read(interface.Draw_Record){records = &records_before[0], count = before_count, capacity = before_count}
 		before_bytes := system.Bytes_To_Read{bytes = &text_before[0], count = before_text_count, capacity = before_text_count}
-		buffer := rectangles[:]
-		count = min(damage_of_draw_table_7(&before_table, &before_bytes, &now_table, &now_text, &buffer, nil), interface.DAMAGE_CAPACITY)
-		if count < 0 {
-			// The module refused the tables: the whole frame.
-			rectangles[0] = {0, 0, WIDTH, HEIGHT}
-			count = 1
+		found: [interface.DAMAGE_CAPACITY]Damage_Rectangle
+		buffer := found[:]
+		count := min(damage_of_draw_table_7(&before_table, &before_bytes, &now_table, &now_text, &buffer, nil), interface.DAMAGE_CAPACITY)
+		// The module refused the tables: no picture is known.
+		changed_known = count >= 0
+		for index in 0 ..< max(count, 0) {
+			interface.damage_add(&changed, {int(found[index].left), int(found[index].top), int(found[index].right), int(found[index].bottom)})
 		}
+	}
+	if !changed_known {
+		picture_debts = {}
+	}
+	picture := window.picture
+	to_draw, to_present: interface.Damage
+	interface.damage_of_picture(&picture_debts, picture, &changed, {0, 0, WIDTH, HEIGHT}, &to_draw, &to_present)
+	rectangles: [interface.DAMAGE_CAPACITY]Damage_Rectangle
+	for rectangle, index in to_draw.rectangles[:to_draw.count] {
+		rectangles[index] = {i64(rectangle.left), i64(rectangle.top), i64(rectangle.right), i64(rectangle.bottom)}
 	}
 	canvas := window.canvas
 	pixels := system.Bytes_To_Change{bytes = ([^]u8)(canvas.pixels), count = u64(canvas.stride * canvas.height * 4), capacity = u64(canvas.stride * canvas.height * 4)}
 	shape := Canvas_Shape{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = 1, background = i64(graphics.COLOR_BACKGROUND)}
-	damage := system.Table_To_Read(Damage_Rectangle){records = &rectangles[0], count = u64(count), capacity = u64(count)}
+	damage := system.Table_To_Read(Damage_Rectangle){records = &rectangles[0], count = u64(to_draw.count), capacity = u64(to_draw.count)}
 	execute_draw_table_7(&now_table, &now_text, &damage, &pixels, &shape, nil)
 	shown.draw_time = system.nanoseconds() - start
-	if count > 0 {
-		left, top, right, bottom := rectangles[0].left, rectangles[0].top, rectangles[0].right, rectangles[0].bottom
-		for rectangle in rectangles[1:count] {
-			left, top, right, bottom = min(left, rectangle.left), min(top, rectangle.top), max(right, rectangle.right), max(bottom, rectangle.bottom)
-		}
-		display.present_rectangle(window, int(left), int(top), int(right - left), int(bottom - top))
+	// The canvas is the frame now. With nothing to present, the screen
+	// shows the frame already, and the canvas stays the one to draw.
+	sent := true
+	if to_present.count > 0 {
+		bounds := interface.damage_bounds(&to_present)
+		sent = display.present_rectangle(window, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top)
+		interface.picture_debts_after(&picture_debts, picture, &changed, sent)
+	} else {
+		picture_debts.known[picture] = true
+		picture_debts.owed[picture] = {}
 	}
 	copy(records_before[:kept_records], records_now[:kept_records])
 	copy(text_before[:kept_bytes], text_now[:kept_bytes])
 	before_count, before_text_count = kept_records, kept_bytes
-	drawn_before = true
+	// A Present that the full ring refused: the screen never showed this
+	// frame, so it is not the frame before of the next difference. Each
+	// picture is then drawn whole.
+	drawn_before = sent
 }
 
 // The two canvases of the proof of the same pixels: the top left part of

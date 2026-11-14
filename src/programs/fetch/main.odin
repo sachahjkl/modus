@@ -416,6 +416,11 @@ megabytes :: proc "contextless" (buffer: []u8, kilobytes: u64) -> string {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
+	// The canvas is the picture that the compositor does not read, after
+	// it took the picture before: the whole canvas is drawn.
+	if !display.canvas_wait(window) {
+		return
+	}
 	canvas := window.canvas
 	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	y := 16

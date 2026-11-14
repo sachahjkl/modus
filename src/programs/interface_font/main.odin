@@ -124,7 +124,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.text_put_number(&timing, bold_cache.header.file_size)
 	interface.text_put(&timing, " bytes, from the boot image")
 	interface.draw_text(frame.table, content.x, content.y + TIME_TOP, interface.text_of(&timing), graphics.COLOR_DIM)
-	interface.window_frame_end(&drawing, &frame, window)
+	// The lines below are drawn by hand over the frame, in the same
+	// picture of the surface, before the present.
+	if !interface.window_frame_end_without_present(&drawing, &frame, window) {
+		return
+	}
 
 	canvas := window.canvas
 	x := i64(content.x) * 64

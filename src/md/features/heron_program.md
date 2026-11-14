@@ -33,10 +33,10 @@ The animations play in a program that a reader starts. They never play on a mark
 
 **The stage is a picture of the program, cut in tiles.** Each tile is a Picture record with a generation. A picture of the heron clears and draws two rectangles of the stage and raises the generation of the tiles under them. The window layer then finds a damage of a few tiles by its usual difference: the program tracks no damage rectangle for the window.
 
-**The window is shown whole or not at all.** The surface of the window has two pictures. The program draws one while the compositor reads the other. `Present` names the picture that is complete. The program draws only when the compositor took the picture before.
+**The window is shown whole or not at all.** This is the rule of the system for every window: [infrastructure/whole_frame.md](../infrastructure/whole_frame.md). The surface of a window has two pictures. The program draws one while the compositor reads the other. `Present` names the picture that is complete. The program draws only when the compositor took the picture before.
 
-- This is the one contract of the system for a whole frame. A surface with one picture is memory that the compositor reads while the program writes it.
-- The fault that made this rule: the window had one picture. The window layer paints a damage rectangle with the background, then draws its records. The compositor read the rectangle between the two, and one picture of the screen showed the head of the heron with no body. A window that changes a number shows such a mix as nothing. A window that moves a large form shows it as a flicker.
+- The fault that made this rule was found in this program: its window had one picture. The window layer paints a damage rectangle with the background, then draws its records. The compositor read the rectangle between the two, and one picture of the screen showed the head of the heron with no body. A window that changes a number shows such a mix as nothing. A window that moves a large form shows it as a flicker.
+- The program serves calls in the thread of its window, so it never waits for the compositor: it asks `display.canvas_free`, and when the answer is no, its wait ends when the compositor has read, at a key or at a call.
 - The cost: each picture of the surface is drawn from its own older frame, two steps of the heron. The damage is about two times the damage of one step. It is still a few tiles.
 
 **Each key writes one line, after the picture.** A line says a state that the screen has: the program writes it after it presented that state. A scenario of a test or of a film waits for the line, then takes its picture.
@@ -56,19 +56,17 @@ The animations play in a program that a reader starts. They never play on a mark
 
 ## The subtle points
 
-- A surface with two pictures needs the table of each picture. Without the memory of the second table, the window layer draws each frame whole, and the damage is the whole window.
-- A tile that changed in one step must be drawn in both pictures. The generations do this with no code: the table of a picture holds the generations of its own last frame, so a tile that changed since then differs.
+- A tile that changed in one step must be drawn in both pictures. The window layer does this with no code of the program: the rectangle of the tile is in the damage of that step, and it joins the debt of the picture that was not drawn in that step.
 - The program takes its keys also while it waits for the compositor. Only the picture waits.
 - The line of what the window shows is written after `Present`, not after the compositor drew. The tool takes a picture when the compositor says that it drew each `Present`.
-- The first line of the program says that its window has two pictures, and the main test waits for it. It proves that the program uses the contract. It does not prove that the compositor keeps it.
+- The first line of the program comes after its first picture, and the main test waits for it. The proof that the window shows whole frames is not a line of this program: it is the count of the compositor for each window.
 - The band is in the font of the cells: 8 pixels for a character in both settings of the font. Each text has a box for its longest value, and a box that is too small stops the build.
 
 ## The state
 
-Built: the play, the two ways, the tiles, the surface with two pictures, the lines of the log, the exports `play`, `animations` and `grid`, the scenario of the main test and the film.
+Built: the play, the two ways, the tiles, the lines of the log, the exports `play`, `animations` and `grid`, the scenario of the main test and the film.
 
 Left:
 
 - No host test of the free way: a program has no host tests.
-- No check that reads the screen for a part of a heron. An exact check needs the compositor to say which picture of a surface it read for a frame, and the program to say which picture it drew: the compositor has no such line.
-- The windows with one picture that move a large part each frame (`plasma`, `temple`, `life`) can show a mix of two frames. They copy one whole picture, so the mix is two halves of two frames, not a missing part.
+- No check that reads the screen for a part of a heron. The compositor counts the `Present` records that named the picture that it already read; it does not see what a program wrote.
