@@ -1342,6 +1342,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. A grant whose object belongs to one program (a private store, a terminal, a device, a network endpoint, a service) refuses the debug access: the debugger would write what only that program can write.
 - Where: `TOOLS.md`, "The debugger: the design".
 
+### D-255 The program `scheduler` serves the change of strategy; the console gets no right Schedule
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: the export `strategy_set(name)` of the program `scheduler` sets the scheduling strategy for a caller that acts for the principal, and for no other caller: a service that uses its own right for any caller is a confused deputy. The console gets the command `strategy(name)` and no right Schedule. The palette provider marks the strategy in use with a flag of its entry, and the compositor gets no right Inspect. A press in a field of the form of a command puts the caret there, and the scroll bars of the palette and of a completion list take the pointer. Over a scroll bar the pointer is the arrow.
+- Words: "tout tout faire"
+- State: done. Left: the wheel of a pointing device.
+- Where: `DESIGN.md`, "Palette"; `CONSOLE.md`, "The palette provider"; `SCHEDULING.md`; `POINTERS.md`; `src/md/features/palette.md`; `FIRST_MILESTONE.md`, choice 755.
+
 ## 11. The build and the compiler
 
 ### D-149 Odin is the implementation language
