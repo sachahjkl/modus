@@ -306,10 +306,14 @@ disk_programs_tests_run :: proc() -> bool {
 	defer delete(changed_hash)
 	steps := make([dynamic]Step)
 	defer delete(steps)
-	append(&steps, Step{kind = .Wait, text = "compositor: surface console"})
+	// The storage service takes the disk of the tool before or after the
+	// console has its window: the system fixes no order, so neither wait
+	// moves the place of the log.
+	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 3 objects", any_order = true})
+	append(&steps, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
 	append(&steps, Step{kind = .Front, text = "console"})
 	append(&steps, Step{kind = .Type, text = "connect(\"storage\")"})
-	append(&steps, Step{kind = .Wait, text = "storage: ok, generation "})
+	append(&steps, Step{kind = .Wait, text = "[console]   module     storage"})
 	append(&steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", DISK_PROGRAM_MODULE, hash)})
 	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: reads %s from the store programs of the storage service, for principal 0", DISK_PROGRAM_MODULE)})
 	// The program writes its first line when it runs, and the root service
