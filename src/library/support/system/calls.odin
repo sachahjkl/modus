@@ -137,7 +137,11 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 // fits (docs/MODULE_CONTRACT.md). keep_memory_objects lends each memory
 // object as given: for a measure, or for a table that the caller wants in
 // one place.
-call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false) -> (result: i64, status: Call_Status) {
+//
+// `rows`: the memory of the caller for the records of a Table result. The
+// result is then the count of the records that were copied there: the
+// records that the export gave, at most those that `rows` holds.
+call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil) -> (result: i64, status: Call_Status) {
 	function, described := module.function(file, export)
 	if !described {
 		return 0, .Refused
@@ -171,7 +175,7 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 	if lend(file, function, arguments, connection.ring_memory, &lending) != .Ok {
 		return 0, .Lend_Failed
 	}
-	offset, size, _, error_place, encoded := isolated.encode(file, function, arguments, connection.region)
+	offset, size, result_place, error_place, encoded := isolated.encode(file, function, arguments, connection.region)
 	if !encoded {
 		return 0, .No_Room
 	}
@@ -216,6 +220,19 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 					error^ = errors.error_make(.Bad_Value, .Records, i64(parameter), i64(problem))
 				}
 				return result, .Wrong_Answer
+			}
+			// A Table result: the records are in the call region, and the
+			// count comes from the other program. The caller gets the
+			// records that fit `rows`, and the count of them as the result:
+			// never more than the region holds.
+			if rows != nil && function.result == .Table && result > 0 {
+				described, has_record := module.record_type(file, function.result_detail)
+				if !has_record || described.size == 0 {
+					return 0, .Wrong_Answer
+				}
+				table, _ := isolated.result_table(connection.region, result_place, u64(result), u64(described.size))
+				copied := copy(rows, table) / int(described.size)
+				return i64(copied), .Ok
 			}
 			return result, .Ok
 		}

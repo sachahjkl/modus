@@ -154,6 +154,7 @@ module_builds := [?]Module_Build {
 	{name = "server", source = PROGRAM_SOURCES + "server", image = true},
 	{name = "fetch", source = PROGRAM_SOURCES + "fetch", image = true},
 	{name = "inspect", source = PROGRAM_SOURCES + "inspect", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "debugger_window", source = PROGRAM_SOURCES + "debugger_window", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "disk", source = PROGRAM_SOURCES + "disk", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "storage", source = PROGRAM_SOURCES + "storage", image = true},
 	{name = "notes", source = PROGRAM_SOURCES + "notes", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},

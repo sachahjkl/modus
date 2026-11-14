@@ -240,6 +240,13 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Connect, .Network, .Acts_For_Principal}
 	case "interface_through_module":
 		return {.Image} // It reads the size of the code of interface_module.
+	case "debugger_window":
+		// The window of the debugger: a connection to the service debugger
+		// and to no other service (callable_of), the boot image for the
+		// description of the exports of that service, and the grant to act
+		// for the principal, which the service asks of each caller. It holds
+		// no right over a program (docs/TOOLS.md, "The window of the debugger").
+		return {.Connect, .Image, .Acts_For_Principal}
 	case "tables":
 		// It loads sample, starts a call host of it from the boot image,
 		// and connects to the service sample (docs/MODULE_CONTRACT.md,
@@ -257,6 +264,8 @@ callable_of :: proc "contextless" (name: string) -> []string {
 		return remote_callable[:]
 	case "tables":
 		return tables_callable[:]
+	case "debugger_window":
+		return debugger_window_callable[:]
 	}
 	return nil
 }
@@ -265,6 +274,8 @@ callable_of :: proc "contextless" (name: string) -> []string {
 remote_callable := [?]string{"compositor", "date", "debugger", "inspect", "log", "manual", "monitor", "settings", "storage"}
 @(rodata)
 tables_callable := [?]string{"sample"}
+@(rodata)
+debugger_window_callable := [?]string{"debugger"}
 
 // The values of the context of the compositor that name its own file: 0 to
 // 3 are the screen.
@@ -470,6 +481,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 3072, programs = 1, threads = 1}
 	case "tables":
 		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
+	case "debugger_window":
+		return {pages = 4096, programs = 1, threads = 1} // The two pictures of a window of 1000 x 704, 1375 pages, the draw tables of the interface, and the tables of the rows.
 	}
 	// The things of a program that no case names. A disk program has them
 	// whatever its name (disk_programs.odin, least_budget).

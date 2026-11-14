@@ -314,6 +314,32 @@ Debugging from another machine needs no mechanism of its own.
 
 `modustool test debugger` runs two machines. The first one is the contract of the kernel (the program `debugged`). The second one is the commands: the console starts the program `debug_target`, which has no grant and values that the test knows, and waits for exact rows: a breakpoint by a procedure name and by a file and a line, the frames of the stack, a local variable of a caller, the fields of a record inside a record, an element of an array, the name of an enumeration value, a text, one step, one line, a watch of a global, and the detach. Then the rule: a program with a private store, a service and a device service are refused; a program with a right of the machine is given, the revocation of the grant `machine` of the console ends its debugging, and a new attach is refused; the revocation of the grant to act for the principal, while a thread is held, gives the program back. Then the same exports from the host through `remote`, with the source line that the tool reads in the repository. The parts with no kernel operation have host tests (`src/library/support/debugging`).
 
+### The window of the debugger
+
+The program `debugger_window` shows the rows of the service in one window, with a key for each act. Start it from the menu of the programs, or with `start("debugger_window")`.
+
+![The window of the debugger, attached to a program, with the frame of the caller of a held thread](screenshots/debugger_window.png)
+
+With no program attached, the keys type a name: letters, digits and `_`, Backspace, then Enter to attach. With a program attached:
+
+| Key | What it does | The export |
+|---|---|---|
+| up, down | Chooses a thread | `threads` |
+| page up, page down | Chooses a frame of the chosen thread | `stack`, then `locals` and `source` |
+| `h` | Holds the chosen thread | `hold` |
+| `r` | Lets it run | `release` |
+| `c` | Lets each thread run | `continue_all` |
+| `s` | One instruction | `step` |
+| `l` | One source line | `step_line` |
+| `o` | One source line, over each call | `step_over` |
+| `d` | Detaches | `detach` |
+
+The four cards: the program and its threads, each with its state and its place; the source line of the chosen frame; the stack of the chosen thread; the variables of the chosen frame. A thread that runs has no stack to read: the cards say so, and `h` holds it. The window reads the threads again each 500 ms, so a thread that stops at a breakpoint shows as stopped with no key. The line under the name of the program says what the last act did, or the code of an export that failed.
+
+**What the window holds.** A connection to the service `debugger` and to no other service, the boot image to read the description of the exports of that service, and the grant to act for the principal, which the service asks of each caller. It holds no right over a program. The service debugs one program at a time: while the console is attached, the window attaches to nothing, and the other way.
+
+**The records.** The window reads the rows by the layout of the records of the service. At its start it compares the size of each of those records with the description in the file of the service; when one differs it attaches to nothing and says why.
+
 ## The debugger: the design
 
 The reasons of the form of the debugger. What is built is in "The debugger" above.
