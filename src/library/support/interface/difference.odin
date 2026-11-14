@@ -158,38 +158,60 @@ grid_damage :: proc "contextless" (before, now: ^Draw_Table, record: Draw_Record
 	}
 }
 
-// damage_of_two_pictures finds, for a surface with two pictures, what to
-// draw and what to present. The program draws into the picture that showed
-// the table own_before; the screen shows the other picture, with the table
-// shown. draw: the difference with own_before, the pixels of this picture
-// to make again. present: draw and the difference with shown, because the
-// screen must change wherever it shows something other than now. When the
-// table of the shown picture is not known, the screen can show anything
-// that an older frame drew, also where the frame now draws nothing: present
-// is then the whole surface.
-damage_of_two_pictures :: proc "contextless" (own_before, shown: ^Draw_Table, shown_drawn: bool, now: ^Draw_Table, surface: Rectangle, draw, present: ^Damage) {
-	damage_by_difference(own_before, now, draw)
-	shown_damage: Damage
-	if shown_drawn {
-		damage_by_difference(shown, now, &shown_damage)
-	}
-	damage_to_present(draw, &shown_damage, shown_drawn, surface, present)
+// Picture_Debts: what each of the two pictures of a surface owes. A
+// program draws one picture while the screen shows the other, so a picture holds the frame of two
+// frames before. The window layer keeps one table, the table of the last
+// frame that it presented, and here, for each picture, the rectangles where
+// the picture differs from that table: its debt. A record of zeros: no
+// picture is known, and each one is drawn whole.
+Picture_Debts :: struct {
+	owed:  [2]Damage, // The rectangles where the picture differs from the last table. Read only while the picture is known.
+	known: [2]bool, // The picture is the last table, except in its debt.
 }
 
-// damage_to_present gives what a surface with two pictures presents, from
-// the two differences: draw (the frame now against the picture that the
-// program draws) and shown_damage (the frame now against the picture on the
-// screen; not read when shown_drawn is false: the whole surface is
-// presented). It is apart from damage_of_two_pictures for a window whose
-// differences come from the drawing module (window_drawing.odin): the rule
-// of the present stays in one place.
-damage_to_present :: proc "contextless" (draw, shown_damage: ^Damage, shown_drawn: bool, surface: Rectangle, present: ^Damage) {
-	present^ = draw^
-	if !shown_drawn {
-		damage_add(present, surface)
+// damage_of_picture finds what a frame draws and what it presents. picture
+// is the picture that the program draws now; the screen shows the other
+// one. changed is the difference from the last table to the frame.
+//
+// draw: the changed rectangles and the debt of the picture, the pixels of
+// this picture to make again. present: the changed rectangles and the debt
+// of the other picture, because the screen must change wherever it shows
+// something other than the frame. A picture that is not known gives the
+// whole surface: it can hold anything that an older frame drew, also where
+// the frame now draws nothing.
+//
+// The caller empties debts before the call when it has no difference with
+// the last table (no last table, or a table that was full).
+damage_of_picture :: proc "contextless" (debts: ^Picture_Debts, picture: int, changed: ^Damage, surface: Rectangle, draw, present: ^Damage) {
+	sides := [2]^Damage{draw, present}
+	for side, index in sides {
+		of_picture := index == 0 ? picture : 1 - picture
+		side^ = {}
+		if !debts.known[of_picture] {
+			damage_add(side, surface)
+			continue
+		}
+		side^ = changed^
+		owed := debts.owed[of_picture]
+		for rectangle in owed.rectangles[:owed.count] {
+			damage_add(side, rectangle)
+		}
+	}
+}
+
+// picture_debts_after records the end of a frame that drew `picture` and
+// sent its Present. presented: the compositor has the Present. The drawn
+// picture is then the frame, with no debt, and the other picture owes the
+// changed rectangles more. A Present that was lost leaves the last table
+// as it was while the picture is the frame: the picture is not known.
+picture_debts_after :: proc "contextless" (debts: ^Picture_Debts, picture: int, changed: ^Damage, presented: bool) {
+	if !presented {
+		debts.known[picture] = false
 		return
 	}
-	for rectangle in shown_damage.rectangles[:shown_damage.count] {
-		damage_add(present, rectangle)
+	debts.known[picture] = true
+	debts.owed[picture] = {}
+	for rectangle in changed.rectangles[:changed.count] {
+		damage_add(&debts.owed[1 - picture], rectangle)
 	}
 }

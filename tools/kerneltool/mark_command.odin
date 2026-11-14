@@ -11,10 +11,11 @@ import "core:strconv"
 import "core:strings"
 import "modus:support/mark"
 
-MARK_COMMAND_USAGE :: "kerneltool mark still | frame | tile_map | table | uses | developer" +
+MARK_COMMAND_USAGE :: "kerneltool mark still | frame | animation | tile_map | table | uses | developer" +
 	" [--variant smooth|cells] [--cell <pixels>] [--scheme dark|light] [--background none|scheme]" +
 	" [--size <pixels> | <width>x<height>] [--name-cell <pixels>] [--gap <pixels>]" +
-	" [--animation <name>] [--frame <number>] [--forms yes|no] [--width <pixels>] [--out <file>]"
+	" [--animation <name>] [--frame <number>] [--forms yes|no] [--width <pixels>]" +
+	" [--format png|ico|svg|apng|json] [--entry <variant>:<cell>:<pixels>] [--dark-rule yes|no] [--out <file>]"
 
 // The defaults of a request of the command: the picture of the home of the
 // site, the smooth heron at 8 pixels for a cell in the dark scheme, on
@@ -42,8 +43,10 @@ mark_command_request :: proc(args: []string) -> (request: Mark_Request, out: str
 		heron_cell = MARK_COMMAND_CELL,
 	}
 	request.with_forms = true
-	extension := ".json" if request.what == .Table else ".png"
-	out = strings.concatenate({BUILD_FOLDER, "/mark_", args[0], extension}, context.temp_allocator)
+	// The other entries of an icon file: each takes the color scheme and
+	// the background of the request, which an option after it can still
+	// change, so they are set after the last option.
+	entries := make([dynamic]Mark_Picture, context.temp_allocator)
 	// A whole number of an option: a fraction, a sign or a letter is not
 	// one, and the command refuses it.
 	whole :: proc(text: string) -> (value: int, ok: bool) {
@@ -141,13 +144,60 @@ mark_command_request :: proc(args: []string) -> (request: Mark_Request, out: str
 				return {}, "", not_whole
 			}
 			request.width_most = number
+		case "--format":
+			known := false
+			for name, format in mark_format_names {
+				if format != .Usual && name == value {
+					request.format, known = format, true
+				}
+			}
+			if !known {
+				return {}, "", fmt.tprintf("%s is not a format of a file of the mark: png, ico, svg, apng or json", value)
+			}
+		case "--entry":
+			// One more entry of an icon file: its variant, its cell size
+			// and the side of its square picture.
+			parts := strings.split(value, ":", context.temp_allocator)
+			entry: Mark_Picture
+			known := false
+			if len(parts) == 3 {
+				for name, variant in mark.variant_names {
+					if name == parts[0] {
+						entry.variant, known = variant, true
+					}
+				}
+			}
+			if !known {
+				return {}, "", fmt.tprintf("--entry takes a variant, a cell size and a size, as cells:1:32, not %s", value)
+			}
+			cell, cell_is_whole := whole(parts[1])
+			side, side_is_whole := whole(parts[2])
+			if !cell_is_whole || !side_is_whole {
+				return {}, "", fmt.tprintf("--entry takes whole counts of pixels for its cell size and its size, as cells:1:32, not %s", value)
+			}
+			entry.heron_cell, entry.width, entry.height = cell, side, side
+			append(&entries, entry)
+		case "--dark-rule":
+			if value != "yes" && value != "no" {
+				return {}, "", fmt.tprintf("--dark-rule takes yes or no, not %s", value)
+			}
+			request.dark_rule = value == "yes"
 		case "--out":
 			out = value
 		case:
 			return {}, "", fmt.tprintf("%s is not an option of the command", option)
 		}
 	}
+	if out == "" {
+		out = strings.concatenate({BUILD_FOLDER, "/mark_", args[0], mark_format_extensions[mark_request_format(request)]}, context.temp_allocator)
+	}
 	request.picture.file_name = out
+	for &entry in entries {
+		entry.file_name = out
+		entry.on_light = request.picture.on_light
+		entry.opaque = request.picture.opaque
+	}
+	request.entries = entries[:]
 	return request, out, ""
 }
 
@@ -156,7 +206,14 @@ mark_command_request :: proc(args: []string) -> (request: Mark_Request, out: str
 mark_uses_print :: proc() {
 	for use in mark_uses {
 		picture := use.picture
-		place: string = "the repository" if use.place == .Repository else "the site"
+		place := "the repository"
+		switch use.place {
+		case .Repository:
+		case .Site:
+			place = "the site"
+		case .Site_Root:
+			place = "the root of the site"
+		}
 		kind := "the still mark"
 		switch use.kind {
 		case .Picture:
@@ -164,6 +221,10 @@ mark_uses_print :: proc() {
 			kind = "the tile map of the animations"
 		case .Tile_Map_Of_Frames:
 			kind = "the tile map of the frames"
+		case .Icon_File_Entry:
+			kind = "the still mark, one entry of the icon file"
+		case .Vector_Of_Both_Schemes:
+			kind = "the still mark as rectangles, with the rule of the dark scheme"
 		}
 		width, height := mark_picture_size(picture)
 		scheme: string = "light" if picture.on_light else "dark"
@@ -199,6 +260,6 @@ run_mark :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	scheme: string = "light" if request.picture.on_light else "dark"
-	fmt.printfln("kerneltool: wrote %s (%s, %s, %d pixels for a cell, the %s scheme, %d bytes)", out, mark_what_names[request.what], mark.variant_names[request.picture.variant], request.picture.heron_cell, scheme, len(file))
+	fmt.printfln("kerneltool: wrote %s (%s, %s, %s, %d pixels for a cell, the %s scheme, %d bytes)", out, mark_what_names[request.what], mark_format_names[mark_request_format(request)], mark.variant_names[request.picture.variant], request.picture.heron_cell, scheme, len(file))
 	return 0
 }

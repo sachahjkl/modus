@@ -208,6 +208,29 @@ module_path :: proc(name: string) -> string {
 	return join(module_build_folder, "/", name, ".module")
 }
 
+// The folder of the module file of each import of a module. "": the folder
+// of the modules of this build, where the import was written before its
+// importer. A module from a source outside the repository is written to a
+// folder of its developer, and its imports are modules of the system, in
+// the folder of the build of the system (outside_module.odin).
+module_import_folder := ""
+
+// The folder of the source of the module that this process builds, when
+// that source is outside the repository: an absolute path with its links
+// resolved, as the compiler names a file. "": the module is a module of
+// the system. A source of that folder is in no folder of the system, so
+// the readers of the list of the compiler and the writer of the debug
+// object ask for it (outside_module.odin).
+outside_source_folder := ""
+
+// module_import_path gives the path of the module file of an import.
+module_import_path :: proc(name: string) -> string {
+	if module_import_folder == "" {
+		return module_path(name)
+	}
+	return join(module_import_folder, "/", name, ".module")
+}
+
 build_modules :: proc() -> bool {
 	// One process for each module, several at once (parallel_build.odin).
 	// A module whose inputs are the same is kept (incremental_build.odin).
@@ -549,7 +572,7 @@ module_convert :: proc(build: Module_Build) -> bool {
 	elf := read_file(module_linked_file(build.name)) or_return
 	imports := make([dynamic]Import_File, context.temp_allocator)
 	for name in build.imports {
-		append(&imports, Import_File{name = name, file = read_file(module_path(name)) or_return})
+		append(&imports, Import_File{name = name, file = read_file(module_import_path(name)) or_return})
 	}
 	slot_symbols := make([dynamic]string, context.temp_allocator)
 	file := convert(build.name, elf, description, imports[:], &slot_symbols) or_return

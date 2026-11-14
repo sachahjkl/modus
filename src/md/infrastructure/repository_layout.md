@@ -1,6 +1,6 @@
 # The layout of the repository
 
-Everything that becomes the system is in one folder, `src`. A program of a third party imports the packages of the system through one source library, `modus`. This file is the design of that layout and of the move that reaches it. Both are built. "The order of the move" says what each step did, and "What a third party types" says what is left.
+Everything that becomes the system is in one folder, `src`. A program of a third party imports the packages of the system through one source library, `modus`. This file is the design of that layout and of the move that reaches it. Both are built. "The order of the move" says what each step did.
 
 The term source library is in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Source library". The flag of the compiler for a source library is `-collection`.
 
@@ -115,9 +115,9 @@ This is the least sure point of the design. If a refusal by the compiler is requ
 - In a source: `import "modus:support/system"` and `import operation "modus:contract/operation"`.
 - For a language server and for `odin check`: one source library, `modus`, at `<the repository of modus>/src/library`.
 - To build a module: the tool. The converter that makes a module file from a linked file is a part of the tool, and the compile needs about fifteen flags that only the tool knows. A build with no tool is not a path that the project supports.
-- Not designed: how the tool builds a module whose source is outside the repository (a module table of the third party, and where the tool finds `src/library` and `src/runtime`). The import lines and the one flag are fixed now, so that this later design changes no source.
+- The build of a module whose source is outside the repository has its own design: [third_party_module.md](third_party_module.md). The import lines and the one flag were fixed first, so that design changed no source.
 
-**The proof of the second constraint, and its limit.** `kerneltool check` copies the sources of one small program of the system to a folder outside `src`, with no change, and runs the check of the compiler on the copy with the one flag ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "A program outside the sources"). This is the smallest honest form: it proves the import lines and the flag, which are what this design fixes. It builds no module from the copy, because that path has no design. The copy is in the folder of the build, inside the repository: the sources of the copy hold no relative path to the library, so its folder does not matter. A copy in another repository was refused as a proof: the check then needs a second repository, and proves nothing more about the import lines.
+**The proof of the second constraint.** `kerneltool check` copies the sources of two modules of the system to a folder outside `src`, with no change, and builds a module from each copy with the command of a developer of another project ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "A module from a source outside the repository"). The copies are in the folder of the build, inside the repository: the sources of a copy hold no relative path to the library, so its folder does not matter. A copy in another repository was refused as a proof: the check then needs a second repository, and proves nothing more about the import lines.
 
 The words "SDK" and "collection" are not terms of the system: the term is source library, and `-collection` is only the name of the flag.
 

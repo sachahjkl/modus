@@ -160,6 +160,109 @@ text_fit :: proc "contextless" (table: ^Draw_Table, font: Font, text: string, ro
 	return text[:low]
 }
 
+// The rule of a text that is longer than its box (docs/INTERFACE.md, "The
+// text in a box"): the text goes on more lines inside the width of the box,
+// and the caller gives the box the height of its lines, or scrolls. No
+// procedure below drops a byte: the lines of a text, joined, are the text
+// without the spaces at a break. text_fit, above, is for a name whose whole
+// form the reader has at another place.
+
+// is_path_break says if a line can end after a character of a word: the
+// separators of a path, of a place in a source and of a name of the system.
+@(private)
+is_path_break :: proc "contextless" (character: u8) -> bool {
+	return character == '/' || character == ':' || character == '_'
+}
+
+// text_wrap_line gives the first line of a text in a box of `room` pixels,
+// and the text after it. The line ends at the last space that fits, and the
+// spaces at the break are in neither part. A word that is wider than the
+// box starts on the line of the word before it, and ends a line after its
+// last `/`, `:` or `_` that fits; with none, at its last character that
+// fits. A line has at least one character, also in a box narrower than a
+// character: the rest is always shorter than the text, so a loop over the
+// lines ends. The text is measured in the font that the table draws it in
+// (font_in_use).
+text_wrap_line :: proc "contextless" (table: ^Draw_Table, font: Font, text: string, room: int) -> (line: string, rest: string) {
+	count := len(text_fit(table, font, text, room))
+	if count == len(text) {
+		return text, text[len(text):]
+	}
+	at_space := 0 // The bytes of the line that ends at the last space; 0: none.
+	if text[count] == ' ' {
+		at_space = count
+	}
+	for index := count - 1; at_space == 0 && index > 0; index -= 1 {
+		if text[index] == ' ' {
+			at_space = index
+		}
+	}
+	in_word := 0 // The bytes of the line that ends after the last separator; 0: none.
+	for index := count - 1; in_word == 0 && index >= at_space && index >= 0; index -= 1 {
+		if is_path_break(text[index]) {
+			in_word = index + 1
+		}
+	}
+	end := at_space
+	if at_space != 0 && in_word > at_space {
+		// The last word of the line has a separator. If the whole word has
+		// room on a line of its own, it goes there; else it is broken here,
+		// so that the line of the word before it is not left short.
+		word := text[at_space:]
+		for len(word) > 0 && word[0] == ' ' {
+			word = word[1:]
+		}
+		for index in 0 ..< len(word) {
+			if word[index] == ' ' {
+				word = word[:index]
+				break
+			}
+		}
+		if text_measured_width(table, font, word) > room {
+			end = in_word
+		}
+	}
+	if end == 0 {
+		end = in_word != 0 ? in_word : max(count, 1)
+	}
+	line, rest = text[:end], text[end:]
+	for len(line) > 1 && line[len(line) - 1] == ' ' {
+		line = line[:len(line) - 1]
+	}
+	for len(rest) > 0 && rest[0] == ' ' {
+		rest = rest[1:]
+	}
+	return line, rest
+}
+
+// text_wrapped_line_count gives the count of lines of a text in a box of
+// `room` pixels, by the rule of text_wrap_line: 0 for an empty text. The
+// height of the box of the text is this count times line_height.
+text_wrapped_line_count :: proc "contextless" (table: ^Draw_Table, font: Font, text: string, room: int) -> (count: int) {
+	rest := text
+	for len(rest) > 0 {
+		_, rest = text_wrap_line(table, font, rest, room)
+		count += 1
+	}
+	return count
+}
+
+// draw_text_wrapped appends a text in a box of `room` pixels whose top left
+// corner is (x, y): each line of text_wrap_line, one line_height under the
+// line before. It gives the count of lines, which is the count of
+// text_wrapped_line_count for the same text, font and room: the caller
+// places what follows under them.
+draw_text_wrapped :: proc "contextless" (table: ^Draw_Table, x, y, room: int, text: string, color: graphics.Color, font: Font = {}, element: u32 = 0) -> (count: int) {
+	rest := text
+	for len(rest) > 0 {
+		line: string
+		line, rest = text_wrap_line(table, font, rest, room)
+		draw_text(table, x, y + count * line_height(font), line, color, font, element)
+		count += 1
+	}
+	return count
+}
+
 // line_height gives the height of a line of a font, in pixels: both fonts
 // draw in the line of the grid.
 line_height :: proc "contextless" (font: Font) -> int {

@@ -642,26 +642,23 @@ site_build :: proc(address: string) -> bool {
 	if !reset_folder(SITE_FOLDER) {
 		return false
 	}
-	// The pictures of the mark, and the icons: the heron alone of resources/logo.
-	for picture in mark_uses_pictures(.Site, .Picture) {
-		data := mark_picture_png(picture) or_return
-		if picture.file_name == SITE_MARK_CARD {
-			// Other sites show the card on any background and at this size.
-			width, height, _ := site_png_size(data)
-			if width != SITE_CARD_WIDTH || height != SITE_CARD_HEIGHT || !site_png_is_opaque(data) {
-				fmt.eprintfln("kerneltool: site: %s is %d by %d or not opaque; the picture for other sites is opaque, %d by %d", picture.file_name, width, height, SITE_CARD_WIDTH, SITE_CARD_HEIGHT)
-				return false
-			}
-		}
-		site_write_file(&site, strings.concatenate({SITE_PICTURE_FOLDER, "/", picture.file_name}, context.temp_allocator), data) or_return
-	}
-	// The icons, drawn from the table of the heron (site_icons.odin):
-	// favicon.ico at the root, where a browser asks for it by default, and
-	// the others in the picture folder. The check of the icons reads them.
-	icon_files, icons_ok := site_icon_files()
+	// The pictures of the mark and the icons: each row of the site of the
+	// table of the uses of the mark that is not a tile map, as the
+	// generator makes it. favicon.ico is at the root, where a browser asks
+	// for it by default, and the others are in the picture folder. The
+	// check of the icons reads these files.
+	icon_files, icons_ok := mark_site_files()
 	if !icons_ok {
-		fmt.eprintfln("kerneltool: site: cannot draw the icons or write %s", SITE_FAVICON)
+		fmt.eprintln("kerneltool: site: cannot draw the pictures and the icons of the mark")
 		return false
+	}
+	if card, has_card := icon_files[SITE_PICTURE_FOLDER + "/" + SITE_MARK_CARD]; has_card {
+		// Other sites show the card on any background and at this size.
+		width, height, _ := site_png_size(card)
+		if width != SITE_CARD_WIDTH || height != SITE_CARD_HEIGHT || !site_png_is_opaque(card) {
+			fmt.eprintfln("kerneltool: site: %s is %d by %d or not opaque; the picture for other sites is opaque, %d by %d", SITE_MARK_CARD, width, height, SITE_CARD_WIDTH, SITE_CARD_HEIGHT)
+			return false
+		}
 	}
 	for icon_path, icon_data in icon_files {
 		site_write_file(&site, icon_path, icon_data) or_return

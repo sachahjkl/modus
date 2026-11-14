@@ -19,8 +19,16 @@ HEIGHT :: 704
 LINE :: graphics.LINE_HEIGHT
 LIST_X :: 8
 LIST_Y :: 8
-LIST_WIDTH :: 200
+LIST_WIDTH :: 208 // The title of the card and the name of its record, whole, in the interface font.
 LIST_ROWS_Y :: LIST_Y + graphics.CARD_TITLE + 24 // The first row of the list, in the window.
+// The box of the name of a program in the list: from the left of the card
+// to the mark of its state. A name wider than it goes on more lines
+// (interface.text_wrap_line), and its row has the height of its lines.
+LIST_NAME_ROOM :: LIST_WIDTH - 2 * graphics.CARD_MARGIN - 40
+// The lines of the list: the card without its title, the filter and the
+// four lines of the sample under the rows.
+LIST_LINES :: (HEIGHT - 16 - graphics.CARD_TITLE - 8 - 24 - 80) / LINE
+LIST_MORE_LINES :: 2 // The lines that say how many rows the list does not show.
 RIGHT_X :: LIST_X + LIST_WIDTH + 8
 RIGHT_WIDTH :: WIDTH - RIGHT_X - 8
 MAP_HEIGHT :: 336
@@ -104,12 +112,46 @@ changed :: proc "contextless" (now, before: u64) -> bool {
 	return previous.slot == current.slot && now != before
 }
 
+// The first line of each row of the list, and at shown_count the count of
+// the lines of all the rows: made when the list is read, not at each
+// picture.
+shown_row: [PROGRAM_SLOTS + 1]int
+
+// list_rows_update counts the lines of the name of each row of the list.
+list_rows_update :: proc "contextless" () {
+	line := 0
+	for position in 0 ..< shown_count {
+		shown_row[position] = line
+		line += max(interface.text_wrapped_line_count(nil, {}, system.name_of(entries[shown[position]].name[:]), LIST_NAME_ROOM), 1)
+	}
+	shown_row[shown_count] = line
+}
+
+// list_drawn_count gives the count of rows that the list shows: all of
+// them when they fit, else the rows that leave room for the lines that
+// count the others.
+list_drawn_count :: proc "contextless" () -> int {
+	if shown_row[shown_count] <= LIST_LINES {
+		return shown_count
+	}
+	drawn := 0
+	for drawn < shown_count && shown_row[drawn + 1] <= LIST_LINES - LIST_MORE_LINES {
+		drawn += 1
+	}
+	return drawn
+}
+
 list_place :: proc "contextless" (x, y: int) -> (position: int, inside: bool) {
 	if x < LIST_X || x >= LIST_X + LIST_WIDTH || y < LIST_ROWS_Y {
 		return 0, false
 	}
-	position = (y - LIST_ROWS_Y) / LINE
-	return position, position < shown_count
+	line := (y - LIST_ROWS_Y) / LINE
+	for row in 0 ..< list_drawn_count() {
+		if line >= shown_row[row] && line < shown_row[row + 1] {
+			return row, true
+		}
+	}
+	return 0, false
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
@@ -151,20 +193,25 @@ draw_list :: proc "contextless" (frame: ^interface.Frame) {
 	x := write(inside, 0, 0, "filter ", graphics.COLOR_DIM)
 	x = write(inside, x, 0, string(filter[:filter_count]), graphics.COLOR_TEXT)
 	fill(inside, x, 0, 8, 16, graphics.COLOR_TRACK)
-	for position in 0 ..< shown_count {
+	drawn := list_drawn_count()
+	for position in 0 ..< drawn {
 		item := &entries[shown[position]]
-		y := 24 + position * LINE
-		if y + LINE > inside.height - 80 {
-			break
-		}
+		y := 24 + shown_row[position] * LINE
+		height := (shown_row[position + 1] - shown_row[position]) * LINE
 		chosen := item.slot == selected_slot && item.program_serial == selected_program_serial
 		if chosen {
-			fill(inside, -8, y, inside.width + 8, LINE, graphics.COLOR_TRACK)
-			fill(inside, -8, y, 4, LINE, graphics.COLOR_PROGRAM)
+			fill(inside, -8, y, inside.width + 8, height, graphics.COLOR_TRACK)
+			fill(inside, -8, y, 4, height, graphics.COLOR_PROGRAM)
 		}
-		write(inside, 0, y, system.name_of(item.name[:]), chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+		interface.draw_text_wrapped(frame_table, inside.x, inside.y + y, LIST_NAME_ROOM, system.name_of(item.name[:]), chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
 		fill(inside, inside.width - 32, y + 5, 6, 6, state_color(item.state))
 		right(inside, inside.width, y, graphics.COLOR_DIM, item.slot)
+	}
+	if drawn < shown_count {
+		// The list never hides a row in silence: it counts the rows that it
+		// does not show, and the filter reaches each of them.
+		more: [64]u8
+		interface.draw_text_wrapped(frame_table, inside.x, inside.y + 24 + shown_row[drawn] * LINE, inside.width, system.format(more[:], "and ", u64(shown_count - drawn), " more: type a part of a name"), graphics.COLOR_DIM)
 	}
 	// The cost of one sample: measured, not estimated.
 	y := inside.height - 64
@@ -225,13 +272,18 @@ draw_map :: proc "contextless" (frame: ^interface.Frame) {
 		fill(inside, x, 76, 8, 8, kind_color(kind))
 		x = write(inside, x + 12, 72, addresses.KIND_NAMES[kind], graphics.COLOR_DIM) + 8
 	}
-	// The table: one row for each mapping.
+	// The table: one row for each mapping. The last two columns end at the
+	// right edge of the card: the longest name of a kind ends before the
+	// rights, and "shared" ends at the edge.
 	TABLE_Y :: 96
+	SHARED_X :: RIGHT_WIDTH - 2 * graphics.CARD_MARGIN - 6 * graphics.CELL_WIDTH
+	RIGHTS_X :: SHARED_X - 5 * graphics.CELL_WIDTH
+	#assert(RIGHTS_X >= 512 + 16 * graphics.CELL_WIDTH + graphics.CELL_WIDTH) // "module constants", then a space.
 	write(inside, 0, TABLE_Y, "address", graphics.COLOR_DIM)
 	right(inside, 336, TABLE_Y, graphics.COLOR_DIM, "pages")
 	write(inside, 352, TABLE_Y, "with a frame", graphics.COLOR_DIM)
 	write(inside, 512, TABLE_Y, "kind", graphics.COLOR_DIM)
-	write(inside, 656, TABLE_Y, "rights", graphics.COLOR_DIM)
+	write(inside, RIGHTS_X, TABLE_Y, "rights", graphics.COLOR_DIM)
 	rows := (inside.height - TABLE_Y - LINE) / LINE
 	for &item, number in mappings {
 		y := TABLE_Y + LINE + number * LINE
@@ -256,9 +308,9 @@ draw_map :: proc "contextless" (frame: ^interface.Frame) {
 		right(inside, 496, y, changed(item.present, before) ? FLASH : graphics.COLOR_TEXT, item.present)
 		write(inside, 512, y, addresses.KIND_NAMES[kind], kind_color(kind))
 		rights := [3]u8{'r', .Write in item.flags ? 'w' : '-', .Execute in item.flags ? 'x' : '-'}
-		write(inside, 656, y, string(rights[:]), graphics.COLOR_TEXT)
+		write(inside, RIGHTS_X, y, string(rights[:]), graphics.COLOR_TEXT)
 		if .Shared in item.flags {
-			write(inside, 696, y, "shared", graphics.COLOR_DIM)
+			write(inside, SHARED_X, y, "shared", graphics.COLOR_DIM)
 		}
 	}
 }
@@ -268,25 +320,42 @@ draw_modules :: proc "contextless" (frame: ^interface.Frame) {
 	if current.slot == 0 {
 		return
 	}
-	for &item, number in current.modules.modules[:min(current.modules.count, op.PROGRAM_MODULE_CAPACITY)] {
-		y := number * 2 * LINE
-		if y + 2 * LINE > inside.height {
-			break
-		}
-		fill(inside, 0, y + 4, 8, 8, hash_color(item.hash))
+	// The name has the room before the size, a number of at most five
+	// digits and its unit; the base and the start of the hash have the
+	// width of the card. Each goes on more lines when it is wider.
+	NAME_ROOM :: MODULES_WIDTH - 2 * graphics.CARD_MARGIN - 16 - 10 * graphics.CELL_WIDTH
+	modules := current.modules.modules[:min(current.modules.count, op.PROGRAM_MODULE_CAPACITY)]
+	y := 0
+	for &item, number in modules {
 		name := "a module with no name"
 		if entry := system.image_entry_of(image, item.hash); entry != nil {
 			name = system.name_of(entry.name[:])
 		}
-		write(inside, 16, y, name, graphics.COLOR_TEXT)
-		right(inside, inside.width, y, graphics.COLOR_TEXT, item.size / 1024, " KiB")
 		writer_buffer: [48]u8
 		writer := system.Writer{buffer = writer_buffer[:]}
 		system.write_number(&writer, item.base)
 		system.write_part(&writer, "  ")
 		system.write_hash(&writer, item.hash)
-		write(inside, 16, y + LINE, system.written(&writer)[:min(writer.count, (inside.width - 16) / 8)], hash_color(item.hash))
+		place := system.written(&writer)
+		lines := interface.text_wrapped_line_count(frame_table, {}, name, NAME_ROOM) + interface.text_wrapped_line_count(frame_table, {}, place, inside.width - 16)
+		if rest_line_needed(y, lines, number, len(modules), inside.height) {
+			text(inside, 0, y, graphics.COLOR_DIM, "and ", u64(len(modules) - number), " more: inspect.modules()")
+			break
+		}
+		fill(inside, 0, y + 4, 8, 8, hash_color(item.hash))
+		right(inside, inside.width, y, graphics.COLOR_TEXT, item.size / 1024, " KiB")
+		y += LINE * interface.draw_text_wrapped(frame_table, inside.x + 16, inside.y + y, NAME_ROOM, name, graphics.COLOR_TEXT)
+		y += LINE * interface.draw_text_wrapped(frame_table, inside.x + 16, inside.y + y, inside.width - 16, place, hash_color(item.hash))
 	}
+}
+
+// rest_line_needed says if a row of `lines` lines at y does not fit in a
+// card of a height, with one line kept under it when it is not the last
+// row: the line that counts the rows that the card does not show. A card
+// never ends its rows in silence.
+rest_line_needed :: proc "contextless" (y, lines, number, count, height: int) -> bool {
+	kept := number == count - 1 ? 0 : LINE
+	return y + lines * LINE > height - kept
 }
 
 draw_threads :: proc "contextless" (frame: ^interface.Frame) {
@@ -302,9 +371,22 @@ draw_threads :: proc "contextless" (frame: ^interface.Frame) {
 	right(inside, 272, 0, graphics.COLOR_DIM, "req us")
 	right(inside, 360, 0, graphics.COLOR_DIM, "lag")
 	right(inside, inside.width, 0, graphics.COLOR_DIM, "time ms")
-	for &item, number in current.threads.threads[:min(current.threads.count, op.THREAD_REPORT_CAPACITY)] {
-		y := LINE + number * 2 * LINE
-		if y + 2 * LINE > inside.height {
+	threads := current.threads.threads[:min(current.threads.count, op.THREAD_REPORT_CAPACITY)]
+	y := LINE
+	for &item, number in threads {
+		// The second line of a thread: what it waits for, and its virtual
+		// time. It goes on more lines when the number is long.
+		wait := "no wait"
+		if item.words != 0 {
+			wait = item.deadline != 0 && item.deadline != op.WAIT_FOREVER ? "a word wait, with a deadline" : "a word wait"
+		} else if item.queued != 0 {
+			wait = "in the run queue"
+		}
+		second_buffer: [96]u8
+		second := system.format(second_buffer[:], wait, "  virtual ", item.virtual)
+		lines := 1 + interface.text_wrapped_line_count(frame_table, {}, second, inside.width - 24)
+		if rest_line_needed(y, lines, number, len(threads), inside.height) {
+			text(inside, 0, y, graphics.COLOR_DIM, "and ", u64(len(threads) - number), " more: inspect.threads()")
 			break
 		}
 		before: op.Thread_Report
@@ -325,15 +407,8 @@ draw_threads :: proc "contextless" (frame: ^interface.Frame) {
 		right(inside, 272, y, graphics.COLOR_TEXT, u64(item.request))
 		right(inside, 360, y, graphics.COLOR_TEXT, item.lag)
 		right(inside, inside.width, y, changed(item.run_time, before.run_time) ? FLASH : graphics.COLOR_TEXT, item.run_time)
-		// The second line: what the thread waits for, and its virtual time.
-		wait := "no wait"
-		if item.words != 0 {
-			wait = item.deadline != 0 && item.deadline != op.WAIT_FOREVER ? "a word wait, with a deadline" : "a word wait"
-		} else if item.queued != 0 {
-			wait = "in the run queue"
-		}
-		x2 := text(inside, 24, y + LINE, graphics.COLOR_DIM, wait, "  virtual ")
-		text(inside, x2, y + LINE, graphics.COLOR_DIM, item.virtual)
+		y += LINE
+		y += LINE * interface.draw_text_wrapped(frame_table, inside.x + 24, inside.y + y, inside.width - 24, second, graphics.COLOR_DIM)
 	}
 	if current.threads.count == 0 {
 		write(inside, 0, LINE, "no thread: the program ended", graphics.COLOR_DIM)
@@ -352,23 +427,33 @@ draw_stop :: proc "contextless" (frame: ^interface.Frame) {
 		system.write_part(&writer, "; values hidden: ")
 		system.write_part(&writer, stop.hidden_value_count)
 	}
-	write(inside, 0, 0, system.written(&writer), graphics.COLOR_FAILED)
-	write(inside, 0, LINE + 8, "the stack trace, from the frame pointers:", graphics.COLOR_DIM)
-	for &frame, number in stop.frames[:min(stop.frame_count, op.STOP_FRAME_CAPACITY)] {
-		y := 2 * LINE + 16 + number * LINE
-		if y + LINE > inside.height {
-			break
-		}
-		text(inside, 0, y, graphics.COLOR_DIM, u64(number))
+	// Each text of the report has the width of the card, and each frame the
+	// width after its number and its mark: a name with its file and its
+	// line is wider than the card, so it goes on more lines, and the frame
+	// under it starts under its last line.
+	y := LINE * interface.draw_text_wrapped(frame_table, inside.x, inside.y, inside.width, system.written(&writer), graphics.COLOR_FAILED)
+	y += 8
+	y += LINE * interface.draw_text_wrapped(frame_table, inside.x, inside.y + y, inside.width, "the stack trace, from the frame pointers:", graphics.COLOR_DIM)
+	y += 8
+	frames := stop.frames[:min(stop.frame_count, op.STOP_FRAME_CAPACITY)]
+	for &stop_frame, number in frames {
 		line := system.Writer{buffer = buffer[:]}
-		if frame.address == 0 {
+		if stop_frame.address == 0 {
 			system.write_part(&line, "not code: the kernel gives no value of this frame")
 		} else if name := frame_name(number); name != "" {
 			system.write_part(&line, name)
 		} else {
-			address_write(&line, frame.address, true)
+			address_write(&line, stop_frame.address, true)
 		}
-		fill(inside, 24, y + 4, 8, 8, frame.base != 0 ? hash_color(frame.hash) : graphics.COLOR_NOT_USABLE)
-		write(inside, 40, y, system.written(&line), number == 0 ? graphics.COLOR_FAILED : graphics.COLOR_TEXT)
+		place := system.written(&line)
+		lines := interface.text_wrapped_line_count(frame_table, {}, place, inside.width - 40)
+		if rest_line_needed(y, lines, number, len(frames), inside.height) {
+			// The log has each frame: the line "inspect: <name> stopped:".
+			interface.draw_text_wrapped(frame_table, inside.x, inside.y + y, inside.width, system.format(buffer[:], "and ", u64(len(frames) - number), " frames more: the log has each one"), graphics.COLOR_DIM)
+			break
+		}
+		text(inside, 0, y, graphics.COLOR_DIM, u64(number))
+		fill(inside, 24, y + 4, 8, 8, stop_frame.base != 0 ? hash_color(stop_frame.hash) : graphics.COLOR_NOT_USABLE)
+		y += LINE * interface.draw_text_wrapped(frame_table, inside.x + 40, inside.y + y, inside.width - 40, place, number == 0 ? graphics.COLOR_FAILED : graphics.COLOR_TEXT)
 	}
 }

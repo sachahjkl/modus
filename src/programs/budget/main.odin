@@ -23,7 +23,7 @@
 // budget, <count> threads then no budget, each page returned`, or
 // `budget: wrong answer: ...` for a step that gave another answer.
 //
-// **Its grants**: none. Its budget from the root service holds 1024 pages,
+// **Its grants**: none. Its budget from the root service holds 1280 pages,
 // 1 program and 4 threads: the limits that the steps reach.
 package budget
 

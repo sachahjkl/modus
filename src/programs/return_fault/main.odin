@@ -210,7 +210,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 			interface.text_put(&builder, item.right ? "stopped as its own fault, or returned clean; the machine goes on" : "WRONG: see the log")
 			color = item.right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED
 		}
-		interface.label_value_line(&frame, interface.column_take(&column, LINE), item.name, interface.text_of(&builder), color, 400)
+		// The answer is a sentence, wider than its box: it has the lines
+		// that it needs, and the next case starts under them.
+		interface.label_value_lines(&frame, &column, item.name, interface.text_of(&builder), 400, color, LINE)
 	}
 	interface.column_take(&column, 8)
 	interface.cell_text(&frame, interface.column_take(&column, LINE), with_avx ? "the child of the instruction address holds values in the high halves of ymm0 to ymm15" : "no AVX here: the child of the instruction address holds no ymm values", graphics.COLOR_DIM)
