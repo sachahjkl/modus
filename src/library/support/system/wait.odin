@@ -215,6 +215,34 @@ wake_reader :: proc "contextless" (queue: ^ring.Queue) {
 	}
 }
 
+// wake_writer wakes the writer of a queue if it waits on the count of the
+// records read. A reader calls it after it read each record of the queue,
+// when the writer can wait for that and not only for room: the program of
+// a window waits until the compositor took its last picture
+// (display.canvas_wait). It enters the kernel only for that wake.
+wake_writer :: proc "contextless" (queue: ^ring.Queue) {
+	ring.complete(&queue.counters.read) // See wake_reader.
+	if intrinsics.atomic_load(&queue.counters.writer_waits) != 0 && intrinsics.atomic_exchange(&queue.counters.writer_waits, 0) != 0 {
+		word_wake(&queue.counters.read, WAKE_ALL)
+	}
+}
+
+// records_of_turn gives the count of records that a reader takes from a
+// queue in one turn of its loop: the records that the queue holds now, at
+// most its capacity even when the writer wrote a false count. A reader of
+// a queue that another program writes takes that many with `receive`, and
+// no more: a writer that writes as fast as the reader reads then cannot
+// keep the reader in its loop. The records that come later end the next
+// wait of the reader at once (wait_records).
+//
+//   for _ in 0 ..< system.records_of_turn(queue) {
+//       record := system.receive(queue) or_break
+//       ...
+//   }
+records_of_turn :: proc "contextless" (queue: ^ring.Queue) -> u32 {
+	return ring.count(queue)
+}
+
 // receive reads a record from a queue. If the writer waits for room, it
 // wakes the writer when half of the queue is free: the writer then writes
 // many records for one kernel entry.

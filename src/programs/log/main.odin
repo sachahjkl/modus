@@ -287,12 +287,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	reader_head, reader_records = reader.head, reader.records
 	service, _ = system.service_open(ctx)
 	logged := false
+	picture_owed := true // The window does not show each record that was taken.
 	for {
-		wait: system.Wait
-		display.wait_events(&wait, &window)
-		system.wait_log(&wait, &reader)
-		system.service_wait(&wait, &service)
-		changed := !logged
 		for {
 			record, late, has := system.log_next(&reader)
 			lost += late
@@ -300,12 +296,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				break
 			}
 			take(&record)
-			changed = true
+			picture_owed = true
 		}
 		for _ in display.next_event(&window) {}
-		if changed {
+		// This service never waits for the compositor: while the
+		// compositor did not take the last picture, the window owes its
+		// picture, and the wait below ends when the compositor has read.
+		// The whole canvas is drawn: it is the other picture of the
+		// surface.
+		if picture_owed && display.canvas_free(&window) {
 			draw(window.canvas)
 			display.present(&window)
+			picture_owed = false
 		}
 		if !logged {
 			logged = true
@@ -313,6 +315,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log_in("log", .Info, "log: ok, ", row_count, " records, ", lost, " lost, ", u64(channel_count), " channels")
 			continue
 		}
+		// The list comes after the reads and after the question to the
+		// canvas: a record or a call that arrived since ends the wait at
+		// once.
+		wait: system.Wait
+		display.wait_events(&wait, &window)
+		system.wait_log(&wait, &reader)
+		system.service_wait(&wait, &service)
 		system.wait_end(&wait)
 		system.service_run(&service)
 	}

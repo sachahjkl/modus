@@ -1112,6 +1112,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	arrived: [RECEIVE_PLACES]ring.Record
 	drawn: u64
 	dirty := true
+	picture_waits := false // A picture waits until the compositor took the picture before it.
 	// After a slow isolated call: no call before this time, only datagrams.
 	exchange_until: u64
 	for {
@@ -1164,8 +1165,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if has_window {
 			interface.window_events(&drawing, &window)
 			// The window changes at most ten times in one second: a burst of
-			// calls does not wait for the drawing.
-			if dirty && now - drawn >= 100 {
+			// calls does not wait for the drawing. This service never
+			// waits for the compositor: while the compositor did not take
+			// the last picture, the picture waits, and the wait below ends
+			// when the compositor has read.
+			picture_waits = dirty && now - drawn >= 100 && !display.canvas_free(&window)
+			if dirty && now - drawn >= 100 && !picture_waits {
 				start := system.nanoseconds()
 				draw(&window)
 				drawn, dirty = now, false
@@ -1189,7 +1194,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if system.wait_spin(&wait) {
 			continue
 		}
-		limit := dirty && has_window ? drawn + 100 : system.WAIT_FOREVER
+		limit := dirty && has_window && !picture_waits ? drawn + 100 : system.WAIT_FOREVER
 		if deadline != max(u64) {
 			limit = min(limit, deadline / 1000 + 1)
 		}
