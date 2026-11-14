@@ -166,6 +166,8 @@ The storage service names a store by the name that the root service gives to the
 | 0 | `console`, its line history | `console.history` |
 | 1 | `notes` | `notes.principal.1` |
 | 1 | `console`, its line history | `console.history.principal.1` |
+| 0 | The disk program of the nickname `visitor`, with the grant `store` | `disk-visitor` |
+| 1 | The disk program of the nickname `visitor`, with the grant `store` | `disk-visitor.principal.1` |
 
 So two principals that run one program have two stores, and the stores of the system keep their names. The inverse, `principals.store_name_principal`, gives the principal of a store from its name.
 

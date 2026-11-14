@@ -286,7 +286,9 @@ When the export has a table of error details and wrote more than one detail, one
 | `unload(name)` | Record `Unloaded` | `module`, `commands`, `memory`: what became of the memory of the module |
 | `loaded()` | Table of `Loaded_Module` | The modules and the services whose exports are commands, and the imports of the modules: `module`, `call`, `imported_by`, `in_place_of`, `hash_head` |
 | `start(name)`, `stop(name)` | none | |
-| `start_from_disk(name, hash)` | none | A disk program: its module file is an object of the store `programs`, and `hash` is 64 hexadecimal digits (`MODULE_CONTRACT.md`, "A program from a disk") |
+| `start_from_disk(name, hash)` | none | A disk program: its module file is an object of the store `programs`, and `hash` is 64 hexadecimal digits, or empty for the file of the row of the nickname (`MODULE_CONTRACT.md`, "A program from a disk") |
+| `allow(nickname, grant)`, `disallow(nickname, grant)` | none | A grant of the disk grant table to the file that a nickname names, from its next start: `store` only (`MODULE_CONTRACT.md`, "The grants of a disk program") |
+| `nickname_move(nickname, hash)` | none | Points a nickname to another file; its grants and its store follow |
 | `grants(name)` | Table of `Grant` | One row for each grant that the program has or lost: `program`, `grant`, `state` (`held` or `lost`), `principal`, `principal_name` |
 | `revoke(name, grant)` | Integer | The holdings that ended |
 | `principal_create(name)` | none | The window of unlock opens |

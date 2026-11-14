@@ -190,7 +190,7 @@ A disk program is a program whose module file is an object of the store `program
 
 A disk program adds a program to a machine with no new boot image. The principal names it by its name and by the hash of its file: `start_from_disk("visitor", "5f0c…")`. The root service reads the object, computes the BLAKE3 hash of the bytes, and starts them only when that hash is the hash of the command: the storage service carries the bytes and does not choose them. The store is the store `programs` of the principal of the caller, and each entry of its root tree is one module file, named after its program.
 
-A disk program has no row in the tables of the root service. It receives the log and a window, no grant, and the budget of a program that no table names. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image, by hash.
+A disk program has no row in the tables by name of the root service. It receives the log and a window, the grants of its nickname in the disk grant table and no other grant, and the budget of a program that no table names. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image, by hash.
 
 A disk program is not a package: it has no signer, no version number and no statement of the grants that it asks for. It is not installed: nothing of the machine changes when its file is written.
 
@@ -1820,6 +1820,32 @@ A recorded grant is not a start grant, which says what the root service gives a 
 The design: `docs/ARCHITECTURE.md`, "U2. Root service".
 
 Do not use: permission, access right, token.
+
+### Nickname
+
+A nickname is the name that the principal gives a disk program: the name of the entry of its module file in the store `programs`.
+
+The principal chooses the nickname, and the file never does. The root service names a disk program by its nickname in the log, in `grants` and in `stop`, and the log writes the hash of the file beside it. In the disk grant table a nickname names one file: two hashes never share a nickname. A nickname with a grant has letters, digits, `-` and `_` only. The store of a disk program is attached to its nickname, not to its hash, so a new version of the program under the same nickname keeps its data.
+
+A nickname is not the name of a module of the boot image, and it gives no grant by itself: the root service refuses a nickname that its tables by name know.
+
+Example: `allow("visitor", "store")`, then `start_from_disk("visitor", "")`.
+
+The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk program".
+
+Do not use: alias, pet name, display name.
+
+### Disk grant table
+
+A disk grant table is the table of the root service that binds each nickname of one principal to the hash of one module file, with the grants of that file.
+
+The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The persisted form has a tag of keyed BLAKE2b under a key that the passphrase of the principal gives; the table of principal 0, which has no passphrase, lasts until the machine stops.
+
+A disk grant table is not the grant table of the root service (`grants_of`), which gives the programs of the boot image their grants by their names, and which a disk program never reaches.
+
+The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk program".
+
+Do not use: permission table, access list, manifest.
 
 ### Guest
 
