@@ -166,7 +166,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "kernel_events":
 		return {.Events, .Image} // It gives the event table of the machine, and starts its children from the boot image.
 	case "scheduler":
-		return {.Inspect, .Schedule} // It reads the counts of the scheduler, and changes the strategy.
+		return {.Inspect, .Schedule, .Serve} // It reads the counts of the scheduler, changes the strategy, and serves strategy_set() to the console.
 	case "paint", "life", "tally", "sample", "heron":
 		// Each is a service: the console calls its exports through a
 		// connection.

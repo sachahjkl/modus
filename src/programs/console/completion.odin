@@ -216,6 +216,25 @@ list_move :: proc "contextless" (step: int) {
 	completion.list_changed = true
 }
 
+// completion_view_move moves the rows that the terminal shows to a first
+// row that the pointer asked for on the scroll bar of the list
+// (terminal.Input.List_First). The view of this list holds its choice: the
+// choice goes to the nearest row of the new view. The number comes from
+// the terminal: it is cut to the list of now, and a list that the
+// terminal shows whole does not move.
+completion_view_move :: proc "contextless" (first: int) {
+	if completion.mode == .Closed || completion.ranked_count <= terminal.LIST_ROWS {
+		return
+	}
+	first_shown := clamp(first, 0, completion.ranked_count - terminal.LIST_ROWS)
+	if first_shown == completion.first_shown {
+		return
+	}
+	completion.first_shown = first_shown
+	completion.chosen = clamp(completion.chosen, first_shown, first_shown + terminal.LIST_ROWS - 1)
+	completion.list_changed = true
+}
+
 // ---- The names.
 
 candidate_add :: proc "contextless" (table: ^Candidate_Table, name: string, kind: line_editor.Candidate_Kind, number: int) {

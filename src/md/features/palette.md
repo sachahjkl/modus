@@ -1,6 +1,6 @@
 # The palette
 
-The palette is one panel that a key opens. It reaches every operation that the principal of the session can do: start a program, bring a window to the front, close a window, run a command of the console with its arguments, set a setting. It replaced the launcher, and the term launcher left the system (`docs/DECISIONS.md`, D-236).
+The palette is one panel that a key opens. It reaches every operation that the principal of the session can do: start a program, bring a window to the front, close a window, run a command of the console with its arguments, set a setting, set the scheduling strategy. It replaced the launcher, and the term launcher left the system (`docs/DECISIONS.md`, D-236).
 
 What the panel looks like and what each key does is in [`docs/DESIGN.md`](../../../docs/DESIGN.md), "Palette". The provider is in [`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "8. The palette provider". This file records why the palette has this form.
 
@@ -55,16 +55,55 @@ How a program adds its operations: it exports a described function and is a serv
 - **A locked principal.** The console runs in the session of the machine. With a named principal locked, the palette offers what the console offers. This is a fact of the console, not a new hole of the palette; it is a question for the design of the principals.
 - **When the console does not run**, the palette lists the programs and the windows and says that the commands are absent. `console` is a program of the list, so the palette starts it.
 
+## The scheduling strategy
+
+The palette reaches each operation that a command of the console reaches. No command set the scheduling strategy: only the window of the program `scheduler` did.
+
+**The constraint.** A change of the strategy needs the right Schedule on the machine handle. One program holds it: `scheduler`. The console holds Inspect and Stop, not Schedule.
+
+**The chosen form.** The program that holds the right gets a new face, and no program gets a new right over the machine.
+
+- `scheduler` is a service: it exports `strategy_set(name)`. It serves its calls in the loop of its window, after its checks: the checks change the strategy themselves, and a call during them changes what they measure.
+- The console has the command `strategy(name)`, the export under a short name, as `setting(name, value)` is `settings.set`. It connects at the first use.
+- The provider writes one entry for each strategy, "set strategy to eevdf", as it does for each value of a setting. The line of the entry is `strategy("eevdf")`.
+- The program `scheduler` must run, as `settings` must run for a setting. The command starts no program: its error shows in the panel.
+
+The grant that `scheduler` gains is Serve: the right to be called. Each caller still needs a connection, which the root service gives to the console and to no program without the grant to connect.
+
+**A service that uses its own right for a caller.** The rule against the confused deputy says that a service does not combine its own access with a name from the caller ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "20. No ambient access: the other holes to close"). `strategy_set` does use the right of `scheduler` at the request of a caller. It keeps the rule in the way that `settings.set` and `monitor.programs` keep it: it serves only a caller that acts for the principal, a grant of the root service that is recorded, shown by `grants()` and revoked by `revoke()`. The request is then the request of the principal, and the name that the caller gives is one of three values of a closed set, not the name of an object that the caller cannot reach. The host cannot call it: the remote service has no connection to `scheduler`.
+
+**The value in use.** The panel knows the value in use of a setting from the settings page, which each program reads. No page holds the strategy, and the compositor has no right to inspect the machine. The provider says it: the console reads the strategy in the system report, with the right Inspect that it has, and sets the flag `In_Use` of one entry. A console that lies about the mark gains nothing: it can already lie in a name.
+
+**The mark is a fact of now.** The strategy can change with no line of the console: a key in the window of `scheduler`. The console writes its table after a line only. So the panel sends `Refresh` on the ring at each open, and the console writes its table again when the strategy differs from the mark. The list that the open shows can have the mark of before for the time of one answer; the new table then comes as each new table does.
+
+**Refused forms.**
+
+- **The right Schedule for the console.** One line of code, and the richest program of the system gets a right over each thread of the machine.
+- **The right Inspect for the compositor**, to read the strategy itself. The program that reads each hostile surface gets the reports of the machine.
+- **The strategy as a setting of the service `settings`.** A setting is a value that the service keeps across a stop and that each program reads in a page. The strategy is a state of the kernel, and the kernel is its one source: a page beside it is a second source that can disagree.
+- **A list of the exports of each running service in the table.** It makes each export of each service an entry, connected or not, and the console then holds a connection to each service that runs. The palette lists what the console can call now.
+
+## The pointer in the panel
+
+- **A press in a field of a form puts the caret there**, at the character under the pointer. A press on the name of a parameter puts it at the start of its field. A press on the name of the command, or after the last parenthesis, does nothing. The hit test and the drawing read one layout of the band (`form_band_layout`), so they cannot disagree on a place.
+- **A press and a release on one candidate take it**, as Tab does. A move over a candidate chooses it, as a move over an entry does.
+- **The scroll bar takes the pointer.** The panel is drawn only at a change, so its owner builds a frame for the pointer only when the scroll bar asks for one (`scroll_bar_wants_frame`), and wakes for a held arrow button at the time that the interface state holds.
+- **The view moves, and the choice follows it.** The palette runs the row that is drawn: a choice outside the view is a row that Enter runs and that no frame shows. So a move of the view takes the choice to the nearest entry inside it. The candidates of a form follow the same rule. Before, the view of the candidates was computed from the choice at each draw; it is now a state of the form, which the choice and the scroll bar both move.
+- **A press on the scroll bar is on no row.** The rows end where the scroll bar starts: a press there runs no entry, and the pointer has the shape of the arrow.
+
+Refused: a view that leaves its choice behind (above); a scroll bar that the panel draws by itself with its own hit test (the element of the interface package already holds the press, the drag and the repeat).
+
 ## The film
 
 A film of the palette needed a change of the tool: the old step that took pictures stopped the scenario, so a film had no key during its pictures. A worker thread now takes the pictures while the scenario types and waits for its conditions. The capture stays the screendump of QEMU: another capture path needs a display server of the host, and a window can open. See [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The film".
 
 ## State
 
-Built: the panel with the programs and the windows; the provider with the commands of the console, their arguments and their candidates; the settings; the four prefixes; the kind icons; the film.
+Built: the panel with the programs and the windows; the provider with the commands of the console, their arguments and their candidates; the settings; the scheduling strategy; the four prefixes; the kind icons; the pointer in a field, on a candidate and on the scroll bar; the film.
 
 Left:
 
-- The scheduling strategy is reachable by no command. The program `scheduler` exports only its entry. It needs to serve an export that sets the strategy.
+- A press in the typed part of the search does not move its caret: the keys do.
+- The wheel of the pointing device does not exist in the system: the input service reads no wheel.
 - A Table result is not drawn in the panel: it opens in the console.
 - A second provider (a service that runs its own entries) waits for a real need.

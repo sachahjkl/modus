@@ -54,6 +54,17 @@ KEYS_HELD_LINE :: "1000 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 
 // = 800 pixels wide; the bar is its last 17 pixels, from y = 0 to the line
 // over the status at 8 + 26 * 16 + 8 - 4 = 428, with an arrow button of 17
 // pixels at each end.
+// Places in the palette, on the screen of 1024 pixels of the machine test:
+// the panel is 640 pixels wide from x = 192, and its top is at y = 96
+// (src/library/support/palette, panel_place and the constants of panel.odin).
+PALETTE_INPUT_BAND_Y :: 96 + 24 // The middle line of the input band.
+// In the band of the form "revoke(name: plasma, grant: )": the text starts
+// 16 pixels from the left of the panel, in cells of 16 pixels, and the
+// character 25 is in the name of the second parameter.
+PALETTE_REVOKE_SECOND_FIELD_X :: 192 + 16 + 25 * 16
+PALETTE_SCROLL_BAR_X :: 192 + 640 - 1 - 9 // The middle column of the scroll bar of the list: 17 pixels wide, inside the border of the panel.
+PALETTE_SCROLL_BAR_ARROW_DOWN_Y :: 96 + 48 + 288 - 9 // The middle of its arrow button at the bottom: the list is 288 pixels high under the input band of 48.
+
 CONSOLE_SCROLL_BAR_X :: 800 - 9 // The middle column of the bar.
 CONSOLE_SCROLL_BAR_ARROW_UP_Y :: 8 // The middle of the arrow button at the top.
 CONSOLE_SCROLL_BAR_ARROW_DOWN_Y :: 428 - 9 // The middle of the arrow button at the bottom.
@@ -1076,7 +1087,13 @@ scenario := [?]Step {
 	{kind = .Keys, text = "plasm"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "compositor: the palette takes the candidate plasma"},
-	{kind = .Key, text = "tab"},
+	// A press in the second field puts the caret there: the band shows
+	// "revoke(name: plasma, grant: )" in cells of 16 pixels from x = 208,
+	// and the press is on the name of the second parameter. The text typed
+	// after it is the value of that field: the line that the console runs
+	// has it as its second argument.
+	{kind = .Click, x = PALETTE_REVOKE_SECOND_FIELD_X, y = PALETTE_INPUT_BAND_Y},
+	{kind = .Wait, text = "compositor: a press puts the caret of the palette in the field 1, after 0 characters"},
 	{kind = .Wait, text = " candidates for the parameter 1 of revoke"},
 	{kind = .Wait, text = " candidates for the field 1"},
 	{kind = .Keys, text = "log"},
@@ -1096,6 +1113,17 @@ scenario := [?]Step {
 	{kind = .Keys, text = ">mem"},
 	{kind = .Wait, text = " for \">mem\": memory (command)"},
 	{kind = .Shot, text = "palette_prefix"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// The scroll bar of the panel takes the pointer: the prefix alone lists
+	// each command, more than the 12 rows of the panel, and a press on the
+	// arrow button at the bottom moves the rows by one.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ">"},
+	{kind = .Wait, text = " for \">\": "},
+	{kind = .Click, x = PALETTE_SCROLL_BAR_X, y = PALETTE_SCROLL_BAR_ARROW_DOWN_Y},
+	{kind = .Wait, text = "compositor: the scroll bar of the palette: a press on the arrow down, the rows from 1"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	// The settings: the palette starts the program settings, then ":"
@@ -1138,6 +1166,54 @@ scenario := [?]Step {
 	{kind = .Wait, text = "root: settings stopped"},
 	{kind = .Close, text = "plasma"},
 	{kind = .Wait, text = "root: plasma stopped"},
+	// The scheduling strategy: the program scheduler holds the right to
+	// change it and serves strategy_set after its checks, so the palette
+	// starts the program and the scenario waits for the end of the checks.
+	// ":strat" then lists one entry for each strategy, with the mark on the
+	// one in use. Enter sets the strategy through the console, which calls
+	// the export, and the program writes the change on the log. The second
+	// choice gives the machine back the strategy of its start.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "scheduler"},
+	{kind = .Wait, text = " for \"scheduler\": scheduler (program)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette starts scheduler"},
+	{kind = .Wait, text = "scheduler: round robin: two threads that wake each other"},
+	{kind = .Wait, text = "scheduler: fair: two threads that wake each other"},
+	{kind = .Wait, text = "scheduler: EEVDF: two threads that wake each other"},
+	{kind = .Wait, text = "scheduler: stress: 100 changes of strategy while "},
+	{kind = .Wait, text = "scheduler: ok, no spinner starved under 3 strategies"},
+	{kind = .Wait, text = "scheduler: the window took "},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ":strat"},
+	{kind = .Wait, text = " for \":strat\": set strategy to "},
+	{kind = .Shot, text = "palette_strategy"},
+	{kind = .Keys, text = "egyfair"},
+	{kind = .Wait, text = " for \":strategyfair\": set strategy to fair (setting)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette sends set strategy to fair to the console", any_order = true},
+	{kind = .Wait, text = "console: the palette runs strategy(\"fair\")"},
+	{kind = .Wait, text = "scheduler: the strategy is now fair, it was EEVDF"},
+	// The console marks the strategy in use in a new table; the compositor
+	// writes its line on the same log, in an order that the system does not fix.
+	{kind = .Wait, text = "console: the palette table has ", any_order = true},
+	{kind = .Wait, text = "compositor: the palette did: set strategy to fair"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ":strategyeevdf"},
+	{kind = .Wait, text = " for \":strategyeevdf\": set strategy to eevdf (setting)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "console: the palette runs strategy(\"eevdf\")"},
+	{kind = .Wait, text = "scheduler: the strategy is now EEVDF, it was fair"},
+	{kind = .Wait, text = "compositor: the palette did: set strategy to eevdf"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	{kind = .Close, text = "scheduler"},
+	{kind = .Wait, text = "root: scheduler stopped"},
 	// A command that destroys asks for a second Enter, on a row that says
 	// the act in full. Another key goes back, and nothing stops.
 	{kind = .Key, text = "meta_l"},
@@ -2107,6 +2183,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "terminal: a press on the arrow up of the scroll bar of console: the view starts at line "},
 	{kind = .Click, inside_window = "console", x = CONSOLE_SCROLL_BAR_X, y = CONSOLE_SCROLL_BAR_ARROW_DOWN_Y},
 	{kind = .Wait, text = "terminal: a press on the arrow down of the scroll bar of console: the view follows the last lines"},
+	// Over the scroll bar the pointer is the arrow, and over the text of
+	// the terminal the text shape: the terminal asks for each one when the
+	// pointer crosses the edge of the bar. The picture has the arrow.
+	{kind = .Point, inside_window = "console", x = 2 + 200, y = 24 + 200, text = "text"},
+	{kind = .Point, inside_window = "console", x = 2 + CONSOLE_SCROLL_BAR_X, y = 24 + CONSOLE_SCROLL_BAR_ARROW_DOWN_Y, text = "arrow"},
+	{kind = .Wait, text = "compositor: console asks for the pointer shape arrow over its surface"},
 	{kind = .Shot, text = "scroll_bar"},
 	{kind = .Drag, inside_window = "console", x = CONSOLE_SCROLL_BAR_X, y = CONSOLE_SCROLL_BAR_THUMB_END_Y, to_x = CONSOLE_SCROLL_BAR_X, to_y = CONSOLE_SCROLL_BAR_TRACK_START_Y},
 	{kind = .Wait, text = "terminal: a drag of the thumb of the scroll bar of console: the view starts at line "},

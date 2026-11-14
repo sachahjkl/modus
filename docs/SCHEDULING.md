@@ -328,6 +328,14 @@ Why the zero values are fair enough: the state of a strategy is a history of sha
 
 The interleavings are in `ARCHITECTURE.md`, "Locks of the kernel", "The change of strategy".
 
+**Who changes the strategy.** One program holds the right Schedule: `scheduler`. The principal changes the strategy in three ways, each through that program, which must run:
+
+- in its window: the keys 1, 2 and 3, or a press on the tile of a strategy;
+- in the console: `strategy("eevdf")`, with `round_robin`, `fair` or `eevdf`;
+- in the palette: the entry "set strategy to eevdf" (`DESIGN.md`, "Palette").
+
+The command of the console is the export `scheduler.strategy_set(name)` under a short name. The export gives the number of the strategy that the machine used before. The program serves its calls after its checks, in the loop of its window: the checks change the strategy themselves, and a call during them changes what they measure. The export serves only a caller that acts for the principal (the grant `Acts_For_Principal`, which the console has): the program uses its own right for that caller, so the request must be the request of the principal. No other program gets the right Schedule, and the remote service has no connection to `scheduler`.
+
 ### The time slice is the longest turn
 
 Each strategy ends a turn after the time slice of 10 ticks at most, as round robin does. At the end of a turn the processor passes through the balance (`schedule_pick`), where it takes a thread from a queue with more load. Without this rule, a thread alone in its queue under EEVDF keeps its processor while threads wait in another queue (the check "processors" then sees at most 3 of 4 processors run the program at the same time).

@@ -182,7 +182,10 @@ if moved.changed {
 - **The pointer**: the element holds the press on its own. The interface state keeps the held part, so a program keeps no state for its scroll bars. A held thumb follows the pointer outside the bar: the compositor sends the pointer to a window while a button is down.
 - **A held arrow button** repeats after 400 ms, then each 60 ms, by the clock of the frame, while the pointer stays on the button.
 - **No key and no focus**: a scroll bar is not in the order of Tab. The keys of a view belong to the element that owns the view.
-- **A bar that only shows a place**: `scroll_bar_draw(table, area, direction, geometry)` appends the records with no input. `list_of_rows` and the completion list of the terminal use it: another party owns their choice.
+- **A bar that only shows a place**: `scroll_bar_draw(table, area, direction, geometry)` appends the records with no input. `list_of_rows` uses it for a caller that does not name the scroll bar.
+- **The scroll bar of `list_of_rows`**: the caller owns the choice and the view, and gives only the rows that the area shows. With `List_Rows_Options.scroll_bar` (an identity) the scroll bar of the list is the element, and `List_Rows_Options.scrolled` gets its result; the caller gives the rows from `scrolled.first` in its next frame. The palette does this, and moves its choice into the new view.
+- **A list that another program owns**: the completion list of a terminal is the list of the program that writes in it. Its scroll bar is the element in the terminal; the terminal sends the first row that the pointer asks for to the program (`terminal.Input.List_First`), one time for each row, and the program sends the rows of its new view.
+- **The pointer shape** over a scroll bar is the arrow. The element has no window, so a program whose surface has another shape asks for the arrow while the pointer is over a scroll bar or holds one, and for its shape again after (`POINTERS.md`, "The request of a program").
 - **A program that draws only after a change** has two procedures. `scroll_bar_wants_frame(state, input, area, element)` says if a pointer event needs a frame: the pointer is over the bar, the bar holds the press, or the last frame drew the bar lit. `window_scroll_bar_wake(drawing)` gives the time of the next step of a held arrow button: the program ends its wait there.
 - **The pointer that leaves**: the compositor sends a window one pointer event more when the pointer leaves its surface, with a place outside it, and one when another window takes the front. The bar then draws at rest. Without that event a bar at the edge of a window stays lit.
 - **The record count**: 24 records at rest, 28 when the whole bar is lit.
@@ -190,10 +193,11 @@ if moved.changed {
 | Where | Range | Pointer |
 |---|---|---|
 | The lines of a terminal | The lines kept, the rows of the window | Yes: the view stays where the bar puts it, as after Page Up |
-| The completion list of a terminal | The names of the program, the rows shown | No: the program that writes owns the list |
+| The completion list of a terminal | The names of the program, the rows shown | Yes: the terminal asks the program that owns the list for the first row, and the choice of the program follows its view |
 | The text of `manual` | The rows of the page, the rows of the window | Yes |
 | `list_with_choice` | The lines, the lines in view | Yes: the bar moves the choice, which the view follows |
-| `list_of_rows`, the palette | The rows, the rows in view | No: the caller owns the choice |
+| `list_of_rows` | The rows, the rows in view | When the caller names the scroll bar: the caller moves its view |
+| The palette: the entries, and the candidates of a form | The rows, the 12 rows of the panel | Yes: the view moves, and the choice goes to the nearest row that the view shows |
 
 ## 5. Text
 
