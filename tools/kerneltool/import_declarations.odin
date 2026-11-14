@@ -513,6 +513,13 @@ source_of_the_repository :: proc(path: string) -> (relative: string, ok: bool) {
 	if !strings.has_prefix(path, "/") {
 		return path, true
 	}
+	// A source of a module whose source is outside the repository is in no
+	// folder of the system: it is read where it is. This comes first: the
+	// path of such a folder can hold the name of a source folder of the
+	// system, and the cut below would then name a file of the system.
+	if outside_source_folder != "" && strings.has_prefix(path, join(outside_source_folder, "/")) {
+		return path, true
+	}
 	folders := INPUT_FOLDERS
 	for folder in folders {
 		place := strings.last_index(path, join("/", folder, "/"))

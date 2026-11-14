@@ -22,22 +22,24 @@ DRAWING_THROUGH_MODULE :: #config(DRAWING_THROUGH_MODULE, false)
 // its surface, the interface state and the input of the next frame.
 Window_Drawing :: struct {
 	now:    Draw_Table, // The table of the frame that the program builds.
-	before: Draw_Table, // What the surface shows (its first picture). Empty before the first frame.
-	// A surface with two pictures: the table of its second picture. The
-	// program draws in one picture while the compositor shows the other, so
-	// each picture shows its own older frame.
-	before_second: Draw_Table,
-	drawn_second:  bool, // The second picture shows `before_second`.
+	before: Draw_Table, // The table of the last frame that the window presented. Empty before the first frame.
+	// The surface has two pictures: the program draws in one while the
+	// compositor shows the other, so each picture holds an older frame.
+	// What each picture owes against the table before.
+	debts:  Picture_Debts,
 	state:  Interface_State, // The focus and the element under the pointer, from frame to frame.
 	input:  Input, // The input of the next frame.
-	drawn:  bool, // The surface shows the table before.
+	drawn:  bool, // The table before is the last frame that the window presented.
+	// The last frame was left out: the compositor did not take the picture
+	// before it (display.canvas_wait). The next frame draws what it built.
+	late:   bool,
 	// The measures of the last frame, in nanoseconds.
 	build_time, difference_time, draw_time: u64,
 	build_start: u64, // When the frame that is built now started.
 	damage: Damage, // The damage of the last frame.
 	// A program that draws through the drawing module: the calls of an
-	// export of the module since the start (two for a frame with damage on
-	// a surface with one picture), and the error record of the last call
+	// export of the module since the start (two for a frame with damage:
+	// the difference and the draw), and the error record of the last call
 	// that the module refused, which the one line of the log of a refusal
 	// reads (module_refusal_log). A program with the package compiled in
 	// keeps the three zero.
@@ -190,15 +192,17 @@ when DRAWING_THROUGH_MODULE {
 
 // window_drawing_of makes the drawing of a window with tables in the
 // memory of the caller.
-window_drawing_of :: proc "contextless" (records_now, records_before: []Draw_Record, text_now, text_before: []u8, records_second: []Draw_Record = nil, text_second: []u8 = nil) -> Window_Drawing {
-	return {now = {records = records_now, text = text_now}, before = {records = records_before, text = text_before}, before_second = {records = records_second, text = text_second}}
+window_drawing_of :: proc "contextless" (records_now, records_before: []Draw_Record, text_now, text_before: []u8) -> Window_Drawing {
+	return {now = {records = records_now, text = text_now}, before = {records = records_before, text = text_before}}
 }
 
 // window_events takes the events of a window into the input of the next
 // frame, until the input has KEY_CAPACITY keys. It gives true if an event
-// came.
+// came, and also when the last frame was left out and the compositor took
+// the picture before it since: a program that draws only after an event
+// then draws that frame.
 window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) -> bool {
-	came := false
+	came := drawing.late && display.canvas_free(window)
 	// A full input stops the reading: the other events wait in the ring.
 	for input_has_room(&drawing.input) {
 		event := display.next_event(window) or_break
@@ -214,11 +218,10 @@ window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.
 }
 
 // draw_whole_window_next makes the next frame of each picture of the
-// surface a whole frame: no table before is trusted. A program that reads
-// its events with no window_events calls it on Settings_Changed.
+// surface a whole frame: no picture is known. A program that reads its
+// events with no window_events calls it on Settings_Changed.
 draw_whole_window_next :: proc "contextless" (drawing: ^Window_Drawing) {
-	drawing.drawn = false
-	drawing.drawn_second = false
+	drawing.debts = {}
 }
 
 // window_frame_begin starts a frame of the window.
@@ -241,89 +244,148 @@ window_scroll_bar_wake :: proc "contextless" (drawing: ^Window_Drawing) -> (time
 	return drawing.state.scroll_bar_repeat_at, drawing.state.scroll_bar_repeat_at != 0
 }
 
-// window_frame_end ends the frame: it finds the damage by difference with
-// the frame on the surface, draws the records again in the damage
-// rectangles, and presents only that part. A surface with two pictures
-// compares with the table of the picture that the program draws now, and
-// is drawn whole when the caller gave no memory for that second table. It
-// gives the count of damage rectangles.
+// window_frame_end ends the frame: it finds what changed by difference
+// with the last frame that the window presented, draws the records again
+// in the changed rectangles and in the debt of the picture that the
+// program draws now, and presents the changed part. It gives the count of
+// the rectangles that it drew.
+//
+// A frame is shown whole or not at all:
+// the frame is drawn in the picture that the compositor does not read, and
+// only after the compositor took the picture before
+// (display.canvas_wait). When the compositor does not take it, the frame
+// is left out: nothing is drawn, the result is 0, and the next frame is
+// compared with the last frame that was presented.
 //
 // The difference and the draw are the package compiled in, or the two
 // exports of the drawing module (DRAWING_THROUGH_MODULE): the same code
 // behind a border, crossed one time for the difference and one time for
-// the draw of a frame, and one time more for the difference of a surface
-// with two pictures. A whole frame and a frame with damage draw the same
+// the draw of a frame. A whole frame and a frame with damage draw the same
 // way: each rectangle is painted with the background, then the records
 // that touch it are drawn.
+//
+// The work is three procedures that read no clock, so a host test drives
+// them on a window in plain memory: window_frame_gate, window_frame_changes
+// and window_frame_show. This procedure calls them in this order and
+// measures the time between them.
 window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> int {
 	frame_end(frame)
 	input_clear(&drawing.input)
-	start := system.nanoseconds()
-	drawing.build_time = start - drawing.build_start
-	drawing.damage = {}
-	second := window.two && window.picture == 1
-	before := second ? &drawing.before_second : &drawing.before
-	drawn := second ? drawing.drawn_second : drawing.drawn
-	whole := !drawn || before.full || window.two && drawing.before_second.records == nil
-	surface := Rectangle{0, 0, window.canvas.width, window.canvas.height}
-	// present: with two pictures, the screen shows the other one; its
-	// difference with now must reach the screen too.
-	present: Damage
-	if !whole {
-		// A difference that the drawing module refused: the frame is
-		// drawn whole.
-		whole = !frame_difference(drawing, before, &drawing.now, &drawing.damage)
-		present = drawing.damage
-		if !whole && window.two {
-			shown := second ? &drawing.before : &drawing.before_second
-			shown_drawn := (second ? drawing.drawn : drawing.drawn_second) && !shown.full
-			shown_damage: Damage
-			if shown_drawn {
-				shown_drawn = frame_difference(drawing, shown, &drawing.now, &shown_damage)
-			}
-			damage_to_present(&drawing.damage, &shown_damage, shown_drawn, surface, &present)
-		}
+	drawing.build_time = system.nanoseconds() - drawing.build_start
+	drawing.difference_time, drawing.draw_time = 0, 0
+	if !window_frame_gate(drawing, window) {
+		return 0
 	}
+	start := system.nanoseconds()
+	changes := window_frame_changes(drawing, window)
 	measured := system.nanoseconds()
 	drawing.difference_time = measured - start
+	count := window_frame_show(drawing, window, &changes)
+	drawing.draw_time = system.nanoseconds() - measured
+	return count
+}
+
+// window_frame_gate says if the frame in drawing.now can be drawn: the
+// compositor took the picture before (display.canvas_wait). false: the
+// frame is left out, and no state of the pictures changes.
+window_frame_gate :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) -> bool {
+	drawing.damage = {}
+	drawing.late = !display.canvas_wait(window)
+	return !drawing.late
+}
+
+// What window_frame_changes found for the frame in drawing.now, and
+// window_frame_show needs.
+Frame_Changes :: struct {
+	changed: Damage, // The difference from the last table to the frame. Empty when it is not known: no picture is known then.
+	present: Damage, // Where the picture on the screen differs from the frame.
+	picture: int, // The picture of the surface that the frame is drawn in.
+}
+
+// window_frame_changes finds what the frame in drawing.now draws
+// (drawing.damage) and what it presents. Call it after a yes of
+// window_frame_gate.
+window_frame_changes :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) -> (changes: Frame_Changes) {
+	surface := Rectangle{0, 0, window.canvas.width, window.canvas.height}
+	changes.picture = window.picture
+	// The difference from the last table to this frame. With no last
+	// table, with a table that was full, or with a difference that the
+	// drawing module refused, no picture is known against this frame:
+	// each one is drawn whole.
+	changed_known := drawing.drawn && !drawing.before.full
+	if changed_known {
+		changed_known = frame_difference(drawing, &drawing.before, &drawing.now, &changes.changed)
+	}
+	if !changed_known {
+		changes.changed = {}
+		drawing.debts = {}
+	}
+	// The screen shows the other picture; its difference with the frame
+	// must reach the screen.
+	damage_of_picture(&drawing.debts, changes.picture, &changes.changed, surface, &drawing.damage, &changes.present)
+	return changes
+}
+
+// window_frame_show draws the frame in drawing.now in the canvas of the
+// window and presents it, from the changes that window_frame_changes
+// found, then keeps the frame as the last table. It gives the count of the
+// rectangles that it drew.
+window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, changes: ^Frame_Changes) -> int {
+	surface := Rectangle{0, 0, window.canvas.width, window.canvas.height}
 	// sent: the compositor has the present. When the command ring is full,
-	// the present is lost: with one picture the screen keeps the old pixels
-	// of that rectangle, and the next difference would see no change. So a
-	// lost present makes the next frame of this picture whole. A draw that
-	// the drawing module refused presents nothing, and does the same.
+	// the present is lost, and the picture that was drawn is not the last
+	// table: its next frame is whole. A draw that the drawing module
+	// refused presents nothing, and does the same.
 	sent := true
-	switch {
-	case whole:
-		whole_surface := [1]Rectangle{surface}
-		sent = frame_draw(drawing, &drawing.now, window.canvas, whole_surface[:])
-		if sent {
-			sent = display.present(window)
-		} else {
-			display.picture_end(window)
-		}
-		drawing.damage.rectangles[0] = surface
-		drawing.damage.count = 1
-	case present.count > 0:
-		// With two pictures, the picture that the program draws can be
-		// equal to the frame while the screen is not: nothing to draw.
+	if changes.present.count > 0 {
 		sent = drawing.damage.count == 0 || frame_draw(drawing, &drawing.now, window.canvas, drawing.damage.rectangles[:drawing.damage.count])
 		if sent {
-			bounds := intersection(damage_bounds(&present), surface)
+			bounds := intersection(damage_bounds(&changes.present), surface)
 			sent = display.present_rectangle(window, bounds.left, bounds.top, max(bounds.right - bounds.left, 0), max(bounds.bottom - bounds.top, 0))
 		} else {
 			display.picture_end(window)
 		}
-	case:
-		display.picture_end(window) // A frame with nothing to draw is a picture of the measure too.
-	}
-	drawing.draw_time = system.nanoseconds() - measured
-	copied := sent && draw_table_copy(before, &drawing.now)
-	if second {
-		drawing.drawn_second = copied
+		picture_debts_after(&drawing.debts, changes.picture, &changes.changed, sent)
 	} else {
-		drawing.drawn = copied
+		// The screen shows the frame. The picture that the program draws
+		// can still owe pixels: it pays them in the frame that changes
+		// the screen. A frame with nothing to draw is a picture of the
+		// measure too.
+		drawing.damage = {}
+		display.picture_end(window)
 	}
+	drawing.drawn = sent && draw_table_copy(&drawing.before, &drawing.now)
 	return drawing.damage.count
+}
+
+// window_frame_end_without_present ends the frame of a program that draws
+// over it by hand: it draws the frame whole in window.canvas and presents
+// nothing. The program then draws over the frame in window.canvas and
+// calls display.present. With window_frame_end, window.canvas is the other
+// picture after the call. The pixels that the program adds are in no
+// table, so each frame of such a window is whole.
+//
+// false: the compositor did not take the picture before (the frame is
+// left out), or the drawing module refused the draw. The program draws
+// nothing and does not present.
+window_frame_end_without_present :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> bool {
+	frame_end(frame)
+	input_clear(&drawing.input)
+	drawing.build_time = system.nanoseconds() - drawing.build_start
+	drawing.damage = {}
+	drawing.debts = {}
+	drawing.drawn = false
+	drawing.late = !display.canvas_wait(window)
+	if drawing.late {
+		return false
+	}
+	whole_surface := [1]Rectangle{{0, 0, window.canvas.width, window.canvas.height}}
+	if !frame_draw(drawing, &drawing.now, window.canvas, whole_surface[:]) {
+		return false
+	}
+	drawing.damage.rectangles[0] = whole_surface[0]
+	drawing.damage.count = 1
+	return true
 }
 
 // show_picture draws a frame of a window that is one picture of the program

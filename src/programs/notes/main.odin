@@ -44,10 +44,19 @@ records_now, records_before: [512]interface.Draw_Record
 text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 
-WIDTH :: 560
-HEIGHT :: 300
-HISTORY_CAPACITY :: 512 // The versions of the note that the window shows.
 NOTE_CAPACITY :: 60
+MARGIN :: 12
+VERSION_LABEL :: "version  "
+// The window has the width of its widest line: an older version of the
+// note at its full length, after its label. Each other line of the window
+// is a text of this program, placed in this width with
+// interface.draw_text_wrapped: a line that the window cannot hold goes on
+// two lines, it is never cut at the edge.
+TEXT_ROOM :: (len(VERSION_LABEL) + NOTE_CAPACITY) * graphics.CELL_WIDTH
+WIDTH :: 2 * MARGIN + TEXT_ROOM
+KEYS_Y :: 276 // The two lines of the keys, at the bottom.
+HEIGHT :: KEYS_Y + 2 * graphics.CELL_HEIGHT + 8
+HISTORY_CAPACITY :: 512 // The versions of the note that the window shows.
 COUNT_BLOCKS :: 3
 COUNT_WORDS :: COUNT_BLOCKS * 512
 RUN_STEPS :: 1000
@@ -202,38 +211,42 @@ draw :: proc "contextless" (window: ^display.Window) {
 		cell_y := 68 + cell / 50 * 10
 		interface.draw_rectangle(table, cell_x, cell_y, 8, 8, u64(cell) < count % 400 ? COLOR_LIT : graphics.COLOR_TRACK)
 	}
-	interface.draw_text(table, 12, 156, restored, restored_good ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
-	// The last line follows the status line with no empty band. When the
-	// store is gone, the keys write nothing that stays: the line says that
-	// in their place.
+	// The status of the start, then, when the store is gone, what that
+	// means for the keys: each in the width of the window.
+	status_y := 156
+	status_y += graphics.CELL_HEIGHT * interface.draw_text_wrapped(table, MARGIN, status_y, TEXT_ROOM, restored, restored_good ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
 	if gone {
-		interface.draw_text(table, 12, 172, "the grant of the store ended: the program keeps nothing", graphics.COLOR_FAILED)
+		interface.draw_text_wrapped(table, MARGIN, status_y, TEXT_ROOM, "the grant of the store ended: the program keeps nothing", graphics.COLOR_FAILED)
 	}
 	// The versions of the note: one mark for each state, the shown one lit.
+	// The count is on one line; the generation and the date of the version
+	// that the window shows are on the line under it, so the two never meet.
 	count := history_count()
-	x = interface.draw_text(table, 12, 196, "versions of the note ", graphics.COLOR_DIM)
-	x = interface.draw_text(table, x, 196, system.format(buffer[:], max(history_total - 1, 0)), graphics.COLOR_TEXT)
+	x = interface.draw_text(table, MARGIN, 196, "versions of the note ", graphics.COLOR_DIM)
+	interface.draw_text(table, x, 196, system.format(buffer[:], max(history_total - 1, 0)), graphics.COLOR_TEXT)
 	if shown >= 0 {
-		x = interface.draw_text(table, x + 16, 196, "showing generation ", graphics.COLOR_DIM)
-		x = interface.draw_text(table, x, 196, system.format(buffer[:], history[shown].generation), COLOR_LIT)
+		x = interface.draw_text(table, MARGIN, 212, "showing generation ", graphics.COLOR_DIM)
+		x = interface.draw_text(table, x, 212, system.format(buffer[:], history[shown].generation), COLOR_LIT)
 		if history[shown].date != 0 {
-			interface.draw_text(table, x + 16, 196, calendar.iso_text(buffer[:], history[shown].date), graphics.COLOR_TEXT)
+			interface.draw_text(table, x + 16, 212, calendar.iso_text(buffer[:], history[shown].date), graphics.COLOR_TEXT)
 		}
 	}
-	track := WIDTH - 24
-	interface.draw_rectangle(table, 12, 218, track, 4, graphics.COLOR_TRACK)
+	track := TEXT_ROOM
+	interface.draw_rectangle(table, MARGIN, 238, track, 4, graphics.COLOR_TRACK)
 	if count > 0 {
 		for place in 0 ..< count {
-			mark_x := 12 + (count == 1 ? track - 4 : place * (track - 4) / (count - 1))
+			mark_x := MARGIN + (count == 1 ? track - 4 : place * (track - 4) / (count - 1))
 			lit := place == shown || shown < 0 && place == count - 1
-			interface.draw_rectangle(table, mark_x, lit ? 212 : 214, lit ? 4 : 2, lit ? 16 : 12, lit ? COLOR_LIT : graphics.COLOR_DIM)
+			interface.draw_rectangle(table, mark_x, lit ? 232 : 234, lit ? 4 : 2, lit ? 16 : 12, lit ? COLOR_LIT : graphics.COLOR_DIM)
 		}
 	}
 	if shown >= 0 {
-		x = interface.draw_text(table, 12, 236, "version  ", graphics.COLOR_DIM)
-		interface.draw_text(table, x, 236, string(shown_text[:shown_count]), graphics.COLOR_TEXT)
+		x = interface.draw_text(table, MARGIN, 254, VERSION_LABEL, graphics.COLOR_DIM)
+		interface.draw_text(table, x, 254, string(shown_text[:shown_count]), graphics.COLOR_TEXT)
 	}
-	interface.draw_text(table, 12, HEIGHT - 26, "keys: a note; up, down: its versions; enter: restore the version shown; tab: count 1000", graphics.COLOR_DIM)
+	keys_y := KEYS_Y
+	keys_y += graphics.CELL_HEIGHT * interface.draw_text_wrapped(table, MARGIN, keys_y, TEXT_ROOM, "keys: a note; up, down: its versions; escape: the current note", graphics.COLOR_DIM)
+	interface.draw_text_wrapped(table, MARGIN, keys_y, TEXT_ROOM, "enter: restore the version shown; tab: count 1000", graphics.COLOR_DIM)
 	interface.window_frame_end(&drawing, &frame, window)
 }
 

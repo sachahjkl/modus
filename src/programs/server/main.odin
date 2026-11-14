@@ -566,10 +566,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			_ = event
 		}
 		now := system.time()
+		// This service never waits for the compositor: while the
+		// compositor did not take the last picture, the picture waits,
+		// and the wait below ends when the compositor has read.
+		picture_waits := false
 		if changed && now - last_draw >= 100 {
-			draw(&window)
-			last_draw = now
-			changed = false
+			if display.canvas_free(&window) {
+				draw(&window)
+				last_draw = now
+				changed = false
+			} else {
+				picture_waits = true
+			}
 		}
 		if !ring.empty(&endpoint.completions) {
 			continue
@@ -577,7 +585,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_records(&wait, &endpoint.completions)
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
-		limit := changed ? last_draw + 100 : system.WAIT_FOREVER
+		limit := changed && !picture_waits ? last_draw + 100 : system.WAIT_FOREVER
 		if deadline != max(u64) {
 			limit = min(limit, deadline / 1000 + 1)
 		}

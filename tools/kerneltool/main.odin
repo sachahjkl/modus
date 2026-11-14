@@ -16,6 +16,9 @@
 //   SYSTEM_SIGNING_KEY (not set by the shell): the private key of the
 //     principal that signs the system description; with none,
 //     the test signing key of resources/keys (system_description.odin)
+//   MODUS_SYSTEM (not set by the shell): the folder of the system, for the
+//     command "module-build" run from the folder of another project
+//     (outside_module.odin)
 //   FONT_SOURCE: the BDF file of the font, for the command "font"
 //   POINTER_THEME_SOURCE: the folder of the Xcursor theme of the owner (docs/POINTERS.md)
 //   VECTOR_FONT_SOURCES: the font files of the vector font candidates, for the command "vector_fonts"
@@ -234,6 +237,24 @@ COMMANDS :: [?]Command {
 	// The parallel build of `build` runs this command once for each step of a module.
 	// Run it by hand to see the errors of one module alone.
 	{name = "module", about = "module <name> with_checks|without_checks with_debug_information|without_debug_information [compile|convert]: build one module of the table, and its debug object with the debug information, or run one of its two steps alone (the parallel build runs this command for each step)", run = run_module},
+	// Builds one module from a folder outside the repository: the module
+	// file and its debug object, with the two steps of a module of the
+	// system.
+	//
+	// - `folder of the module`: a folder with one Odin package and the
+	//   module build file `module.txt`: the name of the module, its imports,
+	//   its settings of the compiler, and whether it is a library module.
+	// - `--system <folder>`: the folder of the system. With none, the
+	//   environment variable `MODUS_SYSTEM`, then the folder where the
+	//   command runs.
+	// - `--out <folder>`: the folder of the outputs. With none, the folder
+	//   `build` in the folder of the module.
+	//
+	// It prints the hash of the module file, the hash of each import and
+	// the names of the exports. A module with an import needs the built
+	// modules of the system: run `build` in the folder of the system first
+	// (docs/TOOLS.md, "A module from a source outside the repository").
+	{name = "module-build", about = "module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]: build one module from a folder outside the repository, with its module build file `" + MODULE_BUILD_FILE_NAME + "`: write <name>.module and <name>.debug, and print the hash of the module and the names of its exports", run = run_module_build},
 	// Builds one boot volume in this process: its boot image with the system
 	// description, its boot program, and the volume file.
 	//
@@ -383,7 +404,7 @@ COMMANDS :: [?]Command {
 	// with a sentence: the smooth variant at one pixel for a cell, a part
 	// of a pixel, a picture smaller than its drawing (docs/TOOLS.md, "The
 	// pictures of the mark").
-	{name = "mark", about = "draw one picture of the mark: still | frame | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --out <file>", run = run_mark},
+	{name = "mark", about = "draw one file of the mark: still | frame | animation | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --format png|ico|svg|apng|json, --entry <variant>:<cell>:<pixels>, --dark-rule yes|no, --out <file>", run = run_mark},
 	// Converts the JPEG portrait of the program `temple` to the pixels that the
 	// program holds, `src/programs/temple/portrait.pixels`. The result is in the
 	// repository, so a build decodes no JPEG.
@@ -531,7 +552,9 @@ main :: proc() {
 		usage()
 		return
 	}
-	if !os.exists(ROOT_MARK) {
+	// The command module-build runs from the folder of another project: it
+	// finds the folder of the system by itself, and refuses a wrong one.
+	if os.args[1] != "module-build" && !os.exists(ROOT_MARK) {
 		fmt.eprintln("kerneltool: start it from the root of the repository")
 		os.exit(EXIT_USAGE)
 	}
@@ -624,7 +647,7 @@ run_machine :: proc(args: []string) -> int {
 }
 
 // The parts of the machine test that `test <part>` runs alone.
-test_parts := [?]string{"main", "network", "power", "hierarchy", "ranges", "tcp", "quic", "quic-real", "crypto", "random", "shortage", "extended_state", "return_fault", "fault_ring", "debugger", "kernel_events", "principals", "trusted_boot"}
+test_parts := [?]string{"main", "network", "power", "hierarchy", "ranges", "tcp", "quic", "quic-real", "crypto", "random", "shortage", "extended_state", "return_fault", "fault_ring", "debugger", "kernel_events", "principals", "outside_module", "trusted_boot"}
 
 // test_arguments_problem gives the refusal of the arguments of `test`, or
 // "" when they name the whole test, one part, or `trusted_boot tpm`. A word
@@ -745,6 +768,10 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "extended_state" {
 		return extended_state_tests_run() ? 0 : EXIT_FAILURE
 	}
+	// `test outside_module`: the build of the examples of an outside module only.
+	if len(args) == 1 && args[0] == "outside_module" {
+		return outside_module_examples_check() ? 0 : EXIT_FAILURE
+	}
 	// `test tcp`: the two machines of TCP only.
 	if len(args) == 1 && args[0] == "tcp" {
 		return tcp_tests_run() ? 0 : EXIT_FAILURE
@@ -758,7 +785,7 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "quic-real" {
 		return quic_real_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !debugger_tests_run() || !kernel_events_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !hierarchy_tests_run() || !ranges_tests_run() || !power_loss_run() || !power_loss_settings_run() || !power_loss_ranges_run() || !test_modules() || !test_descriptions() || !test_debug_objects() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !debugger_tests_run() || !kernel_events_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !hierarchy_tests_run() || !ranges_tests_run() || !power_loss_run() || !power_loss_settings_run() || !power_loss_ranges_run() || !test_modules() || !test_descriptions() || !test_debug_objects() || !outside_module_examples_check() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -928,11 +955,6 @@ run_check :: proc(args: []string) -> int {
 	if !library_imports_check() {
 		return EXIT_FAILURE
 	}
-	// The import lines and the one flag are all that a program outside the
-	// sources of the system needs for the compiler to accept it.
-	if !third_party_example_check() {
-		return EXIT_FAILURE
-	}
 	// The tests of the memory procedures in assembly link the form of the
 	// host: the compiler assembles memory_for_host_tests.asm itself and
 	// links its object by its path (a library found through `-L/` is
@@ -1074,8 +1096,10 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"tcg",
 		"-cpu",
 		processor_models[processor],
+		// The main test keeps about 30 windows open, each with two
+		// pictures, and then starts a program that maps 164 MiB.
 		"-m",
-		"512",
+		"1024",
 		"-smp",
 		"4",
 		"-device",

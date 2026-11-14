@@ -8,7 +8,7 @@ Status: built. The kernel runs three strategies (`src/kernel/strategy.odin`), an
 
 **Read before.** `ARCHITECTURE.md`, "K3. Scheduler" and, for the locks, "Rules that keep each path correct". After this guide, the picture of the program `scheduler`.
 
-**The map of this note.** "1. What Linux does" describes CFS, EEVDF and `sched_ext`. "2. What this system takes" gives the six procedures of a strategy, the weight and the request that a program sets for a thread, and the placement of a thread on the processors. "3. Design details" gives the virtual time, the queue clock and the lag. "4. Measured" and "5. What this system refuses, and why" close.
+**The map of this note.** "1. What Linux does" describes CFS, EEVDF and `sched_ext`. "2. What this system takes" gives the six procedures of a strategy, the weight and the request that a program sets for a thread, the placement of a thread on the processors, and a share of the processors for each program. "3. Design details" gives the virtual time, the queue clock and the lag. "4. Measured" and "5. What this system refuses, and why" close.
 
 ![The scheduling strategies side by side, with the wakes, the delay of a wake, the shares of spinners with weights, and the strategy in use](screenshots/scheduler.png)
 
@@ -97,7 +97,7 @@ The run queue, the run lock, the balance between processors and the budgets stay
 
 Property 20, as an exact rule: a program only lowers the weight of its threads. A new thread gets a weight from 1 to the weight limit of the thread that creates it; after that, a write of the program gives the thread a weight at or under the weight that it has, never above. Only the holder of the right **Schedule** on the machine raises a weight ("The schedule of a live thread", below). So a program can give one thread less than another, and cannot take more than a thread with no weight, or more than its limit. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives. The request does not change the share: it moves the deadline. A short request can cost more switches; the cost is in the time of the thread itself, which its budget pays.
 
-A weight is for a thread, not for a program or a budget: a program with many threads still has more share than a program with one thread, as with round robin. A share for each budget (the groups of Linux) is not built: see section 5.
+A weight is for a thread, not for a program or a budget: a program with many threads still has more share than a program with one thread, as with round robin. The share policy of the program `scheduler` gives each program one program weight ("A share for each program"). A share for each budget (the groups of Linux) is not built in the kernel: see section 5.
 
 ### The schedule of a live thread
 
@@ -167,7 +167,7 @@ Two limits of the weight limit, which a limit for each budget closes:
 - The limit is a value of each thread. A thread that a program created just before the write of the limit of its creator keeps the limit that the creator had then, and it gives that limit to the threads that it creates. So "a program under a limit stays under it" holds when each thread of the program has the limit. The holder of **Schedule** writes the limit of each thread of the program, reads the thread report again, and repeats until no thread has the old limit.
 - The limit follows the thread that starts a program. A program that starts programs on request, and that has a higher limit, gives that higher limit to the programs that it starts, also when a program under a lower limit asked for them.
 
-What the limit is not: a share for a program. A program under a limit that creates more threads has more threads of that weight, as a program with the full weight has. A share for each budget is a policy of the program `scheduler`, with these weights (section 5).
+What the limit is not: a share for a program. A program under a limit that creates more threads has more threads of that weight, as a program with the full weight has. A share for each program is a policy of the program `scheduler`, with these weights ("A share for each program").
 
 **The machine number.** A thread number names a thread inside its program. The machine handle needs a name for any thread: the thread report of `Inspect` (`Inspect_Kind.Threads`) gives the machine number of each thread (`Thread_Report.machine_number`). Its low 32 bits are the place of the thread in the thread table of the kernel. Its high 32 bits are the serial of the thread in that place, which changes for each new thread there. The kernel compares the serial under the control lock, where no place gets a new thread. So the machine number of a thread that ended gives `Bad_State`, and never names a later thread.
 
@@ -183,7 +183,7 @@ The interleavings with a pick, a move, a wake, the end of a thread and a change 
 
 One test reads the place of a held thread. The thread report gives the kept lag of a held thread (`Thread_Report.lag`). In at least 100 rounds a spinner lowers to the weight 1, runs one tick (a count of the kernel), and a `Stop` holds it. In the hold its write of the full weight must be refused, its write of the request 1 us accepted, and the lag must be the same number after each; then the machine handle writes the full weight, and the lag must be 0. The rounds go on until one round had a lag below 0, so the test cannot pass with nothing to compare; if that state never comes, the test fails and says so. The conditions are numbers of the kernel, with no time in them. The test does not measure processor time, and no machine test asserts a share or a longest wait after writes: such a condition depends on the load of the host.
 
-**Not built in the kernel.** A share for each budget: section 5 says why. The placement of a thread on the processors is the next subsection.
+**Not built in the kernel.** A share for each budget: section 5 says why, and "A share for each program" is the policy of the program `scheduler`. The placement of a thread on the processors is the next subsection.
 
 ### The placement of a thread
 
@@ -290,6 +290,71 @@ What the machine tests do not cover:
 - The case of the balance fails when the balance tries the busiest queue only, unless a thread of another program wakes with the processor 1 as its home while a processor of the case is idle: that wake names the queue of the processor 1 as a hint. In the case no processor of this program is idle: each processor from 2 runs a spinner of its own, whose end of turn is the pick that must pass the busiest queue.
 - The case of the widened set passes without the look that the write asks for when a thread of another program makes the processor 1 pick: the case cannot keep the other programs of the machine still.
 
+### A share for each program
+
+A weight is for a thread. Without a policy, a program with 8 threads that compute has 8 times the weight of a program with one such thread. The share policy of the program `scheduler` gives each program one program weight, whatever its count of threads. The kernel has no part of it: the program reads the reports and writes the thread schedule of each thread through the machine handle, with the rights **Schedule** and **Inspect**.
+
+**The two commands.** The principal calls them from the console, after `connect("scheduler")`, or from the palette. The program refuses a caller that does not act for the principal (`No_Grant`).
+
+| Command | What it does |
+|---|---|
+| `scheduler.policy(1)`, `scheduler.policy(0)` | Turns the share policy on or off. The result is 1 when it was on. The key P and the button of the view of the shares do the same |
+| `scheduler.share("paint", 256)` | Gives the programs with the name `paint` the program weight 256. The result is the program weight that the name had |
+
+- The policy is off when `scheduler` starts. With the policy on, the program writes each thread of the machine, so the principal decides it.
+- A program weight is from 32 to 1024. A program with no setting has 1024. The value 1024 removes a setting. 16 names can have a setting.
+- A setting holds for each program with that name, also one that starts later, until `scheduler` stops.
+- The weights have an effect under the fair strategy and EEVDF. The round robin reads no weight.
+
+**One round.** The program runs one round each 100 ms, by the clock of the system. A round reads each program slot and the thread report of each program.
+
+- A thread counts when the round sees it for the first time, when it is ready, or when its run time or its virtual time changed since the last round. A thread that waited during the whole period does not count.
+- A thread that counts gets the program weight divided by the count of the threads of its program that count. Another thread gets the program weight divided by the count of all the threads of its program.
+- The division drops the rest. A program has at most 32 threads, and the least program weight is 32, so each thread has a weight of 1 or more, and the weights of the threads that count never sum to more than the program weight. They sum to less by under one unit for each thread: under 3 % of the full weight.
+- The weight limit of the thread gets the same quotient. A thread that the program creates before the next round gets that limit as its weight.
+- A round writes a thread only when its weight or its limit changes. A machine where no thread starts, ends or blocks gets no write.
+
+Example: on a machine with four programs of 1, 2, 4 and 8 threads that compute, the threads have the weights 1024, 512, 256 and 128, and each program has 1024 in all.
+
+**A program keeps what it asked.** The policy never gives a thread more than its program asked.
+
+- A thread whose weight is under its weight limit, when the policy writes it for the first time, chose that weight: it is the most that the policy gives it.
+- A thread that lowers its weight under the weight that the policy wrote keeps the lower weight.
+- A thread whose weight is equal to its limit asked for the most that it can have, which is what the weight 0 gives at its creation.
+
+**When the policy goes off.** Each thread gets the weight that its program asked and the full weight limit. A raised thread starts again as a new thread for its strategy. A program `scheduler` that is stopped with the policy on leaves the weights and the limits as they are; the next start of `scheduler` gives the full limit back to each thread.
+
+**What a program can gain.** A program chooses when its threads wake and when it creates threads.
+
+- **Threads that wake together.** A thread that waited a whole period has the program weight divided by all the threads of its program. When such threads wake, the program has under two program weights, until the next round: one period at most. That round gives each thread the smaller quotient. The threads that ran all the time then have that smaller quotient for one period, so the program has less than its weight by the same amount. Over the two periods the program has its weight.
+- **Threads that are created and end between two rounds.** This is not closed. A new thread has the weight limit of its creator as its weight, and a limit is never under the weight of its thread. A program that keeps one thread that counts, and that creates threads just after a round which end before the next one, has the whole program weight for each of them. A thread reads its own schedule, so it sees the moment of each round. The kernel has no count of the threads that a program created, and no weight for a new thread that is separate from the limit of its creator; one of the two closes this.
+- **Programs that a program starts.** Each program has its own program weight. The count of the programs of a budget is the limit, and the starter of the program chose it.
+
+**What an honest program can lose.**
+
+- A thread that wakes after a wait of a whole period has the smaller quotient until the next round. With an idle processor it loses nothing. With each processor busy, its program gets less than its weight for one period at most.
+- A thread whose weight is raised starts again as a new thread: what it was owed is gone, and what it owed too.
+- The policy reads the schedule of a thread just before it writes it. A program that lowers its weight or its request between the read and the write loses that change, and can make it again.
+
+**The cost.** A round is one kernel entry for each program slot, one for the thread report of each program, and two for each thread whose weight changes. The program runs the rounds on a thread of its own. The measure run prints the time of one round.
+
+**The window.** The key S, or the button after the tiles of the strategies, opens the view of the shares. It has one row for each program, the programs with the most processor time first: the threads that count of all its threads, its program weight, the weight of each thread (the least and the most when they differ), and its share of the processors in the last period, with a bar. A share is the run time of the program in the period, from its program report, against the time of all the processors.
+
+![The view of the shares of the program scheduler: one row for each program, with its threads that count, its program weight, the weight of each thread and its share of the processors in the last period](screenshots/scheduler_shares.png)
+
+**The tests.** The program `scheduler` starts four programs with 1, 2, 4 and 8 threads that compute, under EEVDF, and checks values that the kernel gives back, with no time:
+
+- after three rounds, each thread of the four programs has the weight and the weight limit 1024, 512, 256 and 128, the weights of each program sum to 1024, and the third round wrote none of their threads;
+- a thread of `scheduler` created with the weight 100 has the weight 100 after a round, and the weight 50 after it lowered itself to 50;
+- after `scheduler` started 7 threads more, its 9 threads have the weights 50 to 113, which sum to 954 of 1024;
+- after the policy went off, each of these threads has its weight and the full weight limit again, the thread that lowered itself has the weight 50, and no write of the policy was refused.
+
+One condition is an order of two counts, as for the weights 1, 2 and 4: the part of the program with 8 threads against the program with 1 thread is smaller with the policy than without it. Each part is a count of ticks of the kernel over one interval. An interval ends when each program ran 30 ticks, not after a time: a slow host makes the interval longer and leaves the counts.
+
+The share of each program is a measure, and no test asserts it. The balance between the queues counts threads and not weights. A thread of the weight 1024 in a queue of four threads has between 44 % and 100 % of its processor, by which threads share its queue. So no bound of a share follows from the weights.
+
+What the machine tests do not cover: a program weight other than 1024 has no test of its effect on the weights (the scenario sets one, and reads the answer of the command); the threads that wake together; a program `scheduler` that is stopped with the policy on.
+
 ### The change of strategy is a kernel operation with a right
 
 `Strategy_Set` (operation 27) takes the machine handle with the right `Schedule`, and a strategy. The root service gives the machine with this right only to the program `scheduler`, as it gives Inspect to the programs that read reports (property 20: no ambient access; the strategy of the machine is a fact of all programs). The operation gives the strategy that was in use. `System_Report` gives the strategy in use and the count of changes; `Processor_Report` gives, for each processor, the strategy of its queue, the threads in the queue, and the counts of picks, preemptions and moves, and the cycles spent in picks.
@@ -359,6 +424,8 @@ The numbers below are measures printed by the program `scheduler`; no test asser
 
 The program `scheduler` runs the same cases under each strategy. The numbers below are measures over a fixed time: the program writes them in a measure run (`kerneltool measure scheduler`; `docs/TOOLS.md`, "A check by count, a measure by time"). In the machine test it checks the same cases by count, with no rate: the two threads until the kernel counted their turns, the spinners until each one ran 30 ticks. The runs below are of the machine test before that separation (QEMU with KVM, 4 processors, a host loaded by other tests). Three runs: two threads that wake each other while a spinner runs on each processor make 80 to 84 wakes in one second under round robin, 461 732 to 498 800 under the fair strategy and 313 601 to 332 954 under EEVDF. A thread that sleeps 2 ms among 8 spinners runs 18.5 to 19.3 ms late in the middle under round robin, 0.3 to 0.9 ms under the two others. With the weights 1, 2 and 4, one spinner of each weight gets about 4, 7.5 and 13.5 % under the fair strategy and EEVDF, and about 8 % each under round robin. One pick takes 43 ns (fair), 81 to 86 ns (EEVDF) and 77 to 117 ns (round robin, with more picks from another queue). The spinners did 10 to 20 % less work under the fair strategy than under the two others in each of these three runs. One run with the limit of preemptions, the hint, and the placement of new threads under the fair strategy: two threads that wake each other made 65 (round robin), 458 431 (fair) and 114 643 (EEVDF) wakes in one second; the sleeper was late by 202 us (fair) and 1 005 us (EEVDF) in the middle, 3 031 and 7 275 us at worst. The fall of EEVDF from about 320 000 is between two runs of the full machine test on two trees of the source: with only the desktop (`kerneltool measure scheduler N`), EEVDF made 127 559 to 178 706 wakes in one second in 5 runs with these three rules, and 147 666 to 173 462 in 3 runs without them, so the rules are not its cause. EEVDF stays below the fair strategy in each run: its wake path and its pick read the queue three times each.
 
+The share policy has two lines of measures, in the machine test and in the measure run. The first gives the share of each of four programs with 1, 2, 4 and 8 threads that compute, without the policy and with it, and the part of the program with 8 threads against the program with 1 thread in each case. The second gives the time of one round, the count of the writes of a schedule and how many of them raised a weight. By the weights alone, the part is 800 % without the policy and 100 % with it. The balance between the queues counts threads, so the measured part with the policy is above 100 %.
+
 ## 5. What this system refuses, and why
 
 Each item is an idea of Linux that the system does not take, or does not take yet, with the property or the measure that decides.
@@ -366,6 +433,6 @@ Each item is an idea of Linux that the system does not take, or does not take ye
 - **A tree for the queue** (CFS, EEVDF): refused for now. A scan of a small queue in one table is fewer lines (property 13); a measure decides when a queue becomes large.
 - **The nice value**: refused. A weight is a number from 1 to 1024 that a program can only lower (property 20), not a level that a privileged program raises.
 - **A program of the principal as the strategy** (`sched_ext`): not built. The kernel must stay off the hot path (property 5) and must not run code that it did not verify; a program that answers each pick through a ring puts a round trip between programs on each switch. What it needs: (1) a form of strategy code that the kernel can check before it runs it: a small language of callbacks over the fixed fields (a verifier, as BPF), or a module that the kernel runs only after a proof of bounded time and of the fields that it reads and writes; (2) the six callbacks, which are already the whole interface; (3) a watchdog: a thread that is ready and does not run for a time ends the strategy, as the kernel of Linux does; (4) the fallback: `Strategy_Set` to round robin, which already works without a stop; (5) a right: the same right `Schedule` on the machine. What exists for it: the six callbacks, the state in fixed fields that a strategy owns and that a change resets to zero, the change at run time without a stop, and the counts that a watchdog reads.
-- **Groups** (the CFS groups, the cgroups of Linux): not built in the kernel. A share for each budget is a policy of the program `scheduler`: it reads the thread report of each program and writes the weight of each thread through the machine handle (`Write_Schedule`), so that the weights of the threads of one program sum to the share of the program. The kernel needs no change for it. The form in the kernel that gives as much divides the weight of a group between the queues by the load of the group in each one: a sum that each processor writes at each entry of a thread in a queue, which property 13 forbids, and a weight that changes while the strategy keeps a history, which the rule of the schedule removed. The smaller form in the kernel, one fixed weight of a group in each queue, gives a program with one thread less than the policy of the program gives (by arithmetic on the rules of the code, 4 processors, one thread against a program of 32 threads: 0.50 of a processor against 0.80; not measured). The policy is not written yet.
+- **Groups** (the CFS groups, the cgroups of Linux): not built in the kernel. A share for each budget is a policy of the program `scheduler`: it reads the thread report of each program and writes the weight of each thread through the machine handle (`Write_Schedule`), so that the weights of the threads of one program sum to the share of the program. The kernel needs no change for it. The form in the kernel that gives as much divides the weight of a group between the queues by the load of the group in each one: a sum that each processor writes at each entry of a thread in a queue, which property 13 forbids, and a weight that changes while the strategy keeps a history, which the rule of the schedule removed. The smaller form in the kernel, one fixed weight of a group in each queue, gives a program with one thread less than the policy of the program gives (by arithmetic on the rules of the code, 4 processors, one thread against a program of 32 threads: 0.50 of a processor against 0.80; not measured). The policy is written: "A share for each program".
 - **The deferred dequeue of Linux** (a sleeping thread stays in the queue so that its lag decays): refused. It keeps a thread that waits in a structure of threads that are ready; here the lag is clamped at the sleep and the change of strategy resets it.
 - **Per-thread affinity as a hint of speed that a program raises and lowers at will**: refused. The placement of a thread is built ("The placement of a thread"): a set of processors for each thread, which a program only narrows and which the holder of **Schedule** writes with a limit. A move between two queues keeps the virtual time or the lag, as the balance does.

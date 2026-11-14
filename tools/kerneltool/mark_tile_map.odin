@@ -20,7 +20,7 @@ import "modus:support/mark"
 // One step of the play of an animation on the home: one picture for a
 // time. The picture is the sprite of a frame, or a drawn form of that
 // frame above the water of the sprite.
-Site_Mark_Play_Step :: struct {
+Mark_Play_Step :: struct {
 	milliseconds: int, // How long the picture stays.
 	sprite:       int, // The sprite of the frame: its water, and its heron when form is -1.
 	form:         int, // The drawn form of the heron above the water, or -1: the sprite itself.
@@ -28,20 +28,20 @@ Site_Mark_Play_Step :: struct {
 
 // The drawn forms of all the moves. Two steps with the same cells are one
 // drawing.
-Site_Mark_Forms :: struct {
+Mark_Forms :: struct {
 	drawn: [dynamic]mark.Form_Cells, // The distinct drawings.
 	forms: [dynamic]mark.Form, // For each drawing, the form that it is.
-	steps: [mark.Animation][]Site_Mark_Play_Step, // For each animation, its steps in the order of play.
+	steps: [mark.Animation][]Mark_Play_Step, // For each animation, its steps in the order of play.
 }
 
-// site_mark_forms gives the steps of each animation and the drawings that
+// mark_forms gives the steps of each animation and the drawings that
 // they show. The steps of an animation change where a frame starts and
 // where a key of its move gives another form; two steps that follow each
 // other with the same picture are one step. An animation whose frames are
 // not among the sprites has no step. Without the forms, each step shows
 // the sprite of its frame: for a place that shows no move, as the icon of
 // a tab.
-site_mark_forms :: proc(sprites: ^Site_Mark_Sprites, with_forms := true) -> (forms: Site_Mark_Forms, ok: bool) {
+mark_forms :: proc(sprites: ^Mark_Sprites, with_forms := true) -> (forms: Mark_Forms, ok: bool) {
 	forms.drawn = make([dynamic]mark.Form_Cells, context.temp_allocator)
 	forms.forms = make([dynamic]mark.Form, context.temp_allocator)
 	for animation in mark.Animation {
@@ -49,7 +49,7 @@ site_mark_forms :: proc(sprites: ^Site_Mark_Sprites, with_forms := true) -> (for
 			continue
 		}
 		duration := mark.animation_duration(animation)
-		steps := make([dynamic]Site_Mark_Play_Step, context.temp_allocator)
+		steps := make([dynamic]Mark_Play_Step, context.temp_allocator)
 		frame := 1
 		frame_start := 0
 		at := 0
@@ -69,7 +69,7 @@ site_mark_forms :: proc(sprites: ^Site_Mark_Sprites, with_forms := true) -> (for
 				}
 			}
 			pose := mark.move_pose(animation, at, mark.Move_Travel{})
-			step := Site_Mark_Play_Step {
+			step := Mark_Play_Step {
 				milliseconds = change - at,
 				sprite       = sprites.of_frame[animation][frame - 1],
 				form         = -1,
@@ -120,7 +120,7 @@ MARK_FORM_BOX_ROWS :: mark.BODY_ROWS + mark.FORM_REACH_UP
 // Where the sprites of the frames and the drawings of the forms are in a
 // sheet, in pixels. The frames are at the top, in rows; the forms are
 // under them, in rows of their own box.
-Site_Mark_Sheet_Layout :: struct {
+Mark_Sheet_Layout :: struct {
 	width:         int, // The sheet.
 	height:        int,
 	sprite_width:  int, // One sprite of a frame.
@@ -137,25 +137,25 @@ Site_Mark_Sheet_Layout :: struct {
 // browser decodes in a picture.
 MARK_TILE_MAP_COLUMNS :: 16
 
-// site_mark_sheet_shape gives the count of the columns and of the rows of
+// mark_sheet_shape gives the count of the columns and of the rows of
 // a sheet of a count of sprites, in rows of at most columns_most.
-site_mark_sheet_shape :: proc(sprite_count: int, columns_most := MARK_TILE_MAP_COLUMNS) -> (columns, rows: int) {
+mark_sheet_shape :: proc(sprite_count: int, columns_most := MARK_TILE_MAP_COLUMNS) -> (columns, rows: int) {
 	columns = max(1, min(sprite_count, columns_most))
 	rows = (sprite_count + columns - 1) / columns
 	return
 }
 
-// site_mark_sheet_layout gives the layout of a sheet of a picture of the
+// mark_sheet_layout gives the layout of a sheet of a picture of the
 // mark, for a count of sprites and a count of drawn forms (0: a sheet with
 // no form, as the sheet of the icon), with rows of at most width_most
 // pixels (0: rows of MARK_TILE_MAP_COLUMNS sprites).
-site_mark_sheet_layout :: proc(picture: Mark_Picture, sprite_count, form_count: int, width_most := 0) -> (layout: Site_Mark_Sheet_Layout) {
+mark_sheet_layout :: proc(picture: Mark_Picture, sprite_count, form_count: int, width_most := 0) -> (layout: Mark_Sheet_Layout) {
 	layout.sprite_width, layout.sprite_height = mark_picture_size(picture)
 	columns_most := MARK_TILE_MAP_COLUMNS
 	if width_most > 0 {
 		columns_most = max(1, width_most / layout.sprite_width)
 	}
-	columns, rows := site_mark_sheet_shape(sprite_count, columns_most)
+	columns, rows := mark_sheet_shape(sprite_count, columns_most)
 	layout.sprite_columns = columns_most
 	layout.width = layout.sprite_width * columns
 	layout.height = layout.sprite_height * rows
@@ -175,9 +175,9 @@ site_mark_sheet_layout :: proc(picture: Mark_Picture, sprite_count, form_count: 
 	return
 }
 
-// site_mark_form_pixels draws one form in its box, in the colors of a
+// mark_form_pixels draws one form in its box, in the colors of a
 // picture of the mark: four bytes for each pixel, by row.
-site_mark_form_pixels :: proc(picture: Mark_Picture, drawn: ^mark.Form_Cells) -> []u8 {
+mark_form_pixels :: proc(picture: Mark_Picture, drawn: ^mark.Form_Cells) -> []u8 {
 	cell := picture.heron_cell
 	width := MARK_FORM_BOX_COLUMNS * cell
 	height := MARK_FORM_BOX_ROWS * cell
@@ -202,9 +202,9 @@ site_mark_form_pixels :: proc(picture: Mark_Picture, drawn: ^mark.Form_Cells) ->
 // the steps of its animations, and where each tile is.
 Mark_Tile_Map :: struct {
 	picture: Mark_Picture, // How a tile is drawn: the variant, the cell, the color scheme.
-	sprites: Site_Mark_Sprites, // The distinct frames.
-	forms:   Site_Mark_Forms, // The drawn forms, and the steps of each animation.
-	layout:  Site_Mark_Sheet_Layout, // The places of the tiles, in pixels.
+	sprites: Mark_Sprites, // The distinct frames.
+	forms:   Mark_Forms, // The drawn forms, and the steps of each animation.
+	layout:  Mark_Sheet_Layout, // The places of the tiles, in pixels.
 }
 
 // mark_tile_map_build gives the tile map of one animation or of all, with
@@ -214,9 +214,9 @@ Mark_Tile_Map :: struct {
 // uses.
 mark_tile_map_build :: proc(picture: Mark_Picture, has_animation: bool, animation: mark.Animation, with_forms: bool, width_most: int) -> (tile_map: Mark_Tile_Map, ok: bool) {
 	tile_map.picture = picture
-	tile_map.sprites = site_mark_sprites(has_animation, animation) or_return
-	tile_map.forms = site_mark_forms(&tile_map.sprites, with_forms) or_return
-	tile_map.layout = site_mark_sheet_layout(picture, len(tile_map.sprites.cells), len(tile_map.forms.drawn), width_most)
+	tile_map.sprites = mark_sprites(has_animation, animation) or_return
+	tile_map.forms = mark_forms(&tile_map.sprites, with_forms) or_return
+	tile_map.layout = mark_sheet_layout(picture, len(tile_map.sprites.cells), len(tile_map.forms.drawn), width_most)
 	return tile_map, true
 }
 
@@ -241,7 +241,7 @@ mark_tile_map_pixels :: proc(tile_map: ^Mark_Tile_Map) -> (pixels: []u8, width, 
 		}
 	}
 	for &drawn, index in tile_map.forms.drawn {
-		form := site_mark_form_pixels(tile_map.picture, &drawn)
+		form := mark_form_pixels(tile_map.picture, &drawn)
 		row_bytes := layout.form_width * channels
 		left := (index % layout.form_columns) * layout.form_width
 		top := layout.form_top + (index / layout.form_columns) * layout.form_height
@@ -270,10 +270,10 @@ mark_tile_map_png :: proc(tile_map: ^Mark_Tile_Map) -> (file: []u8, ok: bool) {
 //   cells: the count of the cells of a side of the heron;
 //   tile: the width and the height of a sprite and the height of the rows
 //     of the water at its bottom, in pixels;
-//   forms: where the drawn forms are (site_mark_forms_table_write);
+//   forms: where the drawn forms are (mark_forms_table_write);
 //   animations: for each animation of the tile map its name, its time, its
 //     frames, each [sprite, milliseconds], the steps of its play and, when
-//     it moves, the keys of its move (site_mark_animation_play_write).
+//     it moves, the keys of its move (mark_animation_play_write).
 // Each number comes from src/library/support/mark or from the layout: a script that
 // reads the table holds no number of the mark of its own.
 mark_tile_map_table_fields_write :: proc(b: ^strings.Builder, tile_map: ^Mark_Tile_Map) {
@@ -283,7 +283,7 @@ mark_tile_map_table_fields_write :: proc(b: ^strings.Builder, tile_map: ^Mark_Ti
 	strings.write_string(b, "{")
 	fmt.sbprintf(b, "\"width\":%d,\"height\":%d,\"water\":%d", layout.sprite_width, layout.sprite_height, mark.WATER_ROWS * tile_map.picture.heron_cell)
 	strings.write_string(b, "},\"forms\":")
-	site_mark_forms_table_write(b, tile_map.picture, &tile_map.forms, layout)
+	mark_forms_table_write(b, tile_map.picture, &tile_map.forms, layout)
 	strings.write_string(b, ",\"animations\":[")
 	first_animation := true
 	for animation in mark.Animation {
@@ -306,7 +306,7 @@ mark_tile_map_table_fields_write :: proc(b: ^strings.Builder, tile_map: ^Mark_Ti
 			fmt.sbprintf(b, "[%d,%d]", sprite, int(row.duration_milliseconds))
 		}
 		strings.write_string(b, "]")
-		site_mark_animation_play_write(b, animation, &tile_map.forms)
+		mark_animation_play_write(b, animation, &tile_map.forms)
 		strings.write_string(b, "}")
 	}
 	strings.write_string(b, "]")
@@ -315,13 +315,13 @@ mark_tile_map_table_fields_write :: proc(b: ^strings.Builder, tile_map: ^Mark_Ti
 // The distinct frames of the animations of a tile map. Two frames with the
 // same cells (a frame of an animation that is the still heron again, a pose
 // that an animation takes two times) are one sprite.
-Site_Mark_Sprites :: struct {
+Mark_Sprites :: struct {
 	cells:    [dynamic]mark.Heron_Cells, // The first is the still heron.
 	of_frame: [mark.Animation][]int, // For each animation of the tile map, the sprite of its frames 1, 2, ...; none for the others.
 }
 
-// site_mark_sprites gives the sprites of every animation, or of one.
-site_mark_sprites :: proc(has_animation := false, only := mark.Animation.Blink) -> (sprites: Site_Mark_Sprites, ok: bool) {
+// mark_sprites gives the sprites of every animation, or of one.
+mark_sprites :: proc(has_animation := false, only := mark.Animation.Blink) -> (sprites: Mark_Sprites, ok: bool) {
 	sprites.cells = make([dynamic]mark.Heron_Cells, context.temp_allocator)
 	append(&sprites.cells, mark.still_cells())
 	for animation in mark.Animation {
@@ -354,9 +354,9 @@ site_mark_sprites :: proc(has_animation := false, only := mark.Animation.Blink) 
 	return sprites, true
 }
 
-// site_mark_move_fault_text gives the sentence of a fault of the keys of
+// mark_move_fault_text gives the sentence of a fault of the keys of
 // the moves, or "" for a table with no fault.
-site_mark_move_fault_text :: proc(table: []mark.Move_Key) -> string {
+mark_move_fault_text :: proc(table: []mark.Move_Key) -> string {
 	fault, animation, at := mark.move_keys_fault(table)
 	what: string
 	switch fault {
@@ -378,7 +378,7 @@ site_mark_move_fault_text :: proc(table: []mark.Move_Key) -> string {
 	return fmt.tprintf("the move of %s, the key at %d ms: %s", mark.animation_names[animation], at, what)
 }
 
-// site_mark_forms_table_write writes the part of the table of the script
+// mark_forms_table_write writes the part of the table of the script
 // that says where the drawn forms are in a sheet of the home, in pixels:
 //   count, columns: the drawings, and how many are in one row;
 //   top: the first row of pixels of the drawings in the sheet;
@@ -386,7 +386,7 @@ site_mark_move_fault_text :: proc(table: []mark.Move_Key) -> string {
 //   left, up: where the natural heron is in that box;
 //   reachLeft, reachRight: how far a form goes past the natural heron, in
 //     cells: the dash goes that much farther to be outside the window.
-site_mark_forms_table_write :: proc(b: ^strings.Builder, home: Mark_Picture, forms: ^Site_Mark_Forms, layout: Site_Mark_Sheet_Layout) {
+mark_forms_table_write :: proc(b: ^strings.Builder, home: Mark_Picture, forms: ^Mark_Forms, layout: Mark_Sheet_Layout) {
 	names := [9]string{"count", "columns", "top", "width", "height", "left", "up", "reachLeft", "reachRight"}
 	values := [9]int {
 		len(forms.drawn),
@@ -411,14 +411,14 @@ site_mark_forms_table_write :: proc(b: ^strings.Builder, home: Mark_Picture, for
 	strings.write_string(b, "}")
 }
 
-// site_mark_animation_play_write writes, for one animation, what the
+// mark_animation_play_write writes, for one animation, what the
 // script plays:
 //   steps: each [milliseconds, sprite, form], the form -1 for the sprite
 //     itself;
 //   motion, when the animation moves: the keys of its move, each
 //     [milliseconds, cells to the right, cells up, edge, pace]. Each number
 //     is a whole number: a place is a count of cells.
-site_mark_animation_play_write :: proc(b: ^strings.Builder, animation: mark.Animation, forms: ^Site_Mark_Forms) {
+mark_animation_play_write :: proc(b: ^strings.Builder, animation: mark.Animation, forms: ^Mark_Forms) {
 	strings.write_string(b, ",\"steps\":[")
 	for step, index in forms.steps[animation] {
 		if index > 0 {
@@ -464,7 +464,7 @@ mark_animation_forms_height :: proc(animation: mark.Animation) -> int {
 }
 
 // mark_animation_forms_width gives the width of the widest row of forms.
-mark_animation_forms_width :: proc(forms: ^Site_Mark_Forms) -> int {
+mark_animation_forms_width :: proc(forms: ^Mark_Forms) -> int {
 	most := 0
 	for animation in mark.Animation {
 		count := 0
@@ -482,7 +482,7 @@ mark_animation_forms_width :: proc(forms: ^Site_Mark_Forms) -> int {
 // (x, y) of the picture: each step of its play that shows a drawn form,
 // in the order of play, with the time of the step, the name and the size
 // of the form, and how the form was drawn.
-mark_animation_forms_draw :: proc(canvas: graphics.Canvas, x, y: int, animation: mark.Animation, sprites: ^Site_Mark_Sprites, forms: ^Site_Mark_Forms) {
+mark_animation_forms_draw :: proc(canvas: graphics.Canvas, x, y: int, animation: mark.Animation, sprites: ^Mark_Sprites, forms: ^Mark_Forms) {
 	cell := MARK_ANIMATIONS_CELL_SIZE
 	graphics.text(canvas, x, y, fmt.tprintf("the forms of the move of %s: whole cells; the standing leg and the water keep their place", mark.animation_names[animation]), graphics.COLOR_DIM)
 	box_x := x

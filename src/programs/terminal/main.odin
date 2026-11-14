@@ -715,10 +715,9 @@ number :: proc "contextless" (buffer: ^[27]u8, value: u64) -> string {
 
 // The drawing of the window with the interface package: the cells of the
 // view are a text grid, so a frame damages only the cells that changed.
-// Each picture of the surface has its own table before, with its own copy
-// of the cells.
-records_now, records_before, records_second: [384]interface.Draw_Record
-text_now, text_before, text_second: [1024]u8
+// The table before has its own copy of the cells.
+records_now, records_before: [384]interface.Draw_Record
+text_now, text_before: [1024]u8
 // What the pointer did to the scroll bar of the lines in the last frame.
 scroll_result: interface.Scroll_Bar_Result
 // The scroll bar of the completion list in the last frame: its area (no
@@ -735,18 +734,16 @@ list_first_when_asked: int
 // The pointer shape that the terminal asked for last is the arrow: the
 // pointer was over a scroll bar, or held one. If not, it is the text shape.
 pointer_shape_is_arrow: bool
-cells_before, cells_second: [ROWS_LIMIT * COLUMNS_LIMIT]Cell
-grids_now, grids_before, grids_second: [1]interface.Text_Grid
+cells_before: [ROWS_LIMIT * COLUMNS_LIMIT]Cell
+grids_now, grids_before: [1]interface.Text_Grid
 drawing: interface.Window_Drawing
 
 drawing_start :: proc "contextless" () {
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:], records_second[:], text_second[:])
+	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	grids_now[0] = {cells = ([^]Cell)(&view.cells[0][0])[:ROWS_LIMIT * COLUMNS_LIMIT], columns = columns, rows = rows, stride = COLUMNS_LIMIT}
 	grids_before[0] = {cells = cells_before[:]}
-	grids_second[0] = {cells = cells_second[:]}
 	drawing.now.grids = grids_now[:]
 	drawing.before.grids = grids_before[:]
-	drawing.before_second.grids = grids_second[:]
 }
 
 tile :: proc "contextless" (table: ^interface.Draw_Table, x: int, label: string, value: u64, color: graphics.Color) {
@@ -929,7 +926,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	measure = ctx.values[terminal.VALUE_MEASURE] != 0
 	layout()
 	program = ctx.handles[terminal.GRANT_PROGRAM]
-	window, ok := display.open(ctx, width, height, program_name, two_pictures = true)
+	window, ok := display.open(ctx, width, height, program_name)
 	if !ok {
 		fail("no surface")
 	}
@@ -988,6 +985,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	drawn: u32 // The value of activity at the last picture.
 	dirty := true // The view changed with no record: a key, the first picture.
 	STATE_TIME :: 250 // Milliseconds between two looks at the state of the program.
+	picture_waits := false // A picture waits until the compositor took the picture before it.
 	for {
 		if !measure && !dirty && intrinsics.atomic_load(&activity) == drawn {
 			// Nothing to draw: wait for a record, a key, or the next look at the program.
@@ -1007,6 +1005,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if step_due && now >= step_time {
 				dirty = true
 			}
+		} else if picture_waits {
+			// The wait ends when the compositor has read the ring of the
+			// window, or at the next look at the program.
+			now = display.wait(&window, system.time() + STATE_TIME)
 		} else {
 			now = display.wait(&window, next_frame)
 		}
@@ -1076,9 +1078,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if now < next_frame {
 			continue
 		}
-		if !display.canvas_free(&window) {
-			// The compositor did not take the last picture yet.
-			next_frame = now + 1
+		// The compositor did not take the last picture yet: it can still
+		// read the picture that this one would be drawn in. The keys are
+		// taken; the picture waits for the compositor.
+		picture_waits = !display.canvas_free(&window)
+		if picture_waits {
 			continue
 		}
 		next_frame = max(next_frame + FRAME_TIME, now + 1)

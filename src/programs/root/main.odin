@@ -49,7 +49,9 @@
 // **What a reader sees.** At boot the screen shows the boot display, with
 // each step, until the compositor takes the screen. The log has
 // "root: ok, N modules in the boot image", the strength of the random seed,
-// then one line "root: started NAME" for each program.
+// then one line "root: started NAME" for each program, and, when the
+// console is started, one measure: "root: the start is done: the budget of
+// this service holds N free pages, M at the lowest".
 //
 // **What it does not do.** It does not run the code of a program, and it
 // does not check what a program does with a grant. It checks only the
@@ -166,7 +168,11 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "kernel_events":
 		return {.Events, .Image} // It gives the event table of the machine, and starts its children from the boot image.
 	case "scheduler":
-		return {.Inspect, .Schedule, .Serve} // It reads the counts of the scheduler, changes the strategy, and serves strategy_set() to the console.
+		// It reads the counts of the scheduler, changes the strategy and
+		// writes the weight of each thread (the share policy). It starts
+		// the four programs of its case of the shares from the boot image,
+		// and serves strategy_set(), share() and policy() to the console.
+		return {.Inspect, .Schedule, .Image, .Serve}
 	case "paint", "life", "tally", "sample", "heron":
 		// Each is a service: the console calls its exports through a
 		// connection.
@@ -345,7 +351,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "console":
 		return {pages = 8192, programs = 5, threads = 6} // 4 sandboxes.
 	case "rings":
-		return {pages = 4096, programs = 7, threads = 7} // 6 nodes.
+		return {pages = 5120, programs = 7, threads = 7} // 6 nodes, and the two pictures of its window.
 	case "threads":
 		return {pages = 2048, programs = 1, threads = 6}
 	case "workers":
@@ -359,7 +365,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "frames":
 		return {pages = 12288, programs = 6, threads = 6} // 8192 pages at a time, and 5 twins.
 	case "budget":
-		return {pages = 1024, programs = 1, threads = 4}
+		return {pages = 1280, programs = 1, threads = 4} // The two pictures of its window, then the pages that its cases spend.
 	case "processors":
 		return {pages = 2048, programs = 1, threads = 9}
 	case "locks":
@@ -375,23 +381,31 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "kernel_events":
 		// Program_Create takes the program and its first thread from this
 		// budget. Pages: its module, stack, context, thread area and page
-		// tables, about 142; its window, 960 x 600 x 4 bytes, 563; its rings,
-		// 4 processors x (128 + 8192 x 64 bytes), 513; the thread that empties
-		// them, 16 + 3; one shared page for each child, 2; the load child,
-		// 256 + 4 loaders x (16 + 3), 332; the child that faults, at the same
-		// time, 256: 1831 in all, and 2048 leaves 217. Programs: itself and
+		// tables, about 142; its window, two pictures of 960 x 600 x 4
+		// bytes, 1126; its rings, 4 processors x (128 + 8192 x 64 bytes),
+		// 513; the thread that empties them, 16 + 3; one shared page for
+		// each child, 2; the load child, 256 + 4 loaders x (16 + 3), 332;
+		// the child that faults, at the same time, 256: 2394 in all, and
+		// 3072 leaves 678. Programs: itself and
 		// two children at one time. Threads: its main thread, 1; the load
 		// child, its main thread and 4 loaders, 5 (taken from this budget
 		// when it starts, for its life); then either the child that faults
 		// or the thread that empties the rings, 1, never both at one time:
 		// 7.
-		return {pages = 2048, programs = 3, threads = 7}
+		return {pages = 3072, programs = 3, threads = 7}
 	case "extended_state":
-		return {pages = 2048, programs = 1, threads = 32} // The main thread and up to 31 threads that hold their registers.
+		return {pages = 3072, programs = 1, threads = 32} // The main thread and up to 31 threads that hold their registers; the two pictures of a window of 1024 x 720, 1440 pages.
 	case "address_space":
-		return {pages = 40960, programs = 2, threads = 6} // 64 MiB of large pages, two ranges of 1 GiB with their page tables, a child.
+		return {pages = 41984, programs = 2, threads = 6} // 64 MiB of large pages, two ranges of 1 GiB with their page tables, a child, and the two pictures of its window.
 	case "scheduler":
-		return {pages = 2048, programs = 1, threads = 24} // 12 spinners, two threads that wake each other, one that sleeps, a changer, a thread that starts threads.
+		// Threads: 12 spinners, two threads that wake each other, one that
+		// sleeps, a changer, a thread that starts threads; later, with its
+		// first thread, the 15 threads of the four programs of the shares,
+		// or 8 spinners of its own. Programs: itself and those four. Pages:
+		// its own 2048, and for the four programs 4 x 512 and a stack and a
+		// thread area (19 pages) for each of their 15 threads: 2333; and 1024
+		// more for the second picture of its window of 976 x 704.
+		return {pages = 5632, programs = 5, threads = 24}
 	case "flow":
 		return {pages = 2048, programs = 1, threads = 3}
 	case "crowd":
@@ -415,15 +429,15 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "imports":
 		return {pages = 2048, programs = 3, threads = 3} // Two programs that import calendar.
 	case "errors":
-		return {pages = 2048, programs = 3, threads = 4} // It starts fault and its child, and 3 threads under contention.
+		return {pages = 3072, programs = 3, threads = 4} // It starts fault and its child, and 3 threads under contention; the two pictures of its window.
 	case "server":
-		return {pages = 4096, programs = 1, threads = 1} // Its table of connections with their buffers (CAPACITY in src/programs/server), and a large window.
+		return {pages = 5120, programs = 1, threads = 1} // Its table of connections with their buffers (CAPACITY in src/programs/server), and the two pictures of a large window.
 	case "quic_echo":
 		// 16 QUIC connections of about 85 KiB each, 4 streams of about
 		// 130 KiB for each, and an echo buffer of 16 KiB for each stream:
 		// about 2770 pages, in one mapping of the program (docs/QUIC.md,
-		// section 6).
-		return {pages = 4096, programs = 1, threads = 1}
+		// section 6). Then the two pictures of its window.
+		return {pages = 5120, programs = 1, threads = 1}
 	case "remote":
 		// 2 QUIC connections of about 85 KiB each, 8 streams of about
 		// 130 KiB for each, and a buffer of a request or an answer of about
@@ -435,6 +449,11 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		// The blocks of Argon2id, 19 MiB (4864 pages), its window and its
 		// module (src/library/support/principals, DERIVATION_MEMORY_PAGES).
 		return {pages = 6144, programs = 1, threads = 1}
+	case "pointers", "vector_glyphs":
+		// The two pictures of a window of about 1000 x 704, 1386 pages,
+		// then the pointer themes that pointers checks, or the glyph
+		// caches that vector_glyphs builds.
+		return {pages = 3072, programs = 1, threads = 1}
 	case "tables":
 		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}
@@ -828,6 +847,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The named principal, if one was created: `unlock` reads its file and
 	// asks for the passphrase; with no file it stops (principals.odin).
 	unlock_start(false, "")
+	// A measure, not a check: the pages that this service can still give,
+	// now and at the lowest count that it read since its start. This
+	// service holds the budget of the free memory of the machine, and each
+	// program that it starts takes its budget from it.
+	budget_pages_note()
+	system.log("root: the start is done: the budget of this service holds ", budget_pages_now, " free pages, ", budget_pages_lowest, " at the lowest")
 
 	for {
 		// The stop of a program is an event.
@@ -1328,9 +1353,23 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	return .Ok
 }
 
+// The pages that the budget of this service can still pay: at the last
+// read, and the lowest count of each read. A read comes after each start
+// of a program, when the budget of the program left this budget.
+budget_pages_now: u64
+budget_pages_lowest: u64 = max(u64)
+
+budget_pages_note :: proc "contextless" () {
+	if own, status := system.budget_read(); status == .Ok {
+		budget_pages_now = own.pages
+		budget_pages_lowest = min(budget_pages_lowest, own.pages)
+	}
+}
+
 // started_log writes the line of a start, with the session of a named
 // principal: "root: started notes, in the session of principal 1 \"alice\"".
 started_log :: proc "contextless" (name: string, principal: u64, terminal: string) {
+	budget_pages_note()
 	if principal == principals.MACHINE {
 		system.log_in("programs", .Info, "root: started ", system.Module_Name{name}, terminal)
 	} else {

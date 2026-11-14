@@ -79,16 +79,60 @@ The smallest kernel form gives less than the policy that a program can run today
 
 ### The chosen form
 
-The program `scheduler` runs the policy with no change of the kernel. One round reads the thread report of each program, counts the threads that are ready or that ran since the last round, and writes the weight and the weight limit of each thread through the machine handle. A program is a budget here, because the loader gives each started program its own budget. The measure decides the rest.
+The program `scheduler` runs the policy with no change of the kernel. One round reads the thread report of each program, counts the threads that are ready or that ran since the last round, and writes the weight and the weight limit of each thread through the machine handle. A program is a budget here, because the loader gives each started program its own budget. The rules that a principal reads are in [`docs/SCHEDULING.md`](../../../docs/SCHEDULING.md), "A share for each program".
 
 ### The refused forms
 
 - **The weight of a group divided between the queues.** It needs a sum of the load of a group that each processor writes at each enqueue: a cache line that two processors write on a fast path, which the data rules of the kernel forbid. That weight also changes at each wake, wait and placement of a thread of the group. A program chooses those moments, so the kernel converts a history at a moment that a program chose: the cause of the four failed designs.
 - **A fixed weight in each queue, now.** It makes each procedure of two strategies work on two levels: about 400 lines more in the code that needed five reviews for one rule of 40 lines. And it gives 0.50 where the policy outside gives 0.80. A program with threads in each queue has one full share in each queue; this form does not close that.
 
+### The rule of one round
+
+The program weight is a setting of the principal for the programs with one name: a number from 32 to 1024, and 1024 for a program with no setting. A round reads each program slot and the thread report of each program. It runs each 100 ms, by the clock of the system.
+
+- **A thread counts** when the round saw it for the first time, when it is ready, or when its run time or its virtual time changed since the last round. `N` is the count of these threads, and `T` the count of the threads that live.
+- **A thread that counts gets the program weight divided by `N`.** A thread that does not count gets the program weight divided by `T`. The division drops the rest. A program has at most 32 threads, so the least program weight, 32, keeps each quotient at 1 or more: the weights of the threads that count never sum to more than the program weight. The rest that the division drops is under `N` units of weight: under 3 % of the full weight.
+- **The weight limit of a thread is its quotient.** A new thread gets the limit of its creator as its weight, so a thread that a program creates between two rounds starts with one part of the program weight, not with the full weight.
+- **The policy never raises a thread above what its program asked.** The first write of a thread reads its schedule. A weight under its limit is a weight that the program chose: the policy keeps it as the most of that thread. A weight equal to its limit is "the most that I can have": the kernel gives the same weight for the value 0. Later, a weight under the weight that the policy wrote is a weight that the program lowered: it becomes the most of that thread. The thread gets the smaller of its quotient and that most.
+- **A write happens only when a value changes.** A round of a machine where no thread starts, ends or blocks writes nothing, so it raises nothing: a raise starts a thread again as a new thread.
+- **The policy is off at the start of `scheduler`.** With the policy on, the program writes each thread of the machine, and a thread that wakes after a long wait has a small weight for one period. The principal turns it on. When it goes off, each thread gets back the weight that its program asked and the full weight limit. A program `scheduler` that starts gives the full limit back to each thread that an earlier one left under a limit.
+
+### Why the moment of a wake gives nothing
+
+The question of each layer is: which history does a write convert, and who chooses its moment. The program chooses when its threads wake. The rule answers with two quotients.
+
+A program with `T` threads, of which `N` run, has `N` threads of the weight `P / N`: the sum is `P`. Its other threads have `P / T`. When they wake together, the sum is `P + (T - N) * P / T`, which is under `2 P`, until the next round: one period at most. That round gives each thread `P / T`. The threads must then stay out of a whole period before a round gives the runners `P / N` again, and in that period the runners have `N * P / T`. The two periods sum to `2 P`: what the wake took, the next period gives back. A weight of 1 for a thread that does not count gives a tighter bound, and it was refused: an honest thread that wakes on a busy machine then waits a whole period.
+
+The run time of the report counts ticks. A thread that runs only between two ticks has a run time that never changes. Its virtual time changes at each charge under the fair strategy and EEVDF, so the round counts it.
+
+### What the mechanism lacks
+
+A new thread gets the weight limit of its creator as its weight, and the limit of a thread is never under its weight. So the least weight of a new thread is the weight of the thread that creates it.
+
+A program that knows the moments of the rounds can use this. It keeps one thread that counts, with the whole program weight. Just after a round, that thread creates 31 threads, each with the whole program weight, and they end before the next round. The round never sees them. A thread reads its own schedule, so it sees the moment of each round. The run time of a program counts the ticks of the threads that ended, and a round can compare it with the run times of the threads that live; a thread that runs between two ticks passes that test, so the policy does not build it.
+
+One of two changes of the kernel closes it. Neither is an operation, and neither is built.
+
+- A count of the threads that a program created, in its program report. The policy then sees threads that it never read, and gives the program the quotient of 32 threads.
+- A weight for a new thread that is separate from the limit of its creator, as one more value of the thread schedule that only the machine handle writes.
+
+A program that starts programs has one share for each. The count of the programs of a budget is the limit: the starter of the program chose it.
+
 ### Where the policy outside is weak
 
-The holder writes at a slow rate. When 31 of 32 threads of a program sleep, the one thread that runs has a small weight until the next round. With an idle processor it loses nothing. With each processor busy, the program gets too little for one round. A raise of a weight also starts the thread as new. A measure must say if this matters.
+The holder writes at a slow rate. A thread that wakes after a long wait has the weight `P / T` until the next round. With an idle processor it loses nothing. With each processor busy, the program gets too little for one period. A raise of a weight also starts the thread as new. The measure run prints the shares; it does not say yet if this cost matters for a program of the desktop.
+
+A write through the machine handle gives the three values of the schedule. The policy reads the schedule just before each write. A program that lowers its weight or its request between that read and the write loses that change, and can make it again.
+
+### The event that starts a round
+
+The round has a period by the clock of the system. The event table of the kernel was refused for three reasons. It needs the right Events, and `scheduler` does not hold it. The machine has one event table, and a developer tool uses it. It gives one record for each switch of threads: a program that reads them works at the rate of the scheduler, and the direction is a slow rate. The cost of one round is a measure of the measure run.
+
+### What is a test and what is a measure
+
+The balance between the queues counts threads, not weights. A thread of a large weight in a queue of four threads has between 44 % and 100 % of its processor, by which threads share the queue. So no bound of a share follows from the mechanism, and the share of each program is a measure.
+
+The machine test checks states: the weights and the limits that the kernel gives back after a round, their sum for each program, the weight of a thread that lowered itself, and the weights after the policy went off. It also checks one order, as it does for the weights 1, 2 and 4: the part of the program with 8 threads against the program with 1 thread is smaller with the policy than without it. Each part is a count of ticks of the kernel over one interval, and each interval ends on a count of ticks, not on a time. A slow host makes an interval longer and leaves the counts. The expected numbers are 8 to 1 without the policy and near 1 to 1 with it.
 
 ### The form to build if the measure asks for it
 
@@ -104,4 +148,4 @@ A smaller change is near and not designed: a write of the processor limit of a l
 
 ## State
 
-Built: the placement of a thread, with the correction of the balance. Not built: the policy of a share in the program `scheduler`, and its measure. The kernel gets no share for a budget.
+Built: the placement of a thread, with the correction of the balance; the policy of a share in the program `scheduler`, its two commands, its view of the window and its measure. Not built: the two changes of the kernel that close the threads created and ended between two rounds; a measure of the cost of the policy for a program of the desktop. The kernel gets no share for a budget.

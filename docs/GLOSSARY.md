@@ -1064,6 +1064,30 @@ The design: `docs/SCHEDULING.md`, "The schedule of a live thread", "The weight l
 
 Do not use: maximum priority, weight cap, ceiling.
 
+### Program weight
+
+A program weight is a number from 32 to 1024 that the share policy divides between the threads of one program: the part of the processors of that program against the other programs.
+
+The principal sets it for the programs with one name: `scheduler.share("paint", 256)`. A program with no setting has 1024. It is a setting of the program `scheduler`, not a value of the kernel: the kernel knows the weight of each thread only. The least value is 32 because a program has at most 32 threads: each thread then has a weight of 1 or more. It has an effect while the share policy is on.
+
+Example: with the program weight 1024, the 8 threads of a program that compute have the weight 128 each.
+
+The design: `docs/SCHEDULING.md`, "A share for each program".
+
+Do not use: program priority, group weight, program share.
+
+### Share policy
+
+The share policy is the rule of the program `scheduler` that gives each program one program weight, whatever its count of threads: each round, it writes to each thread the program weight divided by the count of the threads of its program that count.
+
+A thread counts when it is ready or ran since the last round. The program writes the thread schedule of each thread through the machine handle, with the rights **Schedule** and **Inspect**; the kernel has no part of the rule and applies the weights at each tick. A round runs each 100 ms. The policy never gives a thread more than its program asked, and it is off until the principal turns it on (`scheduler.policy(1)`). It is not a limit: a program alone on the machine uses each processor. It is not a strategy: a strategy is a rule of the kernel that orders the threads of a queue, and the share policy only writes the weights that a strategy reads.
+
+Example: a program with 8 threads that compute and a program with one such thread have the same weight in all, 1024.
+
+The design: `docs/SCHEDULING.md`, "A share for each program"; `src/md/features/scheduling_policy.md`.
+
+Do not use: group scheduling, fair share scheduler, cgroup.
+
 ### Thread placement
 
 A thread placement is the set of the processors that can run one thread, and the limit of that set (`op.Thread_Placement`).
@@ -2002,6 +2026,26 @@ A source library is a named folder of source packages that a module compiles in.
 An import of the source names the library and the package: `modus:contract/ring`. The project has one source library. Its name is `modus`, and its folder is `src/library`. It has two parts: `src/library/contract` (what two parties agree on, with no kernel operation) and `src/library/support` (what a program compiles in to use the contracts). A program of the system and a program outside the repository import a package with the same line. The compiler gets the library with one flag: `-collection:modus=src/library`. The kernel and the contract packages import no support package: the tool checks each of their imports before each build (`docs/TOOLS.md`, "The imports of the kernel and of the contract packages"). A source library is not a module: it has no file and no hash of its own, and it is not an edge of the module graph.
 
 Do not use: collection, SDK, libc, static library.
+
+### Outside module
+
+An outside module is a module whose source is in a folder outside the repository of the system.
+
+Its developer writes one Odin package that imports the packages of the system from the source library, and a module build file. The command `kerneltool module-build` builds it with the two steps of a module of the system, and writes the module file and the debug object in a folder of the developer. The module table of the tool has no row for it. A source of an outside module is in the folder of the module or under it, in the source library, or in the libraries of the compiler. An outside module is a module as each other: one file, named by its hash, with described exports. The tool does not yet put one in a boot image.
+
+The design: `docs/TOOLS.md`, "A module from a source outside the repository".
+
+Do not use: third-party module, external module, plugin.
+
+### Module build file
+
+A module build file is the file `module.txt` in the folder of an outside module, which holds the fields of a row of the module table.
+
+Each line is `key: value`. The key `name` is the name of the module. The keys `imports`, `defines` and `library` are the imports by name, the settings of the compiler and whether the module is a library module; each can be absent. The tool refuses a line that it does not know. A module of the system has no module build file: its row is in the module table of the tool.
+
+The design: `docs/TOOLS.md`, "A module from a source outside the repository".
+
+Do not use: manifest, build script, project file.
 
 ### Documentation
 
@@ -3705,7 +3749,7 @@ A surface is a memory object that one program draws into and the compositor show
 
 A surface keeps the pixels out of the kernel and out of the rings: the program writes pixels in its own memory, and the compositor reads the same memory. No pixel goes through a ring or through the kernel.
 
-A program opens a surface with `display.open(ctx, width, height, title, two_pictures)`. This needs the grant of the display, a ring to the compositor in its context; without it the call fails with `No_Grant`. A width or a height is 1 to 2048 pixels (`SURFACE_LIMIT`). The call makes a memory object for one picture or two, maps it, gives the compositor a handle with **Read** only through the ring, and sends `Surface_Create`. Then the program draws a picture and sends `Present` with the rectangle that changed. The compositor sends the input of the window back as completion records of the same ring: keys, pointer events, and `Settings_Changed`.
+A program opens a surface with `display.open(ctx, width, height, title)`. This needs the grant of the display, a ring to the compositor in its context; without it the call fails with `No_Grant`. A width or a height is 1 to 2048 pixels (`SURFACE_LIMIT`). The call makes a memory object for two pictures, maps it, gives the compositor a handle with **Read** only through the ring, and sends `Surface_Create`. Then the program draws a picture and sends `Present` with the rectangle that changed. The compositor sends the input of the window back as completion records of the same ring: keys, pointer events, and `Settings_Changed`.
 
 A surface is not a framebuffer: the framebuffer is the memory of the screen that the firmware gave, and only the compositor writes it. A program cannot write another program's surface or the screen.
 
@@ -3715,15 +3759,27 @@ Do not use: window buffer, framebuffer (reserved for the UEFI one).
 
 ### Picture
 
-A picture is one complete image in the memory of a surface; a surface has one picture or two.
+A picture is one complete image in the memory of a surface; a surface has two pictures.
 
-With one picture, the compositor can read the picture while the program draws, and the screen can show a part of the new image with a part of the old one. With two pictures, the program draws one while the compositor reads the other, and `Present` names the picture that is complete; the next frame draws in the other one. A program asks for two pictures with the argument `two_pictures` of `display.open`. The interface package keeps one draw table for each picture, because the picture that a frame draws holds the frame of two frames before.
+The program draws one picture while the compositor reads the other, and `Present` names the picture that is complete; the next frame draws in the other one. The picture that a frame draws holds the frame of two frames before. The interface package keeps, for each picture, the rectangles where it differs from the last frame that was presented, and draws them again with the rectangles that changed.
 
 A picture is not a picture resource or a picture record: a picture record shows pixels of a picture that the program holds in its own memory, inside its surface.
 
 The design: `src/library/support/display`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: back buffer, front buffer, swap chain.
+
+### Whole frame
+
+A whole frame is a picture of a window that reaches the screen complete: the screen never shows a picture that a program is drawing.
+
+It is a rule of the system for every window, and a program writes no code for it. A surface has two pictures. The program draws the picture that the compositor does not read, and only after the compositor took the picture before (`display.canvas_free`, `display.canvas_wait`). The compositor shows a surface after its first `Present`. A program that stops in the middle of a draw leaves its last complete picture on the screen.
+
+The compositor counts, for each window, the `Present` records that named the picture that it already read: `pictures_drawn_again` in a row of `compositor.windows()`. It is 0 for a program that keeps the rule. The rule does not stop a hostile program, which holds the right to write both pictures: such a program spoils its own window, and no other.
+
+The design: `src/md/infrastructure/whole_frame.md`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
+
+Do not use: tear-free, double buffering, vertical synchronization.
 
 ### Compositor
 
@@ -4665,6 +4721,18 @@ A span has no mark: the stars, the backticks and the brackets are outside its ra
 The design: `docs/SITE.md`, "The reader of the system".
 
 Do not use: run (alone), token, inline.
+
+### Text box
+
+A text box is the place and the width that a window gives to one text: the text is drawn inside it, on one line or on more lines.
+
+A text that is wider than its text box goes on more lines: a line ends at the last space that fits, and a word wider than the whole box (a path, a long name) ends a line after its last `/`, `:` or `_` that fits. No byte of the text is left out, and the caller gives the text box the height of its lines, so the text under it starts lower. `text_wrap_line`, `text_wrapped_line_count` and `draw_text_wrapped` of the interface package hold the rule, and `label_value_lines` is the element that uses it. Example: in the window of `inspect`, the frame `fault::three + 0x4 in fault (src/programs/fault/main.odin:15)` of a stop report has three lines in a card of 50 characters.
+
+A text box is not a text grid: a text grid has cells that the program fills one by one. It is not a cut: a text that a place of a fixed size cannot hold ends with the cut mark.
+
+The design: `docs/INTERFACE.md`, "The text in a box".
+
+Do not use: label box, text area, text field (a text input is the element that takes typed text).
 
 ## Randomness
 
@@ -5743,6 +5811,36 @@ A script that plays the animations shows one tile at a time by its place in the 
 The design: `docs/SITE.md`, "The moves of the heron".
 
 Do not use: sprite sheet, atlas, film strip.
+
+### Icon file
+
+An icon file is one file that holds the mark at several sizes, each as one PNG file behind a directory, so that a reader takes the entry of the size that it shows.
+
+The generator of the pictures of the mark writes it: each entry is the PNG file that the generator writes for one picture, byte for byte, and an entry is at most 256 pixels on a side. The site has one, `favicon.ico` at its root, with an entry of 32 pixels in the cells variant and one of 48 pixels in the smooth variant. Each entry is a row of the table of the uses of the mark. `kerneltool mark still --format ico` writes one. It is not the icon of a phone or of the manifest: each of those is one PNG file.
+
+The design: `docs/SITE.md`, "The icons"; `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: favicon file, ICO container, multi-size icon.
+
+### Vector file of the mark
+
+A vector file of the mark is a file that holds the mark in the cells variant as rectangles of one color, so that a reader draws the same cells at each size.
+
+The generator of the pictures of the mark cuts the pixels of a picture into rectangles: a run of cells of one color in a row is one rectangle. The tool computes each color; the reader of the file only fills rectangles. The file can hold a rule that gives the colors of the dark scheme to a reader that asks for dark. The smooth variant is not written as a vector file: the reader would compute the gradient. The site has one, `pictures/icon.svg`. `kerneltool mark still --format svg` writes one.
+
+The design: `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: SVG logo, scalable icon, vector logo.
+
+### Animated file of the mark
+
+An animated file of the mark is one animated PNG file that holds each frame of one animation of the mark as a picture, each for the time that the table of the animations gives it.
+
+The generator of the pictures of the mark writes it from the PNG data of each frame; a test reads each frame back and compares its pixels. It shows the frames of the heron in its place and plays with no end; it does not show the move of the heron across a page. It is for a page that runs no script, such as a page of a repository. The repository holds none: `kerneltool mark animation --animation <name>` writes one. It is not a tile map, which a script plays, and not a film, which shows the running system.
+
+The design: `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: GIF, animated logo, sprite animation.
 
 ### Site
 

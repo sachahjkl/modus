@@ -40,7 +40,7 @@
 // pictures: the program draws one while the compositor reads the other,
 // and it draws only when the compositor took the picture before.
 //
-// **The log.** `heron: ok, a window of two pictures: ...` after the first
+// **The log.** `heron: ok, the first picture is presented` after the first
 // picture. Each key writes one line, after the program presented its
 // state:
 //
@@ -214,10 +214,9 @@ shown: Scene
 home_body: interface.Rectangle // The rectangle of the natural heron in its place.
 
 // The memory of the interface package for the window (docs/INTERFACE.md):
-// one Picture record for each tile, then the records of the band. The
-// surface has two pictures, so the package keeps the table of each one.
-records_now, records_before, records_second: [TILE_COUNT + 96]interface.Draw_Record
-text_now, text_before, text_second: [1024]u8
+// one Picture record for each tile, then the records of the band.
+records_now, records_before: [TILE_COUNT + 96]interface.Draw_Record
+text_now, text_before: [1024]u8
 drawing: interface.Window_Drawing
 
 // One row of the table of animations().
@@ -848,11 +847,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	service, _ := system.service_open(ctx)
-	// Two pictures: the program draws one while the compositor reads the
-	// other, so the screen never shows a picture that is being drawn. With
-	// one picture the compositor can read a damage rectangle after the
-	// program cleared it and before the program drew the heron in it.
-	window, ok := display.open(ctx, WIDTH, HEIGHT, "heron", two_pictures = true)
+	// The surface has two pictures, as each surface has: the program draws
+	// one while the compositor reads the other, so the screen never shows
+	// a damage rectangle that is cleared and does not hold the heron yet.
+	window, ok := display.open(ctx, WIDTH, HEIGHT, "heron")
 	if !ok {
 		system.stop(1)
 	}
@@ -860,10 +858,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for &picture, index in pictures {
 		picture = graphics.view(stage, index % TILE_COLUMNS * TILE, index / TILE_COLUMNS * TILE, TILE, TILE)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:], records_second[:], text_second[:])
+	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	drawing.now.pictures = pictures[:]
 	drawing.before.pictures = pictures[:]
-	drawing.before_second.pictures = pictures[:]
 	order_memory = mark.ORDER_MEMORY_EMPTY
 	still_start()
 	last := system.nanoseconds()
@@ -883,13 +880,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		// The compositor did not take the last picture yet: it can still
 		// read the picture that the program would draw in. The keys are
-		// taken; the picture waits. The time since the last picture goes
-		// on, so the play loses nothing.
+		// taken; the picture waits. The wait ends when the compositor has
+		// read the ring of the window, at a key or at a call. The time
+		// since the last picture goes on, so the play loses nothing.
 		if !display.canvas_free(&window) {
 			retry: system.Wait
 			display.wait_events(&retry, &window)
 			system.service_wait(&retry, &service)
-			system.wait_end(&retry, system.time() + 1)
+			system.wait_end(&retry)
 			continue
 		}
 		start := system.nanoseconds()
@@ -914,11 +912,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		if !logged {
-			if window.two {
-				system.log("heron: ok, a window of two pictures: the screen never shows a picture that is being drawn")
-			} else {
-				system.log("heron: wrong: the window has one picture, so the screen can show a picture that is being drawn")
-			}
+			system.log("heron: ok, the first picture is presented")
 			logged = true
 		}
 		if played_line_waits {

@@ -79,7 +79,7 @@ site_mark_animation_sheets_read_back :: proc(t: ^testing.T) {
 // the still heron again is the sprite 0.
 @(test)
 site_mark_sprites_are_distinct :: proc(t: ^testing.T) {
-	sprites, ok := site_mark_sprites()
+	sprites, ok := mark_sprites()
 	testing.expect(t, ok)
 	still := mark.still_cells()
 	testing.expect_value(t, mark.cells_differ_count(&sprites.cells[0], &still), 0)
@@ -118,15 +118,15 @@ site_mark_sprites_are_distinct :: proc(t: ^testing.T) {
 	sprite_width, sprite_height := mark_picture_size(home)
 	testing.expect_value(t, sprite_width, mark.heron_size(home.heron_cell))
 	testing.expect_value(t, sprite_height, mark.heron_size(home.heron_cell))
-	columns, rows := site_mark_sheet_shape(len(sprites.cells))
+	columns, rows := mark_sheet_shape(len(sprites.cells))
 	testing.expect(t, columns * rows >= len(sprites.cells))
 	testing.expect(t, columns <= MARK_TILE_MAP_COLUMNS)
 	testing.expect(t, sprite_width * columns <= MARK_PICTURE_SIDE_MOST)
 	testing.expect(t, sprite_height * rows <= MARK_PICTURE_SIDE_MOST)
-	single_columns, single_rows := site_mark_sheet_shape(1)
+	single_columns, single_rows := mark_sheet_shape(1)
 	testing.expect_value(t, single_columns, 1)
 	testing.expect_value(t, single_rows, 1)
-	full_columns, full_rows := site_mark_sheet_shape(MARK_TILE_MAP_COLUMNS + 1)
+	full_columns, full_rows := mark_sheet_shape(MARK_TILE_MAP_COLUMNS + 1)
 	testing.expect_value(t, full_columns, MARK_TILE_MAP_COLUMNS)
 	testing.expect_value(t, full_rows, 2)
 	for animation in mark.Animation {
@@ -496,8 +496,8 @@ sheet_rule_of_pixels :: proc() -> string {
 // of src/library/support/mark at its time, and the sprite of the frame at its time.
 @(test)
 site_mark_steps_follow_the_frames_and_the_keys :: proc(t: ^testing.T) {
-	sprites, ok := site_mark_sprites()
-	forms, forms_ok := site_mark_forms(&sprites)
+	sprites, ok := mark_sprites()
+	forms, forms_ok := mark_forms(&sprites)
 	testing.expect(t, ok && forms_ok)
 	if !ok || !forms_ok {
 		return
@@ -548,30 +548,30 @@ site_mark_steps_follow_the_frames_and_the_keys :: proc(t: ^testing.T) {
 	// The dash: the wind-up in two forms, the run in one, the stop in two,
 	// the rebound: 7 drawings; then the natural heron.
 	dash := forms.steps[.Dash]
-	testing.expect_value(t, dash[0], Site_Mark_Play_Step{milliseconds = 90, sprite = sprites.of_frame[.Dash][0], form = -1})
+	testing.expect_value(t, dash[0], Mark_Play_Step{milliseconds = 90, sprite = sprites.of_frame[.Dash][0], form = -1})
 	testing.expect_value(t, dash[1].milliseconds, 90)
 	testing.expect_value(t, forms.forms[dash[1].form], mark.Form.Gather)
 	testing.expect_value(t, dash[2].milliseconds, 200)
 	testing.expect_value(t, forms.forms[dash[2].form], mark.Form.Crouch)
 	testing.expect_value(t, dash[3].milliseconds, 70)
 	testing.expect_value(t, forms.forms[dash[3].form], mark.Form.Run)
-	testing.expect_value(t, dash[len(dash) - 1], Site_Mark_Play_Step{milliseconds = 100, sprite = sprites.of_frame[.Dash][16], form = -1})
+	testing.expect_value(t, dash[len(dash) - 1], Mark_Play_Step{milliseconds = 100, sprite = sprites.of_frame[.Dash][16], form = -1})
 	// A fault of the keys has a sentence, and the keys of src/library/support/mark
 	// have none.
-	testing.expect_value(t, site_mark_move_fault_text(mark.move_keys[:]), "")
+	testing.expect_value(t, mark_move_fault_text(mark.move_keys[:]), "")
 	faulty := mark.move_keys
 	for &key in faulty {
 		if key.animation == .Hop && key.at_milliseconds == 120 {
 			key.cells_up = 1
 		}
 	}
-	testing.expect_value(t, site_mark_move_fault_text(faulty[:]), "the move of hop, the key at 120 ms: the key moves the heron while a foot is in the water")
+	testing.expect_value(t, mark_move_fault_text(faulty[:]), "the move of hop, the key at 120 ms: the key moves the heron while a foot is in the water")
 }
 
 // merged_frames gives the count of the frames of an animation that show
 // the sprite of the frame before them: the play shows them as one step.
 @(private = "file")
-merged_frames :: proc(sprites: ^Site_Mark_Sprites, animation: mark.Animation) -> int {
+merged_frames :: proc(sprites: ^Mark_Sprites, animation: mark.Animation) -> int {
 	merged := 0
 	for sprite, index in sprites.of_frame[animation] {
 		if index > 0 && sprites.of_frame[animation][index - 1] == sprite {

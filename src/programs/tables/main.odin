@@ -45,6 +45,7 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:support/display"
 import "modus:support/graphics"
+import "modus:support/interface"
 import "modus:support/random"
 import "modus:support/system"
 
@@ -78,7 +79,7 @@ way_names := [Way]string {
 	.Service   = "service",
 }
 
-ANSWER_SIZE :: 80
+ANSWER_SIZE :: 240 // The sentence of an error record fits: the window shows it whole, on the lines that it needs.
 
 Answer :: struct {
 	text:  [ANSWER_SIZE]u8,
@@ -495,12 +496,57 @@ sink: i64
 
 WIDTH :: 1000
 HEIGHT :: 704
-LINE :: 24
-HOSTILE_LINE :: 20 // A multiple of GRID / 2 inside a card: the hostile cases are many.
+LINE :: 20 // A row of a card: a line of text and 4 pixels. The cases are many.
+TEXT_LINE :: graphics.LINE_HEIGHT // One more line of a text that has several.
+CARD_X :: 16
+CARD_WIDTH :: WIDTH - 2 * CARD_X
+CARD_HEAD :: 48 // The title of a card, and the room under its last row.
 NAME_X :: 40 // The column of the names, in a card.
 ANSWER_X :: 312 // The first column of the answers.
-COLUMN_WIDTH :: 224
-HOSTILE_ANSWER_X :: 400
+COLUMN_WIDTH :: 220
+// The box of an answer of the first card: its column, after its mark.
+ANSWER_ROOM :: COLUMN_WIDTH - 16 - 8
+// The answer of a hostile case starts after the longest name, "the same
+// rows in a lent memory object" (36 characters after its mark), and has
+// the rest of the card.
+HOSTILE_ANSWER_X :: NAME_X + 16 + 38 * graphics.CELL_WIDTH
+HOSTILE_ANSWER_ROOM :: CARD_X + CARD_WIDTH - 16 - HOSTILE_ANSWER_X
+MEASURES_HEIGHT :: CARD_HEAD + 5 * LINE
+#assert(ANSWER_X + 2 * COLUMN_WIDTH + 16 + ANSWER_ROOM <= CARD_X + CARD_WIDTH - 16)
+
+// text_lines draws a text in a box of `room` pixels, on the lines that it
+// needs (the rule of interface.text_wrap_line), and gives their count. This
+// window draws with src/library/support/graphics: the rule is the one of
+// the interface package, the pixels are its own.
+text_lines :: proc "contextless" (canvas: graphics.Canvas, x, y, room: int, text: string, color: graphics.Color) -> (count: int) {
+	rest := text
+	for len(rest) > 0 {
+		line: string
+		line, rest = interface.text_wrap_line(nil, {}, rest, room)
+		graphics.text(canvas, x, y + count * TEXT_LINE, line, color)
+		count += 1
+	}
+	return count
+}
+
+// line_count gives the lines of a text in a box, at least one.
+line_count :: proc "contextless" (text: string, room: int) -> int {
+	return max(interface.text_wrapped_line_count(nil, {}, text, room), 1)
+}
+
+// row_height gives the height of a row whose longest text has `lines` lines.
+row_height :: proc "contextless" (lines: int) -> int {
+	return LINE + (lines - 1) * TEXT_LINE
+}
+
+// case_row_lines gives the lines of the row of a case: its longest answer.
+case_row_lines :: proc "contextless" (item: ^Case) -> (lines: int) {
+	lines = 1
+	for way in Way {
+		lines = max(lines, line_count(answer_text(&item.answers[way]), ANSWER_ROOM))
+	}
+	return lines
+}
 
 card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, accent: graphics.Color) {
 	graphics.block(canvas, x, y, width, height, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
@@ -523,10 +569,15 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 			graphics.fill(canvas, x, y, 2, 2, graphics.COLOR_POINT)
 		}
 	}
-	// The cases: one row for each, one column for each way.
+	// The cases: one row for each, one column for each way. An answer has
+	// the box of its column, and a row the height of its longest answer:
+	// the card is as high as its rows.
 	y := 16
-	height := 48 + (case_count + 1) * LINE
-	card(canvas, 16, y, WIDTH - 32, height, "one description, three ways to call", "module sample, the same arguments", graphics.COLOR_KERNEL)
+	height := CARD_HEAD + LINE
+	for &item in cases[:case_count] {
+		height += row_height(case_row_lines(&item))
+	}
+	card(canvas, CARD_X, y, CARD_WIDTH, height, "one description, three ways to call", "module sample, the same arguments", graphics.COLOR_KERNEL)
 	y += 40
 	graphics.text(canvas, NAME_X, y, "export  table", graphics.COLOR_DIM)
 	for way in Way {
@@ -539,24 +590,42 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 			answer := &item.answers[way]
 			x := ANSWER_X + int(way) * COLUMN_WIDTH
 			mark(canvas, x, y, answer.right)
-			graphics.text(canvas, x + 16, y, answer_text(answer), answer.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
+			text_lines(canvas, x + 16, y, ANSWER_ROOM, answer_text(answer), answer.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
 		}
-		y += LINE
+		y += row_height(case_row_lines(&item))
 	}
-	// The hostile cases, with their answers.
+	// The hostile cases, with their answers: the sentence of an error
+	// record, whole. The card of the measures is at the bottom of the
+	// window, and this card has the room between the two: it shows the
+	// cases that fit, and counts the others on its last line.
 	y = 16 + height + 16
-	hostile_height := 48 + hostile_count * HOSTILE_LINE
-	card(canvas, 16, y, WIDTH - 32, hostile_height, "a hostile caller, through the call host", "isolated.decode, export_serve", graphics.COLOR_FAILED)
-	row := y + 40
+	measures_y := HEIGHT - 16 - MEASURES_HEIGHT
+	room := measures_y - 16 - y - CARD_HEAD
+	shown, rows_height := 0, 0
 	for &item in hostile[:hostile_count] {
+		next := row_height(line_count(answer_text(&item.answer), HOSTILE_ANSWER_ROOM))
+		kept := shown == hostile_count - 1 ? 0 : LINE // The line of the count, when a case is left.
+		if rows_height + next > room - kept {
+			break
+		}
+		rows_height += next
+		shown += 1
+	}
+	hostile_height := CARD_HEAD + rows_height + (shown < hostile_count ? LINE : 0)
+	card(canvas, CARD_X, y, CARD_WIDTH, hostile_height, "a hostile caller, through the call host", "isolated.decode, export_serve", graphics.COLOR_FAILED)
+	row := y + 40
+	for &item in hostile[:shown] {
 		mark(canvas, NAME_X, row, item.answer.right)
 		graphics.text(canvas, NAME_X + 16, row, item.name, graphics.COLOR_TEXT)
-		graphics.text(canvas, HOSTILE_ANSWER_X, row, answer_text(&item.answer), item.answer.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
-		row += HOSTILE_LINE
+		row += row_height(text_lines(canvas, HOSTILE_ANSWER_X, row, HOSTILE_ANSWER_ROOM, answer_text(&item.answer), item.answer.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED))
+	}
+	if shown < hostile_count {
+		rest_buffer: [64]u8
+		graphics.text(canvas, NAME_X, row, system.format(rest_buffer[:], "and ", u64(hostile_count - shown), " cases more: the window has no line for them"), graphics.COLOR_DIM)
 	}
 	// The measures.
-	y += hostile_height + 16
-	card(canvas, 16, y, WIDTH - 32, 48 + 5 * LINE, "nanoseconds for one call of sum_values", "rows of 40 bytes, the least of several runs", graphics.COLOR_MEMORY)
+	y = measures_y
+	card(canvas, CARD_X, y, CARD_WIDTH, MEASURES_HEIGHT, "nanoseconds for one call of sum_values", "rows of 40 bytes, the least of several runs", graphics.COLOR_MEMORY)
 	row = y + 40
 	graphics.text(canvas, NAME_X, row, "the way", graphics.COLOR_DIM)
 	sizes := SIZES
@@ -682,8 +751,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	for {
-		draw(window.canvas)
-		display.present(&window)
+		// The canvas is the picture that the compositor does not read,
+		// after it took the picture before: the whole canvas is drawn.
+		if display.canvas_wait(&window) {
+			draw(window.canvas)
+			display.present(&window)
+		}
 		display.wait(&window)
 		for _ in display.next_event(&window) {
 		}

@@ -278,7 +278,13 @@ overview_build :: proc "contextless" () -> int {
 	put("The flat tables of each module of the boot image, read by modus:support/information.", 0, graphics.COLOR_DIM)
 	put("Sizes in bytes of memory. Tab: this table; up, down: the page of a module.", 0, graphics.COLOR_DIM)
 	put("", 0, 0)
-	put("name             code   const    data    zero  exports imports  by  runs", 0, COLOR_HEADING)
+	// The column of the names has the width of the longest name of the
+	// table: no name is cut, and no name meets the number after it.
+	name_width := len("name")
+	for &row in module_rows[:count] {
+		name_width = max(name_width, len(system.name_of(row.name[:])))
+	}
+	put_built(0, COLOR_HEADING, padded("name", name_width), " code   const    data    zero  exports imports  by  runs")
 	totals: [4]i64
 	export_total, import_total, run_total := 0, 0, 0
 	for &row in module_rows[:count] {
@@ -295,14 +301,14 @@ overview_build :: proc "contextless" () -> int {
 		case row.entry == 0:
 			color = COLOR_TITLE
 		}
-		put_built(0, color, padded(name, 15), right(row.code, 6), right(row.constants, 8), right(row.data, 8), right(row.zero, 8), right(row.exports, 9), right(row.imports, 8), right(i64(by), 4), right(i64(runs), 6))
+		put_built(0, color, padded(name, name_width), right(row.code, 6), right(row.constants, 8), right(row.data, 8), right(row.zero, 8), right(row.exports, 9), right(row.imports, 8), right(i64(by), 4), right(i64(runs), 6))
 		totals += {row.code, row.constants, row.data, row.zero}
 		export_total += int(row.exports)
 		import_total += int(row.imports)
 		run_total += runs
 	}
 	put("", 0, 0)
-	put_built(0, graphics.COLOR_DIM, padded("all", 15), right(totals[0], 6), right(totals[1], 8), right(totals[2], 8), right(totals[3], 8), right(i64(export_total), 9), right(i64(import_total), 8), "     ", right(i64(run_total), 6))
+	put_built(0, graphics.COLOR_DIM, padded("all", name_width), right(totals[0], 6), right(totals[1], 8), right(totals[2], 8), right(totals[3], 8), right(i64(export_total), 9), right(i64(import_total), 8), "     ", right(i64(run_total), 6))
 	put("", 0, 0)
 	put("green: a program runs it. yellow: no entry, a library. red: it breaks a rule.", 0, graphics.COLOR_DIM)
 	system.log("manual: overview: ", u64(count), " modules, ", u64(export_total), " exports, ", u64(import_total), " imports, ", u64(run_count), " modules that run in programs")
@@ -311,13 +317,14 @@ overview_build :: proc "contextless" () -> int {
 
 showing_overview: bool
 
-// padded gives a text and spaces after it, in the built lines.
+// padded gives a text, whole, and the spaces after it that make it one
+// character wider than `width`, in the built lines.
 @(private = "file")
 padded :: proc "contextless" (text: string, width: int) -> string {
 	writer := system.Writer {
 		buffer = built[built_count:],
 	}
-	system.write_part(&writer, text[:min(len(text), width)])
+	system.write_part(&writer, text)
 	for writer.count < width + 1 {
 		system.write_part(&writer, " ")
 	}

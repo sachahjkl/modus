@@ -14,10 +14,11 @@
 // last error: the record comes back with the call.
 //
 // **What a reader sees.** Start it from the menu of the programs, or with
-// `start("errors")` in the console. The window lists the cases on two
-// pages (Tab shows the other page): for each one, what the program does,
-// the kind that it expects, and the sentence of the record that it got, in
-// the color "failed" when the answer is not the expected one. The log has
+// `start("errors")` in the console. The window lists the cases on pages
+// (Tab shows the next page; a page holds the cases that fit in its height):
+// for each one, what the program does, the kind that it expects, and the
+// whole sentence of the record that it got, on as many lines as it needs,
+// in the color "failed" when the answer is not the expected one. The log has
 // one line for each case (`errors: a map the boot image to write: ...`),
 // then `errors: ok, 25 cases, each with the expected error record`, the
 // [stack trace](term:stack-trace) of the fault case, a case under
@@ -85,15 +86,19 @@ drawing: interface.Window_Drawing
 WIDTH :: 1000
 LINE :: 16
 TOP :: 8 + 2 * LINE + 8 // The first case.
-CASE_HEIGHT :: 2 * LINE
+CASE_HEIGHT :: 2 * LINE // A case whose sentence has one line.
 CASE_CAPACITY :: 25
-CASES_ON_A_PAGE :: 19 // The window shows one page of cases; Tab shows the other one.
-PAGE_COUNT :: (CASE_CAPACITY + CASES_ON_A_PAGE - 1) / CASES_ON_A_PAGE
-// One case can have a sentence of two lines (a load error that names an
-// export and its difference): the window has one line for it.
-HEIGHT :: TOP + CASES_ON_A_PAGE * CASE_HEIGHT + LINE + 8 + LINE + 8
+// The window shows one page of cases; Tab shows the next one. A sentence
+// has as many lines as it needs in the width of the window (a load error
+// that names an export and its difference, a stack trace with its files),
+// so a case has no fixed height: a page holds the cases that fit in its
+// height, in their order (pages_update).
+PAGE_HEIGHT :: 19 * CASE_HEIGHT
+// Under the cases: the line of the measures, on two lines when its numbers
+// are long.
+HEIGHT :: TOP + PAGE_HEIGHT + 8 + 2 * LINE + 8
 SENTENCE_CAPACITY :: 480 // A stack trace of four named frames, with their files and lines.
-SHOWN :: (WIDTH - 40) / 8 // The characters of a line of the window.
+SENTENCE_ROOM :: WIDTH - 40 // The width of the box of a sentence, in pixels: from x 32 to the end of the band of its case.
 
 // The colors of docs/DESIGN.md: a name is dim, a value (the sentence of a
 // record, the expected kind, the answer) is in the text color, a wrong
@@ -107,6 +112,7 @@ Case :: struct {
 	expected: string,
 	sentence: [SENTENCE_CAPACITY]u8,
 	count:    int,
+	lines:    int, // The lines of the sentence in the window: counted when the case runs, not at each picture.
 	right:    bool,
 }
 
@@ -142,6 +148,10 @@ cases := [CASE_CAPACITY]Case {
 }
 
 shown_page: int // The page of cases that the window shows.
+// The pages: page_first[page] is the first case of a page, and
+// page_first[page_count] is the count of the cases.
+page_first: [CASE_CAPACITY + 1]int
+page_count: int
 machine: system.Handle
 
 image: []u8
@@ -391,7 +401,7 @@ the_context: ^system.Context
 // refuses it before any kernel operation.
 case_display_open :: proc "contextless" (writer: ^system.Writer) -> bool {
 	error: errors.Error_Record
-	if _, opened := display.open(the_context, 0, 100, "zero", false, &error); opened {
+	if _, opened := display.open(the_context, 0, 100, "zero", &error); opened {
 		return false
 	}
 	system.wrapper_error_text(writer, &error, "display.open", display.OPEN_ARGUMENTS[:])
@@ -626,6 +636,28 @@ run :: proc "contextless" (index: int) {
 	writer := system.Writer{buffer = item.sentence[:]}
 	item.right = case_run(index, &writer)
 	item.count = len(system.written(&writer))
+	item.lines = interface.text_wrapped_line_count(nil, {}, string(item.sentence[:item.count]), SENTENCE_ROOM)
+	pages_update()
+}
+
+// pages_update puts the cases on pages again: a case goes on the page of
+// the case before it while its height fits under the cases of that page. A
+// case that runs again can have a sentence of another length, so the page
+// that the window shows is checked too.
+pages_update :: proc "contextless" () {
+	page_count = 0
+	used := PAGE_HEIGHT // The first case starts the first page.
+	for index in 0 ..< len(cases) {
+		height := case_height(index)
+		if used + height > PAGE_HEIGHT {
+			page_first[page_count] = index
+			page_count += 1
+			used = 0
+		}
+		used += height
+	}
+	page_first[page_count] = len(cases)
+	shown_page = min(shown_page, page_count - 1)
 }
 
 // measure gives the nanoseconds of one kernel operation that succeeds and
@@ -906,7 +938,7 @@ program_generator: random.Generator
 // 4. It runs the case under contention (`contend`), then the measures
 //    (`measure`, `families_measure`, `refusals`), and writes the times in
 //    nanoseconds.
-// 5. It draws the window at each event. Tab shows the other page; a key
+// 5. It draws the window at each event. Tab shows the next page; a key
 //    from `a` to `y`, or a press on a case, runs that case again and writes
 //    its new sentence.
 //
@@ -979,7 +1011,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			#partial switch event.kind {
 			case .Key:
 				if event.pressed && event.code == KEY_TAB {
-					shown_page = (shown_page + 1) % PAGE_COUNT
+					shown_page = (shown_page + 1) % page_count
 					system.log("errors: the window shows the page ", u64(shown_page + 1), " of the cases")
 				} else if event.pressed {
 					for index in 0 ..< len(cases) {
@@ -1004,22 +1036,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 }
 
-// sentence_cut gives where the first line of a sentence ends: all of it
-// if it fits, else the last space that fits.
-sentence_cut :: proc "contextless" (sentence: string) -> int {
-	if len(sentence) <= SHOWN {
-		return len(sentence)
-	}
-	for index := SHOWN; index > 0; index -= 1 {
-		if sentence[index] == ' ' {
-			return index
-		}
-	}
-	return SHOWN
-}
-
+// case_height gives the height of a case in the window: the line of what
+// the program does, then each line of the sentence (interface.draw_text_wrapped).
 case_height :: proc "contextless" (index: int) -> int {
-	return cases[index].count > SHOWN ? CASE_HEIGHT + LINE : CASE_HEIGHT
+	return (1 + max(cases[index].lines, 1)) * LINE
 }
 
 KEY_TAB :: 0x0F
@@ -1027,7 +1047,7 @@ KEY_TAB :: 0x0F
 // case_at gives the case that is drawn at a height of the window, or -1.
 case_at :: proc "contextless" (at: int) -> int {
 	y := TOP
-	for index in shown_page * CASES_ON_A_PAGE ..< min((shown_page + 1) * CASES_ON_A_PAGE, len(cases)) {
+	for index in page_first[shown_page] ..< page_first[shown_page + 1] {
 		next := y + case_height(index)
 		if at >= y && at < next {
 			return index
@@ -1045,12 +1065,12 @@ draw :: proc "contextless" (window: ^display.Window) {
 	table := frame.table
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	interface.draw_text(table, 16, 8, "each case makes an error for real; under it, the sentence of its record: errors.Error_Record,", graphics.COLOR_DIM)
-	interface.draw_text(table, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. Its key or a click runs a case again; tab: the other page", graphics.COLOR_DIM)
+	interface.draw_text(table, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. Its key or a click runs a case again; tab: the next page", graphics.COLOR_DIM)
 	page_text: [32]u8
-	interface.draw_text(table, WIDTH - 120, 8 + LINE, system.format(page_text[:], "page ", u64(shown_page + 1), " of ", u64(PAGE_COUNT)), graphics.COLOR_TEXT)
+	interface.draw_text_right(table, WIDTH - 16, 8 + LINE, system.format(page_text[:], "page ", u64(shown_page + 1), " of ", u64(page_count)), graphics.COLOR_TEXT)
 	y := TOP
-	first := shown_page * CASES_ON_A_PAGE
-	for &item, place in cases[first:min(first + CASES_ON_A_PAGE, len(cases))] {
+	first := page_first[shown_page]
+	for &item, place in cases[first:page_first[shown_page + 1]] {
 		index := first + place
 		height := case_height(index)
 		if place % 2 == 0 {
@@ -1060,18 +1080,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_text(table, 32, y, item.text, graphics.COLOR_DIM)
 		interface.draw_text(table, 440, y, item.expected, graphics.COLOR_TEXT)
 		interface.draw_text(table, 640, y, item.right ? "the expected record" : "another answer", item.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
-		sentence := string(item.sentence[:item.count])
-		cut := sentence_cut(sentence)
 		color: u32 = item.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED
-		interface.draw_text(table, 32, y + LINE, sentence[:cut], color)
-		if cut < len(sentence) {
-			rest := sentence[sentence[cut] == ' ' ? cut + 1 : cut:]
-			interface.draw_text(table, 32, y + 2 * LINE, rest[:min(len(rest), SHOWN)], color)
-		}
+		// The whole sentence, on the lines that case_height counted.
+		interface.draw_text_wrapped(table, 32, y + LINE, SENTENCE_ROOM, string(item.sentence[:item.count]), color)
 		y += height
 	}
 	y += 8
-	line: [160]u8
-	interface.draw_text(table, 16, y, system.format(line[:], "a failure with its error record: ", kernel_failed, " ns in a kernel operation (success: ", kernel_good, " ns), ", direct_failed, " ns in a direct call (success: ", direct_good, " ns)"), graphics.COLOR_DIM)
+	line: [192]u8
+	interface.draw_text_wrapped(table, 16, y, WIDTH - 32, system.format(line[:], "a failure with its error record: ", kernel_failed, " ns in a kernel operation (success: ", kernel_good, " ns), ", direct_failed, " ns in a direct call (success: ", direct_good, " ns)"), graphics.COLOR_DIM)
 	interface.window_frame_end(&drawing, &frame, window)
 }

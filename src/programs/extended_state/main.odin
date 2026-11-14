@@ -49,8 +49,8 @@ import "modus:support/interface"
 import "modus:support/system"
 
 LINE :: interface.TABLE_LINE
-WIDTH :: 1024
-HEIGHT :: 720
+WIDTH :: 1000 // The window and its borders fit the screen of 1024 columns.
+HEIGHT :: 704 // And its 768 lines, under the bar and the title of the window.
 WORKER_CAPACITY :: 31 // A program has 32 threads at most: the main thread and these. Its budget has 32.
 RUN_MILLISECONDS :: 3000 // How long the threads hold their registers.
 ROUNDS :: 16 // Kernel entries in one pass: above the round where the x87 control word changes alone (registers.asm).
@@ -647,7 +647,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.text_put(&builder, " processors hold ")
 	interface.text_put(&builder, level_names[held_level])
 	interface.text_put(&builder, ", the x87 stack and MXCSR")
-	content = interface.card(&frame, {8, 168, WIDTH - 16, 384}, "EACH REGISTER OF EACH THREAD", interface.text_of(&builder), graphics.COLOR_PROGRAM)
+	content = interface.card(&frame, {8, 168, WIDTH - 16, 376}, "EACH REGISTER OF EACH THREAD", interface.text_of(&builder), graphics.COLOR_PROGRAM)
 	column = interface.column_of(content)
 	// A row of 16 pixels has room for a line of text. More threads than
 	// 21 (a machine with more than 19 processors) get rows of 11 pixels
@@ -701,7 +701,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	interface.cell_text(&frame, {content.x, content.y + content.height - LINE, content.width, LINE}, "a square: one vector register; then the opmasks, the x87 stack, the x87 control word, MXCSR", graphics.COLOR_DIM)
 
-	content = interface.card(&frame, {8, 560, WIDTH - 16, HEIGHT - 568}, "ONE EMPTY KERNEL ENTRY", "a syscall with no command and no wait, 100000 times, after the test", graphics.COLOR_MACHINE)
+	// The value starts after the longest name of a level, "zmm0 to zmm31
+	// and k0 to k7 (16 bits)": 36 characters, in either font of the names.
+	ENTRY_VALUE_X :: 36 * graphics.CELL_WIDTH + 16
+	content = interface.card(&frame, {8, 552, WIDTH - 16, HEIGHT - 560}, "ONE EMPTY KERNEL ENTRY", "a syscall with no command and no wait, 100000 times, after the test", graphics.COLOR_MACHINE)
 	column = interface.column_of(content)
 	for measured in Level {
 		if measured == .Avx_512_With_Wide_Opmasks {
@@ -714,10 +717,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 			interface.text_put_number(&builder, entry_nanoseconds[measured])
 			interface.text_put(&builder, " ns")
 		}
-		interface.label_value_line(&frame, interface.column_take(&column, LINE), level_names[measured], interface.text_of(&builder), entry_nanoseconds[measured] == 0 ? graphics.COLOR_DIM : graphics.COLOR_TEXT, 248)
+		interface.label_value_line(&frame, interface.column_take(&column, LINE), level_names[measured], interface.text_of(&builder), entry_nanoseconds[measured] == 0 ? graphics.COLOR_DIM : graphics.COLOR_TEXT, ENTRY_VALUE_X)
 	}
 	if finished {
-		interface.label_value_line(&frame, interface.column_take(&column, LINE), "result", passed ? "each register of each thread was kept" : "a register was not kept: see the log", passed ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED, 248)
+		interface.label_value_line(&frame, interface.column_take(&column, LINE), "result", passed ? "each register of each thread was kept" : "a register was not kept: see the log", passed ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED, ENTRY_VALUE_X)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

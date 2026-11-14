@@ -32,9 +32,9 @@
 //   each level;
 // - the channels, each with its count of records (at most 12; the others
 //   count together);
-// - the last 30 records: the time in seconds, the program, the channel and
-//   the text, with the legend of the value kinds over the column of the
-//   text.
+// - the newest records, in 30 lines: the time in seconds, the program, the
+//   channel and the text, with the legend of the value kinds over the
+//   column of the text. A text is whole, on the lines that it needs.
 //
 // At its start it writes two records: `log: the kernel wrote <count>
 // records in the channel boot` and `log: ok, <count> records, <count> lost,
@@ -63,6 +63,7 @@ package log
 import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
+import "modus:support/interface"
 import "modus:support/system"
 
 ROWS :: 30
@@ -132,28 +133,112 @@ repeated_start :: proc "contextless" (record: ^system.Log_Record, text: string) 
 	return skip
 }
 
-// record_text_draw draws the bytes from ..< end of the text of a record:
-// each value run in the color of its kind, the rest in plain. A run that
-// starts before `from`, or that the record cannot hold, is drawn plain.
-record_text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, record: ^system.Log_Record, from, end: int, plain: graphics.Color) {
-	text_count := min(int(record.text_count), len(record.text))
-	at := from
-	left := x
-	for index in 0 ..< min(int(record.run_count), len(record.runs)) {
-		run := record.runs[index]
-		start, run_end, ok := value_kinds.value_run_in_text(run, text_count)
-		if !ok || start < at {
-			continue
+// One text of the log, as the window shows it. The kernel keeps a text
+// longer than one record in several records, cut at a count of bytes
+// (Log_Record.more): the window joins them again, so that the text is whole
+// and its lines end at a space (docs/INTERFACE.md, "The text in a box"),
+// never inside a word where a record ended.
+JOIN_PARTS :: 4 // The records of one text that the window joins: a text of system.log has at most 512 bytes. More records start a second text.
+RECORD_TEXT_SIZE :: size_of(system.Log_Record) - offset_of(system.Log_Record, text)
+JOIN_CAPACITY :: JOIN_PARTS * RECORD_TEXT_SIZE
+JOIN_RUN_CAPACITY :: 64 // The value runs of one joined text that keep their color; a run past them is plain.
+NAME_ROOM :: COLUMN_CHANNEL - COLUMN_PROGRAM - 8 // The box of the name of the program.
+CHANNEL_ROOM :: COLUMN_TEXT - COLUMN_CHANNEL - 8 // The box of the channel.
+TEXT_ROOM :: TEXT_CHARACTERS * 8 // The box of the text.
+
+// A value run of a joined text: its bytes in the joined text.
+Joined_Run :: struct {
+	start, end: int,
+	kind:       value_kinds.Value_Kind,
+}
+
+Joined :: struct {
+	bytes:     [JOIN_CAPACITY]u8,
+	count:     int,
+	runs:      [JOIN_RUN_CAPACITY]Joined_Run,
+	run_count: int,
+	from:      int, // The bytes at the start that repeat the program and the channel: not shown.
+}
+
+joined_text: Joined // The text that the window measures or draws now: not on the stack, it has 2 KiB.
+
+// A text of the window: `count` records from the place `first` of the
+// records that the window holds, and the lines that it takes.
+Group :: struct {
+	first, count, lines: int,
+}
+
+// record_shown gives the record at a place of the records that the window
+// holds, the oldest at 0.
+record_shown :: proc "contextless" (place: int) -> ^system.Log_Record {
+	held := min(row_count, ROWS)
+	return &rows[(row_count - held + u64(place)) % ROWS]
+}
+
+// join makes the text of a group: the texts of its records, one after the
+// other, and their value runs at their places in the joined text.
+join :: proc "contextless" (joined: ^Joined, group: Group) {
+	joined.count, joined.run_count = 0, 0
+	for part in 0 ..< group.count {
+		record := record_shown(group.first + part)
+		text_count := min(int(record.text_count), len(record.text))
+		base := joined.count
+		for index in 0 ..< min(int(record.run_count), len(record.runs)) {
+			start, end, ok := value_kinds.value_run_in_text(record.runs[index], text_count)
+			if ok && joined.run_count < JOIN_RUN_CAPACITY {
+				joined.runs[joined.run_count] = {base + start, base + end, record.runs[index].kind}
+				joined.run_count += 1
+			}
 		}
-		if start >= end {
-			break
-		}
-		run_end = min(run_end, end)
-		left = graphics.text(canvas, left, y, string(record.text[at:start]), plain)
-		left = graphics.text(canvas, left, y, string(record.text[start:run_end]), graphics.value_kind_color(run.kind, false, plain))
-		at = run_end
+		joined.count += copy(joined.bytes[joined.count:], record.text[:text_count])
 	}
-	graphics.text(canvas, left, y, string(record.text[at:end]), plain)
+	joined.from = repeated_start(record_shown(group.first), string(joined.bytes[:joined.count]))
+}
+
+// group_lines gives the lines of a group: the most of the lines of its
+// text, of the name of its program and of its channel, each in its box.
+group_lines :: proc "contextless" (joined: ^Joined, group: Group) -> int {
+	record := record_shown(group.first)
+	text_lines := interface.text_wrapped_line_count(nil, {}, string(joined.bytes[joined.from:joined.count]), TEXT_ROOM)
+	name_lines := interface.text_wrapped_line_count(nil, {}, system.name_of(record.name[:]), NAME_ROOM)
+	channel_lines := interface.text_wrapped_line_count(nil, {}, system.name_of(record.channel[:]), CHANNEL_ROOM)
+	return max(text_lines, name_lines, channel_lines, 1)
+}
+
+// lines_draw draws a text in a box, on the lines that it needs.
+lines_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, room: int, text: string, color: graphics.Color) {
+	rest := text
+	for line_y := y; len(rest) > 0; line_y += LINE {
+		line: string
+		line, rest = interface.text_wrap_line(nil, {}, rest, room)
+		graphics.text(canvas, x, line_y, line, color)
+	}
+}
+
+// joined_text_draw draws the text of a group in its box: each line of the
+// text, each value run in the color of its kind and the rest in plain. A
+// run that a break of a line cuts has its color on both lines.
+joined_text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, joined: ^Joined, plain: graphics.Color) {
+	text := string(joined.bytes[:joined.count])
+	rest := text[joined.from:]
+	for line_y := y; len(rest) > 0; line_y += LINE {
+		line_start := len(text) - len(rest)
+		line: string
+		line, rest = interface.text_wrap_line(nil, {}, rest, TEXT_ROOM)
+		line_end := line_start + len(line)
+		at := line_start
+		left := x
+		for run in joined.runs[:joined.run_count] {
+			start, end := max(run.start, at), min(run.end, line_end)
+			if start >= end {
+				continue
+			}
+			left = graphics.text(canvas, left, line_y, text[at:start], plain)
+			left = graphics.text(canvas, left, line_y, text[start:end], graphics.value_kind_color(run.kind, false, plain))
+			at = end
+		}
+		graphics.text(canvas, left, line_y, text[at:line_end], plain)
+	}
 }
 
 // take keeps one new record: it is the newest of the last 30 rows, and it
@@ -230,24 +315,47 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	for kind, index in legend_kinds {
 		x = graphics.text(canvas, x, top - LINE, legend_names[index], graphics.value_kind_color(kind, false)) + 16
 	}
-	shown := min(row_count, ROWS)
-	for line in 0 ..< shown {
-		record := &rows[(row_count - shown + line) % ROWS]
-		y = top + int(line) * LINE
-		if line % 2 == 1 {
-			graphics.fill(canvas, MARGIN - 4, y, WIDTH - 2 * MARGIN + 8, LINE, COLOR_PANEL)
+	// The texts of the records that the window holds: a record whose text
+	// continues is one text with the records after it.
+	held := int(min(row_count, ROWS))
+	joined := &joined_text
+	groups: [ROWS]Group
+	group_count := 0
+	for place := 0; place < held; {
+		group := Group{first = place, count = 1}
+		for group.count < JOIN_PARTS && place + group.count < held && record_shown(place + group.count - 1).more != 0 {
+			group.count += 1
 		}
-		graphics.fill(canvas, MARGIN - 4, y, 3, LINE, level_colors[record.level])
+		join(joined, group)
+		group.lines = group_lines(joined, group)
+		groups[group_count] = group
+		group_count += 1
+		place += group.count
+	}
+	// The window has ROWS lines: it shows the newest texts that fit whole.
+	// The older ones are in the log, as each record that left the window.
+	first_group, used := group_count, 0
+	for first_group > 0 && used + groups[first_group - 1].lines <= ROWS {
+		first_group -= 1
+		used += groups[first_group].lines
+	}
+	y = top
+	for group, index in groups[first_group:group_count] {
+		record := record_shown(group.first)
+		height := group.lines * LINE
+		if index % 2 == 1 {
+			graphics.fill(canvas, MARGIN - 4, y, WIDTH - 2 * MARGIN + 8, height, COLOR_PANEL)
+		}
+		graphics.fill(canvas, MARGIN - 4, y, 3, height, level_colors[record.level])
 		milliseconds := record.time / 1000
 		x = graphics.unsigned(canvas, MARGIN + 4, y, milliseconds / 1000, graphics.COLOR_DIM, 4)
 		x = graphics.text(canvas, x, y, ".", graphics.COLOR_DIM)
 		graphics.unsigned(canvas, x, y, milliseconds % 1000, graphics.COLOR_DIM, 3)
-		name := system.name_of(record.name[:])
-		graphics.text(canvas, MARGIN + COLUMN_PROGRAM, y, name[:min(len(name), 12)], record.program == 0 ? graphics.COLOR_TEXT : program_colors[record.program % len(program_colors)])
-		graphics.text(canvas, MARGIN + COLUMN_CHANNEL, y, system.name_of(record.channel[:10]), graphics.COLOR_DIM)
-		text_count := min(int(record.text_count), len(record.text))
-		from := repeated_start(record, string(record.text[:text_count]))
-		record_text_draw(canvas, MARGIN + COLUMN_TEXT, y, record, from, min(text_count, from + TEXT_CHARACTERS), record.level == .Error ? level_colors[.Error] : graphics.COLOR_TEXT)
+		lines_draw(canvas, MARGIN + COLUMN_PROGRAM, y, NAME_ROOM, system.name_of(record.name[:]), record.program == 0 ? graphics.COLOR_TEXT : program_colors[record.program % len(program_colors)])
+		lines_draw(canvas, MARGIN + COLUMN_CHANNEL, y, CHANNEL_ROOM, system.name_of(record.channel[:]), graphics.COLOR_DIM)
+		join(joined, group)
+		joined_text_draw(canvas, MARGIN + COLUMN_TEXT, y, joined, record.level == .Error ? level_colors[.Error] : graphics.COLOR_TEXT)
+		y += height
 	}
 }
 
@@ -287,12 +395,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	reader_head, reader_records = reader.head, reader.records
 	service, _ = system.service_open(ctx)
 	logged := false
+	picture_owed := true // The window does not show each record that was taken.
 	for {
-		wait: system.Wait
-		display.wait_events(&wait, &window)
-		system.wait_log(&wait, &reader)
-		system.service_wait(&wait, &service)
-		changed := !logged
 		for {
 			record, late, has := system.log_next(&reader)
 			lost += late
@@ -300,12 +404,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				break
 			}
 			take(&record)
-			changed = true
+			picture_owed = true
 		}
 		for _ in display.next_event(&window) {}
-		if changed {
+		// This service never waits for the compositor: while the
+		// compositor did not take the last picture, the window owes its
+		// picture, and the wait below ends when the compositor has read.
+		// The whole canvas is drawn: it is the other picture of the
+		// surface.
+		if picture_owed && display.canvas_free(&window) {
 			draw(window.canvas)
 			display.present(&window)
+			picture_owed = false
 		}
 		if !logged {
 			logged = true
@@ -313,6 +423,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log_in("log", .Info, "log: ok, ", row_count, " records, ", lost, " lost, ", u64(channel_count), " channels")
 			continue
 		}
+		// The list comes after the reads and after the question to the
+		// canvas: a record or a call that arrived since ends the wait at
+		// once.
+		wait: system.Wait
+		display.wait_events(&wait, &window)
+		system.wait_log(&wait, &reader)
+		system.service_wait(&wait, &service)
 		system.wait_end(&wait)
 		system.service_run(&service)
 	}

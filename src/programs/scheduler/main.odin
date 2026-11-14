@@ -49,6 +49,15 @@
 // processor cannot take does not stop the balance; writes of placements
 // during the changes of strategy lose no thread.
 //
+// For a share of the processors for each program (docs/SCHEDULING.md, "A
+// share for each program"; share.odin): after a round of the share policy,
+// each thread of four programs with 1, 2, 4 and 8 spinning threads has the
+// full weight divided by the threads of its program; a thread that asked a
+// smaller weight, or lowered itself, keeps it; a program that starts more
+// threads has no more weight in all; the part of the program with 8
+// threads against the program with 1 is smaller with the policy than
+// without it; when the policy goes off, each thread has its weight back.
+//
 // The program needs the machine with the rights Inspect and Schedule.
 //
 // **What it is for.** The kernel has three scheduling strategies (round
@@ -59,7 +68,16 @@
 // **Start**: `start("scheduler")` in the console, or the bar of the
 // desktop. Its budget has room for 24 threads: 12 spinners, two threads
 // that wake each other, one that sleeps, a changer, a thread that writes
-// schedules, and a thread that starts threads.
+// schedules, and a thread that starts threads; then the 15 threads of the
+// four programs of the shares, which it starts from the boot image.
+//
+// **The share policy.** `scheduler.policy(1)` in the console, the key P or
+// the button of the view of the shares turns it on: each program then has
+// one program weight, which the program divides between the threads of
+// that program, so a program with many threads takes no more of the
+// processors than a program with one. `scheduler.share("paint", 256)` gives
+// the programs with a name another program weight. The policy is off when
+// the program starts. The two commands are served after the checks.
 //
 // **Grants**, as the root service gives them:
 //
@@ -72,10 +90,16 @@
 //   the strategy for a caller that holds no right over the machine: the
 //   console runs it as `strategy("eevdf")`, and the palette of the desktop
 //   for the entry "set strategy to eevdf". The calls run after the checks,
-//   in the loop of the window.
+//   in the loop of the window. Its exports `share` and `policy` are
+//   commands of the console too.
+// - **Image**: the boot image, to start the four programs of the shares
+//   from its own file.
 //
 // **What a reader sees**: one tile for each strategy with its numbers, and
-// the strategy in use. The log has one line of results for each strategy,
+// the strategy in use. The key S, or the button after the tiles, opens the
+// view of the shares: one row for each program, with its threads that
+// count, its program weight, the weight of each thread, and its share of
+// the processors in the last period as a bar. The log has one line of results for each strategy,
 // then "scheduler: ok, no spinner starved under 3 strategies, ..." or
 // "scheduler: wrong: ..." with the first problem, and the time to draw the
 // window. At the end the program sets the strategy that was in use at its
@@ -93,6 +117,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:support/random"
 import "modus:support/system"
 
 STRATEGY_COUNT :: 3
@@ -1443,8 +1468,153 @@ card :: proc "contextless" (frame: ^interface.Frame, x, y, width, height: int, t
 // The tiles of the strategies in the head: a click on one changes the strategy.
 TILE_X :: 480
 TILE_Y :: MARGIN + 44
-TILE_WIDTH :: 152
+TILE_WIDTH :: 128
 TILE_HEIGHT :: 40
+// The button of the view, after the three tiles: it ends at the right
+// margin of the head.
+VIEW_BUTTON_X :: TILE_X + STRATEGY_COUNT * (TILE_WIDTH + MARGIN)
+VIEW_BUTTON_WIDTH :: WIDTH - MARGIN - CARD_INSIDE - VIEW_BUTTON_X
+
+// The two views of the window under the head: the checks and the measures
+// of the strategies, or the shares of the programs.
+View :: enum {
+	Strategies,
+	Shares,
+}
+
+view: View
+shown_processors: u64
+
+view_toggle :: proc "contextless" () {
+	view = view == .Strategies ? .Shares : .Strategies
+}
+
+policy_toggle :: proc "contextless" () {
+	policy_set(intrinsics.atomic_load(&policy_wanted) == 0)
+}
+
+// The round that the frame draws: a copy, so that the thread of the rounds
+// never waits for a frame.
+round_drawn: Policy_Round
+
+SHARE_ROW :: 20
+SHARE_GAP :: 24 // Between two columns of the rows.
+SHARE_ROWS_Y :: 80 // The first row, under the two lines of the policy and the headers.
+SHARE_COLUMNS :: 5
+POLICY_BUTTON_WIDTH :: 136
+POLICY_BUTTON_HEIGHT :: 24
+
+// share_cell writes the text of one cell of a row of the shares: the name,
+// the threads, the program weight, the weight of each thread, the share.
+share_cell :: proc "contextless" (buffer: []u8, row: ^Program_Row, column: int, elapsed, processors: u64) -> string {
+	switch column {
+	case 0:
+		return system.name_of(row.name[:])
+	case 1:
+		return system.format(buffer, u64(row.counted), " of ", u64(row.threads))
+	case 2:
+		return system.format(buffer, u64(row.weight))
+	case 3:
+		if row.thread_weight_least == row.thread_weight_most {
+			return system.format(buffer, u64(row.thread_weight_most))
+		}
+		return system.format(buffer, u64(row.thread_weight_least), " to ", u64(row.thread_weight_most))
+	}
+	tenths := share_tenths(row.ran, elapsed * max(processors, 1))
+	return system.format(buffer, tenths / 10, ".", tenths % 10, " %")
+}
+
+@(rodata)
+share_headers := [SHARE_COLUMNS]string{"program", "threads that count", "program weight", "weight of each thread", "share, last period"}
+
+// draw_shares draws the view of the shares: the state of the share policy
+// with its button, then one row for each program. The width of each
+// column is the width of its widest text in this frame, so no text is cut
+// and no text is over another one; the bar takes the room that is left.
+draw_shares :: proc "contextless" (frame: ^interface.Frame, top: int) {
+	system.lock(&policy_lock)
+	round_drawn = round_shown
+	system.unlock(&policy_lock)
+	round := &round_drawn
+	inside := card(frame, MARGIN, top, WIDTH - 2 * MARGIN, HEIGHT - top - MARGIN, "SHARES", "Thread_Table_Report, Program_Report.run_time")
+	line: [96]u8
+
+	// The policy: a button, and what it does now.
+	on := intrinsics.atomic_load(&policy_wanted) != 0
+	button := interface.element_interact(frame, interface.identity("share policy"), {inside.x, inside.y, POLICY_BUTTON_WIDTH, POLICY_BUTTON_HEIGHT}, .Button)
+	if button.activated {
+		policy_toggle()
+	}
+	if on {
+		block(inside, 0, 0, POLICY_BUTTON_WIDTH, POLICY_BUTTON_HEIGHT, graphics.shade(graphics.COLOR_PROGRAM, 120), graphics.shade(graphics.COLOR_PROGRAM, 70))
+		write(inside, 12, 4, "policy on", graphics.COLOR_BACKGROUND)
+	} else {
+		fill(inside, 0, 0, POLICY_BUTTON_WIDTH, POLICY_BUTTON_HEIGHT, button.under_pointer ? graphics.shade(graphics.COLOR_TRACK, 130) : graphics.COLOR_TRACK)
+		fill(inside, 0, POLICY_BUTTON_HEIGHT - 2, POLICY_BUTTON_WIDTH, 2, graphics.COLOR_PROGRAM)
+		write(inside, 12, 4, "policy off", graphics.COLOR_TEXT)
+	}
+	if button.focused {
+		fill(inside, 0, 0, POLICY_BUTTON_WIDTH, 2, graphics.COLOR_WHITE)
+	}
+	about := on ? string("each program has its weight, divided between its threads that count; scheduler.share sets it") : string("each thread has the weight that its program asked; the key P, or scheduler.policy(1)")
+	write(inside, POLICY_BUTTON_WIDTH + 16, 4, about, on ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
+	write(inside, 0, 32, system.format(line[:], "round ", round.number, ": ", u64(round.count), " programs, ", round.threads, " threads, ", round.writes, " writes, ", round.duration / 1000, " us"), graphics.COLOR_DIM)
+
+	// The rows that have room, and one line for the others.
+	room := max((inside.height - SHARE_ROWS_Y) / SHARE_ROW, 0)
+	rows := min(round.count, room)
+	if round.count > room {
+		rows = max(room - 1, 0)
+	}
+	// The width of each column of text: its header and each of its cells.
+	widths: [SHARE_COLUMNS]int
+	for column in 0 ..< SHARE_COLUMNS {
+		// The header of the last column is over the bar too.
+		if column < SHARE_COLUMNS - 1 {
+			widths[column] = interface.text_measured_width(frame.table, {}, share_headers[column])
+		}
+		for &row in round.rows[:rows] {
+			widths[column] = max(widths[column], interface.text_measured_width(frame.table, {}, share_cell(line[:], &row, column, round.elapsed, shown_processors)))
+		}
+	}
+	places: [SHARE_COLUMNS]int
+	for column in 1 ..< SHARE_COLUMNS {
+		places[column] = places[column - 1] + widths[column - 1] + SHARE_GAP
+	}
+	bar_x := places[SHARE_COLUMNS - 1] + widths[SHARE_COLUMNS - 1] + SHARE_GAP
+	bar_width := inside.width - bar_x
+	for column in 0 ..< SHARE_COLUMNS {
+		// The header of the last column has the room of its column and of
+		// the bar: it is written only when it fits there.
+		if column < SHARE_COLUMNS - 1 || interface.text_measured_width(frame.table, {}, share_headers[column]) <= inside.width - places[column] {
+			write(inside, places[column], SHARE_ROWS_Y - SHARE_ROW - 4, share_headers[column], graphics.COLOR_DIM)
+		}
+	}
+	most: u64 = 1
+	for &row in round.rows[:rows] {
+		most = max(most, row.ran)
+	}
+	for &row, index in round.rows[:rows] {
+		y := SHARE_ROWS_Y + index * SHARE_ROW
+		for column in 0 ..< SHARE_COLUMNS {
+			color := graphics.Color(graphics.COLOR_TEXT)
+			if column == 2 && row.weight != op.WEIGHT_FULL {
+				color = graphics.COLOR_BOOT_PROGRAM
+			}
+			write(inside, places[column], y, share_cell(line[:], &row, column, round.elapsed, shown_processors), color)
+		}
+		// The bar: the program with the most processor time has the whole bar.
+		if bar_width >= 64 {
+			bar(inside, bar_x, y + 4, bar_width, 8, int(row.ran * u64(bar_width) / most), graphics.COLOR_KERNEL)
+		}
+	}
+	if round.count > rows {
+		write(inside, 0, SHARE_ROWS_Y + rows * SHARE_ROW, system.format(line[:], u64(round.count - rows), " more programs, each with less processor time in the last period"), graphics.COLOR_DIM)
+	}
+	if round.number == 0 {
+		write(inside, 0, SHARE_ROWS_Y, "the first round runs after the checks", graphics.COLOR_DIM)
+	}
+}
 
 LABEL_WIDTH :: 224 // The names of the rows of the measures.
 COLUMN_WIDTH :: 232
@@ -1476,7 +1646,7 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 	after := large(head, 0, 0, name, 2, in_use >= 0 ? strategy_color(in_use) : graphics.COLOR_DIM)
 	write(head, after + 16, 0, "in use", graphics.COLOR_DIM)
 	write(head, after + 16, 16, system.format(line[:], u64(report.strategy_changes), " changes since boot"), graphics.COLOR_DIM)
-	write(WHOLE, TILE_X, MARGIN + 12, "Strategy_Set: a key 1 2 3, Tab and Enter, or a click", graphics.COLOR_DIM)
+	write(WHOLE, TILE_X, MARGIN + 12, "Strategy_Set: a key 1 2 3; the key S: the shares", graphics.COLOR_DIM)
 	for index in 0 ..< STRATEGY_COUNT {
 		x := TILE_X + index * (TILE_WIDTH + MARGIN)
 		color := strategy_color(index)
@@ -1499,9 +1669,25 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 			fill(WHOLE, x, TILE_Y, TILE_WIDTH, 2, graphics.COLOR_WHITE)
 		}
 	}
+	// The button of the view names the view that it opens.
+	view_button := interface.element_interact(frame, interface.identity("view"), {VIEW_BUTTON_X, TILE_Y, VIEW_BUTTON_WIDTH, TILE_HEIGHT}, .Button)
+	if view_button.activated {
+		view_toggle()
+	}
+	fill(WHOLE, VIEW_BUTTON_X, TILE_Y, VIEW_BUTTON_WIDTH, TILE_HEIGHT, view_button.under_pointer ? graphics.shade(graphics.COLOR_TRACK, 130) : graphics.COLOR_TRACK)
+	fill(WHOLE, VIEW_BUTTON_X, TILE_Y + TILE_HEIGHT - 2, VIEW_BUTTON_WIDTH, 2, graphics.COLOR_PROGRAM)
+	write(WHOLE, VIEW_BUTTON_X + 8, TILE_Y + 12, view == .Strategies ? "shares" : "checks", graphics.COLOR_TEXT)
+	if view_button.focused {
+		fill(WHOLE, VIEW_BUTTON_X, TILE_Y, VIEW_BUTTON_WIDTH, 2, graphics.COLOR_WHITE)
+	}
 
 	// The measures: one column for each strategy.
 	top := MARGIN + HEAD_HEIGHT + MARGIN
+	if view == .Shares {
+		draw_shares(frame, top)
+		interface.window_frame_end(&drawing, frame, window)
+		return
+	}
 	// The rows of the rates and of the late wakes have a number in a
 	// measure run only. Else the table has the rows that the check fills,
 	// and one line under them says where the other numbers come from.
@@ -1764,16 +1950,28 @@ choose :: proc "contextless" (index: int) {
 // a caller.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// A program of the case of the shares has this file and no window: it
+	// only computes.
+	if threads := share_role_threads(ctx.values[SHARE_VALUE_ROLE]); threads != 0 {
+		share_program_run(threads)
+	}
+	service, _ := system.service_open(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "scheduler")
 	if !ok {
 		system.stop(1)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
-	// The service: a caller sets the strategy with strategy_set. The calls
-	// run in the loop of the window, after the checks.
-	service, _ := system.service_open(ctx)
+	// The boot image holds the file of this program, for the programs of
+	// the case of the shares; each one needs a seed from this program.
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok && random.generator_from_context(&program_generator, ctx) {
+		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	}
+	// A program scheduler that was stopped with the share policy on left
+	// each thread under a weight limit: they get the full limit back.
+	policy_weights_give_back()
 	report := system_report()
 	processors := report.processors
+	shown_processors = processors
 	draw(&window, report, processors)
 
 	original := report.strategy
@@ -1824,6 +2022,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	stress()
 	system.strategy_set(machine, original)
+	if !share_case() {
+		fail("the share policy did not give each program its part, or did not keep a lowered weight")
+	}
 	done = true
 	if right && system.measure_run() {
 		system.log("scheduler: EEVDF woke ", results[2].wakes / max(results[0].wakes, 1), " times as often as round robin (a measure)")
@@ -1837,20 +2038,35 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	draw(&window, system_report(), processors)
 	drawn := system.nanoseconds() - start
 	system.log("scheduler: the window took ", drawn / 1000, " us to draw")
+	// The rounds of the share policy run on a thread of their own: a round
+	// enters the kernel for each program, and this thread draws and serves
+	// the commands.
+	if _, policy_status := system.thread_start(policy_run, nil); policy_status != .Ok {
+		system.log("scheduler: the thread of the share policy did not start: ", op.STATUS_NAMES[policy_status])
+	}
 	for {
 		// The events go to the input of the next frame: a click or Enter on
 		// a tile chooses its strategy there; the keys 1 2 3 choose here.
 		interface.window_events(&drawing, &window)
 		for &key in drawing.input.keys[:drawing.input.key_count] {
-			if key.character >= '1' && key.character <= '3' {
+			switch {
+			case key.character >= '1' && key.character <= '3':
 				key.taken = true
 				choose(int(key.character - '1'))
+			case key.character == 's':
+				key.taken = true
+				view_toggle()
+			case key.character == 'p':
+				key.taken = true
+				policy_toggle()
 			}
 		}
-		// The calls of the callers that waited: each one sets the strategy.
+		// The calls of the callers that waited: strategy_set, share and policy.
 		system.service_run(&service)
 		// The counts of the processors change: the window shows them each 500 ms.
 		draw(&window, system_report(), processors)
+		// The thread waits for an event of the window or a call of a
+		// command, then runs the calls: scheduler.share and scheduler.policy.
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)

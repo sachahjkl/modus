@@ -488,11 +488,12 @@ The heron has two variants. A request for a picture of the mark names one: nothi
 | Cells | The gradient of its part at the centre of its cell: a cell is one color at every cell size | A small icon, one pixel for a cell: the bar of the site, the bar of the desktop, the icon of 32 pixels of a tab |
 
 - The rule of the choice: a picture is smooth; a small icon is cells.
+- For an icon of the site the cell size says which it is. An icon of one pixel for a cell is a small icon: cells. An icon of two pixels or more for a cell is a picture: smooth. So the entry of 32 pixels of `favicon.ico` is cells, and its entry of 48 pixels and the icons of 180, 192 and 512 pixels are smooth, at 2, 7, 8, 21 and 12 pixels for a cell. The vector icon has no pixel of its own: it is the cells, one rectangle for each run of cells of one color.
 - The smooth variant needs at least 2 pixels for a cell (`SMOOTH_CELL_SIZE_LEAST`). With one pixel for a cell the centre of the pixel is the centre of the cell: that picture is the cells variant, and its request must say so. A procedure of `src/library/support/mark` draws nothing for the smooth variant at one pixel, and the generator of the tool refuses it with a sentence.
 - The cells variant is allowed at each cell size: it gives the look of one color for a cell at a size where a picture has more pixels.
-- One generator in the tool draws each picture file of the mark (`tools/kerneltool/mark_pictures.odin`; `TOOLS.md`, "The pictures of the mark"). `kerneltool logo` and `kerneltool site` hold no number of a picture: each asks the generator for its rows of the table of the uses, below. `kerneltool mark uses` prints the table.
+- One generator in the tool makes each file of the mark (`tools/kerneltool/mark_pictures.odin`; `TOOLS.md`, "The pictures of the mark"). `kerneltool logo` and `kerneltool site` hold no number of a picture: each asks the generator for its rows of the table of the uses, below. `kerneltool mark uses` prints the table.
 
-The table of the uses (`mark_uses`). Each row is one file. "Cell" is the pixels of a side of a cell of the heron.
+The table of the uses (`mark_uses`) is the one table of the files of the mark. Each row is one file; an icon file has one row for each of its entries. "Cell" is the pixels of a side of a cell of the heron.
 
 | File | Written by | Variant | Cell | What |
 |---|---|---|---|---|
@@ -507,8 +508,15 @@ The table of the uses (`mark_uses`). Each row is one file. "Cell" is the pixels 
 | `pictures/mark_card.png` | `site` | Smooth | 16 | The heron and the name (cells of 12, 32 pixels under the heron), centred in 1200 x 630 on the dark background |
 | `pictures/mark_animation_home.png`, `mark_animation_home_light.png` | `site` | Smooth | 8 | The tile maps of the home: the frames and the drawn forms of the moves, 3072 x 992 |
 | `pictures/mark_animation_icon.png` | `site` | Cells | 1 | The tile map of the icon of the tab: the frames only, in the light scheme, 384 x 72 |
+| `favicon.ico`, the entry of 32 pixels | `site` | Cells | 1 | The heron alone, centred in 32 x 32 on nothing, in the light scheme: a small icon |
+| `favicon.ico`, the entry of 48 pixels | `site` | Smooth | 2 | The heron alone, 48 x 48, on nothing, in the light scheme |
+| `pictures/icon.svg` | `site` | Cells | 1 | The vector icon: the cells as rectangles, 24 x 24 units, in the light scheme, with the rule of the dark scheme |
+| `pictures/icon_180.png` | `site` | Smooth | 7 | The icon of a phone: the heron alone, centred in 180 x 180 on the dark background |
+| `pictures/icon_192.png` | `site` | Smooth | 8 | An icon of the manifest: the heron alone, 192 x 192, on nothing, in the light scheme |
+| `pictures/icon_512.png` | `site` | Smooth | 21 | An icon of the manifest: the heron alone, centred in 512 x 512 on nothing, in the light scheme |
+| `pictures/icon_512_maskable.png` | `site` | Smooth | 12 | The maskable icon of the manifest: the heron alone, centred in 512 x 512 on the dark background |
 
-The icons of the site have their own table (`site_icons`; `SITE.md`, "The icons"), with the same rule: the icon of 32 pixels is the cells variant at one pixel for a cell, and each other icon is the smooth variant. The generator draws them.
+`SITE.md`, "The icons", says what names each icon and why it has its size and its background.
 
 What the system draws is not a file, and follows the same rule. The program `heron`: smooth, at each of its cell sizes, because its window is a picture where the gradient matters. The boot display: smooth. The bar of the desktop: cells, one pixel for a cell.
 
@@ -566,7 +574,7 @@ The mark has idle animations: 15 of them. They play in three places: on the larg
   - The damage: the stage is 240 tiles of 32 by 32 pixels, each one Picture record with a generation of its own. A picture of the heron clears and draws the rectangle where the part above the water was and the rectangle where it is, and raises the generation of the tiles that these touch. The interface package then draws again only those tiles. A travel changes the tiles under the two rectangles only.
   - The band under the stage, 104 pixels: the name of the animation, its frame and its progress, then the keys. `1` to `9` and `a` to `f` play one animation at once; Space pauses; `.` shows the next frame while the play is paused; `s` plays four times slower; `l` shows the lines between the cells and a white outline around each cell that the frame changed in the still heron; `z` changes the cell size; `g` changes the way of a move.
   - Its exports: `heron.play("dash")` plays one animation, `heron.animations()` gives a table of the names, the frames, the times and the moves, and `heron.grid(1)` or `heron.grid(0)` chooses the way of a move.
-  - A picture of the window is shown whole or not at all. The surface of the window has two pictures: the program draws one while the compositor reads the other, and it draws only when the compositor took the picture before (`display.canvas_free`). With one picture, the compositor can read a damage rectangle after the program painted it with the background and before the program drew the heron in it: the screen then shows a part of the heron. Each picture of the surface is drawn from its own older frame, so a picture of a travel draws the tiles of two steps: the damage stays a few tiles.
+  - A picture of the window is shown whole or not at all, as for each window of the system. The surface of a window has two pictures: the program draws one while the compositor reads the other, and it draws only when the compositor took the picture before (`display.canvas_free`). The compositor never reads a damage rectangle after the program painted it with the background and before the program drew the heron in it. Each picture of the surface is drawn from its own older frame, so a picture of a travel draws the tiles of two steps: the damage stays a few tiles.
   - Each key writes one line on the log, after the program presented the state of the key: `heron: paused` and `heron: plays again`; `heron: slow` and `heron: full speed`; `heron: cells of 8 pixels`; and, for the lines, the way, a step of a frame and an animation key during a pause, the line of what the window shows. An animation of the own order writes `heron: blink played in its own order: 1 frames`; only the first 32 have a line, so a heron that plays for hours does not fill the log.
   - Its log: `heron: dash played: 17 frames, the heron left the window and came back, on the grid` when an animation that a key or a call asked for ends, and once the mean time and the mean damage of its pictures. Both numbers are measures. A change of the lines or of the way writes what the window shows: `heron: shows dash at frame 3 of 17, held, on the grid: the form run, 4 cells to the right and 0 up; the lines of the cells shown; ...`, or `..., held, free: the frame stretched to ... by ... pixels; ...`.
   - The texts of the band are in the font of the cells, 8 pixels for a character in both settings of the font. Each text has a box for its longest value, and the program does not compile when a box is too small.

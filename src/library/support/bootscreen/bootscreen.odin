@@ -34,7 +34,7 @@ import op "modus:contract/operation"
 import "base:intrinsics"
 
 WIDTH :: 976 // The size that the display needs.
-HEIGHT :: 700 // Pixels.
+HEIGHT :: 708 // Pixels: a window of this height fits the screen of 768 lines under the bar and its title.
 PROCESSOR_ROWS :: 16 // The processors that the card of the processors shows.
 PROGRAM_ROWS :: 12 // The programs that the card of the programs shows.
 
@@ -300,27 +300,27 @@ card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, t
 	return graphics.view(canvas, content.x, content.y, content.width, content.height)
 }
 
-// fact draws one line "name value".
+// fact draws "name value", and gives the count of the lines of the value.
+// A value wider than the card is whole, on the lines that it needs (the
+// rule of interface.text_wrap_line): the caller places the next fact under
+// them. The value is empty after the call.
 @(private)
-fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value: ^Text, color: graphics.Color = graphics.COLOR_TEXT) {
+fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value: ^Text, color: graphics.Color = graphics.COLOR_TEXT) -> (lines: int) {
 	write_name(canvas, 0, y, name, FACT_VALUE - 8, graphics.COLOR_DIM)
 	if value.count == 0 {
 		put(value, "not known yet")
 		show(canvas, FACT_VALUE, y, value, graphics.COLOR_DIM)
-		return
+		return 1
 	}
-	// A value longer than the card is cut after its last whole word.
-	room := max(canvas.width - FACT_VALUE, 0) / graphics.CELL_WIDTH
-	if value.count > room {
-		value.count = room
-		for value.count > 0 && value.bytes[value.count] != ' ' {
-			value.count -= 1
-		}
-		for value.count > 0 && value.bytes[value.count - 1] == ' ' {
-			value.count -= 1
-		}
+	rest := string(value.bytes[:value.count])
+	for len(rest) > 0 {
+		line: string
+		line, rest = interface.text_wrap_line(nil, {}, rest, canvas.width - FACT_VALUE)
+		write(canvas, FACT_VALUE, y + lines * LINE, line, color)
+		lines += 1
 	}
-	show(canvas, FACT_VALUE, y, value, color)
+	value.count = 0
+	return lines
 }
 
 FACT_VALUE :: 120 // The x of the value of a fact, in its card.
@@ -669,7 +669,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	// The memory.
 	LEFT_WIDTH :: 568
 	MIDDLE_Y :: 328
-	MIDDLE_HEIGHT :: 178
+	MIDDLE_HEIGHT :: 186 // The card of the machine: the squares of the processors, then seven lines of facts.
 	{
 		area := card(canvas, MARGIN, MIDDLE_Y, LEFT_WIDTH, MIDDLE_HEIGHT, "MEMORY", "Boot_Report.ranges, System_Report", graphics.COLOR_MEMORY)
 		top: u64
@@ -724,8 +724,8 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			put(&text, " used, ")
 			put_number(&text, data.machine.region_count)
 			put(&text, " objects, budgets ")
-			put_number(&text, data.machine.budget_pages)
-			put(&text, " pages")
+			// As a size: the count of pages of a machine of 1 GiB passes the card.
+			put_size(&text, data.machine.budget_pages * info.PAGE_SIZE)
 			show(area, 0, y + 12, &text, graphics.COLOR_TEXT)
 		} else {
 			write(area, 0, y + 12, "now: not known yet", graphics.COLOR_DIM)
@@ -765,7 +765,11 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			put_number(&text, processor.apic_id)
 			show(area, x + 10 - text.count * 4, 2, &text, graphics.COLOR_BACKGROUND)
 		}
-		FACTS :: 28
+		// The six facts, each under the lines of the fact before it. The
+		// name that a processor gives of itself has up to 47 characters,
+		// and the box of a value 29: the card has the height of one fact
+		// of two lines (MIDDLE_HEIGHT).
+		fact_y := 22
 		put_name(&text, boot.firmware_vendor[:])
 		if text.count != 0 {
 			put(&text, " ")
@@ -773,34 +777,33 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			put(&text, ".")
 			put_number(&text, boot.firmware_revision & 0xFFFF)
 		}
-		fact(area, FACTS, "firmware", &text)
+		fact_y += LINE * fact(area, fact_y, "firmware", &text)
 		if boot.framebuffer_width != 0 {
 			put_number(&text, boot.framebuffer_width)
 			put(&text, "x")
 			put_number(&text, boot.framebuffer_height)
 			put(&text, boot.framebuffer_format == u64(info.Pixel_Format.Red_Green_Blue_X) ? " red first" : " blue first")
 		}
-		fact(area, FACTS + LINE, "framebuffer", &text)
+		fact_y += LINE * fact(area, fact_y, "framebuffer", &text)
 		put_name(&text, data.processor_name[:])
-		text.count = min(text.count, 29)
-		fact(area, FACTS + 2 * LINE, "processor", &text)
+		fact_y += LINE * fact(area, fact_y, "processor", &text)
 		if boot.cycle_frequency != 0 {
 			put_number(&text, boot.cycle_frequency / 1_000_000)
 			put(&text, " MHz")
 		}
-		fact(area, FACTS + 3 * LINE, "cycle counter", &text)
+		fact_y += LINE * fact(area, fact_y, "cycle counter", &text)
 		if boot.timer_frequency != 0 {
 			put_number(&text, boot.timer_frequency / 1_000_000)
 			put(&text, " MHz, 1000 ticks/s")
 		}
-		fact(area, FACTS + 4 * LINE, "timer", &text)
+		fact_y += LINE * fact(area, fact_y, "timer", &text)
 		if boot.kernel_size != 0 {
 			put_size(&text, boot.kernel_size)
 			put(&text, " (file ")
 			put_size(&text, boot.kernel_file_size)
 			put(&text, ")")
 		}
-		fact(area, FACTS + 5 * LINE, "kernel", &text)
+		fact(area, fact_y, "kernel", &text)
 	}
 
 	// The files of the boot image: the size strip, then the kinds with

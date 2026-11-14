@@ -1,7 +1,7 @@
 title: The palette sets the scheduling strategy
 date: 2026-11-14
 release: next
-picture: none
+picture: docs/screenshots/palette_strategy.png
 kind: Shown
 guide: docs/DESIGN.md
 

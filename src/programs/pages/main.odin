@@ -42,9 +42,17 @@ import "modus:support/graphics"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-WIDTH :: 688
-HEIGHT :: 668
 MARGIN :: 12
+// The columns of a run, each as wide as its longest text, so that no text
+// meets the next column or the edge of the window: the address (16
+// characters) and the size (two spaces and 9 characters) after the mark;
+// then the rights, at most " read write execute, 2 MiB pages" (32
+// characters); then the part of the kernel half, at most "double fault
+// stack of processor " and a number of three digits (35 characters).
+RIGHTS_X :: MARGIN + 16 + (16 + 2 + 9) * graphics.CELL_WIDTH
+PART_X :: RIGHTS_X + (32 + 1) * graphics.CELL_WIDTH
+WIDTH :: PART_X + 35 * graphics.CELL_WIDTH + MARGIN
+HEIGHT :: 668
 LINE :: 16
 KERNEL_ROWS :: 22
 PROGRAM_ROWS :: 10
@@ -196,7 +204,7 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 		show(canvas, x, y, &text, color)
 		if kernel {
 			part(&text, run.start)
-			show(canvas, 464, y, &text, graphics.COLOR_DIM)
+			show(canvas, PART_X, y, &text, graphics.COLOR_DIM)
 		}
 		line += 1
 	}
@@ -252,8 +260,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Mappings), 0, u64(uintptr(&kernel_half)), size_of(op.Mapping_Report))
 		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Mappings), 1, u64(uintptr(&program_half)), size_of(op.Mapping_Report))
-		draw(window.canvas)
-		display.present(&window)
+		// The canvas is the picture that the compositor does not read,
+		// after it took the picture before: the whole canvas is drawn.
+		if display.canvas_wait(&window) {
+			draw(window.canvas)
+			display.present(&window)
+		}
 		if !logged {
 			logged = true
 			system.log("pages: the kernel half: ", kernel_half.pages, " pages in ", kernel_half.run_count, " runs, ", kernel_half.write_execute_pages, " write and execute, ", kernel_half.guard_pages, " guard pages of ", kernel_half.guards_expected)
