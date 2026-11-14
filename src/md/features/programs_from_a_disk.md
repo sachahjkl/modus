@@ -88,20 +88,22 @@ The tool writes a data disk of the format of the storage service that holds the 
 
 The writer of the tool is checked by the open of the storage service: a host test opens the image with the code that the service uses, and compares each object byte for byte and each hash.
 
-### The grants of a disk program: proposed, not decided
+### The grants of a disk program
 
-A disk program has no grant. The next step gives the principal a command that grants one. Three choices are open (`docs/DECISIONS.md`, "Open questions for the owner"); this section states the form that is proposed for each, and why.
+A disk program has no grant today. The next step gives the principal a command that grants one (`docs/DECISIONS.md`, D-260).
 
-**What a grant names.** The hash of the file, never its name: `allow(hash, grant)` and `disallow(hash, grant)`, from a caller that acts for the principal. The root service keeps a table of rows, one for each hash: its grants and its budget. A file with another hash, under the same name, has no row. This follows from the rule above: what runs is named by its hash.
+**The nickname.** The name of the entry of a file in the store `programs` is its nickname: the principal chooses it, and the file never does. Each display shows the nickname, with the hash of the file faded beside it: the palette, the menu of the programs, the monitor, a stop report. Two hashes never share a nickname: the store refuses an entry whose name another hash has. A reader then tells programs apart by a word, and still sees what runs.
 
-**Where the store of a disk program is.** A private store is named today by the name of its program, and a name gives nothing to a disk program. Two forms come from the identity alone, and both have a fault:
+**What a grant names.** The hash of the file: `allow(nickname, grant)` and `disallow(nickname, grant)`, from a caller that acts for the principal, write the row of the hash that the nickname names now. A file with another hash has no row, whatever its name.
 
-- the store has the name of the program: two different files with one name share a store, and a file that takes a name takes the data of another;
-- the store has the hash of the file: a new version of a program has another hash, and loses its data.
+**The store of a disk program.** By default each disk program gets an isolated store of its own, attached to its nickname, not to its hash.
 
-The proposed form: the principal names the store in the grant, `allow(hash, "store", "my_notes")`. The store is then an object that the principal owns and lends: the same store goes to the next version of a program by one more command, and to no file that the principal did not name. No rule derives a store from a name or from a hash.
+- The store of a hash: a new version of a program has another hash, and loses its data.
+- The store of the nickname: an update is the principal pointing the nickname to a new hash, and the store follows. The palette says it before the change is done: "this file will get the data of notes". A file under another nickname gets a new, empty store. No file chooses its store.
 
-**How long a row lasts.** Proposed: a row lasts until the machine stops, in the memory of the root service. A row that survives a start is a file that the root service reads before the principal unlocked a store, and that a reader of the disk can change: it needs the encrypted stores of a principal first.
+The size of the store is a line of the budget that the module asks for (`src/md/features/module_budget_request.md`): the starter accepts it, limits it or widens it, by a policy that the principal sets.
+
+**How long a grant lasts.** The table of the grants persists across a restart. It is an object of the store of the principal, signed with a key that is derived from the passphrase, as the key of the unlock is. The root service reads it after the unlock, and refuses a table whose signature fails: a reader of the disk who has no passphrase cannot add a grant. The persistence is a setting: global, with an exception for each program. The default of a desktop is to persist.
 
 **The grants that no command gives.** A disk program never gets the ring of the root service, a right over the machine or a device, the right to debug, or the right to act for the principal: each one is the whole machine, or the principal.
 

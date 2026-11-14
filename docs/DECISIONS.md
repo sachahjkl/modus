@@ -1277,6 +1277,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. Left: the characters of Unicode.
 - Where: `FONTS.md`, "The settings"; `GLOSSARY.md`, "Setting"; `FIRST_MILESTONE.md`, choice 764.
 
+### D-261 The palette builds its form from the descriptions: a control for each field, a mode for each entry, a place from the windows
+- 2026-11-14. Decided by: the owner.
+- Decision: the palette shows each entry in a mode (run, destroy, go to) and each field of a command with a control that the field chooses: a row of buttons for a closed list of a few values, a list with kind icons for a long one, a number with its unit for a size or a time, a text field for a free text. Enter runs the command. An entry whose action has a place in a window offers to go there: an element of a window built with the interface package names the export that it acts on, the window layer gives these names to the compositor, and the compositor raises the window and sends it an event that puts the focus on the element. Nothing is written for one command: the control comes from the field, the mode from the facts of the entry, the place from the window. A provider gives data and never drawing: the palette chooses from a closed set of controls.
+- Words: "j'aimerais que tu prototype un version \"next gen\" de la palette, (gen ui un peu) ou l'idée c'est que la palette est dynamique et capable de muter pour afficher le \"mode\" de l'action souhaitée. Et si c'est une action \"localisée\" (genre un setting) il faut qu'elle soit capable d'exposer une procedure pour \"goto\". [...] Et par défaut la commande se \"run\"." Then: "Idéalement ça devrait être générique". Then, of the three rules: "excellent aussi tes propositions, ont est ALIGNÉS".
+- State: decided; the prototype is in progress.
+- Where: `src/md/features/palette.md`, "The form of an entry, from its descriptions".
+
 ## 10. The console and the tools
 
 ### D-142 The console is a normal program with a real language
@@ -1348,6 +1355,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "pas de cas particulier [...] on doit pas hardcoder. je te fais confiance. je pense: programmes simples [...] (anticiper que un jour les programmes seront sur disque, pas hardcodé que les modules sont dans la boot image, si jamais c'est pas déjà le cas)"; for the other machine the owner chose "Par remote sur QUIC".
 - State: done. A grant whose object belongs to one program (a private store, a terminal, a device, a network endpoint, a service) refuses the debug access: the debugger would write what only that program can write.
 - Where: `TOOLS.md`, "The debugger: the design".
+
+### D-260 The grants of a disk program: a nickname, a store of the nickname, a table signed by the key of the principal
+- 2026-11-14. Decided by: the owner.
+- Decision: a disk program has a nickname that the principal chooses: the name of its entry in the store `programs`. Each display shows the nickname, with the hash of the file faded beside it; the file never chooses its nickname, and two hashes never share one. A grant names the hash. By default a disk program gets an isolated store of its own, attached to its nickname: an update is the principal pointing the nickname to a new hash, and the store follows, which the palette says before it is done; another file under another nickname gets a new, empty store. The size of the store is a line of the budget that the module asks for (D-254): the starter accepts, limits or widens it by a policy that the principal sets. The table of the grants persists across a restart: it is kept in the store of the principal, signed with a key derived from the passphrase, and read after the unlock; a table whose signature fails is refused. The persistence is a setting, global with an exception for each program; the default of a desktop is to persist.
+- Words: "1. Il faudrait quand même pouvoir les identifier avec un \"sobriquet\" (et on affiche son empreinte en faded à côté) t'as capté. Sinon ce sera ingérable 2. Dans un store sandboxé isolé par defaut, per \"hash\" avec la \"taille\" souhaitée exposée par le module, mais dynamique, et contrôlée (policy ?) [...] 3. Ça ok, je pense. Avec, pour le desktop, l'option de configurer global/per program (avec des sensible defaults pour un environnement desktop de persistance au redémarrage évidemment)". Of the two corrections (the store of the nickname, not of the hash; a table signed by the key of the principal): "Oui aux deux, très bien, excellent aussi tes propositions, ont est ALIGNÉS".
+- State: decided, not built.
+- Where: `src/md/features/programs_from_a_disk.md`, "The grants of a disk program".
 
 ### D-258 The window of the debugger is a client of the service, with no right over a program
 - 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
@@ -1885,7 +1899,7 @@ Each question waits for an answer of the owner. The proposal is what holds until
 - **Q-12 The machine tests in the site workflow.** Settled by D-194: the full check commits its numbers in the measure record; the workflow runs no machine test.
 - **Q-13 The cache of the site workflow.** The cache of GitHub Actions now, or FlakeHub Cache (D-170).
 - **Q-14 The tone of the posts.** Settled by D-238.
-- **Q-15 The grants of a disk program.** Three choices (`src/md/features/programs_from_a_disk.md`, "The grants of a disk program: proposed, not decided"): what a grant names, where the store of a disk program is, and how long a grant lasts. Proposal: a grant names the hash of the file; the principal names the store in the grant, so that the store goes to the next version by one more command and to no other file; a grant lasts until the machine stops, until the stores of a principal are encrypted.
+- **Q-15 The grants of a disk program.** Settled by D-260.
 
 ## Conflicts
 

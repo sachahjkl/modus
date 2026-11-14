@@ -93,6 +93,40 @@ The grant that `scheduler` gains is Serve: the right to be called. Each caller s
 
 Refused: a view that leaves its choice behind (above); a scroll bar that the panel draws by itself with its own hit test (the element of the interface package already holds the press, the drag and the repeat).
 
+## The form of an entry, from its descriptions
+
+The panel shows each entry in the form that its action asks for, and offers to go where the action lives (`docs/DECISIONS.md`, D-261). Nothing is written for one command: three rules derive the form.
+
+**Rule 1: the control comes from the field.** One table of the support package of the palette gives a control for a field, from what the field is:
+
+| The field | The control |
+|---|---|
+| A closed list of at most 6 values | A row of buttons, the value in use marked |
+| A closed list of more values | The list of candidates, with kind icons |
+| An Integer with a value kind Size or Time | A number, with its unit after it |
+| A free Text | A text field |
+
+A closed list is a fact of the candidates: the provider says, in the answer `Candidates_Ready`, whether its candidates are the only values that the parameter takes, or suggestions. The values of a setting are closed: the entries of one setting become one row, `font  [vector] spleen`, in place of one entry for each value. Left and Right choose a value, Enter sets it.
+
+**Rule 2: the mode comes from the facts of the entry.** Three modes: run, destroy, go to. The band of the panel names the mode of the chosen entry and its key: an entry with the flag `Destroys` is destroy, with its second Enter; an entry with a place offers go to on Shift and Enter; each other entry runs on Enter. Enter runs by default.
+
+**Rule 3: the place comes from the window.** An element that a program builds with the interface package can name the action that it acts on: a text, `settings.set:font`. The window layer sends these names to the compositor in one record of the ring of its window, when its set changes. The compositor keeps the places of each window. An entry whose action an open window names offers go to. On go to, the compositor raises the window, and sends it an event with the name; the window layer puts the focus on the element, and the next frame shows it. A program writes no code for go to: it names an element when it builds it.
+
+**Why a provider gives data only.** The panel is in the compositor, which reads each hostile surface. A provider that sent a widget, a layout or a drawing would draw in the program that holds each pixel. The provider gives values, candidates and facts; the panel chooses from its closed set of controls. A program gives names of places, never a rectangle: the window layer finds its own element.
+
+**Refused forms.**
+
+- **A form for each command**, written in the panel or in the provider: each new command and each program of another project needs code in the compositor.
+- **A mode "set" beside run.** A setting is a command whose field is a closed list: its row of buttons comes from rule 1, and it runs.
+- **Go to as an export of each program.** Each program writes the same code, and a program with no service cannot be called. The window layer of each program already holds its elements and its focus.
+- **A place as a rectangle that the program gives.** A program can name a rectangle over another window, or one that moves after the next frame. A name, found by the window layer at the time of the event, cannot point outside its own window.
+
+**The subtle points.**
+
+- **A name of a place is hostile input** for the compositor: it is copied with a bound, and compared byte by byte with the action of an entry; it is never shown as the name of the entry.
+- **A window that closes** takes its places with it: the compositor drops them with the window.
+- **Two windows that name one action**, as two windows of one program: go to takes the window in front.
+
 ## The film
 
 A film of the palette needed a change of the tool: the old step that took pictures stopped the scenario, so a film had no key during its pictures. A worker thread now takes the pictures while the scenario types and waits for its conditions. The capture stays the screendump of QEMU: another capture path needs a display server of the host, and a window can open. See [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The film".
@@ -107,3 +141,4 @@ Left:
 - The wheel of the pointing device does not exist in the system: the input service reads no wheel.
 - A Table result is not drawn in the panel: it opens in the console.
 - A second provider (a service that runs its own entries) waits for a real need.
+- The form of an entry from its descriptions (above): decided, the prototype in progress.
