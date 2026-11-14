@@ -2,9 +2,9 @@
 
 ## Purpose
 
-A developer adds a program to a machine with no new boot image. The module file of the program is an object in a store of the storage service. The root service reads it, checks it, and starts it. Such a program is a disk program ([`docs/GLOSSARY.md`](../../docs/GLOSSARY.md), "Disk program").
+A developer adds a program to a machine with no new boot image. The module file of the program is an object in a store of the storage service. The root service reads it, checks it, and starts it. Such a program is a disk program ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Disk program").
 
-The guide is [`docs/MODULE_CONTRACT.md`](../../docs/MODULE_CONTRACT.md), "A program from a disk".
+The guide is [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "A program from a disk".
 
 ## Constraints
 
@@ -92,7 +92,7 @@ The writer of the tool is checked by the open of the storage service: a host tes
 
 - **The command gives a name only, and the entry gives the hash.** The storage service then chooses what runs. The check of the root service would compare the bytes with a hash that the same party gave: it finds damage, not a changed file.
 - **The name of the entry is the hash, and the program has no name.** A reader of the tree then sees 64 digits for each program. The commands `stop`, `grants` and `revoke` name a program by a name.
-- **The file states the grants that it asks for.** A file then grants itself. In the model of the storage, a package states the grants that it asks for and a principal grants them ([`docs/STORAGE.md`](../../docs/STORAGE.md), "1. The model"): the statement is data for the principal, never a grant.
+- **The file states the grants that it asks for.** A file then grants itself. In the model of the storage, a package states the grants that it asks for and a principal grants them ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "1. The model"): the statement is data for the principal, never a grant.
 - **The storage service starts the program.** It would need the right to create a program with a window and a log. Then two programs create access.
 - **The root service reads the disk.** It would hold the block ring and the code of the format. The storage service is the one client of the data disk.
 - **The console reads the bytes and gives them to the root service.** This is a good form for bytes that come from the network. It needs a second path for the bytes, a memory object that the console lends. It is left; the check of the hash is the same.
@@ -103,7 +103,7 @@ The writer of the tool is checked by the open of the storage service: a host tes
 
 ## Subtle points
 
-- **The hash is computed on the bytes, not read from the entry.** The entry of an object holds the hash of the object, which differs from the BLAKE3 hash of its bytes when the object has a hole before its last block ([`docs/STORAGE.md`](../../docs/STORAGE.md), "The hash of an object"). The root service reads the bytes, so the hash of a module stays the BLAKE3 hash of its file.
+- **The hash is computed on the bytes, not read from the entry.** The entry of an object holds the hash of the object, which differs from the BLAKE3 hash of its bytes when the object has a hole before its last block ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "The hash of an object"). The root service reads the bytes, so the hash of a module stays the BLAKE3 hash of its file.
 - **A length from the storage service is copied, then checked.** The size is read one time. Each count of bytes is compared with what is left before a copy.
 - **The name of the caller of the connection is `programs`.** The root service is no row of its own table of started programs, so the connection has a caller record of its own. Its grant is the limit of the store, with no grant to act for a principal.
 - **The connection ends with the load.** The root service holds no handle of the storage service between two loads.
@@ -118,6 +118,6 @@ Left:
 
 - **Grants for a disk program.** A command with which the principal gives a disk program a grant or a larger budget. The identity that such a grant names must not be the name alone.
 - **A file that comes without the tool.** A console command that stores bytes that came from the network in the store `programs`.
-- **Imports from the same store.** The load source of a disk program is the boot image. An import by hash from the store needs the index from a hash to an object ([`docs/STORAGE.md`](../../docs/STORAGE.md), "5. Not built: the next steps").
+- **Imports from the same store.** The load source of a disk program is the boot image. An import by hash from the store needs the index from a hash to an object ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "5. Not built: the next steps").
 - **A list.** No command lists the entries of the store `programs` with their hashes.
 - **A service from a disk.** A disk program has no service ring, so no program connects to it.
