@@ -2,7 +2,7 @@
 
 # modus
 
-An operating system in which each program reaches only what it was given.
+A fast, modular operating system where each program gets only what you give it.
 Programs call each other's functions with typed values, never with text to parse, and a console calls the same functions by name. Every change that a program makes is kept at once, with its earlier versions, so no program has a save action. It starts to a desktop with a console, developer tools and demonstration programs.
 
 ## What makes it different

@@ -1850,7 +1850,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-10. Decided by: the owner.
 - Decision: the kernel and the system are named `modus`. The rename of the code, the tool, the bar and the README is one step of its own.
 - Words: "I think that we will call this kernel modus" (recorded in English).
-- State: in force. The bar and the README show the mark; the title of `README.md` is "modus" in the rewrite of the guides. Not done yet: the description of `flake.nix` still says "Next-Gen Kernel".
+- State: in force. The bar and the README show the mark; the title of `README.md` is "modus" in the rewrite of the guides; the description of `flake.nix` is the sentence of D-262.
 - Where: `FIRST_MILESTONE.md`, "Next steps", item 11.
 
 ### D-187 The repository is renamed modus
@@ -1880,6 +1880,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "aussi, va falloir renommer kerneltool en modustool je pense"
 - State: done.
 - Where: `TOOLS.md`; `AGENTS.md`, "Work".
+
+### D-262 The description of the project is one short sentence of what it gives
+- 2026-11-14. Decided by: the owner.
+- Decision: the description of the project, in the lead of `README.md`, which the site reads, in `flake.nix` and in the repository, is "A fast, modular operating system where each program gets only what you give it." "Secure" is said as the fact that it means here. The coordinator objected to "fast" as a claim with no fact; the owner kept it, and the measured numbers of the README and of the site stand behind it.
+- Words: "change la description du projet à : A fast, secure and modular operating system. Ou qqchose comme ça, qui fait sens avec les objectifs du projet". Then: "Un truc court simple et impactant". Then, of a sentence with no word of speed: "Non c'est pas assez complet". Then, of a longer one: "Trop de blabla".
+- State: done.
+- Where: `README.md`; `flake.nix`; `SITE.md`, "What the owner must decide".
 
 ## Open questions for the owner
 
