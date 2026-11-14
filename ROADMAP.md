@@ -20,11 +20,11 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The IOMMU.** A device reaches only the memory that its service was granted. A device service that has a fault then damages no other program.
 - **A guest.** A program runs another system in a guest, with the virtualization support of the processor. The first guest writes to a port, and the write arrives as a record in the program that runs it. [Design](src/md/features/foreign_systems.md)
 - **A window never shows a picture that is being drawn.** Each program draws its next picture apart, and the compositor shows it only when it is complete, as `terminal`, `manual` and `heron` do today. A window then shows no frame that mixes two pictures. [Design](src/md/features/heron_program.md)
-- **The option for the debug information in the compiler of the Odin project.** The kind of debug information that adds no instruction is offered to the Odin project. A developer then builds the modules of the system with the compiler of that project, with no fork. [Design](src/md/infrastructure/debug_information_and_code.md)
 - **No text over a text, and no cut text, in five windows.** The two pages of the program `manual` that show a module and its tables draw each text in its own box, the window of `notes` draws its note whole, and the stack trace of a stop report wraps in the windows of `errors` and of `inspect`. A reader then reads every line of these windows.
 
 ## Later
 
+- **The option for the debug information in the compiler of the Odin project.** The kind of debug information that adds no instruction is offered to the Odin project. A developer then builds the modules of the system with the compiler of that project, with no fork. [Design](src/md/infrastructure/debug_information_and_code.md)
 - **Linux in a guest.** A principal runs Linux, and the programs of Linux, in a guest beside the programs of the system. [Design](src/md/features/foreign_systems.md)
 - **Programs of NT.** A program of NT runs through Wine inside the Linux guest, with no work of its own in the system. [Design](src/md/features/foreign_systems.md)
 - **Acceleration by a GPU.** The one graphics interface of the system runs in software first, then on the virtual GPU of the test machine, then on a real GPU through a driver domain. The GPU then draws the windows and the pictures, and not the processor. [Design](src/md/features/gpu_access.md)
