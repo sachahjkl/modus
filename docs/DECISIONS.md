@@ -1249,6 +1249,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done: programs, windows, the commands of the console with their arguments, the settings, the prefixes. The palette runs the row that is drawn: the choice is an entry, and a list that arrives late does not move it. Not done: the film; the scheduling strategy, which no command reaches.
 - Where: `DESIGN.md`, section 9; `CONSOLE.md`.
 
+### D-252 Every surface has two pictures: a window shows a whole frame or the frame before it
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: `display.open` always creates two pictures and has no option. The compositor refuses a surface with memory for less than two pictures, shows a surface after its first `Present`, refuses a `Present` that names no picture, and takes from a ring at most the records that it held at the start of the turn. The window layer keeps the debt of each picture. A program waits for the compositor on the read count of its ring, with the hang bound; a service asks and never waits. The cost is the memory of a second picture for each window, paid by the budget of its program: the test machine has 1 GiB.
+- Words: "tout tout faire"
+- State: done. The full check passes. Left: a program that draws only on its own change does not draw a left-out frame again until its next change; no check reads the pixels of the screen.
+- Where: `INTERFACE.md`, section 2.1; `src/md/infrastructure/whole_frame.md`; `FIRST_MILESTONE.md`, choice 751.
+
 ## 10. The console and the tools
 
 ### D-142 The console is a normal program with a real language
