@@ -215,3 +215,40 @@ candidates_and_arguments_are_checked :: proc(t: ^testing.T) {
 	_, _, good = argument_unpack({0 = u64(Value_Kind.Text) << 8 | 1 << 24})
 	testing.expect(t, !good)
 }
+
+// The act name, the name of a setting and the name of a value: each is
+// checked as the other texts, and a setting row is made of setting entries
+// whose buttons each have a name.
+@(test)
+an_act_name_and_a_setting_row_are_checked :: proc(t: ^testing.T) {
+	entry: Entry
+	entry.kind = .Setting
+	entry.name_length = u8(copy(entry.name[:], "set font to spleen"))
+	entry.signature_length = u8(copy(entry.signature[:], "set font to spleen"))
+	entry.setting_value = 1
+	entry.act_name_length = u8(copy(entry.act_name[:], "settings.set:font"))
+	entry.setting_name_length = u8(copy(entry.setting_name[:], "font"))
+	entry.value_name_length = u8(copy(entry.value_name[:], "spleen"))
+	testing.expect_value(t, entry_problem(&entry), Problem.None)
+	entry.value_name_length = 0 // A button with no name.
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+	entry.value_name_length = VALUE_NAME_CAPACITY + 1
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Length)
+	entry.value_name_length = 6
+	entry.act_name[3] = 7
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Byte)
+	entry.act_name[3] = 't'
+	entry.act_name_length = ACT_NAME_CAPACITY + 1
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Length)
+	entry.act_name_length = 17
+	entry.reserved_end = 1
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+	entry.reserved_end = 0
+	// A command can have an act name, and joins no setting row.
+	entry.kind, entry.setting_value = .Command, 0
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+	entry.setting_name_length, entry.value_name_length = 0, 0
+	testing.expect_value(t, entry_problem(&entry), Problem.None)
+	entry.value_name_length = 6 // A value with no setting.
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+}

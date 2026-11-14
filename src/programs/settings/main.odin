@@ -310,10 +310,23 @@ draw :: proc "contextless" (window: ^display.Window) {
 			builder: interface.Text_Builder
 			interface.text_put(&builder, description.name)
 			interface.text_put(&builder, value_name)
-			if interface.button(&frame, area, interface.identity(interface.text_of(&builder)), value_name, choice.values[setting] == u32(index)).activated {
+			element := interface.identity(interface.text_of(&builder))
+			in_use := choice.values[setting] == u32(index)
+			if interface.button(&frame, area, element, value_name, in_use).activated {
 				values := choice.values
 				values[setting] = u32(index)
 				change(values)
+			}
+			if in_use {
+				// The palette sets this setting with the export set, and
+				// its entry has the same act name: "settings.set:" and the
+				// name of the setting (src/programs/console/palette_provider.odin).
+				// The button of the value in use is where go to puts the
+				// focus.
+				act: interface.Text_Builder
+				interface.text_put(&act, "settings.set:")
+				interface.text_put(&act, description.name)
+				interface.element_act_name(&frame, element, interface.text_of(&act))
 			}
 		}
 	}

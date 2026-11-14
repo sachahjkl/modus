@@ -22,6 +22,7 @@
 package palette
 
 import "modus:contract/palette_table"
+import "modus:support/display"
 import "modus:support/interface"
 import "modus:support/line_editor"
 
@@ -43,7 +44,7 @@ Entry_Kind :: enum u8 {
 	Close_Window = 2, // The close of a window: the choice stops its program, after a second Enter.
 	Command      = 3, // A command of the palette provider: the provider runs it.
 	Export       = 4, // An export of a module or of a service, which the palette provider calls.
-	Setting      = 5, // One value of one setting of the machine, or of a state that the palette provider sets (the scheduling strategy): the provider sets it.
+	Setting      = 5, // A setting of the machine, or a state that the palette provider sets (the scheduling strategy): a setting row with one button for each value, or one value alone. The provider sets it.
 }
 
 // The facts of an entry that are true or false.
@@ -80,6 +81,13 @@ NO_ROW :: -1 // No row: an empty list has no choice, and a pointer over no row i
 #assert(ROW_CAPACITY >= line_editor.RANKED_CAPACITY)
 #assert(ENTRY_CAPACITY >= palette_table.ENTRY_CAPACITY + 128)
 #assert(NAME_CAPACITY == palette_table.NAME_CAPACITY)
+#assert(palette_table.ACT_NAME_CAPACITY == display.ACT_NAME_CAPACITY)
+#assert(palette_table.SETTING_NAME_CAPACITY <= NAME_CAPACITY)
+
+// The values of one setting row at most: a closed list of more values is a
+// list, not a row of buttons
+// (src/md/features/palette.md, "The form of an entry, from its descriptions").
+BUTTON_CAPACITY :: 6
 
 // One entry of the palette: a thing that the input can choose.
 Entry :: struct {
@@ -89,8 +97,18 @@ Entry :: struct {
 	name_length: u8, // The bytes of `name` in use.
 	flags:       Entry_Flags, // Its facts.
 	windows:     u8, // A program: the windows that it has now.
-	number:      u32, // For the owner of the source: the index of the thing in its own table. An entry of a provider: its index in the snapshot of the list.
+	// A setting row: its values, the entries of the snapshot from `number`
+	// on, 1 to BUTTON_CAPACITY. 0: the entry is no setting row.
+	value_count: u8,
+	number:      u32, // For the owner of the source: the index of the thing in its own table. An entry of a provider: its index in the snapshot of the list; of a setting row, the index of its first value.
+	act:         u64, // An entry of a provider with an act name: display.act_name_hash of it. 0: none, and no window can offer go to.
 	name:        [NAME_CAPACITY]u8, // The name that the list shows and that the typed part matches.
+}
+
+// entry_is_setting_row says if an entry is a setting row: one row with a
+// button for each value of one setting.
+entry_is_setting_row :: proc "contextless" (entry: ^Entry) -> bool {
+	return entry.kind == .Setting && entry.value_count > 0
 }
 
 // entry_name gives the name of an entry. It is valid while the entry is.
@@ -205,6 +223,15 @@ Panel :: struct {
 	sent_name:     [NAME_CAPACITY]u8, // Running and Result: the name of the entry that the panel sent.
 	sent_length:   int, // The bytes of `sent_name` in use.
 	result:        Result, // Result: what the entry gave.
+	// The value that Left and Right chose on a setting row, by the name of
+	// the row: a new list keeps it on its row. Another row starts at its
+	// value in use (value_chosen).
+	value_row:        [NAME_CAPACITY]u8,
+	value_row_length: int, // The bytes of `value_row` in use. 0: no value was chosen.
+	value_choice:     int, // The chosen value of that row, from 0.
+	// For the owner: an open window names the act name of the chosen
+	// entry, so the band offers go to. The owner sets it before each draw.
+	go_to_offered:    bool,
 }
 
 // typed_text gives the typed part.
@@ -267,7 +294,25 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 		return
 	}
 	list.provider = .Ready
-	for &given, index in list.snapshot.entries[:list.snapshot.entry_count] {
+	given_index := 0
+	// The entries before this index are the values of a setting with more
+	// values than a row holds: each one is an entry of its own.
+	singles_end := 0
+	for given_index < list.snapshot.entry_count {
+		given := &list.snapshot.entries[given_index]
+		act := given.act_name_length > 0 ? display.act_name_hash(string(given.act_name[:given.act_name_length])) : 0
+		// The values of one setting, side by side in the table, are one
+		// row: the panel sends the entry of the chosen value, as it sends
+		// one entry.
+		if given_index >= singles_end {
+			run := setting_run_length(&list.snapshot, given_index)
+			if run > 0 && run <= BUTTON_CAPACITY {
+				entry_add(list, recents, {kind = .Setting, value_count = u8(run), number = u32(given_index), act = act}, string(given.setting_name[:given.setting_name_length]), "")
+				given_index += run
+				continue
+			}
+			singles_end = given_index + run
+		}
 		flags: Entry_Flags
 		if .Destroys in given.flags {
 			flags += {.Destroys}
@@ -289,9 +334,35 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 			// it gives a list that the panel draws again.
 			mark = .In_Use
 		}
-		entry_add(list, recents, {kind = kind, mark = mark, flags = flags, number = u32(index)}, string(given.name[:given.name_length]), "")
+		entry_add(list, recents, {kind = kind, mark = mark, flags = flags, number = u32(given_index), act = act}, string(given.name[:given.name_length]), "")
+		given_index += 1
 	}
 	return .None, 0
+}
+
+// setting_run_length gives the count of the entries of a snapshot from
+// index on that are the values of one setting: a Setting or a
+// Provider_Setting entry with the name of a setting, then each entry after
+// it with the same kind, the same name of a setting and the same act name.
+// 0: the entry at index has no name of a setting.
+setting_run_length :: proc "contextless" (snapshot: ^palette_table.Snapshot, index: int) -> int {
+	if index < 0 || index >= snapshot.entry_count {
+		return 0
+	}
+	first := &snapshot.entries[index]
+	if first.setting_name_length == 0 {
+		return 0
+	}
+	setting_name := string(first.setting_name[:first.setting_name_length])
+	act_name := string(first.act_name[:first.act_name_length])
+	count := 1
+	for &next in snapshot.entries[index + 1:snapshot.entry_count] {
+		if next.kind != first.kind || string(next.setting_name[:next.setting_name_length]) != setting_name || string(next.act_name[:next.act_name_length]) != act_name {
+			break
+		}
+		count += 1
+	}
+	return count
 }
 
 // entries_collect makes the entries of the list of a panel again from the
@@ -438,7 +509,7 @@ panel_drawn :: proc "contextless" (panel: ^Panel) {
 // action does nothing while the choice is not drawn (Panel.choice_undrawn).
 action_runs :: proc "contextless" (action: Action) -> bool {
 	#partial switch action {
-	case .Run, .Confirm, .Submit, .Submit_All, .Open_In_Console:
+	case .Run, .Confirm, .Submit, .Submit_All, .Open_In_Console, .Go_To:
 		return true
 	}
 	return false
@@ -585,6 +656,8 @@ list_content :: proc "contextless" (list: ^List) -> u64 {
 			entry := &list.entries[row.entry]
 			flags := transmute(u8)entry.flags
 			hash = number(hash, u64(entry.kind) | u64(entry.mark) << 8 | u64(flags) << 16 | u64(entry.windows) << 24 | u64(entry.number) << 32)
+			hash = number(hash, u64(entry.value_count))
+			hash = number(hash, entry.act)
 			hash = mix(hash, entry.name[:entry.name_length])
 		}
 	}

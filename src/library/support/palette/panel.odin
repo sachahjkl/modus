@@ -85,7 +85,9 @@ row_at :: proc "contextless" (panel: ^Panel, panel_x, panel_y, x, y: int) -> int
 // form, or the point is on no candidate.
 candidate_at :: proc "contextless" (panel: ^Panel, panel_x, panel_y, x, y: int) -> int {
 	form := &panel.form
-	if panel.state != .Arguments || !form.active {
+	if panel.state != .Arguments || !form.active || field_control(form, form.current) == .Buttons {
+		// A row of buttons takes the keys only: the list area holds no
+		// candidate under the pointer.
 		return NO_ROW
 	}
 	if part_at(panel_x, panel_y, x, y) != .List || x < panel_x + BORDER || x >= rows_right(panel_x, form.shown_count) {
@@ -293,6 +295,15 @@ setting_in_use :: proc "contextless" (panel: ^Panel, entry: ^Entry) -> bool {
 	if entry.mark == .In_Use {
 		return true
 	}
+	// A setting row: one of its values is in use; its line says which.
+	if entry_is_setting_row(entry) {
+		for value in 0 ..< int(entry.value_count) {
+			if value_in_use(panel, entry, value) {
+				return true
+			}
+		}
+		return false
+	}
 	given := given_of(panel.list, entry)
 	if given == nil || given.kind != .Setting || int(given.setting) >= len(panel.settings_in_use) {
 		return false
@@ -393,6 +404,10 @@ candidate_icon :: proc "contextless" (kind: palette_table.Candidate_Kind) -> (ic
 		return kind_icons.cells_of_value_kind(.Module), graphics.value_kind_color(value_kinds.Value_Kind.Module, false)
 	case .Grant:
 		return kind_icons.cells_of_value_kind(.Grant), graphics.value_kind_color(value_kinds.Value_Kind.Grant, false)
+	case .Strategy, .Setting:
+		// A strategy is a value of a state that the provider sets, as a
+		// setting is: the icon and the color of a setting row.
+		return kind_icons.cells_of_desktop_kind(.Setting), graphics.COLOR_TEXT
 	}
 	return nil, 0
 }
@@ -426,6 +441,11 @@ HEADING_WINDOWS :: "windows"
 HEADING_PROGRAMS :: "programs"
 PLACEHOLDER :: "type a part of a name"
 KEYS_END :: "   esc: close"
+MODE_RUN :: "enter: run" // The mode of an entry that runs: each entry that does not destroy.
+MODE_DESTROY :: "enter enter: destroy" // The mode of an entry that destroys: a second Enter runs it.
+MODE_GO_TO :: "shift enter: go to" // An open window names the act name of the entry.
+MODE_GAP :: "   " // Between two texts at the right of the input band.
+WORDS_OF_BUTTONS :: "left, right: choose a value   tab: take it"
 KEYS_OF_PREFIXES :: "> commands  @ windows  : settings  ? manual"
 KEYS_OF_ARGUMENTS :: "tab: next field   enter: run   esc: back"
 KEYS_OF_ARGUMENTS_MORE :: "tab, enter: next field   ctrl enter: run   esc: back"
@@ -438,6 +458,67 @@ NOTE_REFUSED_PROVIDER :: "entries, commands refused"
 WORD_OF_COUNT :: "entries"
 RESULT_CALL_TOP :: 8 // From the top of the list area to the line of the call of a result.
 RESULT_LINES_TOP :: 40 // From the top of the list area to the first line of a result.
+
+// mode_words writes the mode of an entry and its key, as the input band
+// says it: "enter: run", "enter enter: destroy", and "shift enter: go to"
+// after it when an open window names the act name of the entry.
+mode_words :: proc "contextless" (builder: ^interface.Text_Builder, entry: ^Entry, go_to: bool) {
+	interface.text_put(builder, entry_destroys(entry) ? MODE_DESTROY : MODE_RUN)
+	if go_to {
+		interface.text_put(builder, MODE_GAP)
+		interface.text_put(builder, MODE_GO_TO)
+	}
+}
+
+// band_text_end gives the x, from the left of the panel, after what the
+// input band shows of the typed part with its caret, or after its
+// placeholder: the words at the right of the band start 16 pixels after it
+// at the least. The numbers are those of interface.text_input_line.
+band_text_end :: proc "contextless" (table: ^interface.Draw_Table, typed: string) -> int {
+	cell := graphics.CELL_WIDTH * INPUT_SCALE
+	caret := 2 * INPUT_SCALE
+	if len(typed) == 0 {
+		return interface.TEXT_INPUT_LINE_MARGIN + cell + interface.text_measured_width(table, interface.Font{kind = .Interface, scale = INPUT_SCALE}, PLACEHOLDER)
+	}
+	fit := max((PANEL_WIDTH - 2 * interface.TEXT_INPUT_LINE_MARGIN - caret) / cell, 1)
+	return interface.TEXT_INPUT_LINE_MARGIN + min(len(typed), fit) * cell + caret
+}
+
+// band_words_draw draws the words at the right of the input band of the
+// search: the word of the prefix and the mode of the chosen entry, in the
+// room that the typed part leaves. When both do not fit, the mode stays;
+// when it does not fit either, the word of the prefix alone. It gives true
+// when the band shows the mode.
+@(private)
+band_words_draw :: proc "contextless" (table: ^interface.Draw_Table, panel: ^Panel, chosen: ^Entry, prefix: Prefix, x, y: int) -> (mode_shown: bool) {
+	room := PANEL_WIDTH - TEXT_MARGIN - (band_text_end(table, typed_text(panel)) + 16)
+	word := prefix_words(prefix)
+	mode: interface.Text_Builder
+	if chosen != nil {
+		mode_words(&mode, chosen, panel.go_to_offered)
+	}
+	both: interface.Text_Builder
+	interface.text_put(&both, word)
+	if word != "" && chosen != nil {
+		interface.text_put(&both, MODE_GAP)
+	}
+	interface.text_put(&both, interface.text_of(&mode))
+	text := ""
+	switch {
+	case interface.text_measured_width(table, interface.FONT_INTERFACE, interface.text_of(&both)) <= room:
+		text = interface.text_of(&both)
+		mode_shown = chosen != nil
+	case chosen != nil && interface.text_measured_width(table, interface.FONT_INTERFACE, interface.text_of(&mode)) <= room:
+		text = interface.text_of(&mode)
+		mode_shown = true
+	case interface.text_measured_width(table, interface.FONT_INTERFACE, word) <= room:
+		text = word
+	}
+	if text != "" {
+		interface.draw_text_right(table, x + PANEL_WIDTH - TEXT_MARGIN, y + (INPUT_BAND_HEIGHT - interface.LINE) / 2, text, graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	}
+	return mode_shown
+}
 
 // panel_draw appends the draw records of an open panel whose corner is at
 // (x, y). The work is the 12 rows that the panel shows and a fixed count
@@ -455,15 +536,19 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 	panel.scrolled = {}
 	with_form := panel.form.active && panel.state != .Result
 	prefix, _ := prefix_of(typed_text(panel))
+	// The band says the mode of the chosen entry in the search and in its
+	// question; the footer says the act of Enter on it.
 	if with_form {
 		form_band_draw(frame, &panel.form, x, y)
 	} else {
 		interface.text_input_line(frame, {x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT}, typed_text(panel), panel.line.caret, INPUT_SCALE, PLACEHOLDER)
-		// The word of the prefix, at the right of the band: what the list
-		// is restricted to.
-		if word := prefix_words(prefix); word != "" {
-			interface.draw_text_right(table, x + PANEL_WIDTH - TEXT_MARGIN, y + (INPUT_BAND_HEIGHT - interface.LINE) / 2, word, graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		// At the right of the band: the word of the prefix, what the list
+		// is restricted to, and the mode of the chosen entry.
+		band_chosen: ^Entry
+		if panel.state == .Search || panel.state == .Confirm {
+			band_chosen = chosen_entry(panel)
 		}
+		band_words_draw(table, panel, band_chosen, prefix, x, y)
 	}
 
 	// Under the band: the border, as the menus of the bar have it, then
@@ -491,6 +576,8 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 		confirm_text: interface.Text_Builder
 		signatures: [LIST_ROWS][palette_table.SIGNATURE_CAPACITY + 8]u8
 		rows: [LIST_ROWS]interface.List_Row
+		setting_rows: [LIST_ROWS]int // The shown rows that are setting rows, as indexes in `rows`.
+		setting_row_count := 0
 		first := clamp(panel.first_row, 0, max(list.row_count - 1, 0))
 		shown_count := clamp(list.row_count - first, 0, LIST_ROWS)
 		chosen_shown := NO_ROW
@@ -508,7 +595,12 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 				in_use := entry.kind == .Setting && setting_in_use(panel, entry)
 				icon, icon_color := entry_icon(entry, in_use)
 				rows[index] = {kind = .Entry, name = entry_name(entry), matched_places = transmute(u128)row.places, icon = icon, icon_color = icon_color, right_text = entry_words(entry)}
-				if entry.kind == .Setting {
+				if entry_is_setting_row(entry) {
+					// Its buttons are drawn over the row after the list:
+					// the line under a value says which one is in use.
+					setting_rows[setting_row_count] = index
+					setting_row_count += 1
+				} else if entry.kind == .Setting {
 					// The value in use has its icon in the text color, and
 					// says so in words.
 					if in_use {
@@ -549,6 +641,13 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 			options.scrolled = &panel.scrolled
 		}
 		interface.list_of_rows(frame, list_area, rows[:shown_count], options)
+		for shown in setting_rows[:setting_row_count] {
+			entry := &list.entries[min(int(list.rows[first + shown].entry), ENTRY_CAPACITY - 1)]
+			// The area of the row as list_of_rows drew it: the rows less the
+			// scroll bar of a list that does not show each row.
+			area := interface.Area{list_area.x, list_area.y + shown * ROW_HEIGHT, rows_right(x, list.row_count) - list_area.x, ROW_HEIGHT}
+			value_buttons_draw(frame, panel, entry, area, rows[shown].right_text, shown == chosen_shown)
+		}
 		if list.row_count == 0 {
 			// No entry has the typed part: one dim line says so.
 			empty: interface.Text_Builder
@@ -560,7 +659,14 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 		// The detail line: what the chosen entry does, whole.
 		if chosen != nil {
 			about: interface.Text_Builder
-			entry_about(&about, list, chosen)
+			if entry_is_setting_row(chosen) {
+				// The line that the chosen value runs.
+				if given := value_given(list, chosen, value_chosen(panel, chosen)); given != nil {
+					interface.text_put(&about, string(given.about[:given.about_length]))
+				}
+			} else {
+				entry_about(&about, list, chosen)
+			}
 			interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&about), text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
 		}
 	}
@@ -710,6 +816,71 @@ form_place_at :: proc "contextless" (form: ^Form, panel_x, x: int) -> (field: in
 	return 0, 0, false
 }
 
+// The buttons of the field of a form whose control is a row of buttons
+// (field_control): the shown candidates, in their order.
+Form_Buttons :: struct {
+	count:   int, // The buttons: the shown candidates. 0: the field has no row of buttons.
+	areas:   [BUTTON_CAPACITY]interface.Area,
+	in_band: bool, // In the input band at the right of the call; else on the first row under the band.
+}
+
+// form_buttons_layout places the buttons of the current field of a form,
+// for a panel whose corner is at (x, y): in the input band at the right of
+// the call when the band has the room, else on the first row under the
+// band. A row that does not fit there either has no button: the field then
+// shows the list of its candidates, which has room for each name.
+form_buttons_layout :: proc "contextless" (table: ^interface.Draw_Table, form: ^Form, x, y: int) -> (buttons: Form_Buttons) {
+	if field_control(form, form.current) != .Buttons || form.shown_count == 0 {
+		return {}
+	}
+	count := min(form.shown_count, BUTTON_CAPACITY)
+	widths: [BUTTON_CAPACITY]int
+	total := 0
+	for index in 0 ..< count {
+		widths[index] = interface.text_measured_width(table, interface.FONT_INTERFACE, candidate_name(form, index)) + 2 * VALUE_BUTTON_PADDING
+		total += widths[index] + (index > 0 ? VALUE_BUTTON_GAP : 0)
+	}
+	right := x + PANEL_WIDTH - TEXT_MARGIN
+	band: Band_Layout
+	form_band_layout(form, &band)
+	start := x + interface.TEXT_INPUT_LINE_MARGIN + (band.last - band.first) * BAND_CELL_WIDTH + BAND_CARET_WIDTH + 16
+	start = (start + graphics.GRID - 1) / graphics.GRID * graphics.GRID
+	top := y + (INPUT_BAND_HEIGHT - 2 - VALUE_BUTTON_HEIGHT) / 2
+	buttons.in_band = start + total <= right
+	if !buttons.in_band {
+		start = x + TEXT_MARGIN
+		top = y + LIST_TOP + VALUE_BUTTON_TOP
+		if start + total > right {
+			return {}
+		}
+	}
+	for index in 0 ..< count {
+		buttons.areas[index] = {start, top, widths[index], VALUE_BUTTON_HEIGHT}
+		start += widths[index] + VALUE_BUTTON_GAP
+	}
+	buttons.count = count
+	return buttons
+}
+
+// form_buttons_draw draws the buttons of the current field of a form: the
+// chosen candidate filled. In the band, a button that is not chosen has
+// the surface of a card, so it shows on the track of the band; under the
+// band, the track.
+@(private)
+form_buttons_draw :: proc "contextless" (table: ^interface.Draw_Table, form: ^Form, buttons: ^Form_Buttons) {
+	for index in 0 ..< buttons.count {
+		area := buttons.areas[index]
+		chosen := index == form.candidate_choice
+		fill := graphics.Color(buttons.in_band ? graphics.COLOR_CARD_TOP : graphics.COLOR_TRACK)
+		color := graphics.Color(graphics.COLOR_TEXT)
+		if chosen {
+			fill, color = graphics.COLOR_WHITE, graphics.COLOR_BACKGROUND
+		}
+		interface.draw_rectangle(table, area.x, area.y, area.width, area.height, fill)
+		interface.draw_text(table, area.x + VALUE_BUTTON_PADDING, area.y + (area.height - interface.LINE) / 2, candidate_name(form, index), color, interface.FONT_INTERFACE)
+	}
+}
+
 // form_band_draw draws the input band of a form: the call as code, at the
 // scale of the typed part: the name of the command, then each parameter
 // with its name and what the input typed in it, and the caret in the
@@ -751,6 +922,11 @@ form_band_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, x, y
 		interface.draw_text(table, text_x + (start - first) * BAND_CELL_WIDTH, text_y, string(characters[start:end]), color, font)
 		start = end
 	}
+	// A field with a few closed values: its buttons at the right of the
+	// call, when the band has the room.
+	if buttons := form_buttons_layout(table, form, x, y); buttons.in_band {
+		form_buttons_draw(table, form, &buttons)
+	}
 }
 
 // form_list_draw draws the list area and the detail line of a form: the
@@ -788,16 +964,30 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 		words = "module"
 	case .Grant:
 		words = "grant"
+	case .Strategy:
+		words = "strategy"
+	case .Setting:
+		words = "setting"
 	}
-	candidates_icon, candidates_color := candidate_icon(form.candidate_kind)
-	choice := form.candidate_choice
-	first := candidates_first(form)
-	shown_count := clamp(form.shown_count - first, 0, LIST_ROWS)
-	for index in 0 ..< shown_count {
-		rows[index] = {kind = .Entry, name = candidate_name(form, first + index), icon = candidates_icon, icon_color = candidates_color, right_text = words}
+	if buttons := form_buttons_layout(table, form, x, y); buttons.count > 0 {
+		// A few closed values: a row of buttons in place of the list, in
+		// the band or on the first row, and what the keys do under it.
+		if !buttons.in_band {
+			form_buttons_draw(table, form, &buttons)
+		}
+		hint_top := buttons.in_band ? y + LIST_TOP + 4 : y + LIST_TOP + ROW_HEIGHT + 4
+		interface.draw_text(table, x + TEXT_MARGIN, hint_top, interface.text_fit(table, interface.FONT_INTERFACE, WORDS_OF_BUTTONS, text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	} else {
+		candidates_icon, candidates_color := candidate_icon(form.candidate_kind)
+		choice := form.candidate_choice
+		first := candidates_first(form)
+		shown_count := clamp(form.shown_count - first, 0, LIST_ROWS)
+		for index in 0 ..< shown_count {
+			rows[index] = {kind = .Entry, name = candidate_name(form, first + index), icon = candidates_icon, icon_color = candidates_color, right_text = words}
+		}
+		chosen_shown := choice >= first && choice < first + shown_count ? choice - first : NO_ROW
+		interface.list_of_rows(frame, list_area, rows[:shown_count], {chosen = chosen_shown, first = first, total = form.shown_count, scroll_bar = scroll_bar_identity(), scrolled = &panel.scrolled})
 	}
-	chosen_shown := choice >= first && choice < first + shown_count ? choice - first : NO_ROW
-	interface.list_of_rows(frame, list_area, rows[:shown_count], {chosen = chosen_shown, first = first, total = form.shown_count, scroll_bar = scroll_bar_identity(), scrolled = &panel.scrolled})
 	if form.shown_count == 0 {
 		prompt: interface.Text_Builder
 		interface.text_put(&prompt, "type the value of ")

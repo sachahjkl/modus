@@ -170,18 +170,18 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 
-	// Scene 8: the prefix of the settings. The font of the whole desktop
-	// changes behind the open panel, and the value in use has the mark.
-	// After the first choice the choice stays on its entry, so one arrow
-	// down from "spleen" is "vector" in each order of the two rows.
+	// Scene 8: the prefix of the settings. The font is one setting row,
+	// with a button for each value and the value in use marked. Right
+	// chooses spleen, and the font of the whole desktop changes behind the
+	// open panel; Left chooses vector again on the same row.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Film_Type, text = ":font"},
-	{kind = .Wait, text = " for \":font\": set font to vector (setting), set font to spleen (setting)"},
+	{kind = .Wait, text = " for \":font\": font (setting)"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
-	{kind = .Key, text = "down"},
-	{kind = .Wait, text = "compositor: the palette chooses set font to spleen (setting)"},
+	{kind = .Key, text = "right"},
+	{kind = .Wait, text = "compositor: the palette chooses the value spleen of font"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette sends set font to spleen to the console", any_order = true},
@@ -189,8 +189,8 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the settings changed: font spleen", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: set font to spleen"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
-	{kind = .Key, text = "down"},
-	{kind = .Wait, text = "compositor: the palette chooses set font to vector (setting)"},
+	{kind = .Key, text = "left"},
+	{kind = .Wait, text = "compositor: the palette chooses the value vector of font"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "console: the palette runs setting(\"font\", \"vector\")"},
