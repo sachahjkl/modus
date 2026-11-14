@@ -788,7 +788,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		grants[2] = {device(.Interrupt, 1, 0), {.Read}}
 		grants[3] = {device(.Interrupt, 12, 0), {.Read}}
 		grants[op.CONTEXT_LOG] = log_grant("input")
-		_, status = system.program_start(system.image_find(image, "input"), "input", grants, random.values_with_seed(&program_generator, {}), budget_of("input"), nil, &prepared)
+		// The settings page, read-only: the input service reads the layout
+		// of the keyboard there at each key.
+		input_values: [op.CONTEXT_VALUES]u64
+		input_mappings := [1]system.Mapping{{memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}}
+		fixed_addresses.range_mapped_add(&input_values, .Settings_Page)
+		_, status = system.program_start(system.image_find(image, "input"), "input", grants, random.values_with_seed(&program_generator, input_values), budget_of("input"), settings_page != nil ? input_mappings[:] : nil, &prepared)
 		if status != .Ok {
 			fail("cannot start input", status)
 		}

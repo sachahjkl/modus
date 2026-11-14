@@ -11,7 +11,7 @@ import "core:testing"
 @(test)
 a_page_left_in_a_change :: proc(t: ^testing.T) {
 	page: Page
-	write(&page, {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 1, .Grid_Fit = 1})
+	write(&page, {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 1, .Grid_Fit = 1, .Keyboard_Layout = 1})
 	choice := read(&page)
 	testing.expect_value(t, choice.values[.Font], 1)
 	testing.expect_value(t, choice.change_count, 2)
@@ -55,7 +55,7 @@ a_glyph_cache_that_is_not_mapped :: proc(t: ^testing.T) {
 // value changed makes them differ, for each setting.
 @(test)
 values_differ_compares_the_values_only :: proc(t: ^testing.T) {
-	first := Choice{values = {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 0, .Grid_Fit = 1}, change_count = 2}
+	first := Choice{values = {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 0, .Grid_Fit = 1, .Keyboard_Layout = 1}, change_count = 2}
 	second := first
 	second.change_count = 1_000_002
 	testing.expect(t, !values_differ(first, second))

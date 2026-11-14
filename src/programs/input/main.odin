@@ -16,7 +16,7 @@
 // **The records** that it writes (`display.Input`):
 //
 // - `Key`: the scan code (with `display.KEY_EXTENDED` after the prefix
-//   0xE0), the character in the United States layout, 1 for a press or 0
+//   0xE0), the character in the layout of the settings, 1 for a press or 0
 //   for a release, and the modifiers (Shift, Control).
 // - `Pointer`: the motion in x and in y, in pixels of the mouse (y grows
 //   down, as on the screen), and the three buttons.
@@ -28,13 +28,15 @@
 // service: it cannot reach another program.
 //
 // **What it does not prove.** It works with the PS/2 controller that QEMU
-// emulates, with one keyboard layout. It has no USB and no layout
-// setting.
+// emulates, with two keyboard layouts. It has no USB, and no character
+// outside ASCII.
 package input
 
 import "modus:support/display"
 import "modus:support/key_path"
+import "modus:contract/fixed_addresses"
 import "modus:contract/ring"
+import "modus:contract/settings"
 import "modus:support/system"
 
 // The context of this service.
@@ -55,6 +57,34 @@ STATUS_MOUSE :: 1 << 5
 characters := [2][0x3A]u8 {
 	{0, 0, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 8, '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0, 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, '*', 0, ' '},
 	{0, 0, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', 8, '\t', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n', 0, 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~', 0, '|', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0, '*', 0, ' '},
+}
+
+// Scan code set 1, layout of France (AZERTY): the character of each key,
+// without and with shift. A character of the system is one byte of ASCII:
+// a key whose character is outside ASCII (é, è, ç, à, ù, ², °, ¨, £, µ, §)
+// gives no character, and a program still gets its key code.
+@(rodata)
+characters_french := [2][0x3A]u8 {
+	{0, 0, '&', 0, '"', '\'', '(', '-', 0, '_', 0, 0, ')', '=', 8, '\t', 'a', 'z', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '^', '$', '\n', 0, 'q', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'm', 0, 0, 0, '*', 'w', 'x', 'c', 'v', 'b', 'n', ',', ';', ':', '!', 0, '*', 0, ' '},
+	{0, 0, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 0, '+', 8, '\t', 'A', 'Z', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', 0, 0, '\n', 0, 'Q', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'M', '%', 0, 0, 0, 'W', 'X', 'C', 'V', 'B', 'N', '?', '.', '/', 0, 0, '*', 0, ' '},
+}
+
+// The settings page, when the root service mapped it: the layout of the
+// keyboard is read there at each key, so a change of the setting holds from
+// the next key. nil: the layout of the United States.
+settings_page: ^settings.Page
+
+// layout_now gives the table of the layout that the settings name now.
+layout_now :: proc "contextless" () -> ^[2][0x3A]u8 {
+	if settings_page == nil {
+		return &characters
+	}
+	switch settings.Keyboard_Layout(settings.read(settings_page).values[.Keyboard_Layout]) {
+	case .United_States:
+	case .French:
+		return &characters_french
+	}
+	return &characters
 }
 
 SCAN_LEFT_SHIFT :: 0x2A
@@ -142,6 +172,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if output, status = system.ring_open(output_memory); status != .Ok {
 		system.log("input: no ring")
 		system.stop(1)
+	}
+
+	// The settings page, when the root service mapped it for this service.
+	if .Settings_Page in fixed_addresses.ranges_mapped(&ctx.values) {
+		settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
 	}
 
 	for system.port_read_8(PORT_STATUS) & STATUS_OUTPUT_FULL != 0 {
@@ -249,7 +284,7 @@ keyboard_byte :: proc "contextless" (value: u8) {
 	}
 	character: u8
 	if code < len(characters[0]) {
-		character = characters[modifiers & display.MODIFIER_SHIFT][code]
+		character = layout_now()[modifiers & display.MODIFIER_SHIFT][code]
 	}
 	// The loop of entry read this byte only when the ring had room, and
 	// this thread is the one writer of the ring: the record has a place.
