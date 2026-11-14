@@ -1093,9 +1093,11 @@ scenario := [?]Step {
 	// after it is the value of that field: the line that the console runs
 	// has it as its second argument.
 	{kind = .Click, x = PALETTE_REVOKE_SECOND_FIELD_X, y = PALETTE_INPUT_BAND_Y},
-	{kind = .Wait, text = "compositor: a press puts the caret of the palette in the field 1, after 0 characters"},
-	// The console can answer before the compositor logs the press: the
-	// take of the first candidate already asked for the second field.
+	// The press asks the console for the candidates of the field. The
+	// compositor writes its line of the press and the console its line of
+	// the candidates in no fixed order: neither wait moves the place of
+	// the log. The palette has the candidates after both.
+	{kind = .Wait, text = "compositor: a press puts the caret of the palette in the field 1, after 0 characters", any_order = true},
 	{kind = .Wait, text = " candidates for the parameter 1 of revoke", any_order = true},
 	{kind = .Wait, text = " candidates for the field 1"},
 	{kind = .Keys, text = "log"},
