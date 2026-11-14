@@ -263,6 +263,19 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Key, text = "pgdn"},
 	{kind = .Wait, text = "debugger_window: the frame 1 of the thread 0: "},
 	{kind = .Shot, text = "debugger_window"},
+	// A breakpoint at the line of that frame, by one key: the place is the
+	// file and the line of the frame. The registers take the card of the
+	// variables, and give it back. The key of its number removes the
+	// breakpoint.
+	{kind = .Key, text = "b"},
+	{kind = .Wait, text = "debugger_window: a breakpoint at " + DEBUG_TARGET_SOURCE_FILE + ":"},
+	{kind = .Key, text = "g"},
+	{kind = .Wait, text = "debugger_window: the card of the variables shows the registers: "},
+	{kind = .Shot, text = "debugger_window_registers"},
+	{kind = .Key, text = "g"},
+	{kind = .Wait, text = "debugger_window: the card of the variables shows the variables: 2 rows"},
+	{kind = .Key, text = "0"},
+	{kind = .Wait, text = "debugger_window: removed the breakpoint 0"},
 	{kind = .Key, text = "o"},
 	{kind = .Wait, text = "debugger_window: one line, over each call, of the thread 0"},
 	{kind = .Key, text = "d"},

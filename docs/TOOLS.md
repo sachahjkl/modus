@@ -332,9 +332,12 @@ With no program attached, the keys type a name: letters, digits and `_`, Backspa
 | `s` | One instruction | `step` |
 | `l` | One source line | `step_line` |
 | `o` | One source line, over each call | `step_over` |
+| `b` | Puts a breakpoint at the source line of the chosen frame | `break_at` |
+| `0` to `3` | Removes the breakpoint with that number | `break_remove` |
+| `g` | Shows the registers of the chosen thread in the card of the variables, or the variables again | `registers` |
 | `d` | Detaches | `detach` |
 
-The four cards: the program and its threads, each with its state and its place; the source line of the chosen frame; the stack of the chosen thread; the variables of the chosen frame. A thread that runs has no stack to read: the cards say so, and `h` holds it. The window reads the threads again each 500 ms, so a thread that stops at a breakpoint shows as stopped with no key. The line under the name of the program says what the last act did, or the code of an export that failed.
+The four cards: the program, its threads, each with its state and its place, and its breakpoints, each with the number that removes it; the source line of the chosen frame; the stack of the chosen thread; the variables of the chosen frame, or the registers of the chosen thread in two columns. A thread that runs has no stack to read: the cards say so, and `h` holds it. The window reads the threads again each 500 ms, so a thread that stops at a breakpoint shows as stopped with no key. The line under the name of the program says what the last act did, or the code of an export that failed.
 
 **What the window holds.** A connection to the service `debugger` and to no other service, the boot image to read the description of the exports of that service, and the grant to act for the principal, which the service asks of each caller. It holds no right over a program. The service debugs one program at a time: while the console is attached, the window attaches to nothing, and the other way.
 
