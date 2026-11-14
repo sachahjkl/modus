@@ -2003,6 +2003,26 @@ An import of the source names the library and the package: `modus:contract/ring`
 
 Do not use: collection, SDK, libc, static library.
 
+### Outside module
+
+An outside module is a module whose source is in a folder outside the repository of the system.
+
+Its developer writes one Odin package that imports the packages of the system from the source library, and a module build file. The command `kerneltool module-build` builds it with the two steps of a module of the system, and writes the module file and the debug object in a folder of the developer. The module table of the tool has no row for it. A source of an outside module is in the folder of the module or under it, in the source library, or in the libraries of the compiler. An outside module is a module as each other: one file, named by its hash, with described exports. The tool does not yet put one in a boot image.
+
+The design: `docs/TOOLS.md`, "A module from a source outside the repository".
+
+Do not use: third-party module, external module, plugin.
+
+### Module build file
+
+A module build file is the file `module.txt` in the folder of an outside module, which holds the fields of a row of the module table.
+
+Each line is `key: value`. The key `name` is the name of the module. The keys `imports`, `defines` and `library` are the imports by name, the settings of the compiler and whether the module is a library module; each can be absent. The tool refuses a line that it does not know. A module of the system has no module build file: its row is in the module table of the tool.
+
+The design: `docs/TOOLS.md`, "A module from a source outside the repository".
+
+Do not use: manifest, build script, project file.
+
 ### Documentation
 
 The documentation of a module is the text that the module carries in its file for a reader: one line that says what the module is, a text for the module, and a text for each export.
@@ -5755,6 +5775,36 @@ A script that plays the animations shows one tile at a time by its place in the 
 The design: `docs/SITE.md`, "The moves of the heron".
 
 Do not use: sprite sheet, atlas, film strip.
+
+### Icon file
+
+An icon file is one file that holds the mark at several sizes, each as one PNG file behind a directory, so that a reader takes the entry of the size that it shows.
+
+The generator of the pictures of the mark writes it: each entry is the PNG file that the generator writes for one picture, byte for byte, and an entry is at most 256 pixels on a side. The site has one, `favicon.ico` at its root, with an entry of 32 pixels in the cells variant and one of 48 pixels in the smooth variant. Each entry is a row of the table of the uses of the mark. `kerneltool mark still --format ico` writes one. It is not the icon of a phone or of the manifest: each of those is one PNG file.
+
+The design: `docs/SITE.md`, "The icons"; `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: favicon file, ICO container, multi-size icon.
+
+### Vector file of the mark
+
+A vector file of the mark is a file that holds the mark in the cells variant as rectangles of one color, so that a reader draws the same cells at each size.
+
+The generator of the pictures of the mark cuts the pixels of a picture into rectangles: a run of cells of one color in a row is one rectangle. The tool computes each color; the reader of the file only fills rectangles. The file can hold a rule that gives the colors of the dark scheme to a reader that asks for dark. The smooth variant is not written as a vector file: the reader would compute the gradient. The site has one, `pictures/icon.svg`. `kerneltool mark still --format svg` writes one.
+
+The design: `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: SVG logo, scalable icon, vector logo.
+
+### Animated file of the mark
+
+An animated file of the mark is one animated PNG file that holds each frame of one animation of the mark as a picture, each for the time that the table of the animations gives it.
+
+The generator of the pictures of the mark writes it from the PNG data of each frame; a test reads each frame back and compares its pixels. It shows the frames of the heron in its place and plays with no end; it does not show the move of the heron across a page. It is for a page that runs no script, such as a page of a repository. The repository holds none: `kerneltool mark animation --animation <name>` writes one. It is not a tile map, which a script plays, and not a film, which shows the running system.
+
+The design: `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: GIF, animated logo, sprite animation.
 
 ### Site
 
