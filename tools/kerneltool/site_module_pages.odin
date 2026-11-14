@@ -95,7 +95,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		b := strings.builder_make(context.temp_allocator)
 		in_image := 0
 		for item in reference.modules {
-			in_image += item.build.image ? 1 : 0
+			in_image += module_in_boot_image(item.build) ? 1 : 0
 		}
 		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a program is a module whose source is in <code>" + SOURCE_FOLDER_PROGRAMS + "/</code>; the others are modules that a program loads or calls. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
 		fmt.sbprintf(&b, "<p>The <a href=\"%s\">module graph</a> shows who imports whom: %d imports between the %d modules.</p>\n", site_page_link(site, modules_page, site_page_file(SITE_MODULE_GRAPH_FOLDER)), len(graph_layout.edges), len(reference.modules))
@@ -118,7 +118,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 				site_module_link(site, &b, modules_page, item.build.name)
 				// A column of two states: each cell has the icon of its state.
 				strings.write_string(&b, "</td><td>")
-				site_value(&b, item.build.image ? value_kinds.Value_Kind.Yes : value_kinds.Value_Kind.No, item.build.image ? "yes" : "no", true)
+				site_value(&b, module_in_boot_image(item.build) ? value_kinds.Value_Kind.Yes : value_kinds.Value_Kind.No, module_in_boot_image(item.build) ? "yes" : "no", true)
 				fmt.sbprintf(&b, "</td><td>%d</td><td>", len(item.description.exports))
 				// A module with no import has an empty cell: "none" in most
 				// rows would hide the few that import.
@@ -174,7 +174,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		strings.write_string(&b, "<tr><td>Source</td><td class=\"name\">")
 		site_value_link(&b, .File, site_folder_address(site, build.source), build.source, true)
 		strings.write_string(&b, "</td></tr>\n<tr><td>Boot image</td><td>")
-		if !build.image {
+		if !module_in_boot_image(build) {
 			site_value(&b, .No, "no", true)
 			strings.write_string(&b, ": not in the boot image")
 		} else if entry, found := site_boot_image_entry(site, build.name); found {
@@ -380,7 +380,7 @@ site_tiles_write :: proc(site: ^Site, b: ^strings.Builder, page: string) {
 	built := len(entries) > 0
 	if !built {
 		for build in module_builds {
-			if build.image {
+			if module_in_boot_image(build) {
 				append(&entries, Site_Image_Entry{name = build.name})
 			}
 		}

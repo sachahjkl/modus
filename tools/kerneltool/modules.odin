@@ -66,6 +66,14 @@ Module_Build :: struct {
 	// module is one shared copy at each address, and takes one place in the
 	// table of prepared modules of a starter, not one for each importer.
 	library: bool,
+	// A program that a disk holds: it is built as each program, with the
+	// system library, and no boot image gets its file (disk_programs.odin).
+	disk:    bool,
+}
+
+// module_in_boot_image says if the boot image holds the file of a module.
+module_in_boot_image :: proc(build: Module_Build) -> bool {
+	return build.image && !build.disk
 }
 
 // The drawing module, and the setting of a program that draws its window
@@ -184,7 +192,7 @@ module_builds := [?]Module_Build {
 	// It is not in the boot image: the tool writes its file in the store
 	// `programs` of a data disk, and the root service starts it from there
 	// (disk_programs.odin).
-	{name = DISK_PROGRAM_MODULE, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE},
+	{name = DISK_PROGRAM_MODULE, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE, image = true, disk = true},
 }
 
 // The folder of the modules of this build, and whether the compiler writes
@@ -573,7 +581,7 @@ module_convert :: proc(build: Module_Build) -> bool {
 build_boot_image :: proc(path: string, without: string, resources: []Resource_File) -> bool {
 	files := make([dynamic]Image_File, context.temp_allocator)
 	for build in module_builds {
-		if !build.image || build.name == without {
+		if !module_in_boot_image(build) || build.name == without {
 			continue
 		}
 		append(&files, Image_File{name = build.name, file = read_file(module_path(build.name)) or_return})
