@@ -338,7 +338,8 @@ Connection :: struct {
 	peer_max_ack_delay:                u64, // The longest time that the peer holds an ACK frame, in microseconds, from its transport parameters: 25 ms before they come. It is part of the probe timeout of the 1-RTT space, and the most that an ACK Delay field can subtract from a sample.
 	peer_ack_delay_exponent:           u64, // The `ack_delay_exponent` of the peer: the ACK Delay field of its ACK frames counts units of 2 to this power, in microseconds. 3 before its transport parameters come.
 	pending_controls:                  bit_set[Control_Frame], // The control frames of the connection that wait to be sent in the next 1-RTT packet.
-	path_response:                     [PATH_DATA_SIZE]u8, // The 8 bytes of the last PATH_CHALLENGE of the peer, to send back in a PATH_RESPONSE. A second challenge before the answer went replaces the first.
+	path_responses:                    [PATH_RESPONSE_PLACES][PATH_DATA_SIZE]u8, // The 8 bytes of each PATH_CHALLENGE of the peer that waits for its PATH_RESPONSE, the oldest first.
+	path_response_count:               u8, // The challenges of `path_responses` that wait.
 	// The close.
 	close_error_code:                  u64, // The error code of the CONNECTION_CLOSE: of this side in the closing state, of the peer when `closed_by_peer` is true. A transport code is a `Transport_Error`, or 0x100 plus an alert of TLS; an application code is of the application.
 	close_frame_type:                  u64, // The type of the frame that caused a transport close, or 0 when no frame did.

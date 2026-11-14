@@ -610,6 +610,30 @@ supported_groups_in_encrypted_extensions_is_taken :: proc(t: ^testing.T) {
 	testing.expect_value(t, client.alert, Alert.Unsupported_Extension)
 }
 
+// A known extension in a message where the standard does not specify it is
+// illegal_parameter, not unsupported_extension (RFC 8446, section 4.2):
+// key_share and signature_algorithms in EncryptedExtensions. An extension
+// that the standard specifies there and that the client did not offer stays
+// unsupported_extension: early_data.
+@(test)
+a_misplaced_extension_is_an_illegal_parameter :: proc(t: ^testing.T) {
+	messages := messages_of_a_good_handshake()
+	pair := new(Test_Pair, context.temp_allocator)
+	testing.expect_value(t, messages[2].bytes[0], u8(Handshake_Message.Encrypted_Extensions))
+	// key_share (51) and signature_algorithms (13), with no data.
+	for type in ([]u8{51, 13}) {
+		misplaced := with_extension(messages[2].bytes, []u8{0x00, type, 0x00, 0x00})
+		client := receiver_after(pair, messages[:], 2, misplaced)
+		testing.expect_value(t, client.state, Tls_State.Failed)
+		testing.expectf(t, client.alert == .Illegal_Parameter, "the extension %d in EncryptedExtensions gave the alert %v", type, client.alert)
+	}
+	// early_data (42): specified for EncryptedExtensions, and not offered.
+	early := with_extension(messages[2].bytes, []u8{0x00, 42, 0x00, 0x00})
+	client := receiver_after(pair, messages[:], 2, early)
+	testing.expect_value(t, client.state, Tls_State.Failed)
+	testing.expect_value(t, client.alert, Alert.Unsupported_Extension)
+}
+
 // A ClientHello with a session identifier asks for the compatibility mode
 // of TLS, which QUIC does not have: the server fails, and the transport
 // closes with PROTOCOL_VIOLATION (RFC 9001, section 8.4), not with the code
