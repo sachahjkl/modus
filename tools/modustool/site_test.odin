@@ -143,7 +143,7 @@ site_readme_of_the_repository :: proc(t: ^testing.T) {
 	testing.expect(t, err == nil, "cannot read README.md")
 	readme, problem := site_readme_parse(string(data))
 	testing.expect_value(t, problem, "")
-	testing.expect(t, strings.has_prefix(readme.lead, "A fast, modular operating system where each program gets only what you give it."))
+	testing.expect(t, strings.has_prefix(readme.lead, "A fast, modular operating system, sandboxed by default."))
 	testing.expect(t, readme.mark_description != "")
 	testing.expect(t, readme.use_paragraph != "")
 	testing.expect(t, len(readme.licence_paragraphs) > 0)

@@ -1356,6 +1356,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. A grant whose object belongs to one program (a private store, a terminal, a device, a network endpoint, a service) refuses the debug access: the debugger would write what only that program can write.
 - Where: `TOOLS.md`, "The debugger: the design".
 
+### D-263 The key of the machine: sealed by the TPM, with an optional passphrase
+- 2026-11-14. Decided by: the owner.
+- Decision: the key of principal 0, the machine, signs its table of disk grants. By default the TPM seals it, and no one types anything. A passphrase is optional: when it is set, the key is opened only with the TPM and the passphrase together, so the disk and the machine without the passphrase open nothing. Until the key of the TPM is built, a machine with no passphrase keeps the disk grants of principal 0 until it stops, and a machine with a passphrase signs them with a key derived from it, and keeps them across a restart. Principal 0 stays the machine: the passphrase guards its key, and makes it no person (`PRINCIPALS.md`, "5. The session").
+- Words: of a passphrase for principal 0 or the key of the TPM: "Pk pas les 2 avec le mot de passe étant \"optionnel\"".
+- State: decided, not built.
+- Where: `PRINCIPALS.md`, "5. The session"; `src/md/features/programs_from_a_disk.md`, "The grants of a disk program".
+
 ### D-260 The grants of a disk program: a nickname, a store of the nickname, a table signed by the key of the principal
 - 2026-11-14. Decided by: the owner.
 - Decision: a disk program has a nickname that the principal chooses: the name of its entry in the store `programs`. Each display shows the nickname, with the hash of the file faded beside it; the file never chooses its nickname, and two hashes never share one. A grant names the hash. By default a disk program gets an isolated store of its own, attached to its nickname: an update is the principal pointing the nickname to a new hash, and the store follows, which the palette says before it is done; another file under another nickname gets a new, empty store. The size of the store is a line of the budget that the module asks for (D-254): the starter accepts, limits or widens it by a policy that the principal sets. The table of the grants persists across a restart: it is kept in the store of the principal, signed with a key derived from the passphrase, and read after the unlock; a table whose signature fails is refused. The persistence is a setting, global with an exception for each program; the default of a desktop is to persist.
@@ -1883,8 +1890,8 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ### D-262 The description of the project is one short sentence of what it gives
 - 2026-11-14. Decided by: the owner.
-- Decision: the description of the project, in the lead of `README.md`, which the site reads, in `flake.nix` and in the repository, is "A fast, modular operating system where each program gets only what you give it." "Secure" is said as the fact that it means here. The coordinator objected to "fast" as a claim with no fact; the owner kept it, and the measured numbers of the README and of the site stand behind it.
-- Words: "change la description du projet à : A fast, secure and modular operating system. Ou qqchose comme ça, qui fait sens avec les objectifs du projet". Then: "Un truc court simple et impactant". Then, of a sentence with no word of speed: "Non c'est pas assez complet". Then, of a longer one: "Trop de blabla".
+- Decision: the description of the project, in the lead of `README.md`, which the site reads, in `flake.nix` and in the repository, is "A fast, modular operating system, sandboxed by default." "Sandboxed by default" is the title of property 2, the fact that "secure" means here. The coordinator objected to "fast" as a claim with no fact; the owner kept it, and the measured numbers of the README and of the site stand behind it.
+- Words: "change la description du projet à : A fast, secure and modular operating system. Ou qqchose comme ça, qui fait sens avec les objectifs du projet". Then: "Un truc court simple et impactant". Then, of a sentence with no word of speed: "Non c'est pas assez complet". Then, of a longer one: "Trop de blabla". Then, of three short ones, the first: "je disais un pour le nom du projet".
 - State: done.
 - Where: `README.md`; `flake.nix`; `SITE.md`, "What the owner must decide".
 

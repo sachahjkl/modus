@@ -1,5 +1,5 @@
 {
-  description = "A fast, modular operating system where each program gets only what you give it";
+  description = "A fast, modular operating system, sandboxed by default";
 
   inputs = {
     nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.2605";
