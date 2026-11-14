@@ -856,6 +856,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: decided. The placement of a thread on processors is built; the policy is not written.
 - Where: `SCHEDULING.md`; `FIRST_MILESTONE.md`, "Next steps".
 
+### D-253 The share policy is in the program `scheduler`, off by default, and the program gets the grants Image and Serve
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: each program has a program weight (1024, at least 32), which the program `scheduler` divides between the threads that count, one round each 100 ms, by the clock and not by the kernel events. A thread keeps a weight that it lowered. The policy is off by default; `scheduler.policy` and `scheduler.share` serve only a caller that acts for the principal. The program gets the grants Image (it starts the four programs of its check) and Serve (its commands). The kernel gets no share for a budget and no new operation. The share of a program is a measure, not a test: the balance counts threads, not weights. The test checks states and one order of two counts of ticks over one interval.
+- Words: "tout tout faire"
+- State: done. Measured: without the policy the programs with 1, 2, 4 and 8 spinning threads got 7.5 %, 11.8 %, 25.9 % and 54.6 %; with it 20.6 %, 19.3 %, 28.7 % and 31.2 %. Left: a thread that starts and ends between two rounds has the whole program weight; it needs a change of the kernel.
+- Where: `SCHEDULING.md`, "A share for each program"; `src/md/features/scheduling_policy.md`; `FIRST_MILESTONE.md`, choice 752.
+
 ## 6. Storage
 
 ### D-092 No save action; versions for all programs
