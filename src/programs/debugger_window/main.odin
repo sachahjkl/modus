@@ -675,15 +675,17 @@ draw_registers :: proc "contextless" (frame: ^interface.Frame) {
 			break
 		}
 		write(inside, column * column_width, line * LINE, system.name_of(row.name[:]), graphics.COLOR_DIM)
-		// The value without its "0x" and its leading zeros keeps its column narrow.
-		write(inside, column * column_width + 56, line * LINE, value_short(system.name_of(row.value[:])), graphics.COLOR_TEXT)
+		// The value without its leading zeros keeps its column narrow. Its
+		// "0x" stays, dim: a reader knows that the digits are hexadecimal.
+		write(inside, column * column_width + 56, line * LINE, "0x", graphics.COLOR_DIM)
+		write(inside, column * column_width + 72, line * LINE, value_short(system.name_of(row.value[:])), graphics.COLOR_TEXT)
 		shown += 1
 	}
 	rest_line(inside, inside.height - LINE, shown, register_count, "registers")
 }
 
 // value_short gives a hexadecimal value with no zero before its first
-// digit that counts: "0x0000000000403ea2" is "0x403ea2".
+// digit that counts, and no "0x": "0x0000000000403ea2" is "403ea2".
 value_short :: proc "contextless" (value: string) -> string {
 	if len(value) < 3 || value[:2] != "0x" {
 		return value
