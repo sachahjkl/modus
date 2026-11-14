@@ -42,9 +42,17 @@ import "modus:support/graphics"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-WIDTH :: 688
-HEIGHT :: 668
 MARGIN :: 12
+// The columns of a run, each as wide as its longest text, so that no text
+// meets the next column or the edge of the window: the address (16
+// characters) and the size (two spaces and 9 characters) after the mark;
+// then the rights, at most " read write execute, 2 MiB pages" (32
+// characters); then the part of the kernel half, at most "double fault
+// stack of processor " and a number of three digits (35 characters).
+RIGHTS_X :: MARGIN + 16 + (16 + 2 + 9) * graphics.CELL_WIDTH
+PART_X :: RIGHTS_X + (32 + 1) * graphics.CELL_WIDTH
+WIDTH :: PART_X + 35 * graphics.CELL_WIDTH + MARGIN
+HEIGHT :: 668
 LINE :: 16
 KERNEL_ROWS :: 22
 PROGRAM_ROWS :: 10
@@ -196,7 +204,7 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 		show(canvas, x, y, &text, color)
 		if kernel {
 			part(&text, run.start)
-			show(canvas, 464, y, &text, graphics.COLOR_DIM)
+			show(canvas, PART_X, y, &text, graphics.COLOR_DIM)
 		}
 		line += 1
 	}

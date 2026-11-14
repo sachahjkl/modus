@@ -66,6 +66,73 @@ label_value_line :: proc "contextless" (frame: ^Frame, area: Area, label, value:
 	}
 }
 
+// label_value_lines draws a name in the dim color and its value at value_x
+// from the left of a column, each on the lines that it needs: the name in
+// the box before value_x, the value in the box after it
+// (draw_text_wrapped). It takes from the column the height of the longer of
+// the two, and gives the count of its lines: a row of one line has the
+// height `line`, as a row of label_value_line, and each more line adds the
+// height of a line of text. label_value_line cuts a text to one line; this
+// element is for a value that the reader has at no other place: a
+// sentence, a path, a text of a measure. A row that is past the bottom of
+// the column is not drawn: the caller gives the column the height of its
+// rows, or counts the rows that it does not show.
+label_value_lines :: proc "contextless" (frame: ^Frame, column: ^Column, label, value: string, value_x: int, value_color: graphics.Color = graphics.COLOR_TEXT, line: int = LINE) -> (count: int, drawn: bool) {
+	return two_texts_lines(frame, column, label, FONT_INTERFACE, graphics.COLOR_DIM, value, value_color, value_x, line, -1)
+}
+
+// case_lines draws one case of a table of cases: what a program asked, and
+// at answer_x the answer that it got, both in the font of the cells and
+// each on the lines that it needs, over a band on every second case (the
+// band is 8 pixels wider than the column on each side). It takes its
+// height from the column, as label_value_lines does. `drawn` is false for a
+// case that is past the bottom of the column: nothing of it is drawn, and
+// the caller counts it in the line that says how many cases the window
+// does not show.
+case_lines :: proc "contextless" (frame: ^Frame, column: ^Column, index: int, text, answer: string, answer_x: int, text_color, answer_color: graphics.Color, line: int = TABLE_LINE) -> (count: int, drawn: bool) {
+	return two_texts_lines(frame, column, text, {}, text_color, answer, answer_color, answer_x, line, index)
+}
+
+// two_texts_lines is the row of label_value_lines and of case_lines: a
+// first text in the box before second_x, a second text in the box from
+// second_x to the right of the column, a row as high as the longer of the
+// two. band_index: the place of the row in its table, for the band; -1: no
+// band.
+@(private)
+two_texts_lines :: proc "contextless" (frame: ^Frame, column: ^Column, first: string, first_font: Font, first_color: graphics.Color, second: string, second_color: graphics.Color, second_x: int, line: int, band_index: int) -> (count: int, drawn: bool) {
+	table := frame.table
+	first_room := second_x - 8
+	second_room := column.area.width - second_x
+	count = max(text_wrapped_line_count(table, first_font, first, first_room), text_wrapped_line_count(table, {}, second, second_room), 1)
+	height := line + (count - 1) * line_height({})
+	area := column_take(column, height)
+	if area.height < height {
+		return count, false
+	}
+	if band_index >= 0 {
+		table_band(frame, {area.x - 8, area.y, area.width + 16, area.height}, band_index)
+	}
+	y := area.y + (line - line_height({})) / 2
+	draw_text_wrapped(table, area.x, y, first_room, first, first_color, first_font)
+	draw_text_wrapped(table, area.x + second_x, y, second_room, second, second_color)
+	return count, true
+}
+
+// cases_rest_line draws, in an area of one line, the count of the cases
+// that a table of cases did not show, and where the reader finds each of
+// them. With a count of 0 it draws nothing.
+cases_rest_line :: proc "contextless" (frame: ^Frame, area: Area, not_shown: int, where_they_are: string) {
+	if not_shown <= 0 {
+		return
+	}
+	builder: Text_Builder
+	text_put(&builder, "and ")
+	text_put_number(&builder, u64(not_shown))
+	text_put(&builder, " cases more: ")
+	text_put(&builder, where_they_are)
+	draw_text_wrapped(frame.table, area.x, area.y + (area.height - line_height({})) / 2, area.width, text_of(&builder), graphics.COLOR_DIM)
+}
+
 // table_band draws the band under a line of a table: every second line,
 // from the first, has the surface of a card (docs/DESIGN.md, section 3).
 table_band :: proc "contextless" (frame: ^Frame, area: Area, index: int) {

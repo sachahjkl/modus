@@ -181,26 +181,31 @@ put_built :: proc "contextless" (indent: int, color: graphics.Color, parts: ..sy
 	put(system.written(&writer), indent, color)
 }
 
-// put_paragraph breaks a paragraph at the width of the text, between words.
+// put_paragraph breaks a paragraph at the width of the text, between
+// words. An empty paragraph adds no row.
 put_paragraph :: proc "contextless" (text: string, indent: int, color: graphics.Color) {
-	width := COLUMNS - indent
-	rest := text
-	for len(rest) > width {
-		cut := width
-		for cut > 0 && rest[cut] != ' ' {
-			cut -= 1
-		}
-		if cut == 0 {
-			cut = width // A word longer than the line.
-		}
-		put(rest[:cut], indent, color)
-		rest = rest[cut:]
-		for len(rest) > 0 && rest[0] == ' ' {
-			rest = rest[1:]
-		}
+	if len(text) > 0 {
+		put(text, indent, color)
 	}
-	if len(rest) > 0 {
-		put(rest, indent, color)
+}
+
+// USE_INDENT is the indentation of a call of "HOW TO USE IT", in cells.
+USE_INDENT :: 2
+
+// put_use adds one way to use a module: the call, with the name of the
+// module, then what the call gives. The two are on one row when the name is
+// short: the description starts two cells after the longest of the calls,
+// so the descriptions of a page stay in one column. When the row cannot
+// hold the two, the description is on the row under the call: the two
+// texts never meet.
+put_use :: proc "contextless" (call, name, description: string) {
+	put_built(USE_INDENT, COLOR_CODE, call, "(\"", name, "\")")
+	column := max(USE_INDENT + len("connect(\"\")") + len(name) + 2, 24)
+	if fits_after(description, column) {
+		put(description, column, graphics.COLOR_TEXT)
+		line_join()
+	} else {
+		put(description, USE_INDENT + 4, graphics.COLOR_TEXT)
 	}
 }
 
@@ -241,24 +246,14 @@ page_build :: proc "contextless" () {
 
 	put("HOW TO USE IT", 0, COLOR_HEADING)
 	if has_entry {
-		put_built(2, COLOR_CODE, "start(\"", name, "\")")
-		put("a program: the module has an entry", 24, graphics.COLOR_TEXT)
-		line_join()
+		put_use("start", name, "a program: the module has an entry")
 	}
 	if exports > 0 && has_entry {
-		put_built(2, COLOR_CODE, "connect(\"", name, "\")")
-		put("a service: calls to the program that runs, if it serves", 24, graphics.COLOR_TEXT)
-		line_join()
+		put_use("connect", name, "a service: calls to the program that runs, if it serves")
 	}
 	if exports > 0 {
-		put_built(2, COLOR_CODE, "load(\"", name, "\")")
-		put("a library: direct calls, in the memory of the caller", 24, graphics.COLOR_TEXT)
-		line_join()
-	}
-	if exports > 0 {
-		put_built(2, COLOR_CODE, "isolate(\"", name, "\")")
-		put("a sandboxed program: calls through a ring, no handle", 24, graphics.COLOR_TEXT)
-		line_join()
+		put_use("load", name, "a library: direct calls, in the memory of the caller")
+		put_use("isolate", name, "a sandboxed program: calls through a ring, no handle")
 	}
 	put("", 0, 0)
 
@@ -368,27 +363,21 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	interface.draw_rectangle(table, 0, 0, LIST_WIDTH, HEIGHT, graphics.COLOR_CARD_TOP)
 	entries := system.image_entries(image)
-	list_rows := (HEIGHT - 8) / CELL_HEIGHT
-	list_first := clamp(selected - list_rows / 2, 0, max(len(entries) - list_rows, 0))
-	for index in list_first ..< min(len(entries), list_first + list_rows) {
-		entry := &entries[index]
-		y := 4 + (index - list_first) * CELL_HEIGHT
+	first_row := list_first_row()
+	for index in 0 ..< list_count {
+		start, end := list_row[index], list_row[index + 1]
+		if start < first_row {
+			continue // A name whose first line is over the window: its row is not drawn in part.
+		}
+		if end > first_row + LIST_ROWS {
+			break
+		}
+		y := 4 + (start - first_row) * CELL_HEIGHT
 		if index == selected && !showing_overview {
-			interface.draw_rectangle(table, 0, y, LIST_WIDTH, CELL_HEIGHT, COLOR_SELECTED)
+			interface.draw_rectangle(table, 0, y, LIST_WIDTH, (end - start) * CELL_HEIGHT, COLOR_SELECTED)
 		}
-		file := file_of(entry)
-		head, _ := module.header(file)
-		exports := described_exports(file)
-		color := graphics.Color(graphics.COLOR_DIM)
-		switch {
-		case exports > 0 && head.entry_export != 0:
-			color = COLOR_EXPORT
-		case exports > 0:
-			color = COLOR_TITLE
-		case head.entry_export != 0:
-			color = graphics.COLOR_TEXT
-		}
-		interface.draw_text(table, 8, y, system.name_of(entry.name[:]), color)
+		exports := list_exports[index]
+		interface.draw_text_wrapped(table, 8, y, list_name_room(exports), system.name_of(entries[index].name[:]), list_colors[index])
 		if exports > 0 {
 			buffer: [8]u8
 			count := system.format(buffer[:], u64(exports))
@@ -430,6 +419,84 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	total := rows()
 	place := system.format(buffer[:], "rows ", u64(min(first_line + 1, total)), " to ", u64(min(first_line + ROWS, total)), " of ", u64(total))
 	interface.draw_text(table, max(hint + 16, WIDTH - MARGIN - len(place) * CELL_WIDTH), bottom, place, graphics.COLOR_DIM)
+}
+
+// The list of the modules, at the left of the window. The name of a module
+// has a box: from the left of the list to the count of its exports. A name
+// wider than its box goes on more lines (interface.text_wrap_line), and its
+// row has the height of its lines: no name runs over the page. The boot
+// image does not change while the system runs, so the rows are made once.
+LIST_ROWS :: (HEIGHT - 8) / CELL_HEIGHT // The lines of the list in the window.
+LIST_ENTRY_CAPACITY :: 1024
+list_row: [LIST_ENTRY_CAPACITY + 1]int // The first line of each module, and at list_count the count of the lines.
+list_exports: [LIST_ENTRY_CAPACITY]int // The count of the described exports of each module.
+list_colors: [LIST_ENTRY_CAPACITY]graphics.Color
+list_count: int
+
+// list_name_room gives the width of the box of a name of the list, in
+// pixels: the list without its margins and without the count of the
+// exports, when the module has one, and a space before it.
+list_name_room :: proc "contextless" (exports: int) -> int {
+	room := LIST_WIDTH - 16
+	if exports > 0 {
+		buffer: [8]u8
+		room -= (len(system.format(buffer[:], u64(exports))) + 1) * CELL_WIDTH
+	}
+	return room
+}
+
+// list_build makes the rows of the list from the boot image. A boot image
+// with more modules than the list holds is stated on the log with the two
+// counts: `show` and the keys still reach the page of each module.
+list_build :: proc "contextless" () {
+	entries := system.image_entries(image)
+	list_count = min(len(entries), LIST_ENTRY_CAPACITY)
+	line := 0
+	for index in 0 ..< list_count {
+		entry := &entries[index]
+		file := file_of(entry)
+		head, _ := module.header(file)
+		exports := described_exports(file)
+		color := graphics.Color(graphics.COLOR_DIM)
+		switch {
+		case exports > 0 && head.entry_export != 0:
+			color = COLOR_EXPORT
+		case exports > 0:
+			color = COLOR_TITLE
+		case head.entry_export != 0:
+			color = graphics.COLOR_TEXT
+		}
+		list_row[index], list_exports[index], list_colors[index] = line, exports, color
+		line += max(interface.text_wrapped_line_count(nil, {}, system.name_of(entry.name[:]), list_name_room(exports)), 1)
+	}
+	list_row[list_count] = line
+	if list_count < len(entries) {
+		system.log("manual: the list shows ", u64(list_count), " of the ", u64(len(entries)), " modules of the boot image")
+	}
+}
+
+// list_first_row gives the first line of the list that the window shows:
+// the row of the selected module is in the middle when the list is longer
+// than the window.
+list_first_row :: proc "contextless" () -> int {
+	selected_row := selected < list_count ? list_row[selected] : 0
+	return clamp(selected_row - LIST_ROWS / 2, 0, max(list_row[list_count] - LIST_ROWS, 0))
+}
+
+// list_index_at gives the module whose row is at a height of the window,
+// or -1: a row that the window does not show whole takes no press.
+list_index_at :: proc "contextless" (y: int) -> int {
+	if y < 4 {
+		return -1
+	}
+	first_row := list_first_row()
+	row := first_row + (y - 4) / CELL_HEIGHT
+	for index in 0 ..< list_count {
+		if row >= list_row[index] && row < list_row[index + 1] {
+			return list_row[index] >= first_row && list_row[index + 1] <= first_row + LIST_ROWS ? index : -1
+		}
+	}
+	return -1
 }
 
 select :: proc "contextless" (index: int) {
@@ -544,6 +611,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		replacement_table = (^system.Replacement_Table)(address)
 	}
 	information_start(ctx)
+	list_build()
 	entries := system.image_entries(image)
 	documented := 0
 	for &item in entries {
@@ -618,10 +686,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					changed = true
 				}
 				down := event.buttons & display.BUTTON_LEFT != 0
-				if down && !pressed && event.x >= 0 && event.x < LIST_WIDTH && event.y >= 4 {
-					list_rows := (HEIGHT - 8) / CELL_HEIGHT
-					list_first := clamp(selected - list_rows / 2, 0, max(len(entries) - list_rows, 0))
-					if index := list_first + (event.y - 4) / CELL_HEIGHT; index < len(entries) {
+				if down && !pressed && event.x >= 0 && event.x < LIST_WIDTH {
+					if index := list_index_at(event.y); index >= 0 {
 						select(index)
 						page_log()
 						changed = true

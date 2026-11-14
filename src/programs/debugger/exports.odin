@@ -34,9 +34,9 @@ Thread_Row :: struct {
 	state:       [12]u8, // ready or waiting: it runs. held: the debugger stopped it. stopped: a breakpoint, a watch or a step stopped it.
 	instruction: [20]u8, // The address of its next instruction, when its registers can be read.
 	module:      [32]u8, // The module of the instruction.
-	procedure:   [64]u8, // The procedure of the instruction, from the debug object.
+	procedure:   [PROCEDURE_NAME_SIZE]u8, // The procedure of the instruction, from the debug object.
 	offset:      i64, // The offset of the instruction in the procedure, or in the module with no procedure.
-	file:        [64]u8,
+	file:        [SOURCE_PATH_SIZE]u8,
 	line:        i64, // 0: no source line.
 	pending:     i64, // `step` and `step_line`: 1 when the export reached its bound before the step ended or the line changed: call again, or wait for the stop of the thread. 0 else.
 }
@@ -52,9 +52,9 @@ Register_Row :: struct {
 Frame_Row :: struct {
 	frame:          i64, // 0: the instruction of the thread. Each next one: a caller.
 	module:         [32]u8,
-	procedure:      [64]u8,
+	procedure:      [PROCEDURE_NAME_SIZE]u8,
 	offset:         i64, // The offset in the procedure of the instruction (frame 0) or of the return address.
-	file:           [64]u8,
+	file:           [SOURCE_PATH_SIZE]u8,
 	line:           i64, // The line of the instruction, or of the call.
 	frame_pointer:  [20]u8,
 	return_address: [20]u8,
@@ -82,7 +82,7 @@ Source_Row :: struct {
 	line: i64,
 	mark: [4]u8, // "=>" on the line of the instruction.
 	text: [80]u8, // The text of the line, or why the service does not have it.
-	path: [64]u8, // The path of the file, from the root of the repository.
+	path: [SOURCE_PATH_SIZE]u8, // The path of the file, from the root of the repository.
 	hash: [68]u8, // The BLAKE3 hash of the file at the build, in hexadecimal: a reader shows the line only from a file with this hash.
 }
 
@@ -92,7 +92,7 @@ Break_Row :: struct {
 	kind:    [12]u8, // execute or write.
 	address: [20]u8,
 	length:  i64, // A watch: the bytes that it watches.
-	place:   [96]u8, // The text that named it.
+	place:   [PLACE_TEXT_SIZE]u8, // The text that named it, whole.
 }
 
 // Sixteen bytes of the memory of the program: memory().
@@ -108,9 +108,9 @@ Event_Row :: struct {
 	kind:        [28]u8, // "breakpoint N", "watch N", "step", "int3" or "int1".
 	instruction: [20]u8, // Where the thread goes on.
 	module:      [32]u8,
-	procedure:   [64]u8,
+	procedure:   [PROCEDURE_NAME_SIZE]u8,
 	offset:      i64,
-	file:        [64]u8,
+	file:        [SOURCE_PATH_SIZE]u8,
 	line:        i64,
 }
 

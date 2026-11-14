@@ -114,12 +114,20 @@ expected_machine_rows := [?]Expected_Row {
 // grid of 8 pixels, names in the dim color, values in the text color, the
 // state of a case in the color of a program that runs or in the color
 // "failed", with a text that says the same.
-LINE :: 24
+LINE :: interface.TABLE_LINE
 LEFT :: 16
-ANSWER_X :: 376
-WIDTH :: 864
+// The answer starts after the longest text of a case, "UDP from 10.0.2.2
+// port 7 with a wrong checksum": 45 characters. From the left of the cases.
+ANSWER_X :: 47 * graphics.CELL_WIDTH
+WIDTH :: 992
 CASE_CAPACITY :: 15 // The cases of cases_run, and one more after a key.
-HEIGHT :: 16 + 2 * LINE + CASE_CAPACITY * LINE + 4 * LINE + 16
+// The room of the cases: each case, nine lines more for the answers that
+// are sentences of two lines (docs/INTERFACE.md, "The text in a box"), and
+// the line that counts the cases with no room.
+CASES_HEIGHT :: CASE_CAPACITY * LINE + 9 * graphics.LINE_HEIGHT
+MEASURES_Y :: 16 + 2 * LINE + CASES_HEIGHT + LINE + LINE / 2
+HEIGHT :: MEASURES_Y + 3 * LINE + graphics.LINE_HEIGHT + 8 // The three measures, one of them on two lines.
+#assert(HEIGHT <= 712) // The screen of 768 lines, less the bar and the title of the window.
 
 
 Case :: struct {
@@ -529,24 +537,25 @@ draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
-	y := 16
-	interface.draw_text(table, LEFT, y, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", graphics.COLOR_DIM)
-	y += LINE
-	interface.draw_text(table, LEFT, y, "the program asks", graphics.COLOR_DIM)
-	interface.draw_text(table, ANSWER_X, y, "the network answers", graphics.COLOR_DIM)
-	y += LINE
+	interface.draw_text_wrapped(table, LEFT, 16 + 4, WIDTH - 2 * LEFT, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, 16 + LINE + 4, "the program asks", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT + ANSWER_X, 16 + LINE + 4, "the network answers", graphics.COLOR_DIM)
+	// The cases: each answer whole, on the lines that it needs. Then one
+	// line for the count of the cases with no room.
+	column := interface.column_of({LEFT, 16 + 2 * LINE, WIDTH - 2 * LEFT, CASES_HEIGHT})
+	not_shown := 0
 	for &item, index in cases[:case_count] {
-		if index % 2 == 0 {
-			interface.draw_rectangle(table, 8, y - 4, WIDTH - 16, LINE, graphics.COLOR_CARD_TOP)
-		}
-		interface.draw_text(table, LEFT, y, item.text, graphics.COLOR_DIM)
-		end := interface.draw_text(table, ANSWER_X, y, string(item.answer[:item.count]), item.right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
+		answer_buffer: [280]u8
+		answer := string(item.answer[:item.count])
 		if !item.right {
-			interface.draw_text(table, end + 8, y, "not expected", graphics.COLOR_FAILED)
+			answer = system.format(answer_buffer[:], answer, "  not expected")
 		}
-		y += LINE
+		if _, drawn := interface.case_lines(&frame, &column, index, item.text, answer, ANSWER_X, graphics.COLOR_DIM, item.right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED, LINE); !drawn {
+			not_shown += 1
+		}
 	}
-	y += LINE / 2
+	interface.cases_rest_line(&frame, {LEFT, 16 + 2 * LINE + CASES_HEIGHT, WIDTH - 2 * LEFT, LINE}, not_shown, "the log has a line \"net: \" for each")
+	measures_column := interface.column_of({LEFT, MEASURES_Y, WIDTH - 2 * LEFT, HEIGHT - MEASURES_Y})
 	Measure :: struct {
 		name:  string,
 		value: string,
@@ -569,9 +578,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		if item.name == "" {
 			continue
 		}
-		interface.draw_text(table, LEFT, y, item.name, graphics.COLOR_DIM)
-		interface.draw_text(table, ANSWER_X, y, item.value, measured ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
-		y += LINE
+		interface.case_lines(&frame, &measures_column, 1, item.name, item.value, ANSWER_X, graphics.COLOR_DIM, measured ? graphics.COLOR_TEXT : graphics.COLOR_DIM, LINE)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

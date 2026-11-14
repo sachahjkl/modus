@@ -7,13 +7,14 @@ package server
 
 import "modus:support/display"
 import "modus:support/graphics"
+import "modus:support/interface"
 import "modus:support/network"
 import "modus:support/system"
 import "modus:support/tcp"
 import "modus:support/web"
 
 WIDTH :: 976
-HEIGHT :: 672
+HEIGHT :: 680
 
 // The colors of the concepts (src/library/support/graphics/rules.odin, docs/DESIGN.md
 // section 4) that this window uses for TCP:
@@ -118,12 +119,23 @@ COLUMN_RTT :: 440
 COLUMN_WINDOW :: 448 // A bar of WINDOW_BAR pixels for 64 KiB.
 WINDOW_BAR :: 56
 
-// The columns of the table of the last requests (a card 424 pixels wide).
-ACCESS_TARGET :: 48
-ACCESS_STATUS :: 184
-ACCESS_BYTES :: 296 // Right edges.
-ACCESS_TIME :: 368
-ACCESS_PORT :: 384
+// The columns of the table of the last requests (a card 416 pixels wide).
+// The target starts one character after the longest name of a method
+// ("OPTIONS", 7 characters), and its box ends one character before the
+// status: a target wider than the box goes on more lines
+// (docs/INTERFACE.md, "The text in a box").
+ACCESS_TARGET :: 8 * graphics.CELL_WIDTH
+ACCESS_STATUS :: 208
+ACCESS_TARGET_ROOM :: ACCESS_STATUS - graphics.CELL_WIDTH - ACCESS_TARGET
+ACCESS_BYTES :: 304 // Right edges.
+ACCESS_TIME :: 384
+#assert(ACCESS_TIME <= 416 - 2 * CARD_MARGIN)
+
+// The cards of the top row, as high as the six lines of MEASURES; the two
+// tables under them.
+TOP_HEIGHT :: 168
+TABLES_Y :: 8 + TOP_HEIGHT + 8
+TABLES_HEIGHT :: HEIGHT - TABLES_Y - 8
 
 connection_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, connection: ^tcp.Connection, how: string, band: bool) {
 	if band {
@@ -164,19 +176,37 @@ status_color :: proc "contextless" (status: int) -> graphics.Color {
 	return graphics.COLOR_FAILED
 }
 
+// access_target gives the target of a request as the record keeps it.
+access_target :: proc "contextless" (record: ^Access_Record) -> string {
+	return string(record.target[:clamp(record.target_length, 0, len(record.target))])
+}
+
+// access_row_height gives the height of the row of a request: a line of the
+// table, and one line of text more for each more line of its target.
+access_row_height :: proc "contextless" (record: ^Access_Record) -> int {
+	lines := max(interface.text_wrapped_line_count(nil, {}, access_target(record), ACCESS_TARGET_ROOM), 1)
+	return LINE + (lines - 1) * graphics.LINE_HEIGHT
+}
+
+// access_row_draw draws the row of a request. The target is whole, on the
+// lines that it needs in its column (the rule of interface.text_wrap_line;
+// the window draws with src/library/support/graphics).
 access_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, record: ^Access_Record, band: bool) {
 	if band {
-		graphics.fill(canvas, -8, y - 4, canvas.width + 16, LINE, graphics.COLOR_TRACK)
+		graphics.fill(canvas, -8, y - 4, canvas.width + 16, access_row_height(record), graphics.COLOR_TRACK)
 	}
 	buffer: [32]u8
 	method := web.request_method_name(record.method)
 	graphics.text(canvas, 0, y, method == "" ? "-" : method, graphics.COLOR_DIM)
-	target := string(record.target[:min(record.target_length, 16)])
-	graphics.text(canvas, ACCESS_TARGET, y, target, graphics.COLOR_TEXT)
+	rest := access_target(record)
+	for line_y := y; len(rest) > 0; line_y += graphics.LINE_HEIGHT {
+		line: string
+		line, rest = interface.text_wrap_line(nil, {}, rest, ACCESS_TARGET_ROOM)
+		graphics.text(canvas, ACCESS_TARGET, line_y, line, graphics.COLOR_TEXT)
+	}
 	graphics.text(canvas, ACCESS_STATUS, y, system.format(buffer[:], u64(record.status)), status_color(record.status))
 	right(canvas, ACCESS_BYTES, y, size_text(buffer[:], record.bytes), graphics.COLOR_TEXT)
 	right(canvas, ACCESS_TIME, y, time_text(buffer[:], max(record.time, 1)), graphics.COLOR_MACHINE)
-	graphics.text(canvas, ACCESS_PORT, y, system.format(buffer[:], u64(record.remote_port)), graphics.COLOR_DIM)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
@@ -193,7 +223,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	open := tcp_open_count()
 
 	// The listen grant and the table.
-	inside := card(canvas, 8, 8, 256, 160, "LISTEN", "tcp.Table", graphics.COLOR_PROGRAM)
+	inside := card(canvas, 8, 8, 256, TOP_HEIGHT, "LISTEN", "tcp.Table", graphics.COLOR_PROGRAM)
 	after := write_large(inside, 0, 0, system.format(buffer[:], u64(open)), 3, graphics.COLOR_PROGRAM)
 	graphics.text(inside, after + 8, 24, open == 1 ? "connection" : "connections", graphics.COLOR_DIM)
 	fact(inside, 56, "port", system.format(buffer[:], u64(listen_port), ", any host"))
@@ -201,7 +231,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	fact(inside, 96, "accepted", system.format(buffer[:], accepted, ", ", aborted_count, " ended"))
 
 	// The answers by class of status.
-	inside = card(canvas, 272, 8, 232, 160, "ANSWERS", "web.Request", graphics.COLOR_MEMORY)
+	inside = card(canvas, 272, 8, 232, TOP_HEIGHT, "ANSWERS", "web.Request", graphics.COLOR_MEMORY)
 	after = write_large(inside, 0, 0, system.format(buffer[:], requests_answered), 3, graphics.COLOR_MEMORY)
 	graphics.text(inside, after + 8, 24, "requests", graphics.COLOR_DIM)
 	total := max(requests_answered, 1)
@@ -220,7 +250,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 
 	// The measures, with the cycle counter.
-	inside = card(canvas, 512, 8, 456, 160, "MEASURES", "system.nanoseconds", graphics.COLOR_MACHINE)
+	inside = card(canvas, 512, 8, 456, TOP_HEIGHT, "MEASURES", "system.nanoseconds", graphics.COLOR_MACHINE)
 	fact(inside, 0, "handshake", handshake_last == 0 ? "" : system.format(buffer[:], time_text(other[:], handshake_last), ", least ", handshake_least, " us"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
 	fact(inside, 20, "one connection", best_keep_alive_rate == 0 ? "" : system.format(buffer[:], best_keep_alive_rate, " requests in 1 s, the best"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
 	fact(inside, 40, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in 1 s, the best"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
@@ -229,7 +259,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	fact(inside, 100, "ISN secret", system.format(buffer[:], "modus:support/random, ", program_generator.served, " B"), graphics.COLOR_TEXT, MEASURES_VALUE_COLUMN)
 
 	// The connection table, live, then the connections that ended.
-	inside = card(canvas, 8, 176, 536, 488, "CONNECTIONS", "tcp.Connection", graphics.COLOR_PROGRAM)
+	inside = card(canvas, 8, TABLES_Y, 536, TABLES_HEIGHT, "CONNECTIONS", "tcp.Connection", graphics.COLOR_PROGRAM)
 	graphics.text(inside, 0, 0, "remote", graphics.COLOR_DIM)
 	graphics.text(inside, COLUMN_STATE, 0, "state", graphics.COLOR_DIM)
 	right(inside, COLUMN_IN, 0, "in", graphics.COLOR_DIM)
@@ -288,25 +318,24 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 
 	// The last requests, the newest first.
-	inside = card(canvas, 552, 176, 416, 488, "REQUESTS", "Access_Record", graphics.COLOR_MEMORY)
+	inside = card(canvas, 552, TABLES_Y, 416, TABLES_HEIGHT, "REQUESTS", "Access_Record", graphics.COLOR_MEMORY)
 	graphics.text(inside, 0, 0, "method", graphics.COLOR_DIM)
-	graphics.text(inside, ACCESS_TARGET + 16, 0, "target", graphics.COLOR_DIM)
+	graphics.text(inside, ACCESS_TARGET, 0, "target", graphics.COLOR_DIM)
 	graphics.text(inside, ACCESS_STATUS - 8, 0, "status", graphics.COLOR_DIM)
 	right(inside, ACCESS_BYTES, 0, "bytes", graphics.COLOR_DIM)
 	right(inside, ACCESS_TIME, 0, "time", graphics.COLOR_DIM)
 	graphics.fill(inside, 0, 20, inside.width, 1, graphics.COLOR_TRACK)
 	y = 28
 	shown := 0
+	// The table is a view of the newest requests: it shows the rows that
+	// fit whole in the card, and the log has each request.
 	for back in 1 ..= ACCESS_HISTORY {
-		if shown == 17 {
-			break
-		}
 		record := &access_records[(access_next - back + ACCESS_HISTORY) % ACCESS_HISTORY]
-		if record.status == 0 {
+		if record.status == 0 || y - 4 + access_row_height(record) > inside.height {
 			break
 		}
 		access_row_draw(inside, y, record, shown % 2 == 1)
-		y += LINE
+		y += access_row_height(record)
 		shown += 1
 	}
 	if shown == 0 {
