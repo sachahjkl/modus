@@ -50,6 +50,24 @@ list_rows_go_to_one_list :: proc(t: ^testing.T) {
 	testing.expect_value(t, keeping.shown.chosen, -1)
 }
 
+// A row keeps the icon that its program names; a number that names no icon
+// is no icon; a row with no icon after a row with one has none.
+@(test)
+list_row_keeps_the_icon_of_its_kind :: proc(t: ^testing.T) {
+	keeping: List_Keeping
+	name := "monitor"
+	list_keep_row(&keeping, {0 = 0, 1 = 7, 4 = u64(List_Icon.Module)}, transmute([]u8)name, nil)
+	list_keep_row(&keeping, {0 = 1, 1 = 7, 4 = u64(max(List_Icon)) + 1}, transmute([]u8)name, nil)
+	list_keep_row(&keeping, {0 = 2, 1 = 7, 4 = max(u64)}, transmute([]u8)name, nil)
+	list_keep_show(&keeping, {0 = 3, 1 = NO_CHOICE})
+	testing.expect_value(t, keeping.shown.rows[0].icon, List_Icon.Module)
+	testing.expect_value(t, keeping.shown.rows[1].icon, List_Icon.None)
+	testing.expect_value(t, keeping.shown.rows[2].icon, List_Icon.None)
+	list_keep_row(&keeping, {0 = 0, 1 = 7}, transmute([]u8)name, nil)
+	list_keep_show(&keeping, {0 = 1, 1 = NO_CHOICE})
+	testing.expect_value(t, keeping.shown.rows[0].icon, List_Icon.None)
+}
+
 @(test)
 list_values_of_a_hostile_program :: proc(t: ^testing.T) {
 	keeping: List_Keeping
