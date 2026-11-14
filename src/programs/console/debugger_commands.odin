@@ -80,6 +80,10 @@ debug_step :: proc "contextless" (arguments: []Value) -> Value {
 	return bound_call("debugger", "step", arguments)
 }
 
+debug_step_over :: proc "contextless" (arguments: []Value) -> Value {
+	return bound_call("debugger", "step_over", arguments)
+}
+
 debug_step_line :: proc "contextless" (arguments: []Value) -> Value {
 	return bound_call("debugger", "step_line", arguments)
 }
@@ -211,6 +215,12 @@ debugger_commands_start :: proc "contextless" () {
 	//
 	// - `thread`: the number of a thread that is held or stopped.
 	command("step_line", {.Integer}, .Table, "a held thread, to its next source line: debugger.step_line()", debug_step_line)
+	// Runs a thread that is held or stopped to the next source line of its
+	// procedure, and gives its row there: a call of the line runs to its
+	// end, and the thread does not stop inside it.
+	//
+	// - `thread`: the number of a thread that is held or stopped.
+	command("step_over", {.Integer}, .Table, "a held thread, to its next source line, over each call: debugger.step_over()", debug_step_over)
 	// Gives the bytes of the debugged program from an address, sixteen in
 	// each row. It is the export `memory` of the service; `memory` in the
 	// console gives the memory of the machine.

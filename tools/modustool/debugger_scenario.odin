@@ -111,6 +111,11 @@ DEBUG_TARGET_SOURCE_FILE :: PROGRAM_SOURCES + "debug_target/main.odin"
 // the load of the first statement and the store one row of the line table,
 // with this line. A change of that file above the procedure changes it.
 DEBUG_TARGET_LINE_OF_THE_STORE :: "79"
+// The line of count_rounds that calls add_step, and the line after it: the
+// place of a step over a call. A change of that file above them changes
+// them.
+DEBUG_TARGET_LINE_OF_THE_CALL :: "98"
+DEBUG_TARGET_LINE_AFTER_THE_CALL :: "99"
 DEBUG_TARGET_TEXT_OF_THE_STORE :: "\tintrinsics.volatile_store(sum, before + step)"
 
 DEBUG_TARGET_RUNS :: "debug_target: 64 more rounds ran, so the program is not held: as it must"
@@ -199,10 +204,30 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Type, text = "columns(value(0, 0, \"debug_target::title\"), \"name value\")"},
 	{kind = .Wait, text = "[console] debug_target::title  \"debug target\""},
 
-	// A watch on a global, with no other breakpoint: the thread stops after
-	// the instruction that writes it, in the one procedure that does.
+	// A step over a call. With one breakpoint, at the line of count_rounds
+	// that calls add_step, the thread stops before the call. One step_over
+	// runs the call to its end: the service says so, and the thread is at
+	// the next line of count_rounds, not in add_step. The breakpoint that
+	// the step put at the return is gone: the table has one row.
 	{kind = .Type, text = "columns(break_remove(1), \"number place\")"},
 	{kind = .Wait, text = "[console]      0  debug_target::count_rounds"},
+	{kind = .Type, text = "break_remove(0)"},
+	{kind = .Wait, text = "[console] 0 rows of Break_Row"},
+	{kind = .Type, text = "columns(break_at(\"" + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_CALL + "\"), \"number kind\")"},
+	{kind = .Wait, text = "[console]      0  execute"},
+	{kind = .Type, text = "columns(resume(0), \"thread\")"},
+	{kind = .Wait, text = "[console]      0", any_order = true},
+	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 0"},
+	{kind = .Type, text = "columns(events(), \"kind procedure line\")"},
+	{kind = .Wait, text = "[console] breakpoint 0  debug_target::count_rounds    " + DEBUG_TARGET_LINE_OF_THE_CALL},
+	{kind = .Type, text = "columns(step_over(0), \"procedure line pending\")"},
+	{kind = .Wait, text = "debugger: the thread 0 of debug_target ran a call to its end, for step_over"},
+	{kind = .Wait, text = "[console] debug_target::count_rounds    " + DEBUG_TARGET_LINE_AFTER_THE_CALL + "        0"},
+	{kind = .Type, text = "columns(breaks(), \"number kind\")"},
+	{kind = .Wait, text = "[console] 1 row of Break_Row"},
+
+	// A watch on a global, with no other breakpoint: the thread stops after
+	// the instruction that writes it, in the one procedure that does.
 	{kind = .Type, text = "break_remove(0)"},
 	{kind = .Wait, text = "[console] 0 rows of Break_Row"},
 	{kind = .Type, text = "columns(watch(\"debug_target::rounds\", 8), \"number kind length place\")"},

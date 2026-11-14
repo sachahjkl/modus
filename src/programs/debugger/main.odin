@@ -140,6 +140,16 @@ Event :: struct {
 	kind_count:  int,
 }
 
+// The call that `step_over` runs to its end: the service put a breakpoint at
+// the instruction after the call, and the thread runs to it. The breakpoint
+// is one of the four of the session, and goes when the thread is there.
+Step_Over :: struct {
+	active: bool, // The breakpoint is in place.
+	thread: u64, // The thread that made the call.
+	place:  int, // The place of the breakpoint in `Session.breaks`.
+	stack:  u64, // The stack address of the thread after the return: a return of a deeper call of the same procedure has a lower one.
+}
+
 // The program that the service debugs, and for whom.
 Session :: struct {
 	attached:       bool,
@@ -154,6 +164,7 @@ Session :: struct {
 	events:         [EVENT_CAPACITY]Event,
 	event_count:    int,
 	events_lost:    u64, // The stops that found `events` full.
+	step_over:      Step_Over, // The call that a `step_over` lets a thread run to the end of.
 }
 
 machine: system.Handle
@@ -510,7 +521,7 @@ records_take :: proc "contextless" () {
 // step is its result, not an event. The trap flag that the service wrote for a
 // step leaves the thread at its next stop, of any kind: the thread goes on
 // freely at its next answer.
-record_keep :: proc "contextless" (record: op.Fault_Record, awaited_step := false) {
+record_keep :: proc "contextless" (record: op.Fault_Record, awaited_step := false, awaited_break := -1) {
 	if record.thread >= THREAD_CAPACITY {
 		return
 	}
@@ -523,6 +534,11 @@ record_keep :: proc "contextless" (record: op.Fault_Record, awaited_step := fals
 			registers.rflags &~= FLAG_TRAP
 			system.thread_registers_write(session.program, record.thread, registers)
 		}
+	}
+	// The breakpoint of a step over a call, alone: the export waits for it,
+	// and its stop is the result of the export.
+	if awaited_break >= 0 && record.kind == .Debug && record.error_code & op.DEBUG_STATUS_BREAKPOINTS == u64(1) << u64(awaited_break) {
+		return
 	}
 	if awaited_step && record.kind == .Debug && record.error_code & op.DEBUG_STATUS_BREAKPOINTS == 0 {
 		return
