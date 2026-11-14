@@ -65,13 +65,10 @@ scale_values_up_to_stops_at_the_first_reading_too_large :: proc(t: ^testing.T) {
 }
 
 // The test runs on the host: the module links src/library/support/system, whose entries
-// of the machine (src/library/support/system/enter.asm) are not on the host. These
-// definitions are never called by sum_words; each one stops the test if it
-// is.
-@(export, link_name = "system_enter")
-host_system_enter :: proc "c" (wait: u64) -> u64 {intrinsics.trap()}
-@(export, link_name = "thread_record")
-host_thread_record :: proc "c" () -> rawptr {intrinsics.trap()}
+// of the machine (src/library/support/system/enter.asm) are not on the host. The
+// package gives the two entries of the kernel for a host
+// (kernel_entry_on_the_host.odin); this definition gives the call of an
+// export. It is never called by sum_words, and stops the test if it is.
 @(export, link_name = "export_call")
 host_export_call :: proc "c" (address: uintptr, integers, floats, results: rawptr) {intrinsics.trap()}
 @(export, link_name = "port_write_8")
