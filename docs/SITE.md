@@ -1743,4 +1743,4 @@ A `<meta>` policy is not written: `frame-ancestors` has no effect there, and `'s
 
 1. Done: the measured numbers of the site online come from the measure record (see "The measure record").
 2. The cache of the workflow: the cache of GitHub Actions (`magic-nix-cache-action`, now) or FlakeHub Cache (`flakehub-cache-action`, which needs a FlakeHub account for the repository).
-3. The name in the title of `README.md` and in the `description` of `flake.nix`: both say "Next-Gen Kernel", the name of the project before `modus`. The site does not read either (it reads the lead of `README.md`). Not changed here.
+3. Done: the description of the project is one sentence, "A fast, modular operating system where each program gets only what you give it", in the lead of `README.md`, which the site reads, in the `description` of `flake.nix` and in the description of the repository.

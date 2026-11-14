@@ -1,2 +1,2 @@
 name=kernel
-description=Next-Gen Kernel
+description=A fast, modular operating system where each program gets only what you give it
