@@ -2027,6 +2027,26 @@ An import of the source names the library and the package: `modus:contract/ring`
 
 Do not use: collection, SDK, libc, static library.
 
+### Outside module
+
+An outside module is a module whose source is in a folder outside the repository of the system.
+
+Its developer writes one Odin package that imports the packages of the system from the source library, and a module build file. The command `kerneltool module-build` builds it with the two steps of a module of the system, and writes the module file and the debug object in a folder of the developer. The module table of the tool has no row for it. A source of an outside module is in the folder of the module or under it, in the source library, or in the libraries of the compiler. An outside module is a module as each other: one file, named by its hash, with described exports. The tool does not yet put one in a boot image.
+
+The design: `docs/TOOLS.md`, "A module from a source outside the repository".
+
+Do not use: third-party module, external module, plugin.
+
+### Module build file
+
+A module build file is the file `module.txt` in the folder of an outside module, which holds the fields of a row of the module table.
+
+Each line is `key: value`. The key `name` is the name of the module. The keys `imports`, `defines` and `library` are the imports by name, the settings of the compiler and whether the module is a library module; each can be absent. The tool refuses a line that it does not know. A module of the system has no module build file: its row is in the module table of the tool.
+
+The design: `docs/TOOLS.md`, "A module from a source outside the repository".
+
+Do not use: manifest, build script, project file.
+
 ### Documentation
 
 The documentation of a module is the text that the module carries in its file for a reader: one line that says what the module is, a text for the module, and a text for each export.
@@ -3729,7 +3749,7 @@ A surface is a memory object that one program draws into and the compositor show
 
 A surface keeps the pixels out of the kernel and out of the rings: the program writes pixels in its own memory, and the compositor reads the same memory. No pixel goes through a ring or through the kernel.
 
-A program opens a surface with `display.open(ctx, width, height, title, two_pictures)`. This needs the grant of the display, a ring to the compositor in its context; without it the call fails with `No_Grant`. A width or a height is 1 to 2048 pixels (`SURFACE_LIMIT`). The call makes a memory object for one picture or two, maps it, gives the compositor a handle with **Read** only through the ring, and sends `Surface_Create`. Then the program draws a picture and sends `Present` with the rectangle that changed. The compositor sends the input of the window back as completion records of the same ring: keys, pointer events, and `Settings_Changed`.
+A program opens a surface with `display.open(ctx, width, height, title)`. This needs the grant of the display, a ring to the compositor in its context; without it the call fails with `No_Grant`. A width or a height is 1 to 2048 pixels (`SURFACE_LIMIT`). The call makes a memory object for two pictures, maps it, gives the compositor a handle with **Read** only through the ring, and sends `Surface_Create`. Then the program draws a picture and sends `Present` with the rectangle that changed. The compositor sends the input of the window back as completion records of the same ring: keys, pointer events, and `Settings_Changed`.
 
 A surface is not a framebuffer: the framebuffer is the memory of the screen that the firmware gave, and only the compositor writes it. A program cannot write another program's surface or the screen.
 
@@ -3739,15 +3759,27 @@ Do not use: window buffer, framebuffer (reserved for the UEFI one).
 
 ### Picture
 
-A picture is one complete image in the memory of a surface; a surface has one picture or two.
+A picture is one complete image in the memory of a surface; a surface has two pictures.
 
-With one picture, the compositor can read the picture while the program draws, and the screen can show a part of the new image with a part of the old one. With two pictures, the program draws one while the compositor reads the other, and `Present` names the picture that is complete; the next frame draws in the other one. A program asks for two pictures with the argument `two_pictures` of `display.open`. The interface package keeps one draw table for each picture, because the picture that a frame draws holds the frame of two frames before.
+The program draws one picture while the compositor reads the other, and `Present` names the picture that is complete; the next frame draws in the other one. The picture that a frame draws holds the frame of two frames before. The interface package keeps, for each picture, the rectangles where it differs from the last frame that was presented, and draws them again with the rectangles that changed.
 
 A picture is not a picture resource or a picture record: a picture record shows pixels of a picture that the program holds in its own memory, inside its surface.
 
 The design: `src/library/support/display`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: back buffer, front buffer, swap chain.
+
+### Whole frame
+
+A whole frame is a picture of a window that reaches the screen complete: the screen never shows a picture that a program is drawing.
+
+It is a rule of the system for every window, and a program writes no code for it. A surface has two pictures. The program draws the picture that the compositor does not read, and only after the compositor took the picture before (`display.canvas_free`, `display.canvas_wait`). The compositor shows a surface after its first `Present`. A program that stops in the middle of a draw leaves its last complete picture on the screen.
+
+The compositor counts, for each window, the `Present` records that named the picture that it already read: `pictures_drawn_again` in a row of `compositor.windows()`. It is 0 for a program that keeps the rule. The rule does not stop a hostile program, which holds the right to write both pictures: such a program spoils its own window, and no other.
+
+The design: `src/md/infrastructure/whole_frame.md`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
+
+Do not use: tear-free, double buffering, vertical synchronization.
 
 ### Compositor
 
@@ -5767,6 +5799,36 @@ A script that plays the animations shows one tile at a time by its place in the 
 The design: `docs/SITE.md`, "The moves of the heron".
 
 Do not use: sprite sheet, atlas, film strip.
+
+### Icon file
+
+An icon file is one file that holds the mark at several sizes, each as one PNG file behind a directory, so that a reader takes the entry of the size that it shows.
+
+The generator of the pictures of the mark writes it: each entry is the PNG file that the generator writes for one picture, byte for byte, and an entry is at most 256 pixels on a side. The site has one, `favicon.ico` at its root, with an entry of 32 pixels in the cells variant and one of 48 pixels in the smooth variant. Each entry is a row of the table of the uses of the mark. `kerneltool mark still --format ico` writes one. It is not the icon of a phone or of the manifest: each of those is one PNG file.
+
+The design: `docs/SITE.md`, "The icons"; `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: favicon file, ICO container, multi-size icon.
+
+### Vector file of the mark
+
+A vector file of the mark is a file that holds the mark in the cells variant as rectangles of one color, so that a reader draws the same cells at each size.
+
+The generator of the pictures of the mark cuts the pixels of a picture into rectangles: a run of cells of one color in a row is one rectangle. The tool computes each color; the reader of the file only fills rectangles. The file can hold a rule that gives the colors of the dark scheme to a reader that asks for dark. The smooth variant is not written as a vector file: the reader would compute the gradient. The site has one, `pictures/icon.svg`. `kerneltool mark still --format svg` writes one.
+
+The design: `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: SVG logo, scalable icon, vector logo.
+
+### Animated file of the mark
+
+An animated file of the mark is one animated PNG file that holds each frame of one animation of the mark as a picture, each for the time that the table of the animations gives it.
+
+The generator of the pictures of the mark writes it from the PNG data of each frame; a test reads each frame back and compares its pixels. It shows the frames of the heron in its place and plays with no end; it does not show the move of the heron across a page. It is for a page that runs no script, such as a page of a repository. The repository holds none: `kerneltool mark animation --animation <name>` writes one. It is not a tile map, which a script plays, and not a film, which shows the running system.
+
+The design: `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: GIF, animated logo, sprite animation.
 
 ### Site
 

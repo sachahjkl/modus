@@ -509,16 +509,89 @@ kerneltool: src/kernel/serial.odin:12: the import "modus:support/sentence" is re
 
 **What it does not prove.** It does not prove that a contract package uses no kernel operation: that rule is held by review.
 
-## A program outside the sources
+## A module from a source outside the repository
 
-A program outside the repository imports the library of the system with the lines of a program of the system, and gives the compiler one flag. `kerneltool check` proves it with one example (`third_party_example_check`, in `tools/kerneltool/library_imports_check.odin`):
+`kerneltool module-build` builds an outside module (`GLOSSARY.md`, "Outside module"): a module whose source is in a folder of another project. It writes the module file and the debug object. The build is the build of a module of the system: the same two steps, in the same procedures (`MODULE_CONTRACT.md`, "The steps of one module, as implemented"). The code is `tools/kerneltool/outside_module.odin`.
 
-1. It copies each `.odin` file of `src/programs/tally` to `build/third_party_example/tally`, with no change.
-2. It runs the check of the compiler on the copy: `odin check build/third_party_example/tally -target:freestanding_amd64_sysv -no-entry-point -default-to-nil-allocator -vet -collection:modus=src/library`.
+**What the folder holds.** One Odin package, its `.asm` files if it has some, and the module build file, `module.txt`. A source imports the packages of the system from the source library `modus`: `import "modus:support/system"`.
 
-The copy has no relative path to the library, so the folder of the copy does not matter: a program in another repository names the folder `src/library` of the repository of the system in the flag.
+**The module build file.** Each line that is not empty is `key: value`. Each key is written at most one time.
 
-This proves the import lines and the flag. It does not build a module from the copy: the tool builds the modules of its module table only, and the build of a module whose source is outside the repository has no design.
+```
+name: my_program
+imports: drawing
+defines: DRAWING_THROUGH_MODULE=true
+library: no
+```
+
+| Key | Value | When the key is absent |
+|---|---|---|
+| `name` | The name of the module: lower case letters, digits and `_`, at most 31 bytes | The build stops |
+| `imports` | The names of modules of the system, in the order of the import table, with a space between two | No import |
+| `defines` | Settings of the compiler for this module, `NAME=value`, with a space between two | None |
+| `library` | `yes` for a library module (`GLOSSARY.md`, "Library module"), `no` for each other module | `no` |
+
+The tool refuses a line that is not `key: value`, a key that is not in the table, a key that is written two times, and a value that it does not know. The message names the file and the line.
+
+**The command.**
+
+```
+kerneltool module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]
+```
+
+- **The folder of the system** is a checkout of the repository of the system. The tool takes it from `--system`, then from the environment variable `MODUS_SYSTEM`, then from the folder where the command runs. The tool makes the two other folders absolute, then moves to the folder of the system and builds there.
+- **The command `kerneltool` of the flake** compiles the tool from its sources before it runs it. It finds those sources with `MODUS_SYSTEM`. So a command that is typed in the folder of another project sets the variable.
+- **The folder of the outputs** is `build` in the folder of the module when `--out` is absent. The tool writes `<name>.module`, `<name>.debug`, and a folder `<name>` with the files between the steps. The build writes no file in the folder of the system. The command of the flake writes one there: the compiled tool, in `build`.
+- **A module with an import** needs the built modules of the system: the import table holds the hash of the file of each import. Run `kerneltool build` in the folder of the system first. The tool reads `build/modules/<import>.module` there.
+
+From the folder of a module, with the system in `~/modus`:
+
+```
+export MODUS_SYSTEM=~/modus
+nix develop ~/modus#module -c kerneltool module-build .
+```
+
+The shell `module` of the flake has the build tools and the command `kerneltool`. It has no hook of the repository of the system: the default shell installs those hooks in the repository where it starts.
+
+**What the command prints.** One line for the module file, with its size and its hash, which is the identity of the module. One line for the debug object. One line for each import, with the hash that the import table names. One line with the names of the exports.
+
+```
+kerneltool: the module my_program: /home/someone/my_program/build/my_program.module, 20480 bytes, hash 5d0c...
+kerneltool: the debug object of my_program: /home/someone/my_program/build/my_program.debug, 9216 bytes
+kerneltool: the module my_program imports drawing, hash 91ab...
+kerneltool: the module my_program has 2 exports: start, count
+```
+
+The sizes, the hashes and the exports of this example are not those of a real module.
+
+**The rules that hold for each module.** They are parts of the one build, so an outside module passes each of them:
+
+- each function keeps its frame pointer;
+- the module has no thread-local data;
+- each declaration of an import agrees with the description of its export (`MODULE_CONTRACT.md`, "The declaration of an import is checked");
+- a library module has no segment that the loader writes and that is read-only after the load;
+- the debug object holds no path of the host;
+- the compiler runs with `-vet`.
+
+**The rule of the three places.** Each source that the compiler read for an outside module is in one of three places: the folder of the module or a folder under it, the source library `modus`, the libraries of the compiler. The tool reads the list that the compiler writes, after the compile step and before the conversion. A source in another place stops the build with its path. So a relative import that leaves the folder of the module is refused, and an import of a folder of the system that is not its library too. A package in a folder under the folder of the module is allowed, with a relative import.
+
+**The rules that the tool does not apply to an outside module.** The rule of the comments, the rule of the names, the rule of the imports of the kernel, the check of the fixed addresses and the checks of the documents are rules of the repository of the system.
+
+**The path of a source in the debug object.** A source of an outside module has the path from the folder that holds the folder of the module: `my_program/main.odin`. A stop report and the debugger show that path. The debug object holds no folder above the folder of the module.
+
+**The proof.** `kerneltool check` builds two outside modules (`outside_module_examples_check`). Each is a copy of a module of the system: the program `tally`, which has no import, and the module `agenda`, which imports `calendar`.
+
+1. The tool copies each `.odin` and `.asm` file of the module to `build/third_party_example/<name>`, with no change, and writes the module build file there.
+2. It starts itself as a second process in that folder: `module-build . --system <folder of the system>`.
+3. It reads `build/third_party_example/<name>/build/<name>.module`. The loader must accept the file. Each export must have the name and the call form of the same export of the module of the system. The line of documentation must be the same. The import table must name the hash of the file of each import of the build of the system.
+4. It reads the debug object. No path of it starts with `/`, and one or more paths start with the name of the folder of the copy.
+
+The check does not compare the bytes of the two module files. The compiler orders the procedures of a module by the path of its packages, and the package of the copy has another path. The passed line of each example prints the start of the two hashes and says whether the bytes are the same: it is a fact of the run, not a condition.
+
+**What is not built.**
+
+- The tool does not put an outside module in a boot image. A machine loads a module from its boot image only, so an outside module does not yet run in a machine.
+- An import names a module of the system. An outside module does not import another outside module.
 
 ## The commands of the tool
 
@@ -528,6 +601,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 |---|---|
 | `build [whole] [processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test or a measure needs (a start that fails, a shortage of frames, a measure run, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and each boot volume when its inputs are the same, and only converts a module when the file of an import changed; `build whole` keeps nothing ("The incremental build") |
 | `module <name> ...` | Builds one module of the table, and its debug object; with `compile` or `convert` as its last argument, runs one of the two steps alone. The parallel build runs it for each step; run it by hand to see the errors of one module alone |
+| `module-build <folder> [--system <folder>] [--out <folder>]` | Builds one outside module from a folder of another project, with its module build file `module.txt`: writes `<name>.module` and `<name>.debug`, and prints the hash of the module and the names of its exports ("A module from a source outside the repository") |
 | `volume <name>` | Builds one boot volume: its boot image with the system description, its boot program, and the volume file. The build runs it for each volume that it must build; run it by hand, after a build, to see the errors of one volume alone |
 | `run [without_checks]` | Builds the modules and the main boot volume, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `kerneltool call` |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result |
@@ -542,7 +616,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
 | `key new <folder>`, `key show` | The key that signs the system description |
 | `font`, `vector_fonts`, `pointers`, `logo`, `portrait` | Convert a source (a font, a pointer theme, the mark, a picture) into the files of the repository. A build reads the result, never the source |
-| `mark <what> [options]` | Draws one picture of the mark: the still mark, a frame, a tile map, the table of a tile map, the picture for a developer; `mark uses` prints the table of the uses ("The pictures of the mark") |
+| `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `library-imports` | Checks that each import of each source file of the kernel and of the contract packages names a package of the compiler or a contract package ("The imports of the kernel and of the contract packages") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
@@ -894,21 +968,24 @@ These times never stand for a condition. After each key of `Film_Type` the tool 
 
 ### The pictures of the mark
 
-One generator draws each picture file of the mark (`tools/kerneltool/mark_pictures.odin`, `mark_tile_map.odin`, `mark_developer_picture.odin`). The data of the mark is in `src/library/support/mark`; the generator turns a request into the bytes of a file. Three commands ask it:
+One generator makes each file of the mark (`tools/kerneltool/mark_pictures.odin`, `mark_formats.odin`, `mark_tile_map.odin`, `mark_developer_picture.odin`). The data of the mark is in `src/library/support/mark`; the generator turns a request into the bytes of a file. Three commands ask it:
 
 | Command | What it asks |
 |---|---|
 | `logo` | Each row of the repository of the table of the uses of the mark, then the font of the name and the picture for a developer |
-| `site` | Each row of the site of the table of the uses, and each icon of the table of the icons |
+| `site` | Each row of the site of the table of the uses: the pictures, the tile maps, the icons, the icon file and the vector icon |
 | `mark` | One request, from the words of the command |
 
-The table of the uses is in `DESIGN.md`, "The variants of the mark". `logo` and `site` hold no number of a picture: a new file of the mark is a new row of that table.
+The table of the uses is in `DESIGN.md`, "The variants of the mark". It is the one table of the files of the mark. `logo` and `site` hold no number of a picture: a new file of the mark is a new row of that table.
 
 A request says what to draw and how:
 
 | Part | Values | Meaning |
 |---|---|---|
-| What | `still`, `frame`, `tile_map`, `table` | The still mark; one frame of an animation; a tile map; the table of a tile map, as JSON |
+| What | `still`, `frame`, `animation`, `tile_map`, `table` | The still mark; one frame of an animation; every frame of one animation, as one animated file; a tile map; the table of a tile map, as JSON |
+| `--format` | `png`, `ico`, `svg`, `apng`, `json` | The format of the file: see "The formats" below. With no format: `png` for a picture and a tile map, `apng` for an animation, `json` for a table |
+| `--entry` | `<variant>:<cell>:<pixels>` | One more entry of an icon file: its variant, its cell size and the side of its square picture. It takes the color scheme and the background of the request. The option can come several times |
+| `--dark-rule` | `yes`, `no` | A vector file with the rule that gives the colors of the dark scheme to a reader that asks for dark. The default is `no` |
 | `--variant` | `smooth`, `cells` | The variant of the mark. The default is `smooth` |
 | `--cell` | A whole count of pixels | The side of a cell of the heron. The default is 8 |
 | `--scheme` | `dark`, `light` | The colors. The default is `dark` |
@@ -919,7 +996,7 @@ A request says what to draw and how:
 | `--frame` | A number from 0 | The frame of the animation; 0 is the still heron |
 | `--forms` | `yes`, `no` | A tile map with the drawn forms of the moves, or with the frames only. The default is `yes` |
 | `--width` | A whole count of pixels | The widest tile map. With no width, a row holds 16 sprites |
-| `--out` | A path | The file. The default is `build/mark_<what>.png`, or `.json` for a table |
+| `--out` | A path | The file. The default is `build/mark_<what>` with the end of its format: `.png`, `.ico`, `.svg`, `.apng` or `.json` |
 
 Two more words take no option: `mark uses` prints the table of the uses, and `mark developer` writes `build/mark_animations.png`, every frame and every drawn form with its texts.
 
@@ -930,7 +1007,28 @@ kerneltool mark still --variant cells --cell 1 --scheme light
 kerneltool mark frame --animation dash --frame 2 --cell 16
 kerneltool mark tile_map --animation hop --width 1024
 kerneltool mark table --forms no --variant cells --cell 1
+kerneltool mark still --format ico --variant cells --cell 1 --size 32 --scheme light --entry smooth:2:48
+kerneltool mark still --format svg --variant cells --cell 1 --scheme light --dark-rule yes
+kerneltool mark animation --animation dash --format apng
 ```
+
+The fifth example writes the bytes of `favicon.ico` of the site, and the sixth the bytes of its `icon.svg`.
+
+**The formats.** Each format starts from the pixels of one picture, which one procedure of the generator draws. No format computes a color of the heron a second time.
+
+| Format | What the file is | For |
+|---|---|---|
+| `png` | The pixels of one picture, or of a tile map | `still`, `frame`, `tile_map` |
+| `ico` | An icon file: a directory, then one PNG file of the generator for each entry. The first entry is the picture of the request, and each `--entry` adds one. A reader chooses an entry by its size | `still`, `frame` |
+| `svg` | A vector file: the pixels of the picture as rectangles of one color. A run of cells of one color in a row is one rectangle, at each cell size. With `--dark-rule yes`, a rule of style gives each rectangle its color of the dark scheme for a reader that asks for dark | `still`, `frame`, in the cells variant |
+| `apng` | An animated PNG file: each frame of one animation as one picture, in its place, for the time that `src/library/support/mark` gives it. The file plays with no end. A reader that does not know the animated form shows the first frame | `animation` |
+| `json` | The text of the table of a tile map | `table` |
+
+- The smooth variant is not written as a vector file. The gradient of a part is linear across the picture, and a vector file can state a linear gradient. But the reader of the file then computes each color: it goes between the two rounded colors of the ends, and it rounds in its own way. Some pixels are then one unit away from the colors of `src/library/support/mark`, on some readers. In the cells variant the tool computes the one color of each cell, and a rectangle of one color is the same in every reader.
+- An animated PNG file is a PNG file with three more kinds of chunk: `acTL` holds the count of the frames, `fcTL` the size and the time of one frame, and `fdAT` the data of a frame after the first. The data of each frame is the data of the PNG file that the generator writes for that frame.
+- An animated PNG file shows the frames of the heron in its place. It does not show the move of the heron across a page: that is the work of the script of the home of the site.
+- Some places choose the reader of a file by the end of its name. For such a place, name the animated file with `--out <name>.png`: the bytes are a PNG file.
+- The command writes an animated file where `--out` says. The repository holds none.
 
 The generator refuses a request with no sense, with a sentence, and writes no file. It never bends a request into another one:
 
@@ -940,12 +1038,15 @@ The generator refuses a request with no sense, with a sentence, and writes no fi
 - A gap with no name.
 - The still mark with an animation or a frame; a frame with no animation, or past the last frame.
 - A tile map with the name, with a background or with a size; a tile map with a frame; a tile map narrower than one tile.
+- A format that does not hold what is asked: a tile map as a vector file, the still mark as an animated file, an animation as one PNG picture.
+- The smooth variant as a vector file.
+- The rule of the dark scheme with a format that is not `svg`, or with a picture of the dark scheme.
+- An entry of an icon file that is larger than 256 pixels on a side; two entries of one size; `--entry` with a format that is not `ico`.
+- An animation with no name of an animation, or with a frame.
 
 A PNG file of the generator is the smallest that the encoder of the Odin standard library writes for its pixels: the highest level of its deflate, once with each row filter, the smallest kept. No pixel is lost. The picture for a developer is written at the common level, in one pass.
 
-The host tests of the generator are in `mark_pictures_test.odin`: each kind of request, each refusal, the table of the uses, the words of the command, and `only_the_generator_draws_the_mark`, which fails when another file of the tool calls a drawing procedure of `src/library/support/mark`.
-
-What the generator does not write yet: the ICO file and the SVG icon of the site (`site_icons.odin`). The PNG entries of the ICO file come from the generator; the SVG icon is the cells as rectangles with the gradients of `src/library/support/mark`, and calls no drawing procedure.
+The host tests of the generator are in `mark_pictures_test.odin` and `mark_formats_test.odin`: each kind of request, each refusal, the table of the uses, the words of the command, and each format read back. The test of the icon file compares each entry with the PNG file of its picture, byte for byte. The test of the vector file draws its rectangles as a reader does, for each color scheme, and compares each pixel with the picture. The test of the animated file builds one PNG file from the data of each frame, decodes it, and compares its pixels and its time with the frame. `only_the_generator_draws_the_mark` fails when a file of the tool outside the generator calls a drawing procedure of `src/library/support/mark`, or builds an icon file, a vector file or an animated file of the mark.
 
 ### The roadmap
 

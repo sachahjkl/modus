@@ -53,6 +53,9 @@ Window :: struct {
 	events_unread: i64, // The event records in the ring that the program did not read yet. The program writes the count of its reads: it says this of itself.
 	events_waiting: i64, // The event records that wait in the compositor, because the ring of the window is full.
 	keys_refused: i64, // The key records of this window that the compositor lost: the ring and the queue were full.
+	frames:   i64, // The frames of the screen that read a picture of this window.
+	pictures_drawn_again: i64, // The Present records that named the picture that the compositor already read: the program drew in a picture on the screen. 0 for a program that shows whole frames.
+	presents_refused: i64, // The Present records that the compositor refused: their picture number names no picture of the surface. 0 for a program of the system.
 }
 
 // What the screen shows against what the compositor received: screen().
@@ -172,6 +175,18 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 //   the ring of the window is full (256 at most).
 // - `keys_refused`: the key records of this window that were lost, because
 //   256 records already waited.
+// - `frames`: the frames of the screen that read a picture of the window.
+// - `pictures_drawn_again`: the `Present` records that named the picture
+//   that the compositor already read. A surface has two pictures, and a
+//   program draws the one that the compositor does not read: each
+//   `Present` names the other picture. A program that names the same
+//   picture again drew in a picture on the screen, and the screen could
+//   show it half drawn. It is 0 for a program that shows
+//   [whole frames](term:whole-frame).
+// - `presents_refused`: the `Present` records that the compositor refused,
+//   because their picture number names no picture of the surface (it is 0
+//   or 1). Such a record changes nothing on the screen and is not in
+//   `presents`.
 //
 // Only a program that created its surface has a window. If the table of
 // the caller has fewer places than windows, the rows of the windows at the
@@ -210,6 +225,9 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 			events_unread = i64(ring.count(&client.ring.completions)),
 			events_waiting = i64(queue.count + (queue.move_waits ? 1 : 0)),
 			keys_refused = i64(queue.refused[.Key]),
+			frames   = i64(client.frames),
+			pictures_drawn_again = i64(client.pictures_drawn_again),
+			presents_refused = i64(client.presents_refused),
 		}
 		copy(result[row].title[:len(result[row].title) - 1], system.name_of(client.title[:]))
 	}

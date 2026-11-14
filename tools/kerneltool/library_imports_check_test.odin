@@ -175,24 +175,3 @@ library_imports_of_the_repository :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, file_count > 0 && import_count > 0, "the check read no file or no import: a folder of the check is empty")
 }
-
-// The command of the example of a program outside the sources names a
-// folder outside them, and gives the compiler the one flag of the library
-// and no other.
-@(test)
-third_party_example_is_outside_the_sources :: proc(t: ^testing.T) {
-	folders := SOURCE_FOLDERS
-	for folder in folders {
-		testing.expectf(t, !strings.has_prefix(THIRD_PARTY_EXAMPLE_FOLDER, folder), "%s is under %s", THIRD_PARTY_EXAMPLE_FOLDER, folder)
-	}
-	testing.expect(t, !strings.has_prefix(THIRD_PARTY_EXAMPLE_FOLDER, "src/"))
-	testing.expect(t, os.is_dir(THIRD_PARTY_EXAMPLE_SOURCE), THIRD_PARTY_EXAMPLE_SOURCE)
-	flags := 0
-	for part in third_party_example_command() {
-		if strings.has_prefix(part, "-collection:") {
-			flags += 1
-			testing.expect_value(t, part, "-collection:modus=src/library")
-		}
-	}
-	testing.expect_value(t, flags, 1)
-}

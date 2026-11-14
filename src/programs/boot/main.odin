@@ -62,8 +62,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	logged := false
 	for {
 		collect.data(&data, machine)
-		bootscreen.draw(window.canvas, &data)
-		display.present(&window)
+		// The canvas is the picture that the compositor does not read,
+		// after it took the picture before: the whole canvas is drawn.
+		if display.canvas_wait(&window) {
+			bootscreen.draw(window.canvas, &data)
+			display.present(&window)
+		}
 		if !logged {
 			logged = true
 			system.log("boot: ok, ", data.boot.stage_count, " stages, ", data.boot.range_count, " memory ranges, ", u64(data.program_total), " programs")

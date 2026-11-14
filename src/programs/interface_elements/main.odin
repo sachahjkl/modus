@@ -244,9 +244,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	measure_fonts(&window)
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	// The whole frame, drawn with no comparison, then a frame where only
-	// the counters changed, drawn in its damage.
+	// the counters changed, drawn in its damage. The surface has two
+	// pictures, and the first frame of each one is whole: the third frame
+	// is the first that is drawn in its damage, the changes of two frames.
 	frame_draw(&window)
 	whole := drawing.draw_time
+	frame_draw(&window)
 	frame_draw(&window)
 	system.log("interface_elements: ok, the whole frame drawn in ", whole / 1000, " us; the next frame drawn in its ", u64(drawing.damage.count), " damage rectangles in ", drawing.draw_time / 1000, " us")
 	deadline := system.time()

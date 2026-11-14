@@ -1396,11 +1396,13 @@ scenario := [?]Step {
 	// follow in the line are what the program computed, and no step
 	// repeats them. The second dot writes a line of the third frame too,
 	// with the lines hidden: the wait after it is for the lines shown.
-	// The first line of the program says that its window has two
-	// pictures: the program draws one while the compositor reads the
-	// other, so no picture of the screen shows a half-drawn heron.
+	// The first line of the program comes after its first picture. No
+	// picture of the screen shows a half-drawn heron: each surface has
+	// two pictures, and the program draws the one that the compositor
+	// does not read (the step "no window drew in a picture on the
+	// screen", near the end, checks it for each window).
 	{kind = .Launch, text = "heron"},
-	{kind = .Wait, text = "heron: ok, a window of two pictures: the screen never shows a picture that is being drawn", any_order = true},
+	{kind = .Wait, text = "heron: ok, the first picture is presented", any_order = true},
 	{kind = .Wait, text = "compositor: surface heron"},
 	{kind = .Keys, text = "8"},
 	{kind = .Wait, text = "heron: dash played: 17 frames, the heron left the window and came back, on the grid"},
@@ -2013,6 +2015,17 @@ scenario := [?]Step {
 	// few.
 	// The refusals of the root service give an error record: the console
 	// writes its sentence.
+	// No window drew in a picture on the screen: each surface has two
+	// pictures, and each Present of a program names the picture that the
+	// compositor did not read. The compositor counts, for each window,
+	// the Present records that named the picture that it already read.
+	// The line gives the count of
+	// the windows whose count is not 0. It is exact and has no time: the
+	// counts cover each picture since the start of each window.
+	{kind = .Type, text = "connect(\"compositor\")"},
+	{kind = .Wait, text = "[console]   module     compositor"},
+	{kind = .Type, text = "rows(compositor.windows()) - rows(where(compositor.windows(), \"pictures_drawn_again\", 0))"},
+	{kind = .Wait, text = "[console] 0"},
 	{kind = .Type, text = "start(\"nothing\")"},
 	{kind = .Wait, text = "[console] error: root.Start: the argument name names none of the modules"},
 	{kind = .Type, text = "stop(\"compositor\")"},

@@ -700,7 +700,40 @@ The source of a module imports the packages of the system from one source librar
 - **The import lines.** `import "modus:support/system"`, `import operation "modus:contract/operation"`. The first folder of the path says what the package is: `contract` is what two parties agree on, `support` is what a program compiles in to use the contracts. One package has one import line, in the kernel, in a program of the system and in a program outside the repository. No source of the system imports a package of the library by a relative path.
 - **The flag.** The compiler gets the library with one flag: `-collection:modus=src/library`. The tool gives it in each command that runs the compiler. To run the host tests of one package by hand: `nix develop -c odin test <folder of the package> -vet -collection:modus=src/library`. A language server needs the same one entry: the library `modus` at `src/library`.
 - **The rule of the kernel.** The kernel imports the contract packages only, and a contract package imports no support package. The compiler does not hold this rule, because the kernel gets the same library as a program. The tool holds it: before each build, it reads each import of each source file of `src/kernel` and of `src/library/contract` (`TOOLS.md`, "The imports of the kernel and of the contract packages").
-- **A program outside the repository.** Its sources write the same import lines, and its compiler gets the same flag with the path of `src/library` of the repository of the system. `kerneltool check` proves it: it copies the sources of the program `tally` to a folder outside `src`, with no change, and the check of the compiler accepts the copy with the one flag (`TOOLS.md`, "A program outside the sources"). The tool does not yet build a module from a source outside the repository.
+- **A program outside the repository.** Its sources write the same import lines, and its compiler gets the same flag with the path of `src/library` of the repository of the system. The tool builds its module (section "A module of another project").
+
+### A module of another project
+
+A module whose source is in a folder of another project is an outside module (`GLOSSARY.md`, "Outside module"). Its developer keeps no copy of the sources of the system, and the module table of the tool gets no row for it.
+
+**What to write.**
+
+1. A folder with one Odin package. The sources import the packages of the system from the source library: `import "modus:support/system"`. A package of the same project is in a folder under that folder, with a relative import.
+2. The exports, with their comments: the tool reads the description of each export from the source, as for a module of the system (section 1, "Description tables").
+3. An import of a module of the system: a `foreign` block with the call form of each export that the module calls (section "The declaration of an import is checked").
+4. In the folder, the module build file `module.txt` (`GLOSSARY.md`, "Module build file"): the fields of a row of the module table, one `key: value` on each line.
+
+```
+name: my_program
+imports: drawing
+defines: DRAWING_THROUGH_MODULE=true
+library: no
+```
+
+Only `name` is required. `imports` names modules of the system, in the order of the import table. `library: yes` makes a library module (section "A library as a module").
+
+**What to type**, in the folder of the module, with a checkout of the system in `~/modus`:
+
+```
+export MODUS_SYSTEM=~/modus
+nix develop ~/modus#module -c kerneltool module-build .
+```
+
+The tool writes `build/<name>.module` and `build/<name>.debug` in the folder of the module, and prints the hash of the module file. A module with an import needs the built modules of the system, because its import table holds the hash of the file of each import: run `kerneltool build` in the folder of the system first.
+
+**What is the same, and what is not.** The build runs the steps of the table below, with the same commands. Each rule of "Closed rules" holds. One rule is for an outside module only: each source that the compiler read is in the folder of the module or under it, in the source library, or in the libraries of the compiler. The rules of the repository of the system for a comment and for a name do not apply. The whole of the command is in `TOOLS.md`, "A module from a source outside the repository".
+
+**What is not built.** The tool does not put an outside module in a boot image, so the module does not yet run in a machine. An outside module does not import another outside module.
 
 ### The steps of one module, as implemented
 
