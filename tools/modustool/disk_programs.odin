@@ -28,7 +28,7 @@ import block_tree "modus:support/storage_object"
 DISK_PROGRAM_MODULE :: "visitor"
 
 TEST_DISK_PROGRAMS_DISK :: BUILD_FOLDER + "/test_disk_programs_disk.img"
-TEST_OUTPUT_DISK_PROGRAMS :: BUILD_FOLDER + "/test_output_disk_programs.txt"
+TEST_OUTPUT_DISK_PROGRAMS :: BUILD_FOLDER + "/test_output_disk_programs_%d.txt"
 
 // The generation of the root that the writer makes. The first root of a
 // format has the generation 1 and names no store: the open takes a disk
@@ -289,6 +289,16 @@ program_disk_write :: proc(path: string, files: []Program_File) -> bool {
 //
 // The storage service runs before the first line that reads the store, so
 // no step depends on the time of the open of the disk.
+//
+// Then the disk grant table of principal 0, which the console acts for: a
+// grant that no command gives is refused; the grant store goes to the
+// nickname visitor, whose next start has the store disk-visitor and counts
+// its visit there; a start of the nickname with another hash is refused
+// before any read; two moves of the nickname keep its grant and its store.
+//
+// A second machine starts on the same disk. Principal 0 has no passphrase,
+// so its table did not last: the nickname has no row. A new grant finds
+// the store of the nickname with its two visits.
 disk_programs_tests_run :: proc() -> bool {
 	module_file := read_file(module_path(DISK_PROGRAM_MODULE)) or_return
 	changed_file := slice.clone(module_file, context.temp_allocator)
@@ -344,9 +354,66 @@ disk_programs_tests_run :: proc() -> bool {
 	// A name with no entry.
 	append(&steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"nobody\", \"%s\")", hash)})
 	append(&steps, Step{kind = .Wait, text = "root: refused nobody from the disk: the store programs has no object with this name"})
+	// The disk grant table. A grant that no command gives is refused, with
+	// its sentence.
+	append(&steps, Step{kind = .Type, text = fmt.aprintf("allow(\"%s\", \"root_ring\")", DISK_PROGRAM_MODULE)})
+	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: refused the grant Root_Ring to the nickname %s: no command gives it to a disk program, as it reaches the whole machine or the principal", DISK_PROGRAM_MODULE)})
+	// The store: the row names the hash of the program that runs.
+	append(&steps, Step{kind = .Type, text = fmt.aprintf("allow(\"%s\", \"store\")", DISK_PROGRAM_MODULE)})
+	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: the nickname %s, the file %s, has the grant store for principal 0, from its next start; principal 0 has no passphrase, so its disk grant table lasts until the machine stops", DISK_PROGRAM_MODULE, hash)})
 	append(&steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", DISK_PROGRAM_MODULE)})
 	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", DISK_PROGRAM_MODULE)})
+	// Two hashes never share a nickname: refused before any read.
+	append(&steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", DISK_PROGRAM_MODULE, changed_hash)})
+	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: refused %s from the disk: the nickname names the file %s, and the command names the file %s; nickname_move points it to another file", DISK_PROGRAM_MODULE, hash, changed_hash)})
+	// No hash: the hash of the row, and the store of the nickname.
+	disk_programs_store_steps(&steps, hash, 1)
+	// Two moves: the grant and the store follow the nickname.
+	append(&steps, Step{kind = .Type, text = fmt.aprintf("nickname_move(\"%s\", \"%s\")", DISK_PROGRAM_MODULE, changed_hash)})
+	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: the file %s will get the data of %s", changed_hash, DISK_PROGRAM_MODULE)})
+	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: the nickname %s names the file %s, with its grants and its store", DISK_PROGRAM_MODULE, changed_hash)})
+	append(&steps, Step{kind = .Type, text = fmt.aprintf("nickname_move(\"%s\", \"%s\")", DISK_PROGRAM_MODULE, hash)})
+	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: the file %s will get the data of %s", hash, DISK_PROGRAM_MODULE)})
+	disk_programs_store_steps(&steps, hash, 2)
 	append(&steps, Step{kind = .Type, text = "shutdown()"})
 	append(&steps, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
-	return machine_test(steps[:], BOOT_VOLUME, TEST_OUTPUT_DISK_PROGRAMS, MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK)
+	machine_test(steps[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 1), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK) or_return
+
+	// The second machine, on the same disk.
+	again := make([dynamic]Step)
+	defer delete(again)
+	append(&again, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
+	append(&again, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&again, Step{kind = .Front, text = "console"})
+	append(&again, Step{kind = .Type, text = "connect(\"storage\")"})
+	append(&again, Step{kind = .Wait, text = "[console]   module     storage"})
+	append(&again, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"\")", DISK_PROGRAM_MODULE)})
+	append(&again, Step{kind = .Wait, text = fmt.aprintf("root: refused %s from the disk: the nickname has no row in the disk grant table of principal 0: name the hash of its file", DISK_PROGRAM_MODULE)})
+	append(&again, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", DISK_PROGRAM_MODULE, hash)})
+	append(&again, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with no grant", DISK_PROGRAM_MODULE, hash), any_order = true})
+	append(&again, Step{kind = .Wait, text = "visitor: the context holds the log, a window and the budget, and no handle of a grant: as it must"})
+	append(&again, Step{kind = .Type, text = fmt.aprintf("allow(\"%s\", \"store\")", DISK_PROGRAM_MODULE)})
+	append(&again, Step{kind = .Wait, text = fmt.aprintf("root: the nickname %s, the file %s, has the grant store for principal 0", DISK_PROGRAM_MODULE, hash)})
+	append(&again, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", DISK_PROGRAM_MODULE)})
+	append(&again, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", DISK_PROGRAM_MODULE)})
+	// The store of the nickname kept its two visits across the restart.
+	disk_programs_store_steps(&again, hash, 3)
+	append(&again, Step{kind = .Type, text = "shutdown()"})
+	append(&again, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
+	return machine_test(again[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 2), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK)
+}
+
+// disk_programs_store_steps adds the steps of one start of the nickname
+// visitor with no hash and the grant store: the root service takes the
+// hash of the row, and the program finds its count of visits in the store
+// of its nickname. The program stops at the end.
+disk_programs_store_steps :: proc(steps: ^[dynamic]Step, hash: string, visit: int) {
+	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"\")", DISK_PROGRAM_MODULE)})
+	// The program writes its first line when it runs, and the root service
+	// writes its line when the start returned: the system fixes no order.
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with the grant store: the store disk-%s", DISK_PROGRAM_MODULE, hash, DISK_PROGRAM_MODULE), any_order = true})
+	append(steps, Step{kind = .Wait, text = "visitor: the context holds the log, a window, the budget and a store, and no other handle of a grant: as it must"})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("visitor: the store of its nickname holds the visit %d, read again: as it must", visit)})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", DISK_PROGRAM_MODULE)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", DISK_PROGRAM_MODULE)})
 }
