@@ -17,7 +17,7 @@ records_of_turn_ends_against_a_writer_that_floods :: proc(t: ^testing.T) {
 	}
 	taken := 0
 	for _ in 0 ..< records_of_turn(&queue) {
-		record, has := receive(&queue)
+		record, has := ring.pop(&queue)
 		if !has {
 			break
 		}
@@ -30,7 +30,7 @@ records_of_turn_ends_against_a_writer_that_floods :: proc(t: ^testing.T) {
 	// The next turn takes the records of the flood, and no more.
 	taken = 0
 	for _ in 0 ..< records_of_turn(&queue) {
-		record, has := receive(&queue)
+		record, has := ring.pop(&queue)
 		if !has {
 			break
 		}
