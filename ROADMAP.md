@@ -8,7 +8,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **A share of the processor for each program.** The program `scheduler` sets the weight of each thread, so that a program with many threads takes no more of the processor than a program with one. A measure run prints the share that each program gets. [Design](src/md/features/scheduling_policy.md)
 - **The icons of the site from the generator of the mark.** The generator of the pictures of the mark also writes the icon file and the vector icon of the site, and the icons are rows of the one table of the files of the mark. A developer then finds every file of the mark in one table. [Design](src/md/features/mark_pictures.md)
 - **A window for the debugger.** The debugger gets a window over the exports that the console uses today: the threads, the stack, the variables and the source lines. A step over a call stops after the call returns, not inside it.
 - **The palette sets the scheduling strategy.** The scheduling strategy is an entry of the palette, as each setting is. A click in a field of the palette puts the input there. [Design](src/md/features/palette.md)
@@ -48,3 +47,4 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **Checks for three rules that hold by reading.** The tool compares the count of kernel operations with the number that the properties state, checks that no shared package calls an allocator, and runs a block device that drops a write. Each check turns a rule that a reader must trust into a test.
 - **The QUIC library follows two more rules to the letter.** One answer goes out for each path challenge, and a misplaced extension fails with the alert that the standard names. No peer is harmed today, so the work waits.
 - **The guides agree with the code on three points.** The guides state the object kinds, the ring of each thread to the kernel and the form of a handle as the code has them.
+- **The share policy sees the threads that a program creates and ends between two rounds.** A program that creates threads which end before the next round of the share policy gets no more of the processors than a program with one thread. [Design](src/md/features/scheduling_policy.md)

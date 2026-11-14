@@ -1064,6 +1064,30 @@ The design: `docs/SCHEDULING.md`, "The schedule of a live thread", "The weight l
 
 Do not use: maximum priority, weight cap, ceiling.
 
+### Program weight
+
+A program weight is a number from 32 to 1024 that the share policy divides between the threads of one program: the part of the processors of that program against the other programs.
+
+The principal sets it for the programs with one name: `scheduler.share("paint", 256)`. A program with no setting has 1024. It is a setting of the program `scheduler`, not a value of the kernel: the kernel knows the weight of each thread only. The least value is 32 because a program has at most 32 threads: each thread then has a weight of 1 or more. It has an effect while the share policy is on.
+
+Example: with the program weight 1024, the 8 threads of a program that compute have the weight 128 each.
+
+The design: `docs/SCHEDULING.md`, "A share for each program".
+
+Do not use: program priority, group weight, program share.
+
+### Share policy
+
+The share policy is the rule of the program `scheduler` that gives each program one program weight, whatever its count of threads: each round, it writes to each thread the program weight divided by the count of the threads of its program that count.
+
+A thread counts when it is ready or ran since the last round. The program writes the thread schedule of each thread through the machine handle, with the rights **Schedule** and **Inspect**; the kernel has no part of the rule and applies the weights at each tick. A round runs each 100 ms. The policy never gives a thread more than its program asked, and it is off until the principal turns it on (`scheduler.policy(1)`). It is not a limit: a program alone on the machine uses each processor. It is not a strategy: a strategy is a rule of the kernel that orders the threads of a queue, and the share policy only writes the weights that a strategy reads.
+
+Example: a program with 8 threads that compute and a program with one such thread have the same weight in all, 1024.
+
+The design: `docs/SCHEDULING.md`, "A share for each program"; `src/md/features/scheduling_policy.md`.
+
+Do not use: group scheduling, fair share scheduler, cgroup.
+
 ### Thread placement
 
 A thread placement is the set of the processors that can run one thread, and the limit of that set (`op.Thread_Placement`).
