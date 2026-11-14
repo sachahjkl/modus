@@ -482,7 +482,7 @@ crypto_frame_write :: proc "contextless" (space: ^Packet_Number_Space, writer: ^
 //
 // Each frame carries the value of now: MAX_DATA carries
 // `Connection.receive_max_data`, MAX_STREAMS and STREAMS_BLOCKED the limit of
-// streams of their side, PATH_RESPONSE the bytes of the last challenge. A
+// streams of their side, PATH_RESPONSE the bytes of each challenge that waits. A
 // frame that went leaves `Connection.pending_controls` and is noted in
 // `record`; a frame that did not fit waits for the next packet.
 //
@@ -520,12 +520,18 @@ control_frames_write :: proc "contextless" (connection: ^Connection, writer: ^Fr
 		record.controls += {.Streams_Blocked}
 		written = true
 	}
-	if .Path_Response in pending^ && frame_room(writer) >= 1 + PATH_DATA_SIZE {
+	// One PATH_RESPONSE for each challenge that waits, the oldest first, as
+	// many as the packet holds: the others go in the next packet.
+	for (.Path_Response in pending^) && connection.path_response_count > 0 && frame_room(writer) >= 1 + PATH_DATA_SIZE {
 		frame_write_integer(writer, FRAME_PATH_RESPONSE)
-		frame_write_bytes(writer, connection.path_response[:])
-		pending^ -= {.Path_Response}
+		frame_write_bytes(writer, connection.path_responses[0][:])
+		copy(connection.path_responses[:], connection.path_responses[1:])
+		connection.path_response_count -= 1
 		record.controls += {.Path_Response}
 		written = true
+	}
+	if connection.path_response_count == 0 {
+		pending^ -= {.Path_Response}
 	}
 	// The control frames of one stream: a lost packet names one stream, so
 	// its frames go again for that stream.

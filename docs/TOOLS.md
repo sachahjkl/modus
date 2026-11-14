@@ -509,6 +509,16 @@ modustool: src/kernel/serial.odin:12: the import "modus:support/sentence" is ref
 
 **What it does not prove.** It does not prove that a contract package uses no kernel operation: that rule is held by review.
 
+## The rules that a check holds
+
+Two rules of the system are checked when the tool builds, not only read.
+
+**The count of the kernel operations.** `PROPERTIES.md` states how many operations the kernel has, in the sentence "The kernel has <number> operations". The enumeration `Operation` of `src/library/contract/operation/operation.odin` declares them. The tool counts the members of the enumeration, without `None`, and compares the two numbers. A new operation is then refused until the property states the new count, with its reason.
+
+**No source of the system calls an allocator.** A program has no heap: its memory is a mapping that it asks the kernel for, or a variable of its module. The tool reads each source file of the kernel, of the boot program, of the programs, of the modules and of the source library that is not a test, and refuses a line that calls `make`, `new`, `new_clone`, `delete`, `free` or `free_all`, or that names `context.allocator`, `context.temp_allocator` or `[dynamic]`. A comment and the text of a string are not read. A procedure of the system whose name ends with one of these words, as `caller_grant_make`, is not a call of the built-in procedure. The compiler also gets `-default-to-nil-allocator`: with it a call of an allocator fails when the program runs; the check refuses the call before the program exists.
+
+**When they run.** `modustool check` runs both after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same two conditions on the sources of the repository.
+
 ## A module from a source outside the repository
 
 `modustool module-build` builds an outside module (`GLOSSARY.md`, "Outside module"): a module whose source is in a folder of another project. It writes the module file and the debug object. The build is the build of a module of the system: the same two steps, in the same procedures (`MODULE_CONTRACT.md`, "The steps of one module, as implemented"). The code is `tools/modustool/outside_module.odin`.
@@ -618,6 +628,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `font`, `vector_fonts`, `pointers`, `logo`, `portrait` | Convert a source (a font, a pointer theme, the mark, a picture) into the files of the repository. A build reads the result, never the source |
 | `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `library-imports` | Checks that each import of each source file of the kernel and of the contract packages names a package of the compiler or a contract package ("The imports of the kernel and of the contract packages") |
+| `rule-checks` | Checks the count of the kernel operations against the properties, and that no source of the system calls an allocator ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
 
@@ -907,7 +918,7 @@ A picture that is taken too early is wrong, and no test fails. So the tool reads
 
 and when no change of the desktop itself waits for a frame (`desktop` of `compositor.screen()`: the pointer, the bar, a menu, the palette, a window that appeared, moved or closed).
 
-Why this is the two facts. A program that waits, then runs, then waits again enters the kernel to wait. So a program that waits in the two reads with the same count of kernel entries did not run between them: each picture that it sent, it sent before the first read. The compositor reads the ring of each window before it answers a call, so it counted each of these pictures. With no picture and no change of the desktop that waits for a frame, the screen shows them.
+Why this is the two facts. A program that waits, then runs, then waits again enters the kernel to wait. So a program that waits in the two reads with the same count of kernel entries did not run between them: each picture that it sent, it sent before the first read. The compositor reads the ring of each window before it answers a call, so it counted each of these pictures. With no picture and no change of the desktop that waits for a frame, the screen shows them. The window of a program that writes in a terminal has the title of that program, and the terminal draws it: so the condition holds for each program `terminal` too, which is in a wait in the two reads with the same count of kernel entries.
 
 **What the condition by calls leaves out.**
 

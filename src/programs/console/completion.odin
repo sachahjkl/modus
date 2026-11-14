@@ -580,6 +580,20 @@ completion_show :: proc "contextless" () {
 	terminal.hint(&output, {system.written(&long), marked[.Long][0], marked[.Long][1] - marked[.Long][0]}, {system.written(&short), marked[.Short][0], marked[.Short][1] - marked[.Short][0]}, {tone = .Dim})
 }
 
+// The icon that the terminal draws before a name of the completion list,
+// for each kind of candidate.
+@(rodata)
+list_icon_of_candidate := [line_editor.Candidate_Kind]terminal.List_Icon {
+	.Command      = .Command,
+	.Export       = .Export,
+	.Record       = .Record,
+	.Service      = .Service,
+	.Module       = .Module,
+	.Program      = .Program,
+	.Variable     = .Variable,
+	.History_Line = .History_Line,
+}
+
 list_send :: proc "contextless" () {
 	if completion.mode == .Closed || running {
 		terminal.list_show(&output, 0, terminal.NO_CHOICE, 0, 0, 0)
@@ -594,7 +608,7 @@ list_send :: proc "contextless" () {
 		text, name_length, run_count := candidate_row_runs(&buffer, candidate, runs[:])
 		// The runs go first: the List_Row that follows takes them.
 		terminal.code_runs_send(&output, .List_Row, row, runs[:run_count])
-		terminal.list_row(&output, row, text[:name_length], text[name_length:], transmute([2]u64)item.places)
+		terminal.list_row(&output, row, text[:name_length], text[name_length:], transmute([2]u64)item.places, list_icon_of_candidate[candidate.kind])
 	}
 	anchor := len(PROMPT)
 	if completion.mode == .Names {

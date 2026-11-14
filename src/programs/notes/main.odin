@@ -278,8 +278,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		restore()
 		history_read()
 	}
+	first_picture := true
 	for {
 		draw(&window)
+		// The window is open before the store is read: a reader of the log
+		// knows from this line that the window shows the note.
+		if first_picture {
+			first_picture = false
+			system.log("notes: ok, the first picture is presented")
+		}
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.wait_end(&wait)

@@ -575,10 +575,10 @@ frames_process :: proc "contextless" (connection: ^Connection, level: Encryption
 //   handshake, with the sequence number 0. A larger number is PROTOCOL_VIOLATION
 //   (RFC 9000, section 19.16).
 // - **PATH_CHALLENGE**: its 8 bytes are kept, and a PATH_RESPONSE with them is
-//   queued. The record has one place: a second challenge before the answer went
-//   replaces the first, and only the newest is answered. The peer sees that as
-//   a lost PATH_RESPONSE, which never goes again anyway (RFC 9000, section
-//   13.3), and one answer validates the one path of this side
+//   queued, one for each challenge, the oldest first. The record has
+//   `PATH_RESPONSE_PLACES` places: a challenge that comes when each is taken
+//   pushes the oldest out. The peer sees that as a lost PATH_RESPONSE, which
+//   never goes again anyway (RFC 9000, section 13.3)
 //   (docs/QUIC.md, "The frames"). **PATH_RESPONSE**: read and dropped, because
 //   this side sends no challenge.
 // - **CONNECTION_CLOSE**, of the transport or of the application: the
@@ -757,8 +757,15 @@ frame_process :: proc "contextless" (connection: ^Connection, level: Encryption_
 		if reader.failed {
 			return encoding_error(connection, type, now)
 		}
-		// One place: the newest challenge is the one that is answered.
-		copy(connection.path_response[:], data)
+		// Each challenge waits for its own answer, the oldest first. When
+		// each place is taken, the oldest goes out: the peer chose the
+		// count of its challenges, and bears the loss of one answer.
+		if connection.path_response_count == PATH_RESPONSE_PLACES {
+			copy(connection.path_responses[:], connection.path_responses[1:])
+			connection.path_response_count -= 1
+		}
+		copy(connection.path_responses[connection.path_response_count][:], data)
+		connection.path_response_count += 1
 		connection.pending_controls += {.Path_Response}
 	case FRAME_PATH_RESPONSE:
 		// This side sends no PATH_CHALLENGE: the response is read and

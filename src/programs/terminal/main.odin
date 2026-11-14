@@ -68,6 +68,8 @@ import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/key_path"
+import "modus:support/kind_icons"
+import "modus:contract/value_kinds"
 import "modus:contract/ring"
 import "modus:support/system"
 import terminal "modus:support/terminal"
@@ -86,6 +88,9 @@ SCROLL_GAP :: 7 // From the text to the scroll bar: with the bar, three units of
 // The scroll bar of the completion list takes its last two cells and the
 // column of its border.
 LIST_SCROLL_CELLS :: 2
+// The cells of a row of the completion list that hold its kind icon: an
+// icon of 12 pixels, then a space before the name.
+LIST_ICON_CELLS :: 3
 #assert(LIST_SCROLL_CELLS * CELL_WIDTH + 1 == SCROLL_WIDTH)
 #assert((SCROLL_GAP + SCROLL_WIDTH) % 8 == 0)
 
@@ -246,6 +251,11 @@ View :: struct {
 	// is shown, and the list has no scroll bar.
 	list_scroll: bool,
 	list_total, list_first: int,
+	// The kind icon of each row of the list, and its color. list_icon_cells
+	// 0: no row has an icon, and the list keeps no room for one.
+	list_icon_cells: int,
+	list_icons:      [terminal.LIST_ROWS]^kind_icons.Cells,
+	list_icon_colors: [terminal.LIST_ROWS]graphics.Color,
 	// The rows of the view that show lines of the text: the edit line and
 	// the row under it are not lines of the text. After a clear, the view
 	// can show none.
@@ -434,14 +444,27 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 	offset := list_keeping.shown.chosen >= shown_rows ? list_keeping.shown.chosen - shown_rows + 1 : 0
 	scroll := list_keeping.shown.total > list_keeping.shown.row_count || shown_rows < list_keeping.shown.row_count ? LIST_SCROLL_CELLS : 0
 	longest := 0
+	// The room of the kind icons, before the names: one row with an icon
+	// gives it to each row, so the names stay in one column.
+	icon_cells := 0
 	for &row in list_keeping.shown.rows[offset:][:shown_rows] {
 		about := row.length - row.name_length
 		longest = max(longest, row.name_length + (about > 0 ? 2 + about : 0))
+		if row.icon != .None {
+			icon_cells = LIST_ICON_CELLS
+		}
 	}
-	list_width := min(max(longest + 2 + scroll, LIST_WIDTH_LEAST), columns)
+	list_width := min(max(longest + 2 + icon_cells + scroll, LIST_WIDTH_LEAST), columns)
+	// A terminal too narrow for the icons and one character of a name
+	// shows the names alone.
+	if list_width - 2 - scroll - icon_cells < 1 {
+		icon_cells = 0
+	}
 	anchor := min(list_keeping.shown.anchor, edit_line.length)
 	left := min(anchor % columns, columns - list_width)
-	inner := list_width - 2 - scroll
+	inner := list_width - 2 - scroll - icon_cells
+	view.list_icon_cells = icon_cells
+	view.list_icons = {}
 	// The scroll bar: the drawer draws it over the last cells of the rows,
 	// at the place of the rows shown in all the names. The count of the
 	// names comes from the program: it is at least the rows shown.
@@ -458,6 +481,11 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 		cells := view.cells[top + index][left:][:list_width]
 		for &cell in cells {
 			cell = {character = ' ', filled = true, color = name_color, background = background}
+		}
+		// The kind icon of the row: white on the chosen row, as its text.
+		if icon_cells != 0 {
+			icon, color := list_icon_form(row.icon)
+			view.list_icons[index], view.list_icon_colors[index] = icon, chosen ? graphics.COLOR_WHITE : color
 		}
 		// A row with runs of code: each part in the color of its kind, and
 		// the part with no kind in the color of the name. On the chosen row
@@ -482,12 +510,12 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 			case matched:
 				name_cell.color = tone_colors[.Accent]
 			}
-			cells[1 + place] = name_cell
+			cells[1 + icon_cells + place] = name_cell
 		}
 		// What the name is, at the right, cut at its end when the room is short.
 		about_room := inner - name_shown - 2
 		about_shown := about_room > 0 ? min(row.length - row.name_length, about_room) : 0
-		about_left := 1 + inner - about_shown
+		about_left := 1 + icon_cells + inner - about_shown
 		for place in 0 ..< about_shown {
 			kind := terminal.code_runs_kind_at(&row.code, row.name_length + place, &code_cursor)
 			color := chosen ? about_color : terminal.code_kind_color(kind, about_color)
@@ -495,6 +523,34 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 		}
 	}
 	view.list_left, view.list_top, view.list_columns, view.list_rows = left, top, list_width, shown_rows
+}
+
+// list_icon_form gives the form and the color of the kind icon of a row of
+// the completion list, the same as a row of the palette has for the same
+// kind (src/library/support/palette, entry_icon). nil: no icon.
+//
+// - A service, a module and a program are modules: the form of a module.
+// - An export is a part of a module: its own form, in the color of a module.
+// - A command that makes a record gives a type; a variable holds a value;
+//   a line of the history has the form of a time.
+list_icon_form :: proc "contextless" (icon: terminal.List_Icon) -> (form: ^kind_icons.Cells, color: graphics.Color) {
+	module_color := graphics.value_kind_color(value_kinds.Value_Kind.Module, false)
+	switch icon {
+	case .None:
+	case .Command:
+		return kind_icons.cells_of_value_kind(.Command), graphics.value_kind_color(value_kinds.Value_Kind.Command, false)
+	case .Export:
+		return kind_icons.cells_of_desktop_kind(.Export), module_color
+	case .Record:
+		return kind_icons.cells_of_value_kind(.Type), graphics.value_kind_color(value_kinds.Value_Kind.Type, false)
+	case .Service, .Module, .Program:
+		return kind_icons.cells_of_value_kind(.Module), module_color
+	case .Variable:
+		return kind_icons.cells_of_value_kind(.Value), graphics.value_kind_color(value_kinds.Value_Kind.Value, false)
+	case .History_Line:
+		return kind_icons.cells_of_value_kind(.Time), graphics.value_kind_color(value_kinds.Value_Kind.Time, false)
+	}
+	return nil, graphics.COLOR_TEXT
 }
 
 forget :: proc "contextless" () {
@@ -849,6 +905,16 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		interface.draw_rectangle(table, x, y + list_height - 1, list_width, 1, COLOR_LIST_BORDER)
 		interface.draw_rectangle(table, x, y, 1, list_height, COLOR_LIST_BORDER)
 		interface.draw_rectangle(table, x + list_width - 1, y, 1, list_height, COLOR_LIST_BORDER)
+		// The kind icon of each row, over the cells that the row keeps for
+		// it: one pixel for a cell of the icon, at the left of its cells, in the middle
+		// of the height of the row.
+		if view.list_icon_cells != 0 {
+			icon_x := TEXT_X + (view.list_left + 1) * CELL_WIDTH + 2
+			for index in 0 ..< view.list_rows {
+				icon_y := text_y + (view.list_top + index) * CELL_HEIGHT + (CELL_HEIGHT - kind_icons.ICON_SIZE) / 2
+				interface.draw_kind_icon(table, icon_x, icon_y, view.list_icons[index], 1, view.list_icon_colors[index])
+			}
+		}
 		// The scroll bar of the list, over its last cells and the right
 		// column of its border. The program that writes owns the list and
 		// its choice: the bar takes the pointer, and the first row that

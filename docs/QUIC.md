@@ -158,6 +158,7 @@ TLS 1.3 gives the two sides of a connection their keys, and proves to the client
 - must come at the level of the keys in use: bytes of a level left when the next keys take its place, or bytes of an earlier level that come later, fail the handshake, and QUIC closes with PROTOCOL_VIOLATION (RFC 9001, section 4.1.3);
 - must have the type that the state waits for, at its level: else unexpected_message;
 - may hold an extension that the side does not know: it is skipped in a ClientHello, and refused with unsupported_extension where the side did not offer it (ServerHello, EncryptedExtensions);
+- may hold a known extension only in a message for which the standard specifies it (the table of RFC 8446, section 4.2): a known extension in another message of a server is refused with illegal_parameter, as `key_share` in EncryptedExtensions;
 - may hold, in EncryptedExtensions, only an answer to an extension that the client offered and that RFC 8446, section 4.2, allows there: ALPN, `server_certificate_type`, `quic_transport_parameters` and `supported_groups`. The last one names the groups that the server prefers (RFC 8446, section 4.2.7): the client takes it and does not read it. `server_name`, `client_certificate_type` and `early_data` can be in EncryptedExtensions too, but only as answers, and this client offers none of them: they are refused with unsupported_extension;
 - may not ask for the compatibility mode of TLS: a ClientHello with a session identifier fails the handshake, and QUIC closes with PROTOCOL_VIOLATION, not with the code of an alert (RFC 9001, section 8.4);
 - may not hold one extension type two times (illegal_parameter);
@@ -175,7 +176,7 @@ TLS 1.3 gives the two sides of a connection their keys, and proves to the client
 - A whole handshake of a client against a server in memory: both connected with ChaCha20-Poly1305, the same keys in each direction, the transport parameters of the other side, the X25519 private keys erased.
 - The refusals: a server key that is not the pinned key (bad_certificate), a protocol that the server does not speak (no_application_protocol), a weak seed (Seed_Too_Weak, nothing sent).
 - No packet keys after the secrets are erased, and after a handshake that failed (`State`).
-- EncryptedExtensions with `supported_groups` is taken; with `server_name`, or with an extension that is not known, it is refused.
+- EncryptedExtensions with `supported_groups` is taken; with `server_name`, with `early_data` or with an extension that is not known, it is refused with unsupported_extension; with `key_share` or `signature_algorithms`, which the standard does not specify there, it is refused with illegal_parameter.
 - A ClientHello with a session identifier fails as a PROTOCOL_VIOLATION.
 - Hostile messages:
   - each message cut at each length, with its length field set to the cut (the side fails) and left as it was (the side waits);
@@ -265,11 +266,11 @@ This layer is the protocol of one QUIC connection: the handshake, the acknowledg
 | STOP_SENDING | Acted on: this side answers with RESET_STREAM and the same code, and sends no more data on the stream |
 | NEW_CONNECTION_ID | Minimal: read for its form and not used (no migration). A Retire Prior To above 0 closes the connection with PROTOCOL_VIOLATION: this layer has no other identifier of the peer. A real peer seldom sends it, but it may; this is a known gap |
 | RETIRE_CONNECTION_ID | Minimal: this side gave no identifier past the one of the handshake: a number above 0 is PROTOCOL_VIOLATION |
-| PATH_CHALLENGE | Answered with PATH_RESPONSE. The record keeps the data of one challenge: when a second one comes before the answer went, the answer echoes the newest only (below) |
+| PATH_CHALLENGE | Answered with PATH_RESPONSE: one answer with the data of each challenge, the oldest first, for at most 8 challenges that wait (below) |
 | PATH_RESPONSE, DATA_BLOCKED, STREAM_DATA_BLOCKED, STREAMS_BLOCKED | Read and not used (STREAM_DATA_BLOCKED checks its stream as STREAM does) |
 | NEW_TOKEN | A client reads it and keeps no token; to a server, PROTOCOL_VIOLATION |
 
-**One PATH_CHALLENGE at a time.** RFC 9000, section 8.2.2, asks for a PATH_RESPONSE that echoes the data of each PATH_CHALLENGE. This side keeps the 8 bytes of one challenge, and sends its answer in the next 1-RTT packet. A second challenge that comes before that packet went replaces the first, which gets no answer. For the peer, that is the loss of one PATH_RESPONSE, which it must bear in any case: a PATH_RESPONSE never goes again when its packet is lost (RFC 9000, section 13.3), and the peer validates a path with any one answer to a challenge that it sent on it (section 8.2.3). This side has one path, because it does not migrate, so the newest challenge is the one whose answer the peer still waits for. A queue of challenges would need a bound too, and would add a state for a case that a peer does not make on one path.
+**One PATH_RESPONSE for each PATH_CHALLENGE.** RFC 9000, section 8.2.2, asks for a PATH_RESPONSE that echoes the data of each PATH_CHALLENGE. This side keeps the 8 bytes of each challenge that waits, the oldest first (`PATH_RESPONSE_PLACES`: 8 places), and sends one answer for each in the next 1-RTT packets, as many as a packet holds. The count has a bound because the peer chooses how many challenges one packet holds. A challenge that comes when each place is taken pushes the oldest out, which gets no answer. For the peer, that is the loss of one PATH_RESPONSE, which it must bear in any case: a PATH_RESPONSE never goes again when its packet is lost (RFC 9000, section 13.3), and the peer validates a path with any one answer to a challenge that it sent on it (section 8.2.3).
 
 ### What the transport does not do yet
 

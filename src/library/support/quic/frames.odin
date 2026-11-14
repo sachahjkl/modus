@@ -65,6 +65,13 @@ STATELESS_RESET_TOKEN_SIZE :: 16
 
 // The bytes of the data of a PATH_CHALLENGE and of a PATH_RESPONSE frame: 8 (RFC 9000, section 19.17).
 PATH_DATA_SIZE :: 8
+// The challenges of the peer that wait for their answer at one time. Each
+// PATH_CHALLENGE gets one PATH_RESPONSE with its own bytes (RFC 9000, section
+// 8.2.2). The count has a bound, because a peer chooses how many challenges
+// one packet holds: a challenge that comes when each place is taken pushes
+// the oldest out, and the peer sees the loss of one PATH_RESPONSE, which it
+// must bear (RFC 9000, section 13.3).
+PATH_RESPONSE_PLACES :: 8
 
 // The error code of a CONNECTION_CLOSE frame of QUIC (RFC 9000, section 20.1).
 //

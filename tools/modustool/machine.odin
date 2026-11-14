@@ -304,6 +304,7 @@ scenario_persist_second := [?]Step {
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "notes: ok, the first picture is presented"},
 	{kind = .Shot, text = "notes"},
 	// The vector font again, for the machines after this one.
 	{kind = .Launch, text = "settings"},
@@ -346,6 +347,7 @@ scenario_persist_crash := [?]Step {
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count ", any_order = true},
 	{kind = .Wait, text = ", its 3 blocks agree, the last run stopped before its end", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "notes: ok, the first picture is presented"},
 	{kind = .Shot, text = "notes_crash"},
 	{kind = .Quit},
 }
@@ -362,6 +364,7 @@ scenario_persist_damaged := [?]Step {
 	{kind = .Wait, text = " blocks checked, 1 wrong, in ", any_order = true},
 	{kind = .Wait, text = "notes: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "notes: ok, the first picture is presented"},
 	{kind = .Shot, text = "notes_damaged"},
 	{kind = .Type, text = "again"},
 	{kind = .Wait, text = "notes: the note is \"again\", generation "},

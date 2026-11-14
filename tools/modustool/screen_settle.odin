@@ -44,6 +44,10 @@ draws_without_end :: proc(title: string) -> bool {
 @(rodata)
 programs_that_serve_the_reads := [?]string{"remote", "monitor"}
 
+// The program that draws the window of another program: a terminal. Its
+// window has the title of the program that writes in it.
+PROGRAM_THAT_DRAWS_FOR_ANOTHER :: "terminal"
+
 // left_out_of_calls says if the condition by calls leaves out a window
 // with this title.
 left_out_of_calls :: proc(title: string) -> bool {
@@ -119,6 +123,29 @@ screen_settle_problem :: proc(before: []Settle_Program, windows: []Settle_Window
 		// A window whose program stopped gets no picture more.
 		if alive && window.presents == 0 {
 			return fmt.tprintf("the window %s has no picture of its program yet", window.title)
+		}
+	}
+	// A terminal draws the window of another program: the window has the
+	// title of that program, so the loop above read the program that
+	// writes, not the one that draws. Each terminal is in a wait too, and
+	// did not run between the two reads.
+	for program in after {
+		if program.name != PROGRAM_THAT_DRAWS_FOR_ANOTHER || program.state == "stopped" {
+			continue
+		}
+		if program.state != "waiting" {
+			return fmt.tprintf("a program %s is %s, not in a wait: it can still draw the window of its program", program.name, program.state)
+		}
+		for earlier in before {
+			if earlier.slot != program.slot || earlier.name != program.name {
+				continue
+			}
+			if earlier.state != "waiting" {
+				return fmt.tprintf("a program %s was %s, not in a wait: it can still draw the window of its program", program.name, earlier.state)
+			}
+			if earlier.entries != program.entries {
+				return fmt.tprintf("a program %s entered the kernel %d times between two reads: it ran", program.name, program.entries - earlier.entries)
+			}
 		}
 	}
 	return ""

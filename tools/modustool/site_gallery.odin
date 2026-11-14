@@ -208,6 +208,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "notes.png", group = .Storage, guide = "docs/STORAGE.md", caption = "A persistent program after a restart of the machine: notes finds its note and its count of 1000 commits in its private store."},
 	{file = "notes_versions.png", group = .Storage, guide = "docs/STORAGE.md", caption = "The versions of a note: notes shows an older version with its generation and its time, and Enter restores it."},
 	{file = "notes_damaged.png", group = .Storage, guide = "docs/STORAGE.md", caption = "A block of the note changed on the disk outside the storage service: the service serves the count, and notes says that the note is damaged."},
+	{file = "notes_crash.png", group = .Storage, guide = "docs/STORAGE.md", caption = "The program notes after a stop in the middle of 1000 commits: the note and the count are restored, and the three blocks of the count agree."},
 	{file = "power_loss.png", group = .Storage, guide = "docs/STORAGE.md", caption = "After a loss of power during the write of a root: the storage service takes the root before it, and notes finds its note and its count."},
 
 	// The boot and the trusted boot.
@@ -230,7 +231,6 @@ Site_Gallery_Excluded :: struct {
 }
 
 site_gallery_excluded := [?]Site_Gallery_Excluded {
-	{"notes_crash.png", "The picture was taken while the window of notes drew its note: the text of the note is cut. The pictures notes and power_loss show the store after a restart.", false},
 	{"pointers.png", "The repository does not hold this picture, and git ignores it: it shows a pointer theme whose license allows no commercial use. The folder of a developer has it after a test; the picture pointers_system shows the theme of the system.", true},
 }
 
