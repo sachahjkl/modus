@@ -78,7 +78,8 @@ CERTIFICATE_TYPE_RAW_PUBLIC_KEY :: 2
 // - in a **ClientHello**, each known extension can come, and an extension that is not known is
 //   skipped: a client of another stack sends many;
 // - in a **ServerHello** and in **EncryptedExtensions**, only the extensions that the member below
-//   names can come. Each other one, known or not, fails with unsupported_extension: the client did
+//   names can come. A known one that the standard does not specify for that message fails with
+//   illegal_parameter; each other one, known or not, fails with unsupported_extension: the client did
 //   not offer it.
 //
 // A client of this handshake writes seven of them, in this order: `Supported_Versions`,
@@ -99,6 +100,14 @@ Extension :: enum u16 {
 	Key_Share               = 51, // `key_share` (RFC 8446, section 4.2.8): the public keys of the exchange. The list of a ClientHello must hold one X25519 key of 32 bytes; a ServerHello holds the X25519 key of the server.
 	Quic_Transport_Parameters = 57, // `quic_transport_parameters` (RFC 9001, section 8.2): the transport parameters of the side, in a ClientHello and in EncryptedExtensions. The handshake checks their form and keeps the bytes for the transport.
 }
+
+// The known extensions that the standard specifies for a ServerHello and for EncryptedExtensions
+// (the table of RFC 8446, section 4.2; RFC 9001, section 8.2, for the transport parameters; RFC
+// 7250 for the certificate types). A known extension outside the set of its message is refused
+// with illegal_parameter. One inside the set that the client did not offer is refused with
+// unsupported_extension.
+EXTENSIONS_OF_A_SERVER_HELLO :: bit_set[Extension]{.Pre_Shared_Key, .Supported_Versions, .Key_Share}
+EXTENSIONS_OF_ENCRYPTED_EXTENSIONS :: bit_set[Extension]{.Server_Name, .Supported_Groups, .Application_Protocol, .Client_Certificate_Type, .Server_Certificate_Type, .Early_Data, .Quic_Transport_Parameters}
 
 // The types of the handshake messages of TLS 1.3 that this handshake names (RFC 8446, section 4).
 //
@@ -659,6 +668,7 @@ Extensions :: struct {
 // - `handshake`: the handshake, which fails here when the block is wrong.
 // - `block`: the bytes of the block, without its own length.
 // - `known`: the members of `Extension` that this message can hold.
+// - `specified`: the members of `Extension` that the standard specifies for this message.
 // - `unknown_allowed`: true for a ClientHello, where an extension that is not a member of
 //   `Extension` is skipped. False for a message of a server, where it is refused.
 // - `extensions`: where the data of each extension goes.
@@ -669,13 +679,14 @@ Extensions :: struct {
 //
 // - decode_error: an extension is cut, or the block has more than `EXTENSION_TYPES_LIMIT`
 //   extensions;
-// - illegal_parameter: one type comes two times, a known type or not;
-// - unsupported_extension: a known type that is not in `known`, or a type that is not known when
+// - illegal_parameter: one type comes two times, a known type or not; or a known type that is not
+//   in `specified`;
+// - unsupported_extension: a known type of `specified` that is not in `known`, or a type that is not known when
 //   `unknown_allowed` is false.
 //
 // It does not check that a required extension came: the caller reads `present`.
 @(private)
-extensions_read :: proc "contextless" (handshake: ^Tls_Handshake, block: []u8, known: bit_set[Extension], unknown_allowed: bool, extensions: ^Extensions, error: ^errors.Error_Record) -> bool {
+extensions_read :: proc "contextless" (handshake: ^Tls_Handshake, block: []u8, known: bit_set[Extension], specified: bit_set[Extension], unknown_allowed: bool, extensions: ^Extensions, error: ^errors.Error_Record) -> bool {
 	extensions^ = {}
 	reader := Reader{bytes = block}
 	seen: [EXTENSION_TYPES_LIMIT]u16
@@ -701,6 +712,13 @@ extensions_read :: proc "contextless" (handshake: ^Tls_Handshake, block: []u8, k
 		for extension in Extension {
 			if u16(extension) == type {
 				known_type = true
+				// An extension that the standard does not specify for this
+				// message is illegal_parameter. One that it specifies, and
+				// that this side did not offer, is unsupported_extension
+				// (RFC 8446, section 4.2).
+				if extension not_in specified {
+					return tls_fail(handshake, error, .Illegal_Parameter, .Bad_Value, start)
+				}
 				if extension not_in known {
 					return tls_fail(handshake, error, .Unsupported_Extension, .Unsupported, start)
 				}
@@ -1315,7 +1333,7 @@ client_hello_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u
 	extensions: Extensions
 	// Each extension that this side knows may come in a ClientHello; one that
 	// it does not know is skipped.
-	if !extensions_read(handshake, block, ~bit_set[Extension]{}, true, &extensions, error) {
+	if !extensions_read(handshake, block, ~bit_set[Extension]{}, ~bit_set[Extension]{}, true, &extensions, error) {
 		return false
 	}
 	required := bit_set[Extension]{.Supported_Versions, .Supported_Groups, .Signature_Algorithms, .Key_Share, .Server_Certificate_Type, .Application_Protocol, .Quic_Transport_Parameters}
@@ -1627,7 +1645,7 @@ server_hello_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u
 		return tls_fail(handshake, error, .Illegal_Parameter, .Bad_Value, suite)
 	}
 	extensions: Extensions
-	if !extensions_read(handshake, block, {.Supported_Versions, .Key_Share}, false, &extensions, error) {
+	if !extensions_read(handshake, block, {.Supported_Versions, .Key_Share}, EXTENSIONS_OF_A_SERVER_HELLO, false, &extensions, error) {
 		return false
 	}
 	if extensions.present != {.Supported_Versions, .Key_Share} {
@@ -1680,7 +1698,7 @@ encrypted_extensions_read :: proc "contextless" (handshake: ^Tls_Handshake, mess
 	extensions: Extensions
 	// supported_groups is taken and not read: a server may name there the
 	// groups that it prefers, to a client that offered the extension.
-	if !extensions_read(handshake, block, {.Application_Protocol, .Server_Certificate_Type, .Quic_Transport_Parameters, .Supported_Groups}, false, &extensions, error) {
+	if !extensions_read(handshake, block, {.Application_Protocol, .Server_Certificate_Type, .Quic_Transport_Parameters, .Supported_Groups}, EXTENSIONS_OF_ENCRYPTED_EXTENSIONS, false, &extensions, error) {
 		return false
 	}
 	if .Application_Protocol not_in extensions.present {

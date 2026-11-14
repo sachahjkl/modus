@@ -969,6 +969,45 @@ a_forgotten_packet_number_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, .Path_Response not_in server.pending_controls)
 }
 
+// Each PATH_CHALLENGE of one packet waits for its own PATH_RESPONSE, the
+// oldest first, and one datagram of this side answers them all. More
+// challenges than the places push the oldest out.
+@(test)
+each_path_challenge_gets_its_answer :: proc(t: ^testing.T) {
+	endpoints := connected_endpoints()
+	defer free(endpoints)
+	server := connection_copy(&endpoints.server)
+	defer connection_copy_free(server)
+	keys := endpoints.client.spaces[.Application].send_keys
+	base := endpoints.client.spaces[.Application].next_packet_number + 10
+	three := []u8{FRAME_PATH_CHALLENGE, 1, 1, 1, 1, 1, 1, 1, 1, FRAME_PATH_CHALLENGE, 2, 2, 2, 2, 2, 2, 2, 2, FRAME_PATH_CHALLENGE, 3, 3, 3, 3, 3, 3, 3, 3}
+	_, processed := authentic_packet_receive(endpoints, server, &keys, base, three, endpoints.now)
+	testing.expect(t, processed)
+	testing.expect_value(t, server.path_response_count, 3)
+	for place in 0 ..< 3 {
+		testing.expect_value(t, server.path_responses[place], [PATH_DATA_SIZE]u8{0 ..< PATH_DATA_SIZE = u8(place + 1)})
+	}
+	testing.expect(t, .Path_Response in server.pending_controls)
+	buffer: [MAX_DATAGRAM_SIZE]u8
+	testing.expect(t, connection_datagram_send(server, buffer[:], endpoints.now) > 0)
+	testing.expect_value(t, server.path_response_count, 0)
+	testing.expect(t, .Path_Response not_in server.pending_controls)
+
+	// PATH_RESPONSE_PLACES + 2 challenges in one packet: the two oldest go out.
+	many := make([]u8, (PATH_RESPONSE_PLACES + 2) * (1 + PATH_DATA_SIZE), context.temp_allocator)
+	for index in 0 ..< PATH_RESPONSE_PLACES + 2 {
+		many[index * (1 + PATH_DATA_SIZE)] = FRAME_PATH_CHALLENGE
+		for byte in 0 ..< PATH_DATA_SIZE {
+			many[index * (1 + PATH_DATA_SIZE) + 1 + byte] = u8(10 + index)
+		}
+	}
+	_, processed = authentic_packet_receive(endpoints, server, &keys, base + 2, many, endpoints.now)
+	testing.expect(t, processed)
+	testing.expect_value(t, server.path_response_count, PATH_RESPONSE_PLACES)
+	testing.expect_value(t, server.path_responses[0][0], 12)
+	testing.expect_value(t, server.path_responses[PATH_RESPONSE_PLACES - 1][0], u8(10 + PATH_RESPONSE_PLACES + 1))
+}
+
 // The arithmetic of the round-trip time and of the deadlines with values
 // that the peer chooses. Before the correction: an ack_delay of 2^64 -
 // min_round_trip wrapped min_round_trip + ack_delay to 0, and made the
