@@ -88,7 +88,7 @@ The intent of the parts that were built before this folder is in other documents
 - [features/mark_pictures.md](features/mark_pictures.md): one generator for every picture of the mark, the two variants that a request names, the one table of the uses with the icons of the site, the formats that all start from the pixels of one picture, and why the browser computes no color
 - [features/palette.md](features/palette.md): the palette as a panel of the compositor with the console as its provider, and why no program gets a new right
 - [features/roadmap.md](features/roadmap.md): the planned work in one plain file, the check of its form, the rule that removes an entry with its changelog fragment, and its page of the site
-- [features/scheduling_policy.md](features/scheduling_policy.md): the placement of a thread in the kernel, the share for each program outside it, and the hazards that decided both
+- [features/scheduling_policy.md](features/scheduling_policy.md): the placement of a thread in the kernel, the share for each program outside it with the rule of one round, what the mechanism lacks, and the hazards that decided both
 - [features/scroll_bar.md](features/scroll_bar.md): the scroll bar of the system and of the site from one table, its states, the pointer in the element, and where it leaves the design rules
 - [features/site_bar.md](features/site_bar.md): why the bar of the site has three buttons and one menu on one line, and the forms that were refused
 - [features/site_gallery.md](features/site_gallery.md): the gallery and the carousel of the site from one table that is checked against the folder of the pictures, and why the carousel needs no script

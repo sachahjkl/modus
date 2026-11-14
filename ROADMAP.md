@@ -8,7 +8,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **A share of the processor for each program.** The program `scheduler` sets the weight of each thread, so that a program with many threads takes no more of the processor than a program with one. A measure run prints the share that each program gets. [Design](src/md/features/scheduling_policy.md)
 - **A window for the debugger.** The debugger gets a window over the exports that the console uses today: the threads, the stack, the variables and the source lines. A step over a call stops after the call returns, not inside it.
 - **The palette sets the scheduling strategy.** The scheduling strategy is an entry of the palette, as each setting is. A click in a field of the palette puts the input there. [Design](src/md/features/palette.md)
 - **Kind icons in the completion list of the console.** Each row of the completion list shows the kind icon of its name, as each row of the palette does. A reader tells a command from a module or a variable before reading the name.
@@ -45,3 +44,4 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **LLVM 22.** The build uses LLVM 22, with a measure of the speed of the code before and after.
 - **Checks for three rules that hold by reading.** The tool compares the count of kernel operations with the number that the properties state, checks that no shared package calls an allocator, and runs a block device that drops a write. Each check turns a rule that a reader must trust into a test.
 - **The QUIC library follows two more rules to the letter.** One answer goes out for each path challenge, and a misplaced extension fails with the alert that the standard names. No peer is harmed today, so the work waits.
+- **The share policy counts a thread that starts and ends between two rounds.** A program that creates threads which end before the next round of the share policy gets no more of the processors than a program with one thread. [Design](src/md/features/scheduling_policy.md)

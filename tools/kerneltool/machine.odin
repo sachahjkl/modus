@@ -1591,6 +1591,15 @@ scenario := [?]Step {
 	{kind = .Wait, text = "scheduler: one Strategy_Set, with its kernel entry: "},
 	{kind = .Wait, text = "scheduler: stress: 100 changes of strategy while "},
 	{kind = .Wait, text = "scheduler: writes of a schedule through the machine handle while the strategy changed 100 times: none was refused, each of the 8 spinners ran after them and has the schedule written last: as it must"},
+	// The share policy: four programs with 1, 2, 4 and 8 spinning threads.
+	// Each condition is a value that the kernel gives back, or an order of
+	// two counts of ticks; the shares are a measure.
+	{kind = .Wait, text = "scheduler: the share policy, three rounds: each thread of the programs with 1, 2, 4 and 8 spinning threads has the weight and the weight limit 1024, 512, 256 and 128; the weights of each program sum to 1024, 1024, 1024 and 1024; the third round wrote none of their threads: 1: as it must"},
+	{kind = .Wait, text = "scheduler: under the share policy, a thread of this program created with the weight 100 has the weight 100, and the weight 50 after it lowered itself to 50; after this program started 7 threads more, its 9 threads have the weights 50 to 113, which sum to 954 of 1024: as it must"},
+	{kind = .Wait, text = "scheduler: the share policy off: each thread of the 4 programs and the first thread of this program have the weight 1024 and the full weight limit again, the thread that lowered itself has the weight 50 and the full weight limit, and no write of the policy was refused: 1: as it must"},
+	{kind = .Wait, text = "scheduler: the program with 8 spinning threads against the program with 1, by the ticks of the kernel over one interval: its part is smaller under the share policy than without it: as it must"},
+	{kind = .Wait, text = "scheduler: shares of the programs with 1, 2, 4 and 8 spinning threads under EEVDF, by the ticks of the kernel: without the share policy "},
+	{kind = .Wait, text = "scheduler: one round of the share policy, over "},
 	{kind = .Wait, text = "scheduler: ok, no spinner starved under 3 strategies, a wake ended "},
 	{kind = .Wait, text = "scheduler: the window took "},
 	{kind = .Shot, text = "scheduler"},
@@ -1605,7 +1614,24 @@ scenario := [?]Step {
 	{kind = .Key, text = "tab"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "scheduler: the strategy is now EEVDF, it was round robin"},
+	// The two commands of the share policy, from the console: a program
+	// weight for the programs with a name, the policy on, the view of the
+	// shares, the policy off.
 	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"scheduler\")"},
+	{kind = .Wait, text = "[console]   commands   2"},
+	{kind = .Type, text = "scheduler.share(\"terminal\", 512)"},
+	{kind = .Wait, text = "[console] 1024"},
+	{kind = .Type, text = "scheduler.share(\"terminal\", 16)"},
+	{kind = .Wait, text = "the argument weight has 16; it must have at least 32"},
+	{kind = .Type, text = "scheduler.policy(1)"},
+	{kind = .Wait, text = "scheduler: the share policy is on: each program has its program weight, divided between its threads that count, one round each 100 ms"},
+	{kind = .Front, text = "scheduler"},
+	{kind = .Key, text = "s"},
+	{kind = .Shot, text = "scheduler_shares"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "scheduler.policy(0)"},
+	{kind = .Wait, text = "scheduler: the share policy is off: each thread has the weight that its program asked and the full weight limit"},
 	{kind = .Type, text = "stop(\"scheduler\")"},
 	{kind = .Wait, text = "root: scheduler stopped"},
 
@@ -2696,6 +2722,8 @@ scenario_measure_scheduler := [?]Step {
 	{kind = .Launch, text = "scheduler"},
 	{kind = .Wait, text = "scheduler: EEVDF: two threads that wake each other, a spinner on each processor: "},
 	{kind = .Wait, text = "scheduler: stress: 100 changes of strategy while "},
+	{kind = .Wait, text = "scheduler: shares of the programs with 1, 2, 4 and 8 spinning threads under EEVDF, by the ticks of the kernel: without the share policy "},
+	{kind = .Wait, text = "scheduler: one round of the share policy, over "},
 	{kind = .Wait, text = "scheduler: EEVDF woke "},
 	{kind = .Wait, text = "scheduler: the window took "},
 	{kind = .Front, text = "console"},

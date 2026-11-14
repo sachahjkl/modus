@@ -168,7 +168,11 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "kernel_events":
 		return {.Events, .Image} // It gives the event table of the machine, and starts its children from the boot image.
 	case "scheduler":
-		return {.Inspect, .Schedule} // It reads the counts of the scheduler, and changes the strategy.
+		// It reads the counts of the scheduler, changes the strategy and
+		// writes the weight of each thread (the share policy). It starts
+		// the four programs of its case of the shares from the boot image,
+		// and serves share() and policy() to the console.
+		return {.Inspect, .Schedule, .Image, .Serve}
 	case "paint", "life", "tally", "sample", "heron":
 		// Each is a service: the console calls its exports through a
 		// connection.
@@ -394,7 +398,14 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "address_space":
 		return {pages = 41984, programs = 2, threads = 6} // 64 MiB of large pages, two ranges of 1 GiB with their page tables, a child, and the two pictures of its window.
 	case "scheduler":
-		return {pages = 3072, programs = 1, threads = 24} // The two pictures of a window of 976 x 704, 1342 pages; 12 spinners, two threads that wake each other, one that sleeps, a changer, a thread that starts threads.
+		// Threads: 12 spinners, two threads that wake each other, one that
+		// sleeps, a changer, a thread that starts threads; later, with its
+		// first thread, the 15 threads of the four programs of the shares,
+		// or 8 spinners of its own. Programs: itself and those four. Pages:
+		// its own 2048, and for the four programs 4 x 512 and a stack and a
+		// thread area (19 pages) for each of their 15 threads: 2333; and 1024
+		// more for the second picture of its window of 976 x 704.
+		return {pages = 5632, programs = 5, threads = 24}
 	case "flow":
 		return {pages = 2048, programs = 1, threads = 3}
 	case "crowd":

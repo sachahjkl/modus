@@ -40,7 +40,7 @@ A tool with no grant to inspect the machine reads nothing. It says so in its win
 | `pages` | machine, Inspect | `Mapping_Report` of its own page table and of the kernel half |
 | `processors` | machine, Inspect | `Processor_Report` of each processor |
 | `locks` | machine, Inspect | `System_Report.locks` |
-| `scheduler` | machine, Inspect and Schedule | `Processor_Report`, `System_Report.strategy`, `Thread_Table_Report` (the machine number of its own threads) |
+| `scheduler` | machine, Inspect and Schedule | `Processor_Report`, `System_Report.strategy`, `Thread_Table_Report` (the machine number of its own threads; for the share policy, the threads of each program), `Program_Report` (the run time of each program) |
 | `manual` | machine, Inspect; boot image; replacement table | the flat tables of the modules, `Module_Report` of each slot |
 | `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)` |
 | `debugger` | machine, Inspect; boot image; debug image; the command `Debug` of the root ring | `Program_Report`, `Module_Report` and `Thread_Table_Report` of the program that it debugs; the registers and the memory of that program through its handle with `Debug` ("The debugger"). It serves the exports of the debugger |
@@ -1134,7 +1134,7 @@ A **measure run** is a machine whose boot image holds the resource `measure_run`
 | `crowd` | 50 000 records from each writer through each of 5 queues, each one read one time | Records in one second, for 1 s for each queue |
 | `disk` | 256 requests in each of 5 runs, 0 errors; 128 blocks written, flushed and read back | Blocks in one second, for 1 s for each run |
 | `locks` | 16 384 kernel entries and 2048 pages on first use for each locker, with 1, 2 and 4 lockers; 2000 turns of the word wait alone and while 2 lockers enter the kernel 65 536 times each; 16 objects of 600 pages and 2048 pages for each locker of the case of the frames | Kernel entries and pages on first use in one second (300 ms for each row), wakes in one second (500 ms), rounds of 500 ms of the case of the frames |
-| `scheduler` | Under each strategy: 16 turns of the two threads, and 8 turns that a wake ended under EEVDF, by the counts of the kernel; each spinner ran 30 ticks, by the thread report, in each case of the shares | Wakes in one second (400 ms), the late wakes of a thread that sleeps 2 ms 60 times, the work in one second and the shares over 500 ms |
+| `scheduler` | Under each strategy: 16 turns of the two threads, and 8 turns that a wake ended under EEVDF, by the counts of the kernel; each spinner ran 30 ticks, by the thread report, in each case of the shares; each of the four programs of the share policy ran 30 ticks, by its program report | Wakes in one second (400 ms), the late wakes of a thread that sleeps 2 ms 60 times, the work in one second and the shares over 500 ms; the shares of the four programs of the share policy over 1 s |
 | `limits` | The processor time of each budget in the first whole interval of one second, against its limit | The same in the second interval, where each thread computes from the start of the interval |
 | `processors` | The three pictures, with no pause between them, then the line of their times | No measure run: the times of the pictures are printed in each run |
 

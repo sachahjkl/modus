@@ -160,6 +160,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "workers.png", group = .Memory, guide = "docs/ARCHITECTURE.md", caption = "One queue of tiles, one lock, four threads: each tile has the tint of the thread that computed it."},
 	{file = "processors.png", group = .Memory, guide = "docs/ARCHITECTURE.md", caption = "Four processors run the threads of one program at the same time: the same picture with 1, 2 and 4 threads."},
 	{file = "scheduler.png", group = .Memory, guide = "docs/SCHEDULING.md", caption = "The scheduling strategies: round robin, fair and EEVDF side by side, with the wakes, the delay of a wake and the shares of spinners."},
+	{file = "scheduler_shares.png", group = .Memory, guide = "docs/SCHEDULING.md", caption = "A share of the processors for each program: the threads that count, the program weight, the weight of each thread, and the share of the last period."},
 	{file = "locks.png", group = .Memory, guide = "docs/ARCHITECTURE.md", caption = "The locks of the kernel: kernel entries of 1, 2 and 4 programs, two threads that wake each other, and the waits of each lock."},
 	{file = "extended_state.png", group = .Memory, guide = "docs/SIMD.md", caption = "The extended state of each thread: more threads than processors hold every vector register across kernel entries, one square for each."},
 	{file = "extended_state_without_avx.png", group = .Memory, guide = "docs/SIMD.md", caption = "The extended state on a processor with no AVX: the kernel saves x87 and SSE only, and each thread keeps xmm0 to xmm15."},
