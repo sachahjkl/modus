@@ -1342,6 +1342,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. A grant whose object belongs to one program (a private store, a terminal, a device, a network endpoint, a service) refuses the debug access: the debugger would write what only that program can write.
 - Where: `TOOLS.md`, "The debugger: the design".
 
+### D-258 The window of the debugger is a client of the service, with no right over a program
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: the program `debugger_window` calls the exports of the service `debugger` through a connection of its own, as the console does. Its grants are Connect, to that one service, Image and Acts_For_Principal. The service keeps the one handle with the right to debug, and the root service decides which program a caller can debug. `step_over` runs a call of a line to its end by a breakpoint at the instruction after the call. The call of a service gives its caller the records of a Table result. Refused: a window inside the service; a window that holds the right to debug; a read of each row by its description.
+- Words: "tout tout faire"
+- State: done. Left: breakpoints and watches from the window, the registers and the memory of the program.
+- Where: `TOOLS.md`, "The window of the debugger"; `src/md/features/debugger_window.md`; `FIRST_MILESTONE.md`, choices 760 and 761.
+
 ### D-256 A disk program is named by the hash of its file, and gets no grant
 - 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
 - Decision: `start_from_disk(name, hash)` starts a program from the store `programs` of the principal of the caller. The name only finds the entry; the hash of the command is the identity. The root service reads the bytes into its own memory, computes their hash and compares it with the hash of the command: it does not trust the storage service, and it never waits for it without a bound. A disk program gets the log, a window, the least budget and no grant. A name of the grant table, of a module of the boot image or of a system program is refused before any read: a name gives nothing. Its imports come from the boot image, by their hash. Refused: a name in a tree that gives the hash (the storage service would then choose what runs); a grant that the file states.
