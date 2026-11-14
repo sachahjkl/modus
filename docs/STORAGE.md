@@ -110,9 +110,9 @@ The model of section 1 is the direction; the service of today builds a part of i
 | An object of a store, as a list of blocks | An entry of a tree that names an object: its hash and the root of its block tree | Built: the hash is kept; the blocks are still found through the entry, not by the hash |
 | The versions of an object, their thinning | The history of a store | Kept for each object; the history of a store is not built |
 | The system description (a signed list of hashes) | The tree of the system, signed by the principal that signs the system | Not built |
-| The boot image | The transport of the first objects | Not built: the image is still the one source of modules |
+| The boot image | The transport of the first objects | Built in part: the first module of a disk program is an object of the store `programs`, which the root service starts when its bytes have the hash that the principal named (`MODULE_CONTRACT.md`, "A program from a disk"). The image is still the source of each other module and of each import |
 | The resources of the boot image (pointer themes, glyph caches) that the root service gives | Objects of the tree of the system, granted by handle | Not built |
-| The hash of a module (P11) | The name of an object | The same BLAKE3 hash; modules are not in the store yet |
+| The hash of a module (P11) | The name of an object | The same BLAKE3 hash. A module file of a disk program is in the store `programs`; its reader computes the hash on the bytes, because the hash of an object with a hole is not the BLAKE3 hash of its bytes (section 4.6) |
 | A grant of the root service: the store of a connection and its limit | A handle on the store of a program, with its budget of blocks | Built: the connection is the handle |
 
 ## 3. The format on the disk
@@ -258,7 +258,7 @@ The reason: BLAKE3 puts the place of each chunk in its compression, so zero byte
 
 The hash is still a function of the bytes only: a block of zero bytes is always a hole, so two objects with the same bytes have the same hash. The size is in the hash: the last chunk carries its length and its place.
 
-The hash of a module (P11) is the BLAKE3 hash of its file. A module with an aligned block of 4096 zero bytes before its last block has another hash as an object. The work on objects by their hash (section 5) must name the module by one of the two: it is not decided here.
+The hash of a module (P11) is the BLAKE3 hash of its file. A module with an aligned block of 4096 zero bytes before its last block has another hash as an object. The root service reads the bytes of the module file of a disk program and computes the BLAKE3 hash on them: it does not read the hash of the entry, so a disk program is named by the hash of its file. The work on objects by their hash (section 5) must name the module by one of the two: it is not decided here.
 
 #### Ranges
 
@@ -304,7 +304,7 @@ Each step is one tested capability on a system that works.
 1. **Large objects and ranges.** Built (section 4.6), but the disk past 1 GiB: an object can hold 4 TiB, and the disk has 262144 blocks.
 2. **The history of a store.** A version is a tree that a store named; the versions of an object are found in it. The thinning applies to the history of the store. The versions of each object go.
 3. **Objects by their hash.** An index of the store from a hash to the blocks of an object: an object that two entries name is kept one time. The hash of a tree on its entries (section 1.3).
-4. **The first objects from storage.** The boot image carries only what the storage service needs; the root service loads the other modules, the fonts and the pointer themes from the tree of the system, by hash.
+4. **The first objects from storage.** Built for one case: a principal starts a program whose module file is in the store `programs`, by its name and its hash (`MODULE_CONTRACT.md`, "A program from a disk"). Not built: the boot image carries only what the storage service needs; the root service loads the other modules, the fonts and the pointer themes from the tree of the system, by hash.
 5. **Packages.** A signed tree with its six facts; the store of the data of an application, attached to the identity of the package.
 6. **Encryption for a principal.**
 7. **The network as a channel.** An object comes from a peer; its hash proves it.

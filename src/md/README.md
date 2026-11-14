@@ -87,6 +87,7 @@ The intent of the parts that were built before this folder is in other documents
 - [features/key_path.md](features/key_path.md): why no queue between the keyboard and a program drops a key in silence, and the two forms of a full queue
 - [features/mark_pictures.md](features/mark_pictures.md): one generator for every picture of the mark, the two variants that a request names, the one table of the uses with the icons of the site, the formats that all start from the pixels of one picture, and why the browser computes no color
 - [features/palette.md](features/palette.md): the palette as a panel of the compositor with the console as its provider, and why no program gets a new right
+- [features/programs_from_a_disk.md](features/programs_from_a_disk.md): a program whose module file is an object of the store `programs`: why the command names the hash, the load as a state of the loop of the root service, and why its name gives it no grant
 - [features/roadmap.md](features/roadmap.md): the planned work in one plain file, the check of its form, the rule that removes an entry with its changelog fragment, and its page of the site
 - [features/scheduling_policy.md](features/scheduling_policy.md): the placement of a thread in the kernel, the share for each program outside it with the rule of one round, what the mechanism lacks, and the hazards that decided both
 - [features/scroll_bar.md](features/scroll_bar.md): the scroll bar of the system and of the site from one table, its states, the pointer in the element, and where it leaves the design rules

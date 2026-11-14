@@ -176,13 +176,27 @@ Do not use: GOT entry, import address, stub.
 
 The load source is what a loader can read: the files that its program was granted, each named by its hash, and the replacements that the starter of the program gives.
 
-The load source closes the hole of a global library directory. A loader finds an import only in its load source, and checks the hash and the tables of each file before it uses it. The root service and the console give the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports and the modules of the replacements.
+The load source closes the hole of a global library directory. A loader finds an import only in its load source, and checks the hash and the tables of each file before it uses it. The root service and the console give the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports and the modules of the replacements. The first module of a disk program comes from the storage service, checked against the hash that the principal named; its imports come from the boot image.
 
 A file that the load source does not hold gives the load error Find; a file whose bytes do not have their hash gives the load error Read.
 
 The rule: `docs/PROPERTIES.md`, "No ambient access: the other holes to close".
 
 Do not use: search path, library path, module store (for this).
+
+### Disk program
+
+A disk program is a program whose module file is an object of the store `programs` of the storage service, and not a file of the boot image.
+
+A disk program adds a program to a machine with no new boot image. The principal names it by its name and by the hash of its file: `start_from_disk("visitor", "5f0c…")`. The root service reads the object, computes the BLAKE3 hash of the bytes, and starts them only when that hash is the hash of the command: the storage service carries the bytes and does not choose them. The store is the store `programs` of the principal of the caller, and each entry of its root tree is one module file, named after its program.
+
+A disk program has no row in the tables of the root service. It receives the log and a window, no grant, and the budget of a program that no table names. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image, by hash.
+
+A disk program is not a package: it has no signer, no version number and no statement of the grants that it asks for. It is not installed: nothing of the machine changes when its file is written.
+
+The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
+
+Do not use: installed program, side-loaded program.
 
 ### Module space
 

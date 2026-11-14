@@ -20,6 +20,9 @@
 //   processor time and the log records of each program.
 //
 // A program that no case names receives the log and a window, and no grant.
+// A disk program is never a case of these tables: this service refuses a
+// file of a disk whose name one of them gives a grant, or whose name a
+// module of the boot image has (disk_programs.odin).
 //
 // **The commands of the root ring** (`Root_Command` in the package
 // system). A program with the grant **Root_Ring** (the console) sends all
@@ -29,6 +32,10 @@
 // program with **Debugger** sends `Debug`.
 //
 // - `Start`, `Stop`: a program by name, in the session of the caller.
+// - `Start_From_Disk`: a disk program, by its name and the hash of its
+//   module file, which this service reads from the store `programs` of the
+//   storage service. Its completion comes when the load ends
+//   (disk_programs.odin; docs/MODULE_CONTRACT.md, "A program from a disk").
 // - `Connect`, `Disconnect`, `Connect_History`: a connection to a service.
 // - `Palette_Provide`: the entry table and the ring of the palette
 //   provider, for the program with the grant **Palette**.
@@ -81,6 +88,7 @@ import "modus:contract/fixed_addresses"
 import "modus:contract/frame"
 import "modus:support/pci"
 import "modus:support/principals"
+import "modus:support/disk_program"
 import "modus:support/storage"
 import "modus:contract/settings"
 import "modus:contract/palette_table"
@@ -319,6 +327,12 @@ on_demand :: proc "contextless" (name: string) -> bool {
 // caller, and the flag that the caller acts for that principal (the manual
 // gives what runs only to such a caller).
 grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
+	// The connection of this service itself, for the read of the module
+	// file of a disk program: the store of the module files, with its
+	// limit, and no grant to act for a principal.
+	if caller == &disk_reader {
+		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false)
+	}
 	name := system.name_of(caller.name[:])
 	role := grants_of(name)
 	amount: u64
@@ -457,6 +471,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "tables":
 		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}
+	// The things of a program that no case names. A disk program has them
+	// whatever its name (disk_programs.odin, least_budget).
 	return {pages = 2048, programs = 1, threads = 1}
 }
 
@@ -896,7 +912,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					command = .None
 					result = .No_Right
 				}
+				// The completion of a load from the disk comes when the
+				// load ends: this loop goes on meanwhile.
+				held := false
 				#partial switch command {
+				case .Start_From_Disk:
+					result, held = disk_start_begin(&item, record, &completion.values)
 				case .Connect:
 					result = connect(&item, system.name_of(name[:]), &completion.values)
 				case .Connect_History:
@@ -955,9 +976,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						}
 					}
 				}
+				if held {
+					continue
+				}
 				// A refused Debug wrote its own error record: it names the
-				// grant that refuses, which only debug knows.
-				if result != .Ok && command != .Debug {
+				// grant that refuses, which only debug knows. A refused
+				// Start_From_Disk wrote its own too: its values are a hash
+				// and a name of another form.
+				if result != .Ok && command != .Debug && command != .Start_From_Disk {
 					completion.values = refusal(system.Root_Command(record.kind), system.name_of(name[:]), record.values[4], result)
 				}
 				completion.kind = u32(result)
@@ -965,6 +991,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		reap()
+		// After reap: a storage service that stopped ended its connections.
+		disk_load_step(&wait)
 		network_answers(&wait)
 		system.wait_records(&wait, &control.completions)
 		for &item in started {
@@ -972,7 +1000,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.wait_records(&wait, &item.requests.commands)
 			}
 		}
-		system.wait_end(&wait)
+		// A load from the disk has a deadline: the wait ends there, with or
+		// without an answer of the storage service.
+		system.wait_end(&wait, disk_load_deadline())
 	}
 }
 
@@ -2063,6 +2093,11 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 		system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Disconnect), values = {0 = u64(connection.ring), 1 = u64(connection.region)}})
 	}
 	system.log_in("calls", .Info, "root: disconnected ", system.Module_Name{system.name_of(connection.caller.name[:])}, " from the service ", system.Module_Name{system.name_of(connection.service.name[:])})
+	// The connection of this service for a load from the disk: the load
+	// learns here that it ended.
+	if disk_load.connection == connection {
+		disk_load.connection = nil
+	}
 	connection^ = {}
 }
 
@@ -2101,6 +2136,7 @@ release :: proc "contextless" (item: ^Started) {
 		driver_end(item)
 	}
 	endpoint_close(item)
+	disk_load_forget(item)
 	if palette_provider == item {
 		palette_provider_end(item, false)
 	}
