@@ -626,9 +626,22 @@ The sizes, the hashes and the exports of this example are not those of a real mo
 
 The check does not compare the bytes of the two module files. The compiler orders the procedures of a module by the path of its packages, and the package of the copy has another path. The passed line of each example prints the start of the two hashes and says whether the bytes are the same: it is a fact of the run, not a condition.
 
+**An outside module in a machine.** A machine starts an outside module from a disk, as it starts any disk program ("The disk of the disk programs"): the boot image does not change. The command `program-disk` writes a data disk whose store `programs` holds each module file, under the name of its file, and prints the line of the console that starts each one:
+
+```
+modustool program-disk build/data_disk.img ~/my_program/build/my_program.module
+modustool run
+```
+
+```
+> start_from_disk("my_program", "<the 64 digits that the command printed>")
+```
+
+`modustool run` starts the machine with `build/data_disk.img`. The command writes no disk over a file that exists: a data disk holds the stores of a principal. The module runs with no grant and with the least budget, and its name is no name of a module of the boot image (`MODULE_CONTRACT.md`, "A program from a disk"). The test part `disk_programs` builds a copy of the program `visitor` outside the sources under the name `outsider`, puts its file on the disk, and starts it in the machine.
+
 **What is not built.**
 
-- The tool does not put an outside module in a boot image. A machine loads a module from its boot image only, so an outside module does not yet run in a machine.
+- The debug image of a machine has no debug object for an outside module: a stop report of it shows addresses.
 - An import names a module of the system. An outside module does not import another outside module.
 
 ## The commands of the tool
@@ -640,6 +653,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `build [whole] [processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test or a measure needs (a start that fails, a shortage of frames, a measure run, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and each boot volume when its inputs are the same, and only converts a module when the file of an import changed; `build whole` keeps nothing ("The incremental build") |
 | `module <name> ...` | Builds one module of the table, and its debug object; with `compile` or `convert` as its last argument, runs one of the two steps alone. The parallel build runs it for each step; run it by hand to see the errors of one module alone |
 | `module-build <folder> [--system <folder>] [--out <folder>]` | Builds one outside module from a folder of another project, with its module build file `module.txt`: writes `<name>.module` and `<name>.debug`, and prints the hash of the module and the names of its exports ("A module from a source outside the repository") |
+| `program-disk <disk file> <module file> ...` | Writes a data disk whose store `programs` holds each module file under the name of its file, and prints the line of the console that starts each one ("A module from a source outside the repository") |
 | `volume <name>` | Builds one boot volume: its boot image with the system description, its boot program, and the volume file. The build runs it for each volume that it must build; run it by hand, after a build, to see the errors of one volume alone |
 | `run [without_checks]` | Builds the modules and the main boot volume, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `modustool call` |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result |

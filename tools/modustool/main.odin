@@ -255,6 +255,9 @@ COMMANDS :: [?]Command {
 	// the names of the exports. A module with an import needs the built
 	// modules of the system: run `build` in the folder of the system first
 	// (docs/TOOLS.md, "A module from a source outside the repository").
+	// Writes a data disk whose store of the programs holds module files: a
+	// machine with that disk starts each one from its console, by its hash.
+	{name = "program-disk", about = "program-disk <disk file to write> <module file> [<module file> ...]: write a data disk whose store `programs` holds each module file under the name of its file, and print the line of the console that starts each one", run = run_program_disk},
 	{name = "module-build", about = "module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]: build one module from a folder outside the repository, with its module build file `" + MODULE_BUILD_FILE_NAME + "`: write <name>.module and <name>.debug, and print the hash of the module and the names of its exports", run = run_module_build},
 	// Builds one boot volume in this process: its boot image with the system
 	// description, its boot program, and the volume file.
