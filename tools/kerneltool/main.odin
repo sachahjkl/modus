@@ -552,7 +552,9 @@ main :: proc() {
 		usage()
 		return
 	}
-	if !os.exists(ROOT_MARK) {
+	// The command module-build runs from the folder of another project: it
+	// finds the folder of the system by itself, and refuses a wrong one.
+	if os.args[1] != "module-build" && !os.exists(ROOT_MARK) {
 		fmt.eprintln("kerneltool: start it from the root of the repository")
 		os.exit(EXIT_USAGE)
 	}

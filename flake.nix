@@ -150,7 +150,10 @@
     kerneltool = pkgs.writeShellScriptBin "kerneltool" ''
       if [ -n "''${MODUS_SYSTEM:-}" ]; then
         mkdir -p "$MODUS_SYSTEM/build"
-        exec odin run "$MODUS_SYSTEM/tools/kerneltool" -vet -collection:modus="$MODUS_SYSTEM/src/library" -out:"$MODUS_SYSTEM/build/kerneltool" -- "$@"
+        # The tool compiles in the folder of the system: a source of the
+        # tool includes an assembly file by a path from that folder.
+        (cd "$MODUS_SYSTEM" && odin build tools/kerneltool -vet -collection:modus=src/library -out:build/kerneltool) || exit 1
+        exec "$MODUS_SYSTEM/build/kerneltool" "$@"
       fi
       mkdir -p build
       exec odin run tools/kerneltool -vet -collection:modus=src/library -out:build/kerneltool -- "$@"
