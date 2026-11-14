@@ -1096,8 +1096,10 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"tcg",
 		"-cpu",
 		processor_models[processor],
+		// The main test keeps about 30 windows open, each with two
+		// pictures, and then starts a program that maps 164 MiB.
 		"-m",
-		"512",
+		"1024",
 		"-smp",
 		"4",
 		"-device",
