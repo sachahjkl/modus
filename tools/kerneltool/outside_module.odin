@@ -518,7 +518,7 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 	built_hash := blake3.hash(built)
 	system_hash := blake3.hash(of_the_system)
 	test_passed_print(
-		"the module %s, built by `module-build` from a copy of the %d source files of %s in %s: the loader accepts it, its %d exports have the names and the call forms of the module of the system, its import table names the hash of each of its %d imports, and its debug object names %d of its sources from the folder %s; its hash is %x..., the hash of the module of the system is %x...: %s",
+		"the module %s, built by `module-build` from a copy of the %d source files of %s in %s: the loader accepts it, its %d exports have the names and the call forms of the module of the system, its import table names the hash of each of its %d imports, and its debug object names %d of its sources from the folder %s; its hash is %s, the hash of the module of the system is %s: %s",
 		example.name,
 		len(sources),
 		example.source,
@@ -527,8 +527,8 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 		len(imports),
 		named_sources,
 		example.name,
-		built_hash[:4],
-		system_hash[:4],
+		hash_as_hexadecimal(built_hash),
+		hash_as_hexadecimal(system_hash),
 		built_hash == system_hash ? "the same bytes" : "not the same bytes; the path of a package can change the order of its procedures",
 	)
 	return true
