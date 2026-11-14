@@ -53,6 +53,40 @@ Command :: enum u32 {
 	Surface_Create = 1, // values: memory handle (in the compositor), width, height, title (4 values)
 	Present        = 2, // The pixels of the surface changed. values: the picture to show (0 or 1), then the rectangle that changed: x, y, width, height (width 0: the whole surface)
 	Pointer_Shape  = 3, // The pointer shape over this surface (docs/POINTERS.md). values: a number of pointer_pictures.Pointer_Shape
+	// The act names of the window: what its elements act on, so that the
+	// palette offers to go there (docs/INTERFACE.md, "4.2 Act names").
+	// values[0]: the count, 0 to ACT_NAME_SET_CAPACITY; values[1..]: the
+	// act_name_hash of each act name. The set replaces the set before. The
+	// window layer sends it when the set of a frame changes (act_names_send).
+	Act_Names      = 4,
+}
+
+ACT_NAME_SET_CAPACITY :: 6 // The act names of one window: the values of one record after its count.
+ACT_NAME_CAPACITY :: 32 // The bytes of an act name: "settings.set:font".
+
+// act_name_hash gives the hash of an act name: the 64-bit FNV-1a hash of
+// its bytes, never 0. A record of a ring holds 7 values, so a set of act
+// names travels as hashes; the palette hashes the act name of an entry the
+// same way.
+act_name_hash :: proc "contextless" (name: string) -> u64 {
+	hash: u64 = 0xCBF2_9CE4_8422_2325
+	for index in 0 ..< len(name) {
+		hash = (hash ~ u64(name[index])) * 0x0000_0100_0000_01B3
+	}
+	return hash | 1
+}
+
+// act_names_send gives the compositor the set of the act names of the
+// window. It gives false when the command ring was full: the compositor has
+// the set before, and the caller sends it again later.
+act_names_send :: proc "contextless" (window: ^Window, hashes: []u64) -> bool {
+	record := ring.Record{kind = u32(Command.Act_Names)}
+	count := min(len(hashes), ACT_NAME_SET_CAPACITY)
+	record.values[0] = u64(count)
+	for hash, index in hashes[:count] {
+		record.values[1 + index] = hash
+	}
+	return system.send(&window.ring.commands, record)
 }
 
 // What the compositor tells a program, as the kind of a completion record of
@@ -65,6 +99,11 @@ Event_Kind :: enum u32 {
 	// already gave the new font to src/library/support/graphics; the program draws its
 	// window again. values: the change count of the settings page.
 	Settings_Changed = 3,
+	// The palette goes to an element of this window: the compositor raised
+	// it. values[0]: the act_name_hash of the act name. The window layer
+	// puts the focus on the element that names it
+	// (src/library/support/interface, window_events).
+	Go_To            = 4,
 }
 
 // The ring between the root service and the compositor.
@@ -125,6 +164,7 @@ Event :: struct {
 	modifiers: u32, // A key: the `MODIFIER_` bits.
 	x, y:      int, // The pointer: its place in the surface, in pixels; it can be outside the surface.
 	buttons:   u32, // The pointer: the `BUTTON_` bits.
+	act:       u64, // Go_To: the act_name_hash of the act name.
 }
 
 // One window of a program: its ring to the compositor and its surface.
@@ -421,6 +461,8 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		event.buttons = u32(record.values[2])
 	case .Settings_Changed:
 		text_settings_apply()
+	case .Go_To:
+		event.act = record.values[0]
 	}
 	return event, true
 }

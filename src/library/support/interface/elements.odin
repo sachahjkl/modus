@@ -218,6 +218,15 @@ button :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identi
 	draw_rectangle(frame.table, area.x, area.y, area.width, area.height, color, u32(element))
 	shown := text_fit(frame.table, FONT_INTERFACE, label, area.width - 16)
 	draw_text(frame.table, area.x + 8, area.y + (area.height - LINE) / 2, shown, color == graphics.COLOR_TRACK ? graphics.COLOR_TEXT : graphics.COLOR_WHITE, FONT_INTERFACE, u32(element))
+	// The focus has its own mark, a white frame of 2 pixels inside the
+	// button: a button that is open, or the value in use, is blue already,
+	// and the blue of the focus alone does not show where the focus is.
+	if result.focused {
+		draw_rectangle(frame.table, area.x, area.y, area.width, 2, graphics.COLOR_WHITE, u32(element))
+		draw_rectangle(frame.table, area.x, area.y + area.height - 2, area.width, 2, graphics.COLOR_WHITE, u32(element))
+		draw_rectangle(frame.table, area.x, area.y, 2, area.height, graphics.COLOR_WHITE, u32(element))
+		draw_rectangle(frame.table, area.x + area.width - 2, area.y, 2, area.height, graphics.COLOR_WHITE, u32(element))
+	}
 	return result
 }
 

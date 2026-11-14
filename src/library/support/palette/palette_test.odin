@@ -4,6 +4,7 @@ package palette
 import "core:strings"
 import "core:testing"
 import "modus:contract/palette_table"
+import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/kind_icons"
@@ -98,6 +99,7 @@ each_key_in_each_state :: proc(t: ^testing.T) {
 		.Tab       = .None,
 		.Shift_Tab = .None,
 		.Control_Enter = .Open_In_Console,
+		.Shift_Enter   = .Go_To,
 	}
 	for key in Key {
 		testing.expectf(t, key_action(.Search, key) == search[key], "Search, %v: %v", key, key_action(.Search, key))
@@ -479,8 +481,8 @@ OUTSIDE_COLOR :: 0x123456 // A color that no record of the panel draws.
 
 @(private = "file")
 Screen :: struct {
-	records: [512]interface.Draw_Record, // As the compositor has: the rows, and the rectangles of their icons.
-	text:    [4096]u8,
+	records: [768]interface.Draw_Record, // As the compositor has: the rows, the rectangles of their icons, and the buttons of the setting rows.
+	text:    [6144]u8,
 	table:   interface.Draw_Table,
 	pixels:  []graphics.Color,
 	canvas:  graphics.Canvas,
@@ -1022,7 +1024,8 @@ the_entries_of_a_provider :: proc(t: ^testing.T) {
 	panel.state = .Search
 	panel_build(screen, panel)
 	testing.expect(t, has(&screen.table, "shutdown") && has(&screen.table, "()") && has(&screen.table, "stop the machine"))
-	testing.expect(t, has(&screen.table, "enter: run") && !has(&screen.table, NOTE_NO_PROVIDER))
+	// The band says the mode of the chosen entry: shutdown destroys.
+	testing.expect(t, has(&screen.table, MODE_DESTROY) && !has(&screen.table, NOTE_NO_PROVIDER))
 	panel.state = .Confirm
 	panel_build(screen, panel)
 	testing.expect(t, has(&screen.table, "shutdown(): stop the machine"))
@@ -1485,7 +1488,7 @@ the_choice_follows_its_entry :: proc(t: ^testing.T) {
 	testing.expect_value(t, row_text(panel, 0), "plasma (window)")
 	testing.expect(t, panel.choice_undrawn)
 	for action in Action {
-		runs := action == .Run || action == .Confirm || action == .Submit || action == .Submit_All || action == .Open_In_Console
+		runs := action == .Run || action == .Confirm || action == .Submit || action == .Submit_All || action == .Open_In_Console || action == .Go_To
 		testing.expect_value(t, action_runs(action), runs)
 	}
 	panel_drawn(panel)
@@ -1908,4 +1911,268 @@ the_strategy_in_use_is_the_mark_of_the_provider :: proc(t: ^testing.T) {
 	// The flag on an entry that is no such setting: the table is refused.
 	entries[0].kind = .Command
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.Bad_Setting)
+}
+
+// The texts of the form of an entry, as a provider writes them: its act
+// name, the name of its setting row and the name of its value.
+@(private = "file")
+row_texts_set :: proc(entry: ^palette_table.Entry, act_name, setting_name, value_name: string) {
+	entry.act_name_length = u8(copy(entry.act_name[:], act_name))
+	entry.setting_name_length = u8(copy(entry.setting_name[:], setting_name))
+	entry.value_name_length = u8(copy(entry.value_name[:], value_name))
+}
+
+// The entries of one setting, side by side in the table, are one row of
+// the list: the name of the setting, then its values. Left and Right
+// choose a value; the panel sends the entry of that value. A run of more
+// values than a row holds stays entries.
+@(test)
+the_values_of_one_setting_are_one_row :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	given := [?]Given {
+		{name = "memory", signature = "memory() -> Record", about = "memory and kernel counters", result = .Record},
+		{name = "set font to vector", signature = "set font to vector", about = "setting(\"font\", \"vector\")", setting = true, value = 0},
+		{name = "set font to spleen", signature = "set font to spleen", about = "setting(\"font\", \"spleen\")", setting = true, value = 1},
+		{name = "set strategy to round_robin", signature = "set strategy to round_robin", about = "strategy(\"round_robin\")"},
+		{name = "set strategy to fair", signature = "set strategy to fair", about = "strategy(\"fair\")"},
+		{name = "set strategy to eevdf", signature = "set strategy to eevdf", about = "strategy(\"eevdf\")"},
+		{name = "set shade to a", signature = "set shade to a", about = "shade(\"a\")"},
+		{name = "set shade to b", signature = "set shade to b", about = "shade(\"b\")"},
+		{name = "set shade to c", signature = "set shade to c", about = "shade(\"c\")"},
+		{name = "set shade to d", signature = "set shade to d", about = "shade(\"d\")"},
+		{name = "set shade to e", signature = "set shade to e", about = "shade(\"e\")"},
+		{name = "set shade to f", signature = "set shade to f", about = "shade(\"f\")"},
+		{name = "set shade to g", signature = "set shade to g", about = "shade(\"g\")"},
+	}
+	table := table_make(given[:])
+	defer delete(table)
+	entries := ([^]palette_table.Entry)(&table[palette_table.ENTRIES_OFFSET])
+	row_texts_set(&entries[1], "settings.set:font", "font", "vector")
+	row_texts_set(&entries[2], "settings.set:font", "font", "spleen")
+	strategies := [3]string{"round_robin", "fair", "eevdf"}
+	for value, index in strategies {
+		entries[3 + index].kind = .Provider_Setting
+		row_texts_set(&entries[3 + index], "strategy", "strategy", value)
+	}
+	entries[5].flags = {.In_Use}
+	shades := [7]string{"a", "b", "c", "d", "e", "f", "g"}
+	for value, index in shades {
+		entries[6 + index].kind = .Provider_Setting
+		row_texts_set(&entries[6 + index], "shade", "shade", value)
+	}
+	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
+	// One window, its close, the programs, the command, two rows, and the
+	// seven shades one by one.
+	testing.expect_value(t, panel.list.entry_count, 1 + len(PROGRAMS) + 1 + 1 + 2 + 7)
+	panel.state = .Search
+	panel.settings_in_use[0] = 1 // The machine uses Spleen.
+	type_text(panel, ":font")
+	testing.expect_value(t, row_text(panel, 0), "font (setting)")
+	row := chosen_entry(panel)
+	testing.expect(t, row != nil && entry_is_setting_row(row))
+	testing.expect_value(t, row.value_count, 2)
+	testing.expect_value(t, row.act, display.act_name_hash("settings.set:font"))
+	testing.expect_value(t, value_name(panel.list, row, 0), "vector")
+	// The row starts at its value in use.
+	testing.expect_value(t, value_chosen(panel, row), 1)
+	testing.expect(t, value_in_use(panel, row, 1) && !value_in_use(panel, row, 0))
+	testing.expect(t, setting_in_use(panel, row))
+	// Left and Right choose a value there; Home still edits the typed part.
+	testing.expect_value(t, key_action_for(panel, .Right), Action.Value_Next)
+	testing.expect_value(t, key_action_for(panel, .Left), Action.Value_Previous)
+	testing.expect_value(t, key_action_for(panel, .Home), Action.Edit)
+	testing.expect(t, value_move(panel, 1))
+	testing.expect_value(t, value_chosen(panel, row), 0)
+	// Enter sends the entry of the chosen value, by its own name: the
+	// provider checks it as one entry.
+	number, name := entry_sent(panel, row)
+	testing.expect_value(t, number, 1)
+	testing.expect_value(t, name, "set font to vector")
+	testing.expect_value(t, chosen_of(panel), Chosen.Sends)
+	sent_set(panel, row)
+	testing.expect_value(t, sent_text(panel), "set font to vector")
+	// A new list for the same typed part keeps the value on its row.
+	list_build(panel)
+	testing.expect_value(t, value_chosen(panel, chosen_entry(panel)), 0)
+	// The row as the panel draws it: the name, one button for each value,
+	// the mode in the band, and the line that the chosen value runs.
+	screen := screen_make()
+	defer screen_free(screen)
+	has :: proc(table: ^interface.Draw_Table, text: string) -> bool {
+		for record in table.records[:table.record_count] {
+			if interface.is_text_kind(record.kind) && string(table.text[record.text_start:][:record.text_count]) == text {
+				return true
+			}
+		}
+		return false
+	}
+	panel_build(screen, panel)
+	testing.expect(t, has(&screen.table, "font") && has(&screen.table, "vector") && has(&screen.table, "spleen"))
+	// The band: the word of the prefix, then the mode.
+	testing.expect(t, has(&screen.table, "settings" + MODE_GAP + MODE_RUN))
+	testing.expect(t, has(&screen.table, "setting(\"font\", \"vector\")"))
+	testing.expect(t, !screen.table.full)
+	// A press on a button finds its row and its value, by the layout that
+	// the drawing used.
+	x, y := panel_place(SCREEN_WIDTH)
+	buttons := value_buttons_layout(&screen.table, panel.list, row, row_area(panel, x, y, panel.choice), entry_words(row))
+	testing.expect_value(t, buttons.count, 2)
+	testing.expect(t, buttons.areas[0].x + buttons.areas[0].width <= buttons.areas[1].x)
+	pressed_row, pressed_value := value_at(panel, &screen.table, x, y, buttons.areas[1].x + 2, buttons.areas[1].y + 2)
+	testing.expect_value(t, pressed_row, panel.choice)
+	testing.expect_value(t, pressed_value, 1)
+	pressed_row, pressed_value = value_at(panel, &screen.table, x, y, x + interface.LIST_ROW_NAME_X + 1, buttons.areas[1].y + 2)
+	testing.expect_value(t, pressed_value, NO_ROW)
+	// The strategies: a row of three, at the value that the provider marks.
+	line_editor.line_clear(&panel.line)
+	type_text(panel, ":strategy")
+	strategy := chosen_entry(panel)
+	testing.expect(t, strategy != nil && entry_is_setting_row(strategy))
+	testing.expect_value(t, entry_name(strategy), "strategy")
+	testing.expect_value(t, strategy.value_count, 3)
+	testing.expect_value(t, value_chosen(panel, strategy), 2)
+	// Seven shades are more than a row holds: seven entries.
+	line_editor.line_clear(&panel.line)
+	type_text(panel, ":set shade")
+	testing.expect_value(t, panel.list.matched_count, 7)
+	for listed in panel.list.rows[:panel.list.row_count] {
+		testing.expect(t, !entry_is_setting_row(&panel.list.entries[listed.entry]))
+	}
+	testing.expect_value(t, key_action_for(panel, .Right), Action.Edit)
+	// The next open starts the font at its value in use again.
+	panel_close(panel)
+	testing.expect_value(t, panel.value_row_length, 0)
+}
+
+// The control of a field comes from the field: a few closed values are a
+// row of buttons, more closed values and suggestions are a list, and a
+// field with no candidate is typed. Enter takes the chosen button.
+@(test)
+the_control_of_a_field :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	given := [?]Given {
+		{name = "strategy", signature = "strategy(name: Text) -> Integer", about = "set the scheduling strategy", parameters = 1, result = .Integer, kinds = {.Text, .None}, names = {"name", ""}},
+		{name = "repeat", signature = "repeat(Text, Integer) -> Text", about = "a text, several times", parameters = 2, result = .Text, kinds = {.Text, .Integer}},
+	}
+	table := table_make(given[:])
+	defer delete(table)
+	collect_with_table(panel, table)
+	panel.state = .Search
+	type_text(panel, "strategy")
+	form_open(panel, chosen_entry(panel))
+	testing.expect_value(t, panel.state, State.Arguments)
+	form := &panel.form
+	testing.expect_value(t, field_control(form, 0), Field_Control.Text)
+	names := [?]string{"round_robin", "fair", "eevdf", "four", "five", "six", "seven"}
+	for name, index in names {
+		candidate := (^palette_table.Candidate)(&table[palette_table.CANDIDATES_OFFSET + index * size_of(palette_table.Candidate)])
+		candidate.length = u8(copy(candidate.name[:], name))
+	}
+	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED)
+	testing.expect_value(t, field_control(form, 0), Field_Control.Buttons)
+	testing.expect_value(t, key_action_for(panel, .Right), Action.Candidate_Next)
+	testing.expect_value(t, key_action_for(panel, .Home), Action.Field_Edit)
+	// Suggestions are a list, also when they are few.
+	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), 0)
+	testing.expect_value(t, field_control(form, 0), Field_Control.Candidate_List)
+	testing.expect_value(t, key_action_for(panel, .Right), Action.Field_Edit)
+	// More closed values than a row holds are a list.
+	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED)
+	testing.expect_value(t, field_control(form, 0), Field_Control.Candidate_List)
+	// A fact that the contract does not know: no candidate.
+	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), 2)
+	testing.expect_value(t, form.candidate_count, 0)
+	testing.expect_value(t, field_control(form, 0), Field_Control.Text)
+	// Right chooses fair, and Enter takes it before the form runs.
+	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED)
+	testing.expect(t, form_candidate_move(form, 1))
+	ready, _ := form_submit(panel, false)
+	testing.expect(t, ready)
+	testing.expect_value(t, field_text(form, 0), "fair")
+	// The buttons as the panel draws them, in the band or under it, each
+	// with its whole name.
+	screen := screen_make()
+	defer screen_free(screen)
+	panel_build(screen, panel)
+	x, y := panel_place(SCREEN_WIDTH)
+	buttons := form_buttons_layout(&screen.table, form, x, y)
+	testing.expect(t, buttons.count >= 1)
+	for area in buttons.areas[:buttons.count] {
+		testing.expect(t, area.x >= x && area.x + area.width <= x + PANEL_WIDTH - TEXT_MARGIN)
+	}
+	// An Integer field with no candidate is typed as an Integer.
+	form_close(panel)
+	panel.state = .Search
+	line_editor.line_clear(&panel.line)
+	type_text(panel, "repeat")
+	form_open(panel, chosen_entry(panel))
+	testing.expect_value(t, field_control(&panel.form, 1), Field_Control.Integer)
+	testing.expect_value(t, field_control(&panel.form, 0), Field_Control.Text)
+}
+
+// The act names of a window are checked as values of another program, and
+// go to takes the window in front of the others that names the act.
+@(test)
+the_match_of_an_act_name :: proc(t: ^testing.T) {
+	font := display.act_name_hash("settings.set:font")
+	strategy := display.act_name_hash("strategy")
+	testing.expect(t, font != 0 && strategy != 0 && font != strategy)
+	front, ok := act_name_set_of_record({0 = 1, 1 = font})
+	testing.expect(t, ok)
+	testing.expect_value(t, front.count, 1)
+	back: Act_Name_Set
+	back, ok = act_name_set_of_record({0 = 2, 1 = font, 2 = strategy})
+	testing.expect(t, ok)
+	testing.expect(t, act_name_set_has(&back, strategy) && act_name_set_has(&back, font))
+	testing.expect(t, !act_name_set_has(&front, strategy))
+	testing.expect(t, !act_name_set_has(&back, 0))
+	// A count past the record, a hash of 0 in the count, a value after it.
+	_, ok = act_name_set_of_record({0 = 7})
+	testing.expect(t, !ok)
+	_, ok = act_name_set_of_record({0 = 2, 1 = font})
+	testing.expect(t, !ok)
+	_, ok = act_name_set_of_record({0 = 1, 1 = font, 3 = strategy})
+	testing.expect(t, !ok)
+	empty, empty_ok := act_name_set_of_record({})
+	testing.expect(t, empty_ok && empty.count == 0)
+	// The front window first: both name the font, only the back one the
+	// strategy; a window that names nothing is passed.
+	sets := [?]^Act_Name_Set{nil, &front, &back}
+	testing.expect_value(t, act_name_front(sets[:], font), 1)
+	testing.expect_value(t, act_name_front(sets[:], strategy), 2)
+	testing.expect_value(t, act_name_front(sets[:], display.act_name_hash("grid")), NO_ROW)
+	testing.expect_value(t, act_name_front(sets[:], 0), NO_ROW)
+	// The panel hashes the act name of an entry of the table as the window
+	// hashes the name of its element.
+	panel := panel_make()
+	defer panel_free(panel)
+	given := [?]Given{{name = "set font to spleen", signature = "set font to spleen", about = "setting(\"font\", \"spleen\")", setting = true, value = 1}}
+	table := table_make(given[:])
+	defer delete(table)
+	row_texts_set((^palette_table.Entry)(&table[palette_table.ENTRIES_OFFSET]), "settings.set:font", "font", "spleen")
+	collect_with_table(panel, table)
+	panel.state = .Search
+	type_text(panel, ":font")
+	picked := chosen_entry(panel)
+	testing.expect(t, picked != nil && act_name_set_has(&back, picked.act))
+	// Shift with Enter goes there, from the search only.
+	testing.expect_value(t, key_action(.Search, .Shift_Enter), Action.Go_To)
+	testing.expect_value(t, state_after(.Search, .Go_To, chosen_of(panel)), State.Closed)
+	testing.expect_value(t, state_after(.Search, .Go_To, .Nothing), State.Search)
+	testing.expect_value(t, key_action(.Arguments, .Shift_Enter), Action.None)
+	testing.expect(t, action_runs(.Go_To))
+	// The band offers it when its owner says that a window names the act.
+	screen := screen_make()
+	defer screen_free(screen)
+	panel.go_to_offered = true
+	panel_build(screen, panel)
+	found := false
+	for record in screen.table.records[:screen.table.record_count] {
+		if interface.is_text_kind(record.kind) && strings.contains(string(screen.table.text[record.text_start:][:record.text_count]), MODE_GO_TO) {
+			found = true
+		}
+	}
+	testing.expect(t, found)
 }

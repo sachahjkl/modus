@@ -171,6 +171,10 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 palette_next_entries: [palette_table.ENTRY_CAPACITY]palette_table.Entry
 
 PALETTE_STRATEGY_VALUE_CAPACITY :: 16 // The bytes of the name of a strategy as a value of the command `strategy`.
+// The act name of the entries of the strategies, and the name of their
+// row: the name of the command that they run. The program `scheduler`
+// names the tile of the strategy in use with it.
+PALETTE_STRATEGY_ACT_NAME :: "strategy"
 
 // palette_strategy_value gives the name of a scheduling strategy as the
 // command `strategy` takes it: the name of the kernel contract in lower
@@ -243,12 +247,25 @@ palette_table_write :: proc "contextless" () {
 			system.write_part(&name, description.value_names[value])
 			about := system.Writer{buffer = entry.about[:]}
 			palette_setting_line(&about, description.name, description.value_names[value])
-			if name.dropped != 0 || about.dropped != 0 {
+			// The form of the entry in the panel: the values of one
+			// setting are one row, and the window of `settings` names its
+			// buttons with the same act name.
+			act := system.Writer{buffer = entry.act_name[:]}
+			system.write_part(&act, "settings.set:")
+			system.write_part(&act, description.name)
+			row := system.Writer{buffer = entry.setting_name[:]}
+			system.write_part(&row, description.title)
+			value_name := system.Writer{buffer = entry.value_name[:]}
+			system.write_part(&value_name, description.value_names[value])
+			if name.dropped != 0 || about.dropped != 0 || act.dropped != 0 || row.dropped != 0 || value_name.dropped != 0 {
 				continue
 			}
 			entry.name_length = u8(name.count)
 			entry.signature_length = u8(copy(entry.signature[:], entry.name[:name.count]))
 			entry.about_length = u8(about.count)
+			entry.act_name_length = u8(act.count)
+			entry.setting_name_length = u8(row.count)
+			entry.value_name_length = u8(value_name.count)
 			palette_next_entries[count] = entry
 			count += 1
 		}
@@ -275,12 +292,23 @@ palette_table_write :: proc "contextless" () {
 		system.write_part(&about, "strategy(\"")
 		system.write_part(&about, value)
 		system.write_part(&about, "\")")
-		if value == "" || name.dropped != 0 || about.dropped != 0 {
+		// One row for the strategies; the window of `scheduler` names the
+		// tile of the strategy in use with the same act name.
+		act := system.Writer{buffer = entry.act_name[:]}
+		system.write_part(&act, PALETTE_STRATEGY_ACT_NAME)
+		row := system.Writer{buffer = entry.setting_name[:]}
+		system.write_part(&row, PALETTE_STRATEGY_ACT_NAME)
+		value_name := system.Writer{buffer = entry.value_name[:]}
+		system.write_part(&value_name, value)
+		if value == "" || name.dropped != 0 || about.dropped != 0 || act.dropped != 0 || row.dropped != 0 || value_name.dropped != 0 {
 			continue
 		}
 		entry.name_length = u8(name.count)
 		entry.signature_length = u8(copy(entry.signature[:], entry.name[:name.count]))
 		entry.about_length = u8(about.count)
+		entry.act_name_length = u8(act.count)
+		entry.setting_name_length = u8(row.count)
+		entry.value_name_length = u8(value_name.count)
 		palette_next_entries[count] = entry
 		count += 1
 	}
@@ -582,8 +610,29 @@ palette_candidate_kind :: proc "contextless" (command_name: string, parameter: u
 		if parameter <= 1 {
 			return .Module
 		}
+	case "strategy":
+		if parameter == 0 {
+			return .Strategy
+		}
+	case "setting":
+		if parameter == 0 {
+			return .Setting
+		}
 	}
 	return .None
+}
+
+// palette_candidates_closed says if the candidates of a kind are the only
+// values that a parameter takes: the strategies of the kernel and the names
+// of the settings are; the programs that run, the modules and the grants
+// are suggestions, since a line can name another one.
+palette_candidates_closed :: proc "contextless" (kind: palette_table.Candidate_Kind) -> bool {
+	switch kind {
+	case .Strategy, .Setting:
+		return true
+	case .None, .Program, .Module, .Grant:
+	}
+	return false
 }
 
 // palette_candidates_give answers a request for the candidates of one
@@ -606,6 +655,18 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 	}
 	switch kind {
 	case .None:
+	case .Strategy:
+		for strategy in op.Strategy {
+			if strategy == .None {
+				continue
+			}
+			value_buffer: [PALETTE_STRATEGY_VALUE_CAPACITY]u8
+			add(&candidates, &count, palette_strategy_value(&value_buffer, strategy))
+		}
+	case .Setting:
+		for description in settings.descriptions {
+			add(&candidates, &count, description.name)
+		}
 	case .Grant:
 		for grant in system.Root_Grant {
 			add(&candidates, &count, system.root_grant_names[grant])
@@ -653,7 +714,8 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 	}
 	system.log("console: the palette gets ", u64(count), " candidates for the parameter ", record.values[3], " of ", string(entry.name[:named ? int(entry.name_length) : 0]))
 	system.lock(&palette_send_lock)
-	system.send(&palette_ring.completions, ring.Record{tag = record.tag, values = {0 = u64(palette_table.Outcome.Candidates_Ready), 1 = u64(kind), 2 = u64(count)}})
+	facts: u64 = palette_candidates_closed(kind) ? palette_table.CANDIDATES_CLOSED : 0
+	system.send(&palette_ring.completions, ring.Record{tag = record.tag, values = {0 = u64(palette_table.Outcome.Candidates_Ready), 1 = u64(kind), 2 = u64(count), 3 = facts}})
 	system.unlock(&palette_send_lock)
 }
 

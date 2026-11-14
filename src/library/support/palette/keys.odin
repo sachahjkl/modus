@@ -29,6 +29,7 @@ Key :: enum u8 {
 	Tab       = 15, // In a form: the next field, or the chosen candidate.
 	Shift_Tab = 16, // In a form: the field before.
 	Control_Enter = 17, // In a form: run with the fields as they are. In the search: open the entry in the window of its provider.
+	Shift_Enter   = 18, // In the search: go to the window that names the act name of the chosen entry.
 }
 
 // What a key asks of the panel.
@@ -52,6 +53,9 @@ Action :: enum u8 {
 	Submit             = 16, // Enter in a form: the next field, or run from the last one.
 	Submit_All         = 17, // Run the form from any field.
 	Open_In_Console    = 18, // Write the chosen entry of a provider in the edit line of its window.
+	Go_To              = 19, // Raise the window that names the act name of the chosen entry, and give the focus to its element.
+	Value_Previous     = 20, // On a setting row: choose the value before, from the first to the last.
+	Value_Next         = 21, // On a setting row: choose the next value, from the last to the first.
 }
 
 // key_action says what a key asks in a state.
@@ -59,7 +63,8 @@ Action :: enum u8 {
 // - Closed: only the key super acts: it opens the panel.
 // - Search: the key super and Escape close; a character and the keys of
 //   the line edit the typed part; the arrows and the page keys move the
-//   choice; Enter runs the chosen entry.
+//   choice; Enter runs the chosen entry; Shift with Enter goes to the
+//   window that names the act name of the chosen entry.
 // - Confirm: Enter runs the entry; the key super closes the panel; each
 //   other key goes back to the search and does nothing else, so a key
 //   typed too early never destroys and never edits.
@@ -94,6 +99,8 @@ key_action :: proc "contextless" (state: State, key: Key) -> Action {
 			return .Edit
 		case .Control_Enter:
 			return .Open_In_Console
+		case .Shift_Enter:
+			return .Go_To
 		case .Tab, .Shift_Tab, .Other:
 			return .None
 		}
@@ -103,7 +110,7 @@ key_action :: proc "contextless" (state: State, key: Key) -> Action {
 			return .Close
 		case .Enter:
 			return .Confirm
-		case .Escape, .Up, .Down, .Page_Up, .Page_Down, .Left, .Right, .Home, .End, .Backspace, .Delete, .Character, .Tab, .Shift_Tab, .Control_Enter, .Other:
+		case .Escape, .Up, .Down, .Page_Up, .Page_Down, .Left, .Right, .Home, .End, .Backspace, .Delete, .Character, .Tab, .Shift_Tab, .Control_Enter, .Shift_Enter, .Other:
 			return .Back
 		}
 	case .Arguments:
@@ -126,7 +133,7 @@ key_action :: proc "contextless" (state: State, key: Key) -> Action {
 			return .Candidate_Next
 		case .Left, .Right, .Home, .End, .Backspace, .Delete, .Character:
 			return .Field_Edit
-		case .Page_Up, .Page_Down, .Other:
+		case .Page_Up, .Page_Down, .Shift_Enter, .Other:
 			return .None
 		}
 	case .Running:
@@ -135,6 +142,27 @@ key_action :: proc "contextless" (state: State, key: Key) -> Action {
 		return key == .Super || key == .Escape ? Action.Close : Action.Back
 	}
 	return .None
+}
+
+// key_action_for is key_action with the control of what is chosen: on a
+// setting row of the search, Left and Right choose a value in place of a
+// move of the caret; in a field of a form that shows its candidates as a
+// row of buttons, Left and Right choose a candidate. The owner of a panel
+// calls this one; key_action is the table of the states alone.
+key_action_for :: proc "contextless" (panel: ^Panel, key: Key) -> Action {
+	action := key_action(panel.state, key)
+	if key != .Left && key != .Right {
+		return action
+	}
+	if action == .Edit {
+		if entry := chosen_entry(panel); entry != nil && entry_is_setting_row(entry) {
+			return key == .Left ? Action.Value_Previous : Action.Value_Next
+		}
+	}
+	if action == .Field_Edit && panel.form.active && field_control(&panel.form, panel.form.current) == .Buttons {
+		return key == .Left ? Action.Candidate_Previous : Action.Candidate_Next
+	}
+	return action
 }
 
 // What the chosen entry is, for the state that follows a key.
@@ -228,7 +256,11 @@ state_after :: proc "contextless" (state: State, action: Action, chosen: Chosen)
 		return chosen == .Form_Destroys ? State.Confirm : State.Running
 	case .Open_In_Console:
 		return state == .Search && chosen != .Nothing ? State.Closed : state
-	case .None, .Edit, .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After, .Field_Edit, .Field_Next, .Field_Previous, .Candidate_Previous, .Candidate_Next:
+	case .Go_To:
+		// The owner goes only when a window names the act name of the
+		// entry; else it keeps the search and says why.
+		return state == .Search && chosen != .Nothing ? State.Closed : state
+	case .None, .Edit, .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After, .Field_Edit, .Field_Next, .Field_Previous, .Candidate_Previous, .Candidate_Next, .Value_Previous, .Value_Next:
 		return state
 	}
 	return state
@@ -291,12 +323,17 @@ panel_close :: proc "contextless" (panel: ^Panel) {
 	panel.pressed_row = NO_ROW
 	form_close(panel)
 	line_editor.line_clear(&panel.line)
+	// The next open starts each setting row at its value in use.
+	panel.value_row_length = 0
 }
 
 // sent_set keeps the name of the entry that the panel sent to its
 // provider: the panel shows it while it waits and over the result.
 sent_set :: proc "contextless" (panel: ^Panel, entry: ^Entry) {
-	panel.sent_length = copy(panel.sent_name[:], entry_name(entry))
+	// A setting row sends the entry of its chosen value: the name of that
+	// entry, "set font to spleen", is what the panel sent.
+	_, name := entry_sent(panel, entry)
+	panel.sent_length = copy(panel.sent_name[:], name)
 }
 
 // sent_text gives the name of the entry that the panel sent.

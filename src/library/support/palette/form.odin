@@ -25,6 +25,7 @@ Form :: struct {
 	candidates:       [palette_table.CANDIDATE_CAPACITY]palette_table.Candidate, // What the provider gave for the current field: a checked copy.
 	candidate_count:  int, // The candidates in use.
 	candidate_kind:   palette_table.Candidate_Kind, // What they are.
+	candidates_closed: bool, // The provider says that they are the only values of the parameter, not suggestions.
 	shown:            [palette_table.CANDIDATE_CAPACITY]u8, // The candidates that the text of the field matches, in their order.
 	shown_count:      int, // The shown candidates in use.
 	candidate_choice: int, // The chosen one, as an index in `shown`; NO_ROW with none.
@@ -205,6 +206,32 @@ form_candidates_clear :: proc "contextless" (form: ^Form) {
 	form.candidate_choice = NO_ROW
 	form.candidate_first = 0
 	form.candidate_kind = .None
+	form.candidates_closed = false
+}
+
+// The control of a field of a form: what the panel draws for it, from
+// what the field is. The field chooses; no command has a form of its own
+// (src/md/features/palette.md, "The form of an entry, from its descriptions").
+Field_Control :: enum u8 {
+	Text           = 0, // A free Text: the input types it.
+	Integer        = 1, // An Integer: the input types its digits.
+	Candidate_List = 2, // The list of the candidates under the band, with the icon of their kind: suggestions, or more than BUTTON_CAPACITY closed values.
+	Buttons        = 3, // A row of buttons: at most BUTTON_CAPACITY closed values.
+}
+
+// field_control gives the control of a field. Only the field that has the
+// caret has candidates: each other field is typed.
+field_control :: proc "contextless" (form: ^Form, field: int) -> Field_Control {
+	if field < 0 || field >= form.field_count {
+		return .Text
+	}
+	if field == form.current && form.candidate_count > 0 {
+		if form.candidates_closed && form.candidate_count <= BUTTON_CAPACITY {
+			return .Buttons
+		}
+		return .Candidate_List
+	}
+	return form.given.parameters[field] == .Integer ? Field_Control.Integer : Field_Control.Text
 }
 
 // candidates_first gives the first shown candidate that the list area
@@ -263,12 +290,13 @@ form_caret_put :: proc "contextless" (panel: ^Panel, field: int, caret: int) -> 
 
 // form_candidates_set gives the form the candidates of its current field,
 // as the provider wrote them in the candidate area of its table: memory is
-// the mapping of the table, count and kind the numbers of the answer. The
-// form copies the area and checks the copy; an area that fails, and a kind
-// out of its range, give no candidate.
-form_candidates_set :: proc "contextless" (form: ^Form, memory: []u8, count: u64, kind: u64) {
+// the mapping of the table, count, kind and facts the numbers of the
+// answer. The form copies the area and checks the copy; an area that
+// fails, a kind out of its range, and a bit of facts that the contract does
+// not know, give no candidate.
+form_candidates_set :: proc "contextless" (form: ^Form, memory: []u8, count: u64, kind: u64, facts: u64 = 0) {
 	form_candidates_clear(form)
-	if kind == 0 || kind > u64(max(palette_table.Candidate_Kind)) {
+	if kind == 0 || kind > u64(max(palette_table.Candidate_Kind)) || facts &~ palette_table.CANDIDATES_CLOSED != 0 {
 		return
 	}
 	copied, ok := palette_table.candidates_copy(memory, count, &form.candidates)
@@ -277,6 +305,7 @@ form_candidates_set :: proc "contextless" (form: ^Form, memory: []u8, count: u64
 	}
 	form.candidate_count = copied
 	form.candidate_kind = palette_table.Candidate_Kind(kind)
+	form.candidates_closed = facts & palette_table.CANDIDATES_CLOSED != 0
 	form_candidates_filter(form)
 }
 
@@ -435,6 +464,11 @@ form_argument :: proc "contextless" (form: ^Form, field: int) -> [7]u64 {
 // candidates.
 form_submit :: proc "contextless" (panel: ^Panel, all: bool) -> (ready: bool, moved: bool) {
 	form := &panel.form
+	// A row of buttons has a chosen value: Enter takes it, so one key sets
+	// a closed value.
+	if field_control(form, form.current) == .Buttons {
+		form_candidate_take(form)
+	}
 	if !all && form.current < form.field_count - 1 {
 		return false, form_field_move(panel, 1)
 	}

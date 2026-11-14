@@ -5,10 +5,10 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Now
 
 - **Every program that draws imports the drawing module.** The programs that draw a picture, the terminal and the compositor use the drawing module, as 23 programs do today. The code of the drawing is then loaded one time, and one correction reaches every program. [Design](src/md/api/library_modules.md)
-- **The palette builds its form from the descriptions.** Each field of a command gets the control that its type asks for, each entry shows its mode, and an action with a place in a window offers to go there. A principal then sets a value with one press, and finds where a setting lives. [Design](src/md/features/palette.md)
 
 ## Next
 
+- **The palette shows a size or a time as a number with its unit.** A field of a command that takes a size or a time shows its unit after the number, and the buttons of a field take a press of the pointer. A principal then types a value in the unit that the command reads. [Design](src/md/features/palette.md)
 - **A module states the budget that it asks for.** The description of a module holds the pages, the threads and the programs that it asks for, and the tool adds what it can count: the pages of the module and of its imports, of each thread and of the pictures of its window. The starter grants the request or less, so a developer adds a program with no change of the root service, and no amount is a guess. [Design](src/md/features/module_budget_request.md)
 - **The window of the debugger takes a typed place and a click.** The window puts a breakpoint or a watch at a place that the developer types, shows the memory of the program, and takes a click on a row. A developer then needs the console for no act of the debugger. [Design](src/md/features/debugger_window.md)
 - **The grants of a disk program persist across a restart.** A named principal grants a disk program from its own session, and the signed disk grant table is read after the unlock. The monitor and the menu show each nickname with its hash. [Design](src/md/features/programs_from_a_disk.md)

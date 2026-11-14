@@ -77,6 +77,7 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/bar"
 import "modus:support/mark"
+import "modus:support/palette"
 import "modus:contract/ring"
 import "modus:support/system"
 import "modus:contract/pointer_pictures"
@@ -134,6 +135,11 @@ Client :: struct {
 	pointer_over: bool, // The last pointer event of the program was over its surface, or with a button down: the program gets one event more when the pointer leaves.
 	presents:    u64, // The Present records that the program sent since it created its surface.
 	present_waits: bool, // A Present changed a part of the screen, and no frame drew it yet.
+	// The act names of the window, as the last checked record Act_Names
+	// gave them: the palette offers to go there (palette.odin). They go with
+	// the window: client_remove clears the slot.
+	act_names:   palette.Act_Name_Set,
+	act_name_sets_logged: int, // The sets that the log named: the first ACT_NAME_SETS_LOGGED only.
 }
 
 // A rectangle of the screen. right and bottom are not in the rectangle.
@@ -601,6 +607,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				case .Pointer_Shape:
 					pointer_shape_request(&client, record) // pointer_picture.odin
+				case .Act_Names:
+					palette_act_names_take(&client, record) // palette.odin
 				}
 			}
 			// The program can wait until this loop took its last picture

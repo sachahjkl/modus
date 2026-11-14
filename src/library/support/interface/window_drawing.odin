@@ -46,6 +46,65 @@ Window_Drawing :: struct {
 	module_calls: u64,
 	module_error: errors.Error_Record,
 	module_refusal_logged: bool, // The line of a refusal is on the log: a window writes it one time.
+	// The set of the act names that the compositor has from this window, as
+	// hashes in the order of their frame. A frame sends its set only when it
+	// differs (act_names_offer).
+	act_names_sent:       [display.ACT_NAME_SET_CAPACITY]u64,
+	act_names_sent_count: int,
+	act_names_sent_once:  bool, // A set went to the compositor: before it, the compositor has none.
+	act_names_dropped_logged: bool, // The line of a frame with act names that it did not keep is on the log: a window writes it one time.
+}
+
+// act_names_differ says if the act names of a frame differ from the set
+// that the compositor has, in their order: a host test runs it with no
+// window.
+act_names_differ :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame) -> bool {
+	if !drawing.act_names_sent_once || drawing.act_names_sent_count != frame.act_name_count {
+		return true
+	}
+	for &name, index in frame.act_names[:frame.act_name_count] {
+		if drawing.act_names_sent[index] != name.hash {
+			return true
+		}
+	}
+	return false
+}
+
+// act_names_offer sends the set of the act names of a frame to the
+// compositor, in one record, when it differs from the set that the
+// compositor has. A full ring sends nothing: the next frame tries again.
+@(private = "file")
+act_names_offer :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) {
+	if frame.act_names_dropped > 0 && !drawing.act_names_dropped_logged {
+		drawing.act_names_dropped_logged = true
+		system.log_in("programs", .Warning, "interface: ", string(window.title[:window.title_count]), ": a frame names ", u64(frame.act_names_dropped), " act names that the window does not keep: empty, longer than ", u64(display.ACT_NAME_CAPACITY), " bytes, or past ", u64(display.ACT_NAME_SET_CAPACITY), "; the palette cannot go to them. A window writes this line one time")
+	}
+	if !act_names_differ(drawing, frame) {
+		return
+	}
+	hashes: [display.ACT_NAME_SET_CAPACITY]u64
+	for &name, index in frame.act_names[:frame.act_name_count] {
+		hashes[index] = name.hash
+	}
+	if !display.act_names_send(window, hashes[:frame.act_name_count]) {
+		return
+	}
+	drawing.act_names_sent = hashes
+	drawing.act_names_sent_count = frame.act_name_count
+	drawing.act_names_sent_once = true
+}
+
+// act_go_to takes the event Go_To: the palette raised this window to reach
+// an act name. The element of the last frame that named it takes the focus,
+// and the next frame draws it.
+@(private = "file")
+act_go_to :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, hash: u64) {
+	title := string(window.title[:window.title_count])
+	if name, found := focus_by_act_name(&drawing.state, hash); found {
+		system.log_in("programs", .Info, "interface: ", title, ": the focus is on the element of ", name)
+	} else {
+		system.log_in("programs", .Info, "interface: ", title, ": the palette came for an act name that no element of the last frame names")
+	}
 }
 
 // A rectangle as the drawing module describes it: the fields of Rectangle,
@@ -213,6 +272,9 @@ window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.
 		if event.kind == .Settings_Changed {
 			draw_whole_window_next(drawing)
 		}
+		if event.kind == .Go_To {
+			act_go_to(drawing, window, event.act)
+		}
 	}
 	return came
 }
@@ -271,6 +333,7 @@ window_scroll_bar_wake :: proc "contextless" (drawing: ^Window_Drawing) -> (time
 window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> int {
 	frame_end(frame)
 	input_clear(&drawing.input)
+	act_names_offer(drawing, frame, window)
 	drawing.build_time = system.nanoseconds() - drawing.build_start
 	drawing.difference_time, drawing.draw_time = 0, 0
 	if !window_frame_gate(drawing, window) {
@@ -371,6 +434,7 @@ window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^disp
 window_frame_end_without_present :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> bool {
 	frame_end(frame)
 	input_clear(&drawing.input)
+	act_names_offer(drawing, frame, window)
 	drawing.build_time = system.nanoseconds() - drawing.build_start
 	drawing.damage = {}
 	drawing.debts = {}
