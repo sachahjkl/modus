@@ -18,6 +18,7 @@ import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import debug_object "modus:contract/debug_object"
 import module "modus:contract/module"
+import "modus:support/disk_program"
 
 // The name of the module build file, in the folder of the module.
 MODULE_BUILD_FILE_NAME :: "module.txt"
@@ -407,29 +408,32 @@ outside_module_examples_check :: proc() -> bool {
 	return true
 }
 
-@(private = "file")
-outside_module_example_check :: proc(tool_path, system_folder: string, example: Outside_Module_Example) -> bool {
-	folder := join(THIRD_PARTY_EXAMPLE_FOLDER, "/", example.name)
+// outside_module_example_build copies the sources of an example to its
+// folder outside the sources, writes its module build file, and builds it
+// as a developer does: the tool, started in that folder, with the folder
+// of the system as an argument. It gives the folder.
+outside_module_example_build :: proc(tool_path, system_folder: string, example: Outside_Module_Example) -> (folder: string, ok: bool) {
+	folder = join(THIRD_PARTY_EXAMPLE_FOLDER, "/", example.name)
 	reset_folder(folder) or_return
 	sources := files_with_suffix(example.source, ".odin") or_return
 	assembly := files_with_suffix(example.source, ".asm") or_return
 	if len(sources) == 0 {
 		fmt.eprintfln("modustool: test failed: %s has no source file", example.source)
-		return false
+		return "", false
 	}
 	for list in ([2][]string{sources, assembly}) {
 		for source in list {
 			copied_file := join(folder, source[strings.last_index_byte(source, '/'):])
 			if copy_error := os.copy_file(copied_file, source); copy_error != nil {
 				fmt.eprintfln("modustool: test failed: cannot copy %s to %s: %v", source, copied_file, copy_error)
-				return false
+				return "", false
 			}
 		}
 	}
 	build_file_path := join(folder, "/", MODULE_BUILD_FILE_NAME)
 	if write_error := os.write_entire_file(build_file_path, example.build_file); write_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot write %s: %v", build_file_path, write_error)
-		return false
+		return "", false
 	}
 	// As a developer types it: in the folder of the module, with the
 	// folder of the system as an argument.
@@ -439,8 +443,15 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 	os.write(os.stderr, standard_error)
 	if start_error != nil || !state.exited || !state.success {
 		fmt.eprintfln("modustool: test failed: `module-build . --system %s` in %s did not build the module %s", system_folder, folder, example.name)
-		return false
+		return "", false
 	}
+	return folder, true
+}
+
+@(private = "file")
+outside_module_example_check :: proc(tool_path, system_folder: string, example: Outside_Module_Example) -> bool {
+	folder := outside_module_example_build(tool_path, system_folder, example) or_return
+	sources := files_with_suffix(example.source, ".odin") or_return
 	out := join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER)
 	built := read_file(join(out, "/", example.name, ".module")) or_return
 	if load_error := module.validate(built); load_error != .None {
@@ -532,4 +543,71 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 		built_hash == system_hash ? "the same bytes" : "not the same bytes; the path of a package can change the order of its procedures",
 	)
 	return true
+}
+
+// The name of the outside module that the test of the disk programs starts
+// in a machine: the sources of the program visitor, copied outside the
+// sources and built by `module-build` under this name, which is no module
+// of the boot image.
+OUTSIDE_DISK_PROGRAM :: "outsider"
+
+// outside_program_for_a_disk builds that module as a developer does, and
+// gives its file.
+outside_program_for_a_disk :: proc() -> (file: []u8, ok: bool) {
+	tool_path, path_error := os.get_executable_path(context.temp_allocator)
+	if path_error != nil {
+		fmt.eprintfln("modustool: test failed: cannot find the file of the tool: %v", path_error)
+		return nil, false
+	}
+	system_folder, folder_error := os.get_working_directory(context.temp_allocator)
+	if folder_error != nil {
+		fmt.eprintfln("modustool: test failed: cannot read the folder of the system: %v", folder_error)
+		return nil, false
+	}
+	example := Outside_Module_Example{name = OUTSIDE_DISK_PROGRAM, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE, build_file = "name: " + OUTSIDE_DISK_PROGRAM + "\n"}
+	folder := outside_module_example_build(tool_path, system_folder, example) or_return
+	return read_file(join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER, "/", OUTSIDE_DISK_PROGRAM, ".module"))
+}
+
+// The command program-disk: it writes a data disk whose store `programs`
+// holds module files, each under the name of its file. A machine with that
+// disk starts each one with `start_from_disk` and its hash, which the
+// command prints. It writes no disk over a file that exists: a data disk
+// holds the stores of a principal.
+run_program_disk :: proc(args: []string) -> int {
+	if len(args) < 2 {
+		fmt.eprintln("modustool: program-disk <disk file to write> <module file> [<module file> ...]")
+		return EXIT_USAGE
+	}
+	disk := args[0]
+	if os.exists(disk) {
+		fmt.eprintfln("modustool: program-disk: %s exists, and a data disk holds the stores of a principal: remove it, or name another file", disk)
+		return EXIT_USAGE
+	}
+	files := make([dynamic]Program_File, context.temp_allocator)
+	for path in args[1:] {
+		bytes, read := read_file(path)
+		if !read {
+			return EXIT_FAILURE
+		}
+		if load_error := module.validate(bytes); load_error != .None {
+			fmt.eprintfln("modustool: program-disk: %s is not a module file that the loader takes: %v", path, load_error)
+			return EXIT_FAILURE
+		}
+		name := path
+		if slash := strings.last_index_byte(name, '/'); slash >= 0 {
+			name = name[slash + 1:]
+		}
+		name = strings.trim_suffix(name, ".module")
+		append(&files, Program_File{name = name, bytes = bytes})
+	}
+	if !program_disk_write(disk, files[:]) {
+		return EXIT_FAILURE
+	}
+	for file in files {
+		digits: [disk_program.HASH_DIGITS]u8
+		disk_program.hash_write(&digits, blake3.hash(file.bytes))
+		fmt.printfln("modustool: in the console of a machine with this disk: start_from_disk(\"%s\", \"%s\")", file.name, string(digits[:]))
+	}
+	return 0
 }
