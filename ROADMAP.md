@@ -13,7 +13,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A window for the debugger.** The debugger gets a window over the exports that the console uses today: the threads, the stack, the variables and the source lines. A step over a call stops after the call returns, not inside it.
 - **The palette sets the scheduling strategy.** The scheduling strategy is an entry of the palette, as each setting is. A click in a field of the palette puts the input there. [Design](src/md/features/palette.md)
 - **Kind icons in the completion list of the console.** Each row of the completion list shows the kind icon of its name, as each row of the palette does. A reader tells a command from a module or a variable before reading the name.
-- **A module from a source outside the repository.** The tool builds a module whose source is in the folder of another project, with the source library and the memory procedures of the system. A developer then writes a program for the system with no copy of its sources and no change of its module table. [Design](src/md/infrastructure/repository_layout.md)
+- **An outside module in a machine.** The tool puts a module that it built from a folder of another project in the boot image of a boot volume, with its debug object. A developer then starts that module from the console of a machine. [Design](src/md/infrastructure/third_party_module.md)
 - **Programs from a disk.** The root service loads a program from a tree of the storage service, by its hash, and not only from the boot image. A developer adds a program to a machine with no new boot image.
 - **A key sealed by the TPM, and a recovery key.** The TPM releases the key of a principal only to the system whose measure it holds, so an older or a changed system opens no store. A principal who loses the passphrase opens the stores again with a recovery key.
 - **A send with no copy in the network service.** A frame to send holds its headers in the memory of the network service and its data in the memory of the program, which the device reads. The network service then reads no byte of the data that a program sends. [Design](src/md/infrastructure/network_data_path.md)
@@ -25,6 +25,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **An outside module imports another outside module.** The import of a module of another project names a module of the same project, and not only a module of the system. A developer then writes a library module and the programs that import it outside the repository. [Design](src/md/infrastructure/third_party_module.md)
 - **Linux in a guest.** A principal runs Linux, and the programs of Linux, in a guest beside the programs of the system. [Design](src/md/features/foreign_systems.md)
 - **Programs of NT.** A program of NT runs through Wine inside the Linux guest, with no work of its own in the system. [Design](src/md/features/foreign_systems.md)
 - **Acceleration by a GPU.** The one graphics interface of the system runs in software first, then on the virtual GPU of the test machine, then on a real GPU through a driver domain. The GPU then draws the windows and the pictures, and not the processor. [Design](src/md/features/gpu_access.md)

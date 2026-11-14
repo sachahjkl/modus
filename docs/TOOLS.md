@@ -509,16 +509,89 @@ kerneltool: src/kernel/serial.odin:12: the import "modus:support/sentence" is re
 
 **What it does not prove.** It does not prove that a contract package uses no kernel operation: that rule is held by review.
 
-## A program outside the sources
+## A module from a source outside the repository
 
-A program outside the repository imports the library of the system with the lines of a program of the system, and gives the compiler one flag. `kerneltool check` proves it with one example (`third_party_example_check`, in `tools/kerneltool/library_imports_check.odin`):
+`kerneltool module-build` builds an outside module (`GLOSSARY.md`, "Outside module"): a module whose source is in a folder of another project. It writes the module file and the debug object. The build is the build of a module of the system: the same two steps, in the same procedures (`MODULE_CONTRACT.md`, "The steps of one module, as implemented"). The code is `tools/kerneltool/outside_module.odin`.
 
-1. It copies each `.odin` file of `src/programs/tally` to `build/third_party_example/tally`, with no change.
-2. It runs the check of the compiler on the copy: `odin check build/third_party_example/tally -target:freestanding_amd64_sysv -no-entry-point -default-to-nil-allocator -vet -collection:modus=src/library`.
+**What the folder holds.** One Odin package, its `.asm` files if it has some, and the module build file, `module.txt`. A source imports the packages of the system from the source library `modus`: `import "modus:support/system"`.
 
-The copy has no relative path to the library, so the folder of the copy does not matter: a program in another repository names the folder `src/library` of the repository of the system in the flag.
+**The module build file.** Each line that is not empty is `key: value`. Each key is written at most one time.
 
-This proves the import lines and the flag. It does not build a module from the copy: the tool builds the modules of its module table only, and the build of a module whose source is outside the repository has no design.
+```
+name: my_program
+imports: drawing
+defines: DRAWING_THROUGH_MODULE=true
+library: no
+```
+
+| Key | Value | When the key is absent |
+|---|---|---|
+| `name` | The name of the module: lower case letters, digits and `_`, at most 31 bytes | The build stops |
+| `imports` | The names of modules of the system, in the order of the import table, with a space between two | No import |
+| `defines` | Settings of the compiler for this module, `NAME=value`, with a space between two | None |
+| `library` | `yes` for a library module (`GLOSSARY.md`, "Library module"), `no` for each other module | `no` |
+
+The tool refuses a line that is not `key: value`, a key that is not in the table, a key that is written two times, and a value that it does not know. The message names the file and the line.
+
+**The command.**
+
+```
+kerneltool module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]
+```
+
+- **The folder of the system** is a checkout of the repository of the system. The tool takes it from `--system`, then from the environment variable `MODUS_SYSTEM`, then from the folder where the command runs. The tool makes the two other folders absolute, then moves to the folder of the system and builds there.
+- **The command `kerneltool` of the flake** compiles the tool from its sources before it runs it. It finds those sources with `MODUS_SYSTEM`. So a command that is typed in the folder of another project sets the variable.
+- **The folder of the outputs** is `build` in the folder of the module when `--out` is absent. The tool writes `<name>.module`, `<name>.debug`, and a folder `<name>` with the files between the steps. The build writes no file in the folder of the system. The command of the flake writes one there: the compiled tool, in `build`.
+- **A module with an import** needs the built modules of the system: the import table holds the hash of the file of each import. Run `kerneltool build` in the folder of the system first. The tool reads `build/modules/<import>.module` there.
+
+From the folder of a module, with the system in `~/modus`:
+
+```
+export MODUS_SYSTEM=~/modus
+nix develop ~/modus#module -c kerneltool module-build .
+```
+
+The shell `module` of the flake has the build tools and the command `kerneltool`. It has no hook of the repository of the system: the default shell installs those hooks in the repository where it starts.
+
+**What the command prints.** One line for the module file, with its size and its hash, which is the identity of the module. One line for the debug object. One line for each import, with the hash that the import table names. One line with the names of the exports.
+
+```
+kerneltool: the module my_program: /home/someone/my_program/build/my_program.module, 20480 bytes, hash 5d0c...
+kerneltool: the debug object of my_program: /home/someone/my_program/build/my_program.debug, 9216 bytes
+kerneltool: the module my_program imports drawing, hash 91ab...
+kerneltool: the module my_program has 2 exports: start, count
+```
+
+The sizes, the hashes and the exports of this example are not those of a real module.
+
+**The rules that hold for each module.** They are parts of the one build, so an outside module passes each of them:
+
+- each function keeps its frame pointer;
+- the module has no thread-local data;
+- each declaration of an import agrees with the description of its export (`MODULE_CONTRACT.md`, "The declaration of an import is checked");
+- a library module has no segment that the loader writes and that is read-only after the load;
+- the debug object holds no path of the host;
+- the compiler runs with `-vet`.
+
+**The rule of the three places.** Each source that the compiler read for an outside module is in one of three places: the folder of the module or a folder under it, the source library `modus`, the libraries of the compiler. The tool reads the list that the compiler writes, after the compile step and before the conversion. A source in another place stops the build with its path. So a relative import that leaves the folder of the module is refused, and an import of a folder of the system that is not its library too. A package in a folder under the folder of the module is allowed, with a relative import.
+
+**The rules that the tool does not apply to an outside module.** The rule of the comments, the rule of the names, the rule of the imports of the kernel, the check of the fixed addresses and the checks of the documents are rules of the repository of the system.
+
+**The path of a source in the debug object.** A source of an outside module has the path from the folder that holds the folder of the module: `my_program/main.odin`. A stop report and the debugger show that path. The debug object holds no folder above the folder of the module.
+
+**The proof.** `kerneltool check` builds two outside modules (`outside_module_examples_check`). Each is a copy of a module of the system: the program `tally`, which has no import, and the module `agenda`, which imports `calendar`.
+
+1. The tool copies each `.odin` and `.asm` file of the module to `build/third_party_example/<name>`, with no change, and writes the module build file there.
+2. It starts itself as a second process in that folder: `module-build . --system <folder of the system>`.
+3. It reads `build/third_party_example/<name>/build/<name>.module`. The loader must accept the file. Each export must have the name and the call form of the same export of the module of the system. The line of documentation must be the same. The import table must name the hash of the file of each import of the build of the system.
+4. It reads the debug object. No path of it starts with `/`, and one or more paths start with the name of the folder of the copy.
+
+The check does not compare the bytes of the two module files. The compiler orders the procedures of a module by the path of its packages, and the package of the copy has another path. The passed line of each example prints the start of the two hashes and says whether the bytes are the same: it is a fact of the run, not a condition.
+
+**What is not built.**
+
+- The tool does not put an outside module in a boot image. A machine loads a module from its boot image only, so an outside module does not yet run in a machine.
+- An import names a module of the system. An outside module does not import another outside module.
 
 ## The commands of the tool
 
@@ -528,6 +601,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 |---|---|
 | `build [whole] [processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test or a measure needs (a start that fails, a shortage of frames, a measure run, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and each boot volume when its inputs are the same, and only converts a module when the file of an import changed; `build whole` keeps nothing ("The incremental build") |
 | `module <name> ...` | Builds one module of the table, and its debug object; with `compile` or `convert` as its last argument, runs one of the two steps alone. The parallel build runs it for each step; run it by hand to see the errors of one module alone |
+| `module-build <folder> [--system <folder>] [--out <folder>]` | Builds one outside module from a folder of another project, with its module build file `module.txt`: writes `<name>.module` and `<name>.debug`, and prints the hash of the module and the names of its exports ("A module from a source outside the repository") |
 | `volume <name>` | Builds one boot volume: its boot image with the system description, its boot program, and the volume file. The build runs it for each volume that it must build; run it by hand, after a build, to see the errors of one volume alone |
 | `run [without_checks]` | Builds the modules and the main boot volume, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `kerneltool call` |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result |

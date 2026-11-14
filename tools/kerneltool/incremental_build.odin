@@ -1103,7 +1103,7 @@ module_convert_key_inputs :: proc(build: Module_Build) -> Build_Key_Inputs {
 	built_files := make([dynamic]string, context.temp_allocator)
 	for name in build.imports {
 		append(&settings, "imports", name)
-		append(&built_files, module_path(name))
+		append(&built_files, module_import_path(name))
 	}
 	return {subject = join("the conversion of the module ", build.name), tool_identity = build_inputs.tool_identity, settings = settings[:], built_files = built_files[:]}
 }

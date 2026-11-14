@@ -2003,6 +2003,26 @@ An import of the source names the library and the package: `modus:contract/ring`
 
 Do not use: collection, SDK, libc, static library.
 
+### Outside module
+
+An outside module is a module whose source is in a folder outside the repository of the system.
+
+Its developer writes one Odin package that imports the packages of the system from the source library, and a module build file. The command `kerneltool module-build` builds it with the two steps of a module of the system, and writes the module file and the debug object in a folder of the developer. The module table of the tool has no row for it. A source of an outside module is in the folder of the module or under it, in the source library, or in the libraries of the compiler. An outside module is a module as each other: one file, named by its hash, with described exports. The tool does not yet put one in a boot image.
+
+The design: `docs/TOOLS.md`, "A module from a source outside the repository".
+
+Do not use: third-party module, external module, plugin.
+
+### Module build file
+
+A module build file is the file `module.txt` in the folder of an outside module, which holds the fields of a row of the module table.
+
+Each line is `key: value`. The key `name` is the name of the module. The keys `imports`, `defines` and `library` are the imports by name, the settings of the compiler and whether the module is a library module; each can be absent. The tool refuses a line that it does not know. A module of the system has no module build file: its row is in the module table of the tool.
+
+The design: `docs/TOOLS.md`, "A module from a source outside the repository".
+
+Do not use: manifest, build script, project file.
+
 ### Documentation
 
 The documentation of a module is the text that the module carries in its file for a reader: one line that says what the module is, a text for the module, and a text for each export.
