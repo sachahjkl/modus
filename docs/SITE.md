@@ -484,23 +484,23 @@ The groups (`site_gallery_groups`), each with a title and one sentence:
 
 | Group | Pictures |
 |---|---|
-| The desktop and the palette | 20 |
+| The desktop and the palette | 21 |
 | The console and the terminal | 12 |
 | The mark and the graphics | 3 |
 | Rights, grants and faults | 13 |
 | Modules | 9 |
-| Memory, threads and time | 15 |
+| Memory, threads and time | 16 |
 | The developer tools | 4 |
 | The interface and the fonts | 10 |
 | The network, the cryptography and the randomness | 10 |
-| The storage | 7 |
+| The storage | 8 |
 | The boot and the trusted boot | 7 |
 
-110 rows. The excluded files:
+113 rows. The excluded files:
 
 | File | Reason |
 |---|---|
-| `notes_crash.png` | The picture was taken while the window of `notes` drew its note: the text of the note is cut |
+| `pointers.png` | The repository does not hold this picture, and git ignores it: it shows a pointer theme whose license allows no commercial use |
 
 A picture of the table has the size of the screen of the system, 1024 by 768 pixels (`SITE_SCREEN_PICTURE_WIDTH`, `SITE_SCREEN_PICTURE_HEIGHT`): the command stops on another size. The style sheet names the two widths at which a picture is shown, and they come from these constants.
 

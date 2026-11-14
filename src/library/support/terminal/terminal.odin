@@ -114,7 +114,8 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           number of the row, below LIST_ROWS. values[1]: the bytes of the
 //           name. values[2], values[3]: the places of the name that matched
 //           what the input typed (bit n: byte n of the name; values[2]
-//           holds bytes 0 to 63).
+//           holds bytes 0 to 63). values[4]: a List_Icon, what the name
+//           is; a number that is no List_Icon is None.
 //   List    The completion list that the terminal shows over its text, at
 //           the edit line: the rows that List_Row gave before. values[0]:
 //           the count of rows, at most LIST_ROWS; 0 removes the list.
@@ -154,6 +155,23 @@ TERMINAL_RECORD_VERSION :: 2
 NO_CURSOR :: max(u64) // An Edit record with no cursor.
 NO_CHOICE :: max(u64) // A List record with no chosen row.
 LIST_ROWS :: 8 // The rows of a completion list.
+
+// What a row of a completion list is: the terminal draws the kind icon of
+// it before the name, as a row of the palette has one (docs/GLOSSARY.md,
+// "Kind icon"). The program says what the name is; the terminal
+// chooses the form and the color. None: the row has no icon, and a list
+// with no icon in any row keeps no room for one.
+List_Icon :: enum u8 {
+	None         = 0, // No icon.
+	Command      = 1, // A command of the program itself.
+	Export       = 2, // An export of a module or of a service.
+	Record       = 3, // A command that makes a record from its fields.
+	Service      = 4, // A service that the program is connected to.
+	Module       = 5, // A module of the boot image.
+	Program      = 6, // A program that runs.
+	Variable     = 7, // A variable of the program.
+	History_Line = 8, // A line of the history.
+}
 
 // The kind of a completion record: what the terminal gives to the program.
 //   Key     A key was pressed. tag: the code of the key
@@ -369,14 +387,15 @@ hint_form_choose :: proc "contextless" (long_count, short_count, columns: int) -
 }
 
 // list_row gives one row of the next completion list: a name, what it is,
+// the icon of its kind,
 // and the places of the name that matched. A name and its text are cut to
 // RUN_LIMIT bytes together, the name first.
-list_row :: proc "contextless" (terminal: ^Terminal, row: int, name: string, about: string, matched: [2]u64) {
+list_row :: proc "contextless" (terminal: ^Terminal, row: int, name: string, about: string, matched: [2]u64, icon := List_Icon.None) {
 	name_part := name[:min(len(name), RUN_LIMIT)]
 	about_part := about[:min(len(about), RUN_LIMIT - len(name_part))]
 	append(terminal, name_part)
 	append(terminal, about_part)
-	push(terminal, ring.Record{kind = u32(Kind.List_Row), tag = u32(len(name_part) + len(about_part)), values = {0 = u64(row), 1 = u64(len(name_part)), 2 = matched[0], 3 = matched[1]}})
+	push(terminal, ring.Record{kind = u32(Kind.List_Row), tag = u32(len(name_part) + len(about_part)), values = {0 = u64(row), 1 = u64(len(name_part)), 2 = matched[0], 3 = matched[1], 4 = u64(icon)}})
 }
 
 // list_show shows the rows that list_row gave: row_count rows, the chosen
@@ -399,6 +418,7 @@ List_Row :: struct {
 	length:      int, // The bytes of `text` in use.
 	name_length: int, // The bytes of the name, at the start of `text`.
 	matched:     [2]u64, // Bit n: byte n of the name matched what the input typed.
+	icon:        List_Icon, // What the name is: the kind icon before it. None: no icon.
 	code:        Code_Runs, // The runs of code of the row, checked against its text. None: the row is plain.
 }
 
@@ -436,6 +456,8 @@ list_keep_row :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64, fir
 	row.length += copy(row.text[row.length:], second)
 	row.name_length = int(min(values[1], u64(row.length)))
 	row.matched = {values[2], values[3]}
+	// The number comes from the program: a number that names no icon is no icon.
+	row.icon = values[4] <= u64(max(List_Icon)) ? List_Icon(values[4]) : .None
 	row.code = keeping.pending[values[0]]
 	keeping.pending[values[0]] = {}
 	if row.code.count != 0 && !code_runs_check(&row.code, row.length) {
