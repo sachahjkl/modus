@@ -244,6 +244,33 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "[console] debug_target            1"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 
+	// The window of the debugger: the same exports, through a connection of
+	// its own. It attaches by a typed name, holds the main thread, runs one
+	// line of it over each call, and detaches. Each act is one line of the
+	// log of the window.
+	{kind = .Launch, text = "debugger_window"},
+	{kind = .Wait, text = "debugger_window: ok, connected to the service debugger", any_order = true},
+	{kind = .Wait, text = "compositor: surface debugger_window", any_order = true},
+	{kind = .Front, text = "debugger_window"},
+	{kind = .Keys, text = "debug_target"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "debugger_window: attached to debug_target"},
+	{kind = .Key, text = "h"},
+	{kind = .Wait, text = "debugger_window: held the thread 0"},
+	// The thread waits in the kernel: its first frame is the instruction of
+	// the system library, which has no line. The frame of its caller has
+	// the line and the variables of the program.
+	{kind = .Key, text = "pgdn"},
+	{kind = .Wait, text = "debugger_window: the frame 1 of the thread 0: "},
+	{kind = .Shot, text = "debugger_window"},
+	{kind = .Key, text = "o"},
+	{kind = .Wait, text = "debugger_window: one line, over each call, of the thread 0"},
+	{kind = .Key, text = "d"},
+	{kind = .Wait, text = "debugger_window: detached from debug_target"},
+	{kind = .Wait, text = DEBUG_TARGET_RUNS},
+	{kind = .Close, text = "debugger_window"},
+	{kind = .Front, text = "console"},
+
 	// Who can debug which program. A private store belongs to its program:
 	// the grant Store refuses, though the console holds a grant Store too.
 	{kind = .Type, text = "start(\"notes\")"},

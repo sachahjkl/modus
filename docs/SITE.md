@@ -490,13 +490,13 @@ The groups (`site_gallery_groups`), each with a title and one sentence:
 | Rights, grants and faults | 13 |
 | Modules | 9 |
 | Memory, threads and time | 16 |
-| The developer tools | 4 |
+| The developer tools | 5 |
 | The interface and the fonts | 10 |
 | The network, the cryptography and the randomness | 10 |
 | The storage | 8 |
 | The boot and the trusted boot | 7 |
 
-113 rows. The excluded files:
+114 rows. The excluded files:
 
 | File | Reason |
 |---|---|
