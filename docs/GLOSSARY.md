@@ -5764,6 +5764,36 @@ The design: `docs/SITE.md`, "The moves of the heron".
 
 Do not use: sprite sheet, atlas, film strip.
 
+### Icon file
+
+An icon file is one file that holds the mark at several sizes, each as one PNG file behind a directory, so that a reader takes the entry of the size that it shows.
+
+The generator of the pictures of the mark writes it: each entry is the PNG file that the generator writes for one picture, byte for byte, and an entry is at most 256 pixels on a side. The site has one, `favicon.ico` at its root, with an entry of 32 pixels in the cells variant and one of 48 pixels in the smooth variant. Each entry is a row of the table of the uses of the mark. `kerneltool mark still --format ico` writes one. It is not the icon of a phone or of the manifest: each of those is one PNG file.
+
+The design: `docs/SITE.md`, "The icons"; `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: favicon file, ICO container, multi-size icon.
+
+### Vector file of the mark
+
+A vector file of the mark is a file that holds the mark in the cells variant as rectangles of one color, so that a reader draws the same cells at each size.
+
+The generator of the pictures of the mark cuts the pixels of a picture into rectangles: a run of cells of one color in a row is one rectangle. The tool computes each color; the reader of the file only fills rectangles. The file can hold a rule that gives the colors of the dark scheme to a reader that asks for dark. The smooth variant is not written as a vector file: the reader would compute the gradient. The site has one, `pictures/icon.svg`. `kerneltool mark still --format svg` writes one.
+
+The design: `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: SVG logo, scalable icon, vector logo.
+
+### Animated file of the mark
+
+An animated file of the mark is one animated PNG file that holds each frame of one animation of the mark as a picture, each for the time that the table of the animations gives it.
+
+The generator of the pictures of the mark writes it from the PNG data of each frame; a test reads each frame back and compares its pixels. It shows the frames of the heron in its place and plays with no end; it does not show the move of the heron across a page. It is for a page that runs no script, such as a page of a repository. The repository holds none: `kerneltool mark animation --animation <name>` writes one. It is not a tile map, which a script plays, and not a film, which shows the running system.
+
+The design: `docs/TOOLS.md`, "The pictures of the mark".
+
+Do not use: GIF, animated logo, sprite animation.
+
 ### Site
 
 The site is the documentation of the system as static pages, with their style sheet and their pictures, that `kerneltool site` writes in `build/site` from the files of the repository and the logs of the machine tests.

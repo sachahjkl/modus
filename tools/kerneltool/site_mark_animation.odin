@@ -86,11 +86,13 @@ site_mark_tile_maps :: proc() -> (tile_maps: Site_Mark_Tile_Maps, ok: bool) {
 
 // site_mark_tab_icon_picture gives the picture of the icon of favicon.ico
 // that the script draws again from the tile map of the icon during an
-// animation: the icon of SITE_MARK_ANIMATION_ICON_SIZE pixels.
+// animation: the entry of SITE_MARK_ANIMATION_ICON_SIZE pixels, among the
+// rows of favicon.ico of the table of the uses of the mark.
 site_mark_tab_icon_picture :: proc() -> (icon: Mark_Picture, ok: bool) {
-	for candidate in site_icons {
-		if candidate.in_favicon && candidate.size == SITE_MARK_ANIMATION_ICON_SIZE {
-			return site_icon_picture(candidate), true
+	entries, _ := mark_use_entries(SITE_FAVICON)
+	for entry in entries {
+		if width, height := mark_picture_size(entry); width == SITE_MARK_ANIMATION_ICON_SIZE && height == SITE_MARK_ANIMATION_ICON_SIZE {
+			return entry, true
 		}
 	}
 	return {}, false
@@ -139,7 +141,7 @@ site_mark_animation_write :: proc(site: ^Site) -> bool {
 	for path, data in files {
 		site_write_file(site, path, data) or_return
 	}
-	sprites, _ := site_mark_sprites()
+	sprites, _ := mark_sprites()
 	still_least, still_most := mark.still_bounds()
 	fmt.printfln(
 		"kerneltool: site: the animations of the mark: %d animations, %d ms in all, %d sprites; a still time of %d to %d ms; %s %d bytes, %s %d bytes, %s %d bytes, %s %d bytes",
@@ -199,7 +201,7 @@ site_mark_animation_problems :: proc(files: map[string][]u8) -> []string {
 	if !has_script || strings.contains(string(script), "/*TABLE*/") {
 		append(&problems, SITE_MARK_ANIMATION_SCRIPT + " has no table of the frames")
 	}
-	if fault := site_mark_move_fault_text(mark.move_keys[:]); fault != "" {
+	if fault := mark_move_fault_text(mark.move_keys[:]); fault != "" {
 		append(&problems, fault)
 	}
 	return problems[:]

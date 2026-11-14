@@ -404,7 +404,7 @@ COMMANDS :: [?]Command {
 	// with a sentence: the smooth variant at one pixel for a cell, a part
 	// of a pixel, a picture smaller than its drawing (docs/TOOLS.md, "The
 	// pictures of the mark").
-	{name = "mark", about = "draw one picture of the mark: still | frame | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --out <file>", run = run_mark},
+	{name = "mark", about = "draw one file of the mark: still | frame | animation | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --format png|ico|svg|apng|json, --entry <variant>:<cell>:<pixels>, --dark-rule yes|no, --out <file>", run = run_mark},
 	// Converts the JPEG portrait of the program `temple` to the pixels that the
 	// program holds, `src/programs/temple/portrait.pixels`. The result is in the
 	// repository, so a build decodes no JPEG.
@@ -767,6 +767,10 @@ run_test :: proc(args: []string) -> int {
 	// `test extended_state`: the three machines of the extended state only.
 	if len(args) == 1 && args[0] == "extended_state" {
 		return extended_state_tests_run() ? 0 : EXIT_FAILURE
+	}
+	// `test outside_module`: the build of the examples of an outside module only.
+	if len(args) == 1 && args[0] == "outside_module" {
+		return outside_module_examples_check() ? 0 : EXIT_FAILURE
 	}
 	// `test tcp`: the two machines of TCP only.
 	if len(args) == 1 && args[0] == "tcp" {

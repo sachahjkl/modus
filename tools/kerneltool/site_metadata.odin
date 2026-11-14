@@ -753,20 +753,19 @@ site_manifest :: proc(site: ^Site) -> string {
 	site_json_text(&node, "theme_color", site_color(site_dark_colors().background))
 	site_json_key(&node, "icons")
 	strings.write_byte(&b, '[')
-	written_icons := 0
-	for icon in site_icons {
-		if icon.in_favicon || icon.size < 192 {
-			continue // favicon.ico and the icon of a phone are named by the head.
-		}
-		if written_icons > 0 {
+	// The size of each icon is the size of its row of the table of the uses
+	// of the mark.
+	for icon, icon_index in site_manifest_icons {
+		picture, _ := mark_use_picture(icon.file_name)
+		icon_width, icon_height := mark_picture_size(picture)
+		if icon_index > 0 {
 			strings.write_byte(&b, ',')
 		}
-		written_icons += 1
 		entry := site_json_open(&b, "")
 		site_json_text(&entry, "src", strings.concatenate({SITE_PICTURE_FOLDER, "/", icon.file_name}, context.temp_allocator))
-		site_json_text(&entry, "sizes", fmt.tprintf("%dx%d", icon.size, icon.size))
+		site_json_text(&entry, "sizes", fmt.tprintf("%dx%d", icon_width, icon_height))
 		site_json_text(&entry, "type", "image/png")
-		site_json_text(&entry, "purpose", icon.opaque ? "maskable" : "any")
+		site_json_text(&entry, "purpose", icon.maskable ? "maskable" : "any")
 		site_json_close(&entry)
 	}
 	strings.write_byte(&b, ']')

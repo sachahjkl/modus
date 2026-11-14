@@ -616,7 +616,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
 | `key new <folder>`, `key show` | The key that signs the system description |
 | `font`, `vector_fonts`, `pointers`, `logo`, `portrait` | Convert a source (a font, a pointer theme, the mark, a picture) into the files of the repository. A build reads the result, never the source |
-| `mark <what> [options]` | Draws one picture of the mark: the still mark, a frame, a tile map, the table of a tile map, the picture for a developer; `mark uses` prints the table of the uses ("The pictures of the mark") |
+| `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `library-imports` | Checks that each import of each source file of the kernel and of the contract packages names a package of the compiler or a contract package ("The imports of the kernel and of the contract packages") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
@@ -968,21 +968,24 @@ These times never stand for a condition. After each key of `Film_Type` the tool 
 
 ### The pictures of the mark
 
-One generator draws each picture file of the mark (`tools/kerneltool/mark_pictures.odin`, `mark_tile_map.odin`, `mark_developer_picture.odin`). The data of the mark is in `src/library/support/mark`; the generator turns a request into the bytes of a file. Three commands ask it:
+One generator makes each file of the mark (`tools/kerneltool/mark_pictures.odin`, `mark_formats.odin`, `mark_tile_map.odin`, `mark_developer_picture.odin`). The data of the mark is in `src/library/support/mark`; the generator turns a request into the bytes of a file. Three commands ask it:
 
 | Command | What it asks |
 |---|---|
 | `logo` | Each row of the repository of the table of the uses of the mark, then the font of the name and the picture for a developer |
-| `site` | Each row of the site of the table of the uses, and each icon of the table of the icons |
+| `site` | Each row of the site of the table of the uses: the pictures, the tile maps, the icons, the icon file and the vector icon |
 | `mark` | One request, from the words of the command |
 
-The table of the uses is in `DESIGN.md`, "The variants of the mark". `logo` and `site` hold no number of a picture: a new file of the mark is a new row of that table.
+The table of the uses is in `DESIGN.md`, "The variants of the mark". It is the one table of the files of the mark. `logo` and `site` hold no number of a picture: a new file of the mark is a new row of that table.
 
 A request says what to draw and how:
 
 | Part | Values | Meaning |
 |---|---|---|
-| What | `still`, `frame`, `tile_map`, `table` | The still mark; one frame of an animation; a tile map; the table of a tile map, as JSON |
+| What | `still`, `frame`, `animation`, `tile_map`, `table` | The still mark; one frame of an animation; every frame of one animation, as one animated file; a tile map; the table of a tile map, as JSON |
+| `--format` | `png`, `ico`, `svg`, `apng`, `json` | The format of the file: see "The formats" below. With no format: `png` for a picture and a tile map, `apng` for an animation, `json` for a table |
+| `--entry` | `<variant>:<cell>:<pixels>` | One more entry of an icon file: its variant, its cell size and the side of its square picture. It takes the color scheme and the background of the request. The option can come several times |
+| `--dark-rule` | `yes`, `no` | A vector file with the rule that gives the colors of the dark scheme to a reader that asks for dark. The default is `no` |
 | `--variant` | `smooth`, `cells` | The variant of the mark. The default is `smooth` |
 | `--cell` | A whole count of pixels | The side of a cell of the heron. The default is 8 |
 | `--scheme` | `dark`, `light` | The colors. The default is `dark` |
@@ -993,7 +996,7 @@ A request says what to draw and how:
 | `--frame` | A number from 0 | The frame of the animation; 0 is the still heron |
 | `--forms` | `yes`, `no` | A tile map with the drawn forms of the moves, or with the frames only. The default is `yes` |
 | `--width` | A whole count of pixels | The widest tile map. With no width, a row holds 16 sprites |
-| `--out` | A path | The file. The default is `build/mark_<what>.png`, or `.json` for a table |
+| `--out` | A path | The file. The default is `build/mark_<what>` with the end of its format: `.png`, `.ico`, `.svg`, `.apng` or `.json` |
 
 Two more words take no option: `mark uses` prints the table of the uses, and `mark developer` writes `build/mark_animations.png`, every frame and every drawn form with its texts.
 
@@ -1004,7 +1007,28 @@ kerneltool mark still --variant cells --cell 1 --scheme light
 kerneltool mark frame --animation dash --frame 2 --cell 16
 kerneltool mark tile_map --animation hop --width 1024
 kerneltool mark table --forms no --variant cells --cell 1
+kerneltool mark still --format ico --variant cells --cell 1 --size 32 --scheme light --entry smooth:2:48
+kerneltool mark still --format svg --variant cells --cell 1 --scheme light --dark-rule yes
+kerneltool mark animation --animation dash --format apng
 ```
+
+The fifth example writes the bytes of `favicon.ico` of the site, and the sixth the bytes of its `icon.svg`.
+
+**The formats.** Each format starts from the pixels of one picture, which one procedure of the generator draws. No format computes a color of the heron a second time.
+
+| Format | What the file is | For |
+|---|---|---|
+| `png` | The pixels of one picture, or of a tile map | `still`, `frame`, `tile_map` |
+| `ico` | An icon file: a directory, then one PNG file of the generator for each entry. The first entry is the picture of the request, and each `--entry` adds one. A reader chooses an entry by its size | `still`, `frame` |
+| `svg` | A vector file: the pixels of the picture as rectangles of one color. A run of cells of one color in a row is one rectangle, at each cell size. With `--dark-rule yes`, a rule of style gives each rectangle its color of the dark scheme for a reader that asks for dark | `still`, `frame`, in the cells variant |
+| `apng` | An animated PNG file: each frame of one animation as one picture, in its place, for the time that `src/library/support/mark` gives it. The file plays with no end. A reader that does not know the animated form shows the first frame | `animation` |
+| `json` | The text of the table of a tile map | `table` |
+
+- The smooth variant is not written as a vector file. The gradient of a part is linear across the picture, and a vector file can state a linear gradient. But the reader of the file then computes each color: it goes between the two rounded colors of the ends, and it rounds in its own way. Some pixels are then one unit away from the colors of `src/library/support/mark`, on some readers. In the cells variant the tool computes the one color of each cell, and a rectangle of one color is the same in every reader.
+- An animated PNG file is a PNG file with three more kinds of chunk: `acTL` holds the count of the frames, `fcTL` the size and the time of one frame, and `fdAT` the data of a frame after the first. The data of each frame is the data of the PNG file that the generator writes for that frame.
+- An animated PNG file shows the frames of the heron in its place. It does not show the move of the heron across a page: that is the work of the script of the home of the site.
+- Some places choose the reader of a file by the end of its name. For such a place, name the animated file with `--out <name>.png`: the bytes are a PNG file.
+- The command writes an animated file where `--out` says. The repository holds none.
 
 The generator refuses a request with no sense, with a sentence, and writes no file. It never bends a request into another one:
 
@@ -1014,12 +1038,15 @@ The generator refuses a request with no sense, with a sentence, and writes no fi
 - A gap with no name.
 - The still mark with an animation or a frame; a frame with no animation, or past the last frame.
 - A tile map with the name, with a background or with a size; a tile map with a frame; a tile map narrower than one tile.
+- A format that does not hold what is asked: a tile map as a vector file, the still mark as an animated file, an animation as one PNG picture.
+- The smooth variant as a vector file.
+- The rule of the dark scheme with a format that is not `svg`, or with a picture of the dark scheme.
+- An entry of an icon file that is larger than 256 pixels on a side; two entries of one size; `--entry` with a format that is not `ico`.
+- An animation with no name of an animation, or with a frame.
 
 A PNG file of the generator is the smallest that the encoder of the Odin standard library writes for its pixels: the highest level of its deflate, once with each row filter, the smallest kept. No pixel is lost. The picture for a developer is written at the common level, in one pass.
 
-The host tests of the generator are in `mark_pictures_test.odin`: each kind of request, each refusal, the table of the uses, the words of the command, and `only_the_generator_draws_the_mark`, which fails when another file of the tool calls a drawing procedure of `src/library/support/mark`.
-
-What the generator does not write yet: the ICO file and the SVG icon of the site (`site_icons.odin`). The PNG entries of the ICO file come from the generator; the SVG icon is the cells as rectangles with the gradients of `src/library/support/mark`, and calls no drawing procedure.
+The host tests of the generator are in `mark_pictures_test.odin` and `mark_formats_test.odin`: each kind of request, each refusal, the table of the uses, the words of the command, and each format read back. The test of the icon file compares each entry with the PNG file of its picture, byte for byte. The test of the vector file draws its rectangles as a reader does, for each color scheme, and compares each pixel with the picture. The test of the animated file builds one PNG file from the data of each frame, decodes it, and compares its pixels and its time with the frame. `only_the_generator_draws_the_mark` fails when a file of the tool outside the generator calls a drawing procedure of `src/library/support/mark`, or builds an icon file, a vector file or an animated file of the mark.
 
 ### The roadmap
 
