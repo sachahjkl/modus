@@ -39,6 +39,7 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:support/display"
 import "modus:support/graphics"
+import "modus:support/interface"
 import "modus:support/network"
 import "modus:support/random"
 import "modus:support/system"
@@ -58,16 +59,26 @@ RECEIVE_PLACES :: 96
 SEND_TAG :: 1000
 CALL_TAG :: 100_000
 
+// The window is built with the interface package (docs/INTERFACE.md): a
+// table of cases, each with the lines that its answer needs
+// (docs/INTERFACE.md, "The text in a box").
+records_now, records_before: [256]interface.Draw_Record
+text_now, text_before: [8192]u8
+drawing: interface.Window_Drawing
+
 WIDTH :: 976
 CASE_CAPACITY :: 10
-LINE :: 24
-HEIGHT :: 16 + 2 * LINE + CASE_CAPACITY * LINE + 16
-ANSWER_X :: 304
+LINE :: interface.TABLE_LINE
+LEFT :: 16
+// The answer starts after the longest text of a case, "the handshake with
+// 10.0.2.100 port 80": 37 characters.
+ANSWER_X :: 40 * graphics.CELL_WIDTH
+// The height: the two lines of the head, each case with an answer of two
+// lines, and the line that counts the cases with no room.
+HEIGHT :: 16 + 2 * LINE + CASE_CAPACITY * (LINE + graphics.LINE_HEIGHT) + LINE + 16
 
-// The colors of src/library/support/graphics/rules.odin: a band under one case of two,
-// an expected answer in the color of a program that runs, a wrong one in
-// the color "failed".
-COLOR_BAND :: graphics.COLOR_CARD_TOP
+// The colors of src/library/support/graphics/rules.odin: an expected answer
+// in the color of a program that runs, a wrong one in the color "failed".
 COLOR_RIGHT :: graphics.COLOR_PROGRAM
 COLOR_WRONG :: graphics.COLOR_FAILED
 
@@ -416,28 +427,25 @@ megabytes :: proc "contextless" (buffer: []u8, kilobytes: u64) -> string {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	// The canvas is the picture that the compositor does not read, after
-	// it took the picture before: the whole canvas is drawn.
-	if !display.canvas_wait(window) {
-		return
+	if drawing.now.records == nil {
+		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	}
-	canvas := window.canvas
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
-	y := 16
-	graphics.text(canvas, 16, y, "a segment endpoint with a client grant: TCP to 10.0.2.100 port 80, and nothing else.", graphics.COLOR_DIM)
-	y += LINE
-	graphics.text(canvas, 16, y, "the program asks", graphics.COLOR_DIM)
-	graphics.text(canvas, ANSWER_X, y, "the answer", graphics.COLOR_DIM)
-	y += LINE
+	frame := interface.window_frame_begin(&drawing, window)
+	draw_table := frame.table
+	interface.draw_rectangle(draw_table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	interface.draw_text_wrapped(draw_table, LEFT, 16 + 4, WIDTH - 2 * LEFT, "a segment endpoint with a client grant: TCP to 10.0.2.100 port 80, and nothing else.", graphics.COLOR_DIM)
+	interface.draw_text(draw_table, LEFT, 16 + LINE + 4, "the program asks", graphics.COLOR_DIM)
+	interface.draw_text(draw_table, LEFT + ANSWER_X, 16 + LINE + 4, "the answer", graphics.COLOR_DIM)
+	// The cases, then one line for the count of the cases with no room.
+	column := interface.column_of({LEFT, 16 + 2 * LINE, WIDTH - 2 * LEFT, HEIGHT - 16 - 2 * LINE - LINE - 16})
+	not_shown := 0
 	for &item, index in cases[:case_count] {
-		if index % 2 == 0 {
-			graphics.fill(canvas, 8, y - 4, WIDTH - 16, LINE, COLOR_BAND)
+		if _, drawn := interface.case_lines(&frame, &column, index, item.text, string(item.answer[:item.count]), ANSWER_X, graphics.COLOR_DIM, item.right ? COLOR_RIGHT : COLOR_WRONG, LINE); !drawn {
+			not_shown += 1
 		}
-		graphics.text(canvas, 16, y, item.text, graphics.COLOR_DIM)
-		graphics.text(canvas, ANSWER_X, y, string(item.answer[:item.count]), item.right ? COLOR_RIGHT : COLOR_WRONG)
-		y += LINE
 	}
-	display.present(window)
+	interface.cases_rest_line(&frame, {LEFT, HEIGHT - 16 - LINE, WIDTH - 2 * LEFT, LINE}, not_shown, "the log has a line \"fetch: \" for each")
+	interface.window_frame_end(&drawing, &frame, window)
 }
 
 // The random generator of this program, from the seed of its starter.

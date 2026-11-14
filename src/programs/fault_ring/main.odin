@@ -138,7 +138,7 @@ import "modus:support/random"
 import "modus:support/system"
 
 LINE :: interface.TABLE_LINE
-WIDTH :: 1024
+WIDTH :: 1000 // The window and its borders fit the screen of 1024 columns.
 HEIGHT :: 604
 ROWS_IN_THE_FIRST_COLUMN :: 18
 COLUMN_GAP :: 16
@@ -1549,7 +1549,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 				value = string(item.value[:item.value_length])
 			}
 		}
-		interface.label_value_line(&frame, interface.column_take(column, LINE), item.name, value, color, VALUE_X)
+		// A value with a measure is wider than its box: it has the lines
+		// that it needs, and the next row starts under them.
+		interface.label_value_lines(&frame, column, item.name, value, VALUE_X, color, LINE)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

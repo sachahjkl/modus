@@ -82,8 +82,21 @@ PROGRAM_SLOTS_SEARCHED :: 256 // The program slots that an attach searches for t
 THREAD_CAPACITY :: op.THREAD_REPORT_CAPACITY // The threads of one program.
 BREAK_CAPACITY :: op.THREAD_BREAKPOINT_CAPACITY // The breakpoints of the debugger: the debug address registers of a thread.
 EVENT_CAPACITY :: 32 // The stops that the service keeps until `events()` gives them.
-PLACE_TEXT_SIZE :: 96 // The bytes of the place of a breakpoint.
 TEXT_ARGUMENT_LIMIT :: 160 // The bytes of a text argument: a path, a place.
+// The bytes of the place of a breakpoint: the text argument that named it,
+// whole. An argument longer than the limit is refused before it comes
+// here, so no place is cut.
+PLACE_TEXT_SIZE :: TEXT_ARGUMENT_LIMIT
+// The bytes of the path of a source file in a row. The longest path of the
+// sources of the system has 80 bytes; a longer path, of a module from
+// another repository, ends with the cut mark of the writer.
+SOURCE_PATH_SIZE :: 80
+// The bytes of the name of a procedure in a row, "package::procedure". A
+// row of a described record has at most 256 bytes, and the row of a thread
+// holds a path and a name: a name longer than this size ends with the cut
+// mark too. The longest of the sources of the system has 99 bytes.
+PROCEDURE_NAME_SIZE :: 80
+#assert(SOURCE_PATH_SIZE <= TEXT_ARGUMENT_LIMIT) // A path that a row gives is a path that `source` and `break_at` take.
 // The bounds of the exports that wait. The service has one thread and
 // serves each caller, and the debugged program chooses how long one of its
 // instructions takes: so no export waits longer than a stated bound. Each

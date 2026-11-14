@@ -137,8 +137,8 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "return_fault.png", group = .Rights, guide = "docs/ARCHITECTURE.md", caption = "The return to a program: the kernel stops each of five children whose thread the processor would refuse, and the machine goes on."},
 	{file = "fault_ring.png", group = .Rights, guide = "docs/ARCHITECTURE.md", caption = "The fault ring: a fault of a thread becomes a record for a handler thread of its program, which repairs it or stops the program."},
 	{file = "kernel_events.png", group = .Rights, guide = "docs/ARCHITECTURE.md", caption = "The kernel events: the kernel records its own work by a table of rules, and a program reads the records only with the right Events."},
-	{file = "errors.png", group = .Rights, guide = "docs/MODULE_CONTRACT.md", caption = "Errors that diagnose: each case makes an error for real, and the line under it is the sentence of its error record."},
-	{file = "errors_families.png", group = .Rights, guide = "docs/MODULE_CONTRACT.md", caption = "The second page of the program errors: refusals of Inspect, of a wrapper, of a ring and of an export, each with its sentence."},
+	{file = "errors.png", group = .Rights, guide = "docs/MODULE_CONTRACT.md", caption = "Errors that diagnose: each case makes an error for real, and the lines under it are the whole sentence of its error record."},
+	{file = "errors_families.png", group = .Rights, guide = "docs/MODULE_CONTRACT.md", caption = "The second page of the program errors: the stack trace of a fault, whole, then refusals of Inspect, of a wrapper, of a ring and of an export."},
 	{file = "principals_unlock.png", group = .Rights, guide = "docs/PRINCIPALS.md", caption = "The window of unlock: the passphrase of a named principal, shown as dots."},
 
 	// Modules.
@@ -231,7 +231,6 @@ Site_Gallery_Excluded :: struct {
 site_gallery_excluded := [?]Site_Gallery_Excluded {
 	{"notes_crash.png", "The picture was taken while the window of notes drew its note: the text of the note is cut. The pictures notes and power_loss show the store after a restart.", false},
 	{"pointers.png", "The repository does not hold this picture, and git ignores it: it shows a pointer theme whose license allows no commercial use. The folder of a developer has it after a test; the picture pointers_system shows the theme of the system.", true},
-	{"vector_glyphs.png", "An older picture of the prototype of the vector font: its bar has the words of the system before the mark and the palette. The pictures font_candidates and font_vector show the font of today.", false},
 }
 
 // One picture of the table as the pages show it.

@@ -316,7 +316,9 @@ request_finish :: proc "contextless" (index: int) {
 		bytes          = session.answer_bytes,
 		time           = microseconds_taken,
 	}
-	record.target_length = copy(record.target[:], web.request_target(request))
+	// A target longer than the record ends with the cut mark of the writer:
+	// the window and the log show that it is not whole.
+	record.target_length = len(system.format(record.target[:], string(web.request_target(request))))
 	access_records[access_next] = record
 	access_next = (access_next + 1) % ACCESS_HISTORY
 	// The log of the requests, within the log limit of this program.
@@ -328,7 +330,7 @@ request_finish :: proc "contextless" (index: int) {
 		request_log_count += 1
 		remote_text: [32]u8
 		method := web.request_method_name(request.method)
-		system.log_in("requests", .Info, "server: ", method == "" ? "-" : method, " ", string(record.target[:min(record.target_length, 40)]), " ", u64(session.answer_status), ", ", session.answer_bytes, " bytes, ", microseconds_taken, " us, ", address_text(remote_text[:], connection.remote_address, connection.remote_port))
+		system.log_in("requests", .Info, "server: ", method == "" ? "-" : method, " ", string(record.target[:record.target_length]), " ", u64(session.answer_status), ", ", session.answer_bytes, " bytes, ", microseconds_taken, " us, ", address_text(remote_text[:], connection.remote_address, connection.remote_port))
 	} else {
 		requests_not_logged += 1
 	}

@@ -86,7 +86,7 @@ On the path of `log` in the kernel: one store of 6 bytes for each value, and at 
 
 ### The window of the log
 
-The program `log` shows the last 30 records: the time, the mark of the level, the program, the channel, and the text in the font of the cells. Each value run is in the color of its value kind (`docs/DESIGN.md`, "The colors of values"); the rest of the text is in the text color, or in the color "failed" for a record of the level error. The head of the column of the text is the legend: the six kinds that the logs write, each in its color. A text that starts with the name of its program and ": ", then its channel and ": ", shows without that start: the columns at its left say it. The record keeps its text whole.
+The program `log` shows the newest records, in 30 lines: the time, the mark of the level, the program, the channel, and the text in the font of the cells. A text is whole, on the lines that it needs: the window joins again the records of a text that the kernel kept in several records, and a line ends at a space, never where a record ended (`docs/INTERFACE.md`, "The text in a box"). A name of a program that is wider than its column takes more lines too. Each value run is in the color of its value kind (`docs/DESIGN.md`, "The colors of values"); the rest of the text is in the text color, or in the color "failed" for a record of the level error. The head of the column of the text is the legend: the six kinds that the logs write, each in its color. A text that starts with the name of its program and ": ", then its channel and ": ", shows without that start: the columns at its left say it. The record keeps its text whole.
 
 ### The tables of the log service
 

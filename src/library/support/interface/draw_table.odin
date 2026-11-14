@@ -19,6 +19,8 @@
 // - `Area`, `Column`, `Size`, `row_split` (`layout.odin`): where each element
 //   goes.
 // - `Font`, `Text_Builder`, `text_width` (`text.odin`): the measure of a text.
+// - `text_wrap_line`, `text_wrapped_line_count`, `draw_text_wrapped`
+//   (`text.odin`): a text longer than its box, on more lines.
 // - `Frame`, `Input`, `Interface_State`, `Element_Identity` (`input.odin`):
 //   the input and the focus.
 // - The elements (`elements.odin`): buttons, cards, lists, text inputs.

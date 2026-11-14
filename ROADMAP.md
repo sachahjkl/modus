@@ -17,7 +17,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A send with no copy in the network service.** A frame to send holds its headers in the memory of the network service and its data in the memory of the program, which the device reads. The network service then reads no byte of the data that a program sends. [Design](src/md/infrastructure/network_data_path.md)
 - **The IOMMU.** A device reaches only the memory that its service was granted. A device service that has a fault then damages no other program.
 - **A guest.** A program runs another system in a guest, with the virtualization support of the processor. The first guest writes to a port, and the write arrives as a record in the program that runs it. [Design](src/md/features/foreign_systems.md)
-- **No text over a text, and no cut text, in five windows.** The two pages of the program `manual` that show a module and its tables draw each text in its own box, the window of `notes` draws its note whole, and the stack trace of a stop report wraps in the windows of `errors` and of `inspect`. A reader then reads every line of these windows.
 
 ## Later
 
@@ -45,5 +44,4 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **LLVM 22.** The build uses LLVM 22, with a measure of the speed of the code before and after.
 - **Checks for three rules that hold by reading.** The tool compares the count of kernel operations with the number that the properties state, checks that no shared package calls an allocator, and runs a block device that drops a write. Each check turns a rule that a reader must trust into a test.
 - **The QUIC library follows two more rules to the letter.** One answer goes out for each path challenge, and a misplaced extension fails with the alert that the standard names. No peer is harmed today, so the work waits.
-- **The guides agree with the code on three points.** The guides state the object kinds, the ring of each thread to the kernel and the form of a handle as the code has them.
 - **The share policy counts a thread that starts and ends between two rounds.** A program that creates threads which end before the next round of the share policy gets no more of the processors than a program with one thread. [Design](src/md/features/scheduling_policy.md)

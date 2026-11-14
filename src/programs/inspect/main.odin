@@ -142,6 +142,7 @@ list_read :: proc "contextless" () {
 			shown_count += 1
 		}
 	}
+	list_rows_update()
 }
 
 contains :: proc "contextless" (text, part: string) -> bool {
@@ -261,7 +262,18 @@ module_file :: proc "contextless" (hash: [32]u8) -> []u8 {
 // The names of the frames of the stop report of the sample, from the
 // debug image. They are made when the stop report changes, not at each
 // picture: a name costs the check of a debug object.
-FRAME_NAME_CAPACITY :: 160
+//
+// The size of a name is the longest text that system.place_write gives for
+// the sources of the system: the procedure with its package, its offset,
+// the module, the path of the file and the line. A name of a module from
+// another repository can be longer: the writer then ends it with the cut
+// mark, and the window shows the mark.
+FRAME_PROCEDURE_BYTES :: 104 // "package::procedure": the longest name of a procedure of the sources has 73 bytes, a package 24.
+FRAME_OFFSET_BYTES :: len(" + 0x") + 16
+FRAME_MODULE_BYTES :: len(" in ") + 31 // The name of a module of the boot image.
+FRAME_PATH_BYTES :: len(" (") + 80 + len(":") + 8 + len(")") // The longest path of the sources has 80 bytes; a line has at most 8 digits.
+FRAME_NAME_CAPACITY :: 256
+#assert(FRAME_NAME_CAPACITY >= FRAME_PROCEDURE_BYTES + FRAME_OFFSET_BYTES + FRAME_MODULE_BYTES + FRAME_PATH_BYTES)
 Frame_Names :: struct {
 	report: op.Stop_Report, // The stop report of these names.
 	texts:  [op.STOP_FRAME_CAPACITY][FRAME_NAME_CAPACITY]u8,

@@ -71,6 +71,249 @@ text_measure :: proc(t: ^testing.T) {
 	testing.expect_value(t, line_height(FONT_MEDIUM), 32)
 }
 
+// The lines of a text, joined with one space where a line ended at a space,
+// are the text: no byte is dropped. `joined` gets them.
+@(private = "file")
+wrapped_lines_joined :: proc(text: string, room: int, joined: ^[512]u8) -> (result: string, lines: int, widest: int) {
+	count := 0
+	rest := text
+	for len(rest) > 0 {
+		line: string
+		before := rest
+		line, rest = text_wrap_line(nil, {}, rest, room)
+		widest = max(widest, text_width({}, line))
+		count += copy(joined[count:], line)
+		// The spaces that the break took are between the two lines.
+		count += copy(joined[count:], before[len(line):len(before) - len(rest)])
+		lines += 1
+	}
+	return string(joined[:count]), lines, widest
+}
+
+@(test)
+a_text_that_fits_is_one_line :: proc(t: ^testing.T) {
+	line, rest := text_wrap_line(nil, {}, "a short text", 12 * 8)
+	testing.expect_value(t, line, "a short text")
+	testing.expect_value(t, rest, "")
+	testing.expect_value(t, text_wrapped_line_count(nil, {}, "a short text", 12 * 8), 1)
+	testing.expect_value(t, text_wrapped_line_count(nil, {}, "", 80), 0)
+}
+
+@(test)
+a_line_ends_at_the_last_space_that_fits :: proc(t: ^testing.T) {
+	// 10 characters fit: "one two" and a part of "three".
+	line, rest := text_wrap_line(nil, {}, "one two three four", 10 * 8)
+	testing.expect_value(t, line, "one two")
+	testing.expect_value(t, rest, "three four")
+	// The space is the first character that does not fit.
+	line, rest = text_wrap_line(nil, {}, "one two three", 7 * 8)
+	testing.expect_value(t, line, "one two")
+	testing.expect_value(t, rest, "three")
+	// Several spaces at the break are in neither part.
+	line, rest = text_wrap_line(nil, {}, "one two   three", 8 * 8)
+	testing.expect_value(t, line, "one two")
+	testing.expect_value(t, rest, "three")
+	testing.expect_value(t, text_wrapped_line_count(nil, {}, "one two three four", 10 * 8), 2)
+}
+
+@(test)
+a_path_longer_than_the_box_breaks_after_a_separator :: proc(t: ^testing.T) {
+	PLACE :: "fault::three + 0x4 in fault (src/programs/fault/main.odin:15)"
+	// 24 characters: the line ends at a space while the text has one.
+	line, rest := text_wrap_line(nil, {}, PLACE, 24 * 8)
+	testing.expect_value(t, line, "fault::three + 0x4 in")
+	testing.expect_value(t, rest, "fault (src/programs/fault/main.odin:15)")
+	// The path is one word of 33 characters: it breaks after a `/`.
+	line, rest = text_wrap_line(nil, {}, "(src/programs/fault/main.odin:15)", 24 * 8)
+	testing.expect_value(t, line, "(src/programs/fault/")
+	testing.expect_value(t, rest, "main.odin:15)")
+	// A name of the system breaks after a `_`.
+	line, rest = text_wrap_line(nil, {}, "interface_through_module", 20 * 8)
+	testing.expect_value(t, line, "interface_through_")
+	testing.expect_value(t, rest, "module")
+	// A word with no separator breaks at its last character that fits.
+	line, rest = text_wrap_line(nil, {}, "0123456789abcdef", 10 * 8)
+	testing.expect_value(t, line, "0123456789")
+	testing.expect_value(t, rest, "abcdef")
+}
+
+@(test)
+no_line_passes_its_box_and_no_byte_is_lost :: proc(t: ^testing.T) {
+	TEXTS := [?]string {
+		"page fault at fault::three + 0x4 in fault (src/programs/fault/main.odin:15), fault::two + 0x9 in fault (src/programs/fault/main.odin:20), fault::one + 0x9 in fault (src/programs/fault/main.odin:26), entry + 0x46 in fault (src/programs/fault/main.odin:60)",
+		"keys: a note; up, down: its versions; enter: restore the version shown; tab: count 1000",
+		"src/library/support/cryptography/_edwards25519/edwards25519_scalar_mul_base.odin",
+		"interface_through_module",
+		" a text that starts with a space",
+		"a text that ends with spaces   ",
+		"x",
+	}
+	for text in TEXTS {
+		for columns in 1 ..= 130 {
+			joined: [512]u8
+			result, lines, widest := wrapped_lines_joined(text, columns * 8, &joined)
+			testing.expectf(t, result == text, "%d columns: the lines hold the text %q, they hold %q", columns, text, result)
+			testing.expectf(t, widest <= columns * 8, "%d columns: the widest line of %q has %d pixels", columns, text, widest)
+			testing.expect_value(t, lines, text_wrapped_line_count(nil, {}, text, columns * 8))
+			// A text that fits is one line, and a text that does not has more.
+			testing.expectf(t, (lines == 1) == (len(text) <= columns) || text[len(text) - 1] == ' ', "%d columns: %d lines for %d characters", columns, lines, len(text))
+		}
+	}
+}
+
+@(test)
+a_box_narrower_than_a_character_ends :: proc(t: ^testing.T) {
+	// One character on each line: the loop of the lines ends.
+	testing.expect_value(t, text_wrapped_line_count(nil, {}, "abc", 0), 3)
+	testing.expect_value(t, text_wrapped_line_count(nil, {}, "abc", -40), 3)
+	testing.expect_value(t, text_wrapped_line_count(nil, {}, "abc", 3), 3)
+}
+
+@(test)
+draw_text_wrapped_places_each_line_under_the_line_before :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	TEXT :: "fault::three + 0x4 in fault (src/programs/fault/main.odin:15)"
+	count := draw_text_wrapped(&table, 40, 100, 24 * 8, TEXT, graphics.COLOR_TEXT)
+	testing.expect_value(t, count, text_wrapped_line_count(&table, {}, TEXT, 24 * 8))
+	testing.expect_value(t, count, 3)
+	testing.expect_value(t, table.record_count, 3)
+	for record, line in table.records[:table.record_count] {
+		testing.expect_value(t, record.kind, Draw_Kind.Text)
+		testing.expect_value(t, int(record.x), 40)
+		testing.expect_value(t, int(record.y), 100 + line * graphics.CELL_HEIGHT)
+		testing.expect(t, int(record.width) <= 24 * 8, "a line stays in the box")
+	}
+	// At scale 2 a character is 16 pixels wide and a line 32 pixels high.
+	table.record_count, table.text_count = 0, 0
+	count = draw_text_wrapped(&table, 0, 0, 10 * 16, "one two three four", graphics.COLOR_TEXT, FONT_MEDIUM)
+	testing.expect_value(t, count, 2)
+	testing.expect_value(t, int(table.records[1].y), 32)
+}
+
+// The text of a record of a table.
+@(private = "file")
+record_text :: proc(table: ^Draw_Table, record: Draw_Record) -> string {
+	return string(table.text[record.text_start:][:record.text_count])
+}
+
+@(test)
+label_value_lines_takes_the_lines_of_its_longest_text :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	frame := Frame{table = &table}
+	// The value starts at 96: its box has 104 pixels, 13 characters; the
+	// box of the label has 88 pixels, 11 characters.
+	column := column_of({8, 8, 200, 200})
+	count, drawn := label_value_lines(&frame, &column, "a name", "one two three four five", 96)
+	testing.expect_value(t, count, 2)
+	testing.expect(t, drawn)
+	testing.expect_value(t, column.used, 2 * LINE)
+	testing.expect_value(t, table.record_count, 3)
+	testing.expect_value(t, record_text(&table, table.records[0]), "a name")
+	testing.expect_value(t, record_text(&table, table.records[1]), "one two three")
+	testing.expect_value(t, record_text(&table, table.records[2]), "four five")
+	testing.expect_value(t, int(table.records[0].x), 8)
+	testing.expect_value(t, int(table.records[1].x), 8 + 96)
+	testing.expect_value(t, int(table.records[1].y), 8)
+	testing.expect_value(t, int(table.records[2].y), 8 + LINE)
+	for record in table.records[:table.record_count] {
+		testing.expect(t, int(record.x) + int(record.width) <= 8 + 200, "a text stays in the column")
+	}
+	testing.expect(t, int(table.records[0].x) + int(table.records[0].width) <= 8 + 96 - 8, "the label stays before the value")
+
+	// The next row starts under the two lines. A label longer than its
+	// box has two lines too, and the value one.
+	count, drawn = label_value_lines(&frame, &column, "a name of two lines", "short", 96)
+	testing.expect_value(t, count, 2)
+	testing.expect(t, drawn)
+	testing.expect_value(t, int(table.records[3].y), 8 + 2 * LINE)
+	testing.expect_value(t, record_text(&table, table.records[3]), "a name of")
+	testing.expect_value(t, record_text(&table, table.records[4]), "two lines")
+	testing.expect_value(t, record_text(&table, table.records[5]), "short")
+	testing.expect_value(t, column.used, 4 * LINE)
+
+	// A row of a table: one line has the height of a line of a table, and
+	// its text is in the middle of that height.
+	before := table.record_count
+	count, drawn = label_value_lines(&frame, &column, "name", "value", 96, graphics.COLOR_TEXT, TABLE_LINE)
+	testing.expect_value(t, count, 1)
+	testing.expect_value(t, column.used, 4 * LINE + TABLE_LINE)
+	testing.expect_value(t, int(table.records[before].y), 8 + 4 * LINE + (TABLE_LINE - LINE) / 2)
+}
+
+@(test)
+a_row_past_the_bottom_of_its_column_is_not_drawn_in_part :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	frame := Frame{table = &table}
+	// The column has room for one line; the value needs two.
+	column := column_of({0, 0, 200, LINE + 4})
+	count, drawn := label_value_lines(&frame, &column, "a name", "one two three four five", 96)
+	testing.expect_value(t, count, 2)
+	testing.expect(t, !drawn)
+	testing.expect_value(t, table.record_count, 0)
+	// A value of one line fits in a column of the same height.
+	column = column_of({0, 0, 200, LINE + 4})
+	count, drawn = label_value_lines(&frame, &column, "a name", "one two", 96)
+	testing.expect_value(t, count, 1)
+	testing.expect(t, drawn)
+	testing.expect_value(t, table.record_count, 2)
+}
+
+@(test)
+case_lines_has_a_band_as_high_as_its_answer :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	frame := Frame{table = &table}
+	column := column_of({16, 0, 400, 200})
+	// The answer has the box from 200 to 400: 25 characters.
+	ANSWER :: "refused: the argument address, 10.0.2.2 port 9, is not the remote of the grant"
+	count, drawn := case_lines(&frame, &column, 0, "UDP to 10.0.2.2 port 9", ANSWER, 200, graphics.COLOR_DIM, graphics.COLOR_PROGRAM)
+	testing.expect(t, drawn)
+	testing.expect_value(t, count, text_wrapped_line_count(&table, {}, ANSWER, 200))
+	testing.expect(t, count >= 4)
+	// The band of the case at an even place: the whole row, 8 pixels wider
+	// on each side.
+	band := table.records[0]
+	testing.expect_value(t, band.kind, Draw_Kind.Rectangle)
+	testing.expect_value(t, int(band.x), 8)
+	testing.expect_value(t, int(band.width), 416)
+	testing.expect_value(t, int(band.height), TABLE_LINE + (count - 1) * LINE)
+	testing.expect_value(t, column.used, int(band.height))
+	// The text of the case, then each line of the answer; the lines of the
+	// answer, joined, are the answer.
+	testing.expect_value(t, table.record_count, 2 + count)
+	joined: [128]u8
+	length := 0
+	for record, line in table.records[2:table.record_count] {
+		testing.expect_value(t, int(record.x), 16 + 200)
+		testing.expect(t, int(record.width) <= 200, "a line of the answer stays in its box")
+		if line > 0 {
+			length += copy(joined[length:], " ")
+		}
+		length += copy(joined[length:], record_text(&table, record))
+	}
+	testing.expect_value(t, string(joined[:length]), ANSWER)
+	// The case after it has no band, and starts under the band.
+	before := table.record_count
+	case_lines(&frame, &column, 1, "ARP", "answered", 200, graphics.COLOR_DIM, graphics.COLOR_PROGRAM)
+	testing.expect_value(t, table.records[before].kind, Draw_Kind.Text)
+	testing.expect_value(t, int(table.records[before].y), int(band.height) + (TABLE_LINE - LINE) / 2)
+}
+
+@(test)
+cases_rest_line_counts_the_cases_with_no_room :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	frame := Frame{table = &table}
+	cases_rest_line(&frame, {0, 0, 400, TABLE_LINE}, 0, "the log has each one")
+	testing.expect_value(t, table.record_count, 0)
+	cases_rest_line(&frame, {0, 0, 400, TABLE_LINE}, 3, "the log has each one")
+	testing.expect_value(t, table.record_count, 1)
+	testing.expect_value(t, record_text(&table, table.records[0]), "and 3 cases more: the log has each one")
+}
+
 @(test)
 no_change_no_damage :: proc(t: ^testing.T) {
 	first, second: Tables
