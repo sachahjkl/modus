@@ -1456,6 +1456,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. The full check passes: 89 modules are the same bytes with and without debug information. Not done: the pull request to the Odin project.
 - Where: `REPRODUCIBLE_BUILD.md`, section 8; `MODULE_CONTRACT.md`, "Debug information"; `src/md/infrastructure/debug_information_and_code.md`.
 
+### D-250 A module of another project is built by one command, with the build path of a module of the system
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: `kerneltool module-build <folder>` builds a module from a folder with one Odin package and a module build file `module.txt` (`key: value` lines: `name`, `imports`, `defines`, `library`). The tool moves to the folder of the system (`--system`, then `MODUS_SYSTEM`) and runs the two steps of a module of the system: one build path. A source of an outside module is in its folder, in the source library, or in the libraries of the compiler. The rules of the repository for a comment and a name do not apply to it. Refused: a row of the module table for each developer, a run from the store of Nix, a second compile command.
+- Words: "tout tout faire"
+- State: done. The examples `tally` and `agenda` have the bytes of the modules of the system. Left: an outside module in a machine; an outside module that imports another outside module.
+- Where: `TOOLS.md`, "A module from a source outside the repository"; `MODULE_CONTRACT.md`, "A module of another project"; `src/md/infrastructure/third_party_module.md`; `FIRST_MILESTONE.md`, choice 749.
+
 ## 12. The site and the publication
 
 ### D-163 A technical site
@@ -1766,6 +1773,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "Q14 simple lowkey technical lowercase"; "Q09 ouais pk pas [...] ça fera du lore"
 - State: in force. This settles conflict C-10 and the questions Q-09 and Q-14.
 - Where: D-183.
+
+### D-251 The icons of the site are rows of the table of the mark; the vector icon is the cells variant
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: the table of the uses of the mark holds every icon of the site; the table `site_icons` is gone. The generator writes an icon file, a vector file and an animated PNG file from the pixels that one procedure draws. The variant of an icon follows its cell size: one pixel for a cell is cells, two or more is smooth. The smooth variant as a vector file is refused: its reader computes the colours of a gradient (D-245 refuses a colour that the browser computes), and some pixels differ by one unit. So `icon.svg` is the cells variant, one rectangle for each run of cells of one colour.
+- Words: "tout tout faire"
+- State: done. The bytes of `favicon.ico`, of the four PNG icons and of the manifest did not change.
+- Where: `TOOLS.md`, "The pictures of the mark"; `DESIGN.md`, "The variants of the mark"; `SITE.md`, "The icons"; `src/md/features/mark_pictures.md`; `FIRST_MILESTONE.md`, choice 750.
 
 ## 13. The name and the repository
 
