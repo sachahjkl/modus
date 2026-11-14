@@ -195,8 +195,38 @@ Root_Command :: enum u32 {
 	// when the storage service gave no answer before the deadline, and
 	// `Malformed` for bytes that are no module or whose import is not in
 	// the boot image.
+	//
+	// values[0..3] all zero takes the hash from the row of the nickname in
+	// the disk grant table of the principal: `Absent` (unit `Grants`) when
+	// the nickname has no row. A row with another hash refuses the start
+	// before any read: `Exists` (unit `Grants`), and the value is the first
+	// 8 bytes of the hash of the row. A disk program whose row has the grant
+	// store gets the store of its nickname.
 	Start_From_Disk = 16,
+	// Disk_Grant changes the disk grant table of the principal of the
+	// caller (docs/MODULE_CONTRACT.md, "The grants of a disk program"):
+	// values[0..2] the nickname, 1 to 23 bytes with zero bytes after it
+	// (modus:support/disk_program, name_pack); values[4] 1 to allow, 2 to
+	// disallow; values[5] the start grant (modus:contract/start_grant). The
+	// row names the hash that the nickname names now: its row, or the disk
+	// program of the nickname that runs. The grant takes effect at the next
+	// start. The caller must act for its principal (`No_Grant`, unit
+	// `Acts_For_Principal`). A grant that no command gives is refused with
+	// `Reserved` (unit `Grants`), one that no command gives yet with
+	// `Unsupported`; a nickname with no row and no program with `Absent`
+	// (unit `Programs`); a full table with `Full` (unit `Grants`).
+	Disk_Grant = 17,
+	// Nickname_Move points a nickname of the disk grant table of the
+	// principal of the caller to another file: values[0..3] the hash,
+	// values[4..6] the nickname, as Start_From_Disk carries them. Its grants
+	// and its store follow. A nickname with no row is refused with `Absent`
+	// (unit `Grants`); the same file with `Bad_Value`.
+	Nickname_Move = 18,
 }
+
+// The action of a Disk_Grant command, in values[4].
+DISK_GRANT_ALLOW :: 1
+DISK_GRANT_DISALLOW :: 2
 
 // The state of a principal in the root service.
 Principal_State :: enum u64 {
@@ -298,6 +328,8 @@ root_command_names := [Root_Command]string {
 	.Debug      = "Debug",
 	.Palette_Provide = "Palette_Provide",
 	.Start_From_Disk = "Start_From_Disk",
+	.Disk_Grant = "Disk_Grant",
+	.Nickname_Move = "Nickname_Move",
 }
 
 // root_command_name gives the name of a command of the root ring, or "an
@@ -322,8 +354,10 @@ root_argument_name :: proc "contextless" (command: i64, argument: i64) -> string
 			return "by"
 		case .Principals, .Principal_Unlock:
 			return "number"
-		case .Start_From_Disk:
+		case .Start_From_Disk, .Nickname_Move:
 			return "hash"
+		case .Disk_Grant:
+			return "grant"
 		}
 	}
 	return ""
