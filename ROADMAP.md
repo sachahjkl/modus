@@ -46,4 +46,3 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **LLVM 22.** The build uses LLVM 22, with a measure of the speed of the code before and after.
 - **Checks for three rules that hold by reading.** The tool compares the count of kernel operations with the number that the properties state, checks that no shared package calls an allocator, and runs a block device that drops a write. Each check turns a rule that a reader must trust into a test.
 - **The QUIC library follows two more rules to the letter.** One answer goes out for each path challenge, and a misplaced extension fails with the alert that the standard names. No peer is harmed today, so the work waits.
-- **The guides agree with the code on three points.** The guides state the object kinds, the ring of each thread to the kernel and the form of a handle as the code has them.
