@@ -1,13 +1,13 @@
 # Pointer pictures
 
-The system has its own format for the pictures of the pointer, simple to manage and to package. A text manifest describes each theme, and the kernel tool packages it into one binary file. The tool imports, converts and adjusts the pointer theme "Posy's Cursor" from its Xcursor files.
+The system has its own format for the pictures of the pointer, simple to manage and to package. A text manifest describes each theme, and the modus tool packages it into one binary file. The tool imports, converts and adjusts the pointer theme "Posy's Cursor" from its Xcursor files.
 
 The terms are in `GLOSSARY.md`: pointer, pointer shape, pointer picture, hot spot, nominal size, pointer theme, pointer theme file, pointer manifest, resource, caret. The system says "pointer", never "cursor". The caret of a text input is another thing.
 
 **The idea in plain words.** The pointer is the small picture that follows the mouse. It changes with what is under it: an arrow over the desktop, a hand over a button, a text bar over a text. Each of these is a **pointer shape**. A **pointer theme** gives one **pointer picture** for each shape, at one or more sizes, with a **hot spot**: the pixel of the picture that points. The whole path is short:
 
 1. A **pointer manifest** in the repository names the shapes of a theme and where their pictures come from.
-2. At each build, the kernel tool reads the manifest and writes one **pointer theme file**.
+2. At each build, the modus tool reads the manifest and writes one **pointer theme file**.
 3. The boot image holds the file as a resource. The root service checks its hash and maps it read-only into the compositor.
 4. The compositor validates the file once, chooses the shape from what is under the pointer, and blends its picture at the place of the pointer.
 
@@ -219,7 +219,7 @@ shape arrow hot 0 0
 |XX
 ```
 
-**The command.** `kerneltool pointers` converts each manifest of `resources/pointers` to a pointer theme file in `build/pointers`, and prints a table of each theme: the shape, its source, its sizes, its frames and its bytes. It takes the Xcursor folder from the variable `POINTER_THEME_SOURCE` or from the path after the command. `kerneltool build` runs the same code.
+**The command.** `modustool pointers` converts each manifest of `resources/pointers` to a pointer theme file in `build/pointers`, and prints a table of each theme: the shape, its source, its sizes, its frames and its bytes. It takes the Xcursor folder from the variable `POINTER_THEME_SOURCE` or from the path after the command. `modustool build` runs the same code.
 
 ## 5. The two themes
 
@@ -241,7 +241,7 @@ Read on 2026-11-11:
 - The author, http://www.michieldb.nl/other/cursors/: "Posy's improved cursors for Windows 10 (and older)", "A project from 2018", and "License: \"Attribution-NonCommercial\" (free to use, change and distribute for non-commercial use)" (the license note was added on 2024-10-16; version 1.5 of the Windows sets is of 2026-10-06).
 - CC BY-NC 4.0, section 2(a)(1): the right to reproduce and share, and to make and share adapted material, "for NonCommercial purposes only". Section 3(a): a share keeps the name of the creator, a notice of the license with its URI, and says if the material was modified.
 
-What follows for this repository: property 2 of the objective of `PROPERTIES.md` reuses what is "permissively licensed"; a NonCommercial license is not. So the repository holds the manifest and the tool, and the build makes the theme file from the input. The theme file carries the license `CC-BY-NC-4.0` and the attribution, which the tool joins from the `attribution` lines of the manifest: "Posy's Cursor by Michiel de Boer (Posy), michieldb.nl/other/cursors. Linux port 1.6 by simtrami, github.com/simtrami/posy-improved-cursor-linux. License CC BY-NC 4.0, creativecommons.org/licenses/by-nc/4.0 (non-commercial use). Converted by kerneltool: the sizes 32 and 64 (32 only for wait and busy_with_arrow), no pixel changed." The program `pointers` shows it with the theme.
+What follows for this repository: property 2 of the objective of `PROPERTIES.md` reuses what is "permissively licensed"; a NonCommercial license is not. So the repository holds the manifest and the tool, and the build makes the theme file from the input. The theme file carries the license `CC-BY-NC-4.0` and the attribution, which the tool joins from the `attribution` lines of the manifest: "Posy's Cursor by Michiel de Boer (Posy), michieldb.nl/other/cursors. Linux port 1.6 by simtrami, github.com/simtrami/posy-improved-cursor-linux. License CC BY-NC 4.0, creativecommons.org/licenses/by-nc/4.0 (non-commercial use). Converted by modustool: the sizes 32 and 64 (32 only for wait and busy_with_arrow), no pixel changed." The program `pointers` shows it with the theme.
 
 ## 7. The place of the Posy theme
 
@@ -257,7 +257,7 @@ From one full check (one run, with a load of about 30 on the host; a measure is 
 
 | What | Time |
 |---|---|
-| `kerneltool pointers`: the Posy theme (122 names, 17 files read, 178 pictures, 883 008 bytes) | 34 to 87 ms |
+| `modustool pointers`: the Posy theme (122 names, 17 files read, 178 pictures, 883 008 bytes) | 34 to 87 ms |
 | the same for the theme of the system (15 grids, 42 pictures, 208 512 bytes) | 0.6 to 0.8 ms |
 | the root service: the hash of the Posy theme | 1.4 to 1.8 ms |
 | the compositor: `validate` of the Posy theme, once | 427 to 653 us |

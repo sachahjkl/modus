@@ -3024,7 +3024,7 @@ CONTEXT_VALUE_DEBUG_IMAGE_SIZE :: 21
 //
 // The root service writes 1 in the context of each program that it starts
 // when the boot image holds the resource `measure_run`: the tool puts it
-// in the boot image of `kerneltool measure` only. A program that starts a
+// in the boot image of `modustool measure` only. A program that starts a
 // child copies the value.
 //
 // A program that measures a rate over a duration (reads in one second,

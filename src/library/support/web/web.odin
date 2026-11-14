@@ -1,5 +1,5 @@
 // The small HTTP/1.1 of the test of TCP: what the program `server`, the
-// program `fetch` and the kernel tool read and write the same way. The
+// program `fetch` and the modus tool read and write the same way. The
 // head of a request or of a response, its Content-Length and the end of
 // its connection; the large page, whose bytes come from their offset; the
 // hash FNV-1a of 64 bits, that each side computes over a body.

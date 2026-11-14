@@ -16,7 +16,7 @@ The changelog and the news are two records:
 
 ## The form
 
-`kerneltool news new <subject>` writes `news/<yyyy-mm-dd>-<subject>.md` with the date of the host. The subject has only the lowercase letters a to z, the digits and `-`, at most 48 bytes.
+`modustool news new <subject>` writes `news/<yyyy-mm-dd>-<subject>.md` with the date of the host. The subject has only the lowercase letters a to z, the digits and `-`, at most 48 bytes.
 
 ```
 title: The console completes names
@@ -56,7 +56,7 @@ The text: at most 1200 bytes; no heading (the title is the heading); no line of 
 
 A film shows what a picture cannot: a list that narrows at each key, a window that moves.
 
-- `kerneltool film <name>` writes the file. It films a scenario of the machine and writes `docs/films/<name>.webm` when an entry names that film (`docs/TOOLS.md`, "The film of a document"). So write the line `film:` first, then run the command.
+- `modustool film <name>` writes the file. It films a scenario of the machine and writes `docs/films/<name>.webm` when an entry names that film (`docs/TOOLS.md`, "The film of a document"). So write the line `film:` first, then run the command.
 - The repository holds the file, as it holds the screen pictures. The site copies it and encodes nothing.
 - The file is WebM with AV1, at most 4 MiB (`FILM_DOCUMENT_SIZE_LIMIT`): each version of the file stays in the history of the repository, and a reader loads it on a phone.
 - An entry with a film has a picture. The page of the news shows the picture until the reader starts the film. A card of the home, the feed and a browser that does not play the format show the picture only.
@@ -66,7 +66,7 @@ A film shows what a picture cannot: a list that narrows at each key, a window th
 
 | Command | What it does |
 |---|---|
-| `kerneltool news new <subject>` | Writes a new entry with the date of the host, `release: next`, no title and no text: `news check` fails until a person writes them |
-| `kerneltool news check` | Checks each entry: the head is well formed, each key known and present, the date a date of the calendar and the date of the file name, the picture a PNG file of the repository, the release a release of `CHANGELOG.md` or `next`, the guide a file, the film a WebM file of the repository of at most 4 MiB in an entry that has a picture, the text not empty and at most 1200 bytes, no two titles the same. `kerneltool check` runs it |
-| `kerneltool film <name>` | Films a scenario of the machine, and writes `docs/films/<name>.webm` when an entry names it |
-| `kerneltool site` | Writes the page of the news with the film of each entry that has one, the three newest entries on the home, the feed `news.xml`, and a link from each release to its entries |
+| `modustool news new <subject>` | Writes a new entry with the date of the host, `release: next`, no title and no text: `news check` fails until a person writes them |
+| `modustool news check` | Checks each entry: the head is well formed, each key known and present, the date a date of the calendar and the date of the file name, the picture a PNG file of the repository, the release a release of `CHANGELOG.md` or `next`, the guide a file, the film a WebM file of the repository of at most 4 MiB in an entry that has a picture, the text not empty and at most 1200 bytes, no two titles the same. `modustool check` runs it |
+| `modustool film <name>` | Films a scenario of the machine, and writes `docs/films/<name>.webm` when an entry names it |
+| `modustool site` | Writes the page of the news with the film of each entry that has one, the three newest entries on the home, the feed `news.xml`, and a link from each release to its entries |

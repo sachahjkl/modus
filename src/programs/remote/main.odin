@@ -34,7 +34,7 @@
 // to test and to measure a running machine from outside, with no screen:
 //
 // ```
-// kerneltool call <the public key, 64 hexadecimal digits> "monitor.programs()"
+// modustool call <the public key, 64 hexadecimal digits> "monitor.programs()"
 // ```
 //
 // **Start**: `start("remote")` in the console, or the bar of the desktop.

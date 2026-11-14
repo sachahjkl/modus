@@ -21,7 +21,7 @@ import "modus:support/bootscreen"
 import "modus:support/cryptography/ed25519"
 
 // The public key of the signing key, 32 bytes: the tool writes it before
-// it builds the boot program (tools/kerneltool/system_description.odin).
+// it builds the boot program (tools/modustool/system_description.odin).
 system_public_key := #load(#config(SYSTEM_PUBLIC_KEY, "../../build/system_public_key.bin"))
 
 // trust_check verifies the system description of the boot image and gives

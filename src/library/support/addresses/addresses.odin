@@ -1,7 +1,7 @@
 // The addresses of a program as a developer tool shows them (docs/TOOLS.md):
 // the kind of each mapping, an address as "module + offset", the near
 // export of an address, and the band of an address space with its gaps
-// folded. Pure code: no kernel operation, no allocation, so the kernel tool
+// folded. Pure code: no kernel operation, no allocation, so the modus tool
 // tests it on the host.
 package addresses
 

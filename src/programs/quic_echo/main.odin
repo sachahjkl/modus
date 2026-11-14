@@ -19,7 +19,7 @@
 // **What it is for.** It is the test bench of the QUIC library on a real
 // network path: the handshake of TLS 1.3, streams in both directions, Retry,
 // the budgets of work against a hostile client, and the idle end. Its echo
-// has no other use: the peer of the kernel tool writes a pattern on each
+// has no other use: the peer of the modus tool writes a pattern on each
 // stream and checks each byte that comes back. The service `remote` uses
 // the same library and the same limits.
 //
@@ -43,7 +43,7 @@
 // connections accepted and ended, the Retries, the Initials refused by each
 // limit, the datagrams over the budget.
 //
-// **What it does not prove**: the client is the peer of the kernel tool,
+// **What it does not prove**: the client is the peer of the modus tool,
 // not a QUIC stack of another project. 0-RTT and the migration of a
 // connection are not built (docs/QUIC.md, section 9).
 //

@@ -427,7 +427,7 @@ when ODIN_OS == .Freestanding {
 	foreign import memory "../../../runtime/memory_for_host_tests.asm"
 	@(default_calling_convention = "c")
 	foreign memory {
-		// The same procedure for a build on the host: the host tests and the kernel tool link the assembly
+		// The same procedure for a build on the host: the host tests and the modus tool link the assembly
 		// file of the runtime made for them.
 		erase_secret_bytes :: proc(destination: rawptr, count: int) -> rawptr ---
 	}

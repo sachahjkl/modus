@@ -1,8 +1,8 @@
 // The mark of the system (docs/DESIGN.md, section "The mark"), as data: a
 // heron drawn on a grid of 24 by 24 square cells, and the name "modus" in
-// letters of square cells. The kernel tool writes the files of the mark from
+// letters of square cells. The modus tool writes the files of the mark from
 // this package, and a program of the system can draw the mark from the same
-// data. Pure code: no kernel operation, no allocation, so the kernel tool
+// data. Pure code: no kernel operation, no allocation, so the modus tool
 // tests it on the host.
 //
 // Each part of the heron (all the cells of one letter of the rows) is filled
@@ -10,7 +10,7 @@
 // where the color is moved 30 % toward white, to the bottom right corner,
 // where it is moved 30 % toward black. The eye is one flat color.
 //
-// Who uses it: the kernel tool (the files of the mark: the logo, the icon of
+// Who uses it: the modus tool (the files of the mark: the logo, the icon of
 // the site), the boot display and the programs that show the mark. The
 // parts:
 //

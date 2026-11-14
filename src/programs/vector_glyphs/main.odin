@@ -48,7 +48,7 @@ Candidate :: struct {
 	bytes: []u8,
 }
 
-// The subsets that `kerneltool vector_fonts` writes, with their licenses
+// The subsets that `modustool vector_fonts` writes, with their licenses
 // beside them in resources/fonts.
 candidates := [?]Candidate {
 	{"Paper Mono (default)", #load("../../../resources/fonts/paper_mono.ttf")},

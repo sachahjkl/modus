@@ -23,7 +23,7 @@ A developer tool (`GLOSSARY.md`) shows how the system runs. It reads reports of 
 | "The debugger", "The debugger: the design" | The debugger service: who can debug which program, its exports, the commands of the console, debugging from another machine; then the reasons of its form and what the kernel gives it |
 | "What `inspect` does not read: the bytes of another program", "The cost" | The limit of the grant, and the price of a sample |
 | "The comments of the sources", "The form of a documented comment" | The rules that the tool checks on every comment, and the form of a comment that the site and the console show |
-| "The commands of the tool" | The commands of `kerneltool`, the parts of the machine test that `kerneltool test` runs alone, the times of a test, the incremental build, and how the tool sends input and waits |
+| "The commands of the tool" | The commands of `modustool`, the parts of the machine test that `modustool test` runs alone, the times of a test, the incremental build, and how the tool sends input and waits |
 | "The bounds of the tests" | How a test waits, and why no test asserts a speed |
 
 ![The program inspect: the address space of the console as a band scaled by pages, its mappings, its modules and its threads](screenshots/inspect.png)
@@ -301,16 +301,16 @@ frame  procedure
 
 Debugging from another machine needs no mechanism of its own.
 
-- **The service `remote` carries the exports.** `remote` carries a call of an export over QUIC from another machine to a service that it can connect to (`QUIC.md`, section 7). `debugger` is one of them. On the host, `kerneltool call <key> "debugger.attach(\"clock\")"` calls an export against a machine that `kerneltool run` started, and prints its table.
+- **The service `remote` carries the exports.** `remote` carries a call of an export over QUIC from another machine to a service that it can connect to (`QUIC.md`, section 7). `debugger` is one of them. On the host, `modustool call <key> "debugger.attach(\"clock\")"` calls an export against a machine that `modustool run` started, and prints its table.
 - **Who the caller is.** The caller is `remote`: the root service applies the rule of "Who can debug which program" to `remote`, with the principal of the session of `remote`. `remote` holds the grant to act for the principal, a grant Network and a grant Connect, which reach things of `remote` alone: so a developer on another machine debugs exactly the programs with no grant, in the session where `remote` runs. Each other program is refused to `remote`. The connection adds no right, and `revoke("remote", "acts_for_principal")` ends each debugging of the host: the root service ends it at the revocation.
 - **What the host can do.** For a program with no grant, a host that holds the key of `remote` reads each byte of its memory and each register, writes its registers, and so chooses what the program runs. With the handles of that program it draws in its window and reads the keys and the pointer events that the compositor sends to it. Each client of `remote` is the one caller `remote`: two clients share one debugging, and one can steer or detach the debugging of the other (`QUIC.md`, section 7, "Who may call").
 - **The time of a call.** `remote` ends a call that takes more than 5000 ms, and with it its connection to the service: the root service then ends the debugging. Each export of the service has a bound under that time ("The bounds of the exports"). `wait_stop` waits 3000 ms at most: a caller on another machine calls it again, or reads `events()` after the line of the stop in the log.
-- **The source line.** `kerneltool call` prints, after a table whose record has the fields `path`, `line` and `hash`, the text of each line from the file of the repository, only when the file has that hash: "source: src/programs/debug_target/main.odin:79: ...". With another hash it says that the file changed since the build. A path that is absolute, that has a part `..` or that names a file of the compiler is not read.
+- **The source line.** `modustool call` prints, after a table whose record has the fields `path`, `line` and `hash`, the text of each line from the file of the repository, only when the file has that hash: "source: src/programs/debug_target/main.odin:79: ...". With another hash it says that the file changed since the build. A path that is absolute, that has a part `..` or that names a file of the compiler is not read.
 - **Where the debug objects are.** In the debug image of the debugged machine: the service names each address there. A caller on another machine can also read raw values (`registers`, `memory`) and name them with its own debug objects, by the hash of the module.
 
 ### The test
 
-`kerneltool test debugger` runs two machines. The first one is the contract of the kernel (the program `debugged`). The second one is the commands: the console starts the program `debug_target`, which has no grant and values that the test knows, and waits for exact rows: a breakpoint by a procedure name and by a file and a line, the frames of the stack, a local variable of a caller, the fields of a record inside a record, an element of an array, the name of an enumeration value, a text, one step, one line, a watch of a global, and the detach. Then the rule: a program with a private store, a service and a device service are refused; a program with a right of the machine is given, the revocation of the grant `machine` of the console ends its debugging, and a new attach is refused; the revocation of the grant to act for the principal, while a thread is held, gives the program back. Then the same exports from the host through `remote`, with the source line that the tool reads in the repository. The parts with no kernel operation have host tests (`src/library/support/debugging`).
+`modustool test debugger` runs two machines. The first one is the contract of the kernel (the program `debugged`). The second one is the commands: the console starts the program `debug_target`, which has no grant and values that the test knows, and waits for exact rows: a breakpoint by a procedure name and by a file and a line, the frames of the stack, a local variable of a caller, the fields of a record inside a record, an element of an array, the name of an enumeration value, a text, one step, one line, a watch of a global, and the detach. Then the rule: a program with a private store, a service and a device service are refused; a program with a right of the machine is given, the revocation of the grant `machine` of the console ends its debugging, and a new attach is refused; the revocation of the grant to act for the principal, while a thread is held, gives the program back. Then the same exports from the host through `remote`, with the source line that the tool reads in the repository. The parts with no kernel operation have host tests (`src/library/support/debugging`).
 
 ## The debugger: the design
 
@@ -347,9 +347,9 @@ A comment must stay true for a reader who has only the source file. A number of 
 
 ### What the check refuses
 
-`kerneltool check` reads each comment of the sources and refuses a comment that names a thing of the working records by its number, its label or its date. A comment gives the reason itself, in plain words. When the reason is long, a pointer names a document and its heading, as `(docs/MODULE_CONTRACT.md, "Did not fit, across calls")`, or a numbered section, as `(docs/CONSOLE.md, section 3)`.
+`modustool check` reads each comment of the sources and refuses a comment that names a thing of the working records by its number, its label or its date. A comment gives the reason itself, in plain words. When the reason is long, a pointer names a document and its heading, as `(docs/MODULE_CONTRACT.md, "Did not fit, across calls")`, or a numbered section, as `(docs/CONSOLE.md, section 3)`.
 
-The check reads the `.odin`, `.asm` and `.nix` files of `src/kernel`, `src/boot`, `src/runtime`, `src/library/contract`, `src/library/support`, `src/modules`, `src/programs` and `tools`, with their tests, and `flake.nix`. It reads a comment with the scanner of the site (`tools/kerneltool/site_source_readers.odin`): the lines of comment that follow each other are one text. A form that a line break cuts is found, at the line where it starts. A string of the code is not a comment.
+The check reads the `.odin`, `.asm` and `.nix` files of `src/kernel`, `src/boot`, `src/runtime`, `src/library/contract`, `src/library/support`, `src/modules`, `src/programs` and `tools`, with their tests, and `flake.nix`. It reads a comment with the scanner of the site (`tools/modustool/site_source_readers.odin`): the lines of comment that follow each other are one text. A form that a line break cuts is found, at the line where it starts. A string of the code is not a comment.
 
 | Form | Example | Message |
 |---|---|---|
@@ -374,7 +374,7 @@ Each comment breach is one line of the output: the file, the line, the words, an
 
 The forms that the check does not refuse:
 
-- A pointer to a document with a section, a label or a heading: `docs/CONSOLE.md, section 3`, `docs/ARCHITECTURE.md, U3`. The heading in quotes of a pointer is not read: it is the text of a heading, and `kerneltool site` checks that the heading exists. `docs/PROPERTIES.md, property 10` is refused: the number of a property is not a heading.
+- A pointer to a document with a section, a label or a heading: `docs/CONSOLE.md, section 3`, `docs/ARCHITECTURE.md, U3`. The heading in quotes of a pointer is not read: it is the text of a heading, and `modustool site` checks that the heading exists. `docs/PROPERTIES.md, property 10` is refused: the number of a property is not a heading.
 - A number in a word, a hexadecimal number, a size, a port, a name of a standard: `P256`, `X25519`, `SHA-256`, `0xC2`, `C2_FIELD`, `4433`, `4 KiB`.
 - A step of one digit: the steps of an algorithm or of a scenario (`RFC 6582 3.2, step 4`).
 - A date with no word of a decision before it: an example of a format, a test vector, the date of a measure.
@@ -386,7 +386,7 @@ The check prefers a comment breach that it does not see to a correct comment tha
 - a step of one digit, and a date of a decision with no word of a decision in the 48 bytes before it;
 - a comment `/* ... */`, and a line of a string that runs over several lines (the scanner reads one line at a time).
 
-A file that `src/library/support/cryptography/origin.manifest` lists is not read: it is taken from the cryptography of Odin, `kerneltool cryptography-origin` proves that it is its origin with listed changes only, and its comments are those of Odin. A file is exempt only by a manifest that the table of exemptions of `tools/kerneltool/comment_rule_check.odin` names, with the reason.
+A file that `src/library/support/cryptography/origin.manifest` lists is not read: it is taken from the cryptography of Odin, `modustool cryptography-origin` proves that it is its origin with listed changes only, and its comments are those of Odin. A file is exempt only by a manifest that the table of exemptions of `tools/modustool/comment_rule_check.odin` names, with the reason.
 
 The marks of Markdown (next section) are not words: a list item, a mark of bold or a link is not a breach, and a breach in bold or in a list item is still a breach. The host test `comment_markdown_and_the_comment_rules` checks both.
 
@@ -411,7 +411,7 @@ A comment above a declaration, on the line of a member of an enumeration, or bef
 
 A comment has no heading, no table, no quote, no line of HTML and no picture: it sits under the heading of its symbol, in a page or in a cell of a table, where a heading would break the outline of the page and a table would not fit. The site shows these lines as words of a paragraph.
 
-A link is a claim of its author: `kerneltool site` stops on a link whose target names nothing, with its file and its line, as it stops on a pointer whose heading does not exist. A code span that names nothing stays code.
+A link is a claim of its author: `modustool site` stops on a link whose target names nothing, with its file and its line, as it stops on a pointer whose heading does not exist. A code span that names nothing stays code.
 
 A module carries the same text, with its marks, and the program `manual` reads them in the system (`MODULE_CONTRACT.md`, "Description tables"): a bold word is in the bold weight, a word in italics has a thin line under it, a code span is in the font of the cells, a list item has its mark and its indentation, an example is a block, and a link is a colored name. The help of an export is the first sentence of the comment with the marks removed: the console prints it as one plain line. So the first sentence of a comment must read well with no mark.
 
@@ -423,7 +423,7 @@ The folder `src/md` holds the intent files (`GLOSSARY.md`, "Intent file"): one M
 
 **Why a check.** A reader who starts work on a part reads the file index first, and opens only the files that it lists. A file that the index does not list is a design that nobody finds. An entry with no file sends a reader nowhere. Both faults come from a change that touched one side only, so a check keeps the two the same set.
 
-`kerneltool check` runs `intent_index_check` (`tools/kerneltool/intent_index.odin`). It reads each `.md` file of `src/md` and of its folders, and refuses:
+`modustool check` runs `intent_index_check` (`tools/modustool/intent_index.odin`). It reads each `.md` file of `src/md` and of its folders, and refuses:
 
 | Fault | Message |
 |---|---|
@@ -445,7 +445,7 @@ The section of the index ends at the next heading. A line inside a fence of code
 [`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "8. The palette provider"
 ```
 
-The link opens the guide for a reader of the repository. The labels after it are those of a document pointer, and the check of the pointers of the site reads them with the same rule (`site_document_pointer_problems`, which `kerneltool site` and the host test `site_document_pointers_of_the_repository` run): a heading that the guide does not have stops the command. A link to a Markdown file that is no document, with a heading after it, stops the command too: it is most often a link with a wrong count of `..` (a file of `src/md/features` is three folders under the root, and `src/md/README.md` is two), and its heading must not pass unread. A code span of an intent file that names a document is checked as a code span of a guide is.
+The link opens the guide for a reader of the repository. The labels after it are those of a document pointer, and the check of the pointers of the site reads them with the same rule (`site_document_pointer_problems`, which `modustool site` and the host test `site_document_pointers_of_the_repository` run): a heading that the guide does not have stops the command. A link to a Markdown file that is no document, with a heading after it, stops the command too: it is most often a link with a wrong count of `..` (a file of `src/md/features` is three folders under the root, and `src/md/README.md` is two), and its heading must not pass unread. A code span of an intent file that names a document is checked as a code span of a guide is.
 
 **A pointer to an intent file.** An intent file is a working record: the site does not publish it. A comment of a source and a code span of a guide name one by its whole path, `src/md/features/palette.md`, with the labels of a place after it. On a page, the reference links to the file in the repository, at the line of the heading. A pointer to a file that the folder does not have is a stale pointer, and stops the command. The name of an intent file has letters, digits and `_`, so that a path in a sentence ends where the name ends.
 
@@ -453,11 +453,11 @@ The link opens the guide for a reader of the repository. The labels after it are
 
 ## The source paths in the documents
 
-A code span of a document that names a file of the repository is a link on the site. A span whose file is gone stays plain code, with no error: the link is lost in silence. A source that moves, or that gets a new name, must change each document that names it. `kerneltool check` runs `source_paths_check` (`tools/kerneltool/source_paths_check.odin`), which is the proof of that change.
+A code span of a document that names a file of the repository is a link on the site. A span whose file is gone stays plain code, with no error: the link is lost in silence. A source that moves, or that gets a new name, must change each document that names it. `modustool check` runs `source_paths_check` (`tools/modustool/source_paths_check.odin`), which is the proof of that change.
 
 **What it reads.** Each document of `docs/` but the records of their time, `README.md`, `AGENTS.md`, and each intent file of `src/md`. In them, each code span outside a fence of code, also a span of a heading.
 
-**Which span is a source path.** A span that starts with the path of a folder of the sources, or with the last part of that path, then a `/`. The folders of the sources are the constants of `tools/kerneltool/source_folders.odin`. The last part is the name that a folder had before a move: a span that still starts with it is read, and is refused, so an old path cannot stay in a document. The first part of a path that has more parts is not a start: under it, an intent file names a folder of a later state or of a refused form, and such a span names nothing on purpose.
+**Which span is a source path.** A span that starts with the path of a folder of the sources, or with the last part of that path, then a `/`. The folders of the sources are the constants of `tools/modustool/source_folders.odin`. The last part is the name that a folder had before a move: a span that still starts with it is read, and is refused, so an old path cannot stay in a document. The first part of a path that has more parts is not a start: under it, an intent file names a folder of a later state or of a refused form, and such a span names nothing on purpose.
 
 | Span | How the check reads it |
 |---|---|
@@ -465,7 +465,7 @@ A code span of a document that names a file of the repository is a link on the s
 | `src/kernel/enter.odin:34` | The path before the `:`. A line number is not checked |
 | `src/programs/*/main.odin`, `src/programs/<name>/main.odin` | A name that is not written out ends the path at the folder before it: `src/programs` must exist |
 | `build/modules/x`, `docs/reference/modules/` | Not a source path: the name of a source folder is inside a longer path |
-| `kerneltool check`, `kernel`, `"modus:contract/ring"` | Not a source path: the span does not start with the name of a folder and a `/` |
+| `modustool check`, `kernel`, `"modus:contract/ring"` | Not a source path: the span does not start with the name of a folder and a `/` |
 
 A path is read from the root of the repository. A path that names nothing gives the document, the line and the span. When the path exists under the folder of its first name, the sentence gives the new path.
 
@@ -480,7 +480,7 @@ A path is read from the root of the repository. A path that names nothing gives 
 
 ## The imports of the kernel and of the contract packages
 
-The system has one source library, so the compiler accepts each package of the library in each source: an import of a support package compiles in the kernel. The rule that the kernel imports the contract packages only is held by the tool, with `library_imports_check` (`tools/kerneltool/library_imports_check.odin`).
+The system has one source library, so the compiler accepts each package of the library in each source: an import of a support package compiles in the kernel. The rule that the kernel imports the contract packages only is held by the tool, with `library_imports_check` (`tools/modustool/library_imports_check.odin`).
 
 **The rule.** Each import of each source file of `src/kernel` and of `src/library/contract` names one of these, and nothing else:
 
@@ -501,17 +501,17 @@ Each other import is refused:
 
 **What it reads.** Each `.odin` file of the two folders and of each folder under them, with the parser of the library of the compiler. It reads more than the compiler compiles: a host test, a file that a build tag leaves out, and an import inside a `when` whatever its condition. The check is stricter than the compiler, never looser. A file with an error of syntax is refused as a file, because the parser does not read it whole. A foreign import names a file of assembly or an object, not a package: the check does not read it.
 
-**When it runs.** Before the first compiler of each build starts: `build`, `test`, `run`, `measure`, `screenshots`, `film`, `repeat`, and `module <name>` with no step. `kerneltool check` runs it first, and `kerneltool library-imports` runs it alone. A refused import stops the build with the file, the line and the text of the import:
+**When it runs.** Before the first compiler of each build starts: `build`, `test`, `run`, `measure`, `screenshots`, `film`, `repeat`, and `module <name>` with no step. `modustool check` runs it first, and `modustool library-imports` runs it alone. A refused import stops the build with the file, the line and the text of the import:
 
 ```
-kerneltool: src/kernel/serial.odin:12: the import "modus:support/sentence" is refused: a source of src/kernel and of src/library/contract imports a package of base:, of core: or under modus:contract/ only, by a path with no ".."; the kernel and a contract package import no support package
+modustool: src/kernel/serial.odin:12: the import "modus:support/sentence" is refused: a source of src/kernel and of src/library/contract imports a package of base:, of core: or under modus:contract/ only, by a path with no ".."; the kernel and a contract package import no support package
 ```
 
 **What it does not prove.** It does not prove that a contract package uses no kernel operation: that rule is held by review.
 
 ## A module from a source outside the repository
 
-`kerneltool module-build` builds an outside module (`GLOSSARY.md`, "Outside module"): a module whose source is in a folder of another project. It writes the module file and the debug object. The build is the build of a module of the system: the same two steps, in the same procedures (`MODULE_CONTRACT.md`, "The steps of one module, as implemented"). The code is `tools/kerneltool/outside_module.odin`.
+`modustool module-build` builds an outside module (`GLOSSARY.md`, "Outside module"): a module whose source is in a folder of another project. It writes the module file and the debug object. The build is the build of a module of the system: the same two steps, in the same procedures (`MODULE_CONTRACT.md`, "The steps of one module, as implemented"). The code is `tools/modustool/outside_module.odin`.
 
 **What the folder holds.** One Odin package, its `.asm` files if it has some, and the module build file, `module.txt`. A source imports the packages of the system from the source library `modus`: `import "modus:support/system"`.
 
@@ -536,30 +536,30 @@ The tool refuses a line that is not `key: value`, a key that is not in the table
 **The command.**
 
 ```
-kerneltool module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]
+modustool module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]
 ```
 
 - **The folder of the system** is a checkout of the repository of the system. The tool takes it from `--system`, then from the environment variable `MODUS_SYSTEM`, then from the folder where the command runs. The tool makes the two other folders absolute, then moves to the folder of the system and builds there.
-- **The command `kerneltool` of the flake** compiles the tool from its sources before it runs it. It finds those sources with `MODUS_SYSTEM`. So a command that is typed in the folder of another project sets the variable.
+- **The command `modustool` of the flake** compiles the tool from its sources before it runs it. It finds those sources with `MODUS_SYSTEM`. So a command that is typed in the folder of another project sets the variable.
 - **The folder of the outputs** is `build` in the folder of the module when `--out` is absent. The tool writes `<name>.module`, `<name>.debug`, and a folder `<name>` with the files between the steps. The build writes no file in the folder of the system. The command of the flake writes one there: the compiled tool, in `build`.
-- **A module with an import** needs the built modules of the system: the import table holds the hash of the file of each import. Run `kerneltool build` in the folder of the system first. The tool reads `build/modules/<import>.module` there.
+- **A module with an import** needs the built modules of the system: the import table holds the hash of the file of each import. Run `modustool build` in the folder of the system first. The tool reads `build/modules/<import>.module` there.
 
 From the folder of a module, with the system in `~/modus`:
 
 ```
 export MODUS_SYSTEM=~/modus
-nix develop ~/modus#module -c kerneltool module-build .
+nix develop ~/modus#module -c modustool module-build .
 ```
 
-The shell `module` of the flake has the build tools and the command `kerneltool`. It has no hook of the repository of the system: the default shell installs those hooks in the repository where it starts.
+The shell `module` of the flake has the build tools and the command `modustool`. It has no hook of the repository of the system: the default shell installs those hooks in the repository where it starts.
 
 **What the command prints.** One line for the module file, with its size and its hash, which is the identity of the module. One line for the debug object. One line for each import, with the hash that the import table names. One line with the names of the exports.
 
 ```
-kerneltool: the module my_program: /home/someone/my_program/build/my_program.module, 20480 bytes, hash 5d0c...
-kerneltool: the debug object of my_program: /home/someone/my_program/build/my_program.debug, 9216 bytes
-kerneltool: the module my_program imports drawing, hash 91ab...
-kerneltool: the module my_program has 2 exports: start, count
+modustool: the module my_program: /home/someone/my_program/build/my_program.module, 20480 bytes, hash 5d0c...
+modustool: the debug object of my_program: /home/someone/my_program/build/my_program.debug, 9216 bytes
+modustool: the module my_program imports drawing, hash 91ab...
+modustool: the module my_program has 2 exports: start, count
 ```
 
 The sizes, the hashes and the exports of this example are not those of a real module.
@@ -579,7 +579,7 @@ The sizes, the hashes and the exports of this example are not those of a real mo
 
 **The path of a source in the debug object.** A source of an outside module has the path from the folder that holds the folder of the module: `my_program/main.odin`. A stop report and the debugger show that path. The debug object holds no folder above the folder of the module.
 
-**The proof.** `kerneltool check` builds two outside modules (`outside_module_examples_check`). Each is a copy of a module of the system: the program `tally`, which has no import, and the module `agenda`, which imports `calendar`.
+**The proof.** `modustool check` builds two outside modules (`outside_module_examples_check`). Each is a copy of a module of the system: the program `tally`, which has no import, and the module `agenda`, which imports `calendar`.
 
 1. The tool copies each `.odin` and `.asm` file of the module to `build/third_party_example/<name>`, with no change, and writes the module build file there.
 2. It starts itself as a second process in that folder: `module-build . --system <folder of the system>`.
@@ -595,7 +595,7 @@ The check does not compare the bytes of the two module files. The compiler order
 
 ## The commands of the tool
 
-All the automation of the project is one program of the host, `tools/kerneltool`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c kerneltool <command>`; `kerneltool help` prints the list with one line for each.
+All the automation of the project is one program of the host, `tools/modustool`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c modustool <command>`; `modustool help` prints the list with one line for each.
 
 | Command | What it does |
 |---|---|
@@ -603,9 +603,9 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `module <name> ...` | Builds one module of the table, and its debug object; with `compile` or `convert` as its last argument, runs one of the two steps alone. The parallel build runs it for each step; run it by hand to see the errors of one module alone |
 | `module-build <folder> [--system <folder>] [--out <folder>]` | Builds one outside module from a folder of another project, with its module build file `module.txt`: writes `<name>.module` and `<name>.debug`, and prints the hash of the module and the names of its exports ("A module from a source outside the repository") |
 | `volume <name>` | Builds one boot volume: its boot image with the system description, its boot program, and the volume file. The build runs it for each volume that it must build; run it by hand, after a build, to see the errors of one volume alone |
-| `run [without_checks]` | Builds the modules and the main boot volume, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `kerneltool call` |
+| `run [without_checks]` | Builds the modules and the main boot volume, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `modustool call` |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result |
-| `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed", then the times of the test (below) |
+| `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "modustool: all tests passed", then the times of the test (below) |
 | `measure ...` | A measure run: a machine that measures with no other load. No argument: the locks. `scheduler N`, `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, and its lines. `windows`, `address_space`, `shortage`. The numbers are measures, never conditions ("A check by count, a measure by time") |
 | `screenshots` | The whole test, then the copy of the pictures to `docs/screenshots` and to the development log: the pictures are a fact of the machines, so they are copied as soon as each machine passed. Then a second build and the measure runs whose numbers the measure record holds (the locks, `clock`, `disk`, `scheduler`), then the measure record. `screenshots compress` compresses the PNG files that are stored with no compression |
 | `check` | `odin check -vet`, the imports of the kernel and of the contract packages, the example of a program outside the sources and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
@@ -623,9 +623,9 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 
 ### The parts of the machine test
 
-`kerneltool test` with no argument runs every machine in this order: a start that fails, the trusted boot, the shortage of frames, the self tests of the kernel, the main machine, the network, TCP, QUIC, QUIC against a real client, the randomness, the extended state, the return to a program, the fault ring, the debugger of a program, the kernel events, the cryptography, the persistence, the principals, the hierarchy, the ranges, the disk programs, and the loss of power. Each machine writes its log in a file `build/test_output*.txt` and its pictures in `build/screenshots`.
+`modustool test` with no argument runs every machine in this order: a start that fails, the trusted boot, the shortage of frames, the self tests of the kernel, the main machine, the network, TCP, QUIC, QUIC against a real client, the randomness, the extended state, the return to a program, the fault ring, the debugger of a program, the kernel events, the cryptography, the persistence, the principals, the hierarchy, the ranges, the disk programs, and the loss of power. Each machine writes its log in a file `build/test_output*.txt` and its pictures in `build/screenshots`.
 
-`kerneltool test <part>` runs one part only, for the work on it. The parts that the command accepts:
+`modustool test <part>` runs one part only, for the work on it. The parts that the command accepts:
 
 | Part | The machines that it runs |
 |---|---|
@@ -662,12 +662,12 @@ The persistence and the self tests of the kernel have no part of their own: only
 
 ### The disk of the disk programs
 
-The part `disk_programs` needs a data disk that holds a module file before any machine runs. The tool writes that disk itself (`tools/kerneltool/disk_programs.odin`): a file `build/test_disk_programs_disk.img` in the format of the storage service (`STORAGE.md`, "3. The format on the disk"), with one store, `programs`, whose root tree holds the module files. The writer makes one commit of a new disk: the blocks of data and the object nodes of each file, one leaf with the entries in the order of their names, the store block, then the root. A block of zero bytes is a hole, as in the storage service. The writer changes no disk that exists, and takes at most the 24 entries of one leaf.
+The part `disk_programs` needs a data disk that holds a module file before any machine runs. The tool writes that disk itself (`tools/modustool/disk_programs.odin`): a file `build/test_disk_programs_disk.img` in the format of the storage service (`STORAGE.md`, "3. The format on the disk"), with one store, `programs`, whose root tree holds the module files. The writer makes one commit of a new disk: the blocks of data and the object nodes of each file, one leaf with the entries in the order of their names, the store block, then the root. A block of zero bytes is a hole, as in the storage service. The writer changes no disk that exists, and takes at most the 24 entries of one leaf.
 
 The tool prints one line for each file, with the hash that the command `start_from_disk` names:
 
 ```
-kerneltool: build/test_disk_programs_disk.img: the store programs holds visitor, <count> bytes, hash <64 hexadecimal digits>
+modustool: build/test_disk_programs_disk.img: the store programs holds visitor, <count> bytes, hash <64 hexadecimal digits>
 ```
 
 The module of the test is `visitor`: a row of the module table of the tool with no `image`, so the build makes its file and no boot image holds it. The disk of the test has three entries with that module:
@@ -684,7 +684,7 @@ Host tests check the writer with the code of the open of the storage service (`s
 
 ### The times of a test
 
-`kerneltool test` reads the monotonic clock of the host at the start and at the end of the build, of each machine and of each step. At the end of a test that ran a machine, passed or failed, it writes `build/test_times.txt` and prints a summary. Each number is a measure: no test reads one, and no time makes a test fail ("The bounds of the tests").
+`modustool test` reads the monotonic clock of the host at the start and at the end of the build, of each machine and of each step. At the end of a test that ran a machine, passed or failed, it writes `build/test_times.txt` and prints a summary. Each number is a measure: no test reads one, and no time makes a test fail ("The bounds of the tests").
 
 The file has one line for each machine: its log file, its result, its whole time, the time from the start of QEMU to the first line of its log, the time of its steps and the time of its stop. Under it, one line for each step, in the order of the run, in fixed columns:
 
@@ -700,7 +700,7 @@ The file has one line for each machine: its log file, its result, its whole time
 
 The last step of a machine that failed is the step that failed, when a step failed.
 
-The summary is a list of lines that start with `kerneltool: measure:`:
+The summary is a list of lines that start with `modustool: measure:`:
 
 - the whole test, the build, and the machines (the start to the first line of the log, the steps, the stops);
 - for each kind of step, the count of its steps and the sum of their durations;
@@ -711,7 +711,7 @@ The summary is a list of lines that start with `kerneltool: measure:`:
 
 The time of a wait says how late the line came after the step before, not what the program did: a program that runs during several steps has its time in the step that waits for its line.
 
-One run of `kerneltool test main`, before the tool sent its input in batches, is the measure that the batches answer. The whole test took 625.6 s: the build 147.0 s, the machine 478.4 s for 1013 steps.
+One run of `modustool test main`, before the tool sent its input in batches, is the measure that the batches answer. The whole test took 625.6 s: the build 147.0 s, the machine 478.4 s for 1013 steps.
 
 | Part | Steps | Time |
 |---|---|---|
@@ -747,7 +747,7 @@ A source names an export of an import in a `foreign` block: a name, the paramete
 | The assembly files that the module links: `src/runtime/memory.asm`, the `.asm` files of its folder, and those of `src/library/support/system` for a program | The tool lists them as the build does |
 | The command of the compiler and the command of `llc`, with each flag: the checks of the kernel, the kind of debug information (`-debug-info:same-code`), the direction of the instruction scheduler of `llc` (`-misched-topdown`), the settings of the module, the features of the target | The text of the two commands (`module_compile_command`, `module_object_command`) |
 | The programs `odin`, `llc`, `nasm` and `ld.lld` | The path of each file after each link, its size and its time. In the store of Nix the path holds the hash of the package |
-| The tool | One hash over every file of `tools/kerneltool` and of each package of the repository that it imports, to any depth. The code that builds a module is in the tool. The executable of the tool is not the identity: two builds of the tool do not give the same file |
+| The tool | One hash over every file of `tools/modustool` and of each package of the repository that it imports, to any depth. The code that builds a module is in the tool. The executable of the tool is not the identity: two builds of the tool do not give the same file |
 
 **The inputs of the conversion.**
 
@@ -764,7 +764,7 @@ A source names an export of an import in a `foreign` block: a name, the paramete
 
 - **The body of an export.** The compiler, `llc` and the link never open a file of the import, so no body of it can be inlined in the importer. To inline across two bodies of code, their sources are compiled into one module (`MODULE_CONTRACT.md`, "Closed rules"); then they are sources of that module, and the list of the compiler holds them.
 - **The description of an export** (its name, its parameters, its result). The compiled code depends on the declaration in the `foreign` block of the importer, which is a source of the importer. The description in the file of the import is not read by the compile step. The conversion compares the two: it reads each `foreign` procedure of the sources of the importer and the description of the export of that name in the module file of the import, and a declaration with another count of parameters, another type, direction, record layout, result, error record or calling convention stops the build with its file and its line, and so does a symbol that became a slot of the importer and has no compared declaration (`import_declarations.odin`; `MODULE_CONTRACT.md`, "The declaration of an import is checked"). A change of the sources changes the key of the compile step, which the key of the conversion holds, and a change of the import changes the key of the conversion: each runs the comparison again.
-- **A library module** (`GLOSSARY.md`; the field `library` of the module table, set for `drawing`). The conversion refuses its module file when a segment that the loader writes is read-only after the load: a segment with a rebase (a table of addresses) or a slot (an import) (`MODULE_CONTRACT.md`, "A library as a module"). A segment of that range of the linker with no rebase and no slot is a constant segment for every module, and is not refused. After the modules, each build prints one measure line for each library module: the size of its file, and the size of the file of each module that imports it with their sum: "kerneltool: measure: the library module drawing has ... bytes; the files of the 24 modules that import it have ... bytes in all". It is a measure to compare two builds; no check reads it.
+- **A library module** (`GLOSSARY.md`; the field `library` of the module table, set for `drawing`). The conversion refuses its module file when a segment that the loader writes is read-only after the load: a segment with a rebase (a table of addresses) or a slot (an import) (`MODULE_CONTRACT.md`, "A library as a module"). A segment of that range of the linker with no rebase and no slot is a constant segment for every module, and is not refused. After the modules, each build prints one measure line for each library module: the size of its file, and the size of the file of each module that imports it with their sum: "modustool: measure: the library module drawing has ... bytes; the files of the 24 modules that import it have ... bytes in all". It is a measure to compare two builds; no check reads it.
 - **A program that draws through the drawing module** has two entries in its line of the module table: the import `drawing`, and the compiler setting `DRAWING_THROUGH_MODULE=true`, which makes the window layer of `src/library/support/interface` call the exports. A host test of the tool (`programs_that_draw_through_the_module_follow_its_rules`) refuses a line with the setting and no import, a source of such a program that draws a picture or a grid of text cells, and one that starts a child of its own file with no load source.
 - **The layout of a record, and a constant.** An importer that uses a record or a constant of a library imports the package that declares it (`modus:contract/`, `modus:support/`, or the folder of the module). That package is in the list of the compiler, so its files are inputs of the compile step.
 - **A file of `#load`.** It is in the list of the compiler. No source loads a module file of the build; if one did, the list names that file, and the key of the compile step holds its hash.
@@ -778,7 +778,7 @@ A source names an export of an import in a `foreign` block: a name, the paramete
 - If not, the module is **converted** (the conversion alone) when the record of the conversion is absent or damaged, when its key is not the key of now, or when the module file or the debug object is absent or has not its recorded hash.
 - If not, the module is **kept**: no process starts.
 
-A damaged record is never an error. The tool decides for a module after its imports were built, converted or kept. A converted module has a new hash, as a built one, so each module that imports it is converted in its turn: a change goes up the levels of the imports as a chain of conversions. An import that is built again to the same bytes changes nothing above it. The tool prints one line with the counts, for example "kerneltool: 48 of 84 modules kept, 33 converted, 3 built: drawing (built: an input changed), clock (converted: an import or the linked file changed), ...".
+A damaged record is never an error. The tool decides for a module after its imports were built, converted or kept. A converted module has a new hash, as a built one, so each module that imports it is converted in its turn: a change goes up the levels of the imports as a chain of conversions. An import that is built again to the same bytes changes nothing above it. The tool prints one line with the counts, for example "modustool: 48 of 84 modules kept, 33 converted, 3 built: drawing (built: an input changed), clock (converted: an import or the linked file changed), ...".
 
 **When no record is written.** The tool writes no record for a module when the compiler gave no list, or when it cannot prove that the hash and the build read the same bytes: an input file must be older than the start of the build by one second, and its size and its time must be the same after the build. The conversion reads the sources too, so the rule holds for a module that was only converted: its record of the conversion is removed. A file that was saved during the build, or in the last second before it, costs one more build of its modules.
 
@@ -831,11 +831,11 @@ A volume that a command does not need is not built and not checked. It stays wit
 
 **What runs at each build.** The debug image, the pointer themes, the glyph caches and the four boot images are built at each build: each one reads outputs of the modules or files of the repository, and its time is in the measure.
 
-**How to force a whole build.** `kerneltool build whole` ignores every record, builds each module and each boot volume, and writes new records. The commands that prove the build always build whole, with no option: `check`, `screenshots` and `repeat`, and the two procedures of the second build set it themselves, so no caller can compare two builds of which one kept its outputs. `nix flake check` builds in an empty folder, with no record.
+**How to force a whole build.** `modustool build whole` ignores every record, builds each module and each boot volume, and writes new records. The commands that prove the build always build whole, with no option: `check`, `screenshots` and `repeat`, and the two procedures of the second build set it themselves, so no caller can compare two builds of which one kept its outputs. `nix flake check` builds in an empty folder, with no record.
 
-**What costs a whole build.** A change of a file of `tools/kerneltool`, or of a package that the tool imports, changes the identity of the tool, so every module and every boot volume that the command needs is built again: a scenario of a machine test is such a file. A change of the compiler or of a program of the build does the same. A change of a file of a package builds again each module that compiles the package in, also when the file is a host test that a build tag leaves out. A change of a file of a module that other modules import (an import of the module table, not a package) builds that module and converts the others.
+**What costs a whole build.** A change of a file of `tools/modustool`, or of a package that the tool imports, changes the identity of the tool, so every module and every boot volume that the command needs is built again: a scenario of a machine test is such a file. A change of the compiler or of a program of the build does the same. A change of a file of a package builds again each module that compiles the package in, also when the file is a host test that a build tag leaves out. A change of a file of a module that other modules import (an import of the module table, not a package) builds that module and converts the others.
 
-**The measure.** Each `build` prints its measure, lines that start with `kerneltool: measure: the build`: the whole time, the time of the hash of the input files with their count and their bytes, the time of the modules with the count of the modules built, converted and kept (and in it the time of the compile steps, the time of the conversions, the checks and the writes of the records; the time of a step is the time on the clock from the start of its first process to the end of its last one, in each level, with several processes at once), then one line for each later step: the debug image, the pointer themes, the glyph caches, the four boot images, the checks and the writes of the build records of the boot volumes, and the boot volumes in all. One line gives the count of the volumes built, kept and not needed by the command, with the count of volume processes at once; then one line for each built volume gives the whole time of its process. The process of a volume prints its own line, `kerneltool: measure: the build of the boot volume <name>`: the signed boot image, the compiler of the boot program, the assembler with the link and the firmware signature, and the volume file. Each number is a measure: nothing reads one.
+**The measure.** Each `build` prints its measure, lines that start with `modustool: measure: the build`: the whole time, the time of the hash of the input files with their count and their bytes, the time of the modules with the count of the modules built, converted and kept (and in it the time of the compile steps, the time of the conversions, the checks and the writes of the records; the time of a step is the time on the clock from the start of its first process to the end of its last one, in each level, with several processes at once), then one line for each later step: the debug image, the pointer themes, the glyph caches, the four boot images, the checks and the writes of the build records of the boot volumes, and the boot volumes in all. One line gives the count of the volumes built, kept and not needed by the command, with the count of volume processes at once; then one line for each built volume gives the whole time of its process. The process of a volume prints its own line, `modustool: measure: the build of the boot volume <name>`: the signed boot image, the compiler of the boot program, the assembler with the link and the firmware signature, and the volume file. Each number is a measure: nothing reads one.
 
 One whole build before the incremental build, on a host with 16 processors, read in the times of the files that it wrote: 83 s from the first LLVM IR file to the last module (84 modules, one compiler process for each processor), under 1 s for the debug image, the pointer themes and the three boot images, then 51 s for the 18 boot volumes, one after the other, 2.8 s each.
 
@@ -844,11 +844,11 @@ One whole build before the incremental build, on a host with 16 processors, read
 The hash of a module file is its identity. A change that must not change the system is proved by it: a move of the sources, a new name of a folder, a change of the tool. Each module of the build after the change has the hash of the build before.
 
 ```
-nix develop -c kerneltool build
-nix develop -c kerneltool module-hashes write /tmp/module_hashes_before
+nix develop -c modustool build
+nix develop -c modustool module-hashes write /tmp/module_hashes_before
 (the change)
-nix develop -c kerneltool build
-nix develop -c kerneltool module-hashes compare /tmp/module_hashes_before
+nix develop -c modustool build
+nix develop -c modustool module-hashes compare /tmp/module_hashes_before
 ```
 
 - `module-hashes write <file>` writes the record: the line `module hashes, form 1`, then one line for each module of the table of the modules, the BLAKE3 hash of `build/modules/<name>.module` in 64 hexadecimal digits, a space and the name.
@@ -862,14 +862,14 @@ A build key holds the path of each source, so a move of a folder builds each mod
 
 The machine test acts as the keyboard and the mouse of the machine. Each key and each move goes to the virtual keyboard and the virtual mouse of QEMU, so the input service of the system reads them from the keyboard controller as it reads real devices. The tool has no other way in: no export of the system takes a key or a move.
 
-The tool talks to QEMU on its machine protocol (QMP), on a Unix socket beside the log of the machine (`build/test_output*.qmp`). A second socket of the same protocol is for the worker of a film only ("The film"). A command is one line of JSON, and QEMU answers each command with one line: the tool knows when QEMU did it (`tools/kerneltool/qmp.odin`, `qmp_socket_linux.odin`, `machine_input.odin`). The monitor of QEMU for a reader stays on the standard input: the tool ends QEMU through it.
+The tool talks to QEMU on its machine protocol (QMP), on a Unix socket beside the log of the machine (`build/test_output*.qmp`). A second socket of the same protocol is for the worker of a film only ("The film"). A command is one line of JSON, and QEMU answers each command with one line: the tool knows when QEMU did it (`tools/modustool/qmp.odin`, `qmp_socket_linux.odin`, `machine_input.odin`). The monitor of QEMU for a reader stays on the standard input: the tool ends QEMU through it.
 
 **No wait is a fixed time.** After an input, the tool waits for a condition, with the bound of a hang ("The bounds of the tests"):
 
 - **Keys.** The keys of a typed line, with its Enter, are one list. One command of QMP (`input-send-event`) presses and releases several keys with no time between two events. The queue of the virtual keyboard holds 16 bytes, and QEMU drops, with no error, a byte that finds it full; a key is 3 bytes, a key with a prefix (an arrow, Page Up) 5, a key with Shift 6. So the tool cuts the list into commands of 16 bytes at most, and sends the next command when the keyboard controller says that it holds no byte: the system read the bytes before. The tool reads the status of the controller through QEMU, and the read changes nothing in the machine.
 - **The condition after the keys.** When the program `remote` runs, the tool reads the count of key records of `compositor.pointer()` before the list, and goes on when the count grew by one record for each press and each release: one call for each read of the count, not several for each key. A count that stops short is a failure, and the message has the count. The same read gives `keys_refused`, the key records that the compositor lost because a window did not read: a number above 0 is a failure. Before `remote` runs, and when the scenario revoked its grant, the condition is that the system read each byte of the keyboard. The input service takes a byte of the keyboard from the controller only when the input ring has room for its record (`ARCHITECTURE.md`, "The path of a key"), so "the controller holds no byte" also says that the input ring took each key record.
 - **The dependency on QEMU.** "The controller holds no byte" is bit 0 of the status port at 0. QEMU sets that bit again inside the read of the data port while the queue of the device holds a byte, so the bit at 0 means that the queue is empty. This holds while the property `kbd-throttle` of the i8042 device is false, which is its default; with `kbd-throttle` true the bit stays 0 for 1 ms after each byte, and the condition is false. The tool does not set that property.
-- **The echo of a line of the console.** The two conditions above stop at the compositor or at the input ring. A key then goes through the ring of the window and the terminal ring. The console writes each line that it enters on the log, as `[console] > text`, before it runs it. So after the keys of a step `Type` that goes to the console, the tool waits for that line of the log: each key of the line and its Enter reached the console, in order. A line with no echo fails at the step that typed it. The message names the line, gives the counts `keys`, `keys_waiting` and `keys_refused` of the compositor when the tool can call it, and quotes each line of the log that says that a queue refused a record or that the input ring was full. The tool waits for the echo only when it knows that the console takes the line now (`tools/kerneltool/console_echo.odin`):
+- **The echo of a line of the console.** The two conditions above stop at the compositor or at the input ring. A key then goes through the ring of the window and the terminal ring. The console writes each line that it enters on the log, as `[console] > text`, before it runs it. So after the keys of a step `Type` that goes to the console, the tool waits for that line of the log: each key of the line and its Enter reached the console, in order. A line with no echo fails at the step that typed it. The message names the line, gives the counts `keys`, `keys_waiting` and `keys_refused` of the compositor when the tool can call it, and quotes each line of the log that says that a queue refused a record or that the input ring was full. The tool waits for the echo only when it knows that the console takes the line now (`tools/modustool/console_echo.odin`):
   - The console is in front: the last step that changed the front window was the step `Front` of the console. A step `Launch`, `Move`, `Close`, `Click` or `Drag`, the key of the palette, and a typed line that has `start(` make the front window unknown. The tool then waits for no echo, as for a line typed into the window of another program.
   - No line can still run: a step `Wait` passed since the step `Type` before. The console enters a line only when the line before it ended. A line typed with no `Wait` since the line before it is owed: the tool waits for its echo, in order, at the next step `Type` of the console that has a `Wait` before it.
   - A step `Keys` and a step `Key` have no echo: they enter no line.
@@ -887,7 +887,7 @@ The tool talks to QEMU on its machine protocol (QMP), on a Unix socket beside th
 | `CONDITION_POLL_PERIOD` | 1 ms | The period between two reads of a condition through QEMU or through `remote` |
 | `LOG_POLL_PERIOD` | 50 ms | The period of the poll of the log when no change of the file woke the wait |
 | The poll of the step `Power_Loss` | 1 ms | The period between two reads of the state of the disk that the tool serves |
-| `FILM_RATE` | 30 pictures in one second | The rate of a film (`kerneltool film`): a rate, not a wait |
+| `FILM_RATE` | 30 pictures in one second | The rate of a film (`modustool film`): a rate, not a wait |
 
 A film has two more kinds of time, and only a film has them: the period between two typed keys and the hold of a state for its viewer ("The film"). No scenario of a test has such a step, and a host test checks that.
 
@@ -898,7 +898,7 @@ A picture shows a window that its program drew after the line of the log that th
 1. each program sent the picture of its last change;
 2. the compositor drew each picture that it received.
 
-A picture that is taken too early is wrong, and no test fails. So the tool reads the two facts, and takes the picture when they hold. The code is `tools/kerneltool/screen_settle.odin`.
+A picture that is taken too early is wrong, and no test fails. So the tool reads the two facts, and takes the picture when they hold. The code is `tools/modustool/screen_settle.odin`.
 
 **The condition by calls.** When the tool can call the compositor through `remote`, it makes three reads in this order: `monitor.programs()`, then `compositor.windows()` and `compositor.screen()`, then `monitor.programs()` again. The screen is settled when, for each window:
 
@@ -923,7 +923,7 @@ The hang bound ends a wait for a screen that never settles. The test fails, and 
 
 ### The film
 
-`kerneltool film <name>` builds the main boot volume, starts a test machine, runs the scenario of the film, and writes two files from the same pictures: `build/films/<name>.mp4` and `build/films/<name>.webm`. It copies the MP4 file and three of its pictures, as PNG files, to a new folder of the development log (`<date>_film_<name>`). It copies the WebM file to `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). A film is not a test: no check runs it. The code is `tools/kerneltool/film.odin`.
+`modustool film <name>` builds the main boot volume, starts a test machine, runs the scenario of the film, and writes two files from the same pictures: `build/films/<name>.mp4` and `build/films/<name>.webm`. It copies the MP4 file and three of its pictures, as PNG files, to a new folder of the development log (`<date>_film_<name>`). It copies the WebM file to `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). A film is not a test: no check runs it. The code is `tools/modustool/film.odin`.
 
 | Film | What it shows | Scenario |
 |---|---|---|
@@ -968,15 +968,15 @@ Each file is at a constant 30 pictures in one second. Each pixel of the screen i
 
 ### The film of a document
 
-A news entry can name a film: `film: docs/films/<name>.webm` in its head (`news/README.md`, "The film"). The repository holds that file, as it holds the screen pictures, so `kerneltool site` copies it and needs no encoder.
+A news entry can name a film: `film: docs/films/<name>.webm` in its head (`news/README.md`, "The film"). The repository holds that file, as it holds the screen pictures, so `modustool site` copies it and needs no encoder.
 
-- `kerneltool film <name>` writes `docs/films/<name>.webm` after its two files, when a news entry names the film with that name (`film_is_named_by_a_news_entry`). A film that no entry names stays in the build folder. So the line `film:` is written first, then the command runs.
+- `modustool film <name>` writes `docs/films/<name>.webm` after its two files, when a news entry names the film with that name (`film_is_named_by_a_news_entry`). A film that no entry names stays in the build folder. So the line `film:` is written first, then the command runs.
 - The file is the WebM file of the build folder, byte for byte.
-- Before the copy, the command makes the checks of `kerneltool news check` on the file (`film_document_problem`): a WebM file (an EBML header of the document type `webm`), at most 4 MiB (`FILM_DOCUMENT_SIZE_LIMIT`), whose tracks state the width and the height of its pictures. A file that fails is not copied: the repository keeps the film that it has, and the command fails.
+- Before the copy, the command makes the checks of `modustool news check` on the file (`film_document_problem`): a WebM file (an EBML header of the document type `webm`), at most 4 MiB (`FILM_DOCUMENT_SIZE_LIMIT`), whose tracks state the width and the height of its pictures. A file that fails is not copied: the repository keeps the film that it has, and the command fails.
 - The bound of 4 MiB: each version of the file stays in the history of the repository, and a reader of the site loads it on a phone. The film of the palette, 36.8 s of the whole screen, has 1.5 MiB.
 - A film is not the same bytes at each run: the pictures are taken at the times of the host. Run the command to change the film, and commit the new file only then.
 
-The tool reads the width and the height of the pictures from the file itself (`film_document_picture_size`: the element `Tracks` of the segment, the first track with `PixelWidth` and `PixelHeight`). The site states them on the `video` element (`SITE.md`, "The film of a news entry"). The code is `tools/kerneltool/film_document.odin`.
+The tool reads the width and the height of the pictures from the file itself (`film_document_picture_size`: the element `Tracks` of the segment, the first track with `PixelWidth` and `PixelHeight`). The site states them on the `video` element (`SITE.md`, "The film of a news entry"). The code is `tools/modustool/film_document.odin`.
 
 **A film shows time; a test waits for conditions.** A scenario of a test has no fixed time ("How the tool sends input and waits"). A film is for a viewer, who must see a text being typed and must have the time to read a state. So a film has two kinds of step with a fixed time, and they exist only in the scenario of a film:
 
@@ -991,7 +991,7 @@ These times never stand for a condition. After each key of `Film_Type` the tool 
 
 ### The pictures of the mark
 
-One generator makes each file of the mark (`tools/kerneltool/mark_pictures.odin`, `mark_formats.odin`, `mark_tile_map.odin`, `mark_developer_picture.odin`). The data of the mark is in `src/library/support/mark`; the generator turns a request into the bytes of a file. Three commands ask it:
+One generator makes each file of the mark (`tools/modustool/mark_pictures.odin`, `mark_formats.odin`, `mark_tile_map.odin`, `mark_developer_picture.odin`). The data of the mark is in `src/library/support/mark`; the generator turns a request into the bytes of a file. Three commands ask it:
 
 | Command | What it asks |
 |---|---|
@@ -1026,13 +1026,13 @@ Two more words take no option: `mark uses` prints the table of the uses, and `ma
 Examples:
 
 ```
-kerneltool mark still --variant cells --cell 1 --scheme light
-kerneltool mark frame --animation dash --frame 2 --cell 16
-kerneltool mark tile_map --animation hop --width 1024
-kerneltool mark table --forms no --variant cells --cell 1
-kerneltool mark still --format ico --variant cells --cell 1 --size 32 --scheme light --entry smooth:2:48
-kerneltool mark still --format svg --variant cells --cell 1 --scheme light --dark-rule yes
-kerneltool mark animation --animation dash --format apng
+modustool mark still --variant cells --cell 1 --scheme light
+modustool mark frame --animation dash --frame 2 --cell 16
+modustool mark tile_map --animation hop --width 1024
+modustool mark table --forms no --variant cells --cell 1
+modustool mark still --format ico --variant cells --cell 1 --size 32 --scheme light --entry smooth:2:48
+modustool mark still --format svg --variant cells --cell 1 --scheme light --dark-rule yes
+modustool mark animation --animation dash --format apng
 ```
 
 The fifth example writes the bytes of `favicon.ico` of the site, and the sixth the bytes of its `icon.svg`.
@@ -1102,7 +1102,7 @@ A few lines that say what the file is.
 
 **Who changes the file, and when.** The file is written by hand. An entry is added when a work is planned, and it moves from one section to another when its state changes. When a work is done, its entry is removed in the commit that adds the changelog fragment of the work. A work that is done in part keeps an entry whose summary names the part that is left.
 
-`kerneltool roadmap check` checks the file; `kerneltool check` runs it, and `kerneltool site` stops on the same faults of form. Each problem is one sentence with the line of its fault. The check refuses:
+`modustool roadmap check` checks the file; `modustool check` runs it, and `modustool site` stops on the same faults of form. Each problem is one sentence with the line of its fault. The check refuses:
 
 | Fault | The rule |
 |---|---|
@@ -1118,14 +1118,14 @@ A few lines that say what the file is.
 
 **The last rule, and its limit.** The tool cannot know that a work is done. It knows that an entry of the changelog has the summary of an entry of the roadmap. So the fragment that ends a planned work takes the summary of its roadmap entry as its bold summary, and the check then fails until the entry is removed: the removal cannot be forgotten in that commit. A fragment with another summary is not seen: the rule helps the writer who follows it, and proves nothing about the others. Two summaries that are equal by chance name two works with one name; the roadmap entry then takes a more exact summary. Two summaries are compared with no regard to the case and to the marks (`roadmap_summary_key`).
 
-The code is `tools/kerneltool/roadmap.odin`; the host tests are `roadmap_test.odin`. The page of the site: `SITE.md`, "The roadmap".
+The code is `tools/modustool/roadmap.odin`; the host tests are `roadmap_test.odin`. The page of the site: `SITE.md`, "The roadmap".
 
 ## The bounds of the tests
 
 A test checks a condition: a value, a state, a line of the log. A test that depends on the speed of the computer that runs it fails on a loaded host with no fault of the system, so no test asserts a speed.
 
 - **A time in a test has one role: to end a hang.** The bound is generous, and the same for each wait that has no reason of its own. It is never tuned to how fast the work is on some host.
-  - A step of a machine test, and each wait of the tool after an input (the keys, the pointer, a reply of QEMU): `HANG_BOUND`, 120 s (`tools/kerneltool/machine.odin`). The QUIC cases and the cases of `remote` of the peer, the HTTP client of the host, the calls of the host, the wait for a key and the start of swtpm use the same bound. A TCP case of the peer has `CASE_TIME_LIMIT`, 180 s: one case runs several timers of the server of 10 s and more, in time of the machine.
+  - A step of a machine test, and each wait of the tool after an input (the keys, the pointer, a reply of QEMU): `HANG_BOUND`, 120 s (`tools/modustool/machine.odin`). The QUIC cases and the cases of `remote` of the peer, the HTTP client of the host, the calls of the host, the wait for a key and the start of swtpm use the same bound. A TCP case of the peer has `CASE_TIME_LIMIT`, 180 s: one case runs several timers of the server of 10 s and more, in time of the machine.
   - The first Wait of a machine, its boot: `BOOT_HANG_BOUND`, 180 s.
   - The checks of a program that a machine test runs: `system.TEST_HANG_BOUND_MILLISECONDS`, 60 s (`src/library/support/system/test_bounds.odin`). It is under the bound of a step, so that the program writes its own report of the hang before the tool ends the machine.
 - **A case that can count its progress has a bound on a stall.** It ends when its count does not grow for `system.TEST_HANG_BOUND_MILLISECONDS`, or after `system.TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS` (600 s) in all. The report names the step where the count stopped: a step that stays still tells a lost wake from a slow host. The Wait for the line of such a case has `PROGRESS_CASE_HANG_BOUND_SECONDS` (660 s), more than the overall bound of the program.
@@ -1133,7 +1133,7 @@ A test checks a condition: a value, a state, a line of the log. A test that depe
 - **A behaviour in time of the system is checked by order and by its own clock.** A deadline that ends a wait, a budget of processor time that throttles a program, a timer of TCP, the idle timeout of QUIC and the clock are behaviours. The check has a lower bound where the behaviour is "not before" ("the idle end held its bound": the end came no earlier than the idle timeout, in time of the machine). Its upper side is the hang bound only, and the line prints how late the end came. A wake is checked by a deadline that is the hang bound: a wait that ended before its deadline was woken.
 - **A test waits for a condition, never for a fixed time.** A thread that must be in its wait before a wake is read with `Thread_State` or `Program_State` until it is `Waiting`. A stress of a fixed time goes on until each side did its work at least once.
 
-`kerneltool check` checks the steps of the machine tests (`tools/kerneltool/test_bound_check.odin`). The field `seconds` of a step is a named constant, never a number, and a line of comment just above the constant gives its reason. The steps with a bound of their own today: the long case of the fault ring (its progress) and the firmware of the TPM and of Secure Boot (a command of the TPM that the firmware abandons costs it about two minutes).
+`modustool check` checks the steps of the machine tests (`tools/modustool/test_bound_check.odin`). The field `seconds` of a step is a named constant, never a number, and a line of comment just above the constant gives its reason. The steps with a bound of their own today: the long case of the fault ring (its progress) and the firmware of the TPM and of Secure Boot (a command of the TPM that the firmware abandons costs it about two minutes).
 
 The check does not read the checks of the programs: `system.time() + 1000` is a poll interval in one place and a bound in another, and no rule on the text tells them apart. The rule for them is this section.
 
@@ -1146,9 +1146,9 @@ So a program separates the two:
 - **In a test, a program checks by count.** Each check ends after a fixed count of work, and its line gives the count. No check ends after a duration; the hang bound ends a check that never reaches its count, as a failure.
 - **In a measure run, a program measures by time.** It runs the same work for a fixed duration, writes its rates, and still checks its counts.
 
-A **measure run** is a machine whose boot image holds the resource `measure_run`. The root service then writes 1 in the value 22 of the context (`CONTEXT_VALUE_MEASURE_RUN`) of each program that it starts, and a program reads it with `system.measure_run()`. The modules are the modules of the test, byte for byte: the tool builds one boot image more (`build/boot_measure.image`, `build/boot_volume_measure.img`) from the same modules. A measure is then a measure of the code that the test checked. `kerneltool test` never starts a measure run; each form of `kerneltool measure` does.
+A **measure run** is a machine whose boot image holds the resource `measure_run`. The root service then writes 1 in the value 22 of the context (`CONTEXT_VALUE_MEASURE_RUN`) of each program that it starts, and a program reads it with `system.measure_run()`. The modules are the modules of the test, byte for byte: the tool builds one boot image more (`build/boot_measure.image`, `build/boot_volume_measure.img`) from the same modules. A measure is then a measure of the code that the test checked. `modustool test` never starts a measure run; each form of `modustool measure` does.
 
-`kerneltool measure <program>` starts one program alone on a measure run, waits for the lines of its measures and for its last line, stops the machine, and prints the lines of the program. The log is `build/test_output_measure_<program>.txt`. `kerneltool screenshots` runs the measure runs whose numbers the measure record holds, after the test.
+`modustool measure <program>` starts one program alone on a measure run, waits for the lines of its measures and for its last line, stops the machine, and prints the lines of the program. The log is `build/test_output_measure_<program>.txt`. `modustool screenshots` runs the measure runs whose numbers the measure record holds, after the test.
 
 | Program | The check of a test, by count | The measure of a measure run |
 |---|---|---|
@@ -1163,5 +1163,5 @@ A **measure run** is a machine whose boot image holds the resource `measure_run`
 
 Two programs keep a time in their check, because the property is a behaviour in time of the system. `limits` checks a limit of processor time for each second: its check needs one period of the budgets. `scheduler` checks shares, which are proportions over a time: its interval ends on a count of ticks of the spinner with the least share, not on a time of the clock, so a loaded host makes the interval longer and the check the same.
 
-The window of each of these programs shows, in a test, the counts of its checks, and says that the rates are measured by `kerneltool measure`. It shows no rate that it did not measure.
+The window of each of these programs shows, in a test, the counts of its checks, and says that the rates are measured by `modustool measure`. It shows no rate that it did not measure.
 

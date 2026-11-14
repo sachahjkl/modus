@@ -170,7 +170,7 @@ a_damaged_substitution_table :: proc(t: ^testing.T) {
 	testing.expect_value(t, outside_problem, Font_Problem.Too_Short)
 }
 
-// The subsets of Paper Mono that "kerneltool vector_fonts" writes draw the
+// The subsets of Paper Mono that "modustool vector_fonts" writes draw the
 // slashed zero: 3 contours and 32 points, where the zero of the font has 2
 // contours (24 points in Regular, 26 in SemiBold), like the capital O.
 @(test)

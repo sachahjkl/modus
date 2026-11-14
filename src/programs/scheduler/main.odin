@@ -1793,7 +1793,7 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 	}
 	if !measure_rows {
 		y += ROW
-		write(inside, 0, y, "wakes in one second, late wakes and work in one second are measures: run `kerneltool measure scheduler`", graphics.COLOR_DIM)
+		write(inside, 0, y, "wakes in one second, late wakes and work in one second are measures: run `modustool measure scheduler`", graphics.COLOR_DIM)
 	}
 
 	// The processors: the strategy of each queue and its counts.

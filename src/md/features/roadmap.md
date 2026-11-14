@@ -56,6 +56,6 @@ The check reads the fragments and the releases, because a fragment becomes an en
 
 ## State
 
-Built: the file, the command `kerneltool roadmap check` with its host tests, the page, its line in the menu of the bar ([site_bar.md](site_bar.md)), the line on the page of the releases, on the home and on the status page, and the search entries.
+Built: the file, the command `modustool roadmap check` with its host tests, the page, its line in the menu of the bar ([site_bar.md](site_bar.md)), the line on the page of the releases, on the home and on the status page, and the search entries.
 
 Left: no command writes or moves an entry.

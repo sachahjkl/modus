@@ -7,7 +7,7 @@
 // and finds where a variable is and what its type is, with no allocator
 // and no parser of DWARF.
 //
-// The kernel tool writes it at the build from the linked ELF file of the
+// The modus tool writes it at the build from the linked ELF file of the
 // module: the procedure table from the symbol table, the line table from
 // the line program of DWARF, the types and the variables from the entries
 // of `.debug_info`. The system reads no DWARF: a parser of DWARF is a large
@@ -39,7 +39,7 @@
 //
 // and no other byte. The reader refuses every other form (check).
 //
-// Who uses it: the kernel tool writes the debug objects (`encode`) into the
+// Who uses it: the modus tool writes the debug objects (`encode`) into the
 // debug image; the program `errors`, the console and the developer tools
 // read them through `system.Debug_Names` to name the frames of a stop
 // report (`check`, `place_of`). A debugger reads the variables

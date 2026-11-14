@@ -16,7 +16,7 @@ import op "modus:contract/operation"
 // the kernel changes an x87, SSE or AVX register. The build makes the
 // kernel with no such instruction, and refuses a kernel that has one
 // outside the three procedures of the save and the restore
-// (tools/kerneltool/vector_check.odin).
+// (tools/modustool/vector_check.odin).
 
 // The area of one thread: the standard form of xsave, with x87, SSE, AVX
 // and the three components of AVX-512 at their offsets (1664 + 1024 bytes

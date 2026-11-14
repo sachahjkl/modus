@@ -2,7 +2,7 @@
 // fills a buffer that the caller owns, and the sentences of the error
 // records (docs/MODULE_CONTRACT.md, section 8) and of the descriptions of
 // the exports are written with it. A program compiles it in through
-// src/library/support/system; the kernel tool compiles it on the host, so a sentence
+// src/library/support/system; the modus tool compiles it on the host, so a sentence
 // of the host is the sentence of the machine.
 //
 // The parts:

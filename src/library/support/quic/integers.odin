@@ -4,7 +4,7 @@
 // gives each failure as an error record.
 //
 // Who uses it: the remote service (`src/programs/remote`, a server), the
-// program `quic_echo` and the kernel tool (a client of the remote
+// program `quic_echo` and the modus tool (a client of the remote
 // service). The parts, by file:
 //
 // - `connection.odin`, `connection_receive.odin`, `connection_send.odin`:

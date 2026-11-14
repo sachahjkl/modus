@@ -48,15 +48,15 @@
       '';
     });
 
-    # What tools/kerneltool needs on the path.
+    # What tools/modustool needs on the path.
     # llc comes from the LLVM of the Odin compiler (18): Odin writes LLVM IR, and
     # llc makes each object with frame pointers.
-    # openssl: its QUIC client is the peer of the test "quic-real" of kerneltool.
+    # openssl: its QUIC client is the peer of the test "quic-real" of modustool.
     # swtpm: the software TPM of the machines of "test trusted_boot".
     # sbsigntool (sbsign): signs the boot program for Secure Boot.
     # virt-firmware (virt-fw-vars): enrols the certificate of the firmware
     # signing key in a variable store of the firmware, with Secure Boot on.
-    # openssl also makes the firmware signing key ("kerneltool key new").
+    # openssl also makes the firmware signing key ("modustool key new").
     buildTools = [odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware];
 
     # The pointer theme of the owner (docs/POINTERS.md): "Posy's Cursor", the
@@ -77,7 +77,7 @@
     # the TPM").
     ovmfWithTpm = pkgs.OVMF.override {tpmSupport = true;};
 
-    # The UEFI firmware of the first machine. kerneltool reads these names.
+    # The UEFI firmware of the first machine. modustool reads these names.
     firmware = {
       OVMF_CODE = "${pkgs.OVMF.fd}/FV/OVMF_CODE.fd";
       OVMF_VARS = "${pkgs.OVMF.fd}/FV/OVMF_VARS.fd";
@@ -92,13 +92,13 @@
       # certificate of the firmware signing key enrolled and Secure Boot on.
       OVMF_FULL_CODE = "${pkgs.OVMFFull.fd}/FV/OVMF_CODE.fd";
       OVMF_FULL_VARS = "${pkgs.OVMFFull.fd}/FV/OVMF_VARS.fd";
-      # The source of the font, for the command "font" of kerneltool.
+      # The source of the font, for the command "font" of modustool.
       FONT_SOURCE = "${pkgs.spleen}/share/fonts/misc/spleen-8x16.bdf";
       # The Xcursor folder of the pointer theme of the owner, for the build.
       POINTER_THEME_SOURCE = "${pointerTheme}/share/icons/Posy_Cursor/cursors";
     };
 
-    # The vector font candidates, for the command "vector_fonts" of kerneltool
+    # The vector font candidates, for the command "vector_fonts" of modustool
     # (docs/FONTS.md): name=file, separated by ";". Only the development shell
     # has them: the build reads the subsets in resources/fonts.
     # Paper Mono is not in nixpkgs: its two files come from its repository,
@@ -141,38 +141,38 @@
       };
     };
 
-    # The command "kerneltool": it compiles tools/kerneltool with the source
+    # The command "modustool": it compiles tools/modustool with the source
     # library of the project, and runs it in the folder of the project.
     # With MODUS_SYSTEM set, the folder of the project is that folder and
     # the command runs where it is typed: the folder of another project,
     # for the command "module-build"
     # (docs/TOOLS.md, "A module from a source outside the repository").
-    kerneltool = pkgs.writeShellScriptBin "kerneltool" ''
+    modustool = pkgs.writeShellScriptBin "modustool" ''
       if [ -n "''${MODUS_SYSTEM:-}" ]; then
         mkdir -p "$MODUS_SYSTEM/build"
         # The tool compiles in the folder of the system: a source of the
         # tool includes an assembly file by a path from that folder.
-        (cd "$MODUS_SYSTEM" && odin build tools/kerneltool -vet -collection:modus=src/library -out:build/kerneltool) || exit 1
-        exec "$MODUS_SYSTEM/build/kerneltool" "$@"
+        (cd "$MODUS_SYSTEM" && odin build tools/modustool -vet -collection:modus=src/library -out:build/modustool) || exit 1
+        exec "$MODUS_SYSTEM/build/modustool" "$@"
       fi
       mkdir -p build
-      exec odin run tools/kerneltool -vet -collection:modus=src/library -out:build/kerneltool -- "$@"
+      exec odin run tools/modustool -vet -collection:modus=src/library -out:build/modustool -- "$@"
     '';
 
-    # kerneltool check: the host code passes -vet and its tests, the system builds,
+    # modustool check: the host code passes -vet and its tests, the system builds,
     # and the machine test passes under QEMU (console, desktop, tools).
     bootTest = pkgs.stdenvNoCC.mkDerivation ({
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
-          # The host tests of `kerneltool site` read README.md, flake.lock and the Markdown documents; the check of the source paths in the documents reads AGENTS.md too; the check of the README needs its pictures; `kerneltool news check` reads news/, and the film that a news entry names (docs/films: absent in a tree where no entry names a film); the check of the font of the name of the mark reads LICENSE, whose text the font carries.
+          # The host tests of `modustool site` read README.md, flake.lock and the Markdown documents; the check of the source paths in the documents reads AGENTS.md too; the check of the README needs its pictures; `modustool news check` reads news/, and the film that a news entry names (docs/films: absent in a tree where no entry names a film); the check of the font of the name of the mark reads LICENSE, whose text the font carries.
           fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./ROADMAP.md ./changelog.d ./news ./README.md ./AGENTS.md ./LICENSE (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "md") ./docs) ./docs/screenshots (inputs.nixpkgs.lib.fileset.maybeMissing ./docs/films) ./resources ./src ./tools ./.project];
         };
-        nativeBuildInputs = buildTools ++ [kerneltool];
+        nativeBuildInputs = buildTools ++ [modustool];
         buildPhase = ''
           export HOME=$TMPDIR
           mkdir -p build
-          kerneltool check
+          modustool check
         '';
         installPhase = ''
           cp build/test_output.txt $out
@@ -191,18 +191,18 @@
 
     devShells.${system} = {
       default = pkgs.mkShell ({
-          packages = buildTools ++ [kerneltool pkgs.ffmpeg] ++ preCommitCheck.enabledPackages; # ffmpeg: the command "film" of kerneltool.
+          packages = buildTools ++ [modustool pkgs.ffmpeg] ++ preCommitCheck.enabledPackages; # ffmpeg: the command "film" of modustool.
           inherit (preCommitCheck) shellHook;
         }
         // firmware
         // vectorFontSources);
 
       # The shell of a developer who builds a module of their own project:
-      # the build tools and the command "kerneltool", with no hook of this
+      # the build tools and the command "modustool", with no hook of this
       # repository. The default shell installs the hooks of this repository
       # in the repository where it starts.
       module = pkgs.mkShell {
-        packages = buildTools ++ [kerneltool];
+        packages = buildTools ++ [modustool];
       };
     };
   };

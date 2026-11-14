@@ -15,9 +15,9 @@
 // overlap, and the compiler checks that the band holds every member.
 //
 // An address of the band has no other source than this table. No other
-// file computes an address from BAND_START or SLOT: `kerneltool check`
+// file computes an address from BAND_START or SLOT: `modustool check`
 // refuses a file of contract, support, programs or modules outside this
-// folder that names them (tools/kerneltool/fixed_addresses_check.odin).
+// folder that names them (tools/modustool/fixed_addresses_check.odin).
 //
 // A mapping that a program places by its own choice goes outside the
 // band, at OWN_CHOICE_START or after. The modules that a program loads

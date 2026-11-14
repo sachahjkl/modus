@@ -2,7 +2,7 @@ Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved.
 DejaVu changes are in public domain
 
 
-This file is a subset of dejavu_sans_mono, made by "kerneltool vector_fonts" (docs/FONTS.md):
+This file is a subset of dejavu_sans_mono, made by "modustool vector_fonts" (docs/FONTS.md):
 the characters 32 to 126 and the glyph .notdef, each glyph a simple glyph
 (0 glyphs made of glyphs were made simple), no hinting instructions, no
 OpenType layout tables. The subset carries the name "DejaVu Sans Mono ASCII".

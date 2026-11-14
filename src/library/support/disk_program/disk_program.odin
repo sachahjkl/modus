@@ -1,4 +1,4 @@
-// What the root service, the console and the kernel tool agree on for a
+// What the root service, the console and the modus tool agree on for a
 // disk program: a program whose module file is an object of the store
 // `programs` of the storage service, and not a file of the boot image
 // (docs/MODULE_CONTRACT.md, "A program from a disk").
@@ -25,7 +25,7 @@ package disk_program
 STORE_NAME :: "programs"
 
 // The limit of blocks of the store `programs`, as the root service grants
-// it and as the kernel tool writes it: 16 MiB. The two numbers are one
+// it and as the modus tool writes it: 16 MiB. The two numbers are one
 // constant, so the grant of a read never differs from the limit on the
 // disk.
 STORE_BLOCKS_LIMIT :: 4096

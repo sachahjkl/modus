@@ -24,7 +24,7 @@
 // five runs: a read or a write, the blocks in each request, the
 // requests in flight, a bar of the requests that the check sent, and a bar
 // of the kernel entries of this program and of the block service for 100
-// requests. In a measure run (`kerneltool measure disk`) the first bar is
+// requests. In a measure run (`modustool measure disk`) the first bar is
 // the blocks in one second. Its lines in the log:
 //
 // - `disk: ok, the disk has <count> blocks, 64 blocks in one request at
@@ -303,7 +303,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_text(table, 12, y, wrong == 0 ? "write, flush, read back: 128 blocks, 0 wrong" : "write, flush, read back: WRONG", wrong == 0 ? COLOR_RATE : graphics.COLOR_FAILED)
 	}
 	if !measured {
-		interface.draw_text(table, 12, y + LINE, "the blocks in one second are a measure: run `kerneltool measure disk`.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y + LINE, "the blocks in one second are a measure: run `modustool measure disk`.", graphics.COLOR_DIM)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

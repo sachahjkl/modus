@@ -80,7 +80,7 @@ One color is one concept, as one term is one concept.
 
 ### The colors of code
 
-Code has one set of colors wherever it is shown: on the site, and in the console of the system. The table is `src/library/support/graphics/code_colors.odin` (`Code_Class`, `code_class_colors`); the site (`tools/kerneltool/site_code.odin`) and the terminal (`src/library/support/terminal/code_runs.odin`) read it. Each class is an accent of the concepts, moved toward white on a dark surface and toward black on the light page of the site.
+Code has one set of colors wherever it is shown: on the site, and in the console of the system. The table is `src/library/support/graphics/code_colors.odin` (`Code_Class`, `code_class_colors`); the site (`tools/modustool/site_code.odin`) and the terminal (`src/library/support/terminal/code_runs.odin`) read it. Each class is an accent of the concepts, moved toward white on a dark surface and toward black on the light page of the site.
 
 | Class | What | Accent | Dark: shade, color | Light: shade |
 |---|---|---|---|---|
@@ -98,7 +98,7 @@ Code has one set of colors wherever it is shown: on the site, and in the console
 
 ### The colors of values
 
-A technical value has one color wherever it is shown: on the site, and in the programs of the system that show values of mixed kinds, as the log does. The kinds are the value kinds (`GLOSSARY.md`, `src/library/contract/value_kinds`), one enumeration for the site and the system. The colors are one table, `src/library/support/graphics/value_colors.odin` (`value_kind_colors`); the site (`tools/kerneltool/site_values.odin`) and the program `log` read it. The site keeps only what is its own: the title and the meaning of each kind (`docs/SITE.md`, "The kinds of values"). The icon of each kind is one table too ("The icons of the kinds"). No kind and no color is new: the log uses the kinds of the site, so no new decoration exists.
+A technical value has one color wherever it is shown: on the site, and in the programs of the system that show values of mixed kinds, as the log does. The kinds are the value kinds (`GLOSSARY.md`, `src/library/contract/value_kinds`), one enumeration for the site and the system. The colors are one table, `src/library/support/graphics/value_colors.odin` (`value_kind_colors`); the site (`tools/modustool/site_values.odin`) and the program `log` read it. The site keeps only what is its own: the title and the meaning of each kind (`docs/SITE.md`, "The kinds of values"). The icon of each kind is one table too ("The icons of the kinds"). No kind and no color is new: the log uses the kinds of the site, so no new decoration exists.
 
 The kinds that the log writes, on a dark surface (contrast on the background `0x0B1018`, the top of a card `0x17212E`, the band of a row of the log `0x131B26`):
 
@@ -112,7 +112,7 @@ The kinds that the log writes, on a dark surface (contrast on the background `0x
 | Status | Failed | `0xF06060` | 5.94 / 5.06 / 5.40 |
 
 - A part with no kind has the color of the text around it.
-- Each kind has at least 4.5 to 1 on the background, on both colors of a card and on the band of a row of the log (`src/library/support/graphics/value_colors_test.odin`), and on both surfaces of a table of the site in both forms (`tools/kerneltool/site_values_test.odin`).
+- Each kind has at least 4.5 to 1 on the background, on both colors of a card and on the band of a row of the log (`src/library/support/graphics/value_colors_test.odin`), and on both surfaces of a table of the site in both forms (`tools/modustool/site_values_test.odin`).
 - A color is never the only sign: the text of the value and its unit say the same fact.
 
 ### The icons of the kinds
@@ -197,7 +197,7 @@ Every place and size sits on a grid of 8 pixels, so that the elements of differe
 
 Drawing must stay cheap and the same on every machine: integers, rectangles, and no image file to decode.
 
-- Drawing is `fill` of rectangles with integer arithmetic. No floating point and no image file. The one drawn data is the glyph cache of the vector font: the kernel tool makes it at build time from the outlines, in integers, and a text draw blends its words (`docs/FONTS.md`).
+- Drawing is `fill` of rectangles with integer arithmetic. No floating point and no image file. The one drawn data is the glyph cache of the vector font: the modus tool makes it at build time from the outlines, in integers, and a text draw blends its words (`docs/FONTS.md`).
 - A display does not wait so that a reader can see it. A display that fails stays.
 - Each display has a measured draw time.
 
@@ -376,7 +376,7 @@ A chosen row is the chosen line of a list, of a menu of the bar, of the palette,
 
 ### The scroll bar
 
-A view that shows a part of a longer content has a scroll bar at its right (or under it, for a content that is wider): the lines of a terminal, the text of `manual`, a list, the palette. Each one is the same element (`docs/INTERFACE.md`, "4.1 The scroll bar"), and the scroll bars of the site are the same form (`docs/SITE.md`, "The scroll bars"). The sizes, the stops and the colors are one table, `src/library/support/graphics/scroll_bar.odin`: the interface package draws from it, and the kernel tool writes the style sheet of the site from it.
+A view that shows a part of a longer content has a scroll bar at its right (or under it, for a content that is wider): the lines of a terminal, the text of `manual`, a list, the palette. Each one is the same element (`docs/INTERFACE.md`, "4.1 The scroll bar"), and the scroll bars of the site are the same form (`docs/SITE.md`, "The scroll bars"). The sizes, the stops and the colors are one table, `src/library/support/graphics/scroll_bar.odin`: the interface package draws from it, and the modus tool writes the style sheet of the site from it.
 
 ![The scroll bar of the console with the pointer over its arrow button: the bar is lit and the button is blue](screenshots/scroll_bar.png)
 
@@ -454,7 +454,7 @@ The mark is the picture that stands for the system: a heron in pixel cells, and 
 - The two backgrounds: the background of the system `0x0B1018`, and the light background `0xF4F6F8` of a page of another program. On the light background the neck is darker (`0x9FB2C8`), and the name is in `0x0B1018` instead of the text color.
 - The name of the mark: "modus" in letters of 5 by 7 cells, 2 empty columns between two letters, one flat color. The same letters are a font file, for a page that writes the name as text: see "The font of the name".
 - A picture holds the name only where one file must carry the heron and the name. Elsewhere the picture is the heron alone, and the name is drawn or written beside it.
-- The files: `kerneltool logo` writes them, each a row of the table of the uses of the mark (see "The variants of the mark"), and `kerneltool check` fails with "run kerneltool logo" when a picture does not have the pixels of the data, or when the font does not have the bytes that the data gives.
+- The files: `modustool logo` writes them, each a row of the table of the uses of the mark (see "The variants of the mark"), and `modustool check` fails with "run modustool logo" when a picture does not have the pixels of the data, or when the font does not have the bytes that the data gives.
 
 | File | Size | What it shows |
 |---|---|---|
@@ -491,7 +491,7 @@ The heron has two variants. A request for a picture of the mark names one: nothi
 - For an icon of the site the cell size says which it is. An icon of one pixel for a cell is a small icon: cells. An icon of two pixels or more for a cell is a picture: smooth. So the entry of 32 pixels of `favicon.ico` is cells, and its entry of 48 pixels and the icons of 180, 192 and 512 pixels are smooth, at 2, 7, 8, 21 and 12 pixels for a cell. The vector icon has no pixel of its own: it is the cells, one rectangle for each run of cells of one color.
 - The smooth variant needs at least 2 pixels for a cell (`SMOOTH_CELL_SIZE_LEAST`). With one pixel for a cell the centre of the pixel is the centre of the cell: that picture is the cells variant, and its request must say so. A procedure of `src/library/support/mark` draws nothing for the smooth variant at one pixel, and the generator of the tool refuses it with a sentence.
 - The cells variant is allowed at each cell size: it gives the look of one color for a cell at a size where a picture has more pixels.
-- One generator in the tool makes each file of the mark (`tools/kerneltool/mark_pictures.odin`; `TOOLS.md`, "The pictures of the mark"). `kerneltool logo` and `kerneltool site` hold no number of a picture: each asks the generator for its rows of the table of the uses, below. `kerneltool mark uses` prints the table.
+- One generator in the tool makes each file of the mark (`tools/modustool/mark_pictures.odin`; `TOOLS.md`, "The pictures of the mark"). `modustool logo` and `modustool site` hold no number of a picture: each asks the generator for its rows of the table of the uses, below. `modustool mark uses` prints the table.
 
 The table of the uses (`mark_uses`) is the one table of the files of the mark. Each row is one file; an icon file has one row for each of its entries. "Cell" is the pixels of a side of a cell of the heron.
 
@@ -524,14 +524,14 @@ What the system draws is not a file, and follows the same rule. The program `her
 
 The font of the name of the mark (`GLOSSARY.md`) is the letters of `mark.name_letters` as a TrueType file. A page that writes "modus" in it shows the letters of the files of the mark, and the text stays text.
 
-- The file: `resources/logo/modus_mark.ttf`, written by `kerneltool logo` (`tools/kerneltool/mark_font.odin`). The tool writes each table itself: `OS/2`, `cmap`, `glyf`, `head`, `hhea`, `hmtx`, `loca`, `maxp`, `name` and `post`. The file holds no date: the same letters and the same license give the same bytes. `kerneltool check` compares the bytes of the file with the bytes that the data gives.
+- The file: `resources/logo/modus_mark.ttf`, written by `modustool logo` (`tools/modustool/mark_font.odin`). The tool writes each table itself: `OS/2`, `cmap`, `glyf`, `head`, `hhea`, `hmtx`, `loca`, `maxp`, `name` and `post`. The file holds no date: the same letters and the same license give the same bytes. `modustool check` compares the bytes of the file with the bytes that the data gives.
 - The glyphs, 7: the glyph of a character that the font does not have (no contour), the space, and `m`, `o`, `d`, `u`, `s`. The capitals `M`, `O`, `D`, `U`, `S` have the glyphs of the small letters: the name of the mark has small letters only, so a text "Modus" still shows the mark. No other character has a glyph: a browser takes it from the next font.
 - The outline of a glyph is the union of its cells: it goes around the whole letter, with a second contour for the hole of the `o` and of the `d`. It is not one square for each cell: two squares that share a side can show a thin line between them when a browser smooths the edges. Each point is a corner of a cell. An outer contour turns clockwise and a hole the other way. The font has no curve and no instruction.
 - The units: a cell is 128 units and the em is 1024 units, 8 cells. The 7 rows of the name are above the baseline (the ascent, 896 units) and one empty row is under it (the descent, 128 units): the letters stand on the baseline of a text beside them. The letters with no stem are 5 rows high (640 units).
 - The advance of each glyph is 896 units: the 5 columns of a letter and the gap of 2 columns. So "modus" in the font has the proportions of `name_draw`: 33 columns from the left of the `m` to the right of the `s`, and the gap after the `s` is empty.
 - The sizes: a font size of 8 pixels gives cells of one pixel. A font size that is a multiple of 8 pixels draws whole cells; another size blurs the squares. A text in this font starts on a whole pixel.
 - The names in the file: the family "modus mark", the style "Regular", the line of the copyright and the text of the license of the repository (`LICENSE`).
-- The test (`tools/kerneltool/mark_font_test.odin`): the reader of fonts of the system (`src/library/support/vector_font`), which did not write the file, opens it. For each letter, the outline sampled at the centre of each cell, with the rule of the winding that is not zero, is the cells of `mark.name_letters`, and the area of the outline is the area of those cells. The test also checks the checksum of each table and of the file, the glyph of each character, the advances, and that two builds give the same bytes.
+- The test (`tools/modustool/mark_font_test.odin`): the reader of fonts of the system (`src/library/support/vector_font`), which did not write the file, opens it. For each letter, the outline sampled at the centre of each cell, with the rule of the winding that is not zero, is the cells of `mark.name_letters`, and the area of the outline is the area of those cells. The test also checks the checksum of each table and of the file, the glyph of each character, the advances, and that two builds give the same bytes.
 - Where it is used: the site (`SITE.md`, "The name of the mark"). The system draws the name from the cells with `name_draw`, with no font.
 
 ### The animations
@@ -580,7 +580,7 @@ The mark has idle animations: 15 of them. They play in three places: on the larg
   - The texts of the band are in the font of the cells, 8 pixels for a character in both settings of the font. Each text has a box for its longest value, and the program does not compile when a box is too small.
 - Reduced motion: when the browser says that the visitor asks for reduced motion, nothing moves, and the still picture stays. A change of that choice while the page is open stops or starts the play.
 - A hidden tab: the play stops, no timer runs, and the icon is the still icon again.
-- `kerneltool logo` writes `build/mark_animations.png`: each animation as a row of its frames at cells of 8 pixels, with the durations, for a reader to look at.
+- `modustool logo` writes `build/mark_animations.png`: each animation as a row of its frames at cells of 8 pixels, with the durations, for a reader to look at.
 - The bar of the desktop does not play the animations. The data is ready for it: `animation_frame_cells` gives the cells of a frame, and `cells_draw` draws them. To play them, the compositor needs one picture of 24 x 24 pixels for each distinct frame, drawn at the start as the still heron is, and one timer that changes the generation of the Picture record of the bar. The rule of the choice and of the still times is the rule of `src/library/support/mark/play.odin`.
 
 ### The moves
@@ -623,7 +623,7 @@ The rule: a cell of the heron never changes its form. It is a square of one size
 | flap | 0 natural; 200 natural; 420 natural, 3 cells up; 650 natural, 3 cells up; 800 rebound, on the water; 900 natural; 1000 natural |
 
 - The times of the animations and of their frames did not change with the forms.
-- `kerneltool logo` draws, in `build/mark_animations.png`, under the frames of each animation that moves, each drawing that its move shows, at the cells of the frames, with the water of its frame, its time, its name, its size, and how it was drawn. The host test `drawn_forms_keep_the_eye_the_beak_and_the_legs` writes each drawing as text on its log, and checks the eye, the beak, the head cell for cell, the width of the legs and the standing leg.
+- `modustool logo` draws, in `build/mark_animations.png`, under the frames of each animation that moves, each drawing that its move shows, at the cells of the frames, with the water of its frame, its time, its name, its size, and how it was drawn. The host test `drawn_forms_keep_the_eye_the_beak_and_the_legs` writes each drawing as text on its log, and checks the eye, the beak, the head cell for cell, the width of the legs and the standing leg.
 
 ## 12. The card of the boot image
 

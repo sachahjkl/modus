@@ -2,7 +2,7 @@
 // segment endpoint with a client grant. The root service granted it
 // 10.0.2.100 port 80 and nothing else. In the test of TCP against a stack
 // that this project did not write, QEMU gives that address to a listener
-// of the kernel tool on the host (`guestfwd`): the TCP at the other end is
+// of the modus tool on the host (`guestfwd`): the TCP at the other end is
 // the one of libslirp.
 //
 // The window shows each case, its answer, and whether it is the expected

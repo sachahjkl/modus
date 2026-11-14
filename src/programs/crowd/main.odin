@@ -27,7 +27,7 @@
 // line for each run (`crowd: shared queue, 2 writers, 2 readers: ...`),
 // then `crowd: ok, <count> runs, each record written is read one time,
 // each event started all the threads`, or `crowd: wrong: ...`. In a
-// measure run (`kerneltool measure crowd`) the window and the lines have
+// measure run (`modustool measure crowd`) the window and the lines have
 // the records in one second.
 //
 // **Its grant**: **Inspect**: the machine handle reads the kernel entries
@@ -348,7 +348,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		y += LINE
 	}
 	if !measured {
-		interface.draw_text(table, 12, y + LINE / 2, "the records in one second are a measure: run `kerneltool measure crowd`.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y + LINE / 2, "the records in one second are a measure: run `modustool measure crowd`.", graphics.COLOR_DIM)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

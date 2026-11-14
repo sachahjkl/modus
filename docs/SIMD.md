@@ -46,7 +46,7 @@ blend_premultiplied_alpha_row :: #force_inline proc "contextless" (to: [^]Color,
 - the edge values often: 0, 1, 254 and 255 in each byte, whole words of 0, of all ones and of full coverage;
 - guard words before and after each row: a form that writes outside its columns changes them.
 
-When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). `kerneltool check` runs them.
+When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). `modustool check` runs them.
 
 ## 2. One form: SSE2
 
@@ -57,7 +57,7 @@ The vector forms use the 128-bit registers of SSE2. Two facts make this form fre
 
 So a vector form needs no test of the processor and no choice at the start of a program: on amd64 the public procedure runs the SSE2 form, and on another target the scalar form.
 
-**How a module is compiled.** A module is compiled for the plain x86-64 processor, with SSE2: for a module, `llc` gets no `-mattr` and no `-mcpu` (`build_module` in `tools/kerneltool/modules.odin`). The kernel is the one exception, in the other direction: it is compiled with every vector feature off (`KERNEL_TARGET_FEATURES`), and the build refuses a kernel that has a vector instruction outside the save and the restore of the extended state (`tools/kerneltool/vector_check.odin`). No vector form runs in the kernel.
+**How a module is compiled.** A module is compiled for the plain x86-64 processor, with SSE2: for a module, `llc` gets no `-mattr` and no `-mcpu` (`build_module` in `tools/modustool/modules.odin`). The kernel is the one exception, in the other direction: it is compiled with every vector feature off (`KERNEL_TARGET_FEATURES`), and the build refuses a kernel that has a vector instruction outside the save and the restore of the extended state (`tools/modustool/vector_check.odin`). No vector form runs in the kernel.
 
 **How a vector form is written.** The arithmetic is written with `base:intrinsics` on `#simd[N]T` types: `simd_shuffle`, `simd_select`, `simd_lanes_eq`, `simd_shr`, `simd_shl`, `simd_bit_and`, `simd_bit_or`, `simd_bit_xor`, `simd_reduce_or`, `simd_reduce_and`, `simd_extract`, `unaligned_load`, `unaligned_store`, the operators `+ - *`, and `cast` between element widths. The compiler lowers them to SSE2 instructions. No form names an instruction of the processor, and no form is written in assembler.
 
@@ -72,7 +72,7 @@ An AVX2 form of each procedure, behind one choice at the start of a program (CPU
 | One glyph from the glyph cache | 301 ns | 193 ns | 244 ns |
 | BLAKE3 of 390 624 bytes | 835 us | 200 us | 383 us |
 
-The build with no optimisation (the build of the host tests of `kerneltool check`) gave the same order: one glyph 1382 / 813 / 4716 ns in a first run, BLAKE3 5920 / 1904 / 2002 us.
+The build with no optimisation (the build of the host tests of `modustool check`) gave the same order: one glyph 1382 / 813 / 4716 ns in a first run, BLAKE3 5920 / 1904 / 2002 us.
 
 AVX2 lost to SSE2 in both places, and its form of the blend of a glyph gave wrong bytes in the build with no optimisation. So the system has the scalar form and the SSE2 form only: no AVX2 form, and no vector form that chooses at the start of a program.
 
@@ -182,7 +182,7 @@ The rotations by 16, 12, 8 and 7 bits are written as two shifts and an or (`rota
 A measure is a line that a program of the system writes on the log. Each command runs the main machine test; each line is in `build/test_output.txt`. A measure is valid when `uptime` shows a load under 8. No test fails on a time: a measure is printed, never asserted (`docs/TOOLS.md`, "The bounds of the tests").
 
 ```
-flock -o <the lock of the worktree> nix develop -c kerneltool test main
+flock -o <the lock of the worktree> nix develop -c modustool test main
 grep "vector_glyphs: one glyph" build/test_output.txt
 grep "compositor: the blend of the arrow" build/test_output.txt
 grep "root: the resource glyph_cache" build/test_output.txt

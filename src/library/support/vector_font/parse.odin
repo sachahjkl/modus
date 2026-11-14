@@ -1,6 +1,6 @@
 // The vector font of the system (docs/FONTS.md): a reader of a subset of
 // TrueType, and a rasterizer in fixed point with coverage for each color
-// stripe. The kernel tool uses it at build time to make the glyph cache;
+// stripe. The modus tool uses it at build time to make the glyph cache;
 // a program uses it to draw a glyph from its outline.
 //
 // A font file is hostile input: each read is checked against the length of
@@ -31,7 +31,7 @@ Font_Problem :: enum u8 {
 	No_Feature, // The table GSUB has no single substitution of this feature for this glyph.
 }
 
-// The words of each problem, for the kernel tool and the log.
+// The words of each problem, for the modus tool and the log.
 font_problem_names := [Font_Problem]string {
 	.None               = "none",
 	.Too_Short          = "a read passes the end of the file or of a table",

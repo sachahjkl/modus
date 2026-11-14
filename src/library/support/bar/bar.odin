@@ -1,7 +1,7 @@
 // The bar of the desktop: the names of the programs, and the place of each
 // button of the bar and of each line of its two menus, the menu of the
 // programs and the menu of the windows. The compositor draws them; the
-// kernel tool clicks them in the machine test. The two read this one table.
+// modus tool clicks them in the machine test. The two read this one table.
 // The palette (src/library/support/palette) lists the same names.
 package bar
 
@@ -33,7 +33,7 @@ COLUMN_LEAST :: 120 // The title of the menu fits.
 // place of each button and of each line of a menu comes from it, so a
 // press lands on the entry that the eye sees. The compositor measures it
 // once, and again when the font changes; it writes in its log which font
-// it is, and the kernel tool measures the same layout from the same cache.
+// it is, and the modus tool measures the same layout from the same cache.
 Layout :: struct {
 	label_width:         int, // LABEL.
 	windows_label_width: int, // WINDOWS_LABEL.

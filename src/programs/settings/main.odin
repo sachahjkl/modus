@@ -3,7 +3,7 @@
 // theme and the grid fit of the vector font. The window shows each setting
 // as a row of buttons and the text of the system at its three sizes; the
 // exports set() and get() make the same changes from the console and from
-// `kerneltool call`.
+// `modustool call`.
 //
 // This program is the one writer of the settings page (modus:contract/settings).
 // A change is written first to its private store, as one record in one

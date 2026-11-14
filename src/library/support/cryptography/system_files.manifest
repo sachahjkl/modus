@@ -1,10 +1,10 @@
 # The files of src/library/support/cryptography that the system wrote itself: the
 # compatibility layer, the files in the place of a hardware dispatch of the
 # origin, and the tests (docs/CRYPTOGRAPHY.md, section 3). Each line: the
-# file, the BLAKE3 hash of the file. `kerneltool cryptography-origin` (also in
-# `kerneltool check`) checks each hash, and that each .odin file of
+# file, the BLAKE3 hash of the file. `modustool cryptography-origin` (also in
+# `modustool check`) checks each hash, and that each .odin file of
 # src/library/support/cryptography is in this list or in origin.manifest. After a review
-# of a change, `kerneltool cryptography-system-hashes` prints the new lines.
+# of a change, `modustool cryptography-system-hashes` prints the new lines.
 src/library/support/cryptography/_aes/hw/no_hardware.odin 22e079d0522e4f77547c8d4e3c7b17a67a7c49227ee3515eacf80612de73efcf
 src/library/support/cryptography/aes/aes_implementation_portable.odin 1d60197764d33da67000a7770e6322a1e9abb84ae3f0fb448f774f5128909eec
 src/library/support/cryptography/chacha20/chacha20_implementation_portable.odin 80f2d2530c4f9420f79d9b7d741b36bc904b94dc3b57fc844bb6c5fdbdc583ef
@@ -13,10 +13,10 @@ src/library/support/cryptography/compatibility_bits/bits.odin d5d4df35278f4769cd
 src/library/support/cryptography/compatibility_bytes/bytes.odin 9864ff03522356bfe4c67e650a2216a156ca5ac03adae442408e463a7e3b9ad0
 src/library/support/cryptography/compatibility_crypto/crypto.odin 41a2d5b1cd049d6e4a9d5cbe51c3fb9bc3d598e29031f9a6de45cbc585f9c62c
 src/library/support/cryptography/compatibility_crypto/erase_in_a_module.odin 6cb45a7cb77881650f0e16cb3a4bfc054353eaf089bfe680e584407f9c0982c1
-src/library/support/cryptography/compatibility_crypto/erase_on_the_host.odin 8d785cc708dfcce59f7e2f1284efada768ea0161955a10af48c61167d660c545
+src/library/support/cryptography/compatibility_crypto/erase_on_the_host.odin d3914c0c45bf9af606fb691aec695e5bf6866fa45aef69a0a9afd0fea8d262c6
 src/library/support/cryptography/compatibility_memory/memory.odin 76396668884b965c82efef7d7c10c09ee748dbaac99a19540e3b9b50f7e9615c
 src/library/support/cryptography/compatibility_endian/endian.odin 15f7940cd444b003b4595265a4a214e89444e37bad4d083e4a3021361c9b8935
 src/library/support/cryptography/compatibility_hash/hash.odin 127136a2b58a00e9104194be6944fe8752fb541ae426e2ae350e9a8c1f668437
 src/library/support/cryptography/sha2/sha256_implementation_portable.odin 89fed452402008c9030bb773386266de1b4baa7986f56781b991cf0243d04d8b
-src/library/support/cryptography/vectors/vectors_test.odin c336e28abf0c6c55a675f4669d14cdb662ac69276bd6654d016779014ae843d0
+src/library/support/cryptography/vectors/vectors_test.odin 5049944042ebd7d59294622fb9c57690ad9c482524adf4c84c36479dd9496fad
 src/library/support/cryptography/vectors/argon2id_vectors_test.odin 58f747321a82fd7b47af7160960a8f4ed789525dbf5e00024dfc839bfc8813b1

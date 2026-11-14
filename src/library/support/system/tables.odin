@@ -7,7 +7,7 @@ import module "modus:contract/module"
 //
 // Each type has the layout of the table place (module.Table_Place): the
 // address of the first record, the count, and the capacity. The name of the
-// type is the direction; the kernel tool reads it from the source:
+// type is the direction; the modus tool reads it from the source:
 //
 //   sum_values :: proc "c" (readings: ^system.Table_To_Read(Reading)) -> i64
 //

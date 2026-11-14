@@ -32,7 +32,7 @@ modus is an operating system for x86-64, written in Odin, that runs on one fixed
 
 **Communication** between two programs is shared memory: a ring of records and, for bytes, a region. A call of a service is a record in a call ring with its arguments in a call region. No program parses the text of another.
 
-**The tool** (`tools/kerneltool`) is the only automation: the build (incremental, in two steps for a module, reproducible), the machine tests under QEMU with a peer for the network, the checks of the sources, the site, the changelog, the news, the films. `kerneltool check` and `kerneltool screenshots` with `nix flake check` are the full check.
+**The tool** (`tools/modustool`) is the only automation: the build (incremental, in two steps for a module, reproducible), the machine tests under QEMU with a peer for the network, the checks of the sources, the site, the changelog, the news, the films. `modustool check` and `modustool screenshots` with `nix flake check` are the full check.
 
 ## The subtle points
 
@@ -66,7 +66,7 @@ These are the points that an agent gets wrong most often.
 - **A link between two intent files** is a relative link. The tool checks that the file exists.
 - **The name of a file** has lower case letters, digits and `_`, and ends with `.md`.
 - **Simplified Technical English**, with the terms of the glossary.
-- `kerneltool check` runs the check `intent_index_check`: the file index below lists each other file of this folder exactly once, and names no file that does not exist.
+- `modustool check` runs the check `intent_index_check`: the file index below lists each other file of this folder exactly once, and names no file that does not exist.
 
 ## Where older intent lives
 

@@ -1,7 +1,7 @@
 // The B+ tree of one tree of a store (src/library/contract/store, docs/STORAGE.md):
 // search, insert, replace, remove, and the walk in the order of the names,
 // with copy on write. Pure code: no kernel operation, no allocation.
-// The storage service, the open of a disk and the kernel tool use it; the
+// The storage service, the open of a disk and the modus tool use it; the
 // blocks come from a Source that the caller gives, and a commit writes the
 // changed nodes through a Writer.
 //

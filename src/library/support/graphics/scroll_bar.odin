@@ -3,8 +3,8 @@ package graphics
 // The scroll bar (docs/DESIGN.md, "The scroll bar"): the one
 // table of its sizes, of the stops of its gradients and of its colors. The
 // interface package draws each scroll bar of the system from it
-// (src/library/support/interface/scroll_bar.odin), and the kernel tool writes the scroll
-// bars of the site from it (tools/kerneltool/site_style.odin). A change of a
+// (src/library/support/interface/scroll_bar.odin), and the modus tool writes the scroll
+// bars of the site from it (tools/modustool/site_style.odin). A change of a
 // number here changes both.
 //
 // The parts, along the bar: an arrow button, the track, an arrow button.

@@ -47,7 +47,7 @@
 // grant ends while the program runs.
 //
 // **What it does not prove**: in the test of the network the echo server at
-// the gateway is the peer of the kernel tool (`tools/kerneltool/peer.odin`),
+// the gateway is the peer of the modus tool (`tools/modustool/peer.odin`),
 // not a stack of another project; the test of TCP against libslirp is the
 // program fetch.
 package net
@@ -86,7 +86,7 @@ BURST_TIME :: 1000 // Milliseconds.
 DATA_BYTES :: 64
 
 // The frames that the peer of the test sends before its first answer, and
-// that the network service must refuse: one of each row (tools/kerneltool,
+// that the network service must refuse: one of each row (tools/modustool,
 // peer.odin). Nine have no endpoint: facts of the machine, that this program
 // reads with the right Inspect of its grant. One came to the local port of
 // this endpoint from a remote that its grant does not name: a fact of this

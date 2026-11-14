@@ -4,7 +4,7 @@ import op "modus:contract/operation"
 
 // The name of the resource of the boot image that makes a measure run: the
 // root service looks for it, and the tool puts it in the boot image of
-// `kerneltool measure` only (docs/TOOLS.md, "A check by count, a measure by time").
+// `modustool measure` only (docs/TOOLS.md, "A check by count, a measure by time").
 MEASURE_RUN_RESOURCE :: "measure_run"
 
 // measure_run says if this program runs for a measure: its starter wrote 1

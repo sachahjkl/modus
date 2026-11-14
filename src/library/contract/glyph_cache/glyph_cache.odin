@@ -1,6 +1,6 @@
 // The glyph cache file (docs/FONTS.md, "The glyph cache"): the glyphs of
 // one font, already drawn, for each size of the grid, with the advance of
-// each character and the pair adjustments of the font. The kernel tool
+// each character and the pair adjustments of the font. The modus tool
 // makes it at build time from the font file; the boot image holds it as a
 // resource; the root service gives each program a read-only mapping of it.
 // A program draws a character with a copy and a blend of its words: no

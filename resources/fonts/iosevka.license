@@ -1,6 +1,6 @@
 Copyright 2015-2026, Renzhi Li (aka. Belleve Invis, belleve@typeof.net).
 
-This file is a subset of iosevka, made by "kerneltool vector_fonts" (docs/FONTS.md):
+This file is a subset of iosevka, made by "modustool vector_fonts" (docs/FONTS.md):
 the characters 32 to 126 and the glyph .notdef, each glyph a simple glyph
 (5 glyphs made of glyphs were made simple), no hinting instructions, no
 OpenType layout tables. The subset carries the name "Iosevka ASCII".

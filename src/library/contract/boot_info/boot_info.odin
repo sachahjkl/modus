@@ -162,7 +162,7 @@ MEASURE_REGISTER :: 11
 
 // A test of the kernel on itself. The kernel does one thing that its page
 // tables must refuse, and the machine stops with the report of the fault.
-// The kernel tool builds one boot program for each test.
+// The modus tool builds one boot program for each test.
 Self_Test :: enum u64 {
 	None            = 0, // No test: a normal boot.
 	Stack_Overflow  = 1, // Use more than the kernel stack.

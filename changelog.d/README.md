@@ -3,8 +3,8 @@
 ## For an agent on a branch
 
 - Your branch adds one fragment for each change that a reader of the system notices.
-- Write it with `nix develop -c kerneltool changelog new <type> <subject> - < text.md`: the text comes from the standard input. If the text has no `` ` ``, no `$` and no quote, `"<text>"` in place of `-` also works. The command `kerneltool` runs through `odin run`, which gives the arguments to a shell: the shell runs a `` `...` `` of an argument.
-- Never edit `CHANGELOG.md` or `src/library/contract/release/release.odin`. `kerneltool changelog release` writes them when the coordinator releases a step.
+- Write it with `nix develop -c modustool changelog new <type> <subject> - < text.md`: the text comes from the standard input. If the text has no `` ` ``, no `$` and no quote, `"<text>"` in place of `-` also works. The command `modustool` runs through `odin run`, which gives the arguments to a shell: the shell runs a `` `...` `` of an argument.
+- Never edit `CHANGELOG.md` or `src/library/contract/release/release.odin`. `modustool changelog release` writes them when the coordinator releases a step.
 - If a change has no effect that a reader notices (a document, a comment, a rename inside one file), it has no fragment.
 
 ## The fragments
@@ -41,11 +41,11 @@ type: Added
 
 | Command | What it does |
 |---|---|
-| `kerneltool changelog new <type> <subject> "<text>"`, or `-` in place of the text to read it from the standard input | Writes one fragment with the time of the host. It refuses a type that is not known, a bad subject and a text that is not one entry |
-| `kerneltool changelog check` | Checks each fragment, the structure of `CHANGELOG.md`, that no fragment repeats an entry of a release, and that `RELEASE_NUMBER` is the newest release. `kerneltool check` runs it |
-| `kerneltool changelog assemble` | Prints what the next release brings |
-| `kerneltool changelog release <release number>` | Writes the release `## [<release number>] - <date>` from the fragments, sets `RELEASE_NUMBER`, and deletes the fragments |
-| `kerneltool changelog notes <release number>` | Prints one release |
-| `kerneltool release_number` | Prints the release number of the system |
+| `modustool changelog new <type> <subject> "<text>"`, or `-` in place of the text to read it from the standard input | Writes one fragment with the time of the host. It refuses a type that is not known, a bad subject and a text that is not one entry |
+| `modustool changelog check` | Checks each fragment, the structure of `CHANGELOG.md`, that no fragment repeats an entry of a release, and that `RELEASE_NUMBER` is the newest release. `modustool check` runs it |
+| `modustool changelog assemble` | Prints what the next release brings |
+| `modustool changelog release <release number>` | Writes the release `## [<release number>] - <date>` from the fragments, sets `RELEASE_NUMBER`, and deletes the fragments |
+| `modustool changelog notes <release number>` | Prints one release |
+| `modustool release_number` | Prints the release number of the system |
 
 In a release, the parts are in the order Added, Changed, Deprecated, Removed, Fixed, Security. Inside a part, the entries are in the order of the times of their fragments.

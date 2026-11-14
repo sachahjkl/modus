@@ -96,7 +96,7 @@ FRAME_INTERVAL :: 16 // Milliseconds.
 BAR_HEIGHT :: bar.HEIGHT
 // The frame of a window: a title bar over the surface, and a border of
 // BORDER pixels at the left, the right and the bottom. The machine test
-// reads these numbers (tools/kerneltool/machine.odin, WINDOW_*).
+// reads these numbers (tools/modustool/machine.odin, WINDOW_*).
 TITLE_HEIGHT :: 24
 BORDER :: 2
 CLOSE_SIZE :: 24 // The close button: a square at the right end of the title bar.
@@ -300,7 +300,7 @@ bar_measure :: proc "contextless" () {
 }
 
 // bar_layout_update measures the bar in the font that draws it now, and
-// writes in the log which font it is when it changes: the kernel tool reads
+// writes in the log which font it is when it changes: the modus tool reads
 // that line to find the places of the bar. The places of the old and of
 // the new layout are damaged.
 bar_layout_update :: proc "contextless" () {

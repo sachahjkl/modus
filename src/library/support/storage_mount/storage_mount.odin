@@ -1,7 +1,7 @@
 // The open of a data disk (src/library/contract/store): which root to use, the check of
 // each block that it names, and the blocks in use. The storage service runs
-// it at its start; the kernel tool runs the same code on the host, on each
-// image of a disk that a loss of power can leave (tools/kerneltool,
+// it at its start; the modus tool runs the same code on the host, on each
+// image of a disk that a loss of power can leave (tools/modustool,
 // power_loss.odin). Pure code: no kernel operation, no allocation. The
 // blocks come from a Block_Reader that the caller gives.
 package storage_mount
@@ -21,7 +21,7 @@ Block_Reader :: struct {
 	// (len(numbers) * BLOCK_SIZE bytes). false: the device reported an error.
 	read: proc "contextless" (reader: ^Block_Reader, numbers: []u64, into: []u8) -> bool,
 	// check gives the check of the bytes of a block that read gave. nil:
-	// format.check. The kernel tool gives the check that it computed for
+	// format.check. The modus tool gives the check that it computed for
 	// the same bytes before: its images differ in a few blocks.
 	check: proc "contextless" (reader: ^Block_Reader, number: u64, bytes: []u8) -> u64,
 	// value gives the value of the bytes of a block of data at the block
@@ -72,7 +72,7 @@ reader_source_read :: proc "contextless" (source: ^tree.Source, pointer: format.
 }
 
 // Object_Source reads the block trees of objects through a Block_Reader,
-// for src/library/support/storage_object: the kernel tool reads the objects of an image
+// for src/library/support/storage_object: the modus tool reads the objects of an image
 // with it.
 Object_Source :: struct {
 	using source: block_tree.Source,

@@ -55,7 +55,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - Decision: performance is a criterion at every level, the build tools too. Slow software is rejected.
 - Words: none recorded.
 - State: in force.
-- Where: each guide gives its measures; `kerneltool measure`.
+- Where: each guide gives its measures; `modustool measure`.
 
 ### D-004 "Everything is a file" is rejected
 - 2026-11-09. Decided by: the owner.
@@ -473,7 +473,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - Where: `AGENTS.md`.
 
 ### D-055 A brief quotes the rule word for word
-- 2026-11-10. Decided by: the coordinator, after a wrong rule in a brief ("Odin standard library only" was a rule for the kernel tool only).
+- 2026-11-10. Decided by: the coordinator, after a wrong rule in a brief ("Odin standard library only" was a rule for the modus tool only).
 - Decision: a brief for an agent quotes the recorded rule word for word.
 - Words: none.
 - State: in force.
@@ -504,12 +504,12 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-11. Decided by: the owner (accepted the rule of the coordinator).
 - Decision: a comment gives the reason itself. It names no number of a property, a choice, a step or a review finding, and no date of a decision. A pointer to a document is allowed. The ChaCha20 code copied from Odin is not touched.
 - Words: "euh ne pas mentionner nos \"propriétés\" dans les commentaires non ? exemple \"(property 10)\""; then "je suis okay avec ta suggestion".
-- State: done. `kerneltool check` refuses such a comment (183 were rewritten on 2026-11-12).
+- State: done. `modustool check` refuses such a comment (183 were rewritten on 2026-11-12).
 - Where: `AGENTS.md`.
 
 ### D-060 A development log out of the repository
 - 2026-11-10. Decided by: the owner.
-- Decision: keep all the screenshots in a folder out of the repository. `kerneltool screenshots` copies the pictures of each run to a new folder of `../kernel-devlog`, named with the time in UTC. The rule of the posts (D-183) applies to these pictures.
+- Decision: keep all the screenshots in a folder out of the repository. `modustool screenshots` copies the pictures of each run to a new folder of `../kernel-devlog`, named with the time in UTC. The rule of the posts (D-183) applies to these pictures.
 - Words: none recorded.
 - State: in force; extended by D-061.
 - Where: `TOOLS.md`.
@@ -621,17 +621,17 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ### D-212 One full check for a group of merges
 - 2026-11-12. Decided by: the owner, on a proposal of the coordinator.
-- Decision: the full check (47 minutes) runs once for a group of merges. Each merge passes the build, the host tests of what it changes and `kerneltool site` before it.
+- Decision: the full check (47 minutes) runs once for a group of merges. Each merge passes the build, the host tests of what it changes and `modustool site` before it.
 - Words: "C'est bon. Fusionne." (to: "Je peux regrouper plusieurs fusions sous un seul contrôle [...] Je le fais à partir de maintenant, sauf avis contraire.")
 - State: in force.
 - Where: `AGENTS.md`, "Work".
 
 ### D-213 The trusted boot is merged; its two machines with a TPM are opt-in
 - 2026-11-12. Decided by: the owner, on a proposal of the coordinator.
-- Decision: the three layers of the trusted boot are merged. The two test machines with a software TPM are not in the full check: on some runs QEMU does not give the firmware the answer of one TPM command. `kerneltool test trusted_boot tpm` runs them. The cause is to be found, or the measure tested on a hardware TPM, before a key is sealed to the measure.
+- Decision: the three layers of the trusted boot are merged. The two test machines with a software TPM are not in the full check: on some runs QEMU does not give the firmware the answer of one TPM command. `modustool test trusted_boot tpm` runs them. The cause is to be found, or the measure tested on a hardware TPM, before a key is sealed to the measure.
 - Words: "C'est bon. Fusionne." (to: "je fusionne les couches qui marchent et je sors les machines TPM du contrôle complet en attendant")
 - State: done; the cause of the lost answer: not found.
-- Where: `TRUSTED_BOOT.md`, "The machines of the TPM"; `tools/kerneltool/trusted_boot_scenario.odin`.
+- Where: `TRUSTED_BOOT.md`, "The machines of the TPM"; `tools/modustool/trusted_boot_scenario.odin`.
 
 ### D-218 No test depends on the speed of the hardware
 - 2026-11-12. Decided by: the owner.
@@ -670,9 +670,9 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: in force.
 - Where: `PROPERTIES.md`, property 4; `ARCHITECTURE.md`.
 
-### D-072 The kernel tool counts the kernel operations
+### D-072 The modus tool counts the kernel operations
 - 2026-11-09. Decided by: the owner.
-- Decision: the kernel tool counts the kinds of kernel operation, with no fixed limit.
+- Decision: the modus tool counts the kinds of kernel operation, with no fixed limit.
 - Words: none recorded.
 - State: replaced by D-073 for the limit. The count stays.
 - Where: `PROPERTIES.md`, property 1.
@@ -1283,7 +1283,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-10. Decided by: the owner.
 - Decision: the console is a central entry point and is very fast. No escape characters and no escape sequences. A program sends typed, structured records to a terminal. The program that produces and the terminal that shows are separate. A demonstration shows that the display does not slow the throughput, and it is filmed.
 - Words: none recorded.
-- State: done (`programs/terminal`, `programs/flood`, `kerneltool film`).
+- State: done (`programs/terminal`, `programs/flood`, `modustool film`).
 - Where: `CONSOLE.md`; `FIRST_MILESTONE.md`, choices 61 to 69.
 
 ### D-144 The terminal starts no program
@@ -1307,9 +1307,9 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done (step 83).
 - Where: `CONSOLE.md`, section 6; `FIRST_MILESTONE.md`, choices 556 to 564.
 
-### D-147 One kernel tool, no scripts
+### D-147 One modus tool, no scripts
 - 2026-11-09. Decided by: the owner.
-- Decision: all project automation is a command of one Odin tool, `kerneltool`: build, conversion to modules, the boot image, QEMU, tests, and every call to a third-party tool. No shell, Python or other script.
+- Decision: all project automation is a command of one Odin tool, `modustool`: build, conversion to modules, the boot image, QEMU, tests, and every call to a third-party tool. No shell, Python or other script.
 - Words: none recorded.
 - State: in force.
 - Where: `AGENTS.md`; `TOOLS.md`.
@@ -1367,14 +1367,14 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ### D-150 The Nix flake supplies the tools
 - 2026-11-09. Decided by: the owner.
-- Decision: a Nix flake at the root supplies the compiler, the linker, QEMU and the firmware. The kernel tool runs inside it. `nix flake check` runs the hooks and the machine test.
+- Decision: a Nix flake at the root supplies the compiler, the linker, QEMU and the firmware. The modus tool runs inside it. `nix flake check` runs the hooks and the machine test.
 - Words: none recorded.
 - State: in force.
 - Where: `flake.nix`; `AGENTS.md`.
 
 ### D-151 The layout of the repository
 - 2026-11-09. Decided by: the owner.
-- Decision: documents in `docs/`, research notes in `docs/research/`, the boot program in `boot/`, the kernel tool in `tools/kerneltool/`, build output in `build/`, which git ignores. Code is in named Odin libraries, with no relative import.
+- Decision: documents in `docs/`, research notes in `docs/research/`, the boot program in `boot/`, the modus tool in `tools/modustool/`, build output in `build/`, which git ignores. Code is in named Odin libraries, with no relative import.
 - Words: none recorded.
 - State: in force (the libraries since 2026-11-10, choice 87). Changed by D-249: the sources of the system are in `src/`, and the two libraries are one source library, `modus`.
 - Where: `README.md`; `FIRST_MILESTONE.md`, choice 87.
@@ -1414,9 +1414,9 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: in force.
 - Where: `MODULE_CONTRACT.md`.
 
-### D-156 The kernel tool uses only the Odin standard library
+### D-156 The modus tool uses only the Odin standard library
 - 2026-11-09. Decided by: the owner.
-- Decision: the kernel tool uses only the Odin standard library. The rule is about the tool, not about the system.
+- Decision: the modus tool uses only the Odin standard library. The rule is about the tool, not about the system.
 - Words: none recorded.
 - State: in force.
 - Where: `TOOLS.md`.
@@ -1430,7 +1430,7 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ### D-158 The parallel build
 - 2026-11-11. Decided by: the owner (accepted the answer of the coordinator).
-- Decision: `kerneltool build` runs one compiler for each module, as many at once as the machine has processors, and assembles the boot image in the fixed order of the module table.
+- Decision: `modustool build` runs one compiler for each module, as many at once as the machine has processors, and assembles the boot image in the fixed order of the module table.
 - Words: "Pourquoi on est obligé de faire du monothread ? Avec pas moyen de faire du multithread, collect, order ?"; then "Ah oui c'est bien ça".
 - State: done (step 62). The compiler on one thread is replaced by D-160.
 - Where: `REPRODUCIBLE_BUILD.md`; `FIRST_MILESTONE.md`, choice 414.
@@ -1493,7 +1493,7 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ### D-250 A module of another project is built by one command, with the build path of a module of the system
 - 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
-- Decision: `kerneltool module-build <folder>` builds a module from a folder with one Odin package and a module build file `module.txt` (`key: value` lines: `name`, `imports`, `defines`, `library`). The tool moves to the folder of the system (`--system`, then `MODUS_SYSTEM`) and runs the two steps of a module of the system: one build path. A source of an outside module is in its folder, in the source library, or in the libraries of the compiler. The rules of the repository for a comment and a name do not apply to it. Refused: a row of the module table for each developer, a run from the store of Nix, a second compile command.
+- Decision: `modustool module-build <folder>` builds a module from a folder with one Odin package and a module build file `module.txt` (`key: value` lines: `name`, `imports`, `defines`, `library`). The tool moves to the folder of the system (`--system`, then `MODUS_SYSTEM`) and runs the two steps of a module of the system: one build path. A source of an outside module is in its folder, in the source library, or in the libraries of the compiler. The rules of the repository for a comment and a name do not apply to it. Refused: a row of the module table for each developer, a run from the store of Nix, a second compile command.
 - Words: "tout tout faire"
 - State: done. The examples `tally` and `agenda` have the bytes of the modules of the system. Left: an outside module in a machine; an outside module that imports another outside module.
 - Where: `TOOLS.md`, "A module from a source outside the repository"; `MODULE_CONTRACT.md`, "A module of another project"; `src/md/infrastructure/third_party_module.md`; `FIRST_MILESTONE.md`, choice 749.
@@ -1502,9 +1502,9 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ### D-163 A technical site
 - 2026-11-10. Decided by: the owner.
-- Decision: a technical site presents modus, in the manner of https://libernt.com/fr/. The site is a command of `kerneltool` and shows the pictures and the measured numbers of the machine test.
+- Decision: a technical site presents modus, in the manner of https://libernt.com/fr/. The site is a command of `modustool` and shows the pictures and the measured numbers of the machine test.
 - Words: none recorded.
-- State: done (`kerneltool site`).
+- State: done (`modustool site`).
 - Where: `SITE.md`.
 
 ### D-164 A rich, generated documentation in the look of the system
@@ -1650,7 +1650,7 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ### D-243 The planned work is one file, `ROADMAP.md`, with a check and a page of the site
 - 2026-11-14. Decided by: the owner (the rule "Roadmap" of the global rules; the page); the coordinator and an agent (the form).
-- Decision: the planned work has one place, `ROADMAP.md` at the root, next to `CHANGELOG.md`: the title, the sections Now, Next and Later, each a list; an entry is a short bold summary, then one or two sentences on what the work gives the user; no date. A work that is done loses its entry in the commit of its changelog fragment. `kerneltool roadmap check` checks the form. The site shows the file on the page Roadmap, beside the page Releases. `docs/FIRST_MILESTONE.md` no longer holds plans: its section "Next steps" points to the roadmap.
+- Decision: the planned work has one place, `ROADMAP.md` at the root, next to `CHANGELOG.md`: the title, the sections Now, Next and Later, each a list; an entry is a short bold summary, then one or two sentences on what the work gives the user; no date. A work that is done loses its entry in the commit of its changelog fragment. `modustool roadmap check` checks the form. The site shows the file on the page Roadmap, beside the page Releases. `docs/FIRST_MILESTONE.md` no longer holds plans: its section "Next steps" points to the roadmap.
 - Words: "j'aimerais [...] qu'on [la] rende visible sur le site, la roadmap, joliment, tout simplement, parallèle au changelog"
 - State: done.
 - Where: `AGENTS.md`, "Roadmap"; `TOOLS.md`, "The roadmap"; `SITE.md`, "The roadmap"; `src/md/features/roadmap.md`; `FIRST_MILESTONE.md`, choice 741.
@@ -1664,7 +1664,7 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ### D-245 The mark has variants; a picture keeps its gradient; the tool makes the pixels; one generator holds the logic
 - 2026-11-14. Decided by: the owner.
-- Decision: the mark has two variants, smooth and cells. A request names its variant; nothing chooses it from the cell size. A picture is smooth: the head of the home of the site, its tile maps, the files of `resources/logo`, the card, the boot display, the window of the program `heron`. A small icon, one pixel for a cell, is cells: the bar of the site, the bar of the desktop, the icon of a tab. The smooth variant at one pixel for a cell is refused. The tool writes the real pixels of each picture, with a lossless encoding only; a browser computes no color. One generator of the tool draws every picture file of the mark, with one command, `kerneltool mark`; `kerneltool logo` and `kerneltool site` are lists of requests. This replaces the form of the same day in which each picture of the heron of the site had one pixel for a cell and the page made the cell larger.
+- Decision: the mark has two variants, smooth and cells. A request names its variant; nothing chooses it from the cell size. A picture is smooth: the head of the home of the site, its tile maps, the files of `resources/logo`, the card, the boot display, the window of the program `heron`. A small icon, one pixel for a cell, is cells: the bar of the site, the bar of the desktop, the icon of a tab. The smooth variant at one pixel for a cell is refused. The tool writes the real pixels of each picture, with a lossless encoding only; a browser computes no color. One generator of the tool draws every picture file of the mark, with one command, `modustool mark`; `modustool logo` and `modustool site` are lists of requests. This replaces the form of the same day in which each picture of the heron of the site had one pixel for a cell and the page made the cell larger.
 - Words: "il faut absolument garder le dégradé, ça donne toute son apparence. [...] pour les icônes petite taille on peut se couper le dégradé, ça n'a pas d'intérêt, ça va juste diminuer la lisibilité, mais en revanche pour les images comme on a fait sur la page d'accueil il faut évidemment avoir le dégradé. Donc on aura un petit peu de variantes du logo et donc des animations [...] pas juste une option quoi, c'est quelle variante du logo on veut en fait"; "non non c'est pas [le] navigateur qui calcule le dégradé"; "je veux un outil puissant où tout est concentré plutôt que éparpillé dans des scripts, un peu de logique ici, un peu de logique là [...] j'essaie de comprimer la complexité d'un sujet [en] un seul endroit".
 - State: done. Left: the icon file and the vector icon of the site in the generator.
 - Where: `DESIGN.md`, "The variants of the mark"; `TOOLS.md`, "The pictures of the mark"; `src/md/features/mark_pictures.md`; `FIRST_MILESTONE.md`, choice 736.
@@ -1713,80 +1713,80 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ### D-194 The site shows the numbers of the last full check
 - 2026-11-12. Decided by: the owner, on the published page of the numbers; the form was given by the coordinator.
-- Decision: the published site shows the measured numbers of the last full check of the commit that it is built from. The pass that commits the pictures (`kerneltool screenshots`) also commits the measure record, `docs/measures/measures.txt`. The site reads `build/` when its logs are newer than the record, else the record. This settles Q-12.
+- Decision: the published site shows the measured numbers of the last full check of the commit that it is built from. The pass that commits the pictures (`modustool screenshots`) also commits the measure record, `docs/measures/measures.txt`. The site reads `build/` when its logs are newer than the record, else the record. This settles Q-12.
 - Words: "0 of 14 numbers are measured in this build" (the page that the owner saw); "The published site must show the numbers of the last full check of the commit that it is built from."
 - State: in force.
-- Where: `docs/SITE.md`, "The measure record"; `tools/kerneltool/measure_record.odin`.
+- Where: `docs/SITE.md`, "The measure record"; `tools/modustool/measure_record.odin`.
 
 ### D-195 A pointer of a comment to a document is a reference on the site
 - 2026-11-12. Decided by: the owner, on the page of the module `kernel_without_return_check`; the form was given by the coordinator.
-- Decision: a pointer of a source comment to a document (`docs/ARCHITECTURE.md, "Kernel systems"`) is shown on the site as a link with the title of the document and of the heading, in a style of its own, not as the path and a label. A pointer whose label names no heading stops `kerneltool site`.
+- Decision: a pointer of a source comment to a document (`docs/ARCHITECTURE.md, "Kernel systems"`) is shown on the site as a link with the title of the document and of the heading, in a style of its own, not as the path and a label. A pointer whose label names no heading stops `modustool site`.
 - Words: "qu'est-ce que ça fout là ce genre d'infos ? ça devrait pas etre genre un "tag" ou une "référence" ? genre un lien, affiché avec un style pour architecture.md ?"
 - State: in force.
-- Where: `docs/SITE.md`, "The references to documents"; `tools/kerneltool/site_document_references.odin`.
+- Where: `docs/SITE.md`, "The references to documents"; `tools/modustool/site_document_references.odin`.
 
 ### D-196 One section Docs, with the guides and the reference under it
 - 2026-11-12. Decided by: the owner; the word, the place of the status page and the redirects of the two generations were given by the coordinator.
 - Decision: the bar names one section, Docs, in place of Guides and Reference: Docs, Status, News, Releases. The guides are under `/docs/guides/`, the reference under `/docs/reference/`, and `/docs/` is a page of its own. The word of the section and of its page is "Docs"; "Guides" and "Reference" stay the names of its two parts. The status page stays at `/status/`, a section of its own. Each old address of the two generations (the `.html` files, and the folders before the docs) redirects straight to the page of today.
 - Words: "pourquoi \"reference\" et pas \"docs\" ? ça parle plus aux gens ?"; "on garde une page d'index sur docs avec un sous chemin reference et guides ?".
 - State: done.
-- Where: `docs/SITE.md`, "The sections"; `docs/SITE.md`, "The redirect pages"; `tools/kerneltool/site_frame.odin`.
+- Where: `docs/SITE.md`, "The sections"; `docs/SITE.md`, "The redirect pages"; `tools/modustool/site_frame.odin`.
 
 ### D-197 The docs home is a door with a search over the whole site
 - 2026-11-12. Decided by: the owner; the form was given by the coordinator.
 - Decision: `/docs/` is the home of the docs: a large search field in the middle, which searches the whole site with the index and the list of the search of the bar, then a card for the guides, a card for the reference, and doors. Every count on it is computed.
 - Words: "avec une belle \"page d'accueil de docs\" avec une searchbar, qui cherche parmi tout ?".
 - State: done.
-- Where: `docs/SITE.md`, "The docs home"; `tools/kerneltool/site_docs_home.odin`.
+- Where: `docs/SITE.md`, "The docs home"; `tools/modustool/site_docs_home.odin`.
 
 ### D-198 One search field on a page
 - 2026-11-12. Decided by: the owner, when asked whether the bar keeps its field beside the large field of the docs home.
 - Decision: the docs home has its large field and no field in its bar; every other page has the field of the bar and no other.
 - Words: "non c'est redondant. autant ne l'avoir que sur toutes les autres pages (exclusivité mutuelle)".
 - State: done.
-- Where: `docs/SITE.md`, "The search"; `tools/kerneltool/site_search.odin`.
+- Where: `docs/SITE.md`, "The search"; `tools/modustool/site_search.odin`.
 
 ### D-199 A chart of what the search finds, which follows the search; the icons of the values inside the style sheet
 - 2026-11-12. Decided by: the owner; the reading of "dynamique", the form of the chart and the delivery of the icons were given by the coordinator.
 - Decision: the paragraph of the counts under the search field of the docs home is removed. Under the cards of the guides and of the reference, a horizontal bar chart gives the count of the entries of each kind of the index, the largest first, each kind with the icon and the color that the list of results shows for it, and a link to the page that lists the kind, when one exists. With no script the chart is static. The coordinator reads "dynamique" so: while the search field holds a text, each row shows the count of the matches of its kind, in the same place, a press on a row keeps the list of results to its kind, and a bar changes its length in at most 150 ms, with no movement for a reader who asks for reduced motion. The icons of the value kinds are inside the style sheet, so that a page asks for no file to draw them.
 - Words: "cette liste rébarbative d'informations sans aucune mise en forme, aucune couleur sur les numéros, les symboles, les types de choses, c'est nul. A la limite, mets un graphe en dessous du guide et de la référence, ça peut être intéressant. Mais un graphe ou plutôt un histogramme, j'en sais rien. Un truc visuel, parce que là, juste l'espèce de boum, gros cube de texte, ça n'a aucun intérêt en dessous de la barre de recherche, ça prend juste de la place."; "Et tant qu'à mettre un histogramme, autant le rendre dynamique."; "j'espère que le site a bien la compression, etc. Parce que je trouve qu'il n'est pas long à charger, mais on sent que c'est lourd à charger."
 - State: done.
-- Where: `docs/SITE.md`, "The docs home"; `docs/SITE.md`, "The kinds of values"; `tools/kerneltool/site_docs_home.odin`; `tools/kerneltool/site_search.odin`; `tools/kerneltool/site_values.odin`.
+- Where: `docs/SITE.md`, "The docs home"; `docs/SITE.md`, "The kinds of values"; `tools/modustool/site_docs_home.odin`; `tools/modustool/site_search.odin`; `tools/modustool/site_values.odin`.
 
 ### D-200 The cards of the docs home list everything, with no empty part
 - 2026-11-12. Decided by: the owner; the form was given by the coordinator.
 - Decision: the card of the guides lists every guide with its one line of description; the card of the reference lists every reference table with its count, with no table of three columns; a card takes the height of its rows; the chart of the search is under the reference, in the shorter column; the row of doors is removed. Each guide has a row in the table "## Documents" of `README.md`, and the site refuses a guide with none.
 - Words: "Mauvais usage de l'espace." (with a picture of the two cards: the card of the guides empty for its lower half, the table of the reference squeezed).
 - State: done.
-- Where: `docs/SITE.md`, "The docs home"; `tools/kerneltool/site_docs_home.odin`; `README.md`, "Documents".
+- Where: `docs/SITE.md`, "The docs home"; `tools/modustool/site_docs_home.odin`; `README.md`, "Documents".
 
 ### D-201 The foot of each page names the maker
 - 2026-11-12. Decided by: the owner.
 - Decision: the foot of each page of the site starts with "modus · by Froment Software": the mark of the maker and its name as a link to https://froment.software, as on the other sites of the maker.
 - Words: "sur le site, dans le footer, il manque le « by froment software » comme il y a sur tous les sites."
 - State: done.
-- Where: `tools/kerneltool/site_frame.odin`; `resources/site/froment_software.png`.
+- Where: `tools/modustool/site_frame.odin`; `resources/site/froment_software.png`.
 
 ### D-207 The site colors its code
 - 2026-11-12. Decided by: the owner; the means was chosen by the coordinator.
 - Decision: code on the site is colored. The tool colors it with the tokenizer of the compiler, not with Shiki: a Node script is forbidden in the repository.
 - Words: "Un peu dommage aussi qu'on ait pas de coloration du code, peut-être avec Shiki"
 - State: done.
-- Where: `docs/SITE.md`; `tools/kerneltool/site_code.odin`.
+- Where: `docs/SITE.md`; `tools/modustool/site_code.odin`.
 
 ### D-208 The look of the site: scroll bars, selection, values, type cards
 - 2026-11-12. Decided by: the owner.
 - Decision: the site styles its scroll bars and its selection color. A technical value is in the monospace font, with a color and an icon of its kind. A type has a card: its size, its alignment and its fields.
 - Words: "si tu peux styliser les scroll-bars [...] genre la couleur de highlight, enfin tout ce bordel"; "sur les différents data types, d'avoir un tool type qui explique le type. Genre sa carte d'identité, sa taille, des informations techniques. Sa taille, son alignement"; "que les valeurs techniques [...] soient affichées en monospace, qu'elles aient une couleur [...] accompagnées d'un icône"
 - State: done.
-- Where: `docs/SITE.md`, "The kinds of values"; `tools/kerneltool/site_types.odin`; `tools/kerneltool/site_values.odin`.
+- Where: `docs/SITE.md`, "The kinds of values"; `tools/modustool/site_types.odin`; `tools/modustool/site_values.odin`.
 
 ### D-209 The documentation tree: separate and expanded
 - 2026-11-12. Decided by: the owner.
 - Decision: the guides and the reference each have their own tree, and a tree is shown expanded.
 - Words: "je ne suis pas fan qu'on regroupe dans la table des matières les guides, la doc [...] la doc, je voudrais voir l'arbre déployé et pas compressé"
 - State: done.
-- Where: `docs/SITE.md`; `tools/kerneltool/site_documentation.odin`.
+- Where: `docs/SITE.md`; `tools/modustool/site_documentation.odin`.
 
 ### D-210 Faults of the site that the owner found
 - 2026-11-12. Decided by: the owner.
@@ -1845,6 +1845,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "fait un amendement au commit et force push pour retirer ces images qui ont été publiées qui sont beaucoup trop grosses 193 mégaoctets c'est trop"; then, after the coordinator said that an amend removes nothing: "et fait la technique qui réécrit l'historique".
 - State: done. Commit identifiers in older records name the old history.
 - Where: `REVIEWS.md`.
+
+### D-257 The tool is `modustool`
+- 2026-11-14. Decided by: the owner.
+- Decision: the tool of the project has the name of the system: the command `modustool`, the folder `tools/modustool`, the package `modustool`, and the start `modustool:` of each line that it prints. The prose says "the modus tool". The changelog, the news entries of a past release and the measure record of a past run keep the old name: they say what was true at their date.
+- Words: "aussi, va falloir renommer kerneltool en modustool je pense"
+- State: done.
+- Where: `TOOLS.md`; `AGENTS.md`, "Work".
 
 ## Open questions for the owner
 
@@ -1921,7 +1928,7 @@ Older records cite the old `docs/HANDOFF.md`. Its list "Rules from the owner" ha
 | B22 | Principals and sessions | D-006 |
 | B23 | Usability concessions | D-007 |
 | B24 | Odin is final | D-149 |
-| B25 | One kernel tool | D-147 |
+| B25 | One modus tool | D-147 |
 | B26 | Performance | D-003 |
 | B27 | The linker | D-152 |
 | B28 | ELF at build time | D-153 |

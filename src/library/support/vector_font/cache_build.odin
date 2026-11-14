@@ -91,7 +91,7 @@ cache_header_write :: proc "contextless" (out: []u8, font_bytes: []u8, font_name
 // the three scales of the grid and writes a glyph cache file
 // (modus:contract/glyph_cache) into the memory of the caller: one position, each
 // glyph the full width of its cell, each advance the width of the cell, no
-// pair. The kernel tool makes the cache of the boot image with it; a
+// pair. The modus tool makes the cache of the boot image with it; a
 // program makes its own cache of another font with it. It gives the size
 // of the file, or a problem; .Too_Many_Points also when out is too small.
 // scale_count: 3 for the text of the system, 1 for a weight that draws only

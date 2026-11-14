@@ -4,7 +4,7 @@
 ;   fill_bytes_with_value      (destination, value, count)
 ;   erase_secret_bytes         (destination, count)
 ;   erase_stack_below_the_caller ()
-; Each gives the destination. The kernel tool links this file in every
+; Each gives the destination. The modus tool links this file in every
 ; module, in the kernel and in the boot program, and builds them without
 ; -no-crt: with it, Odin gives its own functions, loops of one byte, two of
 ; them with no optimization (optnone).
@@ -18,7 +18,7 @@
 ;   (none)   the System V calling convention: the modules and the kernel.
 ;   WIN64    the Microsoft x64 calling convention: the boot program (UEFI).
 ;   HOST     the System V convention, the long names only, for the tests of
-;            the kernel tool on the host (the host keeps its own memcpy).
+;            the modus tool on the host (the host keeps its own memcpy).
 ;
 ; The forms were chosen by measure (the compositor writes the table at its
 ; start). Under 16 bytes: general registers. 16 to 64 bytes: two or four

@@ -12,7 +12,7 @@ This file is no longer the record of the decisions. Each thing that it held is n
 Each item is the "not done yet" of a decision. Move it to `FIRST_MILESTONE.md`, "Next steps", when it is ordered.
 
 1. The measures on a quiet host: the windows, `flood`, the calls, the SIMD forms on the machine, the costs of QUIC (D-190, D-100).
-2. The cleanup of the comments in the code, and its check in `kerneltool check` (D-059).
+2. The cleanup of the comments in the code, and its check in `modustool check` (D-059).
 3. The research on identity across machines (D-006).
 4. A check of the licences in the reuse list of `PROPERTIES.md`, which also names `gui_toolkit` and a TCP library that the system does not use (C-12, C-14).
 5. The animations of the mark: a shorter cycle and two scratching animations (D-181).

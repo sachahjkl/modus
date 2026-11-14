@@ -1,4 +1,4 @@
-// The call from the host: what the kernel tool on the host and the remote
+// The call from the host: what the modus tool on the host and the remote
 // service in the machine agree on (docs/MODULE_CONTRACT.md, section 4, "A
 // call from the host"; docs/QUIC.md, section 7).
 //

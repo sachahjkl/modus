@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_chacha20/chacha20.odin; its imports changed, and the adjustments that tools/kerneltool/cryptography_origin.odin lists (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_chacha20/chacha20.odin; its imports changed, and the adjustments that tools/modustool/cryptography_origin.odin lists (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package _chacha20
 
 import crypto "modus:support/cryptography/compatibility_crypto"

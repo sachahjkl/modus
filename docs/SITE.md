@@ -8,7 +8,7 @@ No page holds a text that a person must remember to update: each page is generat
 
 ## The command
 
-`kerneltool site` writes the site in `build/site/`. The folder is not committed. `kerneltool site --address https://<host>/<path>` sets the address of the site for one run (see "What the owner must decide").
+`modustool site` writes the site in `build/site/`. The folder is not committed. `modustool site --address https://<host>/<path>` sets the address of the site for one run (see "What the owner must decide").
 
 - One style sheet for all pages, one small script for the search (see "The search") and a few small scripts of one page each (the animations of the mark and the carousel on the home, the module graph, the index of the glossary), no request to another server: the pages work from a file, from a folder of a host and from the root of a domain. Each link inside the site is relative. Each page is whole with no script.
 - Before it writes a page, the command checks all the pages. A failure stops the command with the page and the reason, and no page is written:
@@ -27,7 +27,7 @@ No page holds a text that a person must remember to update: each page is generat
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
 - At its end the command prints: the pages and their bytes, the count of the redirect pages and the count of each generation of old addresses, the other files, the bytes of the style sheet and the count of the icons inside it, the entries and the bytes of the index of the search and the bytes of the script, the bytes of each page of the glossary with its bound (see "The glossary"), the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), the count of the declarations of the sources and of the files that the parser refused, and the count of the code spans that link to a declaration, that are ambiguous and that name no declaration, with the first five of the last two (see "The declarations of the sources"), the counts of the module graph and its modules with no entry that no module imports (see "The module graph"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after, and the count and the bytes of the thumbnails of the gallery, with the bytes of the same pictures at full size.
 - Before any of these, the command checks the gallery table against the folder `docs/screenshots` (see "The gallery table"); a picture that the table does not name stops it.
-- `kerneltool check` runs the host tests of the site (`tools/kerneltool/site_test.odin`, `site_render_test.odin`) and checks that each picture that `README.md` names is a file of the repository. It does not write the site.
+- `modustool check` runs the host tests of the site (`tools/modustool/site_test.odin`, `site_render_test.odin`) and checks that each picture that `README.md` names is a file of the repository. It does not write the site.
 
 ## The pages
 
@@ -44,7 +44,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/reference/` | The list of the reference tables below |
 | `docs/reference/glossary/` | The index of `docs/GLOSSARY.md`: every term from A to Z, each row with the anchor `term-<name>` (see "The glossary") |
 | `docs/reference/glossary/<group>/` | One group of `docs/GLOSSARY.md`, by the slug of its heading: each term of the group is an entry with the anchor `term-<name>` |
-| `docs/reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the comment above `COMMANDS ::` (what the tool is and how to run a command) at the top; for each command its name, the comment lines just above its entry as its documentation (the first sentence is the cell "What it does"), and its help, the line that `kerneltool help` prints |
+| `docs/reference/commands/` | `COMMANDS` in `tools/modustool/main.odin`: the comment above `COMMANDS ::` (what the tool is and how to run a command) at the top; for each command its name, the comment lines just above its entry as its documentation (the first sentence is the cell "What it does"), and its help, the line that `modustool help` prints |
 | `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it |
 | `docs/reference/licenses/` | See "The licenses" |
 | `releases/` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, each of its changes the anchor `release-<number>-change-<its place in the release, from 1>`, and a line with a link to each news entry that names it |
@@ -70,7 +70,7 @@ The tool reads the commit from the files of git (`.git`, `HEAD`, the reference, 
 
 The owner asked for it on 2026-11-12: "j'aimerais des urls genre /reference/licenses au lieu de licenses.html (possible avec index.html dans dossier". Then, of the two sections Guides and Reference: "pourquoi \"reference\" et pas \"docs\" ? ça parle plus aux gens ?", and "on garde une page d'index sur docs avec un sous chemin reference et guides ?".
 
-- Each page is the `index.html` of its own folder: `docs/reference/licenses/index.html`, `docs/guides/NETWORK/index.html`, `news/index.html`. The home is `index.html` at the root. `site_page_file` in `tools/kerneltool/site_frame.odin` gives the file of a page from its folder; no other code writes the path of a page.
+- Each page is the `index.html` of its own folder: `docs/reference/licenses/index.html`, `docs/guides/NETWORK/index.html`, `news/index.html`. The home is `index.html` at the root. `site_page_file` in `tools/modustool/site_frame.odin` gives the file of a page from its folder; no other code writes the path of a page.
 - The folders come from one place: `SITE_DOCS_FOLDER` (`docs`), `SITE_GUIDE_FOLDER` and `SITE_REFERENCE_FOLDER` under it, the folder of each reference table under the reference, and `site_section_folders` for the page of each section. A change of these lines moves the pages, the links, the canonical addresses, the sitemap, the page graphs, the feeds, `llms.txt` and the index of the search together.
 - The address of a page is its folder with a final slash: `/docs/reference/licenses/`. GitHub Pages serves the `index.html` of a folder at that address, and it redirects the address with no final slash to it.
 - `site_page_link` writes each link from a page to a page, in one of two forms:
@@ -108,7 +108,7 @@ The old addresses were public. Two generations of them exist, and each old addre
 
 ## The Markdown that the site renders
 
-The renderer (`tools/kerneltool/site_render.odin`) knows the Markdown that the documents of `docs/` use:
+The renderer (`tools/modustool/site_render.odin`) knows the Markdown that the documents of `docs/` use:
 
 - headings `#` to `######`, each with an id from its text (lowercase letters and digits, `-` between words; `-2`, `-3` for a repeated id);
 - paragraphs, joined lines;
@@ -137,7 +137,7 @@ Each guide has the documentation layout (see "The two layouts"): its headings of
 
 ## The glossary
 
-The glossary (`docs/GLOSSARY.md`) is one source, read by one reader: `glossary_read` (`tools/kerneltool/glossary.odin`). The pages of the glossary, the links to a term on the other pages, the entries of the search, the page graph, the references to a term and the check of the tool all take the terms that it gives.
+The glossary (`docs/GLOSSARY.md`) is one source, read by one reader: `glossary_read` (`tools/modustool/glossary.odin`). The pages of the glossary, the links to a term on the other pages, the entries of the search, the page graph, the references to a term and the check of the tool all take the terms that it gives.
 
 ### The form of an entry
 
@@ -147,11 +147,11 @@ The glossary (`docs/GLOSSARY.md`) is one source, read by one reader: `glossary_r
 - The paragraphs after it are the explanation, in the Markdown of the guides: what the term is for, how a program gets and uses it, its neighbours, what it is not, an example from the system, and a document reference to its full design.
 - The last paragraph starts with "Do not use: " and lists the words that the term replaces. It is optional.
 
-`glossary_read` refuses a table of terms (the form before this one), two groups whose headings have one slug (each group is a page, named by its slug), a term before the first group, a term with no short definition or whose first paragraph is a list, a table, a quote or a fence, a heading of level 4 or more inside an entry, and a line "Do not use" that is not the last paragraph of its entry. `kerneltool check` and `kerneltool site` stop on each of them, with the line.
+`glossary_read` refuses a table of terms (the form before this one), two groups whose headings have one slug (each group is a page, named by its slug), a term before the first group, a term with no short definition or whose first paragraph is a list, a table, a quote or a fence, a heading of level 4 or more inside an entry, and a line "Do not use" that is not the last paragraph of its entry. `modustool check` and `modustool site` stop on each of them, with the line.
 
 ### The terms with no explanation
 
-`kerneltool check` prints the count of the terms that have a short definition and no explanation, and their names by group, as a warning: a short definition alone is the summary that a reader of another system cannot use. The warning becomes a failure when every group has its explanations.
+`modustool check` prints the count of the terms that have a short definition and no explanation, and their names by group, as a warning: a short definition alone is the summary that a reader of another system cannot use. The warning becomes a failure when every group has its explanations.
 
 ### The pages
 
@@ -198,7 +198,7 @@ A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject
 | Decided | The owner chose a thing that a reader sees: a name, a mark, a font | The color of the kernel |
 | Fixed | A thing that a reader saw fail now works | The color of the machine |
 
-- `kerneltool news new <subject>` writes an entry with the date of the host, `release: next`, and no title and no text, so that the check fails until a person writes them. `kerneltool news check` checks each entry: the head, each key known and present once, the date a date of the calendar and the date of the file name, the picture a PNG file of `docs/screenshots/` or `resources/logo/`, the release a release of `CHANGELOG.md` or `next`, the guide a document of `docs/` that is a page of the site, the film a WebM file of `docs/films/` under its size bound in an entry that has a picture ("The film of a news entry"), the text not empty, at most 1200 bytes, with no heading and no line of HTML, and no two titles the same. `kerneltool check` runs it, and `kerneltool site` stops on the same faults.
+- `modustool news new <subject>` writes an entry with the date of the host, `release: next`, and no title and no text, so that the check fails until a person writes them. `modustool news check` checks each entry: the head, each key known and present once, the date a date of the calendar and the date of the file name, the picture a PNG file of `docs/screenshots/` or `resources/logo/`, the release a release of `CHANGELOG.md` or `next`, the guide a document of `docs/` that is a page of the site, the film a WebM file of `docs/films/` under its size bound in an entry that has a picture ("The film of a news entry"), the text not empty, at most 1200 bytes, with no heading and no line of HTML, and no two titles the same. `modustool check` runs it, and `modustool site` stops on the same faults.
 - `news/`: each entry, newest first, as a card with the color of its kind, its date, a link to its release and to its guide, its picture or its film, and a link to its file. Its anchor is `news-<the name of its file>`. One renderer renders all the entries of the page, so the ids stay unique and each term of the glossary links once.
 - The home shows the three newest entries: the title, the kind, the date, the picture and the first sentence. The picture of an entry with a film has the mark "film" and links to the entry.
 - `releases/`: under each release, a link to each entry that names it. An entry with `release: next` is in no release yet.
@@ -207,15 +207,15 @@ A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject
 What a feed reader needs, and what is missing with no address:
 
 - A reader subscribes to the address of the feed and resolves each relative link against it. With no address (`SITE_ADDRESS` is empty), the links of the feed are relative to the root of the site (`news/index.html#news-...`, `pictures/...`): they work for a reader that fetched the feed from the host of the site.
-- Missing with no address: the link `rel="self"` (the feed cannot name its own place), absolute links (a reader that receives the feed as a file, or copies an entry elsewhere, cannot resolve them), and the discovery of the feed from another site. `kerneltool site --address https://...` writes absolute links and the link `self`. The command says so when the site has no address.
+- Missing with no address: the link `rel="self"` (the feed cannot name its own place), absolute links (a reader that receives the feed as a file, or copies an entry elsewhere, cannot resolve them), and the discovery of the feed from another site. `modustool site --address https://...` writes absolute links and the link `self`. The command says so when the site has no address.
 
 ### The film of a news entry
 
-An entry can name a film: `film: docs/films/<name>.webm` in its head. The command `kerneltool film <name>` writes the file (`TOOLS.md`, "The film of a document"), and the repository holds it. The site copies it to `films/<name>.webm` as it is: `kerneltool site` runs no encoder.
+An entry can name a film: `film: docs/films/<name>.webm` in its head. The command `modustool film <name>` writes the file (`TOOLS.md`, "The film of a document"), and the repository holds it. The site copies it to `films/<name>.webm` as it is: `modustool site` runs no encoder.
 
 **The file.** WebM with AV1, 30 pictures in one second, no sound, at most 4 MiB (`FILM_DOCUMENT_SIZE_LIMIT`). Each version of the file stays in the history of the repository, and a reader loads it on a phone. Measured on the film of the palette (36.8 s, 2048 by 1536 pixels): H.264 in MP4 3 169 392 bytes, VP9 in WebM 3 019 142 bytes, AV1 in WebM 1 572 784 bytes, with the text of the screen sharp in the AV1 file. The site holds one file for a film, and no second source in another format.
 
-**The checks.** `kerneltool news check` reads the file: it starts with an EBML header (the bytes `1A 45 DF A3`) of the document type `webm`, it is under the size bound, and its tracks state the width and the height of its pictures. The entry has a picture. `kerneltool site` stops on the same faults.
+**The checks.** `modustool news check` reads the file: it starts with an EBML header (the bytes `1A 45 DF A3`) of the document type `webm`, it is under the size bound, and its tracks state the width and the height of its pictures. The entry has a picture. `modustool site` stops on the same faults.
 
 **The page of the news.** An entry with a film shows it under its text, over the width of the card, at most 1024 pixels wide: the width of the screen of the system. In the column of a picture (384 pixels) the text of a film of the whole screen is not readable. On a screen narrower than 720 pixels the film takes the width of the column.
 
@@ -259,9 +259,9 @@ Not done: the page graph of the news names no `VideoObject` for a film.
 
 The owner asked for it on 2026-11-14: "j'aimerais [...] qu'on [la] rende visible sur le site, la roadmap, joliment, tout simplement, parallèle au changelog".
 
-`roadmap/` shows `ROADMAP.md`, the planned work of the system (`GLOSSARY.md`, "Roadmap"). It is the other half of `releases/`: the releases list the work that is done, the roadmap the work that is planned. The form of the file and its check are in `TOOLS.md`, "The roadmap"; the code of the page is `tools/kerneltool/site_roadmap.odin`.
+`roadmap/` shows `ROADMAP.md`, the planned work of the system (`GLOSSARY.md`, "Roadmap"). It is the other half of `releases/`: the releases list the work that is done, the roadmap the work that is planned. The form of the file and its check are in `TOOLS.md`, "The roadmap"; the code of the page is `tools/modustool/site_roadmap.odin`.
 
-- `kerneltool site` reads the file with the reader of `kerneltool roadmap check` (`roadmap_read`), before it writes a page. A fault of form stops the command with the line of the fault, and no page is written. The site does not apply the rule of the changelog summaries: that rule is for a commit, not for a page.
+- `modustool site` reads the file with the reader of `modustool roadmap check` (`roadmap_read`), before it writes a page. A fault of form stops the command with the line of the fault, and no page is written. The site does not apply the rule of the changelog summaries: that rule is for a commit, not for a page.
 - The page adds no sentence to an entry. Its first paragraphs say what the three sections are and where the work that is done is; a line names the file.
 - The three sections are three columns from 960 pixels, and one column under 960 pixels, in the same order. Why columns: Now, Next and Later are one line of time, read from the left to the right, and a reader sees at once how much is in each. Why 960 and not 720: three columns of a window of 720 pixels are about 220 pixels each, about 28 characters a line. Why not three groups one under the other at every width: a wide window has the room for the three side by side, and under the two others the section Later, the longest, starts far below the first screen. The columns start at the same height and end where their cards end (`align-items: start`): no card is stretched to fill a column.
 - A section has a heading (`now`, `next`, `later` as its id), the count of its entries in the dim color, and one line that says what it holds. A section with no entry says "No entry.".
@@ -310,7 +310,7 @@ The owner asked for it on 2026-11-12: "une doc riche et auto générée, avec re
 
 - On the first key in the box, it fetches `search.json` from the folder of the script. A page opened from a file cannot read another file in the browsers of today: the script then says so under the box, and the site stays whole by its links.
 - The match and the order are those of the completion list of the console (`CONSOLE.md`, section 3; `src/library/support/line_editor/fuzzy_match.odin`): `lower`, `fuzzy_match`, `ranked_before` and `rank_candidates`, ported rule for rule on the UTF-8 bytes of the query and of the title. The tie order is the kind: of two entries with one score, a module comes before a guide section that has its name.
-- Two things keep the script in step with the console. The tool writes the constants of `src/library/support/line_editor` (the points of each rule, the bounds) into the script. And one table of queries, names, scores and orders, `site_search_match_names` and `site_search_match_orders` in `tools/kerneltool/site_search.odin`, is run twice: by the host test `site_search_matcher_table` over the matcher of Odin, and by the script over its own matcher when the address of a page has `?selftest=1` (it prints one line in the console of the browser, "search self test: N of N cases pass" or the first case that fails, when the script runs during the load and again when the list opens; the same line is the attribute `data-search-self-test` of the root element and the first words under the box). A change of the rule in Odin fails the host test until the table has the new scores; the new table then fails the self test of the script until the script has the new rule. No program of the repository runs the script: the self test is run in a browser.
+- Two things keep the script in step with the console. The tool writes the constants of `src/library/support/line_editor` (the points of each rule, the bounds) into the script. And one table of queries, names, scores and orders, `site_search_match_names` and `site_search_match_orders` in `tools/modustool/site_search.odin`, is run twice: by the host test `site_search_matcher_table` over the matcher of Odin, and by the script over its own matcher when the address of a page has `?selftest=1` (it prints one line in the console of the browser, "search self test: N of N cases pass" or the first case that fails, when the script runs during the load and again when the list opens; the same line is the attribute `data-search-self-test` of the root element and the first words under the box). A change of the rule in Odin fails the host test until the table has the new scores; the new table then fails the self test of the script until the script has the new rule. No program of the repository runs the script: the self test is run in a browser.
 - The chart of the docs home counts the matches of each kind (see "The docs home"). One more table, `site_search_kind_cases`, holds its cases: a query over a group of names, the tie order that the list keeps (a tie order stands for a kind), the count of the matches of each tie order, the count that the list keeps and its first name. The empty query is the field with no text, and gives the counts of the whole group. The host test `site_search_kind_cases_table` runs it over the matcher of the console, and the self test of the script runs it over its own.
 - A third table, `site_search_segment_cases`, holds the segments of the bar of that chart: the counts of the kinds, and the start and the width of each segment in thousandths of the bar. The host test `site_search_segment_cases_table` runs it over `site_search_chart_segments`, and the self test of the script over its own segments. The tool writes the least share of a segment into the rule of the script (`leastShare`).
 
@@ -330,7 +330,7 @@ With no script, the site is whole: every page is reachable by its links, and the
 
 ## The docs home
 
-The owner asked for it on 2026-11-12: "on garde une page d'index sur docs avec un sous chemin reference et guides ? avec une belle \"page d'accueil de docs\" avec une searchbar, qui cherche parmi tout ?". The code is `tools/kerneltool/site_docs_home.odin`.
+The owner asked for it on 2026-11-12: "on garde une page d'index sur docs avec un sous chemin reference et guides ? avec une belle \"page d'accueil de docs\" avec une searchbar, qui cherche parmi tout ?". The code is `tools/modustool/site_docs_home.odin`.
 
 `docs/` is a door to the docs, not a list: the presentation layout (one centred column, no tree, no "On this page"), the title "Docs", and from the top:
 
@@ -347,7 +347,7 @@ The text of the page needs the entries of the index, and the index has an entry 
 
 ### The chart of what the search finds
 
-The owner asked for it on 2026-11-12, of the paragraph that gave the counts under the field: "Un truc visuel, parce que là, juste l'espèce de boum, gros cube de texte, ça n'a aucun intérêt en dessous de la barre de recherche, ça prend juste de la place.", then "Et tant qu'à mettre un histogramme, autant le rendre dynamique." Then, of its place in the column of the reference, under the cards: "pas ouf le placement sur le site de l'histogramme (alors qu'il est trop cool !) genre on le voit quasi pas c'est dommage." Its point is that it moves while the reader types: it is under the field, in a compact form that does not push the cards away. The code is `site_search_chart` in `tools/kerneltool/site_docs_home.odin`, and the part of `search.js` that follows the field.
+The owner asked for it on 2026-11-12, of the paragraph that gave the counts under the field: "Un truc visuel, parce que là, juste l'espèce de boum, gros cube de texte, ça n'a aucun intérêt en dessous de la barre de recherche, ça prend juste de la place.", then "Et tant qu'à mettre un histogramme, autant le rendre dynamique." Then, of its place in the column of the reference, under the cards: "pas ouf le placement sur le site de l'histogramme (alors qu'il est trop cool !) genre on le voit quasi pas c'est dommage." Its point is that it moves while the reader types: it is under the field, in a compact form that does not push the cards away. The code is `site_search_chart` in `tools/modustool/site_docs_home.odin`, and the part of `search.js` that follows the field.
 
 With no script, the chart is whole and static:
 
@@ -371,7 +371,7 @@ With the script, the chart follows the field:
 
 ## The home
 
-The owner looked at the home on 2026-11-14 and asked for six changes: the text of a news card with no picture at its top; a line of time in the place of the boxes of the start ("Soit on affiche une timeline [...] avec des informations riches, mais là l'espèce de boîte c'est nul"); a chart or nothing for the measures ("Soit on fait des rapports de statistiques qu'on affiche sur un graphe ou des histogrammes [...], soit on n'affiche rien"); a newest release that is worth a look ("le texte tout plat comme ça, c'est pas très aguicheur [...] il y a un manque d'emphase sur les mots"); an animation at a click on the heron; and the states of the buttons ("The states of a control"). The code is `tools/kerneltool/site_home.odin`; its host tests are `site_home_test.odin`; the intent is `src/md/features/site_home.md`.
+The owner looked at the home on 2026-11-14 and asked for six changes: the text of a news card with no picture at its top; a line of time in the place of the boxes of the start ("Soit on affiche une timeline [...] avec des informations riches, mais là l'espèce de boîte c'est nul"); a chart or nothing for the measures ("Soit on fait des rapports de statistiques qu'on affiche sur un graphe ou des histogrammes [...], soit on n'affiche rien"); a newest release that is worth a look ("le texte tout plat comme ça, c'est pas très aguicheur [...] il y a un manque d'emphase sur les mots"); an animation at a click on the heron; and the states of the buttons ("The states of a control"). The code is `tools/modustool/site_home.odin`; its host tests are `site_home_test.odin`; the intent is `src/md/features/site_home.md`.
 
 The home does the tour: it shows the system. From its top: the head (the heron, the name, the tagline, the doors), the news, "What it is", the line of time of the start, the tiles of the boot image, the charts of the measures, the carousel, the band of the newest release.
 
@@ -459,7 +459,7 @@ A click, a tap, Enter or Space on the large heron plays one animation at once.
 
 ## The gallery
 
-The owner asked for it on 2026-11-14, of the program `heron`: "faudra évidemment le rendre visible dans les captures du site parce que c'est super sympa. D'ailleurs je veux pas mettre trop de captures sur la page d'accueil [...] idéalement avoir [un] carrousel et une page galerie". The code is `tools/kerneltool/site_gallery.odin`; its host tests are `site_gallery_test.odin`.
+The owner asked for it on 2026-11-14, of the program `heron`: "faudra évidemment le rendre visible dans les captures du site parce que c'est super sympa. D'ailleurs je veux pas mettre trop de captures sur la page d'accueil [...] idéalement avoir [un] carrousel et une page galerie". The code is `tools/modustool/site_gallery.odin`; its host tests are `site_gallery_test.odin`.
 
 Before it, the home showed 20 pictures in 7 groups, from a list of its own, and a picture that the list did not name was on no page: 91 of the 111 pictures of `docs/screenshots` were not on the site.
 
@@ -476,7 +476,7 @@ The gallery table (`GLOSSARY.md`) is the one source of the pictures of the scree
 | `home` | The carousel of the home shows the picture |
 | `film` | A film of `docs/films`, or none: the gallery then shows the film in the place of the thumbnail |
 
-The rule: **each PNG file of `docs/screenshots` is in one row of the table, or in one line of the excluded files (`site_gallery_excluded`) with its reason.** `kerneltool site` stops, and the host test `site_gallery_table_names_every_picture` fails, on a file that neither names, on a file that both name, on a row or an excluded line whose file is gone, and on an excluded line with no reason. So a new picture of a machine test cannot be forgotten: the step that adds it writes its row.
+The rule: **each PNG file of `docs/screenshots` is in one row of the table, or in one line of the excluded files (`site_gallery_excluded`) with its reason.** `modustool site` stops, and the host test `site_gallery_table_names_every_picture` fails, on a file that neither names, on a file that both name, on a row or an excluded line whose file is gone, and on an excluded line with no reason. So a new picture of a machine test cannot be forgotten: the step that adds it writes its row.
 
 A caption is written for the table: it is not the file name with spaces, and it is not the caption of `README.md`, which can be several sentences for the reader of the repository. A caption states what the picture shows; the writer of a row looks at the picture.
 
@@ -595,7 +595,7 @@ Not done: the page graph names no `ImageGallery` for the page; the script has no
 
 ## What other sites read
 
-The owner asked for it on 2026-11-12: "we'll want a sitemap, json-ld, good seo (graph) etc". The structure follows a site of the owner that has these parts; no fact of that site is copied here. The code is `tools/kerneltool/site_metadata.odin`; its host tests are `site_metadata_test.odin`, with a site address and with none.
+The owner asked for it on 2026-11-12: "we'll want a sitemap, json-ld, good seo (graph) etc". The structure follows a site of the owner that has these parts; no fact of that site is copied here. The code is `tools/modustool/site_metadata.odin`; its host tests are `site_metadata_test.odin`, with a site address and with none.
 
 A canonical address, an address of Open Graph and an `@id` of JSON-LD must be absolute: a relative one is wrong for the program that receives it. So each part that needs one is written only with a site address (`GLOSSARY.md`), and the command lists the parts that it did not write.
 
@@ -642,7 +642,7 @@ Not verified against a validator of schema.org or the documents of a search engi
 
 Each `img` has `width`, `height` and an alt text (a check of the pages). The pictures below the first screen have `loading="lazy"` and `decoding="async"`: the pictures of the carousel of the home, the thumbnails of the gallery, the pictures of the news and of the guides. The mark of the home and the heron of the bar are on the first screen and load at once. A film of a news entry is a `video` element with its `width`, its `height` and a `poster` ("The film of a news entry"); the check of the links of a page reads `poster` as it reads `href`, `src` and `srcset`.
 
-Each PNG file that the site copies from the repository (the screen pictures, the pictures of the news and of the guides, the icons) is written again through `site_png_compress` (`tools/kerneltool/site_pictures.odin`): it decodes the file and encodes the same pixels with the encoder of the standard library, `core:image/png` (a row filter chosen for each row, then the deflate of `core:compress/deflate` at its default level 5). The screen pictures of `docs/screenshots` are stored with no compression (`png_encode` of `tools/kerneltool/machine.odin`): 2 360 312 bytes for 1024 by 768. The command prints the count of the pictures and their bytes before and after. The output is the same bytes at each build: the encoder reads no clock, no random number and no thread, and its buffers start at zero; a host test encodes each picture twice and compares the bytes, and compares the pixels of the two files byte for byte. A picture of 16 bits a channel stops the command: the repository has none.
+Each PNG file that the site copies from the repository (the screen pictures, the pictures of the news and of the guides, the icons) is written again through `site_png_compress` (`tools/modustool/site_pictures.odin`): it decodes the file and encodes the same pixels with the encoder of the standard library, `core:image/png` (a row filter chosen for each row, then the deflate of `core:compress/deflate` at its default level 5). The screen pictures of `docs/screenshots` are stored with no compression (`png_encode` of `tools/modustool/machine.odin`): 2 360 312 bytes for 1024 by 768. The command prints the count of the pictures and their bytes before and after. The output is the same bytes at each build: the encoder reads no clock, no random number and no thread, and its buffers start at zero; a host test encodes each picture twice and compares the bytes, and compares the pixels of the two files byte for byte. A picture of 16 bits a channel stops the command: the repository has none.
 
 No picture is written at half its width as a second candidate of a `srcset`. The thumbnails of the gallery are another case: a thumbnail is the `src` of its element, so every reader gets it, and the picture at its full size is behind its link (see "The thumbnails"). A browser takes a picture of 512 pixels from a `srcset` only when its place, times the density of the screen, is at most 512 pixels: the place of a picture of the home was 556 pixels on a wide screen, and a phone of density 2 or 3 needs more than 512 pixels for its whole width. So nearly no reader gets the half picture, and its 2 by 2 mean blurs the text of a screen picture. A build that wrote them measured about 60 000 bytes for each half picture; the compressed whole picture is expected near 150 000 bytes (the command prints the measure), so a half picture saves about 90 000 bytes, for that rare reader only. The rule: a version for `srcset` earns its place only when the common screens choose it and it saves at least half of the bytes; the half pictures fail the first part.
 
@@ -663,7 +663,7 @@ Each number is a line that a program printed in the log of a machine test, quote
 
 The first paragraph of the page states the run of the measure record: its time, its commit and whether its tree had changes that were not committed, its release, its host and its count of checks that passed. When the release of the record is not the newest release of the changelog, a paragraph says that the numbers were measured before the release that the site shows. With no measure record, a paragraph says so.
 
-A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by count, a measure by time"): the test checks by count and writes no rate. `kerneltool screenshots` runs these measure runs after the test, so their logs are in `build/` when it writes the measure record.
+A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by count, a measure by time"): the test checks by count and writes no rate. `modustool screenshots` runs these measure runs after the test, so their logs are in `build/` when it writes the measure record.
 
 | Number | Log in `build/` | Text of the line | Required |
 |---|---|---|---|
@@ -682,15 +682,15 @@ A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by co
 | ChaCha20-Poly1305 on 1200 bytes | `test_output_cryptography.txt` | `cryptography_vectors: seal ChaCha20-Poly1305` | yes |
 | The same bytes after a second build | `reproducible_build.txt` | `the same bytes after a second build` | yes |
 
-`kerneltool check` and `kerneltool screenshots` write `build/reproducible_build.txt` after their comparison of two builds.
+`modustool check` and `modustool screenshots` write `build/reproducible_build.txt` after their comparison of two builds.
 
 Under the table, the section "How to read each number" says that a number is one run on the host of the record, that no test asserts it, and then, for each number, the text `reading` of its entry in `site_measures`: what the program does to measure it, and what the number does not say.
 
-A required number is a line that a scenario of `kerneltool test` waits for (a step `Wait`), or the line of the second build: a run that passed holds it. A host test checks that each required number is such a line. A full frame of the compositor is not required: the compositor prints it when a frame redraws the whole screen, and no step waits for it. The lock measure of `kerneltool measure` (`test_output_measure.txt`) comes first when it is newer, but the full check does not run it: the full check takes the same line from `test_output.txt`.
+A required number is a line that a scenario of `modustool test` waits for (a step `Wait`), or the line of the second build: a run that passed holds it. A host test checks that each required number is such a line. A full frame of the compositor is not required: the compositor prints it when a frame redraws the whole screen, and no step waits for it. The lock measure of `modustool measure` (`test_output_measure.txt`) comes first when it is newer, but the full check does not run it: the full check takes the same line from `test_output.txt`.
 
 ## The measure record
 
-The site workflow builds the site on a clean checkout and runs no machine test: the logs of `build/` are absent there. So the pass that commits the pictures also commits the numbers. `kerneltool screenshots` runs the machine tests (`kerneltool test`) and the second build, then writes `docs/measures/measures.txt` before it copies the pictures. The file is in the repository.
+The site workflow builds the site on a clean checkout and runs no machine test: the logs of `build/` are absent there. So the pass that commits the pictures also commits the numbers. `modustool screenshots` runs the machine tests (`modustool test`) and the second build, then writes `docs/measures/measures.txt` before it copies the pictures. The file is in the repository.
 
 The form, one line for each fact, a key, one space and a value:
 
@@ -716,7 +716,7 @@ end
 
 - The numbers are in the order of `site_measures`, the lines `boot` in the order of the log of the main machine. The same run gives the same bytes but for the measured values, the time and the count.
 - The commit and the tree are read when the pass starts, before it writes into the tree. The commit is the commit of the tree that ran: the commit that holds the record comes after it.
-- `time` is the time when the record was written, in UTC. `checks` counts each line `kerneltool: test passed: ...` of the process.
+- `time` is the time when the record was written, in UTC. `checks` counts each line `modustool: test passed: ...` of the process.
 - A log written before the start of the run is of another run: the pass does not read it.
 - The pass fails, and does not write the record, when a required number has no line in the logs of the run. A number that is not required and has no line gets a line `absent`.
 - The pass reads the record back before it writes it. The site refuses a record that does not have this form, and stops.
@@ -742,7 +742,7 @@ Two tables: what the system holds, and what builds and tests it and is not a par
 | Rows | Files and the form the reader relies on |
 |---|---|
 | The system | `LICENSE`: line 1 names the license, a line `Copyright ...` |
-| The vector fonts | The lists `vector_font_candidates`, `vector_font_emphasis` and `vector_font_interface` of `tools/kerneltool/vector_fonts.odin`; for each, `resources/fonts/<name>.license`: line 1 the copyright, with the address of the source in parentheses at its end; a line `... carries the name "<family>".`; a line `License of the source: <words>.` In the boot image: the default font and its emphasis, as glyph caches |
+| The vector fonts | The lists `vector_font_candidates`, `vector_font_emphasis` and `vector_font_interface` of `tools/modustool/vector_fonts.odin`; for each, `resources/fonts/<name>.license`: line 1 the copyright, with the address of the source in parentheses at its end; a line `... carries the name "<family>".`; a line `License of the source: <words>.` In the boot image: the default font and its emphasis, as glyph caches |
 | Spleen | `src/library/support/graphics/FONT_LICENSE`: line 1 `... comes from Spleen 8x16 <version>`, line 2 `(<address>).`, a line `Copyright ...`. The file holds the text of the license, not its name: "not recorded" |
 | The pointer themes | `resources/pointers/system.manifest` and `posy.manifest`: the lines `theme <name>`, `license <SPDX identifier>`, `attribution <text>` |
 | The cryptography | `src/library/support/cryptography/LICENSE.odin.txt` (`(zlib)`, `tag <release>`, `(https://...)`), `LICENSE.fiat-crypto.txt` (`(BSD-1-Clause)`), the count of the lines of `origin.manifest` |
@@ -785,7 +785,7 @@ Code takes the text color, because the dim color on the track is 4.33. The color
 
 The owner asked for it on 2026-11-12, of the measured numbers at a width of 1630 pixels: "tableau pas ouf, si possible de faire un tableau scrollable ? pck la colonne compressée".
 
-The writer of each generated table states the kind of each column (`Site_Column_Kind` in `tools/kerneltool/site_pages.odin`), because it knows what the column holds. `site_table_start` writes the class of the kind on each header cell, and `site_table_end` writes it on each cell of the body, by the place of the cell in its row. The style sheet gives each kind its least width as a `width` on the header cell: in the automatic layout of a table, that width is a least width, and a table with more room shares it in proportion to those widths.
+The writer of each generated table states the kind of each column (`Site_Column_Kind` in `tools/modustool/site_pages.odin`), because it knows what the column holds. `site_table_start` writes the class of the kind on each header cell, and `site_table_end` writes it on each cell of the body, by the place of the cell in its row. The style sheet gives each kind its least width as a `width` on the header cell: in the automatic layout of a table, that width is a least width, and a table with more room shares it in proportion to those widths.
 
 | Kind | Holds | Least width | Wraps |
 |---|---|---|---|
@@ -825,7 +825,7 @@ The owner asked for it on 2026-11-12: "il manque un menu burger sur la version m
 
 ### The buttons and the menu of the bar
 
-The owner decided it on 2026-11-14, on the fact that six sections do not fit the one line of the bar near 720 pixels: "Regrouper certains trucs dans un dropdown et voilà". The code is `tools/kerneltool/site_bar.odin`; its host tests are `site_bar_test.odin`; the intent is `src/md/features/site_bar.md`.
+The owner decided it on 2026-11-14, on the fact that six sections do not fit the one line of the bar near 720 pixels: "Regrouper certains trucs dans un dropdown et voilà". The code is `tools/modustool/site_bar.odin`; its host tests are `site_bar_test.odin`; the intent is `src/md/features/site_bar.md`.
 
 The bar is one line of 41 pixels, and the parts under it are placed by that height ("The polish of the browser's parts"). Six sections stand under the home. The bar names them all:
 
@@ -867,7 +867,7 @@ Refused: a second line of the bar; smaller text; icons with no word; one menu bu
 
 ### The states of a control
 
-The owner asked for it on 2026-11-14: "les boutons [...] manquent d'un état visuel au survolage et actif." The code is `tools/kerneltool/site_controls.odin`; the intent is `src/md/features/site_bar.md`.
+The owner asked for it on 2026-11-14: "les boutons [...] manquent d'un état visuel au survolage et actif." The code is `tools/modustool/site_controls.odin`; the intent is `src/md/features/site_bar.md`.
 
 A site control (`GLOSSARY.md`) is a part of a page that a reader presses. Before this rule a button had no sign of the pointer: a link under the pointer takes the track color, and a button is already a rectangle of the track.
 
@@ -900,7 +900,7 @@ The host test `site_controls_have_their_states` checks, for each control of the 
 
 ### The two layouts
 
-The owner asked for it on 2026-11-12: "la doc, je veux un vrai truc de doc, comme Odin par exemple, où ils ont une sidebar, il y a des documentations techniques au centre, il y a les symboles à droite". The code is `tools/kerneltool/site_documentation.odin`.
+The owner asked for it on 2026-11-12: "la doc, je veux un vrai truc de doc, comme Odin par exemple, où ils ont une sidebar, il y a des documentations techniques au centre, il y a les symboles à droite". The code is `tools/modustool/site_documentation.odin`.
 
 The writer of each page states its layout (`Site_Page.layout`); the tool does not guess it from a path.
 
@@ -927,7 +927,7 @@ Print shows the middle column only: the bar, the tree, "On this page", the bread
 
 ### The tree lines
 
-A navigation of the site that is a tree shows its levels by tree lines (`GLOSSARY.md`), as a file tree does, not by its indentation alone. The rule is one for every tree: each list under an item of another list, inside a `nav` element, has the class `tree-lines` (`SITE_TREE_LINES_LIST_OPEN` in `tools/kerneltool/site_documentation.odin`), and the style sheet draws the lines of each item of such a list. No tree has a rule of its own for the indentation of a level.
+A navigation of the site that is a tree shows its levels by tree lines (`GLOSSARY.md`), as a file tree does, not by its indentation alone. The rule is one for every tree: each list under an item of another list, inside a `nav` element, has the class `tree-lines` (`SITE_TREE_LINES_LIST_OPEN` in `tools/modustool/site_documentation.odin`), and the style sheet draws the lines of each item of such a list. No tree has a rule of its own for the indentation of a level.
 
 The trees of the site:
 
@@ -972,7 +972,7 @@ The host tests: `site_documentation_tree_has_tree_lines` (each list under an ite
 
 ### The kinds of values
 
-The owner asked for it on 2026-11-12: "que les valeurs techniques, comme par exemple le fait de dire handle ou les valeurs numériques, soient affichées en monospace, qu'elles aient une couleur [...] accompagnées d'un icône". The rule of the two fonts of the desktop holds (`DESIGN.md`, "Two fonts"): a name or an explanation in the reading font, a value in the monospace font. The code is `tools/kerneltool/site_values.odin`.
+The owner asked for it on 2026-11-12: "que les valeurs techniques, comme par exemple le fait de dire handle ou les valeurs numériques, soient affichées en monospace, qu'elles aient une couleur [...] accompagnées d'un icône". The rule of the two fonts of the desktop holds (`DESIGN.md`, "Two fonts"): a name or an explanation in the reading font, a value in the monospace font. The code is `tools/modustool/site_values.odin`.
 
 The value kinds (`GLOSSARY.md`) are one enumeration of the system, `value_kinds.Value_Kind` (`src/library/contract/value_kinds`), with the name of each kind (`VALUE_KIND_NAMES`, the class `value-<name>`): a log record of the system keeps the same kinds. The color of each kind is one table of the system, `src/library/support/graphics/value_colors.odin`: an accent of `src/library/support/graphics/rules.odin` with a `graphics.shade` for each color scheme (`DESIGN.md`, "The colors of values"); the program `log` reads the same table. The icon of each kind is its kind icon (`GLOSSARY.md`), one table of the system too, `src/library/support/kind_icons` (12 by 12 cells, `#` a cell; `DESIGN.md`, "The icons of the kinds"): the palette of the desktop draws the same cells. The table of the site, `site_value_kinds`, gives each kind what only the site shows: its title and its meaning. The contrast is that of the text of a value on the two surfaces of a table: the background and the band of every second row (dark: `0x0B1018`, `0x17212E`; light: `0xF4F6F8`, white). A host test computes each one.
 
@@ -1042,7 +1042,7 @@ What the site does:
 - `search.js`, which each page loads, asks for `version.json` once in each view of a page, with `cache: "no-store"` (past the cache of the browser) and a query `?at=<time in milliseconds>` (an address that no cache of the edge holds). It never asks again in the same view.
 - When the page and the file both name a commit and the two differ, the script puts one line under the bar: "This page is from an older build: reload", where "reload" is a button that calls `location.reload()`. The line has `role="status"`, the dim color, and no style attribute (`.build-notice` in the style sheet). The page never reloads by itself.
 - Nothing is shown when the commits are equal, when the page or the file names no commit, when the fetch fails or answers with an error, or when its text is not JSON: a page opened from a file shows nothing.
-- The rule is one function of the script (`olderBuild`). The self test of the script (`?selftest=1`) runs it over the table `site_build_notice_cases` of `tools/kerneltool/site_search.odin`; the host test `site_older_build_notice` checks the file, the table and the parts of the script.
+- The rule is one function of the script (`olderBuild`). The self test of the script (`?selftest=1`) runs it over the table `site_build_notice_cases` of `tools/modustool/site_search.odin`; the host test `site_older_build_notice` checks the file, the table and the parts of the script.
 
 What it cannot do:
 
@@ -1053,7 +1053,7 @@ What it cannot do:
 
 ## The mark on the site
 
-The site asks the generator of the pictures of the mark for its pictures (`tools/kerneltool/mark_pictures.odin`; `TOOLS.md`, "The pictures of the mark"). The list is the rows of the site of the table of the uses of the mark (`DESIGN.md`, "The variants of the mark"); the site holds no number of a picture of its own:
+The site asks the generator of the pictures of the mark for its pictures (`tools/modustool/mark_pictures.odin`; `TOOLS.md`, "The pictures of the mark"). The list is the rows of the site of the table of the uses of the mark (`DESIGN.md`, "The variants of the mark"); the site holds no number of a picture of its own:
 
 | File | Variant, cells | Size | Use |
 |---|---|---|---|
@@ -1071,7 +1071,7 @@ The pixels of each picture are made by the tool. The page shows each picture of 
 - The `img` of the home has `width="192"` and `height="192"`, the size of its file: the page keeps the place of the picture before the file arrives.
 - On a screen of density 2 or 3 the browser shows a pixel of a picture as a square of 2 or 3 pixels of the screen, with no smoothing: the pictures of the mark and the canvases of the stage have `image-rendering: pixelated`, and the canvases also the older word `crisp-edges`.
 
-The icons of the pages are drawn by the tool from the same table (see "The icons"); the site copies no icon of `resources/logo`. `kerneltool logo` also writes `resources/logo/modus_transparent.png` and `modus_light_transparent.png`, which the README shows in a `<picture>` for the two color schemes.
+The icons of the pages are drawn by the tool from the same table (see "The icons"); the site copies no icon of `resources/logo`. `modustool logo` also writes `resources/logo/modus_transparent.png` and `modus_light_transparent.png`, which the README shows in a `<picture>` for the two color schemes.
 
 Which pictures hold the name of the mark:
 
@@ -1087,11 +1087,11 @@ The alt text of the heron of the home is the description of the mark of `README.
 
 ### The name of the mark
 
-Where the site shows the name of the system as the mark, the name is text in the font of the name of the mark (`GLOSSARY.md`; `DESIGN.md`, "The font of the name"). The code is `tools/kerneltool/site_mark_name.odin`.
+Where the site shows the name of the system as the mark, the name is text in the font of the name of the mark (`GLOSSARY.md`; `DESIGN.md`, "The font of the name"). The code is `tools/modustool/site_mark_name.odin`.
 
 - The places: the bar (after the heron), the foot (before "· by"), and the title of the home (the `h1`, beside the heron). The name in a sentence stays in the reading font: "the documentation of modus" is prose, not the mark.
 - The markup, one constant (`SITE_MARK_NAME_HTML`): `<span class="mark-name">modus</span>`. The text is `SITE_SYSTEM_NAME`. It is real text: a reader selects it, a search of the page finds it, and a screen reader says "modus".
-- The file: `fonts/modus_mark.ttf`. `kerneltool site` builds it from `src/library/support/mark` and `LICENSE`, as `kerneltool logo` does: the bytes of `resources/logo/modus_mark.ttf`. A TrueType file: each browser reads it as it is, and the tool needs no compressor.
+- The file: `fonts/modus_mark.ttf`. `modustool site` builds it from `src/library/support/mark` and `LICENSE`, as `modustool logo` does: the bytes of `resources/logo/modus_mark.ttf`. A TrueType file: each browser reads it as it is, and the tool needs no compressor.
 - The style sheet declares it once: `@font-face` with the family "modus mark", `format("truetype")`, `font-weight: 100 900` and `font-display: block`. The class `.mark-name` names the family, then the monospace font. It sets `font-weight: 400` and `font-synthesis: none`: the font answers to each weight, so a browser never thickens the squares of a name inside a bold link.
 - Each page asks for the font in its head, before it reads the style sheet: `<link rel="preload" href="fonts/modus_mark.ttf" as="font" type="font/ttf" crossorigin>`. The bar shows the name on the first screen of each page. The address of the preload and of the style sheet is the same, with no version.
 - No text jumps. The box of the name has the size of the name in cells (`display: inline-block`, a width and a height in pixels, `overflow: hidden`), whatever font draws the text. While the font loads, the text is not shown (`font-display: block`): it never shows in another font first. When the font arrives, nothing beside the name moves. A browser that cannot load the font shows the name in the monospace font in the same box.
@@ -1111,7 +1111,7 @@ Where the site shows the name of the system as the mark, the name is text in the
 
 ### The rhythm of the animations
 
-The animations of the mark (`DESIGN.md`, "The animations") play on the large heron of the home and on the icon of its tab. `src/library/support/mark` holds the 15 animations as frames of cells, and the rule of the choice and of the still times (`src/library/support/mark/play.odin`): the program `heron` of the system plays by the same rule. `mark_animation.js` runs the rule on the page, and `tools/kerneltool/site_mark_schedule.odin` ties the script to it.
+The animations of the mark (`DESIGN.md`, "The animations") play on the large heron of the home and on the icon of its tab. `src/library/support/mark` holds the 15 animations as frames of cells, and the rule of the choice and of the still times (`src/library/support/mark/play.odin`): the program `heron` of the system plays by the same rule. `mark_animation.js` runs the rule on the page, and `tools/modustool/site_mark_schedule.odin` ties the script to it.
 
 The choice of the next animation:
 
@@ -1162,7 +1162,7 @@ A development aid: `#heron=<name>` at the end of the address of the home plays o
 
 ### The moves of the heron
 
-An animation of `src/library/support/mark` changes cells. On the home, four animations also move the heron: the dash, the hop, the stretch and the flap. The rule of a move is data of `src/library/support/mark` (`DESIGN.md`, "The moves"): the forms of the heron, each drawn in whole cells, and the keys of each move, in whole cells. The site holds no rule of its own: the generator of the pictures of the mark writes the tile maps and their table (`tools/kerneltool/mark_tile_map.odin`).
+An animation of `src/library/support/mark` changes cells. On the home, four animations also move the heron: the dash, the hop, the stretch and the flap. The rule of a move is data of `src/library/support/mark` (`DESIGN.md`, "The moves"): the forms of the heron, each drawn in whole cells, and the keys of each move, in whole cells. The site holds no rule of its own: the generator of the pictures of the mark writes the tile maps and their table (`tools/modustool/mark_tile_map.odin`).
 
 The rule of the site: a cell of the heron is always a square of 8 pixels of the page at a place of the grid. Each picture and each canvas of the home has 8 pixels for a cell, and the page shows each at its own size (see "The mark on the site"). No transform changes the size of a picture of the heron. A squashed or a stretched heron is a drawing in whole cells that the tool made; a move puts the heron at a whole count of cells from its place: in pixels of the page, a multiple of 8.
 
@@ -1170,7 +1170,7 @@ The rule of the site: a cell of the heron is always a square of 8 pixels of the 
 - The drawn forms. The tool draws each form that a move shows, for each frame that plays in that form, into the two tile maps of the home, under the sprites of the frames: 19 drawings, each in a box of 256 by 208 pixels (32 by 26 cells), 12 in a row. A drawing has the gradient of its cells at their place, as a frame has. The script copies one drawing, or the upper part of the sprite of a frame, onto the canvas of the heron, pixel for pixel: a copy has the same size at its source and at its place.
 - The steps. For each animation the tool writes the steps of its play: a time, the sprite of a frame, and a drawn form or none. A step starts where a frame starts or where a key gives another form. The script shows the steps; it computes no form. Each step ends at its time from the start of the animation, so the pictures stay in step with the place of the heron.
 - The place. The script gives the places of the keys to the animations of the browser (`Element.animate`) as translations of whole cells. From a key to the next one the heron goes cell by cell: the way has as many even steps as it has cells (`steps(n, end)`), so the heron is never between two cells. That is the rule of `mark.move_pose`. A fast way is many cells for each picture of the screen: on a window of 1920 pixels the dash goes more than 10 cells for each picture of a screen of 60 pictures a second.
-- No key moves the heron while a foot is in the rows of the water: in such a frame only the form changes, and the column of the standing leg and the line of the water keep their place in every form. `kerneltool site` stops on a table that breaks this rule (`mark.move_keys_fault`).
+- No key moves the heron while a foot is in the rows of the water: in such a frame only the form changes, and the column of the standing leg and the line of the water keep their place in every form. `modustool site` stops on a table that breaks this rule (`mark.move_keys_fault`).
 - The dash, 1780 ms. The heron gathers (26 by 21 cells), then crouches (28 by 19) until 380 ms. With the first step of its run it takes the form of the run (32 by 20, with lines of speed of 10 and 9 cells) and leaves to the right: 4 cells in 70 ms, 10 more in the next 70 ms, then at one speed to a place past the right edge of the window, which it reaches 350 ms after its start. It stays outside for 280 ms. Then it is past the left edge at once, comes in at one speed in 350 ms, and goes 3 cells past its place. It brakes there for 100 ms (20 by 23, a long neck), slides back in 120 ms (22 by 21), rebounds on its legs (26 by 20) and stands.
 - "Past an edge" is a place that the script computes from the window, as a whole count of cells: the heron, in its widest form, is outside the window at that side.
 - No scroll bar and no layout shift. The stage keeps the box of the picture, and a place is a translation: nothing beside the heron moves. While an animation with a key past an edge plays, the root element has the class `mark-travel`, and the style sheet cuts the page at the sides of the window (`overflow-x: clip`): a heron outside the window adds no width to the page.
@@ -1182,11 +1182,11 @@ The rule of the site: a cell of the heron is always a square of 8 pixels of the 
 
 The tile maps. Each of the three tile maps holds 43 sprites: the still heron and 42 distinct frames, in rows of 16 (`MARK_TILE_MAP_COLUMNS`). In a tile map of the home, one for each color scheme, a sprite is 192 by 192 pixels: the sprites take 3072 x 576 pixels, and under them are the 19 drawn forms in two rows of 208 pixels, so a tile map is 3072 x 992 pixels. The tile map of the icon of the tab is 384 x 72 pixels, with no form. No side is longer than the 8192 pixels that a browser decodes.
 
-The bytes of a tile map. Its pixels are red, green, blue and alpha, 8 bits each, and the file loses none. The generator writes it with the encoder of the Odin standard library at the highest level of its deflate, once with each of its row filters, and keeps the smallest file (`mark_pixels_png`); the pixels are the same in each. `kerneltool site` prints the count of the sprites and the bytes of each tile map and of the script. The script names each tile map with the version of its bytes (`?v=`, see "The versions of the files"): a script never cuts the tile map of another build that a cache kept.
+The bytes of a tile map. Its pixels are red, green, blue and alpha, 8 bits each, and the file loses none. The generator writes it with the encoder of the Odin standard library at the highest level of its deflate, once with each of its row filters, and keeps the smallest file (`mark_pixels_png`); the pixels are the same in each. `modustool site` prints the count of the sprites and the bytes of each tile map and of the script. The script names each tile map with the version of its bytes (`?v=`, see "The versions of the files"): a script never cuts the tile map of another build that a cache kept.
 
 ### The icons
 
-The owner asked for it on 2026-11-12: "la favicon faut qu'elle soit bien configurée". Each icon is a row of the table of the uses of the mark (`DESIGN.md`, "The variants of the mark"), and the generator of the pictures of the mark makes its file (`TOOLS.md`, "The pictures of the mark"). `tools/kerneltool/site_icons.odin` holds what is not the mark: the list of the icons of the manifest, and the checks.
+The owner asked for it on 2026-11-12: "la favicon faut qu'elle soit bien configurée". Each icon is a row of the table of the uses of the mark (`DESIGN.md`, "The variants of the mark"), and the generator of the pictures of the mark makes its file (`TOOLS.md`, "The pictures of the mark"). `tools/modustool/site_icons.odin` holds what is not the mark: the list of the icons of the manifest, and the checks.
 
 The heron is pixels: each raster icon is the drawing of `src/library/support/mark` at a whole cell size, centred with an even margin, never scaled by a filter. The entry of 32 pixels of `favicon.ico` is the cells variant; each other raster icon has two pixels or more for a cell and is the smooth variant.
 
@@ -1226,7 +1226,7 @@ Under the heading, a paragraph says what a property, its status and its state ar
 
 ## The reference tables
 
-Each table is read from the text of the file that defines the thing (`tools/kerneltool/site_source_readers.odin`): the comments of a contract are its documentation, and the compiler drops them. Each row links to its line in the file, at the commit of the build. Under each table, the page names the file. Each reader knows one form; when a file loses it, the command stops with the file and the line.
+Each table is read from the text of the file that defines the thing (`tools/modustool/site_source_readers.odin`): the comments of a contract are its documentation, and the compiler drops them. Each row links to its line in the file, at the commit of the build. Under each table, the page names the file. Each reader knows one form; when a file loses it, the command stops with the file and the line.
 
 | Page | Read from | The form |
 |---|---|---|
@@ -1242,7 +1242,7 @@ Each page starts with what the thing is: the comment above its declaration in th
 The kernel operations, the commands of the console, the commands of the tool and the exports of each module are documented symbols (`GLOSSARY.md`), under the table of their page, as on a package page of a programming language. A symbol shows:
 
 - its name, as a heading with its id (`operation-<name>`, `command-<name>`, `tool-command-<name>`, `export-<name>`), which "On this page" lists; the name in the table is a link to it;
-- its signature in a block of code: an operation as `Name(<parameters>) -> <result>` from the start of its comment (none when the comment does not start with `(`), a command as `help()` prints it, a command of the tool as `nix develop -c kerneltool <name>`, an export as the console prints it;
+- its signature in a block of code: an operation as `Name(<parameters>) -> <result>` from the start of its comment (none when the comment does not start with `(`), a command as `help()` prints it, a command of the tool as `nix develop -c modustool <name>`, an export as the console prints it;
 - the text of its source comment, as Markdown (see "The Markdown of a source comment"), then its document references; nothing when the source has none;
 - its facts: the number of an operation and the statuses that its comment names (links to the table of statuses); the parameters and the result of a command; the parameters, the result and the error record of an export (the rule of the build: it fails with a negative result and writes the record);
 - its source line, a link to `<repository>/blob/<commit>/<file>#L<line>`.
@@ -1257,9 +1257,9 @@ What the tables cannot show:
 
 ## The module pages
 
-`docs/reference/modules/` lists each module of `module_builds` (`tools/kerneltool/modules.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Programs (its source is in `src/programs/`), Modules (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `docs/reference/modules/<name>/` gives:
+`docs/reference/modules/` lists each module of `module_builds` (`tools/modustool/modules.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Programs (its source is in `src/programs/`), Modules (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `docs/reference/modules/<name>/` gives:
 
-- its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/kerneltool/describe.odin`), then its document references; its purpose is the first sentence, with no pointer;
+- its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/modustool/describe.odin`), then its document references; its purpose is the first sentence, with no pointer;
 - for a module that is a build of the source of another module with settings of its own (`defines` of its row of `module_builds`), a first paragraph before the documentation: "The module `kernel` built with the setting `TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true`", then the comment above its row in `module_builds`, which says why it exists. The documentation after it is the comment of the shared source, which describes the other module. Its description for other sites names its source and its settings;
 - its source folder, its size in the boot image of the last build (or that the image is not built), its build settings (the `defines` of its row, or "none"), its imports and the modules that import it;
 - its kind (its group);
@@ -1272,7 +1272,7 @@ The index of the modules links to the page of the module graph.
 
 ## The module graph
 
-The owner asked for it on 2026-11-12: "et on a de quoi faire du déboggage de modules ? (et pourquoi pas un outil de visualisation des \"dépendances\"/carte d'identité module(s) ?". The code is `tools/kerneltool/site_module_graph.odin`; its host tests are `site_module_graph_test.odin`. The same facts for what runs now are `manual.edges()` (`MODULE_CONTRACT.md`, "Replacement of an import").
+The owner asked for it on 2026-11-12: "et on a de quoi faire du déboggage de modules ? (et pourquoi pas un outil de visualisation des \"dépendances\"/carte d'identité module(s) ?". The code is `tools/modustool/site_module_graph.odin`; its host tests are `site_module_graph_test.odin`. The same facts for what runs now are `manual.edges()` (`MODULE_CONTRACT.md`, "Replacement of an import").
 
 `docs/reference/module-graph/` draws the module graph (`GLOSSARY.md`) of the build. The reference index, the card of the reference of the docs home and the tree list it after the modules, and the index of the modules links to it.
 
@@ -1322,7 +1322,7 @@ The identity card (`GLOSSARY.md`) of a module: its name (a link to its page, but
 
 ## The references to documents
 
-The owner asked for it on 2026-11-12, of the page of a module that started with "The kernel (docs/ARCHITECTURE.md, systems K1 to K5).": "ça devrait pas etre genre un \"tag\" ou une \"référence\" ? genre un lien, affiché avec un style pour architecture.md ? je comprends pas ce texte en fait. K1 to K5 ?". The code is `tools/kerneltool/site_document_references.odin`; its host tests are `site_document_references_test.odin`.
+The owner asked for it on 2026-11-12, of the page of a module that started with "The kernel (docs/ARCHITECTURE.md, systems K1 to K5).": "ça devrait pas etre genre un \"tag\" ou une \"référence\" ? genre un lien, affiché avec un style pour architecture.md ? je comprends pas ce texte en fait. K1 to K5 ?". The code is `tools/modustool/site_document_references.odin`; its host tests are `site_document_references_test.odin`.
 
 A comment of the source names a document for a person who reads the code: a document pointer (`GLOSSARY.md`). The rule of the comments allows it. On a page, the path and a label such as "U3" or "section 8" mean nothing: the site writes a document reference (`GLOSSARY.md`) in its place.
 
@@ -1377,7 +1377,7 @@ The owner asked for the check of the pages on 2026-11-13: "il reste des référe
 
 ## The Markdown of a source comment
 
-The owner asked for it on 2026-11-13: "I suppose you extract text from the code BUT it lacks emphasis (bold, italics, lists, shit like that) and makes the paragraphs displayed in the docs look very plain and boring to read. we could use markdown for this (and have []() references to symbols and stuff if that's not already done". The code is `tools/kerneltool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the programs of the system is `src/library/support/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
+The owner asked for it on 2026-11-13: "I suppose you extract text from the code BUT it lacks emphasis (bold, italics, lists, shit like that) and makes the paragraphs displayed in the docs look very plain and boring to read. we could use markdown for this (and have []() references to symbols and stuff if that's not already done". The code is `tools/modustool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the programs of the system is `src/library/support/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
 
 A source comment is Markdown in a small part, written by the renderer of the guides (`Site_Renderer.comment`): one renderer, and a mode that refuses what a comment does not have.
 
@@ -1456,7 +1456,7 @@ When it starts, `manual` checks the page of its own module, whose comments have 
 
 ## The types
 
-The owner asked for it on 2026-11-12: "Si c'était possible sur les différents data types, d'avoir un tool type qui explique le type. Genre sa carte d'identité, sa taille, des informations techniques. Sa taille, son alignement, les trucs normaux qu'on aimerait savoir quand on vient sur cette doc." The code is `tools/kerneltool/site_types.odin`; its host tests are `site_types_test.odin`.
+The owner asked for it on 2026-11-12: "Si c'était possible sur les différents data types, d'avoir un tool type qui explique le type. Genre sa carte d'identité, sa taille, des informations techniques. Sa taille, son alignement, les trucs normaux qu'on aimerait savoir quand on vient sur cette doc." The code is `tools/modustool/site_types.odin`; its host tests are `site_types_test.odin`.
 
 ### What a type card holds
 
@@ -1476,7 +1476,7 @@ Each card also says where the type is named: the types whose fields, base or ele
 
 ### The table and its check
 
-`site_contract_type_rows` holds one row for each type of the documented packages: its package, its name and its type information, `{"operation", "Rights", type_info_of(op.Rights)}`. The name is stated in the row because the bit sets of the contract are aliases (`Rights :: bit_set[Right; u32]`): the type information of an alias is the type that it names, with no name. The contract is not changed for the site. `kerneltool site` reads each declaration of a type of those packages with the parser (`Name :: struct`, `enum`, `bit_set`, `union`, `distinct`, `bit_field`, or an array type) and stops when:
+`site_contract_type_rows` holds one row for each type of the documented packages: its package, its name and its type information, `{"operation", "Rights", type_info_of(op.Rights)}`. The name is stated in the row because the bit sets of the contract are aliases (`Rights :: bit_set[Right; u32]`): the type information of an alias is the type that it names, with no name. The contract is not changed for the site. `modustool site` reads each declaration of a type of those packages with the parser (`Name :: struct`, `enum`, `bit_set`, `union`, `distinct`, `bit_field`, or an array type) and stops when:
 
 - a declaration has no row: a new type of the contract cannot be forgotten;
 - a row names no declaration, or a type has two rows, or a row has no type information;
@@ -1521,12 +1521,12 @@ A code span of a guide, of a news entry or of a source comment that names a type
 
 ## The colors of the code
 
-The owner asked for it on 2026-11-12: "Un peu dommage aussi qu'on ait pas de coloration du code, peut-être avec Shiki, on peut, parce que là je vois du Odin qui est pas coloré." The code is `tools/kerneltool/site_code.odin`; its host tests are `site_code_test.odin`. The colors of the classes are the table of the colors of code of the system (`src/library/support/graphics/code_colors.odin`, `docs/DESIGN.md`, section 4), which the terminal of the system reads too: a type has one color on the site and in the console.
+The owner asked for it on 2026-11-12: "Un peu dommage aussi qu'on ait pas de coloration du code, peut-être avec Shiki, on peut, parce que là je vois du Odin qui est pas coloré." The code is `tools/modustool/site_code.odin`; its host tests are `site_code_test.odin`. The colors of the classes are the table of the colors of code of the system (`src/library/support/graphics/code_colors.odin`, `docs/DESIGN.md`, section 4), which the terminal of the system reads too: a type has one color on the site and in the console.
 
 The tool colors the code when it writes the pages: static markup, no script, no request, nothing new in the Content-Security-Policy. Not Shiki: it is a library of Node, and the automation of the repository is commands of the Odin tool, with no script of another language. Odin is read by the tokenizer of the compiler itself (`core:odin/tokenizer`), not by a grammar of regular expressions: a token is what the compiler sees.
 
 - `site_code_odin` writes each token in a `<span class="c-<class>">`, and each byte between two tokens (spaces, line feeds) as it is: the text of the output with its tags removed and its escapes undone is the source, byte for byte. The tokenizer gives the comments as tokens. Two tokens of one class with only spaces between share one span.
-- A text that the tokenizer refuses (an illegal character, a string or a comment with no end) is written plain, and `kerneltool site` prints "N code blocks not colored, the first: <place>". A fragment that is not a declaration is still tokens and is colored: the tokenizer does not parse.
+- A text that the tokenizer refuses (an illegal character, a string or a comment with no end) is written plain, and `modustool site` prints "N code blocks not colored, the first: <place>". A fragment that is not a declaration is still tokens and is colored: the tokenizer does not parse.
 
 | Class | What | Accent of the design rules | Dark: shade, contrast on the block of code `0x1C2633` | Light: shade, contrast on the block of code `0xD6DBE0` |
 |---|---|---|---|---|
@@ -1559,11 +1559,11 @@ The size: the declarations of the page of the types are 963 lines, 53 KB of text
 
 ## The declarations of the sources
 
-The owner asked for it on 2026-11-12, of a paragraph of a guide with code spans that name procedures and files and hold an expression: "dans ce genre de texte, ce serait cool d'avoir des références vers les fonctions/symboles/etc mentionnées + de la coloration syntactique, meme dans les inline snippets, si possible". The code is `tools/kerneltool/site_declarations.odin`; its host tests are `site_declarations_test.odin`.
+The owner asked for it on 2026-11-12, of a paragraph of a guide with code spans that name procedures and files and hold an expression: "dans ce genre de texte, ce serait cool d'avoir des références vers les fonctions/symboles/etc mentionnées + de la coloration syntactique, meme dans les inline snippets, si possible". The code is `tools/modustool/site_declarations.odin`; its host tests are `site_declarations_test.odin`.
 
 ### The declaration index
 
-`kerneltool site` reads the declaration index (`GLOSSARY.md`) before it renders any guide (`site_declarations_read`): each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/modules` and `src/programs` (`SITE_DECLARATION_FOLDERS`; not the tests and not the tool), with the parser of Odin (`core:odin/parser`), as the types and the exports are read. Each declaration at the top of a file, and inside a `when` there, gives one entry:
+`modustool site` reads the declaration index (`GLOSSARY.md`) before it renders any guide (`site_declarations_read`): each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/modules` and `src/programs` (`SITE_DECLARATION_FOLDERS`; not the tests and not the tool), with the parser of Odin (`core:odin/parser`), as the types and the exports are read. Each declaration at the top of a file, and inside a `when` there, gives one entry:
 
 - its name, its package (the name after `package`), its folder, its file and its line;
 - its kind, from its value: a mutable declaration is a global variable; a procedure literal or a group of procedures is a procedure; a type expression (`struct`, `enum`, `union`, `bit_set`, `distinct`, an array, a pointer...) is a type; a name with a capital and lowercase letters given another name is an alias of a type; any other value is a constant;
@@ -1584,7 +1584,7 @@ The code spans of the guides, the glossary, the news entries and the source comm
 The test of a fragment of Odin (`site_code_span_is_odin`) leaves a span plain when it is unsure. It refuses:
 
 - a text that the tokenizer refuses, or of one token;
-- a command of a shell: its first word is a known command (`kerneltool`, `nix`, `git`, `odin`, `qemu-system-x86_64`, `cd`, ...), or it has `--`, `$`, `\` or `~/`, or it starts with `./` or `/`;
+- a command of a shell: its first word is a known command (`modustool`, `nix`, `git`, `odin`, `qemu-system-x86_64`, `cd`, ...), or it has `--`, `$`, `\` or `~/`, or it starts with `./` or `/`;
 - a path: a `/` with no space on either side; a file name: a name, a period and a known extension;
 - a setting of a command or of the environment: an `=` with no space on either side (`NAME=true`);
 - a line of a log or of prose: two names or values side by side with no operator between (`test return_fault`, `1031293 us`), or two labels `name: ` in one span (`kernel: boot: firmware`);
@@ -1616,7 +1616,7 @@ The command prints the declarations of the index by kind, the files that the par
 
 ## The polish of the browser's parts
 
-The owner asked for it on 2026-11-12: "si tu peux styliser les scroll-bars, s'il te plaît, ce serait cool. Tu as tous les trucs de peaufinage en CSS là que tu peux mettre, genre la couleur de highlight, enfin tout ce bordel." In the design of the system: square, the colors of the palette, both color schemes, and nothing more. The rules are `SITE_POLISH_RULES` in `tools/kerneltool/site_style.odin`, after the colors, so that print and the forced colors win over them.
+The owner asked for it on 2026-11-12: "si tu peux styliser les scroll-bars, s'il te plaît, ce serait cool. Tu as tous les trucs de peaufinage en CSS là que tu peux mettre, genre la couleur de highlight, enfin tout ce bordel." In the design of the system: square, the colors of the palette, both color schemes, and nothing more. The rules are `SITE_POLISH_RULES` in `tools/modustool/site_style.odin`, after the colors, so that print and the forced colors win over them.
 
 - Scroll bars: see "The scroll bars". `scrollbar-gutter: stable` on the page.
 - `color-scheme: dark light` on the root; each page already has `<meta name="color-scheme" content="dark light">`.
@@ -1638,7 +1638,7 @@ A host test checks that the style sheet holds each of these rules, has no `outli
 
 ### The scroll bars
 
-The scroll bars of the site are the scroll bar of the system (`DESIGN.md`, "The scroll bar"), written from the same table: `src/library/support/graphics/scroll_bar.odin` holds the sizes, the stops of each gradient and the colors of the dark and of the light form. The system draws from it; the kernel tool writes the variables of the style sheet from it. A change of a number of the table changes both. The rules are `SITE_SCROLL_RULES` and `site_scroll_variables` in `tools/kerneltool/site_style.odin`. They apply to every part that scrolls: the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search, the cards of the types and of the declarations, and the row of the carousel of the home.
+The scroll bars of the site are the scroll bar of the system (`DESIGN.md`, "The scroll bar"), written from the same table: `src/library/support/graphics/scroll_bar.odin` holds the sizes, the stops of each gradient and the colors of the dark and of the light form. The system draws from it; the modus tool writes the variables of the style sheet from it. A change of a number of the table changes both. The rules are `SITE_SCROLL_RULES` and `site_scroll_variables` in `tools/modustool/site_style.odin`. They apply to every part that scrolls: the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search, the cards of the types and of the declarations, and the row of the carousel of the home.
 
 The form, 17 pixels wide, all rectangular:
 
@@ -1677,17 +1677,17 @@ The work is in layers; each layer adds pages to a site that works.
 - (a) Done: the pages, the bar, the transparent mark, the renderer, the guides; also the tables of the licenses.
 - (b) Done: the status page, the reference tables generated from the code, the module pages, the tiles of the boot image on the home, the links from the code spans of the guides to the rows.
 - The metadata for other sites goes into the head of `site_page_html`, which writes every page.
-- (c) Done: the news (`news/`, `kerneltool news`), its page, its door on the home, its feed and its links from the releases.
+- (c) Done: the news (`news/`, `modustool news`), its page, its door on the home, its feed and its links from the releases.
 - (d) Done: the search: its index, its script, its box in the bar.
-- (e) Done: what other sites read (`tools/kerneltool/site_metadata.odin`): the canonical address, Open Graph, the summary card, the page graph, the manifest, `sitemap.xml`, `robots.txt`, `releases.xml`, `llms.txt`, the pictures of the repository compressed, and their checks. See "What other sites read".
+- (e) Done: what other sites read (`tools/modustool/site_metadata.odin`): the canonical address, Open Graph, the summary card, the page graph, the manifest, `sitemap.xml`, `robots.txt`, `releases.xml`, `llms.txt`, the pictures of the repository compressed, and their checks. See "What other sites read".
 - Done: the module graph, the identity card and the neighbours of each module (see "The module graph").
 - (f) Done: one section Docs in the bar, the guides and the reference under `docs/`, the docs home with its own search field, and the redirect pages of the two generations of old addresses. See "The sections", "The redirect pages" and "The docs home".
-- The count of checks of `kerneltool check` on the site: the measure record counts the checks of `kerneltool screenshots` only (the machine tests and the second build), not the host tests of `kerneltool check`.
+- The count of checks of `modustool check` on the site: the measure record counts the checks of `modustool screenshots` only (the machine tests and the second build), not the host tests of `modustool check`.
 - An embedded font for the text: Paper Mono is under the SIL OFL 1.1 with no Reserved Font Name (`resources/fonts/paper_mono.license`): its ASCII subsets can be copied into the site with `OFL.txt` and their `.license` files and declared with `@font-face`. The site uses the fonts of the reader's system for its text; its one font file is the font of the name of the mark.
 
 ## How the site is published
 
-The owner chose it on 2026-11-12: "pour la publication du site je préfère un workflow GitHub évidemment". The site is at `https://modus.froment.software/` (`SITE_ADDRESS` in `tools/kerneltool/site_frame.odin`). `kerneltool site --address https://<host>/<path>` writes it for another address for one run (see "What other sites read").
+The owner chose it on 2026-11-12: "pour la publication du site je préfère un workflow GitHub évidemment". The site is at `https://modus.froment.software/` (`SITE_ADDRESS` in `tools/modustool/site_frame.odin`). `modustool site --address https://<host>/<path>` writes it for another address for one run (see "What other sites read").
 
 The site workflow (`GLOSSARY.md`), `.github/workflows/site.yml`, runs at each push to `master` and by hand (`workflow_dispatch`). It holds no logic: each step calls the tool or an action, and each action is pinned by a version tag.
 
@@ -1696,28 +1696,28 @@ The site workflow (`GLOSSARY.md`), `.github/workflows/site.yml`, runs at each pu
 | build | `actions/checkout@v7.0.1` | The repository at the pushed commit, with its `.git`: `HEAD` is the commit, which the foot of each page names |
 | build | `DeterminateSystems/nix-installer-action@v23` | Nix, for the flake and its FlakeHub inputs |
 | build | `DeterminateSystems/magic-nix-cache-action@v15` | The store paths of the development shell, kept in the cache of GitHub Actions between runs |
-| build | `nix develop -c kerneltool build` | The modules and `build/boot.image` |
-| build | `nix develop -c kerneltool site` | The site in `build/site`; a failed check stops the run, and the site of the last run stays online |
+| build | `nix develop -c modustool build` | The modules and `build/boot.image` |
+| build | `nix develop -c modustool site` | The site in `build/site`; a failed check stops the run, and the site of the last run stays online |
 | build | `actions/upload-pages-artifact@v5.0.0` | `build/site` as the artifact of GitHub Pages |
 | deploy | `actions/deploy-pages@v5.0.1` | The artifact online, in the environment `github-pages` |
 
 - The permissions: `contents: read`, `pages: write`, `id-token: write` (the deployment proves its run to GitHub Pages with a token of the run).
 - `concurrency: pages`, not cancelled: two runs do not deploy at the same time, and a deployment that started ends.
-- The wrapper `kerneltool` of the flake makes `build/` before it runs the tool.
+- The wrapper `modustool` of the flake makes `build/` before it runs the tool.
 
-What a clean checkout gives to `kerneltool site`:
+What a clean checkout gives to `modustool site`:
 
 | What the site reads | Made by | In the workflow |
 |---|---|---|
 | The documents, the news, the changelog, the code that the reference tables read, `flake.nix`, `flake.lock`, `LICENSE`, the pictures of `docs/screenshots` and `resources/logo`, the films of `docs/films` | Committed | Read |
 | The pictures of the mark, the module pages and their signatures | The code of the tool (`src/library/support/mark`, `describe_package`); no module is built | Written |
 | The commit | `.git` | Read |
-| `build/boot.image` | `kerneltool build` | Written by the step before: the tiles of the home with their sizes and colors, the size of each module in its page, and the column "in the boot image" of the licenses. With no image these show the modules with no size, and "not recorded" |
-| The measure record, `docs/measures/measures.txt` | `kerneltool screenshots` | Committed: the measured numbers, the second build and the stages of the start of the last full check, with its date, its commit and its host |
-| The logs of the machine tests, `build/test_output*.txt` | `kerneltool test`, `kerneltool measure` | Absent: the site reads the measure record. With no record, each number says "Not measured.", and so does the start of the machine on the home. The command does not fail |
-| `build/reproducible_build.txt` | `kerneltool check`, `kerneltool screenshots` | Absent: the line of the measure record |
+| `build/boot.image` | `modustool build` | Written by the step before: the tiles of the home with their sizes and colors, the size of each module in its page, and the column "in the boot image" of the licenses. With no image these show the modules with no size, and "not recorded" |
+| The measure record, `docs/measures/measures.txt` | `modustool screenshots` | Committed: the measured numbers, the second build and the stages of the start of the last full check, with its date, its commit and its host |
+| The logs of the machine tests, `build/test_output*.txt` | `modustool test`, `modustool measure` | Absent: the site reads the measure record. With no record, each number says "Not measured.", and so does the start of the machine on the home. The command does not fail |
+| `build/reproducible_build.txt` | `modustool check`, `modustool screenshots` | Absent: the line of the measure record |
 
-The time of the step `kerneltool build` on a runner of GitHub is not measured yet: the first run gives it.
+The time of the step `modustool build` on a runner of GitHub is not measured yet: the first run gives it.
 
 The domain:
 

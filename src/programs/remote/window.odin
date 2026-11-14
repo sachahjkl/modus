@@ -148,7 +148,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		}
 	}
 	if recent_count == 0 {
-		interface.draw_text(table, inside.x, inside.y, "none yet: kerneltool call <public key> \"monitor.programs()\" on the host", graphics.COLOR_DIM)
+		interface.draw_text(table, inside.x, inside.y, "none yet: modustool call <public key> \"monitor.programs()\" on the host", graphics.COLOR_DIM)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

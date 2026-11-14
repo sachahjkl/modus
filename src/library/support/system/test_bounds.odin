@@ -9,11 +9,11 @@ package system
 // slower, and that says nothing about the system. Where a case writes a
 // count of its progress, the bound is on a stall: this long with no growth
 // of the count. It is smaller than the hang bound of a step of a machine
-// test in kerneltool (HANG_BOUND, 120 s), so that the report of the program
+// test in modustool (HANG_BOUND, 120 s), so that the report of the program
 // comes first.
 TEST_HANG_BOUND_MILLISECONDS :: 60_000
 // The whole run of a case that writes a count of its progress: it ends a
 // case that goes on for ever while its count still grows. The step of
-// kerneltool that waits for such a case has a larger bound of its own
+// modustool that waits for such a case has a larger bound of its own
 // (PROGRESS_CASE_HANG_BOUND_SECONDS, 660 s).
 TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS :: 600_000

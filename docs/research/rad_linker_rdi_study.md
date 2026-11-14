@@ -383,7 +383,7 @@ What the project can take from RDI is the design, which it already shares: nil a
 - **Linker, later**: If the project needs a writer inside a linker (for the merge of section 3), expect 800 to 1 500 lines in a fork, plus the maintenance of the fork.
 - **RDI: adopt as the debug format, as an external object named by hash.** Use `lib_rdi` (4 588 lines, MIT, no dependency) unchanged for reading. Record the RDI version next to the hash.
 - **RDI, production**: Run `radbin` as a build step on the linked image. With COFF the path is PDB to RDI, the tested one. With ELF the path is DWARF to RDI, which has known defects.
-- **RDI, first experiment**: Build `radbin` on Linux, convert one Odin program by both paths, and dump both RDI files. Check procedures, line tables, and one record type. No code to write; one build command in the kernel tool.
+- **RDI, first experiment**: Build `radbin` on Linux, convert one Odin program by both paths, and dump both RDI files. Check procedures, line tables, and one record type. No code to write; one build command in the modus tool.
 - **RDI is not the description tables.** Keep types, fields, functions and parameters as a project format with a record size per table. Reuse the RDI conventions: nil at index 0, (first, count) ranges, u32 indices.
 - **Expected code**: converter 400 to 700 lines of Odin, import library writer 150 lines, RDI integration under 100 lines. No C code of the project.
 - **Open risks to track**: alpha state, no RDI stability promise, x64 only, Linux port of the linker not finished.

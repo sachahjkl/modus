@@ -6,7 +6,7 @@ package mark
 // the animations").
 //
 // The rule of the choice is here once, for each place that plays the
-// animations: the kernel tool runs it as the model of the script of the
+// animations: the modus tool runs it as the model of the script of the
 // site, and the program `heron` runs it in the system. Pure procedures: a
 // caller gives the memory and the numbers of chance.
 

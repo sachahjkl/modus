@@ -3,9 +3,9 @@
 // that the module writes.
 //
 // **What it is for.** It is the callee of the first test of the loader,
-// which runs on the host with no machine: the kernel tool loads it and
+// which runs on the host with no machine: the modus tool loads it and
 // test_caller with the loader of the system and calls the entry of
-// test_caller (`test_modules` in `tools/kerneltool/modules.odin`). A wrong
+// test_caller (`test_modules` in `tools/modustool/modules.odin`). A wrong
 // rebase gives a wrong address in `operations`, a wrong data segment gives
 // a wrong count: either changes the result.
 //

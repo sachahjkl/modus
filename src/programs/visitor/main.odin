@@ -9,7 +9,7 @@
 //
 // **Start**: `start_from_disk("visitor", hash)` in the console, on a
 // machine whose data disk holds the store `programs` with its file. The
-// kernel tool writes that disk for the test part `disk_programs`, and
+// modus tool writes that disk for the test part `disk_programs`, and
 // prints the hash. `start("visitor")` is refused: the boot image has no
 // such module.
 //

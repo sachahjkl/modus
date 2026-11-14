@@ -24,7 +24,7 @@
 // each way (`clock: the check of the time page: 1000000 reads, 0 kernel
 // entries`), the comparison with the cycle counter, then `clock: ok, the
 // time never went back, ...`, or `clock: wrong: ...`. In a measure run
-// (`kerneltool measure clock`) the window and the log have the reads in one
+// (`modustool measure clock`) the window and the log have the reads in one
 // second (`clock: the time page: <rate> reads in one second, 0 kernel
 // entries for one million reads`).
 //
@@ -193,7 +193,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.cell_text(&frame, cells[2], interface.number_text(&builder, measured ? measure.rate : measure.reads), graphics.COLOR_TEXT, .Right)
 		interface.cell_text(&frame, cells[3], interface.number_text(&builder, measure.entries), graphics.COLOR_TEXT, .Right)
 	}
-	interface.cell_text(&frame, interface.column_take(&column, LINE), measured ? "kernel entries: for one million reads." : "the reads in one second are a measure: run `kerneltool measure clock`.", graphics.COLOR_DIM)
+	interface.cell_text(&frame, interface.column_take(&column, LINE), measured ? "kernel entries: for one million reads." : "the reads in one second are a measure: run `modustool measure clock`.", graphics.COLOR_DIM)
 	interface.column_take(&column, 8)
 	if checked {
 		numbers: [5]interface.Text_Builder

@@ -64,7 +64,7 @@ The strength of the seed is the strongest source that gave all its values. The r
 
 **No claim beyond the sources.** The system does not test the output of `rdseed` or `rdrand` for quality. A processor whose generator is wrong or hostile gives a wrong seed, with no sign; the jitter of the cycle counter is mixed in so that such a processor alone does not fix the seed, but this system claims no bits from it.
 
-**A machine with no `rdrand` and no `rdseed`.** The seed comes from the cycle counter only. Each program still starts and draws. The log and the window say "weak (the cycle counter only)" in the color of a failure. `kerneltool test random` runs such a machine (`-cpu max,-rdrand,-rdseed`).
+**A machine with no `rdrand` and no `rdseed`.** The seed comes from the cycle counter only. Each program still starts and draws. The log and the window say "weak (the cycle counter only)" in the color of a failure. `modustool test random` runs such a machine (`-cpu max,-rdrand,-rdseed`).
 
 **Each program knows the strength of its seed.** The starter writes the strength of the seed of the system in the context value 16 (`op.CONTEXT_VALUE_SEED_STRENGTH`) with the seed: 1 weak, 2 processor, 3 entropy. A child's seed comes from its starter's stream, so it has the same strength. `random.seed_strength(generator)` gives it.
 
@@ -85,11 +85,11 @@ The strength of the seed is the strongest source that gave all its values. The r
   - two seeds give two streams, a zero seed is refused, and a child seed is not part of the later stream of its starter;
   - a statistical smoke test on 1 MiB: the count of one bits within 6 standard deviations, and a chi-square of the 256 byte values between 150 and 400. **It finds a gross fault, and proves nothing about the quality**;
   - each fallback with sources of the test: none, `rdrand` of all ones, `rdrand` that repeats one value, `rdrand` alone, and `rdseed`.
-- `kerneltool test random`, three machines:
+- `modustool test random`, three machines:
   - two with the processor of the host (strength `entropy`), with two programs `randomness` in the first;
   - one with no `rdrand` and no `rdseed` (strength `weak`).
   - The first 16 bytes of the stream of the 4 programs all differ: two programs give different streams, and a restart gives different streams.
-- `server` and `fetch` take the secret of the initial sequence numbers of TCP from their generator (`kerneltool test tcp`).
+- `server` and `fetch` take the secret of the initial sequence numbers of TCP from their generator (`modustool test tcp`).
 
 ## 5. What is not built
 

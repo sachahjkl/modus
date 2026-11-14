@@ -7,7 +7,7 @@ license CC-BY-NC-4.0
 attribution Posy's Cursor by Michiel de Boer (Posy), michieldb.nl/other/cursors.
 attribution Linux port 1.6 by simtrami, github.com/simtrami/posy-improved-cursor-linux.
 attribution License CC BY-NC 4.0, creativecommons.org/licenses/by-nc/4.0 (non-commercial use).
-attribution Converted by kerneltool: the sizes 32 and 64 (32 only for wait and busy_with_arrow), no pixel changed.
+attribution Converted by modustool: the sizes 32 and 64 (32 only for wait and busy_with_arrow), no pixel changed.
 
 # 32 is the smallest size of the theme; 64 is for a screen with twice the pixels.
 sizes 32 64

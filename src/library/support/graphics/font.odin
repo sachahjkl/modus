@@ -1,4 +1,4 @@
-// This file is the output of "kerneltool font". Do not change it by hand.
+// This file is the output of "modustool font". Do not change it by hand.
 //
 // The font is Spleen 8x16 2.1.0, Copyright (c) 2018-2024, Frederic Cambus.
 // Its license is BSD 2-Clause: see src/library/support/graphics/FONT_LICENSE.

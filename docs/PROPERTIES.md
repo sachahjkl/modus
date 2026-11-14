@@ -550,7 +550,7 @@ Licences in this table come from memory. Verify each one before the code is impo
 
 1. **Module contract**: the open questions of `MODULE_CONTRACT.md`.
 
-Fixed choices: implementation language (Odin), storage licence (new engine under MIT), properties 4, 7, 14, 15 and 16 (decided), kernel entry (kernel ring only), threads (several threads per program), call form (registers, `MODULE_CONTRACT.md` section 4), graphics implementation (written from nothing, no port of wgpu or Dawn), kernel operation limit (the kernel tool counts the kinds of kernel operation; no fixed limit yet).
+Fixed choices: implementation language (Odin), storage licence (new engine under MIT), properties 4, 7, 14, 15 and 16 (decided), kernel entry (kernel ring only), threads (several threads per program), call form (registers, `MODULE_CONTRACT.md` section 4), graphics implementation (written from nothing, no port of wgpu or Dawn), kernel operation limit (the modus tool counts the kinds of kernel operation; no fixed limit yet).
 
 ## First milestone
 

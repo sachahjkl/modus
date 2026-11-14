@@ -8,7 +8,7 @@ import "modus:support/system"
 
 // The same facts as the window, as tables of records, not text: a caller
 // that acts for the principal reads them, the remote service among them:
-// kerneltool call "inspect.mappings(\"console\")". The facts are of another
+// modustool call "inspect.mappings(\"console\")". The facts are of another
 // program, and a program sees no other program, so a caller that does not
 // act for the principal gets a refusal.
 

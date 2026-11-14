@@ -25,7 +25,7 @@ What it means here:
 
 ## 2. The origin, and its license
 
-- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the release `dev-2026-11a` of Odin, in the fork that `flake.nix` fetches by its commit and its hash. The fork changes the compiler only, not `core:crypto`. When the compiler changes, `kerneltool cryptography-take` takes the files again.
+- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the release `dev-2026-11a` of Odin, in the fork that `flake.nix` fetches by its commit and its hash. The fork changes the compiler only, not `core:crypto`. When the compiler changes, `modustool cryptography-take` takes the files again.
 - **License of Odin, and of `core:crypto`** (its README: "This library is made available under the zlib license"): the zlib license, in `src/library/support/cryptography/LICENSE.odin.txt`. Its second clause, "Altered source versions must be plainly marked as such", is met by the first line of each file that is taken.
 - **fiat-crypto**: the field arithmetic of `core:crypto/_fiat` is a port of fiat-crypto, which gives three licenses. Odin chose BSD-1-Clause; its text is in `src/library/support/cryptography/LICENSE.fiat-crypto.txt`, with the first part that is taken.
 - **Review**: the README of `core:crypto` says that the packages "have not received independent third party review". The system relies on the RFC test vectors (section 5) and on the timing rules of the origin. It does not claim more.
@@ -47,14 +47,14 @@ The taken code keeps the folders and the names of its origin, so that its import
 
 ## 4. The proof of what changed
 
-A reader must be able to trust that the cryptography is the code of its origin, with only the changes that the project lists. A check proves it at each `kerneltool check`: it applies the listed changes to the origin and compares the result with the file of the repository, byte for byte.
+A reader must be able to trust that the cryptography is the code of its origin, with only the changes that the project lists. A check proves it at each `modustool check`: it applies the listed changes to the origin and compares the result with the file of the repository, byte for byte.
 
-`kerneltool cryptography-origin` (also in `kerneltool check`) reads the manifest. For each file:
+`modustool cryptography-origin` (also in `modustool check`) reads the manifest. For each file:
 
 - the origin file, under `ODIN_ROOT` of the compiler that built the tool, has the BLAKE3 hash of the manifest. If not, the compiler of the flake changed;
 - the origin with the listed changes is the file of the repository, byte for byte.
 
-The listed changes, all in `tools/kerneltool/cryptography_origin.odin` (`cryptography_import_changes`, applied in this order):
+The listed changes, all in `tools/modustool/cryptography_origin.odin` (`cryptography_import_changes`, applied in this order):
 1. The first line: "// Altered source: Odin dev-2026-11a, <origin path>; only its imports changed (...)".
 2. `"core:crypto"` becomes `crypto "modus:support/cryptography/compatibility_crypto"`.
 3. `"core:crypto/hash"` becomes `hash "modus:support/cryptography/compatibility_hash"` (before the next rule, which would send it to a copy of the origin package).
@@ -63,17 +63,17 @@ The listed changes, all in `tools/kerneltool/cryptography_origin.odin` (`cryptog
 
 The check also covers the folders, not only the listed files: Odin compiles each `.odin` file of a package folder, so a new file in a folder of a copy would change the code with no line of a manifest.
 - It walks each folder of `src/library/support/cryptography`. Each `.odin` file must be a line of `origin.manifest` or a line of `system_files.manifest`, and no file is in both or two times.
-- `system_files.manifest` lists the files that the system wrote (the compatibility layer, the files in the place of a hardware dispatch, the tests), each with its BLAKE3 hash. A change of one of them fails the check until its new hash is written: `kerneltool cryptography-system-hashes` prints the lines.
+- `system_files.manifest` lists the files that the system wrote (the compatibility layer, the files in the place of a hardware dispatch, the tests), each with its BLAKE3 hash. A change of one of them fails the check until its new hash is written: `modustool cryptography-system-hashes` prints the lines.
 - An origin path starts with `core/crypto/` and holds no `..`; a file of the repository starts with `src/library/support/cryptography/` and holds no `..`. A line cannot take a file from another part of Odin or of the host.
 - A symbolic link anywhere under `src/library/support/cryptography` fails the check: a folder of a copy that points elsewhere would bring `.odin` files that no list names.
 - A file that is not a `.odin` file, a `LICENSE.*` file of the top folder or one of the two manifests fails the check: a `#load` or a `foreign import` could read it, and no list has its hash.
 - The system list is a tripwire, not a proof of review: whoever changes a file of the system also writes its new hash. The review of the change reads it.
 
-A new file comes with `kerneltool cryptography-take <origin> <file>`, which writes it and prints its line of the manifest.
+A new file comes with `modustool cryptography-take <origin> <file>`, which writes it and prints its line of the manifest.
 
 ### Listed adjustments
 
-A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/kerneltool/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and the adjustment must be read again. The first line of an adjusted file says so.
+A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/modustool/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and the adjustment must be read again. The first line of an adjusted file says so.
 
 There are two groups of adjustments.
 
@@ -99,7 +99,7 @@ Each primitive passes the published vectors of its standard, on the host and on 
 | Ed25519 | `ed25519` | RFC 8032 7.1, tests 1 and 2, and a changed signature that `verify` refuses |
 | AES-128-GCM | `aes` (`aes.odin`, `aes_ecb.odin`, `aes_ctr.odin`, `aes_gcm.odin`, `aes_impl.odin`), `_aes`, `_aes/ct64` | The GCM specification, test case 4, and a changed tag that `open` refuses |
 | BLAKE2b | `blake2b`, `_blake2` | RFC 7693, appendix A, on the host only |
-| Argon2id | `argon2id` | RFC 9106, section 5.3; the blocks are erased after the derivation; too few blocks is `Out_Of_Memory`. On the host only: `cryptography_vectors` does not run it on the machine; `unlock` runs the module there (`kerneltool test principals`) |
+| Argon2id | `argon2id` | RFC 9106, section 5.3; the blocks are erased after the derivation; too few blocks is `Out_Of_Memory`. On the host only: `cryptography_vectors` does not run it on the machine; `unlock` runs the module there (`modustool test principals`) |
 
 **What the system puts in the place of the hardware code.** The origin chooses a hardware implementation by the processor features, which it reads with `core:sys/info`; a module does not have that package. On another processor the origin itself compiles a generic file. A file of the system takes the place of that dispatch, with the procedures of that generic file, unchanged:
 - `sha2/sha256_implementation_portable.odin`;

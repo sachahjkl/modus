@@ -363,7 +363,7 @@ stack_switch:                    ; (top: u64, entry: rawptr) -> !: continue on a
 ; scheduler calls them when a processor leaves a thread for another one,
 ; and the first processor proves the start state with them at boot. These
 ; three procedures are the only code of the kernel that names an x87, SSE
-; or AVX register (`kerneltool` refuses any other: vector_check.odin). Each
+; or AVX register (`modustool` refuses any other: vector_check.odin). Each
 ; one ends with a label "<name>_end": the check allows the instructions of
 ; a procedure only up to that label, and refuses a kernel where the label
 ; does not follow the procedure.

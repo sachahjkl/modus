@@ -65,7 +65,7 @@ The tool runs in the folder of the system. Each path of a source of the system i
 
 The folder of the system is, in this order: the argument `--system`, the environment variable `MODUS_SYSTEM`, the folder where the command runs.
 
-The command `kerneltool` of the flake compiles the tool from its sources before it runs it. It reads `MODUS_SYSTEM` to find those sources, because it runs before the tool reads an argument. A developer who uses the command of the flake sets the variable. A caller that runs the file of the tool itself can give `--system`.
+The command `modustool` of the flake compiles the tool from its sources before it runs it. It reads `MODUS_SYSTEM` to find those sources, because it runs before the tool reads an argument. A developer who uses the command of the flake sets the variable. A caller that runs the file of the tool itself can give `--system`.
 
 The forms that were refused:
 
@@ -122,7 +122,7 @@ The rules of the repository of the system that the tool does not apply to an out
 
 ## The proof in the check, and its limit
 
-`kerneltool check` builds two outside modules, each from a copy of a module of the system:
+`modustool check` builds two outside modules, each from a copy of a module of the system:
 
 - `tally`, a program with no import;
 - `agenda`, a module that imports `calendar`.

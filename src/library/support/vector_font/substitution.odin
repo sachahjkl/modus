@@ -3,7 +3,7 @@ package vector_font
 // One form of the substitutions of the table GSUB (OpenType): the single
 // substitution (lookup type 1, or type 7 that holds a type 1) of a feature,
 // such as "zero", whose lookup maps the glyph of '0' to a slashed zero. The
-// kernel tool uses it to put that form of a glyph in a subset
+// modus tool uses it to put that form of a glyph in a subset
 // (docs/FONTS.md, section 6, "The zero of Paper Mono").
 //
 // The feature is found as a shaper finds it: in the default language

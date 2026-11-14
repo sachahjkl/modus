@@ -84,7 +84,7 @@ The storage service starts on demand, after the root service, as before. The roo
 
 ### How the file reaches the disk
 
-The tool writes a data disk of the format of the storage service that holds the store `programs` with its module files (`kerneltool` builds such a disk for the test part `disk_programs`). It prints the hash of each file. The module is a row of the module table of the tool that is not in the boot image.
+The tool writes a data disk of the format of the storage service that holds the store `programs` with its module files (`modustool` builds such a disk for the test part `disk_programs`). It prints the hash of each file. The module is a row of the module table of the tool that is not in the boot image.
 
 The writer of the tool is checked by the open of the storage service: a host test opens the image with the code that the service uses, and compares each object byte for byte and each hash.
 

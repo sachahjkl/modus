@@ -6,7 +6,7 @@
 // a watch can see, a procedure with parameters and local variables, a loop
 // to step through, and a second thread that only waits.
 //
-// **What it is for.** The machine test `kerneltool test debugger` attaches
+// **What it is for.** The machine test `modustool test debugger` attaches
 // the debugger service to this program from the console and from the host,
 // and waits for exact rows: a breakpoint by a procedure name and by a file
 // and a line, the frames of the stack, a local variable of a caller, the
@@ -31,7 +31,7 @@
 // them.
 //
 // The lines of `add_step` are named in the scenario of the test
-// (tools/kerneltool/debugger_scenario.odin, DEBUG_TARGET_LINE_OF_THE_LOAD
+// (tools/modustool/debugger_scenario.odin, DEBUG_TARGET_LINE_OF_THE_LOAD
 // and DEBUG_TARGET_LINE_OF_THE_STORE): a change of this file above that
 // procedure changes those two numbers.
 package debug_target

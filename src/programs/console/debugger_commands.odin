@@ -174,7 +174,7 @@ debugger_commands_start :: proc "contextless" () {
 	command("value", {.Integer, .Integer, .Text}, .Table, "a variable or a global, by a path: debugger.value()", debug_value)
 	// Gives the source line of the instruction of a frame: its number, the
 	// path of its file and the hash of that file at the build. The system
-	// holds no source text; `kerneltool call` shows the line on the host
+	// holds no source text; `modustool call` shows the line on the host
 	// when the file of the repository has that hash.
 	//
 	// - `thread`, `frame`: as for `locals`.

@@ -68,7 +68,7 @@ thread_index :: #force_inline proc "contextless" (thread: ^Thread) -> u32 {
 
 // The test build checks, at each entry of a thread in a list, that the
 // processor of the list is in the placement of the thread. A build that
-// does not ask for the check has none: the kernel tool asks for it in the
+// does not ask for the check has none: the modus tool asks for it in the
 // test build only.
 TEST_BUILD_CHECKS_PLACEMENT :: #config(TEST_BUILD_CHECKS_PLACEMENT, false)
 

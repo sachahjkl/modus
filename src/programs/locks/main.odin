@@ -30,7 +30,7 @@
 // `start("locks")` in the console. The window shows the kernel entries and
 // the page faults of the check with 1, 2 and 4 lockers, the wakes of the
 // word wait between two threads alone and under load, and, for each
-// run, the waits of each lock. In a measure run (`kerneltool measure`) the
+// run, the waits of each lock. In a measure run (`modustool measure`) the
 // numbers are in one second. The log gets one line for each locker
 // (`locks: locker 1 counted ... entries, the kernel ...`), the lines of the
 // stress case and of the case of the frames, then the summary.
@@ -376,7 +376,7 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	y := LEFT
 	measured := system.measure_run()
-	interface.draw_text(table, LEFT, y, measured ? "each locker works on its own objects: it waits only if the kernel makes it wait." : "each locker works on its own objects. rates in one second: run `kerneltool measure`.", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, measured ? "each locker works on its own objects: it waits only if the kernel makes it wait." : "each locker works on its own objects. rates in one second: run `modustool measure`.", graphics.COLOR_DIM)
 	y += LINE + GAP
 	interface.draw_text(table, LEFT, y, measured ? "in one second, all lockers" : "in the check, all lockers", graphics.COLOR_DIM)
 	for active, index in counts {

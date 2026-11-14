@@ -337,7 +337,7 @@ object_read_block :: proc "contextless" (_: ^block_tree.Source, number: u64, int
 
 Mount :: storage_mount.Mount
 
-// The open of the disk: the same code as the check of the kernel tool on
+// The open of the disk: the same code as the check of the modus tool on
 // the host (src/library/support/storage_mount). The service keeps the blocks in use and
 // their reference counts there.
 opened: storage_mount.State

@@ -1,5 +1,5 @@
 // The format of a pointer theme file (docs/POINTERS.md, section 3): the
-// pointer pictures of a whole theme in one file, which the kernel tool
+// pointer pictures of a whole theme in one file, which the modus tool
 // writes and the compositor maps read-only and reads in place. All numbers
 // are little-endian; each header has a fixed size; no field depends on a
 // language.
@@ -34,7 +34,7 @@ SHAPE_COUNT_LIMIT :: 256 // The shapes of one file.
 PICTURE_COUNT_LIMIT :: 1 << 16 // The pictures of one file.
 
 // The names of the pointer theme files in the resource table of the boot
-// image (kerneltool pointers). The compositor takes the first one that the
+// image (modustool pointers). The compositor takes the first one that the
 // boot image has: the theme of the owner when the build had its input.
 RESOURCE_OF_THE_OWNER :: "pointers_posy" // The theme of the owner.
 RESOURCE_OF_THE_SYSTEM :: "pointers_system" // The theme of the system.

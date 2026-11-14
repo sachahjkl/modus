@@ -19,7 +19,7 @@ The animations play in a program that a reader starts. They never play on a mark
 
 ## The chosen form
 
-**The rules are in `src/library/support/mark`.** The cells and the frames, the order of play and the still times (`play.odin`), the forms and the keys of the moves (`motion.odin`) are data and pure procedures there. The kernel tool runs the same procedures to check the script of the site. The program holds no rule: it asks for the next animation, the frame at a time, the form and the place at a time, and draws.
+**The rules are in `src/library/support/mark`.** The cells and the frames, the order of play and the still times (`play.odin`), the forms and the keys of the moves (`motion.odin`) are data and pure procedures there. The modus tool runs the same procedures to check the script of the site. The program holds no rule: it asks for the next animation, the frame at a time, the form and the place at a time, and draws.
 
 - The rule of the order takes a number of chance as a parameter. A test gives the numbers of a generator with a seed; the program gives numbers of its random generator. The rule itself has no source of chance, so the tool and the program can share it.
 

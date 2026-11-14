@@ -25,7 +25,7 @@
 // records read in order, and the kernel entries for one million records.
 // The log gets one line for each ring (`flow: capacity 32, wait at once:
 // 200000 records read in order, 0 lost, ...`), then `flow: ok, 4 rings, 0
-// records lost`, or `flow: wrong: ...`. In a measure run (`kerneltool
+// records lost`, or `flow: wrong: ...`. In a measure run (`modustool
 // measure flow`) the window and the lines have the records in one second.
 //
 // **Its grant**: **Inspect**: the machine handle reads the kernel entries
@@ -228,7 +228,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		y += LINE
 	}
 	if !measured {
-		interface.draw_text(table, 12, y + LINE / 2, "the records in one second are a measure: run `kerneltool measure flow`.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y + LINE / 2, "the records in one second are a measure: run `modustool measure flow`.", graphics.COLOR_DIM)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

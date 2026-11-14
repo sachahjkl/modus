@@ -8,9 +8,9 @@ import "modus:support/system"
 // A program built with this setting draws its window through the drawing
 // module (docs/INTERFACE.md, section 7): window_frame_end calls the two
 // exports of the module in place of the difference and the execution of
-// this package, so the program holds no copy of that code. The kernel tool
+// this package, so the program holds no copy of that code. The modus tool
 // sets it for each program that imports the module (the module table,
-// tools/kerneltool/modules.odin).
+// tools/modustool/modules.odin).
 //
 // Such a program has no Picture record and no Text_Grid record: a picture
 // and a grid are named by an address, and the description of an export
@@ -52,7 +52,7 @@ Window_Drawing :: struct {
 // each an integer of 64 bits. The two have one layout, so the rectangles
 // of a Damage are the records of the table, with no copy. The two records
 // of the border are declared for each build, at the top of the file: the
-// kernel tool reads them there when it compares the declarations below
+// modus tool reads them there when it compares the declarations below
 // with the descriptions of the exports.
 Module_Rectangle :: struct {
 	left, top, right, bottom: i64,

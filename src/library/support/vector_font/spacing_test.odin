@@ -3,7 +3,7 @@ package vector_font
 
 import "core:testing"
 
-// The subsets of B612 that "kerneltool vector_fonts" writes. The values
+// The subsets of B612 that "modustool vector_fonts" writes. The values
 // below were read by hand in the files of B612 1.008 (the commit of
 // flake.nix), with a reader that is not this one.
 @(private = "file")

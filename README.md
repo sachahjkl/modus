@@ -21,9 +21,9 @@ Each claim names the program that shows it, and its picture below.
 
 ## Try it
 
-The Nix flake supplies every tool. `nix develop`, then `kerneltool run`, builds the system and starts it in a virtual machine. In the machine, type `help()` in the console, or open the menu of the programs with the button "programs" of the bar. The section "Use" lists the other commands.
+The Nix flake supplies every tool. `nix develop`, then `modustool run`, builds the system and starts it in a virtual machine. In the machine, type `help()` in the console, or open the menu of the programs with the button "programs" of the bar. The section "Use" lists the other commands.
 
-[`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. `kerneltool release_number` prints the newest release. [`ROADMAP.md`](ROADMAP.md) lists the planned work: what is in work now, what comes next, and what comes later.
+[`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. `modustool release_number` prints the newest release. [`ROADMAP.md`](ROADMAP.md) lists the planned work: what is in work now, what comes next, and what comes later.
 
 ## Pictures
 
@@ -127,7 +127,7 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![The network: a virtio network device in a program, a network service with ARP, IPv4, ICMP echo and UDP, and an endpoint with a grant of one remote; ten cases with their answers, and the measures](docs/screenshots/network.png)
 
-![A call from the host: kerneltool call reaches the program remote on one QUIC stream, which makes the isolated call and writes the typed result back; the counts, the public key, the connections that the root service made, and the last calls](docs/screenshots/remote.png)
+![A call from the host: modustool call reaches the program remote on one QUIC stream, which makes the isolated call and writes the typed result back; the counts, the public key, the connections that the root service made, and the last calls](docs/screenshots/remote.png)
 
 ![TCP in the program: server holds a listen grant on the port 80 and serves one table of connections from one thread; the peer of the test drops, reorders and repeats frames, resets a connection, opens 16 at once, and keeps 32 connections with no progress, which the server ends; the table shows the state, the bytes, the round trip and the congestion window of each connection](docs/screenshots/server.png)
 
@@ -155,7 +155,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 
 ![The program heron: the heron of the mark held at a frame of its dash, in the form of the run, in whole square cells, with the lines of the cells and the cells that the frame changed](docs/screenshots/heron.png)
 
-`kerneltool screenshots` makes these pictures from the running machine.
+`modustool screenshots` makes these pictures from the running machine.
 
 ## What works
 
@@ -167,8 +167,8 @@ The repository holds no picture of the same window with the pointer theme Posy's
 - A block service drives a virtio disk with device memory and a message interrupt; its client gives the memory that the device reads and writes.
 - The storage service keeps a private store for each program on the data disk: each change is one commit, and a stop of the machine never shows a part of one. `notes` finds its state after a restart of the machine, after QEMU was ended during its commits, and after its last root block was cut. An object is a tree of blocks of up to 4 TiB, and a block of zero bytes costs nothing; a program writes ranges and commits them in one step, and a commit hashes the blocks that it changed, never the whole object.
 - The network: a frame service drives a virtio network device, and the network service gives a program an endpoint of UDP datagrams that reaches only the remote of its grant. The kernel has no network code.
-- `kerneltool call <key> "monitor.programs()"` calls an export of a service of the running machine from the host, and prints the typed result: a table with its field names, a record, a text, or the sentence of its error record. The call goes over QUIC to the program `remote`, whose public key (`<key>`, in its window) the host pins; the root service decides which services it reaches, and the console revokes its grant with `revoke("remote", "acts_for_principal")`. The test reads the place of the pointer from the compositor before each press, and waits for log records with typed fields through `log.records()`.
-- The debugger is a service, `debugger`: `debug("clock")` in the console attaches it to a program, then `break_at("fault::three")`, `stack(0)`, `locals(0, 0)`, `value(0, 0, "pair.next^.first")`, `step(0)` and `watch(...)` give tables with the procedures, the lines, the types and the variables of the debug objects. The root service gives the debug access by one rule over grants: a program with no grant can be debugged, a service cannot. The same exports are called from the host: `kerneltool call <key> "debugger.stack(0)"` (`docs/TOOLS.md`, "The debugger").
+- `modustool call <key> "monitor.programs()"` calls an export of a service of the running machine from the host, and prints the typed result: a table with its field names, a record, a text, or the sentence of its error record. The call goes over QUIC to the program `remote`, whose public key (`<key>`, in its window) the host pins; the root service decides which services it reaches, and the console revokes its grant with `revoke("remote", "acts_for_principal")`. The test reads the place of the pointer from the compositor before each press, and waits for log records with typed fields through `log.records()`.
+- The debugger is a service, `debugger`: `debug("clock")` in the console attaches it to a program, then `break_at("fault::three")`, `stack(0)`, `locals(0, 0)`, `value(0, 0, "pair.next^.first")`, `step(0)` and `watch(...)` give tables with the procedures, the lines, the types and the variables of the debug objects. The root service gives the debug access by one rule over grants: a program with no grant can be debugged, a service cannot. The same exports are called from the host: `modustool call <key> "debugger.stack(0)"` (`docs/TOOLS.md`, "The debugger").
 - `inspect` shows one program live: its address space, its modules, its threads with the state of the scheduler, the stop report of a program that faulted, and the bytes of its own memory, from reports of the kernel that give no byte of another program.
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
 - The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`. A command gives a result and never prints: the console draws a number, a text, a record, a table, a handle, bytes or an error, each with its own drawer, and a line filters the table of a built-in command as the table of an export: `where(grants("notes"), "state", "held")`. The log records of the programs that a line calls show under the line.
@@ -201,7 +201,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/MODULE_CONTRACT.md` | The module format, the loader, the call form (direct, isolated, from the host), the types, the context of a program, and the errors that diagnose |
 | `docs/FIRST_MILESTONE.md` | What the code does now, the choices made, the gaps |
 | `docs/TOOLS.md` | The developer tools, and what each one reads |
-| `docs/SITE.md` | The site of the system: what `kerneltool site` writes, and where each part of the page comes from |
+| `docs/SITE.md` | The site of the system: what `modustool site` writes, and where each part of the page comes from |
 | `docs/GLOSSARY.md` | The terms of the project. One term per concept: its short definition, then what it is for, how it works, and what it is not |
 | `docs/DESIGN.md` | The design rules: how a program of the system looks. The boot display is the model |
 | `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the Posy theme |
@@ -233,13 +233,13 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `src/boot/` | The boot program (UEFI) |
 | `src/kernel/` | The kernel. It imports the contract packages only: the tool checks each of its imports before each build |
 | `src/runtime/` | `memory.asm`: the copy and the fill of every module, of the kernel and of the boot program (`copy_bytes_without_overlap`, `copy_bytes_with_overlap`, `fill_bytes_with_value`), with its host tests |
-| `src/library/` | The source library `modus`, in two parts. A source imports `"modus:contract/ring"` and `"modus:support/system"`, and the compiler gets the one flag `-collection:modus=src/library`. A program outside the repository imports with the same lines, and `kerneltool module-build` builds its module |
+| `src/library/` | The source library `modus`, in two parts. A source imports `"modus:contract/ring"` and `"modus:support/system"`, and the compiler gets the one flag `-collection:modus=src/library`. A program outside the repository imports with the same lines, and `modustool module-build` builds its module |
 | `src/library/contract/` | The contract packages (`modus:contract/`): what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `palette_table` (the entry table and the ring between the palette provider and the palette), `pointer_pictures` (the pointer theme file and its validation), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call), `glyph_cache` (the drawn glyphs of the vector font), `settings` (the settings page of the principal), `date` (the date page: the date of the time 0 of the system), `system_description` (the signed list of the hashes of the system, and its checks), `start_grant` (the list of what the root service gives a program by its name, and the name of each one) |
 | `src/library/support/` | The support packages (`modus:support/`): what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics` (drawing, and the table of the design rules), `interface` (the elements of the windows as draw tables, the damage by difference), `vector_font` (the vector font: a reader of TrueType outlines, a rasterizer in fixed point with subpixel bands, the builder of the glyph cache), `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `bar` (the names of the programs and the places of the bar and of its menus), `palette` (the panel of the palette: its state, its entries, their ranking, its keys, its results and its draw records), `relay` (the records of the `rings` demonstration), `twins` (the modes of the program `twin`) |
 | `src/programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `heron`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `scheduler`, `address_space`, `shortage`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, `pointers`, `debugger`, `debug_target` |
 | `resources/` | The sources of the resources of the boot image: the pointer manifests (`resources/pointers/`), the ASCII subsets of the seven candidate vector fonts with their licenses (`resources/fonts/`, `docs/FONTS.md`), and the test signing key, whose private key is published (`resources/keys/`) |
 | `src/modules/` | Modules of commands (`math`, `probe`), the library modules that programs import (`drawing`: the damage and the draw of a window; `cryptography`), and the test modules of the host load test |
-| `tools/kerneltool/` | The kernel tool: all the automation of the project |
+| `tools/modustool/` | The modus tool: all the automation of the project |
 
 ## Use
 
@@ -247,7 +247,7 @@ The Nix flake supplies the compiler, the linker, the assembler, QEMU and the UEF
 
 ```
 nix develop
-kerneltool run
+modustool run
 ```
 
 | Command | Action |
@@ -277,7 +277,7 @@ In the machine, type `help()` in the console. The button "programs" of the bar o
 
 A module can be written in a folder of another project, with no copy of the sources of the system.
 
-- Clone this repository, and build it: `nix develop -c kerneltool build`.
+- Clone this repository, and build it: `nix develop -c modustool build`.
 - In a folder of your project, write one Odin package. Import the packages of the system from the source library: `import "modus:support/system"`.
 - In the same folder, write the file `module.txt`, with the name of the module.
 
@@ -289,7 +289,7 @@ Then build the module, in that folder. `~/modus` is the clone of this repository
 
 ```
 export MODUS_SYSTEM=~/modus
-nix develop ~/modus#module -c kerneltool module-build .
+nix develop ~/modus#module -c modustool module-build .
 ```
 
 The tool writes `build/my_program.module` and `build/my_program.debug` in the folder, and prints the hash of the module. The lines `imports`, `defines` and `library` of `module.txt` are in `docs/TOOLS.md`, "A module from a source outside the repository". The tool does not yet put such a module in the boot image of a machine.

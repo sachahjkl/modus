@@ -151,7 +151,7 @@ The signing key is an Ed25519 key pair of the principal that signs the system. I
 
 ### Creation
 
-1. Run `nix develop -c kerneltool key new <folder>`, with a folder outside the repository.
+1. Run `nix develop -c modustool key new <folder>`, with a folder outside the repository.
 2. The tool writes `<folder>/signing_key`: the private key, 64 hexadecimal digits, readable by its owner only, in a folder that only its owner can open. It writes `<folder>/signing_key.public`: the public key. It creates each file exclusively: a file or a symbolic link at that path makes it stop.
 3. The tool then writes the firmware signing key with `openssl`: `<folder>/firmware_signing_key.pem` (the RSA-2048 private key) and `<folder>/firmware_signing_key.crt` (its certificate).
 4. The tool refuses to replace an existing key.
@@ -160,7 +160,7 @@ The signing key is an Ed25519 key pair of the principal that signs the system. I
 ### Use
 
 1. Set `SYSTEM_SIGNING_KEY=<folder>/signing_key` before each build.
-2. Run `kerneltool key show` to print the public key that the build uses.
+2. Run `modustool key show` to print the public key that the build uses.
 3. The build puts the public key in the boot program and signs the description of each boot volume.
 
 ### Backup
@@ -183,7 +183,7 @@ Anyone who has the private key can sign a system that the boot program accepts. 
 The measure is a record in the TPM of which system started: the hash of the system description, extended into one register before the kernel starts. No later code can set the register back, so a key sealed to it, or a remote party that reads it, learns which system runs. Today nothing reads it but the record of principal 0 and the boot display.
 
 - **The register**: PCR 11. The TCG rules for PC firmware leave PCR 8 to 15 to the operating system. The conventions of Linux give PCR 11 to the whole system image that a boot stage measures before the kernel starts, which is what this measure is. The firmware of the test machine does not write PCR 11.
-- **The value**: the firmware hashes the system description with SHA-256 and extends PCR 11 with it, in each active bank. In the SHA-256 bank, after a reset, PCR 11 then holds `SHA-256(32 zero bytes || SHA-256(description))`. `kerneltool` computes the same value from the description of the boot volume and compares it with the value that the boot program read back.
+- **The value**: the firmware hashes the system description with SHA-256 and extends PCR 11 with it, in each active bank. In the SHA-256 bank, after a reset, PCR 11 then holds `SHA-256(32 zero bytes || SHA-256(description))`. `modustool` computes the same value from the description of the boot volume and compares it with the value that the boot program read back.
 - **The event**: type `EV_IPL`, in the event log of the firmware. Its data is the signed message: the label and the BLAKE3 hash. The event log names the system by its identity, BLAKE3; the TPM has no BLAKE3 bank, so the register holds SHA-256.
 - **The path**: the boot program calls `HashLogExtendEvent` of `EFI_TCG2_PROTOCOL`, then `TPM2_PCR_Read` through `SubmitCommand`. The firmware talks to the TPM. The boot program has no TPM driver.
 - **The order**: the boot program measures after the checks of section 1 and before it leaves the firmware services.
@@ -216,7 +216,7 @@ What the test machines do:
 
 What the runs with that firmware showed: 10 runs of 11 passed, each machine of the TPM with "1 Startup, 0 commands abandoned" and its boot program started within seconds. In one run a machine of the firmware without system management mode abandoned two commands and did not reach the boot program in 10 minutes. So system management mode is not the cause. The trace of QEMU of that machine: the firmware starts a command, QEMU gives it to swtpm one millisecond later, swtpm writes its answer, and the firmware cancels 4 minutes 38 seconds later; QEMU does not give the next command to swtpm at all. In another machine that hung, the threads of QEMU were read while it hung: its main thread slept in `poll`, one processor of the machine ran at full time (the firmware in its wait loop), the three others were idle, and swtpm slept in `poll` with its answer written. So the answer is lost inside QEMU, between the thread that reads the answer of swtpm and the device that the firmware reads. Not known: why.
 
-So the two machines of the measure are not part of `kerneltool test` and of the full check: `kerneltool test trusted_boot tpm` runs them. A test that fails for a fault of its machine proves nothing about the system. The eight other machines (the five refusals of layer 1 and the three machines of Secure Boot) run in each full check. Before a key is sealed to the measure, the cause must be found or the measure must be tested on a machine with a hardware TPM.
+So the two machines of the measure are not part of `modustool test` and of the full check: `modustool test trusted_boot tpm` runs them. A test that fails for a fault of its machine proves nothing about the system. The eight other machines (the five refusals of layer 1 and the three machines of Secure Boot) run in each full check. Before a key is sealed to the measure, the cause must be found or the measure must be tested on a machine with a hardware TPM.
 
 The steps of a machine of the TPM or of Secure Boot after `boot program: started` have a bound of 300 s each, and the wait for `boot program: PCR 11 = ` ends at once with the line of a refusal.
 
@@ -226,11 +226,11 @@ Secure Boot makes the firmware check the boot program before it runs it, which c
 
 ![A start with Secure Boot: the firmware verified the boot program, then the boot program verified the system](screenshots/boot_secure_boot.png)
 
-1. **A second key.** UEFI Secure Boot verifies Authenticode signatures with RSA keys and X.509 certificates. It cannot verify Ed25519. So the principal that signs the system has a firmware signing key: an RSA-2048 key and a self-signed certificate, that `kerneltool key new` makes with `openssl req -new -x509 -newkey rsa:2048 -sha256 -days 36500 -nodes`, in the folder of the signing key. The firmware does not check the dates of a certificate of `db`.
-2. **The test pair** is `resources/keys/test_firmware_signing_key.pem` and `.crt`, beside the test signing key, and its private key is published in the same way. `kerneltool key test-firmware-new` writes it once.
+1. **A second key.** UEFI Secure Boot verifies Authenticode signatures with RSA keys and X.509 certificates. It cannot verify Ed25519. So the principal that signs the system has a firmware signing key: an RSA-2048 key and a self-signed certificate, that `modustool key new` makes with `openssl req -new -x509 -newkey rsa:2048 -sha256 -days 36500 -nodes`, in the folder of the signing key. The firmware does not check the dates of a certificate of `db`.
+2. **The test pair** is `resources/keys/test_firmware_signing_key.pem` and `.crt`, beside the test signing key, and its private key is published in the same way. `modustool key test-firmware-new` writes it once.
 3. **The signature of the boot program**: `sbsign --key <key> --cert <certificate> --output <signed> <unsigned>`, of the package `sbsigntool`. The build keeps the unsigned boot program as its output and writes the signed copy beside it.
 4. **The variable store of the test machine**: `virt-fw-vars` of the package `python3Packages.virt-firmware` writes a copy of `OVMF_FULL_VARS` with the certificate as PK, KEK and the one entry of `db`, and Secure Boot on (`--set-pk`, `--add-kek`, `--add-db`, `--secure-boot`). No certificate of a vendor is enrolled.
-5. **The machines** of `kerneltool test trusted_boot`: the signed boot program starts, and its trust record says `Firmware_And_Boot_Program`; these machines have no TPM device; the signed boot program with one byte changed does not start; the unsigned boot program does not start. For the last two, the tool waits for the line `BdsDxe: failed to load Boot` of the firmware, then checks that the log has no line `boot program: started`.
+5. **The machines** of `modustool test trusted_boot`: the signed boot program starts, and its trust record says `Firmware_And_Boot_Program`; these machines have no TPM device; the signed boot program with one byte changed does not start; the unsigned boot program does not start. For the last two, the tool waits for the line `BdsDxe: failed to load Boot` of the firmware, then checks that the log has no line `boot program: started`.
 
 The machines with this firmware run with four processors, as every other machine, with the system management mode of QEMU (`-machine q35,smm=on`). The first wait of such a machine is the line `boot program: started`, by name, with a bound of 600 seconds: this firmware starts slower than the usual one, and slower still on a loaded host. The tool prints the time of the first wait of each machine.
 
@@ -252,7 +252,7 @@ The machines with this firmware run with four processors, as every other machine
 | The check of the root service | `src/programs/root/trust.odin` |
 | The line of the trust and the line of the check on the boot display | `src/library/support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
 | The places of the card of the boot image | `src/library/support/bootscreen/image_card` |
-| The signature, the keys, the command `key` | `tools/kerneltool/system_description.odin` |
-| The ten machines of `test trusted_boot` | `tools/kerneltool/trusted_boot_scenario.odin` |
-| The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/kerneltool/secure_boot.odin` |
+| The signature, the keys, the command `key` | `tools/modustool/system_description.odin` |
+| The ten machines of `test trusted_boot` | `tools/modustool/trusted_boot_scenario.odin` |
+| The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/modustool/secure_boot.odin` |
 | The Ed25519 code of the boot program | `src/library/support/cryptography/ed25519` (`docs/CRYPTOGRAPHY.md`) |

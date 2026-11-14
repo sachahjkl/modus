@@ -860,7 +860,7 @@ value :: proc "c" (thread: i64, frame: i64, path: ^string, result: ^[]Value_Row,
 //
 // The system holds no source text: the row says so in `text`. A reader
 // that has the sources shows the line only from a file whose BLAKE3 hash
-// is `hash`; the command `kerneltool call` does so on the host, from the
+// is `hash`; the command `modustool call` does so on the host, from the
 // repository.
 //
 // - **thread**, **frame**: as for `locals`.

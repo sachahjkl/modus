@@ -2,7 +2,7 @@
 // docs/STORAGE.md "Large objects"): reads of blocks and of ranges, the hash
 // of an object, and the work of a commit that changes some blocks, cuts or
 // extends the object, by copy on write. Pure code: no kernel operation, no
-// allocation. The storage service, the open of a disk, the kernel tool and
+// allocation. The storage service, the open of a disk, the modus tool and
 // the host tests use it; the blocks come from a Source that the caller
 // gives, and a commit counts the names of the blocks and writes its blocks
 // through a Counter.
@@ -218,7 +218,7 @@ Source :: struct {
 	// a number that names no block of the disk.
 	read_block: proc "contextless" (source: ^Source, number: u64, into: ^Block) -> Read,
 	// value gives the value of a block of data that read_block gave, at the
-	// block `index` of its object. nil: block_value. The kernel tool gives
+	// block `index` of its object. nil: block_value. The modus tool gives
 	// the value that it computed before for the same bytes.
 	value:      proc "contextless" (source: ^Source, number: u64, index: u64, bytes: ^Block) -> Value,
 	data:       rawptr, // The state of the caller.

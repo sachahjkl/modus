@@ -298,7 +298,7 @@ Do not use: error code, errno value, exception type.
 
 A frame pointer is the register `rbp` of a function: the address of its frame on the stack, where the frame pointer and the return address of its caller are.
 
-Every module keeps frame pointers, so that the kernel, a debugger or a profiler walks the stack with no unwind tables and runs no code of the program. The kernel tool compiles each module through LLVM with `--frame-pointer=all`. The cost, measured: the code of `console` is 0.45 % larger, and a call through a slot is about 0.4 ns slower.
+Every module keeps frame pointers, so that the kernel, a debugger or a profiler walks the stack with no unwind tables and runs no code of the program. The modus tool compiles each module through LLVM with `--frame-pointer=all`. The cost, measured: the code of `console` is 0.45 % larger, and a call through a slot is about 0.4 ns slower.
 
 The rule: `docs/MODULE_CONTRACT.md`, "Closed rules".
 
@@ -308,7 +308,7 @@ Do not use: base pointer, frame record.
 
 A stack trace is the list of the return addresses of the calls that led to a fault, from the frame pointers, each with the module record that holds it.
 
-The kernel writes the stack trace into the stop report: frame 0 is the instruction, and each next frame is a return address. The walk stops at 16 frames, or at a frame pointer that is 0, not aligned, not above the one before, or not memory of the program. A reader names each frame "module + offset"; the kernel tool names the function from the linked file of the module.
+The kernel writes the stack trace into the stop report: frame 0 is the instruction, and each next frame is a return address. The walk stops at 16 frames, or at a frame pointer that is 0, not aligned, not above the one before, or not memory of the program. A reader names each frame "module + offset"; the modus tool names the function from the linked file of the module.
 
 The design: `docs/MODULE_CONTRACT.md`, "A fault: the stack trace".
 
@@ -479,9 +479,9 @@ The file has ten parts, all numbers little-endian:
 - the variable table, with the variable range table;
 - the strings: the bytes of the names and of the paths.
 
-The kernel tool writes the debug object at the build, from the linked ELF file of the module: the procedure table from its symbol table, the line table from the line program of its DWARF, the types and the variables from the entries of its DWARF. The system itself reads no DWARF. A parser of DWARF is a large parser of hostile input; the tool runs it once on its own output, and a program reads only sorted tables of fixed records, with a binary search and no allocator. `debug_object.check` refuses every other form before the first lookup, and `debug_object.place_of` gives the procedure, the offset in it, the file and the line of an offset.
+The modus tool writes the debug object at the build, from the linked ELF file of the module: the procedure table from its symbol table, the line table from the line program of its DWARF, the types and the variables from the entries of its DWARF. The system itself reads no DWARF. A parser of DWARF is a large parser of hostile input; the tool runs it once on its own output, and a program reads only sorted tables of fixed records, with a binary search and no allocator. `debug_object.check` refuses every other form before the first lookup, and `debug_object.place_of` gives the procedure, the offset in it, the file and the line of an offset.
 
-The debug object names its module by the hash of the module file. The module names nothing: its bytes are the same with and without its debug object, and `kerneltool check` proves it by a third build with no debug information. The build asks the compiler for a kind of debug information that adds no instruction, `-debug-info:same-code` (`docs/REPRODUCIBLE_BUILD.md`, "8. The debug information"). The hash proves only that the tool wrote the object for that module, not that the names are true. A reader shows the names; no decision of the system uses them. A reader uses a debug object only for a loaded module whose file has that hash (`debug_object.describes_module`): the tables of another build are wrong for it.
+The debug object names its module by the hash of the module file. The module names nothing: its bytes are the same with and without its debug object, and `modustool check` proves it by a third build with no debug information. The build asks the compiler for a kind of debug information that adds no instruction, `-debug-info:same-code` (`docs/REPRODUCIBLE_BUILD.md`, "8. The debug information"). The hash proves only that the tool wrote the object for that module, not that the names are true. A reader shows the names; no decision of the system uses them. A reader uses a debug object only for a loaded module whose file has that hash (`debug_object.describes_module`): the tables of another build are wrong for it.
 
 The file table ties each line to one version of its source: a reader shows the text of a line only from a file whose BLAKE3 hash is the hash of the table (`debug_object.source_line_of`), and says so when the hash differs.
 
@@ -575,7 +575,7 @@ Do not use: place (for a variable), location expression (the form of DWARF that 
 
 The debug image is one file that holds the debug object of each module of a build, in the form of a boot image, so that the programs of a machine can name the procedures and lines of every module.
 
-The kernel tool writes it as `build/debug.image`: a header, one entry for each object (the name of the module, the hash of the object, its offset and its size), and each object on a page. It copies it to the boot volume as `DEBUG/OBJECTS.IMG`, beside the boot program.
+The modus tool writes it as `build/debug.image`: a header, one entry for each object (the name of the module, the hash of the object, its offset and its size), and each object on a page. It copies it to the boot volume as `DEBUG/OBJECTS.IMG`, beside the boot program.
 
 The path of the image through the start:
 
@@ -876,7 +876,7 @@ Do not use: span (for this), token, highlight range.
 
 A cut mark is the end of a text that a place of a fixed size does not hold: the start of the text, cut after a whole character, then "... and N bytes more" (`modus:contract/cut_mark`).
 
-N counts each byte that the place does not hold, so the reader knows what is missing. It is the one form of a cut text in the system: a text is written whole, cut with this mark, or refused; never cut in silence. `kerneltool check` refuses a source that sets the count of a writer by hand.
+N counts each byte that the place does not hold, so the reader knows what is missing. It is the one form of a cut text in the system: a text is written whole, cut with this mark, or refused; never cut in silence. `modustool check` refuses a source that sets the count of a writer by hand.
 
 The rule: `docs/ARCHITECTURE.md`, "A text is never cut in silence".
 
@@ -1394,7 +1394,7 @@ Do not use: boot loader, bootloader.
 
 A fixed range is an address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the files of a module.
 
-Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. A mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START`. `kerneltool check` refuses an address of the band written another way.
+Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. A mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
 
 Do not use: well-known address, fixed mapping.
 
@@ -1645,7 +1645,7 @@ It asks the root service for the debug access to a program on behalf of one of i
 
 It is not the program `debugged`, which is the test of the contract of the kernel and debugs its own children. It is not a developer tool: a developer tool reads reports and never the bytes of a program.
 
-Example: `kerneltool call <key> "debugger.attach(\"debug_target\")"`, then `"debugger.threads()"`.
+Example: `modustool call <key> "debugger.attach(\"debug_target\")"`, then `"debugger.threads()"`.
 
 The design: `docs/TOOLS.md`, "The debugger".
 
@@ -2045,7 +2045,7 @@ Do not use: collection, SDK, libc, static library.
 
 An outside module is a module whose source is in a folder outside the repository of the system.
 
-Its developer writes one Odin package that imports the packages of the system from the source library, and a module build file. The command `kerneltool module-build` builds it with the two steps of a module of the system, and writes the module file and the debug object in a folder of the developer. The module table of the tool has no row for it. A source of an outside module is in the folder of the module or under it, in the source library, or in the libraries of the compiler. An outside module is a module as each other: one file, named by its hash, with described exports. The tool does not yet put one in a boot image.
+Its developer writes one Odin package that imports the packages of the system from the source library, and a module build file. The command `modustool module-build` builds it with the two steps of a module of the system, and writes the module file and the debug object in a folder of the developer. The module table of the tool has no row for it. A source of an outside module is in the folder of the module or under it, in the source library, or in the libraries of the compiler. An outside module is a module as each other: one file, named by its hash, with described exports. The tool does not yet put one in a boot image.
 
 The design: `docs/TOOLS.md`, "A module from a source outside the repository".
 
@@ -2607,7 +2607,7 @@ Do not use: DMA buffer, bounce buffer.
 
 The data disk is the disk of the storage service: it holds the private stores of each program.
 
-The data disk is the one disk whose content the system keeps. The root service starts its block service (the device at place 16 of the bus) when the storage service starts, and gives the block ring to the storage service only. The storage service writes its own format on the whole disk: two places for the root block, then the blocks of the trees, the objects and the versions. The kernel tool makes a disk of 64 MiB for a run and a new one for each machine test.
+The data disk is the one disk whose content the system keeps. The root service starts its block service (the device at place 16 of the bus) when the storage service starts, and gives the block ring to the storage service only. The storage service writes its own format on the whole disk: two places for the root block, then the blocks of the trees, the objects and the versions. The modus tool makes a disk of 64 MiB for a run and a new one for each machine test.
 
 The data disk is not a home disk or a disk of the user: no program reads it but the storage service, and a program sees only its own private store.
 
@@ -2633,7 +2633,7 @@ Do not use: scratch disk, test disk.
 
 A network device is a device that sends and receives frames on a link.
 
-The test machine has one virtio network device, at place 18 of the bus, with the hardware address 52:54:00:12:34:56. Its link is the user network of QEMU, where the peer of the kernel tool is the gateway.
+The test machine has one virtio network device, at place 18 of the bus, with the hardware address 52:54:00:12:34:56. Its link is the user network of QEMU, where the peer of the modus tool is the gateway.
 
 The root service starts the frame service of the device when the first program that needs the network starts. The frame service is the only program that touches the device, and the network service is the only client of the frame service. So no program but these two can send a frame.
 
@@ -2819,7 +2819,7 @@ A remote is the IPv4 address and the UDP port or TCP port at the other end of a 
 
 A grant names remotes: a client grant names one, and a listen grant admits the remotes that came to it. A command of the datagram ring names a remote in two values (address and port); an error record of `Not_Granted` packs the remote that a request named and the remote of the grant. Example: the remote of the client grant of `fetch` on the test network is 10.0.2.100 port 80; the remote service admits the address of the host, 10.0.2.2, with any port.
 
-A remote is not a host: the host is the computer that runs QEMU, and a remote is any address and port. It is not a peer either: the peer is one part of the kernel tool.
+A remote is not a host: the host is the computer that runs QEMU, and a remote is any address and port. It is not a peer either: the peer is one part of the modus tool.
 
 The design: `src/library/contract/datagram`.
 
@@ -3038,7 +3038,7 @@ Do not use: ARP cache entry, neighbour entry.
 
 The gateway is the machine of the link that carries IPv4 packets to other networks: 10.0.2.2 on the first machine.
 
-The network service sends each datagram whose address is not on its link (10.0.2.0/24) to the hardware address of the gateway. On the test machine with the network of the tests, the gateway is the peer of the kernel tool; with the user network of QEMU, it is libslirp. The address of the gateway is also the address from which the host reaches the machine, so the listen grant of the remote service admits that address only.
+The network service sends each datagram whose address is not on its link (10.0.2.0/24) to the hardware address of the gateway. On the test machine with the network of the tests, the gateway is the peer of the modus tool; with the user network of QEMU, it is libslirp. The address of the gateway is also the address from which the host reaches the machine, so the listen grant of the remote service admits that address only.
 
 The gateway is not a routing table: the network service has one route, to the gateway, and no other.
 
@@ -3048,11 +3048,11 @@ Do not use: router, default route.
 
 ### Peer
 
-The peer is the part of the kernel tool that is the gateway and the echo server of the network of the test machine, a TCP client that the tool drives, and the QUIC client of the remote service.
+The peer is the part of the modus tool that is the gateway and the echo server of the network of the test machine, a TCP client that the tool drives, and the QUIC client of the remote service.
 
 The peer makes the network tests closed and repeatable: no frame leaves the host, and each run has the same answers. QEMU gives it each frame of the network device as one UDP datagram on the loopback of the host (`-netdev dgram`). It reads each frame with its own code, not with `src/library/support/network`, so a fault of the network service in a checksum or a length is a fault that the peer sees. It answers ARP, an echo request and a datagram to port 7. It sends frames that the network service must refuse, and can drop, reorder and repeat the frames of TCP with a generator that each case seeds. It carries each call of the tool to the remote service on a call stream, and the call answer back.
 
-The peer is not a simulator of a network: it speaks the real protocols, with the TCP library and the QUIC library of the system. It is in `tools/kerneltool/peer.odin` and `tools/kerneltool/peer_remote.odin`.
+The peer is not a simulator of a network: it speaks the real protocols, with the TCP library and the QUIC library of the system. It is in `tools/modustool/peer.odin` and `tools/modustool/peer_remote.odin`.
 
 The design: `docs/NETWORK.md`, "With the controlled peer", and `docs/QUIC.md`, "7. `remote` over QUIC (built)".
 
@@ -3060,7 +3060,7 @@ Do not use: mock, fake server, simulator.
 
 ### Host
 
-The host is the computer that runs QEMU and the kernel tool; the system does not run on it.
+The host is the computer that runs QEMU and the modus tool; the system does not run on it.
 
 The host builds the system, starts the machine, and drives the tests. For the network of the machine, the host is at the address of the gateway, 10.0.2.2: the peer of the tool answers for it, and each call of the tool to the remote service comes from that address.
 
@@ -3074,7 +3074,7 @@ Do not use: build machine (for this), remote (for this).
 
 The remote service is the program `remote`: a QUIC server that takes each call of the host on a call stream, makes it as an isolated call of an export of a service, and writes the call answer on the same stream.
 
-The remote service lets the kernel tool on the host call an export of a running service, for tests and for the console of the developer, with the same descriptions and checks as a call inside the system.
+The remote service lets the modus tool on the host call an export of a running service, for tests and for the console of the developer, with the same descriptions and checks as a call inside the system.
 
 It has a UDP listen grant on the port 7100 that admits the address of the host only. It makes an Ed25519 key at its start and logs it ("remote: the public key of this service: " and 64 hexadecimal digits); the tool pins that key. It holds the connections to the services that the root service lets it call. It has 2 connection records of 8 streams each, so 8 calls can wait at once on one connection, and it makes one isolated call at a time. It does not read the descriptions of the exports: it checks the places and the sizes of each request against the bytes of the stream and the size of the call region (`remote.request_check`), and the service checks the argument record, as for each caller.
 
@@ -3086,11 +3086,11 @@ Do not use: RPC server, debug agent, gdbstub.
 
 ### Call socket
 
-The call socket is the Unix socket where the peer of the kernel tool takes the calls of the tool to the remote service, one connection of the socket for each call.
+The call socket is the Unix socket where the peer of the modus tool takes the calls of the tool to the remote service, one connection of the socket for each call.
 
-The call socket keeps the calls on the host to one user. It is in `$XDG_RUNTIME_DIR/kerneltool`, or in `/tmp/kerneltool-<user number>` when that variable is not set; the tool makes that folder with the mode 0700 and uses it only when it is a folder of this user with no right for the group and the others. `kerneltool run` takes the socket `calls-run.socket` and prints its path; `kerneltool call` finds it by the same rule; a machine test takes a socket of its own.
+The call socket keeps the calls on the host to one user. It is in `$XDG_RUNTIME_DIR/modustool`, or in `/tmp/modustool-<user number>` when that variable is not set; the tool makes that folder with the mode 0700 and uses it only when it is a folder of this user with no right for the group and the others. `modustool run` takes the socket `calls-run.socket` and prints its path; `modustool call` finds it by the same rule; a machine test takes a socket of its own.
 
-On a connection, the tool writes a header with a fixed mark, the key to pin and the count of the bytes, then the call request, then the end of its sending; the peer writes the outcome and the bytes of the call answer. If the peer does not answer, the call fails with "the peer of the tool does not answer at <path>: does `kerneltool run` run?".
+On a connection, the tool writes a header with a fixed mark, the key to pin and the count of the bytes, then the call request, then the end of its sending; the peer writes the outcome and the bytes of the call answer. If the peer does not answer, the call fails with "the peer of the tool does not answer at <path>: does `modustool run` run?".
 
 The call socket is not a port of the network: no program of another user and no other machine reaches it.
 
@@ -3219,13 +3219,13 @@ Do not use: symbol (for this), nearest symbol.
 
 ### Confirmed place
 
-A confirmed place is a place of the pointer that the kernel tool read from the compositor before a press, through the remote service.
+A confirmed place is a place of the pointer that the modus tool read from the compositor before a press, through the remote service.
 
 A press must land where the step wants it, and the tool does not trust its own count of the moves that it sent to the virtual mouse of QEMU. So, in a machine test, the tool calls `compositor.pointer()` before each press: after the packets of a move, it reads the place until the pointer is there or until the compositor received each packet, and it moves the pointer again from the place that the compositor gives, 6 tries at most (`POINTER_TRIES`). Before the remote service runs, the tool moves the pointer with no confirmation, and waits until the system read each packet.
 
 A confirmed place is not a move of the pointer by the system: the compositor only reports where the pointer is.
 
-The design: `pointer_confirm` in `tools/kerneltool/machine_input.odin`; `docs/TOOLS.md`, "How the tool sends input and waits".
+The design: `pointer_confirm` in `tools/modustool/machine_input.odin`; `docs/TOOLS.md`, "How the tool sends input and waits".
 
 Do not use: pointer sync, warp.
 
@@ -3555,7 +3555,7 @@ Do not use: image, generation, manifest, profile, system list.
 
 A distinct result is one content of one output of a build (a module, its LLVM IR, its object, the boot program) among the contents that several builds of the same source gave.
 
-The identity of a module is the hash of its content, so a build must be deterministic: one source must give one distinct result for each output. `kerneltool check` builds everything a second time and compares; `kerneltool repeat` builds again and again with no machine. Each compares each output, not only the module: a difference in the LLVM IR or in the object is an early sign. When an output differs, each distinct result stays in `build/different_builds/<owner>/<file name>.variant_<n>`, and the tool prints where the first difference is.
+The identity of a module is the hash of its content, so a build must be deterministic: one source must give one distinct result for each output. `modustool check` builds everything a second time and compares; `modustool repeat` builds again and again with no machine. Each compares each output, not only the module: a difference in the LLVM IR or in the object is an early sign. When an output differs, each distinct result stays in `build/different_builds/<owner>/<file name>.variant_<n>`, and the tool prints where the first difference is.
 
 A distinct result is not a version of a module: it is a fault of the build to correct.
 
@@ -3585,7 +3585,7 @@ The root block makes a commit atomic. A commit writes each new block to a free b
 
 The root block (`Root` of `src/library/contract/store`) holds the mark `STORAGE4`, the generation, the count of blocks of the disk, the time since the format, the date, and one store entry for each of up to 60 stores. Blocks 0 and 1 are its two places. Example of a log line: "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used".
 
-The root block is not a superblock that a program can read: only the storage service and the kernel tool read it.
+The root block is not a superblock that a program can read: only the storage service and the modus tool read it.
 
 The design: `docs/STORAGE.md`, "3.3 The commit and the open", and `src/library/contract/store`.
 
@@ -3637,9 +3637,9 @@ The base of the generations is, in a machine test, the generation of one commit 
 
 A generation counts the commits of the whole disk, and the console commits its line history after each line: an absolute generation in a test changes with each line before it. So a step `Generation` waits for a line of the log and keeps the number in it; a later step names `{generation}` or `{generation+4}` in its text or its expected text. A step that names `{generation}` before any step `Generation` stops the test.
 
-The base of the generations is not an offset of a file: it is a number of the kernel tool, not of the system.
+The base of the generations is not an offset of a file: it is a number of the modus tool, not of the system.
 
-The design: the step `Generation` of `tools/kerneltool/machine.odin`.
+The design: the step `Generation` of `tools/modustool/machine.odin`.
 
 Do not use: offset, delta.
 
@@ -3887,7 +3887,7 @@ Do not use: header, caption, decoration.
 
 The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the time since the start.
 
-The bar is the fixed place of the desktop where the input starts a program or finds a window. It is 32 pixels high. From the left: the mark of the system, the button `programs`, the button `windows`; at the right, "palette: super" and the time since the start of the machine. A press on a button opens its menu under it. `src/library/support/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the programs, `bar.names`: the compositor draws from it, and the kernel tool presses the same places in the machine tests.
+The bar is the fixed place of the desktop where the input starts a program or finds a window. It is 32 pixels high. From the left: the mark of the system, the button `programs`, the button `windows`; at the right, "palette: super" and the time since the start of the machine. A press on a button opens its menu under it. `src/library/support/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the programs, `bar.names`: the compositor draws from it, and the modus tool presses the same places in the machine tests.
 
 The bar is not a task bar with an icon for each program, and not a dock: it holds two menus and no state of a program.
 
@@ -3899,7 +3899,7 @@ Do not use: task bar, panel, dock.
 
 The bar layout is the widths of the texts of the bar, measured in the font that draws them, from which come the place of each button and of each line of a menu.
 
-The names of the bar are in the interface font, which has proportional widths. If the places came from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` (the width of `programs`, of `windows`, and of the widest name) once, and again when the font changes. It writes which font it used in its log, such as "compositor: the bar is in the interface font: programs ... pixels, windows ..., the widest name ...", or "compositor: the bar is in the font of the cells". The kernel tool measures the same layout from the same glyph cache, so it presses the right places.
+The names of the bar are in the interface font, which has proportional widths. If the places came from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` (the width of `programs`, of `windows`, and of the widest name) once, and again when the font changes. It writes which font it used in its log, such as "compositor: the bar is in the interface font: programs ... pixels, windows ..., the widest name ...", or "compositor: the bar is in the font of the cells". The modus tool measures the same layout from the same glyph cache, so it presses the right places.
 
 The bar layout is not a set of constants: it depends on the font in use.
 
@@ -4025,7 +4025,7 @@ A library module is a module that holds code that many programs import, in place
 
 A package that 40 programs compile in is 40 copies of the same code with no record of what each program holds. A library module is one file with one hash: the import table of each program names it, the module graph shows who runs it, and a change of its code builds one module. Its exports have descriptions, as each export: the border is coarse, so a call passes whole tables of the caller, by address, with no copy. The code that a program calls many times for one result stays compiled into the program.
 
-A library module has no segment that the loader writes and that is read-only after the load: no table of addresses, and no import. So all its code is shared code at each address, and a starter keeps one prepared module for it, not one for each importer. The kernel tool refuses a library module that breaks this rule. Its writable data is a cache of a fixed size, one copy for each program; the caller still supplies each table and each buffer. Example: the drawing module.
+A library module has no segment that the loader writes and that is read-only after the load: no table of addresses, and no import. So all its code is shared code at each address, and a starter keeps one prepared module for it, not one for each importer. The modus tool refuses a library module that breaks this rule. Its writable data is a cache of a fixed size, one copy for each program; the caller still supplies each table and each buffer. Example: the drawing module.
 
 A library module is not a second kind of import: it is a module, and the loader binds it as each import. The root service, the boot program and the call host import nothing: they keep the packages compiled in.
 
@@ -4219,7 +4219,7 @@ Do not use: stepper, scroll arrow, spin button.
 
 The pointer is the mark on the screen that the pointing device moves: a press acts at its place.
 
-The compositor draws the pointer last, with the pointer picture of the pointer shape that it chose for the place, and puts the hot spot of the picture at the place of the pointer. It sends each pointer event to the program of the surface under the pointer, in the coordinates of the surface, and one event more, with a place outside the surface, when the pointer leaves it: the program then draws at rest what the pointer was over. In a machine test, `compositor.pointer()` gives the place and the shape of the pointer, so the kernel tool can confirm a place before a press.
+The compositor draws the pointer last, with the pointer picture of the pointer shape that it chose for the place, and puts the hot spot of the picture at the place of the pointer. It sends each pointer event to the program of the surface under the pointer, in the coordinates of the surface, and one event more, with a place outside the surface, when the pointer leaves it: the program then draws at rest what the pointer was over. In a machine test, `compositor.pointer()` gives the place and the shape of the pointer, so the modus tool can confirm a place before a press.
 
 The pointer is not the caret, which marks a place in a text. The system does not use the word "cursor" for either one.
 
@@ -4308,7 +4308,7 @@ Do not use: cursor file, .cur, Xcursor file (for this).
 
 A pointer manifest is a text file of the repository that says how the tool makes a pointer theme file: for each pointer shape, the files of an Xcursor theme or grids of squares, and the adjustments.
 
-The manifest keeps the choices about a theme in text that a reader can review, with no JSON and no general parser. It has the statements `theme`, `license`, `attribution`, `sizes`, `shape`, `frame`, and lines of a grid that start with `|`. A shape has sources or a grid, not both. `kerneltool pointers` reads it and writes the pointer theme file. An error gives the file, the line, the column and what was expected: `resources/pointers/posy.manifest:12:7: expected a pointer shape name such as "arrow"; found "arow"`.
+The manifest keeps the choices about a theme in text that a reader can review, with no JSON and no general parser. It has the statements `theme`, `license`, `attribution`, `sizes`, `shape`, `frame`, and lines of a grid that start with `|`. A shape has sources or a grid, not both. `modustool pointers` reads it and writes the pointer theme file. An error gives the file, the line, the column and what was expected: `resources/pointers/posy.manifest:12:7: expected a pointer shape name such as "arrow"; found "arow"`.
 
 A pointer manifest is not the `index.theme` of an icon theme: the system reads no file of a theme at run time.
 
@@ -4370,7 +4370,7 @@ Do not use: file dialog, powerbox.
 
 A font is a set of glyphs of one design, with the measures that place them side by side.
 
-The system draws all its text from fonts, and a program never reads a font file at run time. The kernel tool reads each font file at the build, subsets it to the characters 32 to 126, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs once on the host and never in a program.
+The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs once on the host and never in a program.
 
 The system has three fonts:
 
@@ -4402,7 +4402,7 @@ An outline is the set of closed contours of line segments and quadratic curves t
 
 The outline is what a TrueType font stores in its table `glyf`: points in units of the font (1000 to one em for Paper Mono, 2000 for B612), each on or off the curve. The renderer of `src/library/support/vector_font` cuts each quadratic curve into 1 to 16 segments, each at most 1/8 of a pixel from the curve, scales the points to the grid, applies the grid fit, and accumulates the coverage of each pixel in fixed point, with no floating point. The sum of the coverage of a closed outline is exactly the area of the polygon of its cut points.
 
-Only the kernel tool reads outlines: it draws them once into a glyph cache at the build. A glyph made of glyphs (`i` and `j` in Paper Mono) is made a simple outline in the subset. Outlines of CFF (cubic curves) are not read.
+Only the modus tool reads outlines: it draws them once into a glyph cache at the build. A glyph made of glyphs (`i` and `j` in Paper Mono) is made a simple outline in the subset. Outlines of CFF (cubic curves) are not read.
 
 The design: `docs/FONTS.md`, "4. Fixed point".
 
@@ -4448,7 +4448,7 @@ Do not use: hinting (alone), autohint.
 
 A glyph cache is a file that holds the glyphs of one font already drawn, as words of coverage, for each character 32 to 126 at each scale of the grid.
 
-A glyph cache moves all the work of a font out of the programs. The kernel tool builds it at the build (`vector_font.glyph_cache_build`) and puts it in the boot image as a resource. The root service checks its hash once at the start, and maps it read-only at a fixed range in each program with a surface, each terminal and the compositor. A program validates it once (`glyph_cache.validate`: about 7 µs), then each draw reads the words of a glyph with no other check. A glyph from the cache costs about 109 ns at scale 1 over a flat color on the host.
+A glyph cache moves all the work of a font out of the programs. The modus tool builds it at the build (`vector_font.glyph_cache_build`) and puts it in the boot image as a resource. The root service checks its hash once at the start, and maps it read-only at a fixed range in each program with a surface, each terminal and the compositor. A program validates it once (`glyph_cache.validate`: about 7 µs), then each draw reads the words of a glyph with no other check. A glyph from the cache costs about 109 ns at scale 1 over a flat color on the host.
 
 The format is `src/library/contract/glyph_cache`, version 2: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
 
@@ -4488,7 +4488,7 @@ A setting is one value of the settings page, with 0 as its default:
 - `pointer_theme`: `owner` or `system`;
 - `grid_fit`: `on` or `off`.
 
-The program `settings` is the one writer. It shows each setting as a row of buttons, and it exports `settings.set(name, value)` and `settings.get(name)`, so the console and `kerneltool call` change a setting too. A caller that does not act for the principal gets `No_Grant`. A change takes effect while programs run: the compositor sees it, draws its screen again and sends `Settings_Changed` to each window. The values survive a stop: `settings` keeps them as one record in its private store, and its boot pass writes them on the page at the start.
+The program `settings` is the one writer. It shows each setting as a row of buttons, and it exports `settings.set(name, value)` and `settings.get(name)`, so the console and `modustool call` change a setting too. A caller that does not act for the principal gets `No_Grant`. A change takes effect while programs run: the compositor sees it, draws its screen again and sends `Settings_Changed` to each window. The values survive a stop: `settings` keeps them as one record in its private store, and its boot pass writes them on the page at the start.
 
 A setting is not a configuration file of one program: one value applies to every program with a surface. The scheduling strategy is not a setting: the right `Schedule` belongs to the program `scheduler`.
 
@@ -4608,7 +4608,7 @@ Do not use: glyph swap, alternate.
 
 The slashed zero is a zero with a stroke at an angle inside it, so that it does not look like the capital O.
 
-The plain zero of Paper Mono has the same contours as its capital O, and a reader of a hash or an address cannot tell `0` from `O`. So the character `0` of the system is the slashed zero of Paper Mono: the kernel tool reads the font feature `zero` and draws its substitute for `0` in the subset. Each picture of the system with a 0 shows it. JetBrains Mono, the reference font of the tests of the renderer, keeps its own zero, so the golden hashes of the renderer did not change.
+The plain zero of Paper Mono has the same contours as its capital O, and a reader of a hash or an address cannot tell `0` from `O`. So the character `0` of the system is the slashed zero of Paper Mono: the modus tool reads the font feature `zero` and draws its substitute for `0` in the subset. Each picture of the system with a 0 shows it. JetBrains Mono, the reference font of the tests of the renderer, keeps its own zero, so the golden hashes of the renderer did not change.
 
 The design: `docs/FONTS.md`, "Paper Mono, the font of the system".
 
@@ -4816,7 +4816,7 @@ The strength is what the system claims about its seed, and no more:
 
 Each program knows the strength of its seed: the starter writes it in the context value 16, and `random.seed_strength(generator)` gives it. A child has the strength of its starter, because its seed comes from that stream. A program states the least strength that it accepts with `random.fill_for_a_key`: QUIC and TLS ask for `processor`, so on a machine with no `rdrand` and no `rdseed` a handshake does not start, and the caller gets the error `Seed_Too_Weak`. The system never refuses for the program: each program still starts and draws.
 
-`kerneltool test random` runs a machine with no `rdrand` and no `rdseed`: its log and its window say "weak (the cycle counter only)" in the color of a failure.
+`modustool test random` runs a machine with no `rdrand` and no `rdseed`: its log and its window say "weak (the cycle counter only)" in the color of a failure.
 
 The design: `docs/RANDOMNESS.md`, "3. The seed of the system, and what is claimed".
 
@@ -4826,7 +4826,7 @@ Do not use: security level.
 
 The cryptography module is the module `cryptography`: the cryptographic primitives that the system took from Odin's `core:crypto`, as exports that use the memory of the caller and give error records.
 
-The system does not write cryptography from nothing: it takes proven code and changes only its shell. The arithmetic and the constant-time code stay as they are; `kerneltool cryptography-origin` proves that each file is its origin with listed changes. The module `src/modules/cryptography` then gives the system forms:
+The system does not write cryptography from nothing: it takes proven code and changes only its shell. The arithmetic and the constant-time code stay as they are; `modustool cryptography-origin` proves that each file is its origin with listed changes. The module `src/modules/cryptography` then gives the system forms:
 
 - AEAD seal and open with ChaCha20-Poly1305 and AES-128-GCM;
 - SHA-256, HMAC-SHA-256, HKDF extract and expand;
@@ -4860,7 +4860,7 @@ The compatibility layer is the packages of `src/library/support/cryptography` th
 
 The code of `core:crypto` imports helpers of the library of Odin: `zero_explicit`, `compare_constant_time`, little-endian loads, `rotate_left32`, `add_u64`, the `zero` of `core:mem`. The system does not change that code. It changes only the import lines, so that they name `compatibility_crypto`, `compatibility_endian`, `compatibility_bits`, `compatibility_bytes` and `compatibility_memory`, each imported under the name of its origin as alias. Those packages implement the helpers with the primitives of the system: the compatibility `zero_explicit` calls `erase_secret_bytes` of `src/runtime/memory.asm`, which the compiler cannot remove.
 
-The files of the layer are listed in `system_files.manifest` with their hashes, so a change of one of them fails `kerneltool check` until its new hash is written and reviewed.
+The files of the layer are listed in `system_files.manifest` with their hashes, so a change of one of them fails `modustool check` until its new hash is written and reviewed.
 
 The design: `docs/CRYPTOGRAPHY.md`, "3. The layout".
 
@@ -4964,7 +4964,7 @@ Do not use: self-signed certificate (for this).
 
 The pinned key is the one public key that the caller of a TLS client gives it as the key of the server: the client refuses any other key.
 
-`Tls_Configuration.server_public_key` holds it. A server that presents another key fails the handshake with the alert bad_certificate, and `tls_start` refuses a client whose pinned key is 32 zero bytes (no key was pinned). The peer of the kernel tool pins the key that `remote` wrote on its log (the step Remote_Key), or the key that `kerneltool call <key> "..."` names. A pin belongs to one start of the server: each start makes a new key.
+`Tls_Configuration.server_public_key` holds it. A server that presents another key fails the handshake with the alert bad_certificate, and `tls_start` refuses a client whose pinned key is 32 zero bytes (no key was pinned). The peer of the modus tool pins the key that `remote` wrote on its log (the step Remote_Key), or the key that `modustool call <key> "..."` names. A pin belongs to one start of the server: each start makes a new key.
 
 A pinned key is not a trust anchor: it vouches for no other key and names no one. It proves only that the client speaks to the holder of that private key.
 
@@ -5315,9 +5315,9 @@ Do not use: leaky bucket, fixed window.
 
 ### UDP relay
 
-The UDP relay is the part of the peer of the kernel tool that carries UDP datagrams between a program of the host, on a socket of the loopback, and the UDP port 4433 of the machine.
+The UDP relay is the part of the peer of the modus tool that carries UDP datagrams between a program of the host, on a socket of the loopback, and the UDP port 4433 of the machine.
 
-QEMU user networking with `restrict=on` drops each UDP datagram that the machine sends, so a UDP forward of the host cannot reach `quic_echo`. The relay replaces it: a datagram of a client of the host becomes a frame from 10.0.2.2 to 10.0.2.15 port 4433, from a port that the relay gives that client (42000 plus its place in a table of 16), and the answers go back the same way. A datagram over 1472 bytes is dropped and counted. `kerneltool test quic-real` uses it to run the OpenSSL QUIC client of the host against `quic_echo`.
+QEMU user networking with `restrict=on` drops each UDP datagram that the machine sends, so a UDP forward of the host cannot reach `quic_echo`. The relay replaces it: a datagram of a client of the host becomes a frame from 10.0.2.2 to 10.0.2.15 port 4433, from a port that the relay gives that client (42000 plus its place in a table of 16), and the answers go back the same way. A datagram over 1472 bytes is dropped and counted. `modustool test quic-real` uses it to run the OpenSSL QUIC client of the host against `quic_echo`.
 
 The design: `docs/QUIC.md`, "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)".
 
@@ -5333,9 +5333,9 @@ The signing key answers one question at each start: is this the system that its 
 
 How a principal gets and uses one:
 
-1. `nix develop -c kerneltool key new <folder>`, with a folder outside the repository, writes `signing_key` (64 hexadecimal digits, readable by its owner only) and `signing_key.public`, then the firmware signing key beside them.
+1. `nix develop -c modustool key new <folder>`, with a folder outside the repository, writes `signing_key` (64 hexadecimal digits, readable by its owner only) and `signing_key.public`, then the firmware signing key beside them.
 2. `SYSTEM_SIGNING_KEY=<folder>/signing_key` before each build names the private key. The tool refuses a path inside the repository and a file that the group or the others can read.
-3. The build puts the public key in the boot program and signs the description of each boot volume. `kerneltool key show` prints the public key that the build uses.
+3. The build puts the public key in the boot program and signs the description of each boot volume. `modustool key show` prints the public key that the build uses.
 
 With no variable, the build signs with the test signing key. A lost key signs nothing new; a stolen key signs a system that the boot program accepts, and no list of revoked keys exists: make a new key and a new boot program at once.
 
@@ -5423,7 +5423,7 @@ Do not use: attestation (for this), seal, measurement log (for this).
 
 The measure register is PCR 11 of the TPM: the register that holds the measure.
 
-The rules of the TCG for PC firmware leave PCR 8 to 15 to the operating system, and the conventions of Linux give PCR 11 to the whole system image that a boot stage measures before the kernel. The firmware of the test machine does not write it. `boot_info.MEASURE_REGISTER` is 11. The firmware extends it in each active bank; the trust record keeps the value of the SHA-256 bank, and `kerneltool` computes the same value from the description and compares.
+The rules of the TCG for PC firmware leave PCR 8 to 15 to the operating system, and the conventions of Linux give PCR 11 to the whole system image that a boot stage measures before the kernel. The firmware of the test machine does not write it. `boot_info.MEASURE_REGISTER` is 11. The firmware extends it in each active bank; the trust record keeps the value of the SHA-256 bank, and `modustool` computes the same value from the description and compares.
 
 The system reads no other register: PCR 4 (where the firmware measures the boot program) and PCR 7 (the Secure Boot state) are read by nothing.
 
@@ -5435,7 +5435,7 @@ Do not use: slot, PCR (alone, for this register).
 
 The firmware signing key is the RSA-2048 key and its self-signed X.509 certificate with which the principal that signs the system signs the boot program for Secure Boot.
 
-UEFI Secure Boot verifies Authenticode signatures with RSA keys and X.509 certificates, and cannot verify Ed25519. So a second key closes the gap of the first: without Secure Boot, anyone who can write the boot volume can replace the boot program, its public key and its checks. `kerneltool key new` makes the pair with `openssl` beside the signing key (`firmware_signing_key.pem`, `firmware_signing_key.crt`). The build signs the boot program with `sbsign` and keeps the unsigned copy. The firmware keeps the certificate in its variable `db`, which a principal present at the machine enrols in the setup of the firmware.
+UEFI Secure Boot verifies Authenticode signatures with RSA keys and X.509 certificates, and cannot verify Ed25519. So a second key closes the gap of the first: without Secure Boot, anyone who can write the boot volume can replace the boot program, its public key and its checks. `modustool key new` makes the pair with `openssl` beside the signing key (`firmware_signing_key.pem`, `firmware_signing_key.crt`). The build signs the boot program with `sbsign` and keeps the unsigned copy. The firmware keeps the certificate in its variable `db`, which a principal present at the machine enrols in the setup of the firmware.
 
 With Secure Boot on, the trust record says `Firmware_And_Boot_Program`. A machine whose `db` also holds the certificates of a vendor starts each boot program that the vendor signed.
 
@@ -5447,7 +5447,7 @@ Do not use: db key (for the pair), Secure Boot key.
 
 The test firmware signing key is the firmware signing key of the tests, whose private key is published, so that a boot program that it signed is never trusted.
 
-The pair is `resources/keys/test_firmware_signing_key.pem` and `.crt`; `kerneltool key test-firmware-new` wrote it once. The variable store of the test machines of Secure Boot has its certificate as PK, KEK and the one entry of `db`. `kerneltool test trusted_boot` checks with it that the signed boot program starts, and that a boot program with one byte changed, or unsigned, does not.
+The pair is `resources/keys/test_firmware_signing_key.pem` and `.crt`; `modustool key test-firmware-new` wrote it once. The variable store of the test machines of Secure Boot has its certificate as PK, KEK and the one entry of `db`. `modustool test trusted_boot` checks with it that the signed boot program starts, and that a boot program with one byte changed, or unsigned, does not.
 
 The design: `docs/TRUSTED_BOOT.md`, "7. Secure Boot".
 
@@ -5463,7 +5463,7 @@ A property is one of the 21 fundamental concepts of the system, each with its ru
 
 The properties are the reference against which every proposal is measured: a proposal that contradicts one is named as such before any work on it, and only the owner of the project can change a property. Each property has a number and a title ("10. One code module", "17. Trusted boot: UEFI program, Secure Boot, TPM"), and a status in the summary table of the document. The status page of the site shows each property with its status, the evidence items and the gaps that name it.
 
-A comment in a source never names a property by its number: it states the reason in words, or points to the heading of a guide. `kerneltool check` refuses "(property 14)" and "(P20)" as a comment breach.
+A comment in a source never names a property by its number: it states the reason in words, or points to the heading of a guide. `modustool check` refuses "(property 14)" and "(P20)" as a comment breach.
 
 The design: `docs/PROPERTIES.md`.
 
@@ -5497,7 +5497,7 @@ Do not use: iteration, sprint, milestone (for this).
 
 A choice is a decision made during the implementation that the owner has not reviewed, numbered in the section "Choices made during the implementation" of `docs/FIRST_MILESTONE.md`.
 
-Writing code needs many small decisions that no property or decision settles: a format, an order, a limit. Each one is recorded as a numbered choice with its reason ("1. **Export numbers.** The kernel tool holds an ordered export list per module..."), so that the owner can read it and reverse it. A choice can change at any time.
+Writing code needs many small decisions that no property or decision settles: a format, an order, a limit. Each one is recorded as a numbered choice with its reason ("1. **Export numbers.** The modus tool holds an ordered export list per module..."), so that the owner can read it and reverse it. A choice can change at any time.
 
 A comment never names a choice by its number; the site writes a pointer `choice <n>` of a guide as a link to its item.
 
@@ -5549,7 +5549,7 @@ Do not use: internal document, notes.
 
 An intent file is a Markdown file of the folder `src/md` that records why a part of the system has its form.
 
-It holds the purpose of the part, its constraints, the chosen form with its reasons, each form that was refused with its reason, the subtle points, and what is built and what is left. A design is written there before its code, and a change of a design changes its intent file in the same commit as the code. `src/md/README.md` is the entry point of the folder: an overview of the system, and a file index that lists each other file once; `kerneltool check` refuses an index and a folder that are not the same set. The folder follows the standard of [srcmd.org](https://srcmd.org).
+It holds the purpose of the part, its constraints, the chosen form with its reasons, each form that was refused with its reason, the subtle points, and what is built and what is left. A design is written there before its code, and a change of a design changes its intent file in the same commit as the code. `src/md/README.md` is the entry point of the folder: an overview of the system, and a file index that lists each other file once; `modustool check` refuses an index and a folder that are not the same set. The folder follows the standard of [srcmd.org](https://srcmd.org).
 
 An intent file is not a guide: a guide says what the system does and how to use it, and the site publishes it. It is not the record of a decision (`docs/DECISIONS.md`), a review, a log or a plan. It is a working record for the site: a pointer to one links to the file in the repository. Example: `src/md/features/palette.md` says why the palette is a panel of the compositor with the console as its provider, and which forms were refused.
 
@@ -5561,7 +5561,7 @@ Do not use: design document, specification, RFC, architecture decision record.
 
 The changelog is the file `CHANGELOG.md`: the releases of the system, newest first, each with the changes that a reader of the system notices.
 
-It follows the format of Keep a Changelog 1.1.0 and semantic version numbers. Each entry starts with a short bold summary, then says what the system does now, for a reader, not how the code changed. No one edits the file by hand: a branch adds a fragment for each change, and `kerneltool changelog release` moves the fragments into a new release. So two branches never change the same lines. The site shows the whole file at `releases/` and in the feed `releases.xml`.
+It follows the format of Keep a Changelog 1.1.0 and semantic version numbers. Each entry starts with a short bold summary, then says what the system does now, for a reader, not how the code changed. No one edits the file by hand: a branch adds a fragment for each change, and `modustool changelog release` moves the fragments into a new release. So two branches never change the same lines. The site shows the whole file at `releases/` and in the feed `releases.xml`.
 
 The changelog lists every change for a developer of the system; a news entry reports one thing for a reader who is not a developer.
 
@@ -5573,7 +5573,7 @@ Do not use: release notes (for the file), history, news.
 
 A release is one section of the changelog: a release number, a date, and the entries of its changes, in the parts Added, Changed, Deprecated, Removed, Fixed and Security.
 
-A release marks a state of `master` that passed its checks. `kerneltool changelog release` makes it: it moves the fragments of `changelog.d/` into a new section `## [<number>] - <date>`, deletes them, and writes the release number in `src/library/contract/release`. Example: `## [0.91.0] - 2026-11-12`. On the site each release has the anchor `release-<number>` and links to each news entry that names it.
+A release marks a state of `master` that passed its checks. `modustool changelog release` makes it: it moves the fragments of `changelog.d/` into a new section `## [<number>] - <date>`, deletes them, and writes the release number in `src/library/contract/release`. Example: `## [0.91.0] - 2026-11-12`. On the site each release has the anchor `release-<number>` and links to each news entry that names it.
 
 It is not a version: a stored object of the system has versions. It is not a git tag, and not a build: many builds come between two releases.
 
@@ -5595,7 +5595,7 @@ Do not use: version number, version.
 
 A fragment is one file of `changelog.d/` that holds one change that is not in a release yet: its type and the text of its entry.
 
-A branch adds one fragment for each change that a reader notices, in the same commit as the change: `kerneltool changelog new <type> <subject> - < text.md` writes `changelog.d/<yyyymmdd-hhmmss>-<subject>.md`. Line 1 is `type: <type>` (Added, Changed, Deprecated, Removed, Fixed or Security), line 2 is empty, then one paragraph:
+A branch adds one fragment for each change that a reader notices, in the same commit as the change: `modustool changelog new <type> <subject> - < text.md` writes `changelog.d/<yyyymmdd-hhmmss>-<subject>.md`. Line 1 is `type: <type>` (Added, Changed, Deprecated, Removed, Fixed or Security), line 2 is empty, then one paragraph:
 
 ```
 type: Added
@@ -5603,7 +5603,7 @@ type: Added
 **The thing**: what the system does now, for a reader, in one or two sentences.
 ```
 
-A change with no effect that a reader notices (a document, a comment) has no fragment. `kerneltool changelog release` moves the fragments into a release and deletes them.
+A change with no effect that a reader notices (a document, a comment) has no fragment. `modustool changelog release` moves the fragments into a release and deletes them.
 
 The design: `changelog.d/README.md`.
 
@@ -5615,7 +5615,7 @@ The roadmap is the file `ROADMAP.md`: the planned work of the system, in three s
 
 It is the one place of the plans, and the other half of the changelog: the changelog lists the work that is done, the roadmap the work that is planned. **Now** holds the work that is in progress, **Next** the work that is decided and comes after, **Later** the work that is wanted and has no order. The file is plain Markdown that a reader understands with no tool: a title, the three sections, and in each a list of roadmap entries. It gives no date, and it names no decision and no person.
 
-The file is written by hand. A work that is planned gets an entry; a work that is done loses its entry in the commit of its changelog fragment. `kerneltool roadmap check` checks the form of the file, and `kerneltool check` runs it. The site shows the file at `roadmap/`, as three columns of cards.
+The file is written by hand. A work that is planned gets an entry; a work that is done loses its entry in the commit of its changelog fragment. `modustool roadmap check` checks the form of the file, and `modustool check` runs it. The site shows the file at `roadmap/`, as three columns of cards.
 
 It is not the status page, which gives the state of each property and the gaps of what is built. It is not a list of gaps: a gap is a difference between the code and the documents, and a gap becomes planned work only when an entry names it. It is not a promise of an order: only the sections order the entries.
 
@@ -5635,7 +5635,7 @@ An entry names one planned work in the words of its user: a user of the system, 
 
 The summary is plain text of at most 80 bytes, with its period inside the bold. When an intent file of `src/md` holds the design of the work, the entry ends with a design link, `[Design](src/md/<file>.md)`, and the file must exist. No two entries have the same summary: the summary is the name of the entry in the search of the site and its address on the page, `roadmap-<summary>`.
 
-An entry has no date, no state of its own and no number: its section is its state, and it moves from one section to another by hand. When its work is done, the entry is removed in the commit that adds the changelog fragment of the work. A fragment that takes the summary of the entry as its bold summary makes `kerneltool roadmap check` fail until the entry is gone, so the removal is not forgotten.
+An entry has no date, no state of its own and no number: its section is its state, and it moves from one section to another by hand. When its work is done, the entry is removed in the commit that adds the changelog fragment of the work. A fragment that takes the summary of the entry as its bold summary makes `modustool roadmap check` fail until the entry is gone, so the removal is not forgotten.
 
 On the site an entry is a card in the column of its section, with the accent of the section: the color of a program for Now, the color of the kernel for Next, the dim color for Later.
 
@@ -5654,7 +5654,7 @@ Each entry is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved
 - **Decided**: a choice that a reader sees, such as a name, a mark or a font;
 - **Fixed**: a thing that failed now works.
 
-`kerneltool news new <subject>` writes an empty entry, and `kerneltool news check` refuses it until a title and a text are written. The site shows each entry as a card on `news/`, the three newest on the home, and each in the feed `news.xml`. An entry states the fact; it never says who decided.
+`modustool news new <subject>` writes an empty entry, and `modustool news check` refuses it until a title and a text are written. The site shows each entry as a card on `news/`, the three newest on the home, and each in the feed `news.xml`. An entry states the fact; it never says who decided.
 
 The changelog lists every change for a developer; a news entry reports one thing, in a few sentences, and names the guide that explains it.
 
@@ -5666,7 +5666,7 @@ Do not use: news item, post, announcement, blog post, changelog entry.
 
 A film is the pictures of the screen of a test machine, taken 30 times in one second while a scenario of the tool sends its keys, as one file that a player shows at the speed of the machine.
 
-`kerneltool film <name>` makes a film: `terminal`, `palette` or `heron`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
+`modustool film <name>` makes a film: `terminal`, `palette` or `heron`. It writes an MP4 file with H.264 and a WebM file with AV1 from the same pictures, in the build folder. A film is not a test: only its scenario has steps with a fixed time, the period between two typed keys and the hold of a state for its viewer.
 
 A news entry can name a film, `film: docs/films/<name>.webm`. The command then writes the WebM file in the repository too, which holds it as it holds a screen picture: at most 4 MiB. The site shows it on the page of the news in a `video` element that plays only when the reader starts it, with the picture of the entry in its place before that. A card of the home, the feed and a browser that does not play AV1 show the picture.
 
@@ -5710,7 +5710,7 @@ Do not use: search box, search bar, omnibox.
 
 The mark is the picture that stands for the system: a heron on a grid of 24 by 24 square cells, each part filled with one gradient.
 
-`src/library/support/mark` holds it as data: the rows of the still heron, the colors of each part and the animations of the mark. Every picture of the mark comes from that one table. One generator of the tool draws each picture file, in the variant of the mark that its use names: `kerneltool logo` asks it for the files of `resources/logo`, `kerneltool site` for the pictures and the icons of the site, and `kerneltool mark` for one picture. The system draws the mark on the boot display and in the bar. The squares follow the design of the system: rectangular forms, no rounded blob.
+`src/library/support/mark` holds it as data: the rows of the still heron, the colors of each part and the animations of the mark. Every picture of the mark comes from that one table. One generator of the tool draws each picture file, in the variant of the mark that its use names: `modustool logo` asks it for the files of `resources/logo`, `modustool site` for the pictures and the icons of the site, and `modustool mark` for one picture. The system draws the mark on the boot display and in the bar. The squares follow the design of the system: rectangular forms, no rounded blob.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
@@ -5730,7 +5730,7 @@ Do not use: wordmark, logotype.
 
 The font of the name of the mark is a font file whose glyphs are the cells of the letters of the name of the mark.
 
-It lets a page write the name as text and show the letters of the mark: a reader selects the text, and a screen reader says it. `kerneltool logo` writes it from `mark.name_letters` as `resources/logo/modus_mark.ttf`, a TrueType file, and `kerneltool check` compares its bytes. It has the letters m, o, d, u and s, their capitals with the same glyphs, and the space; it is not a font for a text. One em is 8 cells, so a font size that is a multiple of 8 pixels draws whole cells. Example: the bar of the site shows the heron as a picture of 24 pixels, then "modus" in this font at 16 pixels: cells of 2 pixels.
+It lets a page write the name as text and show the letters of the mark: a reader selects the text, and a screen reader says it. `modustool logo` writes it from `mark.name_letters` as `resources/logo/modus_mark.ttf`, a TrueType file, and `modustool check` compares its bytes. It has the letters m, o, d, u and s, their capitals with the same glyphs, and the space; it is not a font for a text. One em is 8 cells, so a font size that is a multiple of 8 pixels draws whole cells. Example: the bar of the site shows the heron as a picture of 24 pixels, then "modus" in this font at 16 pixels: cells of 2 pixels.
 
 The design: `docs/DESIGN.md`, "The font of the name".
 
@@ -5760,7 +5760,7 @@ Do not use: idle animation, clip, tween.
 
 The order of play is the rule that chooses the next animation of the mark, on the home of the site and in the program `heron`: each animation plays once in a round, in an order of chance.
 
-The place that plays keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, it is emptied and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The rule is one procedure, `mark.next_animation` (`src/library/support/mark/play.odin`): the program `heron` calls it, and the kernel tool runs it to check the script of the site. On the site the memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
+The place that plays keeps a memory of the animations that were played. It chooses the next one among those that the memory does not hold, each with the same chance. When the memory holds every animation, it is emptied and a new round starts; the animation played last is left out of the first choice of the round, so no animation follows itself. The rule is one procedure, `mark.next_animation` (`src/library/support/mark/play.odin`): the program `heron` calls it, and the modus tool runs it to check the script of the site. On the site the memory is kept in the storage of the tab for the visit: a reader who comes back to the home does not see the same first animation. Example: with 15 animations, the blink plays once in each 15 animations, at a place of the round that changes.
 
 The design: `docs/SITE.md`, "The rhythm of the animations"; `docs/DESIGN.md`, "The animations".
 
@@ -5820,7 +5820,7 @@ Do not use: style, mode, rendering, pixel art mode.
 
 A tile map is one PNG file that holds each distinct frame of the animations of the mark as a tile, in rows from the top left with the still heron first, and under them, for a place that shows the moves, a tile for each drawn form.
 
-A script that plays the animations shows one tile at a time by its place in the file, so a page loads one picture for all the animations. A frame that two animations share is in the file once. The generator of the pictures of the mark draws a tile map in a variant of the mark, at a cell size, in a color scheme, and writes its table: the place and the size of each tile, the times, the moves in cells. The site has three: one for each color scheme of the home, in the smooth variant at 8 pixels for a cell, with the drawn forms; and one for the icon of the tab, in the cells variant at one pixel for a cell, with the frames only. `kerneltool mark tile_map` writes one.
+A script that plays the animations shows one tile at a time by its place in the file, so a page loads one picture for all the animations. A frame that two animations share is in the file once. The generator of the pictures of the mark draws a tile map in a variant of the mark, at a cell size, in a color scheme, and writes its table: the place and the size of each tile, the times, the moves in cells. The site has three: one for each color scheme of the home, in the smooth variant at 8 pixels for a cell, with the drawn forms; and one for the icon of the tab, in the cells variant at one pixel for a cell, with the frames only. `modustool mark tile_map` writes one.
 
 The design: `docs/SITE.md`, "The moves of the heron".
 
@@ -5830,7 +5830,7 @@ Do not use: sprite sheet, atlas, film strip.
 
 An icon file is one file that holds the mark at several sizes, each as one PNG file behind a directory, so that a reader takes the entry of the size that it shows.
 
-The generator of the pictures of the mark writes it: each entry is the PNG file that the generator writes for one picture, byte for byte, and an entry is at most 256 pixels on a side. The site has one, `favicon.ico` at its root, with an entry of 32 pixels in the cells variant and one of 48 pixels in the smooth variant. Each entry is a row of the table of the uses of the mark. `kerneltool mark still --format ico` writes one. It is not the icon of a phone or of the manifest: each of those is one PNG file.
+The generator of the pictures of the mark writes it: each entry is the PNG file that the generator writes for one picture, byte for byte, and an entry is at most 256 pixels on a side. The site has one, `favicon.ico` at its root, with an entry of 32 pixels in the cells variant and one of 48 pixels in the smooth variant. Each entry is a row of the table of the uses of the mark. `modustool mark still --format ico` writes one. It is not the icon of a phone or of the manifest: each of those is one PNG file.
 
 The design: `docs/SITE.md`, "The icons"; `docs/TOOLS.md`, "The pictures of the mark".
 
@@ -5840,7 +5840,7 @@ Do not use: favicon file, ICO container, multi-size icon.
 
 A vector file of the mark is a file that holds the mark in the cells variant as rectangles of one color, so that a reader draws the same cells at each size.
 
-The generator of the pictures of the mark cuts the pixels of a picture into rectangles: a run of cells of one color in a row is one rectangle. The tool computes each color; the reader of the file only fills rectangles. The file can hold a rule that gives the colors of the dark scheme to a reader that asks for dark. The smooth variant is not written as a vector file: the reader would compute the gradient. The site has one, `pictures/icon.svg`. `kerneltool mark still --format svg` writes one.
+The generator of the pictures of the mark cuts the pixels of a picture into rectangles: a run of cells of one color in a row is one rectangle. The tool computes each color; the reader of the file only fills rectangles. The file can hold a rule that gives the colors of the dark scheme to a reader that asks for dark. The smooth variant is not written as a vector file: the reader would compute the gradient. The site has one, `pictures/icon.svg`. `modustool mark still --format svg` writes one.
 
 The design: `docs/TOOLS.md`, "The pictures of the mark".
 
@@ -5850,7 +5850,7 @@ Do not use: SVG logo, scalable icon, vector logo.
 
 An animated file of the mark is one animated PNG file that holds each frame of one animation of the mark as a picture, each for the time that the table of the animations gives it.
 
-The generator of the pictures of the mark writes it from the PNG data of each frame; a test reads each frame back and compares its pixels. It shows the frames of the heron in its place and plays with no end; it does not show the move of the heron across a page. It is for a page that runs no script, such as a page of a repository. The repository holds none: `kerneltool mark animation --animation <name>` writes one. It is not a tile map, which a script plays, and not a film, which shows the running system.
+The generator of the pictures of the mark writes it from the PNG data of each frame; a test reads each frame back and compares its pixels. It shows the frames of the heron in its place and plays with no end; it does not show the move of the heron across a page. It is for a page that runs no script, such as a page of a repository. The repository holds none: `modustool mark animation --animation <name>` writes one. It is not a tile map, which a script plays, and not a film, which shows the running system.
 
 The design: `docs/TOOLS.md`, "The pictures of the mark".
 
@@ -5858,7 +5858,7 @@ Do not use: GIF, animated logo, sprite animation.
 
 ### Site
 
-The site is the documentation of the system as static pages, with their style sheet and their pictures, that `kerneltool site` writes in `build/site` from the files of the repository and the logs of the machine tests.
+The site is the documentation of the system as static pages, with their style sheet and their pictures, that `modustool site` writes in `build/site` from the files of the repository and the logs of the machine tests.
 
 Every fact of the site comes from a file: the guides from `docs/`, the reference tables from the sources, the numbers from the logs or the measure record, the news from `news/`. The command checks every page before it writes one, and stops on a fault with the page and the reason: a broken link, a missing alt text, two pages with one title, a document named as bare text. Each page is whole with no script and makes no request to another host. The site workflow publishes it at `https://modus.froment.software/`. Its home is the one page that shows the system: the mark, the tagline, the news, the stages of the start and the pictures of the machine.
 
@@ -5904,7 +5904,7 @@ Do not use: screenshots page, album, lightbox.
 
 The gallery table is the one table of the tool that names each picture of the screen that the site shows: its file, its group, a caption of one sentence, its guide, and whether the home shows it.
 
-It is `site_gallery_rows` in `tools/kerneltool/site_gallery.odin`. The gallery and the carousel of the home take their pictures and their captions from it, so a caption is written once. Each PNG file of `docs/screenshots` is in one row of it, or in the short list of the excluded files with its reason: `kerneltool site` stops, and a host test fails, on a picture that neither names. So a step that adds a picture to a machine test writes its row, and the picture is on the site.
+It is `site_gallery_rows` in `tools/modustool/site_gallery.odin`. The gallery and the carousel of the home take their pictures and their captions from it, so a caption is written once. Each PNG file of `docs/screenshots` is in one row of it, or in the short list of the excluded files with its reason: `modustool site` stops, and a host test fails, on a picture that neither names. So a step that adds a picture to a machine test writes its row, and the picture is on the site.
 
 Example: the row of `heron.png` has the group of the mark, the caption "The program heron: the heron of the mark held at a frame of its dash, in whole square cells, with the lines of the cells.", the guide of the design rules, and the mark of the home.
 
@@ -6014,7 +6014,7 @@ Do not use: progress page, "what runs today".
 
 The site address is the absolute address where a host serves the site, in the form `https://<host>/<path>`.
 
-`SITE_ADDRESS` holds it (`https://modus.froment.software/`), and `kerneltool site --address` sets another for one run. Some parts of a page must be absolute to be right for the program that reads them, so they exist only with a site address: the canonical address, Open Graph, the page graph and the sitemap. With no site address the pages have relative links only, and work from a folder of a disk.
+`SITE_ADDRESS` holds it (`https://modus.froment.software/`), and `modustool site --address` sets another for one run. Some parts of a page must be absolute to be right for the program that reads them, so they exist only with a site address: the canonical address, Open Graph, the page graph and the sitemap. With no site address the pages have relative links only, and work from a folder of a disk.
 
 The design: `docs/SITE.md`, "What other sites read".
 
@@ -6150,7 +6150,7 @@ Do not use: value type, badge, chip, tag (for this).
 
 ### Declaration index
 
-The declaration index is the list of every top-level declaration of the sources of the system, which `kerneltool site` reads with the parser of Odin so that a code span can link to what it names.
+The declaration index is the list of every top-level declaration of the sources of the system, which `modustool site` reads with the parser of Odin so that a code span can link to what it names.
 
 It reads each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/modules` and `src/programs` (not the tests and not the tool). For each procedure, type, constant and global variable it keeps its package, its file and line, its kind, its one line of Odin and the first sentence of its comment. A code span of a guide, a news entry, the glossary or a source comment whose whole text is a name (`blend_coverage_row`, `graphics.text_proportional`) then becomes a link with a declaration card. When several declarations share the name, the folder that the text around the span names chooses one.
 
@@ -6194,7 +6194,7 @@ Do not use: tooltip, hover card, module info (for this).
 
 A document pointer is a part of a source comment that names a document of `docs/` and a place in it, for a reader of the code.
 
-Examples: `(docs/ARCHITECTURE.md, "Kernel systems")`, `docs/FONTS.md, section 12.4`. A pointer is how a comment stays short: the comment gives the reason in a few words and points to the guide for the rest. `kerneltool site` checks every pointer of every source file: a label that finds no heading stops the command. On a page, the site writes a document reference in its place.
+Examples: `(docs/ARCHITECTURE.md, "Kernel systems")`, `docs/FONTS.md, section 12.4`. A pointer is how a comment stays short: the comment gives the reason in a few words and points to the guide for the rest. `modustool site` checks every pointer of every source file: a label that finds no heading stops the command. On a page, the site writes a document reference in its place.
 
 The design: `docs/SITE.md`, "The forms of a pointer".
 
@@ -6204,7 +6204,7 @@ Do not use: doc link, citation (for this).
 
 A comment breach is a comment of a source that names a property, a choice, a step, a review, a finding or a decision by its number, its label or its date, in place of the reason.
 
-A number means nothing to a reader of the code, and it goes stale when the record changes. So a comment states the reason in plain words, or points to a heading of a guide. `kerneltool check` reads every comment of the sources and fails on each breach, with its file, its line and its form: "(property 14)", "(P20)", "choice 186", "D-047", "HANDOFF item 53".
+A number means nothing to a reader of the code, and it goes stale when the record changes. So a comment states the reason in plain words, or points to a heading of a guide. `modustool check` reads every comment of the sources and fails on each breach, with its file, its line and its form: "(property 14)", "(P20)", "choice 186", "D-047", "HANDOFF item 53".
 
 The design: `docs/TOOLS.md`, "The comments of the sources".
 
@@ -6244,7 +6244,7 @@ Do not use: cache buster, fingerprint, hash suffix.
 
 The site workflow is the workflow of GitHub Actions `.github/workflows/site.yml`, which builds the site at each push to `master` and gives it to GitHub Pages.
 
-It holds no logic: each step calls `kerneltool` or an action pinned by its version tag. It builds the boot image (`kerneltool build`) and the site (`kerneltool site`), then deploys `build/site`. A failed check of the site stops the run, and the site of the last run stays online. It runs no machine test: the numbers come from the measure record.
+It holds no logic: each step calls `modustool` or an action pinned by its version tag. It builds the boot image (`modustool build`) and the site (`modustool site`), then deploys `build/site`. A failed check of the site stops the run, and the site of the last run stays online. It runs no machine test: the numbers come from the measure record.
 
 The design: `docs/SITE.md`, "How the site is published".
 
@@ -6252,9 +6252,9 @@ Do not use: pipeline, CI job, deploy script.
 
 ### Full check
 
-A full check is `kerneltool screenshots` and `nix flake check`, both passed.
+A full check is `modustool screenshots` and `nix flake check`, both passed.
 
-`kerneltool screenshots` runs the machine tests, the second build and the pictures on the host, and writes the measure record. `nix flake check` runs the host tests and `kerneltool check` in the sandbox of Nix; it sees only the folders that `flake.nix` names. A full check runs once at the end of a batch of features, before the release and the publication of the site; each merge before it needs only its build and the test of its own part.
+`modustool screenshots` runs the machine tests, the second build and the pictures on the host, and writes the measure record. `nix flake check` runs the host tests and `modustool check` in the sandbox of Nix; it sees only the folders that `flake.nix` names. A full check runs once at the end of a batch of features, before the release and the publication of the site; each merge before it needs only its build and the test of its own part.
 
 The design: `docs/TOOLS.md`, "What each tool reads".
 
@@ -6264,7 +6264,7 @@ Do not use: CI run, test suite, full test.
 
 An incremental build is a build that keeps each output of an earlier build whose inputs are the same, and builds only the others.
 
-It rests on the rule of the reproducible build: the same inputs give the same bytes, so the output of an earlier build with the same inputs is the output of this build. `kerneltool build` keeps a module when the build record of each of its two steps has the build key of its inputs as they are now and each output has its recorded hash; it runs the conversion alone when only the file of an import changed; it keeps each boot volume by the same rule, and builds only the boot volumes that the command boots. The tool builds in every case of doubt: no record, a damaged record, an input or an output that changed or is gone. It prints the count of the modules that it kept.
+It rests on the rule of the reproducible build: the same inputs give the same bytes, so the output of an earlier build with the same inputs is the output of this build. `modustool build` keeps a module when the build record of each of its two steps has the build key of its inputs as they are now and each output has its recorded hash; it runs the conversion alone when only the file of an import changed; it keeps each boot volume by the same rule, and builds only the boot volumes that the command boots. The tool builds in every case of doubt: no record, a damaged record, an input or an output that changed or is gone. It prints the count of the modules that it kept.
 
 It is not a cache of the compiler and holds no second copy of an output: the kept output is the file of the build folder itself.
 
@@ -6324,7 +6324,7 @@ Do not use: relink, repackage, packaging step.
 
 A whole build is a build that ignores every build record: it builds each module and each boot volume, and writes new records.
 
-`kerneltool build whole` asks for one. The commands that prove the build are always whole builds: `check`, `screenshots` and `repeat` compare the results of two runs of the compiler, and a kept output would be compared with itself. `nix flake check` builds in an empty folder, so its build has no record to read.
+`modustool build whole` asks for one. The commands that prove the build are always whole builds: `check`, `screenshots` and `repeat` compare the results of two runs of the compiler, and a kept output would be compared with itself. `nix flake check` builds in an empty folder, so its build has no record to read.
 
 The design: `docs/TOOLS.md`, "The incremental build".
 
@@ -6334,7 +6334,7 @@ Do not use: clean build, fresh build, full build.
 
 The measure record is the file `docs/measures/measures.txt`: the measured numbers of the last full check, each as the whole line of its log, with the facts of its run.
 
-The site workflow runs no machine test, so the pass that commits the pictures also commits the numbers. `kerneltool screenshots` writes the record: one line `key value` for each fact (its time, its release, its commit, the state of its tree, its host, the count of checks that passed), then each number with its log, its line and its machine, and the stages of the start. The site reads it when the logs of `build/` are not newer. A number of speed is a measure: it is printed and recorded, and never makes a test fail.
+The site workflow runs no machine test, so the pass that commits the pictures also commits the numbers. `modustool screenshots` writes the record: one line `key value` for each fact (its time, its release, its commit, the state of its tree, its host, the count of checks that passed), then each number with its log, its line and its machine, and the stages of the start. The site reads it when the logs of `build/` are not newer. A number of speed is a measure: it is printed and recorded, and never makes a test fail.
 
 The design: `docs/SITE.md`, "The measure record".
 
@@ -6344,9 +6344,9 @@ Do not use: benchmark results, metrics file, numbers cache.
 
 A measure run is a machine whose boot image holds the resource `measure_run`, in which each program measures its rates over a duration.
 
-A rate (records in one second, reads in one second) needs a duration. In a test, a program runs its checks only: each one ends after a count of work, and the program writes no rate. In a measure run, the root service writes 1 in the value 22 of the context of each program that it starts (`CONTEXT_VALUE_MEASURE_RUN`); a program reads it with `system.measure_run()`, runs the same work for a fixed duration, and writes its rates. The modules of a measure run are the modules of the test, byte for byte: only the boot image has one resource more. `kerneltool measure` starts a measure run; `kerneltool test` never does.
+A rate (records in one second, reads in one second) needs a duration. In a test, a program runs its checks only: each one ends after a count of work, and the program writes no rate. In a measure run, the root service writes 1 in the value 22 of the context of each program that it starts (`CONTEXT_VALUE_MEASURE_RUN`); a program reads it with `system.measure_run()`, runs the same work for a fixed duration, and writes its rates. The modules of a measure run are the modules of the test, byte for byte: only the boot image has one resource more. `modustool measure` starts a measure run; `modustool test` never does.
 
-It is not the measure build, which is a build of the kernel with no check. A measure run can use the test build or the measure build. Example: `kerneltool measure clock` prints "clock: the time page: N reads in one second, 0 kernel entries for one million reads".
+It is not the measure build, which is a build of the kernel with no check. A measure run can use the test build or the measure build. Example: `modustool measure clock` prints "clock: the time page: N reads in one second, 0 kernel entries for one million reads".
 
 The design: `docs/TOOLS.md`, "A check by count, a measure by time".
 
@@ -6368,7 +6368,7 @@ Do not use: idle screen, stable frame, quiescent.
 
 The hang bound is the one time in a test: it ends a test that waits for ever, and checks nothing about speed.
 
-A test checks a condition: a value, a state, a line of the log. A time in it has one role, to end a hang, so it is generous and the same for each wait that has no reason of its own: `HANG_BOUND`, 120 s, for a step of a machine test, and `system.TEST_HANG_BOUND_MILLISECONDS`, 60 s, for the checks of a program, so that the program reports its own hang before the tool ends the machine. A bound of its own needs a named constant with its reason, and `kerneltool check` refuses a number in the field `seconds` of a step.
+A test checks a condition: a value, a state, a line of the log. A time in it has one role, to end a hang, so it is generous and the same for each wait that has no reason of its own: `HANG_BOUND`, 120 s, for a step of a machine test, and `system.TEST_HANG_BOUND_MILLISECONDS`, 60 s, for the checks of a program, so that the program reports its own hang before the tool ends the machine. A bound of its own needs a named constant with its reason, and `modustool check` refuses a number in the field `seconds` of a step.
 
 It is not a timeout that a test asserts: no test fails because the host is slow. A duration is printed as a measure.
 

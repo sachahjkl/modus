@@ -26,14 +26,14 @@ Each part of the network is a program or a library of user space. The table name
 
 | Part | Where | What it does |
 |---|---|---|
-| TCP library | `src/library/support/tcp` | The state machine, the windows, the timers, the reassembly, the congestion control. Pure code over memory of the caller: no kernel operation, no allocation. The kernel tool uses the same package on the host |
+| TCP library | `src/library/support/tcp` | The state machine, the windows, the timers, the reassembly, the congestion control. Pure code over memory of the caller: no kernel operation, no allocation. The modus tool uses the same package on the host |
 | Network service | `src/programs/network` | Gives each program with the grant one endpoint. It checks the header of each datagram and each segment against the grant, writes and checks the IPv4 header, and copies the datagram or the segment one time. It computes no checksum of UDP or TCP and keeps no state of a connection |
 | Protocol library | `src/library/support/network` | For the network service: Ethernet, ARP, IPv4, ICMP echo, and the checks of the header of UDP and TCP (`parse`). For a program with a datagram endpoint: the UDP header and its checksum (`udp_header_write`, `udp_data_read`) |
 | Server | `src/programs/server` | A program with a listen grant on the TCP port 80. One thread serves all its connections from one connection table. It speaks a small HTTP/1.1 |
 | Client | `src/programs/fetch` | A program with a segment grant of one remote. It fetches pages and measures |
 | QUIC server | `src/programs/quic_echo` | A program with a listen grant of UDP on the port 4433: QUIC in the program (`docs/QUIC.md`, section 6) |
 | Remote service | `src/programs/remote` | The calls of the host: a QUIC server with a listen grant of UDP on the port 7100 that admits the address of the host (10.0.2.2) only. Each call is one QUIC stream (`docs/QUIC.md`, section 7) |
-| Peer | `tools/kerneltool/peer.odin` | The gateway of the test machine. It is also a TCP client that the tool drives, with loss, reorder and duplicates that the tool chooses, and the QUIC client of the remote service |
+| Peer | `tools/modustool/peer.odin` | The gateway of the test machine. It is also a TCP client that the tool drives, with loss, reorder and duplicates that the tool chooses, and the QUIC client of the remote service |
 
 The kernel has no network code.
 
@@ -230,11 +230,11 @@ RFC 6528 needs a secret that an attacker cannot guess: with it, a remote cannot 
 
 ## The tests
 
-TCP is tested at three levels: the library alone on the host, the system against a TCP stack that this project did not write, and the system against a peer that damages the traffic on purpose. `kerneltool test tcp` runs the two machines (`docs/TOOLS.md`, "The parts of the machine test").
+TCP is tested at three levels: the library alone on the host, the system against a TCP stack that this project did not write, and the system against a peer that damages the traffic on purpose. `modustool test tcp` runs the two machines (`docs/TOOLS.md`, "The parts of the machine test").
 
 ### The library on the host
 
-`odin test src/library/support/tcp` (in `kerneltool check`): two connection tables on one link that the test controls, with loss, reorder and duplicates; the sequence numbers at the wrap of 2^32; the round trip estimate and the timer of RFC 6298, with its doubling; a zero window that opens; a RST in the window and out of it; a SYN in a synchronized state. The checksum has its own cases: a segment with one changed bit, in its data or in its header, changes no field of the connection and adds one to the count; a segment whose checksum is right for another pair of addresses is dropped; a segment from the remote of a live connection with a malformed option, with and without a right checksum, still names its connection for the program (`connection_of_segment`), and data on the connection is taken after it.
+`odin test src/library/support/tcp` (in `modustool check`): two connection tables on one link that the test controls, with loss, reorder and duplicates; the sequence numbers at the wrap of 2^32; the round trip estimate and the timer of RFC 6298, with its doubling; a zero window that opens; a RST in the window and out of it; a SYN in a synchronized state. The checksum has its own cases: a segment with one changed bit, in its data or in its header, changes no field of the connection and adds one to the count; a segment whose checksum is right for another pair of addresses is dropped; a segment from the remote of a live connection with a malformed option, with and without a right checksum, still names its connection for the program (`connection_of_segment`), and data on the connection is taken after it.
 
 `odin test src/library/support/network` checks the other half: `parse` gives a datagram or a segment with a wrong checksum to its port, and `udp_data_read` refuses the datagram with the rule `Verify` and takes it with the rule `Do_Not_Verify`. A datagram with an odd count of bytes has its own case: the test sums the words by hand, and one changed bit of the last byte is refused. The rule of a taken listen port has its case too: the port of an endpoint with no grant stays taken until the endpoint is removed.
 
@@ -287,11 +287,11 @@ The case "damaged" sends two segments by hand on a live connection, after a firs
 
 A QUIC server must answer clients that it does not know in advance, over UDP. The listen grant of UDP lets it answer each client that came to its port, and never reach a machine that did not come. It is the listen grant of TCP, with one rule changed for datagrams.
 
-Written for QUIC (`docs/QUIC.md`, section 6); `kerneltool test quic` and `kerneltool test quic-real` run it. A datagram endpoint can have a listen grant: one local UDP port that the root service names, and the remotes that came to it. Its rules are the ones of the listen grant of TCP above, with one change: a new remote is admitted on a datagram of 1200 bytes at least (`datagram.LISTEN_FIRST_LEAST`), where TCP admits it on a SYN. 1200 bytes is the least first datagram of a QUIC client (RFC 9000, section 14.1), so a stray small datagram of an unknown remote takes no place.
+Written for QUIC (`docs/QUIC.md`, section 6); `modustool test quic` and `modustool test quic-real` run it. A datagram endpoint can have a listen grant: one local UDP port that the root service names, and the remotes that came to it. Its rules are the ones of the listen grant of TCP above, with one change: a new remote is admitted on a datagram of 1200 bytes at least (`datagram.LISTEN_FIRST_LEAST`), where TCP admits it on a SYN. 1200 bytes is the least first datagram of a QUIC client (RFC 9000, section 14.1), so a stray small datagram of an unknown remote takes no place.
 
 - The table of admitted remotes is the one of TCP (`network.Admitted`): 64 places, the oldest place with no traffic for 120 s serves again, `Release` forgets a remote.
 - A UDP listen grant can name one remote address (`datagram.Grant.address`): then a datagram of another address is never admitted, whatever its size, and the endpoint counts it (`Not_Granted`). The port of the remote is not named: a QUIC client takes a new port for each connection. The grant of `remote` names the address of the host, 10.0.2.2: that address is the rule of who may call (`docs/QUIC.md`, section 7). A TCP listen grant names no address.
-- With QEMU user networking, each datagram that a `hostfwd` of UDP gives to the machine comes from 10.0.2.2. A forward of a UDP port of the host to the port 7100 would then let each sender that reaches that port call `remote` as the principal. The tool refuses a machine with such a forward (`network_device_problem` in `tools/kerneltool/main.odin`).
+- With QEMU user networking, each datagram that a `hostfwd` of UDP gives to the machine comes from 10.0.2.2. A forward of a UDP port of the host to the port 7100 would then let each sender that reaches that port call `remote` as the principal. The tool refuses a machine with such a forward (`network_device_problem` in `tools/modustool/main.odin`).
 - A UDP listen port is not a port PORT_FIRST + n of a client grant, and no other UDP listen grant has it.
 - A Send goes only to an admitted remote. To a remote that the program did not validate, the network service sends at most 3 times the bytes that came from it (status `Amplification`, error kind `Over_Limit`); the command `Validate` lifts that limit for a remote that proved its address to the program (`docs/QUIC.md`, section 6, says what a program that validates every remote gains). A send does not keep a place alive: only a datagram of the remote does.
 - `Resolve` and `Echo` are refused, as for each listen grant: the program answers, but it does not reach.
@@ -308,7 +308,7 @@ It reuses from TCP:
 - The endpoint and its grant: a client grant of one remote, and the listen grant with its admitted remotes, for UDP in place of TCP. The table of admitted remotes is the one of the datagram endpoint, unchanged (the section above).
 - The form of the interface: a table of connection records and buffers of the caller, one `step` for a batch of datagrams, a table of events, the deadline of the next timer.
 - The ideas of loss and congestion: RFC 9002 takes the round trip estimate of RFC 6298, and its congestion control is NewReno. The code is not shared: `src/library/support/quic/recovery.odin` has its own estimate and congestion window, and `src/library/support/quic` imports nothing of `src/library/support/tcp`.
-- The tests: the peer with loss, reorder and duplicates (`tools/kerneltool/peer_quic.odin`). The test against a stack that this project did not write uses the QUIC client of OpenSSL through the UDP relay of the peer, not libslirp: with `restrict=on`, libslirp drops each UDP datagram that the machine sends.
+- The tests: the peer with loss, reorder and duplicates (`tools/modustool/peer_quic.odin`). The test against a stack that this project did not write uses the QUIC client of OpenSSL through the UDP relay of the peer, not libslirp: with `restrict=on`, libslirp drops each UDP datagram that the machine sends.
 
 It needs more than TCP gives:
 
