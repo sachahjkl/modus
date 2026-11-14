@@ -4698,6 +4698,18 @@ The design: `docs/SITE.md`, "The reader of the system".
 
 Do not use: run (alone), token, inline.
 
+### Text box
+
+A text box is the place and the width that a window gives to one text: the text is drawn inside it, on one line or on more lines.
+
+A text that is wider than its text box goes on more lines: a line ends at the last space that fits, and a word wider than the whole box (a path, a long name) ends a line after its last `/`, `:` or `_` that fits. No byte of the text is left out, and the caller gives the text box the height of its lines, so the text under it starts lower. `text_wrap_line`, `text_wrapped_line_count` and `draw_text_wrapped` of the interface package hold the rule, and `label_value_lines` is the element that uses it. Example: in the window of `inspect`, the frame `fault::three + 0x4 in fault (src/programs/fault/main.odin:15)` of a stop report has three lines in a card of 50 characters.
+
+A text box is not a text grid: a text grid has cells that the program fills one by one. It is not a cut: a text that a place of a fixed size cannot hold ends with the cut mark.
+
+The design: `docs/INTERFACE.md`, "The text in a box".
+
+Do not use: label box, text area, text field (a text input is the element that takes typed text).
+
 ## Randomness
 
 ### Random seed

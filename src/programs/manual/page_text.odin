@@ -71,11 +71,30 @@ row_part_add :: proc "contextless" (part: Row_Part) {
 	}
 }
 
-// put adds a row of one text in the font of the cells, at an indentation
-// in cells.
+// put adds a text in the font of the cells, at an indentation in cells: one
+// row when it fits in the width of the text, else one row for each of its
+// lines (interface.text_wrap_line), each at the indentation. No byte of the
+// text is left out: a signature or a fact that is longer than the window
+// is read whole. An empty text is an empty row.
 put :: proc "contextless" (text: string, indent: int, color: graphics.Color) {
-	cut := text[:min(len(text), max(COLUMNS - indent, 0))]
-	row_part_add({text = cut, x = i32(indent * CELL_WIDTH), width = i32(len(cut) * CELL_WIDTH), color = color, flags = {.Row_Start}})
+	x := i32(indent * CELL_WIDTH)
+	if len(text) == 0 {
+		row_part_add({x = x, color = color, flags = {.Row_Start}})
+		return
+	}
+	room := max(COLUMNS - indent, 1) * CELL_WIDTH
+	rest := text
+	for len(rest) > 0 {
+		line: string
+		line, rest = interface.text_wrap_line(nil, {}, rest, room)
+		row_part_add({text = line, x = x, width = i32(len(line) * CELL_WIDTH), color = color, flags = {.Row_Start}})
+	}
+}
+
+// fits_after says if a text of the font of the cells, at an indentation in
+// cells, ends inside the width of the text.
+fits_after :: proc "contextless" (text: string, indent: int) -> bool {
+	return indent + len(text) <= COLUMNS
 }
 
 // line_join puts the last row on the row before it: a row with two colors.

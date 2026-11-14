@@ -18,7 +18,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A send with no copy in the network service.** A frame to send holds its headers in the memory of the network service and its data in the memory of the program, which the device reads. The network service then reads no byte of the data that a program sends. [Design](src/md/infrastructure/network_data_path.md)
 - **The IOMMU.** A device reaches only the memory that its service was granted. A device service that has a fault then damages no other program.
 - **A guest.** A program runs another system in a guest, with the virtualization support of the processor. The first guest writes to a port, and the write arrives as a record in the program that runs it. [Design](src/md/features/foreign_systems.md)
-- **No text over a text, and no cut text, in five windows.** The two pages of the program `manual` that show a module and its tables draw each text in its own box, the window of `notes` draws its note whole, and the stack trace of a stop report wraps in the windows of `errors` and of `inspect`. A reader then reads every line of these windows.
 
 ## Later
 

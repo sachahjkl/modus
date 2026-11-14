@@ -111,19 +111,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	for label in labels {
 		interface.draw_text(frame.table, content.x, content.y + label.top, label.text, graphics.COLOR_DIM)
 	}
-	timing: interface.Text_Builder
-	interface.text_put(&timing, "one line of ")
-	interface.text_put_number(&timing, u64(len(PARAGRAPH[1])))
-	interface.text_put(&timing, " characters: shaping ")
-	interface.text_put_number(&timing, shaping_time)
-	interface.text_put(&timing, " ns, drawing ")
-	interface.text_put_number(&timing, drawing_time)
-	interface.text_put(&timing, " ns; caches of ")
-	interface.text_put_number(&timing, regular_cache.header.file_size)
-	interface.text_put(&timing, " and ")
-	interface.text_put_number(&timing, bold_cache.header.file_size)
-	interface.text_put(&timing, " bytes, from the boot image")
-	interface.draw_text(frame.table, content.x, content.y + TIME_TOP, interface.text_of(&timing), graphics.COLOR_DIM)
+	// The line of the measures is wider than the card: it has the lines
+	// that it needs (docs/INTERFACE.md, "The text in a box"), and the card
+	// has room for three under TIME_TOP.
+	timing: [192]u8
+	interface.draw_text_wrapped(frame.table, content.x, content.y + TIME_TOP, content.width, system.format(timing[:], "one line of ", u64(len(PARAGRAPH[1])), " characters: shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; caches of ", u64(regular_cache.header.file_size), " and ", u64(bold_cache.header.file_size), " bytes, from the boot image"), graphics.COLOR_DIM)
 	// The lines below are drawn by hand over the frame, in the same
 	// picture of the surface, before the present.
 	if !interface.window_frame_end_without_present(&drawing, &frame, window) {

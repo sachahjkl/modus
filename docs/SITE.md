@@ -501,7 +501,6 @@ The groups (`site_gallery_groups`), each with a title and one sentence:
 | File | Reason |
 |---|---|
 | `notes_crash.png` | The picture was taken while the window of `notes` drew its note: the text of the note is cut |
-| `vector_glyphs.png` | An older picture of the prototype of the vector font: its bar has the words of the system before the mark and the palette |
 
 A picture of the table has the size of the screen of the system, 1024 by 768 pixels (`SITE_SCREEN_PICTURE_WIDTH`, `SITE_SCREEN_PICTURE_HEIGHT`): the command stops on another size. The style sheet names the two widths at which a picture is shown, and they come from these constants.
 

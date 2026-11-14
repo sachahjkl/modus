@@ -60,10 +60,21 @@ foreign _ {
 }
 
 LINE :: 22
-ANSWER_X :: 440
-WIDTH :: 760
+LEFT :: 12
+// The answer starts after the longest text of a case, "calendar_fixed in
+// place of calendar: year_days(2000)": 52 characters. From the left of the
+// cases.
+ANSWER_X :: 54 * graphics.CELL_WIDTH
+WIDTH :: 976
 CASE_CAPACITY :: 12
-HEIGHT :: 12 + 4 * LINE + CASE_CAPACITY * LINE + 4 * LINE + 12
+CASES_Y :: 12 + 3 * LINE + LINE / 2 // Under the two lines of the head and the titles of the two columns.
+// The room of the cases: each case, six lines more for the answers that
+// are sentences of two lines (docs/INTERFACE.md, "The text in a box").
+CASES_HEIGHT :: CASE_CAPACITY * LINE + 6 * graphics.LINE_HEIGHT
+MEASURES_Y :: CASES_Y + CASES_HEIGHT + LINE + LINE / 2 // Under the line that counts the cases with no room.
+HEIGHT :: MEASURES_Y + 3 * LINE + 12
+// A line of a measure is a text of at most 112 bytes in the font of the cells.
+#assert(112 * graphics.CELL_WIDTH <= WIDTH - 2 * LEFT)
 
 COLOR_WRONG :: 0xE0B040
 
@@ -399,18 +410,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		y += LINE
 		interface.draw_text(table, 12, y, "the loader gives a replacement only if each export that agenda uses is the same.", graphics.COLOR_DIM)
 		y += LINE + LINE / 2
-		interface.draw_text(table, 12, y, "the program asks the loader", graphics.COLOR_DIM)
-		interface.draw_text(table, ANSWER_X, y, "the answer", graphics.COLOR_DIM)
-		y += LINE
+		interface.draw_text(table, LEFT, y, "the program asks the loader", graphics.COLOR_DIM)
+		interface.draw_text(table, LEFT + ANSWER_X, y, "the answer", graphics.COLOR_DIM)
+		// The cases: each answer whole, on the lines that it needs. Then
+		// one line for the count of the cases with no room.
+		column := interface.column_of({LEFT, CASES_Y - 3, WIDTH - 2 * LEFT, CASES_HEIGHT})
+		not_shown := 0
 		for item, index in cases[:case_count] {
-			if index % 2 == 0 {
-				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
+			if _, drawn := interface.case_lines(&frame, &column, index, item.text, item.answer, ANSWER_X, graphics.COLOR_TEXT, item.right ? graphics.COLOR_PROGRAM : COLOR_WRONG, LINE); !drawn {
+				not_shown += 1
 			}
-			interface.draw_text(table, 12, y, item.text, graphics.COLOR_TEXT)
-			interface.draw_text(table, ANSWER_X, y, item.answer, item.right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
-			y += LINE
 		}
-		y += LINE / 2
+		interface.cases_rest_line(&frame, {LEFT, CASES_Y - 3 + CASES_HEIGHT, WIDTH - 2 * LEFT, LINE}, not_shown, "the log has a line \"imports: \" for each")
+		y = MEASURES_Y
 		line: [112]u8
 		interface.draw_text(table, 12, y, system.format(line[:], "a call through the slot: ", call_whole, ".", call_tenth, " ns to calendar, ", replaced_whole, ".", replaced_tenth, " ns to calendar_fixed"), graphics.COLOR_DIM)
 		y += LINE
