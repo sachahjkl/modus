@@ -766,7 +766,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - Decision: a module states the budget that it asks for. The starter of a program accepts the request, limits it or widens it, by its own constraints; a module never grants itself a budget. The flat table of the root service, one case with fixed amounts for each program, goes: it does not hold when a module of another project runs.
 - Words: "pour l'histoire des budgets \"demandés\" par un module, qu'un invoqueur peut accepter, limiter ou élargir, selon ses contraintes, est une bonne idée effectivement. cette liste statique plate que tu maintenais n'était pas gérable, surtout quand on voudra lancer des modules \"étrangers\", ça ne scale pas"
 - State: decided, not built. The entry of `ROADMAP.md`: "A module states the budget that it asks for."
-- Where: `ROADMAP.md`.
+- Where: `ROADMAP.md`; `src/md/features/module_budget_request.md`.
 
 ## 4. Memory
 

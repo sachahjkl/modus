@@ -8,7 +8,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **A module states the budget that it asks for.** The description of a module holds the pages, the threads and the programs that it asks for, and the tool adds what it can count: the pages of the module and of its imports, of each thread and of the pictures of its window. The starter grants the request or less, so a developer adds a program with no change of the root service, and no amount is a guess.
+- **A module states the budget that it asks for.** The description of a module holds the pages, the threads and the programs that it asks for, and the tool adds what it can count: the pages of the module and of its imports, of each thread and of the pictures of its window. The starter grants the request or less, so a developer adds a program with no change of the root service, and no amount is a guess. [Design](src/md/features/module_budget_request.md)
 - **A window for the debugger.** The debugger gets a window over the exports that the console uses today: the threads, the stack, the variables and the source lines. A step over a call stops after the call returns, not inside it.
 - **Grants for a disk program.** A principal gives a disk program a grant or a larger budget with a command, and revokes it. A program that a developer adds then does more than write in its window. [Design](src/md/features/programs_from_a_disk.md)
 - **A disk program without the tool.** A principal stores a module file that came over the network in the store of the programs, lists the files of that store with their hashes, and a disk program imports a module of the same store. A developer then adds a program to a machine that runs. [Design](src/md/features/programs_from_a_disk.md)
