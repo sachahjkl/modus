@@ -1342,6 +1342,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. A grant whose object belongs to one program (a private store, a terminal, a device, a network endpoint, a service) refuses the debug access: the debugger would write what only that program can write.
 - Where: `TOOLS.md`, "The debugger: the design".
 
+### D-256 A disk program is named by the hash of its file, and gets no grant
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: `start_from_disk(name, hash)` starts a program from the store `programs` of the principal of the caller. The name only finds the entry; the hash of the command is the identity. The root service reads the bytes into its own memory, computes their hash and compares it with the hash of the command: it does not trust the storage service, and it never waits for it without a bound. A disk program gets the log, a window, the least budget and no grant. A name of the grant table, of a module of the boot image or of a system program is refused before any read: a name gives nothing. Its imports come from the boot image, by their hash. Refused: a name in a tree that gives the hash (the storage service would then choose what runs); a grant that the file states.
+- Words: "tout tout faire"
+- State: done. Left: grants for a disk program; a disk program without the tool; a disk program that is a service.
+- Where: `MODULE_CONTRACT.md`, "A program from a disk"; `TOOLS.md`, "The disk of the disk programs"; `src/md/features/programs_from_a_disk.md`; `FIRST_MILESTONE.md`, choice 756.
+
 ### D-255 The program `scheduler` serves the change of strategy; the console gets no right Schedule
 - 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
 - Decision: the export `strategy_set(name)` of the program `scheduler` sets the scheduling strategy for a caller that acts for the principal, and for no other caller: a service that uses its own right for any caller is a confused deputy. The console gets the command `strategy(name)` and no right Schedule. The palette provider marks the strategy in use with a flag of its entry, and the compositor gets no right Inspect. A press in a field of the form of a command puts the caret there, and the scroll bars of the palette and of a completion list take the pointer. Over a scroll bar the pointer is the arrow.
