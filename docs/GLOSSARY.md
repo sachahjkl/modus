@@ -4479,14 +4479,15 @@ Do not use: proportional font cache.
 
 ### Setting
 
-A setting is one choice of the principal of the machine that changes how each program draws: the font, the order of the subpixel bands, the pointer theme or the grid fit.
+A setting is one choice of the principal of the machine that each program follows: the font, the order of the subpixel bands, the pointer theme, the grid fit or the layout of the keyboard.
 
 A setting is one value of the settings page, with 0 as its default:
 
 - `font`: `vector` (Paper Mono) or `spleen`;
 - `subpixel_order`: `rgb`, `bgr` or `none`;
 - `pointer_theme`: `owner` or `system`;
-- `grid_fit`: `on` or `off`.
+- `grid_fit`: `on` or `off`;
+- `keyboard_layout`: `us` or `french`.
 
 The program `settings` is the one writer. It shows each setting as a row of buttons, and it exports `settings.set(name, value)` and `settings.get(name)`, so the console and `modustool call` change a setting too. A caller that does not act for the principal gets `No_Grant`. A change takes effect while programs run: the compositor sees it, draws its screen again and sends `Settings_Changed` to each window. The values survive a stop: `settings` keeps them as one record in its private store, and its boot pass writes them on the page at the start.
 

@@ -51,6 +51,7 @@ Setting :: enum u32 {
 	Subpixel_Order = 1, // The order of the color stripes of the screen: `Subpixel_Order`.
 	Pointer_Theme  = 2, // Which pointer theme the compositor draws: `Pointer_Theme`.
 	Grid_Fit       = 3, // Whether the glyphs sit on whole pixels: `Grid_Fit`.
+	Keyboard_Layout = 4, // Which character each key of the keyboard gives: `Keyboard_Layout`.
 }
 
 // The values of each setting. 0 is the default.
@@ -78,6 +79,14 @@ Grid_Fit :: enum u32 {
 	Off = 1, // The shapes of the design: the glyph cache with no grid fit.
 }
 
+// The layout of the keyboard: the character that the input service gives
+// for each key. A character is one byte of ASCII: a key whose character is
+// outside ASCII in a layout gives no character there.
+Keyboard_Layout :: enum u32 {
+	United_States = 0, // The layout of the United States: QWERTY.
+	French        = 1, // The layout of France: AZERTY.
+}
+
 SETTING_CAPACITY :: 8 // The page and the kept record have room for 8 values.
 VALUE_NAME_CAPACITY :: 4 // The most values of one setting.
 
@@ -96,6 +105,7 @@ descriptions := [Setting]Description {
 	.Subpixel_Order = {"subpixel_order", "subpixel order", {"rgb", "bgr", "none", ""}, len(Subpixel_Order)},
 	.Pointer_Theme  = {"pointer_theme", "pointer theme", {"owner", "system", "", ""}, len(Pointer_Theme)},
 	.Grid_Fit       = {"grid_fit", "grid fit", {"on", "off", "", ""}, len(Grid_Fit)},
+	.Keyboard_Layout = {"keyboard_layout", "keyboard layout", {"us", "french", "", ""}, len(Keyboard_Layout)},
 }
 
 // The settings page: what the program `settings` writes and each program
@@ -189,6 +199,8 @@ valid :: proc "contextless" (setting: Setting, value: u32) -> u32 {
 		count = len(Pointer_Theme)
 	case .Grid_Fit:
 		count = len(Grid_Fit)
+	case .Keyboard_Layout:
+		count = len(Keyboard_Layout)
 	}
 	return value < count ? value : 0
 }

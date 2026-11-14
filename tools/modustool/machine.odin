@@ -280,7 +280,7 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
-	{kind = .Wait, text = "settings: font spleen, subpixel order rgb, pointer theme owner, grid fit on; kept in the store"},
+	{kind = .Wait, text = "settings: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; kept in the store"},
 	// A line for the next machine: the console keeps its line history in
 	// its store, after each line and before shutdown().
 	{kind = .Type, text = "length(\"kept across a stop\")"},
@@ -298,9 +298,9 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "storage: ok, generation 1027: 3 stores, 4 objects, ", any_order = true},
 	{kind = .Wait, text = "console: the line history: 4 lines kept from before the stop", any_order = true},
 	// The setting of the machine before: the desktop draws in Spleen 8x16.
-	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on; in ", any_order = true},
+	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; in ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
-	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on; "},
+	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; "},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
@@ -309,7 +309,7 @@ scenario_persist_second := [?]Step {
 	// The vector font again, for the machines after this one.
 	{kind = .Launch, text = "settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
-	{kind = .Wait, text = "settings: ok, font spleen, subpixel order rgb, pointer theme owner, grid fit on"},
+	{kind = .Wait, text = "settings: ok, font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
 	{kind = .Shot, text = "settings_kept"},
 	{kind = .Front, text = "console"},
 	// The line history of the machine before: Up gives shutdown(), a second
@@ -332,7 +332,7 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "settings.set(\"font\", \"vector\")"},
-	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on; kept in the store"},
+	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; kept in the store"},
 	{kind = .Front, text = "notes"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "notes: count 1100"},
@@ -901,7 +901,7 @@ scenario := [?]Step {
 	// service runs.
 	{kind = .Wait, text = "root: connected console to the store of its line history in the service storage, 4 blocks", any_order = true},
 	{kind = .Wait, text = "console: no line history kept: the history starts empty", any_order = true},
-	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on; in ", any_order = true},
+	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; in ", any_order = true},
 	{kind = .Wait, text = "root: settings stopped with code 0"},
 
 	// The console: a language with typed commands.
@@ -2581,7 +2581,7 @@ scenario := [?]Step {
 	// kept in the private store of settings.
 	{kind = .Launch, text = "settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
-	{kind = .Wait, text = "settings: ok, font vector, subpixel order rgb, pointer theme owner, grid fit on"},
+	{kind = .Wait, text = "settings: ok, font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
 	{kind = .Front, text = "monitor"},
 	{kind = .Move, text = "monitor", to_x = 8, to_y = 408},
 	{kind = .Front, text = "settings"},
@@ -2593,30 +2593,50 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
-	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on; ", any_order = true},
-	{kind = .Wait, text = "settings: drawn with font spleen, subpixel order rgb, pointer theme owner, grid fit on"},
+	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; ", any_order = true},
+	{kind = .Wait, text = "settings: drawn with font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "font_spleen"},
 	{kind = .Call, text = "settings.get(\"font\")", expected = "spleen"},
 	{kind = .Call, text = "settings.set(\"font\", \"vector\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; "},
 	{kind = .Call, text = "settings.set(\"grid_fit\", \"off\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off; "},
-	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us; "},
+	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us"},
 	{kind = .Shot, text = "font_without_grid_fit"},
 	{kind = .Call, text = "settings.set(\"pointer_theme\", \"system\")", expected = "1"},
 	{kind = .Wait, text = "compositor: the pointer theme in use: System", any_order = true}, // Written before the line of the change.
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme system, grid fit off; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme system, grid fit off, keyboard layout us; "},
 	{kind = .Point, inside_window = "settings", x = 100, y = 12, text = "move"}, // The title bar, in the theme of the system.
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"bgr\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr, pointer theme system, grid fit off; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr, pointer theme system, grid fit off, keyboard layout us; "},
 	{kind = .Call, text = "settings.get(\"subpixel_order\")", expected = "bgr"},
 	{kind = .Call, text = "settings.set(\"font\", \"comic\")", outcome = .Failed, expected = "(-3)"},
 	{kind = .Call, text = "settings.set(\"colour\", \"red\")", outcome = .Failed, expected = "(-2)"},
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"rgb\")", expected = "1"},
 	{kind = .Call, text = "settings.set(\"pointer_theme\", \"owner\")", expected = "1"},
 	{kind = .Call, text = "settings.set(\"grid_fit\", \"on\")", expected = "1"},
-	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on"},
+	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
+	// The layout of the keyboard: with the layout of France, the key that
+	// gives q in the layout of the United States gives a. The setting holds
+	// from the next key, and the tool sets it from the host: a line typed
+	// under the other layout would not be the line that the tool means.
+	{kind = .Front, text = "console"},
+	{kind = .Call, text = "settings.set(\"keyboard_layout\", \"french\")", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout french; "},
+	// A typed name opens the completion list: Escape closes it, so that
+	// Enter runs the line and does not take a candidate.
+	{kind = .Keys, text = "q"},
+	{kind = .Key, text = "esc"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] > a"},
+	{kind = .Call, text = "settings.set(\"keyboard_layout\", \"us\")", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; "},
+	{kind = .Keys, text = "q"},
+	{kind = .Key, text = "esc"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] > q"},
+	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "settings"},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
