@@ -1878,6 +1878,7 @@ Each question waits for an answer of the owner. The proposal is what holds until
 - **Q-12 The machine tests in the site workflow.** Settled by D-194: the full check commits its numbers in the measure record; the workflow runs no machine test.
 - **Q-13 The cache of the site workflow.** The cache of GitHub Actions now, or FlakeHub Cache (D-170).
 - **Q-14 The tone of the posts.** Settled by D-238.
+- **Q-15 The grants of a disk program.** Three choices (`src/md/features/programs_from_a_disk.md`, "The grants of a disk program: proposed, not decided"): what a grant names, where the store of a disk program is, and how long a grant lasts. Proposal: a grant names the hash of the file; the principal names the store in the grant, so that the store goes to the next version by one more command and to no other file; a grant lasts until the machine stops, until the stores of a principal are encrypted.
 
 ## Conflicts
 
