@@ -233,7 +233,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `src/boot/` | The boot program (UEFI) |
 | `src/kernel/` | The kernel. It imports the contract packages only: the tool checks each of its imports before each build |
 | `src/runtime/` | `memory.asm`: the copy and the fill of every module, of the kernel and of the boot program (`copy_bytes_without_overlap`, `copy_bytes_with_overlap`, `fill_bytes_with_value`), with its host tests |
-| `src/library/` | The source library `modus`, in two parts. A source imports `"modus:contract/ring"` and `"modus:support/system"`, and the compiler gets the one flag `-collection:modus=src/library`. A program outside the repository imports with the same lines |
+| `src/library/` | The source library `modus`, in two parts. A source imports `"modus:contract/ring"` and `"modus:support/system"`, and the compiler gets the one flag `-collection:modus=src/library`. A program outside the repository imports with the same lines, and `kerneltool module-build` builds its module |
 | `src/library/contract/` | The contract packages (`modus:contract/`): what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `palette_table` (the entry table and the ring between the palette provider and the palette), `pointer_pictures` (the pointer theme file and its validation), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call), `glyph_cache` (the drawn glyphs of the vector font), `settings` (the settings page of the principal), `date` (the date page: the date of the time 0 of the system), `system_description` (the signed list of the hashes of the system, and its checks), `start_grant` (the list of what the root service gives a program by its name, and the name of each one) |
 | `src/library/support/` | The support packages (`modus:support/`): what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics` (drawing, and the table of the design rules), `interface` (the elements of the windows as draw tables, the damage by difference), `vector_font` (the vector font: a reader of TrueType outlines, a rasterizer in fixed point with subpixel bands, the builder of the glyph cache), `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `bar` (the names of the programs and the places of the bar and of its menus), `palette` (the panel of the palette: its state, its entries, their ranking, its keys, its results and its draw records), `relay` (the records of the `rings` demonstration), `twins` (the modes of the program `twin`) |
 | `src/programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `heron`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `scheduler`, `address_space`, `shortage`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, `pointers`, `debugger`, `debug_target` |
@@ -254,6 +254,7 @@ kerneltool run
 |---|---|
 | `build` | Build the modules, the boot image and the boot program. One process for each module, as many at once as the processors; `build <processes>` sets the count. A module or a boot volume whose inputs are the same as at its last build is kept; `build whole` builds all |
 | `module` | `module <name> with_checks\|without_checks with_debug_information\|without_debug_information [compile\|convert]`: build one module of the table, or run one of its two steps alone (the parallel build runs it for each step) |
+| `module-build` | `module-build <folder> [--system <folder>] [--out <folder>]`: build one module from a folder of another project, with its file `module.txt` ("Build a module of your own", below) |
 | `volume` | `volume <name>`: build one boot volume (the build runs it for each boot volume that it must build, several at once) |
 | `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal of the host |
 | `test` | Build, start the machine, act as the input (keys, pointer), check the log, save pictures |
@@ -271,6 +272,27 @@ kerneltool run
 `nix flake check` runs the formatting hooks and `check`.
 
 In the machine, type `help()` in the console. The button "programs" of the bar opens the menu that starts programs.
+
+### Build a module of your own
+
+A module can be written in a folder of another project, with no copy of the sources of the system.
+
+- Clone this repository, and build it: `nix develop -c kerneltool build`.
+- In a folder of your project, write one Odin package. Import the packages of the system from the source library: `import "modus:support/system"`.
+- In the same folder, write the file `module.txt`, with the name of the module.
+
+```
+name: my_program
+```
+
+Then build the module, in that folder. `~/modus` is the clone of this repository:
+
+```
+export MODUS_SYSTEM=~/modus
+nix develop ~/modus#module -c kerneltool module-build .
+```
+
+The tool writes `build/my_program.module` and `build/my_program.debug` in the folder, and prints the hash of the module. The lines `imports`, `defines` and `library` of `module.txt` are in `docs/TOOLS.md`, "A module from a source outside the repository". The tool does not yet put such a module in the boot image of a machine.
 
 ## Licences
 

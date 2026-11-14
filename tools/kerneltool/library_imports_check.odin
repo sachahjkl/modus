@@ -19,7 +19,6 @@ import "core:fmt"
 import "core:mem/virtual"
 import "core:odin/ast"
 import "core:odin/parser"
-import "core:os"
 import "core:slice"
 import "core:strings"
 
@@ -158,48 +157,4 @@ library_imports_check :: proc() -> bool {
 
 run_library_imports :: proc(args: []string) -> int {
 	return library_imports_check() ? 0 : EXIT_FAILURE
-}
-
-// The example of a program outside the sources of the system
-// (docs/TOOLS.md, "A program outside the sources"). The tool copies the
-// sources of one small program of the system to a folder outside the
-// sources, with no change, and runs the check of the compiler on the copy
-// with the one flag of the library. It proves two things: a program
-// imports the library with the same lines inside the sources and outside
-// them, and no source of the program needs a relative path to the library.
-// It does not build a module from the copy: the build of a module whose
-// source is outside the repository has no design.
-THIRD_PARTY_EXAMPLE_PROGRAM :: "tally"
-THIRD_PARTY_EXAMPLE_SOURCE :: SOURCE_FOLDER_PROGRAMS + "/" + THIRD_PARTY_EXAMPLE_PROGRAM
-THIRD_PARTY_EXAMPLE_FOLDER :: BUILD_FOLDER + "/third_party_example/" + THIRD_PARTY_EXAMPLE_PROGRAM
-
-// third_party_example_command gives the command of the compiler for the
-// copy: the target and the allocator of a module (module_compile_command),
-// and the one flag of the library.
-third_party_example_command :: proc() -> []string {
-	command := make([dynamic]string, context.temp_allocator)
-	append(&command, "odin", "check", THIRD_PARTY_EXAMPLE_FOLDER, "-target:freestanding_amd64_sysv", "-no-entry-point", "-default-to-nil-allocator", "-vet", SOURCE_LIBRARY_FLAG)
-	return command[:]
-}
-
-third_party_example_check :: proc() -> bool {
-	reset_folder(THIRD_PARTY_EXAMPLE_FOLDER) or_return
-	sources := files_with_suffix(THIRD_PARTY_EXAMPLE_SOURCE, ".odin") or_return
-	if len(sources) == 0 {
-		fmt.eprintfln("kerneltool: test failed: %s has no source file", THIRD_PARTY_EXAMPLE_SOURCE)
-		return false
-	}
-	for source in sources {
-		copied_file := join(THIRD_PARTY_EXAMPLE_FOLDER, source[strings.last_index_byte(source, '/'):])
-		if copy_error := os.copy_file(copied_file, source); copy_error != nil {
-			fmt.eprintfln("kerneltool: test failed: cannot copy %s to %s: %v", source, copied_file, copy_error)
-			return false
-		}
-	}
-	if !run(third_party_example_command()) {
-		fmt.eprintfln("kerneltool: test failed: the copy of %s in %s does not pass the check of the compiler with the one flag %s", THIRD_PARTY_EXAMPLE_SOURCE, THIRD_PARTY_EXAMPLE_FOLDER, SOURCE_LIBRARY_FLAG)
-		return false
-	}
-	test_passed_print("the %d source files of %s, copied with no change to %s, pass the check of the compiler with the one flag %s", len(sources), THIRD_PARTY_EXAMPLE_SOURCE, THIRD_PARTY_EXAMPLE_FOLDER, SOURCE_LIBRARY_FLAG)
-	return true
 }

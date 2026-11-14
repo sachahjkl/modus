@@ -143,7 +143,18 @@
 
     # The command "kerneltool": it compiles tools/kerneltool with the source
     # library of the project, and runs it in the folder of the project.
+    # With MODUS_SYSTEM set, the folder of the project is that folder and
+    # the command runs where it is typed: the folder of another project,
+    # for the command "module-build"
+    # (docs/TOOLS.md, "A module from a source outside the repository").
     kerneltool = pkgs.writeShellScriptBin "kerneltool" ''
+      if [ -n "''${MODUS_SYSTEM:-}" ]; then
+        mkdir -p "$MODUS_SYSTEM/build"
+        # The tool compiles in the folder of the system: a source of the
+        # tool includes an assembly file by a path from that folder.
+        (cd "$MODUS_SYSTEM" && odin build tools/kerneltool -vet -collection:modus=src/library -out:build/kerneltool) || exit 1
+        exec "$MODUS_SYSTEM/build/kerneltool" "$@"
+      fi
       mkdir -p build
       exec odin run tools/kerneltool -vet -collection:modus=src/library -out:build/kerneltool -- "$@"
     '';
@@ -178,11 +189,21 @@
       boot-test = bootTest;
     };
 
-    devShells.${system}.default = pkgs.mkShell ({
-        packages = buildTools ++ [kerneltool pkgs.ffmpeg] ++ preCommitCheck.enabledPackages; # ffmpeg: the command "film" of kerneltool.
-        inherit (preCommitCheck) shellHook;
-      }
-      // firmware
-      // vectorFontSources);
+    devShells.${system} = {
+      default = pkgs.mkShell ({
+          packages = buildTools ++ [kerneltool pkgs.ffmpeg] ++ preCommitCheck.enabledPackages; # ffmpeg: the command "film" of kerneltool.
+          inherit (preCommitCheck) shellHook;
+        }
+        // firmware
+        // vectorFontSources);
+
+      # The shell of a developer who builds a module of their own project:
+      # the build tools and the command "kerneltool", with no hook of this
+      # repository. The default shell installs the hooks of this repository
+      # in the repository where it starts.
+      module = pkgs.mkShell {
+        packages = buildTools ++ [kerneltool];
+      };
+    };
   };
 }
