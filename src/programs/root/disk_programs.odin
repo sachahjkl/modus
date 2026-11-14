@@ -67,7 +67,8 @@ disk_reader: Started
 // of the default, the processor time of one processor for each thread, and
 // 1000 log records in each second. A disk program has this budget.
 least_budget :: proc "contextless" () -> system.Budget_Amounts {
-	amounts := DEFAULT_THINGS
+	// The empty name is the name of no case: the things of the default.
+	amounts := things_of("")
 	own, _ := system.budget_read()
 	amounts.processor = min(amounts.threads * 1_000_000, own.processor)
 	amounts.log_records = 1000

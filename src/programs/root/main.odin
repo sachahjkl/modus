@@ -452,12 +452,10 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "tables":
 		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}
-	return DEFAULT_THINGS
+	// The things of a program that no case names. A disk program has them
+	// whatever its name (disk_programs.odin, least_budget).
+	return {pages = 2048, programs = 1, threads = 1}
 }
-
-// The things of a program that no case of things_of names. A disk program
-// has them whatever its name (disk_programs.odin).
-DEFAULT_THINGS :: system.Budget_Amounts{pages = 2048, programs = 1, threads = 1}
 
 // log_grant gives the grant of the log: each program that this service
 // starts can write on the log. A program that starts programs can also give
