@@ -179,7 +179,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// It reads the counts of the scheduler, changes the strategy and
 		// writes the weight of each thread (the share policy). It starts
 		// the four programs of its case of the shares from the boot image,
-		// and serves share() and policy() to the console.
+		// and serves strategy_set(), share() and policy() to the console.
 		return {.Inspect, .Schedule, .Image, .Serve}
 	case "paint", "life", "tally", "sample", "heron":
 		// Each is a service: the console calls its exports through a

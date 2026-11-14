@@ -160,12 +160,26 @@ LIST_ROWS :: 8 // The rows of a completion list.
 //           (display.KEY_*). values[0]: its character, or 0. values[1]:
 //           the modifiers that were held (display.MODIFIER_*).
 //           Control-R gives the character 'r' with MODIFIER_CONTROL.
+//   List_First  The pointer moved the scroll bar of the completion list.
+//           values[0]: the first row of the whole list that the scroll
+//           bar asks for. The program owns the list: it moves its view
+//           there and its choice into the view, and sends the rows
+//           again (List_Row, List). A program that has no list, or that
+//           reads only its keys (`key`), skips the record.
 // The terminal keeps the keys Page Up and Page Down: they move its view.
 // If the program does not read and the queue is full, the newest keys are
 // lost: the terminal never waits for a program.
 Input :: enum u32 {
-	None = 0, // Not a record: the program skips it.
-	Key  = 1, // A key was pressed.
+	None       = 0, // Not a record: the program skips it.
+	Key        = 1, // A key was pressed.
+	List_First = 2, // The scroll bar of the completion list asks for a first row.
+}
+
+// One input record, as `input` gives it to the program.
+Input_Record :: struct {
+	kind:       Input, // Key or List_First.
+	key:        Key, // Key: the key.
+	list_first: int, // List_First: the first row of the whole list that the scroll bar asks for.
 }
 
 // One key, as `key` gives it to the program.
@@ -487,6 +501,25 @@ key :: proc "contextless" (terminal: ^Terminal) -> (pressed: Key, ok: bool) {
 		record := system.receive(&terminal.ring.completions) or_return
 		if Input(record.kind) == .Key {
 			return {code = record.tag, character = u8(record.values[0]), modifiers = u32(record.values[1])}, true
+		}
+	}
+}
+
+// input gives the next input record: a key, or what the pointer asked of
+// the scroll bar of the completion list. false: no record waits. A program
+// with a completion list reads its input here; a program that reads only
+// keys uses `key`. A record of a kind that the package does not know is
+// skipped.
+input :: proc "contextless" (terminal: ^Terminal) -> (given: Input_Record, ok: bool) {
+	for {
+		record := system.receive(&terminal.ring.completions) or_return
+		#partial switch Input(record.kind) {
+		case .Key:
+			return {kind = .Key, key = {code = record.tag, character = u8(record.values[0]), modifiers = u32(record.values[1])}}, true
+		case .List_First:
+			// The number is the number of another program: the reader
+			// cuts it to its own list.
+			return {kind = .List_First, list_first = int(min(record.values[0], u64(max(i32))))}, true
 		}
 	}
 }

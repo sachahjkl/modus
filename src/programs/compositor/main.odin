@@ -502,6 +502,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if wake := pointer_wake(); wake != 0 {
 			deadline = min(deadline, wake) // An animated pointer shape shows.
 		}
+		if wake := palette_wake(); wake != 0 {
+			deadline = min(deadline, wake) // A held arrow button of the scroll bar of the palette takes its next step.
+		}
 		if display.settings_page != nil {
 			system.wait_word(&wait, &display.settings_page.change_count, settings_seen)
 		}

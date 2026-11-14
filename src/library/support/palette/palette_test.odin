@@ -1657,3 +1657,255 @@ tab_waits_for_the_candidates :: proc(t: ^testing.T) {
 	form_field_move(panel, 1)
 	testing.expect(t, !form.candidates_pending)
 }
+
+// A press in the input band of a form puts the caret in the field under
+// the pointer, at the place between two characters that is nearest to it.
+// The band is "revoke(name: plasma, grant: )": the name of the command
+// takes 7 characters, the value of the first field starts at the character
+// 13, the name of the second parameter at 21, and its value at 28.
+@(test)
+a_press_in_a_field_puts_the_caret_there :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	table := table_make(FORMS[:])
+	defer delete(table)
+	collect_with_table(panel, table)
+	type_text(panel, "revoke")
+	form_open(panel, chosen_entry(panel))
+	form := &panel.form
+	for character in transmute([]u8)string("plasma") {
+		form_field_edit(panel, .Character, character)
+	}
+	x, _ := panel_place(1024)
+	text_x := x + interface.TEXT_INPUT_LINE_MARGIN
+	// On the name of the command, and left of the text: no field.
+	_, _, in_a_field := form_place_at(form, x, text_x + 2 * BAND_CELL_WIDTH + 4)
+	testing.expect(t, !in_a_field, "the name of the command is no field")
+	_, _, in_a_field = form_place_at(form, x, text_x - 1)
+	testing.expect(t, !in_a_field, "the margin is no field")
+	// On the name of the first parameter: the start of its field.
+	field, caret: int
+	field, caret, in_a_field = form_place_at(form, x, text_x + 8 * BAND_CELL_WIDTH + 4)
+	testing.expect(t, in_a_field && field == 0 && caret == 0)
+	// Between the "l" and the "a" of plasma, 2 pixels left of the edge of
+	// the two cells: the caret is after 2 characters.
+	field, caret, in_a_field = form_place_at(form, x, text_x + 15 * BAND_CELL_WIDTH - 2)
+	testing.expect(t, in_a_field && field == 0)
+	testing.expect_value(t, caret, 2)
+	// On the comma after the first field: its end.
+	field, caret, in_a_field = form_place_at(form, x, text_x + 19 * BAND_CELL_WIDTH + 2)
+	testing.expect(t, in_a_field && field == 0)
+	testing.expect_value(t, caret, 6)
+	// On the name of the second parameter, and on the parenthesis after
+	// its empty value: the second field.
+	field, caret, in_a_field = form_place_at(form, x, text_x + 23 * BAND_CELL_WIDTH + 4)
+	testing.expect(t, in_a_field && field == 1 && caret == 0)
+	field, caret, in_a_field = form_place_at(form, x, text_x + 28 * BAND_CELL_WIDTH + 12)
+	testing.expect(t, in_a_field && field == 1 && caret == 0)
+	// Past the end of the call: no field.
+	_, _, in_a_field = form_place_at(form, x, text_x + 31 * BAND_CELL_WIDTH)
+	testing.expect(t, !in_a_field, "the band after the call is no field")
+	// The caret in the same field: no new candidates, and the next
+	// character goes in at the caret.
+	testing.expect(t, !form_caret_put(panel, 0, 2))
+	testing.expect_value(t, form.fields[0].caret, 2)
+	form_field_edit(panel, .Character, 'X')
+	testing.expect_value(t, field_text(form, 0), "plXasma")
+	// The caret in another field: the candidates of the field before
+	// leave, and the typed text is the text of the new field.
+	form.candidates_pending = true
+	testing.expect(t, form_caret_put(panel, 1, 0))
+	testing.expect_value(t, form.current, 1)
+	testing.expect(t, !form.candidates_pending)
+	form_field_edit(panel, .Character, 'l')
+	testing.expect_value(t, field_text(form, 1), "l")
+	testing.expect_value(t, field_text(form, 0), "plXasma")
+	// A place past the text is cut to its end; a field that the form has
+	// not is refused.
+	form_caret_put(panel, 0, 99)
+	testing.expect_value(t, form.fields[0].caret, 7)
+	testing.expect(t, !form_caret_put(panel, 7, 0))
+	testing.expect_value(t, form.current, 0)
+}
+
+// The scroll bar of the list takes the pointer: a press on its arrow
+// button moves the view by one row, and the choice follows the view to
+// the nearest entry that it shows. A point on the scroll bar is on no row.
+@(test)
+the_scroll_bar_moves_the_view_and_the_choice :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	panel_of_test(panel)
+	panel_open(panel)
+	// Two headings, two windows and ten programs: two rows more than the panel shows.
+	testing.expect_value(t, panel.list.row_count, LIST_ROWS + 2)
+	x, y := panel_place(1024)
+	area, shown := scroll_bar_area(panel, x, y)
+	testing.expect(t, shown)
+	testing.expect_value(t, area, interface.Area{x + PANEL_WIDTH - BORDER - interface.LIST_ROW_SCROLL_WIDTH, y + LIST_TOP, interface.LIST_ROW_SCROLL_WIDTH, LIST_HEIGHT})
+	testing.expect_value(t, row_at(panel, x, y, area.x - 1, y + LIST_TOP + 4), 0)
+	testing.expect_value(t, row_at(panel, x, y, area.x, y + LIST_TOP + 4), NO_ROW)
+	// A frame with a press on the arrow button at the bottom.
+	screen := screen_make()
+	defer screen_free(screen)
+	state: interface.Interface_State
+	press_x, press_y := area.x + area.width / 2, area.y + area.height - 8
+	input := interface.Input{pointer_known = true, pointer_x = press_x, pointer_y = press_y, pressed = true, button_held = true, press_x = press_x, press_y = press_y}
+	frame := interface.frame_begin(&screen.table, &state, &input)
+	panel_draw(&frame, panel, x, y)
+	interface.frame_end(&frame)
+	testing.expect(t, panel.scrolled.changed)
+	testing.expect_value(t, panel.scrolled.first, 1)
+	testing.expect_value(t, panel.scrolled.pressed_now, interface.Scroll_Bar_Part.Arrow_Forward)
+	testing.expect_value(t, state.pressed, scroll_bar_identity())
+	// The choice is the first window, at the row 1: the view from the row
+	// 1 still shows it.
+	testing.expect_value(t, panel.choice, 1)
+	testing.expect(t, view_scrolled(panel))
+	testing.expect_value(t, panel.first_row, 1)
+	testing.expect_value(t, panel.choice, 1)
+	testing.expect(t, !view_scrolled(panel), "what the pointer did is applied one time")
+	// The view from the row 2 does not show the choice: it goes to the
+	// first entry of the view.
+	panel.scrolled = {changed = true, first = 2}
+	testing.expect(t, view_scrolled(panel))
+	testing.expect_value(t, panel.first_row, 2)
+	testing.expect_value(t, panel.choice, 2)
+	// The choice on the last row, then the view from the row 0: the
+	// choice goes to the last row that the view shows.
+	panel.choice = panel.list.row_count - 1
+	panel.scrolled = {changed = true, first = 0}
+	testing.expect(t, view_scrolled(panel))
+	testing.expect_value(t, panel.choice, LIST_ROWS - 1)
+	testing.expect(t, row_is_entry(panel, panel.choice))
+	// A first row past the list is cut to its last view.
+	panel.scrolled = {changed = true, first = 99}
+	testing.expect(t, view_scrolled(panel))
+	testing.expect_value(t, panel.first_row, 2)
+	// A draw with no pointer leaves nothing to apply.
+	panel_build(screen, panel)
+	testing.expect(t, !view_scrolled(panel))
+	// The question of an entry that destroys has no scroll bar that the
+	// pointer moves; a list that the panel shows whole has none.
+	panel.state = .Confirm
+	_, shown = scroll_bar_area(panel, x, y)
+	testing.expect(t, !shown)
+	panel.state = .Search
+	type_text(panel, "pla")
+	_, shown = scroll_bar_area(panel, x, y)
+	testing.expect(t, !shown)
+}
+
+// The candidates of a form: the pointer finds the candidate under it, the
+// scroll bar moves their view, and the choice follows the view.
+@(test)
+the_pointer_on_the_candidates :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	table := table_make(FORMS[:])
+	defer delete(table)
+	collect_with_table(panel, table)
+	type_text(panel, "start")
+	x, y := panel_place(1024)
+	testing.expect_value(t, candidate_at(panel, x, y, x + 8, y + LIST_TOP + 4), NO_ROW) // No form yet.
+	form_open(panel, chosen_entry(panel))
+	form := &panel.form
+	COUNT :: 20
+	for index in 0 ..< COUNT {
+		candidate := (^palette_table.Candidate)(&table[palette_table.CANDIDATES_OFFSET + index * size_of(palette_table.Candidate)])
+		name := [2]u8{'a' + u8(index), 'x'}
+		candidate.length = u8(copy(candidate.name[:], name[:]))
+	}
+	form_candidates_set(form, table, COUNT, u64(palette_table.Candidate_Kind.Module))
+	testing.expect_value(t, form.shown_count, COUNT)
+	testing.expect_value(t, candidate_at(panel, x, y, x + 8, y + LIST_TOP + 4), 0)
+	testing.expect_value(t, candidate_at(panel, x, y, x + 8, y + LIST_TOP + 3 * ROW_HEIGHT + 4), 3)
+	testing.expect_value(t, candidate_at(panel, x, y, x + 8, y + 8), NO_ROW) // The input band.
+	area, shown := scroll_bar_area(panel, x, y)
+	testing.expect(t, shown)
+	testing.expect_value(t, candidate_at(panel, x, y, area.x + 2, y + LIST_TOP + 4), NO_ROW) // The scroll bar.
+	// The pointer chooses a candidate; Tab then takes it.
+	testing.expect(t, form_candidate_set(form, 3))
+	testing.expect(t, !form_candidate_set(form, 3), "the candidate is the choice already")
+	testing.expect(t, !form_candidate_set(form, COUNT))
+	testing.expect_value(t, candidate_name(form, form.candidate_choice), "dx")
+	// The scroll bar moves the view: the choice goes into it.
+	panel.scrolled = {changed = true, first = 5}
+	testing.expect(t, view_scrolled(panel))
+	testing.expect_value(t, candidates_first(form), 5)
+	testing.expect_value(t, form.candidate_choice, 5)
+	testing.expect_value(t, candidate_at(panel, x, y, x + 8, y + LIST_TOP + 4), 5)
+	// The keys move the choice, and the view follows it: from the first
+	// candidate to the last one and back.
+	form.candidate_choice = 0
+	testing.expect(t, form_candidate_move(form, -1))
+	testing.expect_value(t, form.candidate_choice, COUNT - 1)
+	testing.expect_value(t, candidates_first(form), COUNT - LIST_ROWS)
+	testing.expect(t, form_candidate_move(form, 1))
+	testing.expect_value(t, candidates_first(form), 0)
+	// A text that narrows the candidates to a few: the view starts at
+	// the first one.
+	panel.scrolled = {changed = true, first = 8}
+	view_scrolled(panel)
+	form_field_edit(panel, .Character, 'c')
+	testing.expect_value(t, form.shown_count, 1)
+	testing.expect_value(t, candidates_first(form), 0)
+	_, shown = scroll_bar_area(panel, x, y)
+	testing.expect(t, !shown)
+}
+
+// A value that only the provider knows: the scheduling strategy. Its
+// entries are settings for the panel, and the one that the provider marks
+// says that the machine uses it.
+@(test)
+the_strategy_in_use_is_the_mark_of_the_provider :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	given := [?]Given {
+		{name = "set strategy to fair", signature = "set strategy to fair", about = "strategy(\"fair\")", result = .Integer},
+		{name = "set strategy to eevdf", signature = "set strategy to eevdf", about = "strategy(\"eevdf\")", result = .Integer},
+	}
+	table := table_make(given[:])
+	defer delete(table)
+	entries := ([^]palette_table.Entry)(&table[palette_table.ENTRIES_OFFSET])
+	entries[0].kind = .Provider_Setting
+	entries[1].kind = .Provider_Setting
+	entries[1].flags = {.In_Use}
+	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
+	// The entry of a row of the list, by its name: the order of two
+	// entries of one score is not what this test checks.
+	listed :: proc(panel: ^Panel, name: string) -> ^Entry {
+		for row in panel.list.rows[:panel.list.row_count] {
+			if row.kind == .Entry && entry_name(&panel.list.entries[row.entry]) == name {
+				return &panel.list.entries[row.entry]
+			}
+		}
+		return nil
+	}
+	type_text(panel, ":strat")
+	testing.expect_value(t, panel.list.row_count, 2)
+	testing.expect_value(t, chosen_of(panel), Chosen.Sends)
+	fair := listed(panel, "set strategy to fair")
+	eevdf := listed(panel, "set strategy to eevdf")
+	if !testing.expect(t, fair != nil && eevdf != nil, "the two strategies are entries of the prefix of the settings") {
+		return
+	}
+	testing.expect_value(t, fair.kind, Entry_Kind.Setting)
+	testing.expect(t, !setting_in_use(panel, fair))
+	testing.expect(t, setting_in_use(panel, eevdf))
+	// The settings page of the owner says nothing of it.
+	panel.settings_in_use[0] = 1
+	testing.expect(t, !setting_in_use(panel, fair))
+	// The mark is a part of what the panel shows: a table that moves it
+	// gives a list with another content, which the panel draws again.
+	content_before := panel.list.content
+	entries[0].flags = {.In_Use}
+	entries[1].flags = {}
+	collect_with_table(panel, table)
+	testing.expect(t, panel.list.content != content_before)
+	testing.expect(t, setting_in_use(panel, listed(panel, "set strategy to fair")))
+	testing.expect(t, !setting_in_use(panel, listed(panel, "set strategy to eevdf")))
+	// The flag on an entry that is no such setting: the table is refused.
+	entries[0].kind = .Command
+	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.Bad_Setting)
+}

@@ -97,6 +97,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "palette_commands.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The letters memo in the palette: the commands of the console that match, each with its signature."},
 	{file = "palette_prefix.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "A prefix keeps one kind in the palette: the sign > lists the commands only."},
 	{file = "palette_settings.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "A setting chosen in the palette: the font changes to Spleen through a line that runs in the console."},
+	{file = "palette_strategy.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The scheduling strategies in the palette: one entry for each strategy, and the one that the machine uses says so."},
 	{file = "palette_arguments.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "A command with a parameter in the palette: start asks for a name, and the list gives the modules that match."},
 	{file = "palette_arguments_two.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "A command with two parameters in the palette: revoke has the name plasma, and the list gives the grants of that program."},
 	{file = "palette_confirm.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The palette asks for a second Enter before it stops a program and closes its window."},

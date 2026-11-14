@@ -966,7 +966,7 @@ A strategy is the rule that orders the ready threads of each run queue: six proc
 
 The six procedures are ready, pick, tick, stopping, wake preemption and move. The kernel calls them through a `switch` on the strategy of the queue, with a direct call in each case: the strategies are a closed set, and the kernel keeps no table of procedure addresses for them. The machine has one strategy at a time: round robin, fair or EEVDF. A strategy owns no memory: its state is fields of the thread and of the queue, zero when the strategy has not placed the thread.
 
-A program with the right Schedule on the machine changes the strategy while the system runs (`Strategy_Set`): each queue converts under its run lock, and no thread stops or is lost. The root service gives that right only to the program `scheduler`. The limit of a budget is not a strategy: it holds under each one.
+A program with the right Schedule on the machine changes the strategy while the system runs (`Strategy_Set`): each queue converts under its run lock, and no thread stops or is lost. The root service gives that right only to the program `scheduler`. The principal changes the strategy through that program: in its window, with the command `strategy("eevdf")` of the console, or with the entry "set strategy to eevdf" of the palette; the command and the entry call its export `strategy_set`. The limit of a budget is not a strategy: it holds under each one.
 
 The design: `docs/SCHEDULING.md`, "What this system takes".
 
@@ -2175,7 +2175,7 @@ Do not use: spacer, padding line.
 
 A completion list is the names that can take the place of the name at the caret, best first, with one chosen row.
 
-The program gives the rows, at most 8 at a time; its terminal draws them over its text, at the edit line. In the console the fuzzy match orders the names.
+The program gives the rows, at most 8 at a time; its terminal draws them over its text, at the edit line. In the console the fuzzy match orders the names. With more names than rows the list has a scroll bar, which takes the pointer: the terminal tells the program the first row that the pointer asks for, and the program moves its view and its chosen row.
 
 The design: `docs/CONSOLE.md`, "Who draws the list, and the line under the edit line".
 
@@ -3971,7 +3971,7 @@ Do not use: glyph (for this), symbol (for this), pictogram, badge.
 
 A palette provider is a program that gives palette entries of its own to the panel and runs the one that the input chooses, with its own rights.
 
-The provider keeps the rule that the panel holds no right: an entry runs in the program that gave it, with the grants of that program, and the panel only names the chosen entry. The console is the palette provider: it has the grant `Palette`, it writes one entry for each of its commands in the palette table, and it runs a chosen entry as a line, so the line and its result are also in its window. `revoke("console", "palette")` ends it, and the palette keeps the programs and the windows, which come from the compositor itself.
+The provider keeps the rule that the panel holds no right: an entry runs in the program that gave it, with the grants of that program, and the panel only names the chosen entry. The console is the palette provider: it has the grant `Palette`, it writes one entry for each of its commands, for each value of each setting and for each scheduling strategy in the palette table, and it runs a chosen entry as a line, so the line and its result are also in its window. `revoke("console", "palette")` ends it, and the palette keeps the programs and the windows, which come from the compositor itself.
 
 A palette provider is not a plugin of the compositor: it runs in its own program, and it draws nothing in the panel.
 
@@ -3983,7 +3983,7 @@ Do not use: palette source, palette backend, palette plugin.
 
 The palette form is the input band of the palette while it holds the call of a command with parameters: one typed field for each parameter.
 
-The form lets the input give the arguments of a command without a line. Each field has the name and the kind of its parameter: an Integer field takes digits, a Text field takes each character but a quote. The list under the band shows the candidates of the field that has the caret, which the palette provider gives: the programs that run, the modules of the boot image, the grants. Tab takes a candidate or goes to the next field; Enter in the last field runs. The values go to the provider as typed values, an Integer as a number and a Text as its bytes, and the provider builds the line. Example: `revoke(name: plasma, grant: log)`.
+The form lets the input give the arguments of a command without a line. Each field has the name and the kind of its parameter: an Integer field takes digits, a Text field takes each character but a quote. The list under the band shows the candidates of the field that has the caret, which the palette provider gives: the programs that run, the modules of the boot image, the grants. Tab takes a candidate or goes to the next field; Enter in the last field runs. A press of the pointer in a field puts the caret there, and a press on a candidate takes it. The values go to the provider as typed values, an Integer as a number and a Text as its bytes, and the provider builds the line. Example: `revoke(name: plasma, grant: log)`.
 
 The palette form is not an edit line: it holds no expression, no variable and no call inside a call. A command whose parameter is a Table or a Record has no form, and opens in the console.
 
@@ -3995,7 +3995,7 @@ Do not use: dialog, prompt, argument box.
 
 The palette table is the memory object where the palette provider writes its entries, and which the compositor maps read-only.
 
-The table carries data and no text of a line. It has a header with a change count, a result area, and at most 256 entries: for each one a kind, the flag "destroys", the names and the kinds of its parameters, the kind of its result, a name, a signature and a help sentence; and a candidate area, where the provider writes the values that one parameter can take. The provider adds 1 to the change count before a change and 1 after it. The compositor copies the table and checks each count, each length, each kind and each byte of the copy before it uses one of them: a table that fails is no table. One ring goes with the table: the compositor names the chosen entry by the change count, its index and the hash of its name, and the provider answers with a result as runs of text in the result area. The arguments of a palette form go on the ring as typed values. The contract is `src/library/contract/palette_table`.
+The table carries data and no text of a line. It has a header with a change count, a result area, and at most 256 entries: for each one a kind, the flag "destroys", the flag "in use" for the scheduling strategy that the machine uses now, the names and the kinds of its parameters, the kind of its result, a name, a signature and a help sentence; and a candidate area, where the provider writes the values that one parameter can take. The provider adds 1 to the change count before a change and 1 after it. The compositor copies the table and checks each count, each length, each kind and each byte of the copy before it uses one of them: a table that fails is no table. One ring goes with the table: the compositor names the chosen entry by the change count, its index and the hash of its name, and the provider answers with a result as runs of text in the result area. The arguments of a palette form go on the ring as typed values. The contract is `src/library/contract/palette_table`.
 
 The palette table is not a call region: the compositor calls nothing in the provider, and waits for no answer in its loop.
 
@@ -4159,7 +4159,7 @@ Do not use: dirty tracking, invalidation.
 
 A scroll bar is the element beside a view that shows a part of a longer content: it shows where the view is in the content, and the pointer moves the view with it.
 
-Each scroll bar of the system is one element of the interface package, `scroll_bar`, and the scroll bars of the site have the same form: both come from one table of sizes and colors, `src/library/support/graphics/scroll_bar.odin`. Its parts are two arrow buttons, the track, and the thumb with its grip. A program gives the units of its content, the units in view and the first unit in view, and takes the new first unit. A scroll bar is vertical or horizontal.
+Each scroll bar of the system is one element of the interface package, `scroll_bar`, and the scroll bars of the site have the same form: both come from one table of sizes and colors, `src/library/support/graphics/scroll_bar.odin`. Its parts are two arrow buttons, the track, and the thumb with its grip. A program gives the units of its content, the units in view and the first unit in view, and takes the new first unit. A scroll bar is vertical or horizontal. The pointer over a scroll bar has the shape of the arrow.
 
 A scroll bar is not a bar (the element that shows a value against a maximum) and not the bar of the desktop. It takes no key: the keys of a view belong to the element that owns the view.
 

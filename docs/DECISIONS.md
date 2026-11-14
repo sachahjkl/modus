@@ -761,6 +761,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done.
 - Where: `ARCHITECTURE.md`, "The control of a thread".
 
+### D-254 A module asks for its budget; its starter accepts, limits or widens the request
+- 2026-11-14. Decided by: the owner.
+- Decision: a module states the budget that it asks for. The starter of a program accepts the request, limits it or widens it, by its own constraints; a module never grants itself a budget. The flat table of the root service, one case with fixed amounts for each program, goes: it does not hold when a module of another project runs.
+- Words: "pour l'histoire des budgets \"demandés\" par un module, qu'un invoqueur peut accepter, limiter ou élargir, selon ses contraintes, est une bonne idée effectivement. cette liste statique plate que tu maintenais n'était pas gérable, surtout quand on voudra lancer des modules \"étrangers\", ça ne scale pas"
+- State: decided, not built. The entry of `ROADMAP.md`: "A module states the budget that it asks for."
+- Where: `ROADMAP.md`.
+
 ## 4. Memory
 
 ### D-084 Paging and virtual memory are design tools
@@ -1334,6 +1341,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "pas de cas particulier [...] on doit pas hardcoder. je te fais confiance. je pense: programmes simples [...] (anticiper que un jour les programmes seront sur disque, pas hardcodé que les modules sont dans la boot image, si jamais c'est pas déjà le cas)"; for the other machine the owner chose "Par remote sur QUIC".
 - State: done. A grant whose object belongs to one program (a private store, a terminal, a device, a network endpoint, a service) refuses the debug access: the debugger would write what only that program can write.
 - Where: `TOOLS.md`, "The debugger: the design".
+
+### D-255 The program `scheduler` serves the change of strategy; the console gets no right Schedule
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: the export `strategy_set(name)` of the program `scheduler` sets the scheduling strategy for a caller that acts for the principal, and for no other caller: a service that uses its own right for any caller is a confused deputy. The console gets the command `strategy(name)` and no right Schedule. The palette provider marks the strategy in use with a flag of its entry, and the compositor gets no right Inspect. A press in a field of the form of a command puts the caret there, and the scroll bars of the palette and of a completion list take the pointer. Over a scroll bar the pointer is the arrow.
+- Words: "tout tout faire"
+- State: done. Left: the wheel of a pointing device.
+- Where: `DESIGN.md`, "Palette"; `CONSOLE.md`, "The palette provider"; `SCHEDULING.md`; `POINTERS.md`; `src/md/features/palette.md`; `FIRST_MILESTONE.md`, choice 755.
 
 ## 11. The build and the compiler
 

@@ -22,6 +22,7 @@
 package palette
 
 import "modus:contract/palette_table"
+import "modus:support/interface"
 import "modus:support/line_editor"
 
 // The state of the panel. One value says all of it: no state is a pair of
@@ -42,7 +43,7 @@ Entry_Kind :: enum u8 {
 	Close_Window = 2, // The close of a window: the choice stops its program, after a second Enter.
 	Command      = 3, // A command of the palette provider: the provider runs it.
 	Export       = 4, // An export of a module or of a service, which the palette provider calls.
-	Setting      = 5, // One value of one setting of the machine: the palette provider sets it.
+	Setting      = 5, // One value of one setting of the machine, or of a state that the palette provider sets (the scheduling strategy): the provider sets it.
 }
 
 // The facts of an entry that are true or false.
@@ -62,6 +63,7 @@ Entry_Mark :: enum u8 {
 	Has_Focus  = 3, // The window that has the focus.
 	Destroys   = 4, // The entry destroys something.
 	Window     = 5, // A window that has not the focus.
+	In_Use     = 6, // A value that its provider says the machine uses now: the scheduling strategy in use.
 }
 
 NAME_CAPACITY :: 64 // The bytes of the name of an entry. A longer name is not listed: a name is whole or absent.
@@ -183,7 +185,10 @@ Panel :: struct {
 	list:          ^List, // The entries and their list. The owner sets it before each other call.
 	choice:        int, // The chosen row, or NO_ROW.
 	first_row:     int, // The first row that the panel shows.
-	pressed_row:   int, // The row where the left button of the pointer went down, until it goes up; or NO_ROW.
+	pressed_row:   int, // The row, or in a form the candidate, where the left button of the pointer went down, until it goes up; or NO_ROW.
+	// What the pointer did to the scroll bar in the last draw of the panel
+	// (panel_draw). The owner applies it with view_scrolled.
+	scrolled:      interface.Scroll_Bar_Result,
 	// A list that came for the same typed part moved the choice to another
 	// entry, and no frame showed it yet: Enter runs nothing until the owner
 	// drew the panel (panel_drawn). The palette runs the row that is drawn.
@@ -275,10 +280,16 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 		#partial switch given.kind {
 		case .Command:
 			kind = .Command
-		case .Setting:
+		case .Setting, .Provider_Setting:
 			kind = .Setting
 		}
-		entry_add(list, recents, {kind = kind, mark = destroys ? Entry_Mark.Destroys : Entry_Mark.None, flags = flags, number = u32(index)}, string(given.name[:given.name_length]), "")
+		mark := destroys ? Entry_Mark.Destroys : Entry_Mark.None
+		if given.kind == .Provider_Setting && .In_Use in given.flags {
+			// The mark is in the content of the list: a table that moves
+			// it gives a list that the panel draws again.
+			mark = .In_Use
+		}
+		entry_add(list, recents, {kind = kind, mark = mark, flags = flags, number = u32(index)}, string(given.name[:given.name_length]), "")
 	}
 	return .None, 0
 }

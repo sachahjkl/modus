@@ -111,6 +111,7 @@ layout :: proc "contextless" () {
 	scroll_top := measure ? HEAD_HEIGHT - 6 : 0
 	scroll_area = {width - SCROLL_WIDTH, scroll_top, SCROLL_WIDTH, status_y - 4 - scroll_top}
 	scroll_identity = interface.identity("the scroll bar of the lines")
+	list_scroll_identity = interface.identity("the scroll bar of the completion list")
 }
 
 FRAME_TIME :: 16 // Milliseconds.
@@ -719,6 +720,20 @@ records_now, records_before: [384]interface.Draw_Record
 text_now, text_before: [1024]u8
 // What the pointer did to the scroll bar of the lines in the last frame.
 scroll_result: interface.Scroll_Bar_Result
+// The scroll bar of the completion list in the last frame: its area (no
+// width: the frame had no such bar), and what the pointer did to it.
+list_scroll_area: interface.Area
+list_scroll_result: interface.Scroll_Bar_Result
+list_scroll_identity: interface.Element_Identity
+// The first row that the terminal asked the program for, and the first row
+// that the list had then: the scroll bar gives the same row at each frame
+// until the program answers, and the terminal asks one time. -1: no
+// request waits for an answer.
+list_first_asked := -1
+list_first_when_asked: int
+// The pointer shape that the terminal asked for last is the arrow: the
+// pointer was over a scroll bar, or held one. If not, it is the text shape.
+pointer_shape_is_arrow: bool
 cells_before: [ROWS_LIMIT * COLUMNS_LIMIT]Cell
 grids_now, grids_before: [1]interface.Text_Grid
 drawing: interface.Window_Drawing
@@ -823,6 +838,8 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	// The border of the completion list, one pixel outside its cells. It
 	// comes last, so that the records before keep their places in the
 	// table when the list opens or closes: the damage stays small.
+	list_scroll_area = {}
+	list_scroll_result = {}
 	if view.list_columns > 0 {
 		x := TEXT_X + view.list_left * CELL_WIDTH - 1
 		y := text_y + view.list_top * CELL_HEIGHT - 1
@@ -834,12 +851,13 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		interface.draw_rectangle(table, x + list_width - 1, y, 1, list_height, COLOR_LIST_BORDER)
 		// The scroll bar of the list, over its last cells and the right
 		// column of its border. The program that writes owns the list and
-		// its choice: this bar shows the place of the rows, and takes no
-		// pointer.
+		// its choice: the bar takes the pointer, and the first row that
+		// the pointer asks for goes to the program (list_scroll_send).
 		if view.list_scroll {
 			bar_length := view.list_rows * CELL_HEIGHT
 			bar_x := TEXT_X + (view.list_left + view.list_columns - LIST_SCROLL_CELLS) * CELL_WIDTH
-			interface.scroll_bar_draw(table, {bar_x, text_y + view.list_top * CELL_HEIGHT, SCROLL_WIDTH, bar_length}, .Vertical, interface.scroll_bar_geometry(bar_length, SCROLL_WIDTH, {total = view.list_total, visible = view.list_rows, first = view.list_first}))
+			list_scroll_area = {bar_x, text_y + view.list_top * CELL_HEIGHT, SCROLL_WIDTH, bar_length}
+			list_scroll_result = interface.scroll_bar(&frame, list_scroll_area, list_scroll_identity, .Vertical, {total = view.list_total, visible = view.list_rows, first = view.list_first})
 		}
 	}
 	// The scroll bar of the lines: where the view is in the lines that the
@@ -1007,9 +1025,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// pointer is on the bar, holds it, or leaves it lit.
 			if event.kind == .Pointer {
 				interface.input_add(&drawing.input, event)
-				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity) {
+				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, list_scroll_area, list_scroll_identity) {
 					dirty = true
 				}
+				pointer_shape_follow(&window)
 				continue
 			}
 			if event.kind != .Key || !event.pressed {
@@ -1144,6 +1163,68 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			scroll_drag_moved = false
 		}
+		if list_scroll_send() {
+			dirty = true
+		}
+		// A frame can end a press on a scroll bar, or move the list under
+		// a still pointer: the shape follows with no move of the pointer.
+		pointer_shape_follow(&window)
+	}
+}
+
+// list_scroll_send gives the program the first row that the pointer asked
+// for on the scroll bar of the completion list, as one input record. The
+// program owns the list: it answers with the rows of its new view. The
+// scroll bar gives the same row at each frame until that answer, so a row
+// is asked one time, and again only after the list moved. It gives true
+// when it sent a record. The log has one line for a press that moved the
+// view and one for a drag, not one for each step.
+list_scroll_send :: proc "contextless" () -> (sent: bool) {
+	if list_scroll_area.width == 0 || list_first_asked >= 0 && view.list_first != list_first_when_asked {
+		list_first_asked = -1 // No list, or the program answered.
+	}
+	moved := list_scroll_result
+	if moved.changed && program != 0 && moved.first != list_first_asked {
+		sent = system.send(&source.completions, ring.Record{kind = u32(terminal.Input.List_First), values = {0 = u64(moved.first)}})
+		if sent {
+			list_first_asked, list_first_when_asked = moved.first, view.list_first
+			list_drag_moved ||= moved.held == .Thumb
+			if moved.pressed_now != .None && moved.pressed_now != .Thumb {
+				system.log("terminal: a press on ", scroll_part_words(moved.pressed_now), " of the scroll bar of the completion list of ", program_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
+			}
+		}
+	}
+	if moved.drag_ended {
+		if list_drag_moved {
+			system.log("terminal: a drag of the thumb of the scroll bar of the completion list of ", program_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
+		}
+		list_drag_moved = false
+	}
+	return sent
+}
+
+list_drag_moved: bool // The drag of the thumb of the completion list that is held now moved its view.
+
+// pointer_shape_follow asks the compositor for the arrow while the pointer
+// is over a scroll bar of the window or holds one, and for the text shape
+// over the rest of the surface: a scroll bar is a control, not text
+// (docs/POINTERS.md, "The request of a program"). It asks only at a change:
+// the compositor writes one line of the log for each request.
+pointer_shape_follow :: proc "contextless" (window: ^display.Window) {
+	input := &drawing.input
+	held := drawing.state.pressed
+	over := held == scroll_identity || held == list_scroll_identity
+	if !over && input.pointer_known {
+		over = interface.area_contains(scroll_area, input.pointer_x, input.pointer_y) || interface.area_contains(list_scroll_area, input.pointer_x, input.pointer_y)
+	}
+	if over == pointer_shape_is_arrow {
+		return
+	}
+	pointer_shape_is_arrow = over
+	if over {
+		display.pointer_shape_set(window, .Arrow)
+	} else {
+		display.pointer_shape_set(window, .Text)
 	}
 }
 

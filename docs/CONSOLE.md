@@ -345,6 +345,7 @@ A fact that a service holds is an export of that service, and the console calls 
 | Built-in command | Where the fact comes from |
 |---|---|
 | `programs()` | The export `monitor.programs()`. With no service `monitor`, or when `monitor` lost its grant, the line fails with the error of the connection or of the export |
+| `setting(name, value)`, `manual_page(name)`, `strategy(name)` | The exports `settings.set`, `manual.show` and `scheduler.strategy_set`. The palette runs them ("8. The palette provider"). Each program must run: the command starts none. `strategy("eevdf")` sets the scheduling strategy of the machine, with `round_robin`, `fair` or `eevdf`: the console holds no right to change it, and the program `scheduler` holds it (`SCHEDULING.md`, "The change at run time") |
 | `debug`, `detach`, `threads`, `hold`, `resume`, `continue_all`, `registers`, `stack`, `locals`, `value`, `source`, `break_at`, `watch`, `breaks`, `break_remove`, `step`, `step_line`, `debug_memory`, `events`, `wait_stop` | The exports of the service `debugger`, which the root service starts when the console connects to it ("The commands of the debugger") |
 | `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `replace`, `connect` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |
 | `modules()` | The boot image that the root service granted to the console. `manual.modules()` gives the same modules with more fields, when the program `manual` runs |
@@ -492,7 +493,7 @@ The main machine and `kerneltool measure` (the machine with only the desktop and
 
 ## 5. Who draws the list, and the line under the edit line
 
-The console knows the names; the terminal owns the cells and the keys. The console sends the rows to show (`terminal.List_Row`: the name, what it is, the places that matched) and then the list (`terminal.List`: the count of rows, the chosen row, the place of the first row in all the names and their count, and the byte of the edit line where the name starts). The terminal lays it out: under the edit line and its hint line when the rows below hold it, above the edit line if not, at the column of the start of the name, as wide as the longest row and cut to the terminal. It has at most 8 rows, and a scroll bar at the right when there are more names (`DESIGN.md`, "The scroll bar"): it takes the last two cells of each row, shows the place of the rows in all the names, and takes no pointer.
+The console knows the names; the terminal owns the cells and the keys. The console sends the rows to show (`terminal.List_Row`: the name, what it is, the places that matched) and then the list (`terminal.List`: the count of rows, the chosen row, the place of the first row in all the names and their count, and the byte of the edit line where the name starts). The terminal lays it out: under the edit line and its hint line when the rows below hold it, above the edit line if not, at the column of the start of the name, as wide as the longest row and cut to the terminal. It has at most 8 rows, and a scroll bar at the right when there are more names (`DESIGN.md`, "The scroll bar"): it takes the last two cells of each row, shows the place of the rows in all the names, and takes the pointer. The console owns the list, so the terminal sends it the first row that the pointer asks for (`terminal.Input.List_First`); the console moves its view there, moves the chosen row to the nearest row of the new view, and sends the rows. The record means nothing while a line runs, when no list is open.
 
 So no record has a place on the screen, and the terminal stays a program with no knowledge of the language of the console. The rows go through the text region of the console and its terminal: no third program reads it, and the terminal already shows each name that `help()` gives.
 
@@ -586,17 +587,17 @@ The console is the palette provider of the desktop: each of its commands is an e
 
 | Field of an entry | Content |
 |---|---|
-| `kind` | `Command` (a command of the console itself), `Export`, or `Setting` |
+| `kind` | `Command` (a command of the console itself), `Export`, `Setting`, or `Provider_Setting` (one scheduling strategy) |
 | `parameter_names` | The name of each parameter, 16 bytes at most each |
 | `setting`, `setting_value` | A `Setting` entry: the number of the setting and of its value |
-| `flags` | `Destroys` for `shutdown`, `stop`, `revoke`, `lock`, `history_clear`, `unload` and `replace` |
+| `flags` | `Destroys` for `shutdown`, `stop`, `revoke`, `lock`, `history_clear`, `unload` and `replace`; `In_Use` for the `Provider_Setting` entry of the strategy that the machine uses now |
 | `parameter_count`, `parameters` | The count of the parameters, and the kind of each one |
 | `result` | The kind of the result |
 | `name` | At most 64 bytes |
 | `signature` | The name, the parameters and the result, as `describe` gives them: `revoke(Text, Text) -> Integer`. One that passes 128 bytes shows `(...)` |
 | `about` | The help sentence, its first 128 bytes |
 
-The console writes the table again after each line, when the command table changed (`load`, `isolate`, `unload`, `connect`). It adds 1 to the change count before the change and 1 after it: an odd count says that the table changes now. The change count is the generation of the table.
+The console writes the table again after each line, when the command table changed (`load`, `isolate`, `unload`, `connect`) or the scheduling strategy changed, and when the panel opens with another strategy in use than the one of the table (the paragraph on the scheduling strategy, below). It adds 1 to the change count before the change and 1 after it: an odd count says that the table changes now. The change count is the generation of the table.
 
 **A choice.** The compositor sends `Choose` on the ring: the generation of the table that the panel showed, the index of the entry, the hash of its name (FNV-1a, 64 bits), and a mode. The console checks them against its own copy of the entries: an index past the table, and a hash that is not the hash of the entry at that index, are refused with "the commands changed: choose again". So the console never runs an entry that the panel did not show. It then finds the command by its name in its command table, and builds the line itself: no text of a line comes from the compositor.
 
@@ -626,6 +627,11 @@ The result area holds what the drawer of the kind of the result wrote (`src/libr
 
 **The settings.** The table has one entry of the kind `Setting` for each value of each setting of `src/library/contract/settings`: "set font to spleen", with the number of the setting and of the value. The compositor checks both against the same contract. A choice runs the line `setting("font", "spleen")`: `setting(name, value)` is a built-in command, the export `settings.set` under a short name, so the console connects to `settings` at the first use. The program `settings` must run.
 
+**The scheduling strategy.** The table has one entry of the kind `Provider_Setting` for each strategy of the kernel: "set strategy to round_robin", "set strategy to fair", "set strategy to eevdf". The panel shows such an entry as it shows a `Setting` entry. A choice runs the line `strategy("eevdf")`: `strategy(name)` is a built-in command, the export `scheduler.strategy_set` under a short name, so the console connects to `scheduler` at the first use. The program `scheduler` must run, and it answers after its checks. The console gets no right over the machine for it: the program that holds the right Schedule changes the strategy (`SCHEDULING.md`, "The change at run time").
+
+- **The value in use.** No page holds the strategy, and the compositor has no right to inspect the machine. The console reads the strategy in the system report, with its grant to inspect the machine, and sets the flag `In_Use` of the entry of that strategy. The compositor refuses a table with that flag on an entry of another kind.
+- **`Refresh`.** The strategy can change with no line of the console: a key in the window of `scheduler`. The compositor sends `Refresh` on the ring at each open of the panel. The console then writes its table again when the strategy in use is not the one that the table marks: the list of the panel follows, as after each new table. `Refresh` has no value and no answer, and the console takes it when no line runs.
+
 **The manual.** With the prefix `?` the compositor sends `Manual` with the name of a program, as a typed value. The console checks the name and runs `manual_page("plasma")`: the export `manual.show` under a short name, which makes the window of the manual show the page of that module. The answer is `Manual_Opened`, and the compositor brings the window of the manual to the front. The program `manual` must run: the command starts no program, and its error shows in the panel.
 
-**Not done.** The entries do not carry the age of their last use in the line history: the recent choices are those of the panel only. An export of a service that the console is not connected to is not listed. The scheduling strategy has no export, so no entry sets it. A press of the pointer does not move the caret to a field of a form.
+**Not done.** The entries do not carry the age of their last use in the line history: the recent choices are those of the panel only. An export of a service that the console is not connected to is not listed. The command `strategy` has no candidates for its field: the three entries give the three values.
