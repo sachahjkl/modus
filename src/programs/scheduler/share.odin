@@ -547,10 +547,13 @@ share_program_run :: proc "contextless" (threads: u64) -> ! {
 // its copy of the data of the module and of the module that it imports,
 // its stack, its context and its page tables, with room; then a stack of
 // 16 pages and a thread area of 3 for each thread more. processor: one
-// processor for each thread, so that its budget never stops it. It has no
-// handle of this program and writes no log record.
+// processor for each thread, and no more than the machine has: its threads
+// cannot run on more, so its budget never stops it, and the four programs
+// ask together for no more than this program holds. It has no handle of
+// this program and writes no log record.
 share_program_amounts :: proc "contextless" (threads: u64) -> system.Budget_Amounts {
-	return {pages = 512 + threads * (system.THREAD_STACK_PAGES + 3), programs = 1, threads = threads, processor = threads * 1_000_000, log_records = 0}
+	processors := min(threads, u64(system.thread_record().processors))
+	return {pages = 512 + threads * (system.THREAD_STACK_PAGES + 3), programs = 1, threads = threads, processor = processors * 1_000_000, log_records = 0}
 }
 
 program_generator: random.Generator
