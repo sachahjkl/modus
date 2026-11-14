@@ -90,7 +90,7 @@ The writer of the tool is checked by the open of the storage service: a host tes
 
 ### The grants of a disk program: proposed, not decided
 
-A disk program has no grant. The next step gives the principal a command that grants one. Three choices are open (`docs/DECISIONS.md`, Q-15); this section states the form that is proposed for each, and why.
+A disk program has no grant. The next step gives the principal a command that grants one. Three choices are open (`docs/DECISIONS.md`, "Open questions for the owner"); this section states the form that is proposed for each, and why.
 
 **What a grant names.** The hash of the file, never its name: `allow(hash, grant)` and `disallow(hash, grant)`, from a caller that acts for the principal. The root service keeps a table of rows, one for each hash: its grants and its budget. A file with another hash, under the same name, has no row. This follows from the rule above: what runs is named by its hash.
 
