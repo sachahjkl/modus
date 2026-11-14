@@ -503,7 +503,7 @@ CARD_WIDTH :: WIDTH - 2 * CARD_X
 CARD_HEAD :: 48 // The title of a card, and the room under its last row.
 NAME_X :: 40 // The column of the names, in a card.
 ANSWER_X :: 312 // The first column of the answers.
-COLUMN_WIDTH :: 224
+COLUMN_WIDTH :: 220
 // The box of an answer of the first card: its column, after its mark.
 ANSWER_ROOM :: COLUMN_WIDTH - 16 - 8
 // The answer of a hostile case starts after the longest name, "a budget as
