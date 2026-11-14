@@ -426,15 +426,15 @@ site_icon_file_of_the_root :: proc(t: ^testing.T) {
 	first := metadata_test_png(2, 2, 4, []u8{1, 2, 3, 255, 4, 5, 6, 0, 7, 8, 9, 128, 10, 11, 12, 255})
 	second := metadata_test_png(3, 1, 3, []u8{1, 2, 3, 4, 5, 6, 7, 8, 9})
 	pictures := [][]u8{first, second}
-	file, ok := site_ico_encode(pictures)
+	file, ok := mark_ico_encode(pictures)
 	testing.expect(t, ok)
-	entries, problem := site_ico_read(file)
+	entries, problem := mark_ico_read(file)
 	testing.expect_value(t, problem, "")
 	testing.expect_value(t, len(entries), 2)
 	if len(entries) == 2 {
 		testing.expect_value(t, entries[0].width, 2)
 		testing.expect_value(t, entries[0].height, 2)
-		testing.expect_value(t, entries[0].offset, SITE_ICO_HEADER_SIZE + 2 * SITE_ICO_ENTRY_SIZE)
+		testing.expect_value(t, entries[0].offset, MARK_ICO_HEADER_SIZE + 2 * MARK_ICO_ENTRY_SIZE)
 		testing.expect_value(t, entries[0].bytes, len(first))
 		testing.expect_value(t, entries[1].width, 3)
 		testing.expect_value(t, entries[1].height, 1)
@@ -444,32 +444,48 @@ site_icon_file_of_the_root :: proc(t: ^testing.T) {
 		testing.expect(t, string(file[entries[1].offset:][:entries[1].bytes]) == string(second))
 	}
 	// A damaged file: cut, another type, an entry outside the file.
-	_, cut_problem := site_ico_read(file[:len(file) - 1])
+	_, cut_problem := mark_ico_read(file[:len(file) - 1])
 	testing.expect(t, cut_problem != "")
 	other_type := make([]u8, len(file), context.temp_allocator)
 	copy(other_type, file)
 	other_type[2] = 2
-	_, type_problem := site_ico_read(other_type)
+	_, type_problem := mark_ico_read(other_type)
 	testing.expect(t, type_problem != "")
-	_, short_problem := site_ico_read(file[:SITE_ICO_HEADER_SIZE + 4])
+	_, short_problem := mark_ico_read(file[:MARK_ICO_HEADER_SIZE + 4])
 	testing.expect(t, short_problem != "")
-	_, empty_ok := site_ico_encode(nil)
+	_, empty_ok := mark_ico_encode(nil)
 	testing.expect(t, !empty_ok)
-	_, not_png_ok := site_ico_encode([][]u8{[]u8{1, 2, 3}})
+	_, not_png_ok := mark_ico_encode([][]u8{[]u8{1, 2, 3}})
 	testing.expect(t, !not_png_ok)
 }
 
 @(test)
 site_icons_of_the_site :: proc(t: ^testing.T) {
+	// The files of the mark of the site, as the generator makes them from
+	// the table of the uses of the mark.
+	files, files_ok := mark_site_files()
+	testing.expect(t, files_ok)
+	if !files_ok {
+		return
+	}
 	// Each raster icon is the heron at a whole cell size with an even
-	// margin; the icon of a phone and the maskable one are opaque, the
-	// others transparent; the maskable drawing is inside the circle of
-	// 80 percent of the icon.
-	for icon in site_icons {
-		drawing := 24 * icon.heron_cell
+	// margin; the icon of a phone and the maskable one are opaque, in the
+	// dark scheme, the others transparent, in the light scheme; the
+	// maskable drawing is inside the circle of 80 percent of the icon.
+	Raster_Icon :: struct {
+		file_name: string,
+		size:      int,
+		opaque:    bool,
+	}
+	raster_icons := [?]Raster_Icon{{SITE_ICON_TOUCH, 180, true}, {SITE_ICON_192, 192, false}, {SITE_ICON_512, 512, false}, {SITE_ICON_MASKABLE, 512, true}}
+	for icon in raster_icons {
+		picture, in_table := mark_use_picture(icon.file_name)
+		testing.expectf(t, in_table, "%s is not a row of the table of the uses of the mark", icon.file_name)
+		drawing := 24 * picture.heron_cell
 		testing.expectf(t, drawing <= icon.size && (icon.size - drawing) % 2 == 0, "the icon of %d has a drawing of %d", icon.size, drawing)
-		data, encoded := mark_picture_png(site_icon_picture(icon))
-		testing.expect(t, encoded)
+		testing.expect_value(t, picture.opaque, icon.opaque)
+		testing.expect_value(t, picture.on_light, !icon.opaque)
+		data := files[strings.concatenate({SITE_PICTURE_FOLDER, "/", icon.file_name}, context.temp_allocator)]
 		width, height, _ := site_png_size(data)
 		testing.expect_value(t, width, icon.size)
 		testing.expect_value(t, height, icon.size)
@@ -479,16 +495,25 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 			testing.expect(t, 200 * drawing * drawing <= 64 * icon.size * icon.size)
 		}
 	}
-	// The ends of the gradient of src/library/support/mark: 0.7 * c + 76.5 and 0.7 * c.
-	black_start, black_end := site_gradient_end_colors(0x000000)
-	testing.expect_value(t, black_start, 0x4D4D4D)
-	testing.expect_value(t, black_end, 0x000000)
-	start, end := site_gradient_end_colors(0xFFFFFF)
-	testing.expect_value(t, start, 0xFFFFFF)
-	testing.expect_value(t, end, 0xB3B3B3)
+	// The entries of favicon.ico are rows of the same table: transparent,
+	// in the light scheme, each with an even margin.
+	favicon_entries, favicon_kind := mark_use_entries(SITE_FAVICON)
+	testing.expect_value(t, len(favicon_entries), 2)
+	testing.expect_value(t, favicon_kind, Mark_Use_Kind.Icon_File_Entry)
+	for entry in favicon_entries {
+		entry_width, entry_height := mark_picture_size(entry)
+		testing.expect(t, entry_width == entry_height && (entry_width - 24 * entry.heron_cell) % 2 == 0 && entry_width >= 24 * entry.heron_cell)
+		testing.expect(t, entry.on_light && !entry.opaque)
+	}
+	// Each icon of the manifest is a row of the table.
+	for icon in site_manifest_icons {
+		picture, in_table := mark_use_picture(icon.file_name)
+		testing.expectf(t, in_table && picture.opaque == icon.maskable, "%s of the manifest is not a row of the table, or a maskable icon is not opaque", icon.file_name)
+	}
 
-	// The SVG icon: the cells of the heron as rectangles, one for each run.
-	svg := site_icon_svg()
+	// The SVG icon: the cells of the heron as rectangles, one for each run
+	// of cells of one color in a row.
+	svg := string(files[SITE_PICTURE_FOLDER + "/" + SITE_ICON_SVG])
 	testing.expect(t, strings.has_prefix(svg, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\""))
 	testing.expect(t, strings.contains(svg, "shape-rendering=\"crispEdges\""))
 	testing.expect(t, strings.contains(svg, "@media (prefers-color-scheme: dark)"))
@@ -511,17 +536,17 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 		if end_index < 0 {
 			break
 		}
+		// A rectangle covers its width times its height in cells.
 		width_value, _ := site_decimal(site_first_attribute_value(rest[start_index:start_index + end_index], "width=\""))
-		widths += width_value
+		height_value, _ := site_decimal(site_first_attribute_value(rest[start_index:start_index + end_index], "height=\""))
+		widths += width_value * height_value
 		rest = rest[start_index + end_index:]
 	}
 	testing.expect_value(t, widths, covered)
 
 	// The files: favicon.ico at the root with 32 and 48, and the checks of a
 	// good site and of damaged ones.
-	files, files_ok := site_icon_files()
-	testing.expect(t, files_ok)
-	entries, favicon_problem := site_ico_read(files[SITE_FAVICON])
+	entries, favicon_problem := mark_ico_read(files[SITE_FAVICON])
 	testing.expect_value(t, favicon_problem, "")
 	testing.expect_value(t, len(entries), 2)
 	site := metadata_test_site("")

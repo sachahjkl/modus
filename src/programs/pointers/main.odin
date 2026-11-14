@@ -261,9 +261,15 @@ frame_draw :: proc "contextless" (window: ^display.Window) -> u64 {
 		under = build(&frame)
 		interface.frame_end(&frame)
 	}
-	interface.execute(&table, window.canvas)
-	pictures_draw(window.canvas)
-	display.present(window)
+	// The canvas is the picture that the compositor does not read, after
+	// it took the picture before. It holds an older frame: the whole
+	// canvas is drawn.
+	if display.canvas_wait(window) {
+		graphics.clear(window.canvas, graphics.COLOR_BACKGROUND)
+		interface.execute(&table, window.canvas)
+		pictures_draw(window.canvas)
+		display.present(window)
+	}
 	// Over a tile, the pointer takes the shape of the tile.
 	shape := pointer_pictures.Pointer_Shape.Arrow
 	if under >= 0 && themes[shown].valid {

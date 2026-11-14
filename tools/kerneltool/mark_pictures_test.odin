@@ -211,24 +211,42 @@ mark_generator_refuses_a_request_with_no_sense :: proc(t: ^testing.T) {
 // uses` prints it.
 @(test)
 mark_uses_name_a_variant_that_fits_each_file :: proc(t: ^testing.T) {
-	testing.expect_value(t, len(mark_uses), 18)
+	testing.expect_value(t, len(mark_uses), 25)
 	testing.expect_value(t, len(mark_uses_pictures(.Repository, .Picture)), 10)
-	testing.expect_value(t, len(mark_uses_pictures(.Site, .Picture)), 5)
+	testing.expect_value(t, len(mark_uses_pictures(.Site, .Picture)), 9)
 	testing.expect_value(t, len(mark_uses_pictures(.Site, .Tile_Map)), 2)
 	testing.expect_value(t, len(mark_uses_pictures(.Site, .Tile_Map_Of_Frames)), 1)
+	testing.expect_value(t, len(mark_uses_pictures(.Site_Root, .Icon_File_Entry)), 2)
+	testing.expect_value(t, len(mark_uses_pictures(.Site, .Vector_Of_Both_Schemes)), 1)
 	for use, index in mark_uses {
 		picture := use.picture
 		testing.expectf(t, mark_picture_refusal(picture) == "", "%s is refused: %s", picture.file_name, mark_picture_refusal(picture))
 		testing.expectf(t, (picture.heron_cell == 1) == (picture.variant == .Cells), "%s: %v at %d pixels for a cell", picture.file_name, picture.variant, picture.heron_cell)
+		// One row is one file, but for an icon file: its rows are its
+		// entries, and each has the kind and the place of the others.
 		for other in mark_uses[index + 1:] {
-			testing.expectf(t, other.picture.file_name != picture.file_name, "%s is in the table two times", picture.file_name)
+			if other.picture.file_name != picture.file_name {
+				continue
+			}
+			testing.expectf(t, use.kind == .Icon_File_Entry && other.kind == .Icon_File_Entry && other.place == use.place, "%s is in the table two times", picture.file_name)
 		}
-		if use.kind != .Picture {
+		entries, kind := mark_use_entries(picture.file_name)
+		testing.expect_value(t, kind, use.kind)
+		switch use.kind {
+		case .Picture:
+			testing.expect_value(t, len(entries), 1)
+		case .Tile_Map, .Tile_Map_Of_Frames:
 			request := Mark_Request{what = .Tile_Map, picture = picture, with_forms = use.kind == .Tile_Map}
 			testing.expectf(t, mark_request_refusal(request) == "", "the tile map %s is refused: %s", picture.file_name, mark_request_refusal(request))
+		case .Icon_File_Entry:
+			testing.expectf(t, mark_icon_file_refusal(entries) == "", "the icon file %s is refused: %s", picture.file_name, mark_icon_file_refusal(entries))
+		case .Vector_Of_Both_Schemes:
+			testing.expectf(t, mark_vector_refusal(picture, true) == "", "the vector file %s is refused: %s", picture.file_name, mark_vector_refusal(picture, true))
 		}
-		found, is_found := mark_use_picture(picture.file_name)
-		testing.expect(t, is_found && found == picture)
+		if use.kind != .Icon_File_Entry {
+			found, is_found := mark_use_picture(picture.file_name)
+			testing.expect(t, is_found && found == picture)
+		}
 	}
 	// Pinned: the uses that the variants were decided for.
 	Pinned :: struct {
@@ -249,19 +267,38 @@ mark_uses_name_a_variant_that_fits_each_file :: proc(t: ^testing.T) {
 		{LOGO_FOLDER + "/heron_48.png", .Smooth, 2},
 		{LOGO_FOLDER + "/modus.png", .Smooth, 24},
 		{PROJECT_IMAGE, .Smooth, 16},
+		// The icons of the site: an icon of one pixel for a cell is a
+		// small icon, cells; an icon of more is a picture, smooth. The
+		// first row of favicon.ico is its entry of 32 pixels.
+		{SITE_FAVICON, .Cells, 1},
+		{SITE_ICON_SVG, .Cells, 1},
+		{SITE_ICON_TOUCH, .Smooth, 7},
+		{SITE_ICON_192, .Smooth, 8},
+		{SITE_ICON_512, .Smooth, 21},
+		{SITE_ICON_MASKABLE, .Smooth, 12},
 	}
 	for entry in pinned {
 		picture, found := mark_use_picture(entry.file_name)
 		testing.expectf(t, found && picture.variant == entry.variant && picture.heron_cell == entry.cell, "%s: %v at %d pixels for a cell", entry.file_name, picture.variant, picture.heron_cell)
 	}
-	// The icons of the site follow the same rule; their rows are in the
-	// table of the icons.
-	for icon in site_icons {
-		picture := site_icon_picture(icon)
-		testing.expectf(t, mark_picture_refusal(picture) == "" && (picture.heron_cell == 1) == (picture.variant == .Cells), "the icon of %d pixels: %v at %d pixels for a cell", icon.size, picture.variant, picture.heron_cell)
+	favicon, _ := mark_use_entries(SITE_FAVICON)
+	testing.expect_value(t, len(favicon), 2)
+	if len(favicon) == 2 {
+		testing.expect_value(t, favicon[1], Mark_Picture{file_name = SITE_FAVICON, variant = .Smooth, heron_cell = 2, on_light = true, width = 48, height = 48})
 	}
 	_, missing := mark_use_picture("no_such_file.png")
 	testing.expect(t, !missing)
+	no_entries, _ := mark_use_entries("no_such_file.png")
+	testing.expect_value(t, len(no_entries), 0)
+	// The path of a row in the site: the picture folder, or the root.
+	for use in mark_uses {
+		if use.picture.file_name == SITE_FAVICON {
+			testing.expect_value(t, mark_use_site_path(use), "favicon.ico")
+		}
+		if use.picture.file_name == SITE_ICON_SVG {
+			testing.expect_value(t, mark_use_site_path(use), SITE_PICTURE_FOLDER + "/icon.svg")
+		}
+	}
 }
 
 // The PNG file of the generator is the smallest of the encoder: not larger
@@ -317,6 +354,38 @@ mark_command_reads_a_request :: proc(t: ^testing.T) {
 	card, card_found := mark_use_picture(SITE_MARK_CARD)
 	testing.expect(t, card_found)
 	testing.expect_value(t, request.picture, card)
+	// The format of the file, and the name of the file from it. An icon
+	// file as the one of the site: its first entry from the options, the
+	// next one from --entry, with the scheme of the request, also when
+	// the scheme comes after the entry.
+	request, out, problem = mark_command_request([]string{"still", "--format", "ico", "--variant", "cells", "--cell", "1", "--size", "32", "--entry", "smooth:2:48", "--scheme", "light"})
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, out, BUILD_FOLDER + "/mark_still.ico")
+	testing.expect_value(t, request.format, Mark_Format.ICO)
+	testing.expect_value(t, len(request.entries), 1)
+	favicon, _ := mark_use_entries(SITE_FAVICON)
+	if len(request.entries) == 1 && len(favicon) == 2 {
+		first, second := request.picture, request.entries[0]
+		first.file_name, second.file_name = SITE_FAVICON, SITE_FAVICON
+		testing.expect_value(t, first, favicon[0])
+		testing.expect_value(t, second, favicon[1])
+	}
+	testing.expect_value(t, mark_request_refusal(request), "")
+	request, out, problem = mark_command_request([]string{"still", "--format", "svg", "--variant", "cells", "--cell", "1", "--scheme", "light", "--dark-rule", "yes"})
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, out, BUILD_FOLDER + "/mark_still.svg")
+	testing.expect(t, request.format == .SVG && request.dark_rule)
+	testing.expect_value(t, mark_request_refusal(request), "")
+	request, out, problem = mark_command_request([]string{"animation", "--animation", "dash", "--format", "apng"})
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, out, BUILD_FOLDER + "/mark_animation.apng")
+	testing.expect(t, request.what == .Animation && request.has_animation && request.animation == .Dash)
+	testing.expect_value(t, mark_request_refusal(request), "")
+	// With no format an animation is an animated PNG file.
+	request, out, problem = mark_command_request([]string{"animation", "--animation", "blink"})
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, out, BUILD_FOLDER + "/mark_animation.apng")
+	testing.expect_value(t, mark_request_format(request), Mark_Format.APNG)
 	// The command reads the smooth variant at one pixel; the generator
 	// refuses it.
 	request, _, problem = mark_command_request([]string{"still", "--cell", "1"})
@@ -335,7 +404,12 @@ mark_command_reads_a_request :: proc(t: ^testing.T) {
 		"frame --animation moonwalk",
 		"frame --frame two",
 		"tile_map --forms maybe",
-		"still --format svg",
+		"still --format gif",
+		"still --format usual",
+		"still --entry cells:1",
+		"still --entry flat:1:32",
+		"still --entry cells:1.5:32",
+		"still --dark-rule maybe",
 		"still --size 1200x",
 		"still --size 12.5x30",
 	}
@@ -351,9 +425,18 @@ mark_command_reads_a_request :: proc(t: ^testing.T) {
 @(private = "file")
 MARK_DRAWING_FILES :: [?]string{"tools/kerneltool/mark_pictures.odin", "tools/kerneltool/mark_tile_map.odin", "tools/kerneltool/mark_developer_picture.odin"}
 
+// The files of the tool that build a file of the mark in a format: the
+// generator, with its file of the formats.
+@(private = "file")
+MARK_FORMAT_FILES :: [?]string{"tools/kerneltool/mark_pictures.odin", "tools/kerneltool/mark_formats.odin"}
+
 // No other file of the tool calls a drawing procedure of src/library/support/mark:
-// each picture file of the mark comes from the generator. The search is by
-// the names of the procedures.
+// each picture file of the mark comes from the generator. The same for
+// the icons: no other file builds an icon file, a vector file or an
+// animated file of the mark; a caller asks for a row of the table of the
+// uses, or sends a request. The file of the icons of the site holds the manifest and the
+// checks only: it does not read the data of the mark. The search is by the
+// names of the procedures.
 @(test)
 only_the_generator_draws_the_mark :: proc(t: ^testing.T) {
 	files := make([dynamic]string, context.temp_allocator)
@@ -364,8 +447,11 @@ only_the_generator_draws_the_mark :: proc(t: ^testing.T) {
 		return
 	}
 	procedures := [?]string{"mark.mark_draw(", "mark.mark_pixel(", "mark.cells_draw(", "mark.cells_pixel(", "mark.form_cells_draw(", "mark.form_cells_pixel(", "mark.name_draw(", "mark.name_pixel("}
+	format_procedures := [?]string{"mark_ico_encode(", "mark_icon_file(", "mark_picture_svg(", "mark_animation_png("}
 	allowed := MARK_DRAWING_FILES
+	format_allowed := MARK_FORMAT_FILES
 	read := 0
+	icons_file_read := false
 	for path in files {
 		if strings.has_suffix(path, "_test.odin") {
 			continue
@@ -374,6 +460,12 @@ only_the_generator_draws_the_mark :: proc(t: ^testing.T) {
 		for allowed_path in allowed {
 			if strings.has_suffix(path, allowed_path) || strings.has_suffix(allowed_path, path) {
 				is_allowed = true
+			}
+		}
+		is_format_allowed := false
+		for allowed_path in format_allowed {
+			if strings.has_suffix(path, allowed_path) || strings.has_suffix(allowed_path, path) {
+				is_format_allowed = true
 			}
 		}
 		bytes, read_error := os.read_entire_file(path, context.temp_allocator)
@@ -385,6 +477,15 @@ only_the_generator_draws_the_mark :: proc(t: ^testing.T) {
 		for procedure in procedures {
 			testing.expectf(t, is_allowed || !strings.contains(string(bytes), procedure), "%s calls %s: a picture of the mark comes from the generator", path, procedure)
 		}
+		for procedure in format_procedures {
+			testing.expectf(t, is_format_allowed || !strings.contains(string(bytes), procedure), "%s calls %s: a file of the mark in a format comes from the generator", path, procedure)
+		}
+		if strings.has_suffix(path, "site_icons.odin") {
+			icons_file_read = true
+			testing.expect(t, !strings.contains(string(bytes), "support/mark\""), "site_icons.odin reads the data of the mark: an icon is a row of the table of the uses")
+			testing.expect(t, !strings.contains(string(bytes), "heron_cell"), "site_icons.odin holds a number of a picture of the mark")
+		}
 	}
 	testing.expect(t, read > 50)
+	testing.expect(t, icons_file_read, "site_icons.odin was not read")
 }

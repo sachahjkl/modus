@@ -1,6 +1,7 @@
 #+build !freestanding
 package interface
 
+import "modus:contract/ring"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/kind_icons"
@@ -907,36 +908,50 @@ text_grid_draws_filled_cells :: proc(t: ^testing.T) {
 	testing.expect(t, pixels[4 * graphics.CELL_WIDTH] == 0, "the last cell is not filled")
 }
 
-// Two pictures: a frame equal to the older frame of its own picture draws
-// nothing, but the screen shows the other picture, which differs: the
-// present covers that difference.
+// Two pictures: a frame draws what changed and what its own picture owes,
+// and presents what changed, which is where the screen differs. After the
+// frame, the other picture owes what changed.
 @(test)
 two_pictures_present_what_the_screen_shows :: proc(t: ^testing.T) {
-	records_own, records_shown, records_now: [4]Draw_Record
-	own := Draw_Table{records = records_own[:]}
-	shown := Draw_Table{records = records_shown[:]}
-	now := Draw_Table{records = records_now[:]}
-	draw_rectangle(&own, 0, 0, 10, 10, 0xFF0000)
-	draw_rectangle(&shown, 0, 0, 10, 10, 0x00FF00) // The frame just before.
-	draw_rectangle(&now, 0, 0, 10, 10, 0xFF0000) // Back to the color of two frames before.
+	surface := Rectangle{0, 0, 40, 40}
+	debts := Picture_Debts{known = {true, true}}
+	damage_add(&debts.owed[0], {20, 20, 30, 30}) // The frame before changed this, in the picture 1.
+	changed: Damage
+	damage_add(&changed, {0, 0, 10, 10})
 	draw, present: Damage
-	damage_of_two_pictures(&own, &shown, true, &now, {0, 0, 40, 40}, &draw, &present)
-	testing.expect_value(t, draw.count, 0)
+	damage_of_picture(&debts, 0, &changed, surface, &draw, &present)
+	testing.expect_value(t, draw.count, 2)
+	testing.expect_value(t, damage_bounds(&draw), Rectangle{0, 0, 30, 30})
 	testing.expect_value(t, present.count, 1)
 	testing.expect_value(t, present.rectangles[0], Rectangle{0, 0, 10, 10})
-	// The table of the other picture is not known: the whole surface is
-	// presented, also where no record of now draws.
-	draw, present = {}, {}
-	damage_of_two_pictures(&own, &shown, false, &now, {0, 0, 40, 40}, &draw, &present)
+	picture_debts_after(&debts, 0, &changed, true)
+	testing.expect_value(t, debts.owed[0].count, 0)
+	testing.expect_value(t, debts.owed[1].count, 1)
+	testing.expect_value(t, debts.owed[1].rectangles[0], Rectangle{0, 0, 10, 10})
+	// A frame that changes nothing: its picture owes, the screen does not.
+	// Nothing is presented, so the caller draws nothing.
+	changed = {}
+	damage_of_picture(&debts, 1, &changed, surface, &draw, &present)
+	testing.expect_value(t, draw.count, 1)
+	testing.expect_value(t, present.count, 0)
+	// A Present that was lost: the picture that was drawn is not known,
+	// and its next frame is the whole surface.
+	damage_add(&changed, {0, 30, 5, 35})
+	picture_debts_after(&debts, 1, &changed, false)
+	damage_of_picture(&debts, 1, &changed, surface, &draw, &present)
+	testing.expect_value(t, draw.count, 1)
+	testing.expect_value(t, draw.rectangles[0], surface)
 	testing.expect_value(t, present.count, 1)
-	testing.expect_value(t, present.rectangles[0], Rectangle{0, 0, 40, 40})
+	testing.expect_value(t, present.rectangles[0], Rectangle{0, 30, 5, 35})
 }
 
 // Two pictures and a screen, as display and the compositor do: each frame
-// draws the damage of its own picture, presents a rectangle, and the screen
-// takes that rectangle of the picture. After each frame the screen must be
-// the frame drawn whole. The frames are those of the terminal: a grid that
-// scrolls, bars of the graph that come and go, a thumb that moves.
+// draws the changed rectangles and the debt of its own picture, presents a
+// rectangle, and the screen takes that rectangle of the picture. After each
+// frame the screen must be the frame drawn whole. The frames are those of
+// the terminal: a grid that scrolls, bars of the graph that come and go, a
+// thumb that moves. Some frames repeat the frame before, some lose their
+// Present, and one frame in 50 has a new font: no picture is known.
 @(test)
 two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 	WIDTH :: 120
@@ -949,67 +964,99 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 		return {pixels = raw_data(pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
 	}
 	cells: [ROWS * COLUMNS]Text_Grid_Cell
-	copies: [2][ROWS * COLUMNS]Text_Grid_Cell
-	records_now: [64]Draw_Record
-	records_before: [2][64]Draw_Record
-	text_now: [256]u8
-	text_before: [2][256]u8
+	copies: [ROWS * COLUMNS]Text_Grid_Cell
+	records_now, records_before: [64]Draw_Record
+	text_now, text_before: [256]u8
 	grids_now := [1]Text_Grid{{cells = cells[:], columns = COLUMNS, rows = ROWS, stride = COLUMNS}}
-	grids_before := [2][1]Text_Grid{{{cells = copies[0][:]}}, {{cells = copies[1][:]}}}
+	grids_before := [1]Text_Grid{{cells = copies[:]}}
 	now := Draw_Table{records = records_now[:], text = text_now[:], grids = grids_now[:]}
-	before := [2]Draw_Table{{records = records_before[0][:], text = text_before[0][:], grids = grids_before[0][:]}, {records = records_before[1][:], text = text_before[1][:], grids = grids_before[1][:]}}
-	drawn: [2]bool
+	before := Draw_Table{records = records_before[:], text = text_before[:], grids = grids_before[:]}
+	surface := Rectangle{0, 0, WIDTH, HEIGHT}
+	debts: Picture_Debts
+	drawn := false // The table before is the last frame that was presented.
 	picture := 0
 	seed: u32 = 7
-	for frame in 0 ..< 200 {
-		// The frame: bars, the grid, a thumb.
+	presented_frames, lost_presents, frames_with_no_present := 0, 0, 0
+	// Pixels that no frame draws: a picture that the rule takes for known
+	// while it is not shows them.
+	for &pixels in pictures {
+		for &pixel in pixels {
+			pixel = 0xFF00FF
+		}
+	}
+	for frame in 0 ..< 400 {
+		seed = seed * 1103515245 + 12345
+		chance := int(seed >> 16) % 16
+		// The frame: bars, the grid, a thumb. One frame in 16 is the frame
+		// before again.
+		step := frame
+		if chance == 0 && frame > 0 {
+			step = frame - 1
+		}
 		draw_table_clear(&now)
+		bars := u32(step) * 2654435761
 		for bar in 0 ..< 6 {
-			seed = seed * 1103515245 + 12345
-			draw_rectangle(&now, bar * 6, 0, 5, int(seed >> 16) % 3 * 4, 0x30A050)
+			draw_rectangle(&now, bar * 6, 0, 5, int(bars >> uint(bar * 3)) % 3 * 4, 0x30A050)
 		}
 		for &cell, index in cells {
-			cell = {character = u8('a' + (index / COLUMNS + frame * 3) % 26), reverse = (index + frame) % 17 == 0, color = 0xE0E0E0}
-			if (index + frame) % 5 == 0 {
+			cell = {character = u8('a' + (index / COLUMNS + step * 3) % 26), reverse = (index + step) % 17 == 0, color = 0xE0E0E0}
+			if (index + step) % 5 == 0 {
 				cell.character = 0
 			}
 		}
 		draw_text_grid(&now, 4, 16, 0)
-		draw_rectangle(&now, 110, 16 + frame * 7 % 60, 6, 13, 0x5080C0)
-		draw_text(&now, 4, 100, frame % 2 == 0 ? "line 12" : "line 3", 0xFFFFFF)
+		draw_rectangle(&now, 110, 16 + step * 7 % 60, 6, 13, 0x5080C0)
+		draw_text(&now, 4, 100, step % 2 == 0 ? "line 12" : "line 3", 0xFFFFFF)
+		if frame % 50 == 49 {
+			debts = {} // A new font: draw_whole_window_next.
+		}
 
 		// The reference: the frame drawn whole.
 		graphics.clear(canvas_of(&whole), graphics.COLOR_BACKGROUND)
 		execute(&now, canvas_of(&whole))
 
 		// The frame as window_frame_end draws it.
-		own := &before[picture]
-		canvas := canvas_of(&pictures[picture])
-		present: Rectangle
-		if !drawn[picture] {
-			graphics.clear(canvas, graphics.COLOR_BACKGROUND)
-			execute(&now, canvas)
-			present = {0, 0, WIDTH, HEIGHT}
+		changed: Damage
+		if drawn && !before.full {
+			damage_by_difference(&before, &now, &changed)
 		} else {
-			draw, presented: Damage
-			damage_of_two_pictures(own, &before[1 - picture], drawn[1 - picture], &now, {0, 0, WIDTH, HEIGHT}, &draw, &presented)
-			draw_damage_on_surface(&now, canvas, draw.rectangles[:draw.count])
-			present = intersection(damage_bounds(&presented), {0, 0, WIDTH, HEIGHT})
+			debts = {}
 		}
-		testing.expect(t, draw_table_copy(own, &now))
-		drawn[picture] = true
-		for y in present.top ..< present.bottom {
-			for x in present.left ..< present.right {
+		draw, present: Damage
+		damage_of_picture(&debts, picture, &changed, surface, &draw, &present)
+		if present.count == 0 {
+			frames_with_no_present += 1
+			testing.expectf(t, screen == whole, "frame %d: nothing is presented, and the screen is not the frame", frame)
+			drawn = draw_table_copy(&before, &now)
+			continue
+		}
+		draw_damage_on_surface(&now, canvas_of(&pictures[picture]), draw.rectangles[:draw.count])
+		testing.expectf(t, pictures[picture] == whole, "frame %d: the picture %d is not the frame", frame, picture)
+		// One Present in 16 is lost: the screen and the canvas stay.
+		sent := chance != 1
+		picture_debts_after(&debts, picture, &changed, sent)
+		if !sent {
+			lost_presents += 1
+			drawn = false
+			continue
+		}
+		presented_frames += 1
+		bounds := intersection(damage_bounds(&present), surface)
+		for y in bounds.top ..< bounds.bottom {
+			for x in bounds.left ..< bounds.right {
 				screen[y * WIDTH + x] = pictures[picture][y * WIDTH + x]
 			}
 		}
-		testing.expectf(t, pictures[picture] == whole, "frame %d: the picture %d is not the frame", frame, picture)
 		if screen != whole {
 			testing.expectf(t, false, "frame %d: the screen is not the frame", frame)
 			return
 		}
+		drawn = draw_table_copy(&before, &now)
+		testing.expect(t, drawn)
 		picture = 1 - picture
 	}
+	// The run had each case.
+	testing.expectf(t, presented_frames > 200 && lost_presents > 0 && frames_with_no_present > 0, "the run must have each case: %d frames presented, %d Present lost, %d frames with no Present", presented_frames, lost_presents, frames_with_no_present)
 }
 
 @(private = "file")
@@ -1478,24 +1525,28 @@ clip_that_changes_kind :: proc(t: ^testing.T) {
 	testing.expect(t, screen_after_damage(&before, &now), "the second of two clips changes")
 }
 
-// The table of the shown picture is not known, and the shown frame had a
-// record that the frame now does not have, far from each record of now:
-// the present covers it, because it is the whole surface.
+// The picture on the screen is not known: it can show a record that the
+// frame now does not have, far from each changed rectangle. The present
+// covers it, because it is the whole surface. The picture that the program
+// draws is known, and draws its changed rectangle only.
 @(test)
-two_pictures_unknown_shown_table_presents_all :: proc(t: ^testing.T) {
-	records_own, records_shown, records_now: [4]Draw_Record
-	own := Draw_Table{records = records_own[:]}
-	shown := Draw_Table{records = records_shown[:]}
-	now := Draw_Table{records = records_now[:]}
-	draw_rectangle(&own, 0, 0, 10, 10, 0xFF0000)
-	draw_rectangle(&shown, 0, 0, 10, 10, 0xFF0000)
-	draw_rectangle(&shown, 200, 150, 20, 20, 0x00FF00) // Only the shown frame has it.
-	draw_rectangle(&now, 0, 0, 10, 10, 0xFF0000)
+two_pictures_unknown_shown_picture_presents_all :: proc(t: ^testing.T) {
+	surface := Rectangle{0, 0, 320, 200}
+	debts := Picture_Debts{known = {true, false}}
+	changed: Damage
+	damage_add(&changed, {0, 0, 10, 10})
 	draw, present: Damage
-	damage_of_two_pictures(&own, &shown, false, &now, {0, 0, 320, 200}, &draw, &present)
-	testing.expect_value(t, draw.count, 0)
-	bounds := damage_bounds(&present)
-	testing.expect(t, bounds.left <= 200 && bounds.top <= 150 && bounds.right >= 220 && bounds.bottom >= 170, "the record that only the shown frame had is presented")
+	damage_of_picture(&debts, 0, &changed, surface, &draw, &present)
+	testing.expect_value(t, draw.count, 1)
+	testing.expect_value(t, draw.rectangles[0], Rectangle{0, 0, 10, 10})
+	testing.expect_value(t, present.count, 1)
+	testing.expect_value(t, present.rectangles[0], surface)
+	// No picture is known: the first frame of a window.
+	debts = {}
+	changed = {}
+	damage_of_picture(&debts, 0, &changed, surface, &draw, &present)
+	testing.expect_value(t, draw.rectangles[0], surface)
+	testing.expect_value(t, present.rectangles[0], surface)
 }
 
 // Each edge of a record is cut to COORDINATE_LIMIT, then the size is the
@@ -1546,14 +1597,156 @@ grid_numbers_that_wrap_are_refused :: proc(t: ^testing.T) {
 	testing.expect(t, table.refused && !table.full && table.record_count == 0)
 }
 
+// The procedures of window_frame_end itself, on a window in plain memory:
+// the gate, the changes, the show. The test is the compositor: it takes
+// the records of the ring of the window and copies the rectangle of each
+// Present from the picture that the record names to a screen. After each
+// Present that it takes, the screen must be the frame drawn whole.
+//
+// The frames: 12 squares apart, more than a damage holds. One square
+// changes, or each one. Some frames find a compositor that did not take
+// the picture before and are left out; some lose their Present to a full
+// ring; some have more records than their table holds.
+@(test)
+window_frame_end_shows_each_frame_whole :: proc(t: ^testing.T) {
+	WIDTH :: 96
+	HEIGHT :: 96
+	SQUARES :: 12
+	Pixels :: [WIDTH * HEIGHT]graphics.Color
+	pictures: [2]Pixels
+	screen, whole, presented_whole: Pixels
+	canvas_of :: proc(pixels: ^Pixels) -> graphics.Canvas {
+		return {pixels = raw_data(pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	}
+	// Pixels that no frame draws: a picture that the rule takes for known
+	// while it is not shows them.
+	for &pixels in pictures {
+		for &pixel in pixels {
+			pixel = 0xFF00FF
+		}
+	}
+	counters: ring.Counters
+	ring_records: [8]ring.Record
+	window: display.Window
+	window.ring.commands = {counters = &counters, records = raw_data(ring_records[:]), mask = 7}
+	window.pictures = {canvas_of(&pictures[0]), canvas_of(&pictures[1])}
+	window.canvas = window.pictures[0]
+	records_now, records_before: [32]Draw_Record
+	text_now, text_before: [64]u8
+	drawing := window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	colors: [SQUARES]graphics.Color
+	palette := [3]graphics.Color{0x30A050, 0x5080C0, 0xE0E0E0}
+	seed: u32 = 11
+	waits := false // A Present is in the ring: the compositor did not take it.
+	presents_taken, left_out, lost, full_tables, wide_changes, one_square := 0, 0, 0, 0, 0, 0
+	for frame in 0 ..< 800 {
+		seed = seed * 1103515245 + 12345
+		chance := int(seed >> 16) % 16
+		// The compositor takes the records of the ring, unless it is late
+		// for this frame.
+		late := chance == 0 && waits
+		if !late {
+			for {
+				record := ring.pop(&window.ring.commands) or_break
+				if display.Command(record.kind) != .Present {
+					continue
+				}
+				from := &pictures[int(record.values[0])]
+				left, top, width, height := int(record.values[1]), int(record.values[2]), int(record.values[3]), int(record.values[4])
+				if width == 0 {
+					width, height = WIDTH - left, HEIGHT - top
+				}
+				for y in top ..< top + height {
+					for x in left ..< left + width {
+						screen[y * WIDTH + x] = from[y * WIDTH + x]
+					}
+				}
+				presents_taken += 1
+				if screen != presented_whole {
+					testing.expectf(t, false, "frame %d: the screen is not the frame that the Present before it showed", frame)
+					return
+				}
+			}
+			waits = false
+		}
+
+		// The frame.
+		changed_squares := 0
+		if chance >= 12 {
+			square := frame % SQUARES
+			colors[square] = palette[(int(seed >> 8) + 1) % 3] == colors[square] ? palette[int(seed >> 8) % 3] : palette[(int(seed >> 8) + 1) % 3]
+			changed_squares = 1
+			one_square += 1
+		} else {
+			for &color, index in colors {
+				next := palette[int(seed >> uint(index)) % 3]
+				changed_squares += int(next != color)
+				color = next
+			}
+		}
+		if changed_squares > DAMAGE_CAPACITY {
+			wide_changes += 1
+		}
+		draw_table_clear(&drawing.now)
+		for color, index in colors {
+			draw_rectangle(&drawing.now, index % 4 * 24 + 4, index / 4 * 24 + 4, 8, 8, color)
+		}
+		if chance == 2 {
+			// More records than the table holds: the table is full.
+			for _ in 0 ..< len(records_now) {
+				draw_rectangle(&drawing.now, 90, 90, 2, 2, 0xFFFFFF)
+			}
+			testing.expect(t, drawing.now.full)
+			full_tables += 1
+		}
+		graphics.clear(canvas_of(&whole), graphics.COLOR_BACKGROUND)
+		execute(&drawing.now, canvas_of(&whole))
+
+		if late {
+			// The compositor did not take the picture before, and the
+			// bound of the wait passed at an earlier frame.
+			window.compositor_late = true
+			testing.expectf(t, !window_frame_gate(&drawing, &window), "frame %d: the canvas is not free, and the frame is drawn", frame)
+			testing.expect(t, drawing.late)
+			left_out += 1
+			continue
+		}
+		if chance == 1 {
+			// A full ring: the Present of this frame is lost.
+			for ring.push(&window.ring.commands, ring.Record{}) {
+			}
+		}
+		if !window_frame_gate(&drawing, &window) {
+			testing.expectf(t, false, "frame %d: the canvas is free, and the frame is left out", frame)
+			return
+		}
+		changes := window_frame_changes(&drawing, &window)
+		window_frame_show(&drawing, &window, &changes)
+		if changes.present.count == 0 {
+			testing.expectf(t, screen == whole, "frame %d: nothing is presented, and the screen is not the frame", frame)
+			continue
+		}
+		testing.expectf(t, pictures[changes.picture] == whole, "frame %d: the picture %d is not the frame", frame, changes.picture)
+		if chance == 1 {
+			testing.expectf(t, !drawing.drawn && window.picture == changes.picture, "frame %d: a lost Present keeps the canvas, and the frame is not the last table", frame)
+			lost += 1
+			continue
+		}
+		testing.expectf(t, window.picture == 1 - changes.picture, "frame %d: a Present changes the canvas to the other picture", frame)
+		waits = true
+		presented_whole = whole
+	}
+	testing.expectf(t, presents_taken > 400 && left_out > 0 && lost > 0 && full_tables > 0 && wide_changes > 0 && one_square > 0, "the run must have each case: %d Present taken, %d frames left out, %d Present lost, %d full tables, %d frames with more changes than a damage holds, %d frames with one square", presents_taken, left_out, lost, full_tables, wide_changes, one_square)
+}
+
 // A new font makes the next frame of each picture whole: with two pictures,
 // the second one must not keep text in the old font.
 @(test)
 whole_window_next_forgets_each_picture :: proc(t: ^testing.T) {
 	drawing: Window_Drawing
-	drawing.drawn, drawing.drawn_second = true, true
+	drawing.debts.known = {true, true}
 	draw_whole_window_next(&drawing)
-	testing.expect(t, !drawing.drawn && !drawing.drawn_second)
+	testing.expect(t, !drawing.debts.known[0] && !drawing.debts.known[1])
 }
 
 // The records of a table as a list of their texts: has_text says if one

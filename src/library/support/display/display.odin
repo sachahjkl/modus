@@ -5,11 +5,13 @@
 // the surface are memory that the program creates and grants to the
 // compositor. No pixel goes through the ring or through the kernel.
 //
-// The memory of a surface has one picture or two. With one picture, the
-// compositor can read the picture while the program draws: the screen can
-// show a part of the new picture with a part of the old one. With two
-// pictures, the program draws one while the compositor reads the other,
-// and Present names the picture that is complete.
+// The memory of a surface has two pictures. The program draws one while
+// the compositor reads the other, and Present names the picture that is
+// complete: the screen never shows a picture that is being drawn. After a
+// Present, `window.canvas` is the other picture, which holds the frame of
+// two frames before: a program that draws by hand draws the whole canvas.
+// The program draws only when the compositor took the last Present
+// (`canvas_free`, `canvas_wait`).
 //
 // Who uses it: each program with a window (`open`, `next_event`,
 // `present`), the compositor (the other side of the ring, and the rings
@@ -23,15 +25,19 @@
 // 	for event in display.next_event(&window) {
 // 		// ... the keys and the pointer ...
 // 	}
-// 	// ... draw in window.canvas ...
-// 	display.present(&window)
+// 	if display.canvas_wait(&window) {
+// 		// ... draw the whole of window.canvas ...
+// 		display.present(&window)
+// 	}
 // 	display.wait(&window)
 // }
 // ```
 //
-// See [surface](term:surface) and [compositor](term:compositor).
+// See [surface](term:surface), [whole frame](term:whole-frame) and
+// [compositor](term:compositor).
 package display
 
+import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:support/graphics"
 import "modus:contract/ring"
@@ -128,10 +134,11 @@ Window :: struct {
 	ring:        ring.Ring, // The ring, mapped.
 	surface:     system.Handle, // The memory of the pixels of the surface.
 	canvas:      graphics.Canvas, // Where the program draws now.
-	pictures:    [2]graphics.Canvas, // The two pictures; the second is empty with one picture.
+	pictures:    [2]graphics.Canvas, // The two pictures of the surface.
 	picture:     int, // The index of canvas in pictures.
-	two:         bool, // The surface has two pictures.
 	presented:   u32, // The count of commands after the last Present.
+	wake_when_free: bool, // canvas_free said no: wait_events also ends when the compositor has read the ring.
+	compositor_late: bool, // The compositor did not take a picture within the bound: canvas_wait waits no more until it does.
 	// The measure of the time of a picture (docs/DESIGN.md, section 7):
 	// picture_begin marks the start, present the end; in a measure run the
 	// log has their mean after 1, 3 and 10 pictures.
@@ -168,16 +175,14 @@ picture_end :: proc "contextless" (window: ^Window) {
 	window.picture_started = 0
 }
 
-// open creates a surface and shows it. The program draws in window.canvas,
-// then calls present.
-// With two_pictures, present changes window.canvas to the other picture:
-// the program draws each picture from nothing, and it calls canvas_free
-// before it draws.
+// open creates a surface of two pictures and shows it. The program draws in
+// window.canvas, then calls present, which changes window.canvas to the
+// other picture. The compositor shows the surface after the first present.
 //
 // error: the record of a failure, if the caller gives one. The record of a
 // kernel operation that failed has its operation; a record of open itself
 // has the operation 0 and the arguments of OPEN_ARGUMENTS (error_text).
-open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: string, two_pictures := false, error: ^errors.Error_Record = nil) -> (window: Window, ok: bool) {
+open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: string, error: ^errors.Error_Record = nil) -> (window: Window, ok: bool) {
 	window.ring_memory = ctx.handles[system.GRANT_DISPLAY]
 	switch {
 	case window.ring_memory == 0:
@@ -200,7 +205,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 		return {}, false
 	}
 	address: rawptr
-	pages := (u64(width * height * size_of(graphics.Color) * (two_pictures ? 2 : 1)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	pages := (u64(width * height * size_of(graphics.Color) * PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	window.surface, status = system.memory_create(pages, error = error)
 	if status != .Ok {
 		return {}, false
@@ -209,7 +214,6 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	if status != .Ok {
 		return {}, false
 	}
-	window.two = two_pictures
 	window.title_count = copy(window.title[:], title)
 	for &picture, index in window.pictures {
 		picture = {pixels = ([^]graphics.Color)(address)[index * width * height:], width = width, height = height, stride = width}
@@ -241,7 +245,12 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 // The names of the arguments of open, for the sentence of a record that
 // open wrote: system.wrapper_error_text(writer, &error, "display.open", display.OPEN_ARGUMENTS[:]).
 @(rodata)
-OPEN_ARGUMENTS := [?]string{"ctx", "width", "height", "title", "two_pictures"}
+OPEN_ARGUMENTS := [?]string{"ctx", "width", "height", "title"}
+
+// The pictures of a surface: the one that the compositor reads and the one
+// that the program draws. The compositor refuses a surface with less
+// memory.
+PICTURE_COUNT :: 2
 
 // present tells the compositor that the picture in window.canvas is
 // complete. It gives false when the command ring was full: the compositor
@@ -251,21 +260,21 @@ present :: proc "contextless" (window: ^Window) -> bool {
 }
 
 // present_rectangle tells the compositor that the picture in window.canvas
-// is complete, and that only one rectangle of it changed: the compositor
-// draws again only that part of the window. A width of 0 is the whole
-// surface. It gives false when the command ring was full: the compositor
-// did not get the present, and with two pictures the canvas stays the same.
+// is complete, and that only one rectangle of the screen differs from it:
+// the compositor draws again only that part of the window. A width of 0 is
+// the whole surface. After it, window.canvas is the other picture: draw in
+// it only when canvas_free or canvas_wait says yes. It gives false when the
+// command ring was full: the compositor did not get the present, and the
+// canvas stays the same.
 present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: int) -> bool {
 	picture_end(window)
 	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0))}}
 	if !system.send(&window.ring.commands, record) {
 		return false
 	}
-	if window.two {
-		window.presented = window.ring.commands.counters.write
-		window.picture = 1 - window.picture
-		window.canvas = window.pictures[window.picture]
-	}
+	window.presented = window.ring.commands.counters.write
+	window.picture = 1 - window.picture
+	window.canvas = window.pictures[window.picture]
 	return true
 }
 
@@ -279,11 +288,103 @@ pointer_shape_set :: proc "contextless" (window: ^Window, shape: pointer_picture
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Pointer_Shape), values = {0 = u64(shape)}})
 }
 
-// canvas_free says if the program can draw in window.canvas. With two
-// pictures, the compositor reads the other picture only after it took the
-// last Present: until then, it can still read this one.
+// canvas_free says if the program can draw in window.canvas. The compositor
+// reads the other picture only after it took the last Present: until then,
+// it can still read this one. A program that must never wait asks it
+// before it builds a frame. After a no, wait_events also ends when the
+// compositor has read the ring of the window: the program asks again.
 canvas_free :: proc "contextless" (window: ^Window) -> bool {
-	return !window.two || i32(window.ring.commands.counters.read - window.presented) >= 0
+	free := compositor_took_the_last_present(window)
+	window.wake_when_free = !free
+	if free {
+		window.compositor_late = false
+	}
+	return free
+}
+
+// compositor_took_the_last_present reads the count of the records that the
+// compositor read from the ring of the window.
+@(private)
+compositor_took_the_last_present :: proc "contextless" (window: ^Window) -> bool {
+	return i32(intrinsics.atomic_load_explicit(&window.ring.commands.counters.read, .Relaxed) - window.presented) >= 0
+}
+
+// The bound of canvas_wait, in milliseconds. It is not the time that a
+// picture takes: the compositor takes a Present in one turn of its loop.
+// It only ends a wait for a compositor that does not read at all, so it is
+// the hang bound of a check, the same for each host
+// (docs/TOOLS.md, "The bounds of the tests").
+CANVAS_WAIT_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+
+// canvas_wait waits until the program can draw in window.canvas: until the
+// compositor took the last Present. The thread waits on the count of the
+// records that the compositor read; the compositor wakes it. true: draw.
+//
+// false: the compositor did not take the Present within the bound. The
+// program draws nothing in this turn. The log has one line, and the next
+// calls give false at once, with no wait, until the compositor reads
+// again: a compositor that does not read costs a program one bound.
+//
+// One thread owns a window: the flag of the ring that this wait sets is
+// cleared after the wait, so a second thread that waits on the same window
+// would lose its wake.
+canvas_wait :: proc "contextless" (window: ^Window) -> bool {
+	if canvas_free(window) {
+		return true
+	}
+	if window.compositor_late {
+		return false
+	}
+	started := system.nanoseconds()
+	deadline := system.time() + CANVAS_WAIT_BOUND_MILLISECONDS
+	free := false
+	for {
+		list: system.Wait
+		canvas_event_wait(&list, window)
+		now := system.wait_end(&list, deadline)
+		free = canvas_free(window)
+		if free || now >= deadline {
+			break
+		}
+	}
+	// The wait for the compositor is not a part of the time of a picture.
+	if window.picture_started != 0 {
+		window.picture_started += system.nanoseconds() - started
+	}
+	if !free {
+		window.compositor_late = true
+		system.log_in("programs", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor did not take a picture in ", u64(CANVAS_WAIT_BOUND_MILLISECONDS), " ms: this window draws no picture until it does")
+	}
+	return free
+}
+
+// canvas_event_wait adds to a wait list the event of the surface: the
+// compositor read a record of the ring of the window.
+//
+// The list waits while the count of the records read holds the value that
+// this procedure read, and only when that value says "not free". The
+// compositor adds 1 to the count for each record of any kind, so each
+// record that it takes after this read ends the wait: the thread then asks
+// again. The wait is on a value that was read, never on a value that is
+// computed: a computed value can come true when the compositor takes a
+// record more, and the thread then sleeps with no wake to come.
+//
+// When the canvas is free at this read, no word is added: the list is
+// marked full, which ends the wait at once with no kernel entry. The mark
+// of the "no" is cleared: one "no" of canvas_free gives one wake, so a
+// program that does not ask again does not turn with no sleep.
+@(private)
+canvas_event_wait :: proc "contextless" (list: ^system.Wait, window: ^Window) {
+	counters := window.ring.commands.counters
+	read := intrinsics.atomic_load_explicit(&counters.read, .Relaxed)
+	if i32(read - window.presented) >= 0 {
+		window.wake_when_free = false
+		list.full = true
+		return
+	}
+	// The flag "the writer waits" of the ring: the compositor enters the
+	// kernel to wake this thread only when it is set (system.wake_writer).
+	system.wait_word(list, &counters.read, read, &counters.writer_waits)
 }
 
 // wait stops the thread until the window has an input event, or until the
@@ -294,9 +395,14 @@ wait :: proc "contextless" (window: ^Window, deadline: u64 = system.WAIT_FOREVER
 	return system.wait_end(&list, deadline)
 }
 
-// wait_events adds the input events of the window to a wait list.
+// wait_events adds the input events of the window to a wait list, and,
+// after canvas_free said no, the event of the surface: the wait also ends
+// when the compositor has read the ring of the window.
 wait_events :: proc "contextless" (list: ^system.Wait, window: ^Window) {
 	system.wait_records(list, &window.ring.completions)
+	if window.wake_when_free {
+		canvas_event_wait(list, window)
+	}
 }
 
 // next_event gives the next input event of the window, if there is one.

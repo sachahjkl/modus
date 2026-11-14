@@ -116,7 +116,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// has room for three under TIME_TOP.
 	timing: [192]u8
 	interface.draw_text_wrapped(frame.table, content.x, content.y + TIME_TOP, content.width, system.format(timing[:], "one line of ", u64(len(PARAGRAPH[1])), " characters: shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; caches of ", u64(regular_cache.header.file_size), " and ", u64(bold_cache.header.file_size), " bytes, from the boot image"), graphics.COLOR_DIM)
-	interface.window_frame_end(&drawing, &frame, window)
+	// The lines below are drawn by hand over the frame, in the same
+	// picture of the surface, before the present.
+	if !interface.window_frame_end_without_present(&drawing, &frame, window) {
+		return
+	}
 
 	canvas := window.canvas
 	x := i64(content.x) * 64

@@ -493,6 +493,7 @@ debug_variables_encode :: proc(parts: ^debug_object.Encode_Parts, names: ^Debug_
 			return fmt.tprintf("the name of the variable %s does not fit the variable table", first.name)
 		}
 		append(&variable_table, debug_object.Variable{name_offset = debug_name_add(names, first.name), name_count = u16(len(first.name)), role = first.role, type = u32(first.type), first_range = u32(len(range_table))})
+		first_range := len(range_table)
 		for item in merged {
 			start := item.start
 			for start < item.end {
@@ -501,6 +502,13 @@ debug_variables_encode :: proc(parts: ^debug_object.Encode_Parts, names: ^Debug_
 				start += size
 			}
 		}
+		// A range longer than the size limit is several records. The later
+		// records of one start after the next range of the variable when
+		// the two overlap: the records of a variable are in the order of
+		// their start, so they are put in that order after the cut.
+		slice.stable_sort_by(range_table[first_range:], proc(a, b: debug_object.Variable_Range) -> bool {
+			return a.start < b.start
+		})
 		at = group_end
 	}
 	parts.variables = variable_table[:]
@@ -779,6 +787,14 @@ debug_path :: proc(directory, name: string, root: string) -> string {
 	for strings.has_prefix(path, "./") {
 		path = path[2:]
 	}
+	// A source of a module whose source is outside the repository: the
+	// path from the folder that holds the folder of the module, so the
+	// name of that folder and no folder above it
+	// (src/md/infrastructure/third_party_module.md). This comes before the
+	// root: the folder of such a module can be inside the repository.
+	if recorded, is_outside := outside_source_path(path, outside_source_folder); is_outside {
+		return recorded
+	}
 	if root != "" && strings.has_prefix(path, join(root, "/")) {
 		return path[len(root) + 1:]
 	}
@@ -820,6 +836,13 @@ debug_object_host_path :: proc(object: []u8) -> string {
 	}
 	if root, error := os.get_working_directory(context.temp_allocator); error == nil && len(root) > 1 && strings.contains(string(object), root) {
 		return fmt.tprintf("its bytes hold the folder of the build, %s", root)
+	}
+	// The folder above the folder of a module whose source is outside the
+	// repository is a path of the computer of its developer.
+	if outside := outside_source_folder; outside != "" {
+		if above := outside[:strings.last_index_byte(outside, '/') + 1]; len(above) > 1 && strings.contains(string(object), above) {
+			return fmt.tprintf("its bytes hold the folder above the folder of the module, %s", above)
+		}
 	}
 	return ""
 }

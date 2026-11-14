@@ -401,7 +401,7 @@ the_context: ^system.Context
 // refuses it before any kernel operation.
 case_display_open :: proc "contextless" (writer: ^system.Writer) -> bool {
 	error: errors.Error_Record
-	if _, opened := display.open(the_context, 0, 100, "zero", false, &error); opened {
+	if _, opened := display.open(the_context, 0, 100, "zero", &error); opened {
 		return false
 	}
 	system.wrapper_error_text(writer, &error, "display.open", display.OPEN_ARGUMENTS[:])

@@ -751,8 +751,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	for {
-		draw(window.canvas)
-		display.present(&window)
+		// The canvas is the picture that the compositor does not read,
+		// after it took the picture before: the whole canvas is drawn.
+		if display.canvas_wait(&window) {
+			draw(window.canvas)
+			display.present(&window)
+		}
 		display.wait(&window)
 		for _ in display.next_event(&window) {
 		}

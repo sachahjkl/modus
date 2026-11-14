@@ -1249,6 +1249,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done: programs, windows, the commands of the console with their arguments, the settings, the prefixes. The palette runs the row that is drawn: the choice is an entry, and a list that arrives late does not move it. Not done: the film; the scheduling strategy, which no command reaches.
 - Where: `DESIGN.md`, section 9; `CONSOLE.md`.
 
+### D-252 Every surface has two pictures: a window shows a whole frame or the frame before it
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: `display.open` always creates two pictures and has no option. The compositor refuses a surface with memory for less than two pictures, shows a surface after its first `Present`, refuses a `Present` that names no picture, and takes from a ring at most the records that it held at the start of the turn. The window layer keeps the debt of each picture. A program waits for the compositor on the read count of its ring, with the hang bound; a service asks and never waits. The cost is the memory of a second picture for each window, paid by the budget of its program: the test machine has 1 GiB.
+- Words: "tout tout faire"
+- State: done. The full check passes. Left: a program that draws only on its own change does not draw a left-out frame again until its next change; no check reads the pixels of the screen.
+- Where: `INTERFACE.md`, section 2.1; `src/md/infrastructure/whole_frame.md`; `FIRST_MILESTONE.md`, choice 751.
+
 ## 10. The console and the tools
 
 ### D-142 The console is a normal program with a real language
@@ -1455,6 +1462,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "il y a pas que nous qui allons produire des modules in fine [...] est-ce que nos changements on devrait pas les garder mais en gros les rendre activables via une option, ou [...] moduler le niveau de [debug] ou le type de debug plutôt que juste dire [debug], comme ça on a un mode spécifique pour Modus"
 - State: done. The full check passes: 89 modules are the same bytes with and without debug information. Not done: the pull request to the Odin project.
 - Where: `REPRODUCIBLE_BUILD.md`, section 8; `MODULE_CONTRACT.md`, "Debug information"; `src/md/infrastructure/debug_information_and_code.md`.
+
+### D-250 A module of another project is built by one command, with the build path of a module of the system
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: `kerneltool module-build <folder>` builds a module from a folder with one Odin package and a module build file `module.txt` (`key: value` lines: `name`, `imports`, `defines`, `library`). The tool moves to the folder of the system (`--system`, then `MODUS_SYSTEM`) and runs the two steps of a module of the system: one build path. A source of an outside module is in its folder, in the source library, or in the libraries of the compiler. The rules of the repository for a comment and a name do not apply to it. Refused: a row of the module table for each developer, a run from the store of Nix, a second compile command.
+- Words: "tout tout faire"
+- State: done. The examples `tally` and `agenda` have the bytes of the modules of the system. Left: an outside module in a machine; an outside module that imports another outside module.
+- Where: `TOOLS.md`, "A module from a source outside the repository"; `MODULE_CONTRACT.md`, "A module of another project"; `src/md/infrastructure/third_party_module.md`; `FIRST_MILESTONE.md`, choice 749.
 
 ## 12. The site and the publication
 
@@ -1766,6 +1780,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "Q14 simple lowkey technical lowercase"; "Q09 ouais pk pas [...] ça fera du lore"
 - State: in force. This settles conflict C-10 and the questions Q-09 and Q-14.
 - Where: D-183.
+
+### D-251 The icons of the site are rows of the table of the mark; the vector icon is the cells variant
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: the table of the uses of the mark holds every icon of the site; the table `site_icons` is gone. The generator writes an icon file, a vector file and an animated PNG file from the pixels that one procedure draws. The variant of an icon follows its cell size: one pixel for a cell is cells, two or more is smooth. The smooth variant as a vector file is refused: its reader computes the colours of a gradient (D-245 refuses a colour that the browser computes), and some pixels differ by one unit. So `icon.svg` is the cells variant, one rectangle for each run of cells of one colour.
+- Words: "tout tout faire"
+- State: done. The bytes of `favicon.ico`, of the four PNG icons and of the manifest did not change.
+- Where: `TOOLS.md`, "The pictures of the mark"; `DESIGN.md`, "The variants of the mark"; `SITE.md`, "The icons"; `src/md/features/mark_pictures.md`; `FIRST_MILESTONE.md`, choice 750.
 
 ## 13. The name and the repository
 

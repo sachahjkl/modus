@@ -260,8 +260,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Mappings), 0, u64(uintptr(&kernel_half)), size_of(op.Mapping_Report))
 		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Mappings), 1, u64(uintptr(&program_half)), size_of(op.Mapping_Report))
-		draw(window.canvas)
-		display.present(&window)
+		// The canvas is the picture that the compositor does not read,
+		// after it took the picture before: the whole canvas is drawn.
+		if display.canvas_wait(&window) {
+			draw(window.canvas)
+			display.present(&window)
+		}
 		if !logged {
 			logged = true
 			system.log("pages: the kernel half: ", kernel_half.pages, " pages in ", kernel_half.run_count, " runs, ", kernel_half.write_execute_pages, " write and execute, ", kernel_half.guard_pages, " guard pages of ", kernel_half.guards_expected)
