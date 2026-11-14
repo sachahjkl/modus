@@ -14,7 +14,7 @@ The guide is [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The window of the debug
 
 ## The chosen form
 
-**A client of the service, as the console is.** The program `debugger_window` has a connection of its own to the service `debugger`, and calls the same exports: `attach`, `threads`, `stack`, `locals`, `source`, `hold`, `release`, `step`, `step_line`, `step_over`, `events`, `detach`. It holds no right over a program. Its grants are the connection to that one service, the boot image for the description of the exports, and the grant to act for the principal.
+**A client of the service, as the console is.** The program `debugger_window` has a connection of its own to the service `debugger`, and calls the same exports: `attach`, `threads`, `stack`, `locals`, `source`, `hold`, `release`, `step`, `step_line`, `step_over`, `events`, `break_at`, `breaks`, `break_remove`, `registers`, `detach`. It holds no right over a program. Its grants are the connection to that one service, the boot image for the description of the exports, and the grant to act for the principal.
 
 **The rows come back as records.** A call of a service gave its caller only the number that the export returns. The call of the system library now also copies the records of a Table result into the memory of the caller, at most those that the memory holds. The console had this code for itself; the window uses the shared form.
 
@@ -38,4 +38,4 @@ The guide is [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The window of the debug
 
 ## State
 
-Built: the window, the shared call that gives the records of a Table result, the test in the machine of the debugger. Left: breakpoints and watches from the window, a click on a row, the registers and the memory of the program, and the sentence of a failure in place of its code.
+Built: the window, the shared call that gives the records of a Table result, a breakpoint at the line of the chosen frame and its removal, the registers of the chosen thread, the test in the machine of the debugger. Left: a watch and a breakpoint at a typed place, a click on a row, the memory of the program, and the sentence of a failure in place of its code.

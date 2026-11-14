@@ -27,6 +27,9 @@
 // - up, down: the thread. page up, page down: the frame.
 // - h: hold the thread. r: let it run. c: let each thread run.
 // - s: one instruction. l: one line. o: one line, over each call.
+// - b: a breakpoint at the source line of the chosen frame. 0 to 3: remove
+//   the breakpoint with that number.
+// - g: the registers of the chosen thread, or its variables again.
 // - d: detach.
 package debugger_window
 
@@ -46,7 +49,7 @@ MARGIN :: 8
 LEFT_WIDTH :: 328
 RIGHT_X :: MARGIN + LEFT_WIDTH + MARGIN
 RIGHT_WIDTH :: WIDTH - RIGHT_X - MARGIN
-KEYS_HEIGHT :: 2 * LINE + 8
+KEYS_HEIGHT :: 3 * LINE + 8
 CARDS_HEIGHT :: HEIGHT - 2 * MARGIN - KEYS_HEIGHT
 SOURCE_HEIGHT :: 264
 LOW_Y :: MARGIN + SOURCE_HEIGHT + MARGIN
@@ -62,6 +65,8 @@ FRAME_ROWS :: 16
 VARIABLE_ROWS :: 16
 SOURCE_ROWS :: 16
 EVENT_ROWS :: 8
+BREAK_ROWS :: 4 // The breakpoints of a program: the debug address registers of a thread.
+REGISTER_ROWS :: 24
 
 // The records of the exports of the service, as its description has them
 // (src/programs/debugger/exports.odin). The program checks at its start
@@ -132,6 +137,20 @@ Event_Row :: struct {
 	line:        i64,
 }
 
+Break_Row :: struct {
+	number:  i64,
+	kind:    [12]u8,
+	address: [20]u8,
+	length:  i64,
+	place:   [160]u8,
+}
+
+Register_Row :: struct {
+	name:  [8]u8,
+	value: [20]u8,
+	about: [128]u8,
+}
+
 // One export of the service that the window calls, and the size of the
 // record of its rows here.
 Export :: enum {
@@ -148,6 +167,10 @@ Export :: enum {
 	Step_Line,
 	Step_Over,
 	Events,
+	Break_At,
+	Breaks,
+	Break_Remove,
+	Registers,
 }
 
 @(rodata)
@@ -165,6 +188,10 @@ export_names := [Export]string {
 	.Step_Line    = "step_line",
 	.Step_Over    = "step_over",
 	.Events       = "events",
+	.Break_At     = "break_at",
+	.Breaks       = "breaks",
+	.Break_Remove = "break_remove",
+	.Registers    = "registers",
 }
 
 @(rodata)
@@ -182,6 +209,10 @@ export_row_sizes := [Export]u32 {
 	.Step_Line    = size_of(Thread_Row),
 	.Step_Over    = size_of(Thread_Row),
 	.Events       = size_of(Event_Row),
+	.Break_At     = size_of(Break_Row),
+	.Breaks       = size_of(Break_Row),
+	.Break_Remove = size_of(Break_Row),
+	.Registers    = size_of(Register_Row),
 }
 
 image: []u8
@@ -213,6 +244,11 @@ variable_count: int
 source_rows: [SOURCE_ROWS]Source_Row
 source_count: int
 event_rows: [EVENT_ROWS]Event_Row
+break_rows: [BREAK_ROWS]Break_Row
+break_count: int
+register_rows: [REGISTER_ROWS]Register_Row
+register_count: int
+registers_shown: bool // The card of the variables shows the registers of the chosen thread.
 scratch_rows: [THREAD_ROWS]Thread_Row // The rows of an export whose rows the window reads again.
 
 records_now, records_before: [2048]interface.Draw_Record
@@ -291,8 +327,18 @@ tables_read :: proc "contextless" () {
 	}
 	thread_count = count
 	thread_chosen = min(thread_chosen, max(thread_count - 1, 0))
+	break_count, register_count = 0, 0
+	if breaks, read := call(.Breaks, nil, bytes_of(break_rows[:])); read {
+		break_count = breaks
+	}
 	if !thread_can_be_read() {
 		return
+	}
+	if registers_shown {
+		of_thread := [1]isolated.Argument{{integer = u64(thread_number())}}
+		if registers, read := call(.Registers, of_thread[:], bytes_of(register_rows[:])); read {
+			register_count = registers
+		}
 	}
 	thread := [1]isolated.Argument{{integer = u64(thread_number())}}
 	if frames, read := call(.Stack, thread[:], bytes_of(frame_rows[:])); read {
@@ -364,6 +410,36 @@ act :: proc "contextless" (export: Export, words: string) {
 	tables_read()
 }
 
+// break_at_the_line puts a breakpoint at the source line of the chosen
+// frame: the place is the path of its file and its line, as `break_at`
+// takes it. A frame with no line has no such place.
+break_at_the_line :: proc "contextless" () {
+	if frame_chosen >= frame_count || frame_rows[frame_chosen].line == 0 {
+		status_set(true, "the chosen frame has no source line: choose a frame with one (page up, page down)")
+		return
+	}
+	buffer: [128]u8
+	place := system.format(buffer[:], system.name_of(frame_rows[frame_chosen].file[:]), ":", frame_rows[frame_chosen].line)
+	rows: [BREAK_ROWS]Break_Row
+	arguments := [1]isolated.Argument{{text = transmute([]u8)place}}
+	if _, ok := call(.Break_At, arguments[:], bytes_of(rows[:])); ok {
+		status_set(false, "a breakpoint at ", place)
+		system.log("debugger_window: a breakpoint at ", place)
+	}
+	tables_read()
+}
+
+// break_remove removes the breakpoint with a number.
+break_remove :: proc "contextless" (number: i64) {
+	rows: [BREAK_ROWS]Break_Row
+	arguments := [1]isolated.Argument{{integer = u64(number)}}
+	if _, ok := call(.Break_Remove, arguments[:], bytes_of(rows[:])); ok {
+		status_set(false, "removed the breakpoint ", number)
+		system.log("debugger_window: removed the breakpoint ", number)
+	}
+	tables_read()
+}
+
 key :: proc "contextless" (event: display.Event) {
 	if !attached {
 		switch {
@@ -409,6 +485,14 @@ key :: proc "contextless" (event: display.Event) {
 		act(.Step_Over, "one line, over each call, of")
 	case event.character == 'd':
 		detach()
+	case event.character == 'b':
+		break_at_the_line()
+	case event.character >= '0' && event.character < '0' + BREAK_ROWS:
+		break_remove(i64(event.character - '0'))
+	case event.character == 'g':
+		registers_shown = !registers_shown
+		tables_read()
+		system.log("debugger_window: the card of the variables shows ", registers_shown ? "the registers" : "the variables", ": ", u64(registers_shown ? register_count : variable_count), " rows")
 	}
 }
 
@@ -486,6 +570,37 @@ draw_program :: proc "contextless" (frame: ^interface.Frame) {
 		shown += 1
 	}
 	rest_line(inside, y, shown, thread_count, "threads")
+	if shown < thread_count {
+		y += LINE
+	}
+	// The breakpoints, under the threads: the number that removes each one,
+	// its kind and the place that named it.
+	y += 8
+	if y + 2 * LINE > inside.height {
+		return
+	}
+	write(inside, 0, y, "BREAKPOINTS", graphics.COLOR_DIM)
+	y += LINE + 4
+	if break_count == 0 {
+		lines(inside, 0, y, inside.width, "none: b puts one at the line of the chosen frame", graphics.COLOR_DIM)
+		return
+	}
+	breaks_shown := 0
+	for &row in break_rows[:break_count] {
+		buffer: [200]u8
+		text := system.format(buffer[:], system.name_of(row.kind[:]), " ", system.name_of(row.place[:]))
+		text_x := 24
+		height := max(interface.text_wrapped_line_count(frame_table, {}, text, inside.width - text_x), 1) * LINE
+		if y + height > inside.height - LINE {
+			break
+		}
+		number: [24]u8
+		write(inside, 0, y, system.format(number[:], row.number), graphics.COLOR_BOOT_PROGRAM)
+		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, graphics.COLOR_TEXT)
+		y += height + 2
+		breaks_shown += 1
+	}
+	rest_line(inside, y, breaks_shown, break_count, "breakpoints")
 }
 
 draw_source :: proc "contextless" (frame: ^interface.Frame) {
@@ -543,7 +658,50 @@ draw_stack :: proc "contextless" (frame: ^interface.Frame) {
 	rest_line(inside, y, shown, frame_count, "frames")
 }
 
+draw_registers :: proc "contextless" (frame: ^interface.Frame) {
+	inside := interface.card(frame, {VARIABLES_X, LOW_Y, VARIABLES_WIDTH, LOW_HEIGHT}, "REGISTERS", "debugger.registers", graphics.COLOR_MACHINE)
+	if register_count == 0 {
+		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : "the thread runs: hold it (h) to read its registers", graphics.COLOR_DIM)
+		return
+	}
+	// Two columns of a name and a value: the registers are many, and each
+	// value has 18 characters.
+	column_width := inside.width / 2
+	rows_of_a_column := (inside.height - LINE) / LINE
+	shown := 0
+	for &row, index in register_rows[:register_count] {
+		column, line := index / max(rows_of_a_column, 1), index % max(rows_of_a_column, 1)
+		if column > 1 {
+			break
+		}
+		write(inside, column * column_width, line * LINE, system.name_of(row.name[:]), graphics.COLOR_DIM)
+		// The value without its leading zeros keeps its column narrow. Its
+		// "0x" stays, dim: a reader knows that the digits are hexadecimal.
+		write(inside, column * column_width + 56, line * LINE, "0x", graphics.COLOR_DIM)
+		write(inside, column * column_width + 72, line * LINE, value_short(system.name_of(row.value[:])), graphics.COLOR_TEXT)
+		shown += 1
+	}
+	rest_line(inside, inside.height - LINE, shown, register_count, "registers")
+}
+
+// value_short gives a hexadecimal value with no zero before its first
+// digit that counts, and no "0x": "0x0000000000403ea2" is "403ea2".
+value_short :: proc "contextless" (value: string) -> string {
+	if len(value) < 3 || value[:2] != "0x" {
+		return value
+	}
+	first := 2
+	for first < len(value) - 1 && value[first] == '0' {
+		first += 1
+	}
+	return value[first:]
+}
+
 draw_variables :: proc "contextless" (frame: ^interface.Frame) {
+	if registers_shown {
+		draw_registers(frame)
+		return
+	}
 	inside := interface.card(frame, {VARIABLES_X, LOW_Y, VARIABLES_WIDTH, LOW_HEIGHT}, "VARIABLES", "debugger.locals", graphics.COLOR_MACHINE)
 	if variable_count == 0 {
 		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : thread_can_be_read() ? "the frame has no variable that the debug object describes" : "the thread runs: it has no variable to read", graphics.COLOR_DIM)
@@ -578,7 +736,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	draw_stack(&frame)
 	draw_variables(&frame)
 	keys := interface.Area{MARGIN + 8, HEIGHT - MARGIN - KEYS_HEIGHT + 8, WIDTH - 2 * MARGIN - 16, KEYS_HEIGHT}
-	lines(keys, 0, 0, keys.width, attached ? "up, down: thread   page up, page down: frame   h: hold   r: let run   c: let each run   s: one instruction   l: one line   o: one line, over each call   d: detach" : "letters, digits and _: the name   backspace: remove a character   enter: attach", graphics.COLOR_DIM)
+	lines(keys, 0, 0, keys.width, attached ? "up, down: thread   page up, page down: frame   h: hold   r: let run   c: let each run   s: one instruction   l: one line   o: one line, over each call   b: a breakpoint at the line of the frame   0 to 3: remove a breakpoint   g: the registers or the variables   d: detach" : "letters, digits and _: the name   backspace: remove a character   enter: attach", graphics.COLOR_DIM)
 	interface.window_frame_end(&drawing, &frame, window)
 }
 

@@ -88,6 +88,23 @@ The tool writes a data disk of the format of the storage service that holds the 
 
 The writer of the tool is checked by the open of the storage service: a host test opens the image with the code that the service uses, and compares each object byte for byte and each hash.
 
+### The grants of a disk program: proposed, not decided
+
+A disk program has no grant. The next step gives the principal a command that grants one. Three choices are open (`docs/DECISIONS.md`, "Open questions for the owner"); this section states the form that is proposed for each, and why.
+
+**What a grant names.** The hash of the file, never its name: `allow(hash, grant)` and `disallow(hash, grant)`, from a caller that acts for the principal. The root service keeps a table of rows, one for each hash: its grants and its budget. A file with another hash, under the same name, has no row. This follows from the rule above: what runs is named by its hash.
+
+**Where the store of a disk program is.** A private store is named today by the name of its program, and a name gives nothing to a disk program. Two forms come from the identity alone, and both have a fault:
+
+- the store has the name of the program: two different files with one name share a store, and a file that takes a name takes the data of another;
+- the store has the hash of the file: a new version of a program has another hash, and loses its data.
+
+The proposed form: the principal names the store in the grant, `allow(hash, "store", "my_notes")`. The store is then an object that the principal owns and lends: the same store goes to the next version of a program by one more command, and to no file that the principal did not name. No rule derives a store from a name or from a hash.
+
+**How long a row lasts.** Proposed: a row lasts until the machine stops, in the memory of the root service. A row that survives a start is a file that the root service reads before the principal unlocked a store, and that a reader of the disk can change: it needs the encrypted stores of a principal first.
+
+**The grants that no command gives.** A disk program never gets the ring of the root service, a right over the machine or a device, the right to debug, or the right to act for the principal: each one is the whole machine, or the principal.
+
 ## Refused forms
 
 - **The command gives a name only, and the entry gives the hash.** The storage service then chooses what runs. The check of the root service would compare the bytes with a hash that the same party gave: it finds damage, not a changed file.

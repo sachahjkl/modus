@@ -142,10 +142,10 @@ The limit: the examples are copies inside the folder of the build. A folder on a
 
 ## Built and left
 
-Built: the command `module-build`, the module build file, the three settings of the process (the folder of the outputs, the folder of the imports, the folder of the outside source), the rule of the three places, the path of an outside source in a debug object, the variable `MODUS_SYSTEM` in the command of the flake and a development shell with the build tools and no hook of the repository, the proof with two examples.
+Built: a machine that runs the module (the command `program-disk` writes a data disk whose store of the programs holds module files, and the root service starts a disk program by its hash, with no grant: the boot image, its system description and its build record do not change); the command `module-build`, the module build file, the three settings of the process (the folder of the outputs, the folder of the imports, the folder of the outside source), the rule of the three places, the path of an outside source in a debug object, the variable `MODUS_SYSTEM` in the command of the flake and a development shell with the build tools and no hook of the repository, the proof with two examples.
 
 Left:
 
-- **A machine that runs the module.** The console loads a module from the boot image only. The tool does not put an outside module in the boot image of a volume: a boot volume has a system description, a debug image and a build record that each list the modules of the table. The roadmap holds this work. The load of a program from a disk is another path to the same end.
+- **The debug object of the module in a machine.** A machine runs the module from a disk (below), and the debug image of the machine has no debug object for it: a stop report of the module shows addresses, and the debugger shows no line. The roadmap holds this work.
 - **An import of another outside module.** An import names a module of the system. A developer with a library module and a program of their own needs a second place for the file of an import. The roadmap holds this work.
 - **A module in another language.** The description of the exports comes from the Odin source.

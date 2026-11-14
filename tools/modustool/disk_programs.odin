@@ -293,15 +293,21 @@ disk_programs_tests_run :: proc() -> bool {
 	module_file := read_file(module_path(DISK_PROGRAM_MODULE)) or_return
 	changed_file := slice.clone(module_file, context.temp_allocator)
 	changed_file[len(changed_file) - 1] ~= 0x01
-	files := [?]Program_File{{DISK_PROGRAM_MODULE, module_file}, {"changed", changed_file}, {"notes", module_file}}
+	// A module of another project: built from a folder outside the
+	// sources, under a name that the boot image does not have.
+	outsider_file := outside_program_for_a_disk() or_return
+	files := [?]Program_File{{DISK_PROGRAM_MODULE, module_file}, {"changed", changed_file}, {"notes", module_file}, {OUTSIDE_DISK_PROGRAM, outsider_file}}
 	program_disk_write(TEST_DISK_PROGRAMS_DISK, files[:]) or_return
-	hash_digits, changed_digits: [disk_program.HASH_DIGITS]u8
+	hash_digits, changed_digits, outsider_digits: [disk_program.HASH_DIGITS]u8
+	disk_program.hash_write(&outsider_digits, blake3.hash(outsider_file))
 	disk_program.hash_write(&hash_digits, blake3.hash(module_file))
 	disk_program.hash_write(&changed_digits, blake3.hash(changed_file))
 	// The machine test frees the temporary memory after each step: the
 	// texts of the steps stay.
 	hash := fmt.aprintf("%s", string(hash_digits[:]))
 	changed_hash := fmt.aprintf("%s", string(changed_digits[:]))
+	outsider_hash := fmt.aprintf("%s", string(outsider_digits[:]))
+	defer delete(outsider_hash)
 	defer delete(hash)
 	defer delete(changed_hash)
 	steps := make([dynamic]Step)
@@ -309,7 +315,7 @@ disk_programs_tests_run :: proc() -> bool {
 	// The storage service takes the disk of the tool before or after the
 	// console has its window: the system fixes no order, so neither wait
 	// moves the place of the log.
-	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 3 objects", any_order = true})
+	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 4 objects", any_order = true})
 	append(&steps, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
 	append(&steps, Step{kind = .Front, text = "console"})
 	append(&steps, Step{kind = .Type, text = "connect(\"storage\")"})
@@ -322,6 +328,13 @@ disk_programs_tests_run :: proc() -> bool {
 	append(&steps, Step{kind = .Wait, text = "visitor: ok, a program that the boot image does not hold"})
 	append(&steps, Step{kind = .Wait, text = "visitor: the context holds the log, a window and the budget, and no handle of a grant: as it must"})
 	append(&steps, Step{kind = .Wait, text = "visitor: no ring to the root service: the open of its handle is refused: as it must"})
+	// The module of another project, from the same store: the root service
+	// starts it by its hash, with no grant, as it starts any disk program.
+	append(&steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", OUTSIDE_DISK_PROGRAM, outsider_hash)})
+	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with no grant", OUTSIDE_DISK_PROGRAM, outsider_hash), any_order = true})
+	append(&steps, Step{kind = .Wait, text = "visitor: no ring to the root service: the open of its handle is refused: as it must"})
+	append(&steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", OUTSIDE_DISK_PROGRAM)})
+	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", OUTSIDE_DISK_PROGRAM)})
 	// The bytes of the entry are not the bytes of the hash of the line.
 	append(&steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"changed\", \"%s\")", hash)})
 	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: refused changed from the disk: its bytes have the hash %s", changed_hash)})
