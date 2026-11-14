@@ -26,6 +26,8 @@
 // the settings, the tests of the storage service). The parts:
 //
 // - `Client`, `open`, `connected`, `call`: the connection.
+// - `call_send`, `call_answer`: one call in two parts, for a program that
+//   does not wait for the storage service.
 // - `read`, `write`, `remove` and the pending changes (`write_range`,
 //   `set_size`, `commit`): the objects.
 // - `open_tree`, `close_tree`, `add`, `list`, `rename`: the trees and the
@@ -145,8 +147,43 @@ connected :: proc "contextless" (client: ^Client) -> bool {
 // When the export answers a negative number, the status is Failed and error
 // has its error record, as the storage service wrote it.
 call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: Status) {
+	sent: Sent_Call
+	if sent, status = call_send(client, name, arguments); status != .Ok {
+		return 0, nil, status
+	}
+	for {
+		// A revocation and the stop of the service are events.
+		wait := system.wait_begin()
+		answered: bool
+		if value, text, status, answered = call_answer(client, &sent, arguments, error); answered {
+			return value, text, status
+		}
+		if !connected(client) {
+			return 0, nil, .Gone
+		}
+		system.wait_records(&wait, &client.calls.completions)
+		system.wait_end(&wait)
+	}
+}
+
+// A call that was sent and whose answer did not come yet: what call_answer
+// needs to read the answer. The root service keeps one while it reads a
+// file, because it never waits for the storage service
+// (docs/MODULE_CONTRACT.md, "A program from a disk").
+Sent_Call :: struct {
+	function:    module.Function, // The description of the export.
+	offset:      u64, // The argument record in the call region.
+	buffer:      isolated.Slice, // Where the export writes a Text or a Table result.
+	error_place: isolated.Slice, // Where the export writes its error record.
+	tag:         u32, // The tag of the command: its completion has it.
+}
+
+// call_send sends one isolated call of the export with a name, and does
+// not wait: call_answer reads its answer. One call is in flight at a time:
+// a call uses the call region whole.
+call_send :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument) -> (sent: Sent_Call, status: Status) {
 	if !connected(client) {
-		return 0, nil, .Gone
+		return {}, .Gone
 	}
 	head, _ := module.header(client.file)
 	export: u32
@@ -159,65 +196,65 @@ call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated
 		}
 	}
 	if export == 0 {
-		return 0, nil, .Refused
+		return {}, .Refused
 	}
 	offset, size, buffer, error_place, ok := isolated.encode(client.file, function, arguments, client.region)
 	if !ok {
-		return 0, nil, .Refused
+		return {}, .Refused
 	}
 	client.tag += 1
 	if !system.send(&client.calls.commands, ring.Record{kind = export, tag = client.tag, values = {0 = offset, 1 = size}}) {
-		return 0, nil, .Refused
+		return {}, .Refused
 	}
-	for {
-		// A revocation and the stop of the service are events.
-		wait := system.wait_begin()
-		for _ in 0 ..< ring.CAPACITY {
-			completion, has := system.receive(&client.calls.completions)
-			if !has {
-				break
-			}
-			if completion.tag != client.tag {
-				continue
-			}
-			if isolated.Status(completion.kind) != .Ok {
-				return 0, nil, .Refused
-			}
-			if i64(completion.values[0]) < 0 && error_place.count != 0 {
-				// The service wrote it: values only, read as values.
-				if error != nil {
-					error^ = (^errors.Error_Record)(raw_data(client.region[error_place.start:]))^
-				}
-				return i64(completion.values[0]), nil, .Failed
-			}
-			if function.result == .Text {
-				result, complete := isolated.result_text(client.region, buffer, completion.values[0])
-				if !complete {
-					return i64(completion.values[0]), nil, .Refused
-				}
-				return i64(completion.values[0]), result, .Ok
-			}
-			if function.result == .Table {
-				// The records as bytes: the caller reads them with the record of
-				// the export. A table that did not fit gives the rows that did.
-				described, described_ok := module.record_type(client.file, function.result_detail)
-				if !described_ok {
-					return 0, nil, .Refused
-				}
-				records, _ := isolated.result_table(client.region, buffer, completion.values[0], u64(described.size))
-				return i64(completion.values[0]), records, .Ok
-			}
-			if problem, _ := isolated.tables_return(client.file, function, arguments, client.region, offset); problem != .None {
-				return i64(completion.values[0]), nil, .Refused
-			}
-			return i64(completion.values[0]), nil, .Ok
+	return {function = function, offset = offset, buffer = buffer, error_place = error_place, tag = client.tag}, .Ok
+}
+
+// call_answer reads the answer of a call that call_send sent, if it came:
+// answered is false when it did not, and the caller waits on the
+// completions of the call ring, or does other work. arguments are the
+// arguments of call_send. The results are those of call.
+call_answer :: proc "contextless" (client: ^Client, sent: ^Sent_Call, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: Status, answered: bool) {
+	for _ in 0 ..< ring.CAPACITY {
+		completion, has := system.receive(&client.calls.completions)
+		if !has {
+			break
 		}
-		if !connected(client) {
-			return 0, nil, .Gone
+		if completion.tag != sent.tag {
+			continue
 		}
-		system.wait_records(&wait, &client.calls.completions)
-		system.wait_end(&wait)
+		if isolated.Status(completion.kind) != .Ok {
+			return 0, nil, .Refused, true
+		}
+		if i64(completion.values[0]) < 0 && sent.error_place.count != 0 {
+			// The service wrote it: values only, read as values.
+			if error != nil {
+				error^ = (^errors.Error_Record)(raw_data(client.region[sent.error_place.start:]))^
+			}
+			return i64(completion.values[0]), nil, .Failed, true
+		}
+		if sent.function.result == .Text {
+			result, complete := isolated.result_text(client.region, sent.buffer, completion.values[0])
+			if !complete {
+				return i64(completion.values[0]), nil, .Refused, true
+			}
+			return i64(completion.values[0]), result, .Ok, true
+		}
+		if sent.function.result == .Table {
+			// The records as bytes: the caller reads them with the record of
+			// the export. A table that did not fit gives the rows that did.
+			described, described_ok := module.record_type(client.file, sent.function.result_detail)
+			if !described_ok {
+				return 0, nil, .Refused, true
+			}
+			records, _ := isolated.result_table(client.region, sent.buffer, completion.values[0], u64(described.size))
+			return i64(completion.values[0]), records, .Ok, true
+		}
+		if problem, _ := isolated.tables_return(client.file, sent.function, arguments, client.region, sent.offset); problem != .None {
+			return i64(completion.values[0]), nil, .Refused, true
+		}
+		return i64(completion.values[0]), nil, .Ok, true
 	}
+	return 0, nil, .Ok, false
 }
 
 // write makes the object `name` under a place the bytes of data, in one

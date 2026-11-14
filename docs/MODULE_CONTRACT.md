@@ -128,7 +128,7 @@ The loader does five steps:
 
 Status of the loader in user space (`src/library/support/system/load.odin`):
 
-- **The load source**: the loader finds a module only in its load source: the files that the program was granted, each named by its hash, and the replacements that the starter of the program gives. The loader checks the hash and the tables of each file before it uses it. It has no search path and no ambient store (P20). The root service and the console give the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports, and the modules of the replacements.
+- **The load source**: the loader finds a module only in its load source: the files that the program was granted, each named by its hash, and the replacements that the starter of the program gives. The loader checks the hash and the tables of each file before it uses it. It has no search path and no ambient store (P20). The root service and the console give the boot image. The first module of a program can come from another place: the root service reads the file of a disk program from the storage service, and checks its hash against the hash of the command ("A program from a disk", below); its imports still come from the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports, and the modules of the replacements.
 - **The module space**: the modules that a loader put in one program. Each module is in it one time: two modules that import a third one call the same copy. A module that another module of the space uses stays when the caller unloads it; a module with no use leaves, and its imports lose one use.
 - **Refusals**: a missing import, an import cycle, a bad file, a replacement that fails its check, a slot that cannot be bound, no room, a kernel operation that fails. On a failure, the space is as it was before the load, and the caller has a load error (below).
 - **Shared code**: a prepared module has two parts. The code is the segments with no Write: the loader never writes them (a rebase and a slot are in a segment with Write, and the loader checks it), so their pages are the same at each base and with each binding, and the table keys them by the hash of the module only. Two programs that import one module at two places map one copy of its code. The fixed part is the segments that are read-only after the load: the loader writes their rebases and their slots, so the table keys them by the hash, the base, and the hash and the base of the module of each import. A writable segment, with its slots, is bound in the copy of each program. The tool gives a segment of the range that the linker makes read-only after the load, and that holds no rebase and no slot, the flags of a constant segment: no loader writes it, so it is a part of the code, shared at each base (`segment_flags_after_the_relocations` in `tools/kerneltool/convert.odin`). The linker always makes that range, for a table of its own that the tool does not copy; in a module with no table of addresses and no import it is such a segment, of one page with no byte.
@@ -173,6 +173,57 @@ What this design removes, compared with ELF:
 - **Fewer rebases at the source**: Tables of offsets in place of tables of addresses. A module with no rebase is fully shared between programs. [Load §5]
 - **Size**: The self-relocation stage of musl is 164 lines; its full dynamic linker is 2455 lines. [Load §1] The target for this loader is a few hundred lines.
 - **Shared code, as implemented**: a program that starts programs keeps a table of prepared modules (`system.Prepared_Modules`), by the hash of the module file. A prepared module is one memory object with the segments that do not change after the load (code, constants, and the data that is read-only after the rebase), copied from the file and rebased at the program base. Each program of the module maps these pages with the protection of their segment, and receives a new memory object for each writable segment: the bytes of the file, rebased for that segment only (`module.rebase_range`). The table keeps the handle without the right Write, so no program writes the prepared module, and a write of a program to its code is a page fault. The kernel learns nothing of the module format: it maps a memory object with the rights of a handle. The code is the same in all the programs because each program has its module at the fixed address `PROGRAM_BASE`. With a random base for each program, the data that is read-only after the rebase differs between programs, and only the code and the constants stay shared.
+
+### A program from a disk
+
+Built. A disk program is a program whose module file is an object of the storage service, and not a file of the boot image. A module is added to a machine with no new boot image.
+
+**Where the file is.** The store `programs` of a principal holds the module files of that principal: each entry of its root tree is one file, and the name of the entry is the name of the program, 1 to 23 bytes (`STORAGE.md`, "1. The model").
+
+**The command.** The console command names the program and the hash of its file:
+
+```
+> start_from_disk("visitor", "5f0c…")
+```
+
+The hash is 64 hexadecimal digits: the BLAKE3 hash of the module file, as the tool that wrote the file prints it. The console sends the record `Start_From_Disk` on the root ring (`system.Root_Command`): the hash in four values, the name in three.
+
+**The root service reads and checks.** The root service opens a connection of its own to the storage service, on the store `programs` of the principal of the caller. It asks for the size of the object, then for its bytes, into memory of its own budget. Then it computes the BLAKE3 hash of the bytes. It starts the program only when that hash is the hash of the command. So the storage service carries the bytes and does not choose them: bytes with another hash are refused, and the line of the log holds both hashes:
+
+```
+root: refused visitor from the disk: its bytes have the hash 9d41…, and the hash asked is 5f0c…
+```
+
+The root service does not read the hash of the entry: the hash of an object differs from the BLAKE3 hash of its bytes when the object has a hole (`STORAGE.md`, "The hash of an object").
+
+**The root service does not wait.** The load is a state of the loop of the root service, not a call: between two answers of the storage service, the root service serves each other ring. The completion of the command comes when the load ends. Four rules end a load whatever the storage service does:
+
+| Rule | What ends the load |
+|---|---|
+| A stop is an event | The storage service stopped |
+| Each answer makes progress | An answer with no byte before the end of the file, or with more bytes than the file has left |
+| The size has a limit | An object of more than 4 MiB (`disk_program.FILE_BYTES_LIMIT`), before any memory is made |
+| The load has a deadline | No start 30 seconds after the command (`disk_program.LOAD_DEADLINE_MILLISECONDS`) |
+
+One load runs at a time: a second command during a load is refused (`Busy`).
+
+**What the program receives.** A program of the boot image has its grants, its budget and the limit of its store by its name, in the tables of the root service. A disk program has no row there. It receives the log with the right Write, a window, and the pages that each program with a window maps read-only (the date, the settings, the glyph caches). It receives no grant: no root ring, no handle of the machine, no boot image, no store, no endpoint, no service ring. Its budget is the budget of a program that no table names: 2048 pages, one program, one thread. No table of the file gives a grant.
+
+**A name gives nothing.** The root service refuses, before any read, a name that the grant table gives a grant, a name of a program of the system, and a name of a module of the boot image:
+
+```
+root: refused notes from the disk: the grant table of the root service names it, and a disk program takes no grant by its name
+```
+
+Without this rule a file named `notes` would start with the store of `notes`.
+
+**The imports.** A disk program imports by hash. Its load source is the boot image and the replacements of the machine: an import whose hash is not in the boot image fails the load at the stage Find. The modules of a disk program are copies that its own budget pays: it maps no prepared module of the root service.
+
+**The refusals of the command**, as the kinds of its error record: `Not_Authentic` (the bytes have another hash; argument 2), `Absent` (no entry has the name), `Exists` (a module of the boot image has the name), `Reserved` (the grant table names it), `Busy` (another load runs), `Too_Long` (the file passes the limit, or the name has more than 23 bytes), `Malformed` (the loader refuses the file), `No_Answer` (the deadline), `Damaged` (a block of the object has a wrong check), `Refused` with the status for the rest.
+
+**The file on the disk.** `kerneltool` writes a data disk that holds the store `programs` (`TOOLS.md`, "The disk of the disk programs"), and prints the hash of each file.
+
+Not built: a command that gives a disk program a grant or a larger budget; a command that stores a file that came from the network; an import from the store; a list of the entries of the store with their hashes; a disk program that is a service.
 
 ## 3. Static is dynamic
 

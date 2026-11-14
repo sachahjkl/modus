@@ -549,7 +549,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 
 ### The parts of the machine test
 
-`kerneltool test` with no argument runs every machine in this order: a start that fails, the trusted boot, the shortage of frames, the self tests of the kernel, the main machine, the network, TCP, QUIC, QUIC against a real client, the randomness, the extended state, the return to a program, the fault ring, the debugger of a program, the kernel events, the cryptography, the persistence, the principals, the hierarchy, the ranges, and the loss of power. Each machine writes its log in a file `build/test_output*.txt` and its pictures in `build/screenshots`.
+`kerneltool test` with no argument runs every machine in this order: a start that fails, the trusted boot, the shortage of frames, the self tests of the kernel, the main machine, the network, TCP, QUIC, QUIC against a real client, the randomness, the extended state, the return to a program, the fault ring, the debugger of a program, the kernel events, the cryptography, the persistence, the principals, the hierarchy, the ranges, the disk programs, and the loss of power. Each machine writes its log in a file `build/test_output*.txt` and its pictures in `build/screenshots`.
 
 `kerneltool test <part>` runs one part only, for the work on it. The parts that the command accepts:
 
@@ -571,6 +571,7 @@ All the automation of the project is one program of the host, `tools/kerneltool`
 | `principals` | The two machines of the principals |
 | `hierarchy` | The machines of the hierarchy of storage |
 | `ranges` | The machines of the ranges of storage |
+| `disk_programs` | The machine of the disk programs: a program that the boot image does not hold starts from the store `programs` ("The disk of the disk programs") |
 | `power` | The loss of power: of the storage, of the settings, of the ranges |
 | `trusted_boot` | The volumes of the trusted boot; `trusted_boot tpm` adds the two machines with a software TPM |
 
@@ -584,6 +585,28 @@ A part builds only the boot volumes that its machines boot ("The incremental bui
 | Each other part | The main volume only |
 
 The persistence and the self tests of the kernel have no part of their own: only the whole run starts them. An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.
+
+### The disk of the disk programs
+
+The part `disk_programs` needs a data disk that holds a module file before any machine runs. The tool writes that disk itself (`tools/kerneltool/disk_programs.odin`): a file `build/test_disk_programs_disk.img` in the format of the storage service (`STORAGE.md`, "3. The format on the disk"), with one store, `programs`, whose root tree holds the module files. The writer makes one commit of a new disk: the blocks of data and the object nodes of each file, one leaf with the entries in the order of their names, the store block, then the root. A block of zero bytes is a hole, as in the storage service. The writer changes no disk that exists, and takes at most the 24 entries of one leaf.
+
+The tool prints one line for each file, with the hash that the command `start_from_disk` names:
+
+```
+kerneltool: build/test_disk_programs_disk.img: the store programs holds visitor, <count> bytes, hash <64 hexadecimal digits>
+```
+
+The module of the test is `visitor`: a row of the module table of the tool with no `image`, so the build makes its file and no boot image holds it. The disk of the test has three entries with that module:
+
+| Entry | Its bytes | What the machine checks |
+|---|---|---|
+| `visitor` | The module file | The root service starts it; the program writes that its context holds the log, a window and its budget, and no handle of a grant |
+| `changed` | The module file with one byte changed | The line names the hash of the module file: the root service refuses the bytes, and the log holds their hash |
+| `notes` | The module file | The grant table of the root service gives the name `notes` a store: the root service refuses the name before any read |
+
+The scenario also asks for a name with no entry. It starts the storage service before the first line that reads the store, so no step depends on the time of the open of the disk.
+
+Host tests check the writer with the code of the open of the storage service (`src/library/support/storage_mount`): no block of the image is wrong, the counts of the store are the counts of what it names, each object gives its bytes, each entry has the hash that its block tree gives, and a file with no hole has the BLAKE3 hash of its bytes.
 
 ### The times of a test
 

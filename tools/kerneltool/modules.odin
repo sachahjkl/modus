@@ -181,6 +181,10 @@ module_builds := [?]Module_Build {
 	{name = "pointers", source = PROGRAM_SOURCES + "pointers", image = true},
 	{name = "settings", source = PROGRAM_SOURCES + "settings", image = true},
 	{name = "date", source = PROGRAM_SOURCES + "date", image = true},
+	// It is not in the boot image: the tool writes its file in the store
+	// `programs` of a data disk, and the root service starts it from there
+	// (disk_programs.odin).
+	{name = DISK_PROGRAM_MODULE, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE},
 }
 
 // The folder of the modules of this build, and whether the compiler writes

@@ -49,7 +49,8 @@ GRANT_VALUE_FILE_ADDRESS :: 1 // A service: where the file of the program is, re
 // of the value 1.
 GRANT_VALUE_FILE_SIZE :: 2
 
-// The ring to the root service. The name of the program is in values[0..4].
+// The ring to the root service. The name of the program is in values[0..4],
+// but for `Start_From_Disk`, whose hash takes those values.
 // The completion record has the tag of the command, and a Status as kind.
 // When the status is not Ok, its values are an error record
 // (errors.completion_record): the argument 1 is the name.
@@ -166,6 +167,35 @@ Root_Command :: enum u32 {
 	// does not have the grant Palette, after a revocation of that grant,
 	// and when a provider exists already (Bad_State).
 	Palette_Provide = 15,
+	// Start_From_Disk starts a disk program: a program whose module file is
+	// an object of the store `programs` of the storage service, and not a
+	// file of the boot image
+	// (docs/MODULE_CONTRACT.md, "A program from a disk").
+	// This command does not carry its name as the others do:
+	// values[0..3] is the hash of the module file (BLAKE3, 32 bytes), and
+	// values[4..6] the name of the program and of its entry in the store, 1
+	// to 23 bytes, zero bytes after it (modus:support/disk_program).
+	//
+	// The root service reads the object from the storage service and starts
+	// its bytes only when their hash is the hash of the command: the
+	// storage service does not choose what runs. The program receives the
+	// log and a window, no grant, and the budget of a program that the
+	// tables of the root service do not name; its name gives it nothing.
+	// The program belongs to the session of the caller, and the store is
+	// the store `programs` of the principal of that session.
+	//
+	// The completion comes when the program started or the load ended, and
+	// not before: the root service serves each other ring meanwhile. A
+	// refusal has an error record whose argument 1 is the name and whose
+	// argument 2 is the hash: `Not_Authentic` for bytes with another hash,
+	// `Absent` (unit `Objects`) for a name with no entry, `Exists` (unit
+	// `Modules`) for the name of a module of the boot image, `Reserved` for
+	// a name that the tables of the root service give a grant, `Busy` while
+	// another load runs, `Too_Long` for a file over the limit, `No_Answer`
+	// when the storage service gave no answer before the deadline, and
+	// `Malformed` for bytes that are no module or whose import is not in
+	// the boot image.
+	Start_From_Disk = 16,
 }
 
 // The state of a principal in the root service.
@@ -267,6 +297,7 @@ root_command_names := [Root_Command]string {
 	.Principal_Unlock = "Principal_Unlock",
 	.Debug      = "Debug",
 	.Palette_Provide = "Palette_Provide",
+	.Start_From_Disk = "Start_From_Disk",
 }
 
 // root_command_name gives the name of a command of the root ring, or "an
@@ -291,6 +322,8 @@ root_argument_name :: proc "contextless" (command: i64, argument: i64) -> string
 			return "by"
 		case .Principals, .Principal_Unlock:
 			return "number"
+		case .Start_From_Disk:
+			return "hash"
 		}
 	}
 	return ""

@@ -7,6 +7,7 @@ import "modus:contract/isolated"
 import op "modus:contract/operation"
 import module "modus:contract/module"
 import "modus:contract/ring"
+import "modus:support/disk_program"
 import "modus:support/random"
 import "modus:support/system"
 import "base:intrinsics"
@@ -406,6 +407,30 @@ commands_start :: proc "contextless" () {
 	// module has the name, the program runs already, no slot is free), and
 	// "the root service did not answer" after 3 seconds.
 	command("start", {.Text}, .None, "start a program, by module name", start_program)
+	// Asks the root service to start a disk program: a program whose module
+	// file is an object of the store `programs` of the storage service, and
+	// not a file of the boot image. It gives nothing.
+	//
+	// - `name`: the name of the program and of its entry in the store, 1 to
+	//   23 bytes.
+	// - `hash`: the BLAKE3 hash of the module file, 64 hexadecimal digits.
+	//   The tool that wrote the file prints it.
+	//
+	// The root service reads the object and starts its bytes only when
+	// their hash is `hash`: the storage service does not choose what runs.
+	// The program receives the log and a window, and no grant, whatever
+	// its name (docs/MODULE_CONTRACT.md, "A program from a disk").
+	//
+	// ```
+	// > start_from_disk("visitor", "5f0c...")
+	// ```
+	//
+	// Errors: the name or the hash has a wrong form; the store has no
+	// object with the name; the bytes have another hash; a module of the
+	// boot image has the name, or the root service gives the name a grant;
+	// another load runs; the loader refuses the file; the storage service
+	// stopped or gave no answer.
+	command("start_from_disk", {.Text, .Text}, .None, "start a program of the store programs, by name and hash", start_from_disk)
 	// Asks the root service to stop a program that runs. It gives nothing.
 	//
 	// - `name`: the name of the program, as `programs()` gives it.
@@ -2145,6 +2170,93 @@ start_program :: proc "contextless" (arguments: []Value) -> Value {
 	// its connection again.
 	line_records_try_again()
 	return request(.Start, arguments[0].text)
+}
+
+// How long the console waits for the completion of Start_From_Disk, in
+// milliseconds. The root service ends a load at its own deadline at the
+// latest, and answers then: twice that deadline only ends a wait for a root
+// service that answers nothing.
+START_FROM_DISK_ANSWER_LIMIT :: 2 * disk_program.LOAD_DEADLINE_MILLISECONDS
+
+// start_from_disk asks the root service to start a disk program, and waits
+// for the end of its load. The name and the hash are checked here first: a
+// record of the root ring holds a name of 23 bytes and a hash of 32, and a
+// cut name can be the name of another program.
+start_from_disk :: proc "contextless" (arguments: []Value) -> Value {
+	name := arguments[0].text
+	problem, offset := disk_program.name_problem(name)
+	switch problem {
+	case .None:
+	case .Empty:
+		return fail("start_from_disk: the name is empty; it must have 1 to ", u64(disk_program.NAME_LIMIT), " bytes")
+	case .Too_Long:
+		return fail("start_from_disk: the name has ", u64(len(name)), " bytes; the name of a disk program has at most ", u64(disk_program.NAME_LIMIT))
+	case .Bad_Byte:
+		return fail("start_from_disk: the byte ", u64(offset), " of the name cannot be in the name of an entry of a tree")
+	case .Store_Name:
+		return fail("start_from_disk: \"", name, "\" is the name of the store of the module files, and no name of a program")
+	}
+	hash, parsed := disk_program.hash_parse(arguments[1].text)
+	if !parsed {
+		return fail("start_from_disk: the hash must be ", u64(disk_program.HASH_DIGITS), " hexadecimal digits; the argument has ", u64(len(arguments[1].text)), " bytes, or a byte that is no digit")
+	}
+	if requests.head == nil {
+		return fail_no_answer()
+	}
+	hash_values := transmute([4]u64)hash
+	name_values := disk_program.name_pack(name)
+	request_count += 1
+	system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Start_From_Disk), tag = request_count, values = {0 = hash_values[0], 1 = hash_values[1], 2 = hash_values[2], 3 = hash_values[3], 4 = name_values[0], 5 = name_values[1], 6 = name_values[2]}})
+	limit := system.time() + START_FROM_DISK_ANSWER_LIMIT
+	for {
+		for record in system.receive(&requests.completions) {
+			if record.tag != request_count {
+				continue
+			}
+			if system.Status(record.kind) == .Ok {
+				return {}
+			}
+			return start_from_disk_refusal(name, record)
+		}
+		wait: system.Wait
+		system.wait_records(&wait, &requests.completions)
+		if system.wait_end(&wait, limit) >= limit {
+			return fail_no_answer()
+		}
+	}
+}
+
+// start_from_disk_refusal makes the line fail with the refusal of the root
+// service for a disk program. The kinds of this command get a sentence of
+// their own: the general sentence of a kind speaks of a tag, of a tree or
+// of a program of the system. The record stays the record of the root
+// service.
+start_from_disk_refusal :: proc "contextless" (name: string, completion: ring.Record) -> Value {
+	error := errors.completion_record(completion.values)
+	already := failed
+	result: Value
+	#partial switch errors.Kind(error.kind) {
+	case .Not_Authentic:
+		head := transmute([8]u8)u64(error.value)
+		result = fail("start_from_disk: the bytes of \"", name, "\" in the store programs do not have the hash asked: their hash starts with ", system.Hash{head[:]}, ". The root service started nothing")
+	case .Absent:
+		result = fail("start_from_disk: the store programs has no object \"", name, "\"")
+	case .Exists:
+		result = fail("start_from_disk: a module of the boot image has the name \"", name, "\": start() starts that module, and a disk program takes another name")
+	case .Reserved:
+		result = fail("start_from_disk: the root service gives the name \"", name, "\" a grant, or keeps it for the system: a disk program takes no grant by its name")
+	case .Busy:
+		result = fail("start_from_disk: another load from the disk runs: try again after it")
+	case .Malformed:
+		result = fail("start_from_disk: the loader refused the file of \"", name, "\": it is no module, or an import of it is not in the boot image. The log has the load error")
+	case:
+		return fail_root("start_from_disk: ", completion)
+	}
+	if !already {
+		argument_names := [2]string{"name", "hash"}
+		failure_record_set(error, "root.Start_From_Disk", argument_names[:])
+	}
+	return result
 }
 
 stop_program :: proc "contextless" (arguments: []Value) -> Value {
