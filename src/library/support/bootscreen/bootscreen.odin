@@ -724,8 +724,8 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			put(&text, " used, ")
 			put_number(&text, data.machine.region_count)
 			put(&text, " objects, budgets ")
-			put_number(&text, data.machine.budget_pages)
-			put(&text, " pages")
+			// As a size: the count of pages of a machine of 1 GiB passes the card.
+			put_size(&text, data.machine.budget_pages * info.PAGE_SIZE)
 			show(area, 0, y + 12, &text, graphics.COLOR_TEXT)
 		} else {
 			write(area, 0, y + 12, "now: not known yet", graphics.COLOR_DIM)

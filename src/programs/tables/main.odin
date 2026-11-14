@@ -506,10 +506,10 @@ ANSWER_X :: 312 // The first column of the answers.
 COLUMN_WIDTH :: 220
 // The box of an answer of the first card: its column, after its mark.
 ANSWER_ROOM :: COLUMN_WIDTH - 16 - 8
-// The answer of a hostile case starts after the longest name, "a budget as
-// the memory of a table" (33 characters after its mark), and has the rest
-// of the card.
-HOSTILE_ANSWER_X :: NAME_X + 16 + 35 * graphics.CELL_WIDTH
+// The answer of a hostile case starts after the longest name, "the same
+// rows in a lent memory object" (36 characters after its mark), and has
+// the rest of the card.
+HOSTILE_ANSWER_X :: NAME_X + 16 + 38 * graphics.CELL_WIDTH
 HOSTILE_ANSWER_ROOM :: CARD_X + CARD_WIDTH - 16 - HOSTILE_ANSWER_X
 MEASURES_HEIGHT :: CARD_HEAD + 5 * LINE
 #assert(ANSWER_X + 2 * COLUMN_WIDTH + 16 + ANSWER_ROOM <= CARD_X + CARD_WIDTH - 16)

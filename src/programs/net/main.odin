@@ -118,7 +118,7 @@ LINE :: interface.TABLE_LINE
 LEFT :: 16
 // The answer starts after the longest text of a case, "UDP from 10.0.2.2
 // port 7 with a wrong checksum": 45 characters. From the left of the cases.
-ANSWER_X :: 47 * graphics.CELL_WIDTH
+ANSWER_X :: 49 * graphics.CELL_WIDTH
 WIDTH :: 992
 CASE_CAPACITY :: 15 // The cases of cases_run, and one more after a key.
 // The room of the cases: each case, nine lines more for the answers that
