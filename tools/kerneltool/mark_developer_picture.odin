@@ -32,8 +32,8 @@ mark_animations_picture_write :: proc() -> bool {
 	width := 2 * MARK_ANIMATIONS_MARGIN + (most_frames + 1) * column_width
 	height := 2 * MARK_ANIMATIONS_MARGIN + MARK_ANIMATIONS_LINE + len(mark.Animation) * row_height + MARK_ANIMATIONS_LINE
 	// Under the frames of an animation that moves, the forms of its move.
-	sprites := site_mark_sprites() or_return
-	forms := site_mark_forms(&sprites) or_return
+	sprites := mark_sprites() or_return
+	forms := mark_forms(&sprites) or_return
 	width = max(width, 2 * MARK_ANIMATIONS_MARGIN + mark_animation_forms_width(&forms))
 	for animation in mark.Animation {
 		height += mark_animation_forms_height(animation)

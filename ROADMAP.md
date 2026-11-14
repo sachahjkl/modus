@@ -9,7 +9,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Next
 
 - **A share of the processor for each program.** The program `scheduler` sets the weight of each thread, so that a program with many threads takes no more of the processor than a program with one. A measure run prints the share that each program gets. [Design](src/md/features/scheduling_policy.md)
-- **The icons of the site from the generator of the mark.** The generator of the pictures of the mark also writes the icon file and the vector icon of the site, and the icons are rows of the one table of the files of the mark. A developer then finds every file of the mark in one table. [Design](src/md/features/mark_pictures.md)
 - **A window for the debugger.** The debugger gets a window over the exports that the console uses today: the threads, the stack, the variables and the source lines. A step over a call stops after the call returns, not inside it.
 - **The palette sets the scheduling strategy.** The scheduling strategy is an entry of the palette, as each setting is. A click in a field of the palette puts the input there. [Design](src/md/features/palette.md)
 - **Kind icons in the completion list of the console.** Each row of the completion list shows the kind icon of its name, as each row of the palette does. A reader tells a command from a module or a variable before reading the name.

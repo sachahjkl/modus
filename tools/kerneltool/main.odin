@@ -383,7 +383,7 @@ COMMANDS :: [?]Command {
 	// with a sentence: the smooth variant at one pixel for a cell, a part
 	// of a pixel, a picture smaller than its drawing (docs/TOOLS.md, "The
 	// pictures of the mark").
-	{name = "mark", about = "draw one picture of the mark: still | frame | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --out <file>", run = run_mark},
+	{name = "mark", about = "draw one file of the mark: still | frame | animation | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --format png|ico|svg|apng|json, --entry <variant>:<cell>:<pixels>, --dark-rule yes|no, --out <file>", run = run_mark},
 	// Converts the JPEG portrait of the program `temple` to the pixels that the
 	// program holds, `src/programs/temple/portrait.pixels`. The result is in the
 	// repository, so a build decodes no JPEG.
