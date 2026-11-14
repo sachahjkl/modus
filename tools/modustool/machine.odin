@@ -3186,7 +3186,7 @@ log_last_line :: proc(machine: ^Machine, text: string) -> string {
 
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual) -> bool {
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false) -> bool {
 	machine_test_started := time.tick_now()
 	// The software TPM runs before QEMU and ends after it, with a folder of
 	// its own for each machine.
@@ -3211,13 +3211,14 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		forward = {host_port = port, listener = &listener}
 	}
 	defer listener_stop(&listener)
-	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor, firmware)
+	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor, firmware, vnc, paused)
 	if !ok {
 		return false
 	}
 	_ = os.remove(output)
 	_ = os.remove(qmp_socket_of(output))
 	_ = os.remove(film_qmp_socket_of(output))
+	_ = os.remove(film_vnc_socket_of(output))
 	monitor_read, monitor_write, pipe_err := os.pipe()
 	if pipe_err != nil {
 		fmt.eprintfln("modustool: cannot create a pipe: %v", pipe_err)
@@ -3289,6 +3290,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	os.close(monitor_write)
 	os.close(monitor_read)
 	qmp_close(&machine.qmp)
+	_ = os.remove(film_vnc_socket_of(output))
 	log_watch_close(&machine.log_watch)
 	delete(machine.picture_jobs)
 	peer_stop(&peer)

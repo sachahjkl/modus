@@ -1270,6 +1270,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. The full check passes. Left: a program that draws only on its own change does not draw a left-out frame again until its next change; no check reads the pixels of the screen.
 - Where: `INTERFACE.md`, section 2.1; `src/md/infrastructure/whole_frame.md`; `FIRST_MILESTONE.md`, choice 751.
 
+### D-259 The layout of the keyboard is a setting that the input service reads
+- 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
+- Decision: `keyboard_layout` is a value of the settings page, with `us` (the default) and `french`. The root service maps the page, read-only, in the input service, which reads the value at each key. A character of the system stays one byte of ASCII: a key whose character is outside ASCII gives no character. Refused: the layout in the compositor; a message to the input service at each change.
+- Words: "tout tout faire"
+- State: done. Left: the characters of Unicode.
+- Where: `FONTS.md`, "The settings"; `GLOSSARY.md`, "Setting"; `FIRST_MILESTONE.md`, choice 764.
+
 ## 10. The console and the tools
 
 ### D-142 The console is a normal program with a real language

@@ -1054,7 +1054,7 @@ processor_models := [Processor_Model]string {
 // The network device goes to the peer (`-netdev dgram`), or, when forward
 // has a port, to QEMU user networking with its TCP (web_host.odin).
 // processor gives the processor of the machine (Processor_Model).
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual) -> (command: []string, ok: bool) {
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false) -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -1129,6 +1129,11 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-netdev",
 		network_device,
 	)
+	if paused {
+		// The machine waits for the step Monitor "cont" of the scenario: a
+		// film catches each line of the start that a viewer must read.
+		append(&list, "-S")
+	}
 	if forward.host_port != 0 {
 		// Each frame of the device, with its time, for the tool after the run
 		// (web_host.odin, frames_of_the_fetch_report).
@@ -1192,7 +1197,15 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// ends QEMU through it. The machine protocol of QEMU is on a socket
 		// beside the log: the tool sends the keys and the moves of the
 		// pointer through it, and each command has a reply (qmp.odin).
-		append(&list, "-display", "none", "-serial", strings.concatenate({"file:", test_output}, context.temp_allocator), "-monitor", "stdio")
+		// A film takes its pictures of a display with no window too, but a
+		// display: QEMU draws the console of the firmware and of the boot
+		// program in text there, which no display draws.
+		if vnc {
+			append(&list, "-display", strings.concatenate({"vnc=unix:", film_vnc_socket_of(test_output)}, context.temp_allocator))
+		} else {
+			append(&list, "-display", "none")
+		}
+		append(&list, "-serial", strings.concatenate({"file:", test_output}, context.temp_allocator), "-monitor", "stdio")
 		append(&list, "-qmp", strings.concatenate({"unix:", qmp_socket_of(test_output), ",server=on,wait=off"}, context.temp_allocator))
 		// A second socket of the same protocol, for the worker of a film:
 		// its pictures and the keys of the scenario never share a reply

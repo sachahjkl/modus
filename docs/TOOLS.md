@@ -675,7 +675,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `library-imports` | Checks that each import of each source file of the kernel and of the contract packages names a package of the compiler or a contract package ("The imports of the kernel and of the contract packages") |
 | `rule-checks` | Checks the count of the kernel operations against the properties, and that no source of the system calls an allocator ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
-| `film [terminal \| palette \| heron]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
+| `film [terminal \| palette \| heron \| boot]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
 
 ### The parts of the machine test
 
@@ -986,8 +986,13 @@ The hang bound ends a wait for a screen that never settles. The test fails, and 
 | `terminal` (also with no argument) | The program `flood` writes lines in the terminal; the keys move in the lines, stop them and start them again | `scenario_film` (`machine.odin`) |
 | `palette` | The palette: a program, a window, a command and its record, the form of a command with its candidates, a question before an entry that destroys, a setting that changes the font of the desktop | `scenario_palette_film` (`palette_film_scenario.odin`) |
 | `heron` | The program `heron`: the heron plays in its own order; the dash at full speed, then four times slower; the lines of the cells with the hop, the stretch and the flap; the dash frame by frame, with the changed cells outlined; one held frame in the free way and on the grid; the three cell sizes | `scenario_heron_film` (`heron_film_scenario.odin`) |
+| `boot` | The check of the boot program, then the boot display held at the stage of the boot program, then drawn again by the root service at each stage, the desktop, then the window of the boot display with the records of the kernel | `scenario_boot_film` (`boot_film_scenario.odin`) |
 
 The films differ by their scenario only. The worker, the list of the encoder and the encoders are the same code.
+
+**The display.** A test machine has no display (`-display none`): the firmware and the boot program write their console to the serial port, and QEMU draws nothing before the first picture of the system. The machine of a film has a display with no window instead (`-display vnc=unix:build/test_output*.vnc.sock`), so QEMU draws that console, and the film of the start shows the check of the boot program before the boot display. A window never opens: a film runs headless, as a test.
+
+**The machine waits for the scenario.** The machine of a film starts paused (`-S`), and its scenario resumes it with the step `Monitor "cont"`. The tool is then ready before the first line of the start, and it freezes the machine on a line that a viewer must read. A test machine starts at once.
 
 **A key with no line.** The program `heron` writes no line for the dot, for Space, for the keys `s` and `z`, and for an animation of its own order. The film of `heron` sends such a key, holds, and then waits for the next line that the program writes: the line of the key `g` or `l` names the animation, its frame and "held", so it proves the dots and the pause before it. No line names the cell size or the slow play: the film shows them, and no step proves them.
 

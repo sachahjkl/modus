@@ -63,6 +63,16 @@ film_qmp_socket_of :: proc(output: string) -> string {
 	return machine_file(output, FILM_QMP_SOCKET_SUFFIX)
 }
 
+// The display of the machine of a film: a VNC server on this socket, and no
+// window. QEMU draws the text console of the firmware and of the boot
+// program there, and a machine with no display draws nothing before the
+// first picture of the system.
+FILM_VNC_SOCKET_SUFFIX :: ".vnc.sock"
+
+film_vnc_socket_of :: proc(output: string) -> string {
+	return machine_file(output, FILM_VNC_SOCKET_SUFFIX)
+}
+
 // film_slot_of gives the slot of a film that holds a time since its start.
 film_slot_of :: proc(since_start: time.Duration) -> int {
 	return int(i64(since_start) * FILM_RATE / i64(time.Second))
@@ -385,10 +395,11 @@ Film :: struct {
 	output: string, // The log of its machine.
 }
 
-FILM_NAMES :: "terminal | palette | heron"
+FILM_NAMES :: "terminal | palette | heron | boot"
 TEST_OUTPUT_FILM_TERMINAL :: BUILD_FOLDER + "/test_output_film_terminal.txt"
 TEST_OUTPUT_FILM_PALETTE :: BUILD_FOLDER + "/test_output_film_palette.txt"
 TEST_OUTPUT_FILM_HERON :: BUILD_FOLDER + "/test_output_film_heron.txt"
+TEST_OUTPUT_FILM_BOOT :: BUILD_FOLDER + "/test_output_film_boot.txt"
 
 // film_of_name gives the film with a name. The name of a film is the text
 // of the step Film_Start of its scenario.
@@ -400,14 +411,17 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 		return Film{name = "palette", steps = scenario_palette_film[:], output = TEST_OUTPUT_FILM_PALETTE}, true
 	case "heron":
 		return Film{name = "heron", steps = scenario_heron_film[:], output = TEST_OUTPUT_FILM_HERON}, true
+	case "boot":
+		return Film{name = "boot", steps = scenario_boot_film[:], output = TEST_OUTPUT_FILM_BOOT}, true
 	}
 	return {}, false
 }
 
 // run_film makes one film: `film` and `film terminal` the film of the
 // terminal, `film palette` the film of the palette, `film heron` the film
-// of the program heron. The films differ by their scenario only: the
-// worker, the list of the encoder and the encoder are the same. A film is for the development log, and for the
+// of the program heron, `film boot` the film of the boot of the machine.
+// The films differ by their scenario only: the worker, the list of the
+// encoder and the encoder are the same. A film is for the development log, and for the
 // news entry that names it: it is not a test, and no check runs it.
 run_film :: proc(args: []string) -> int {
 	name := "terminal"
@@ -426,7 +440,7 @@ run_film :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	// The tool ends QEMU: status 0.
-	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) || !machine_test(film.steps, BOOT_VOLUME, film.output, 0, TEST_DATA_DISK) {
+	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) || !machine_test(film.steps, BOOT_VOLUME, film.output, 0, TEST_DATA_DISK, vnc = true, paused = true) {
 		return EXIT_FAILURE
 	}
 	return film_write(film.name) ? 0 : EXIT_FAILURE
