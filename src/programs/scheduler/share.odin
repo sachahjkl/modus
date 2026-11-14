@@ -324,7 +324,7 @@ policy_weights_give_back :: proc "contextless" () -> bool {
 				if thread, first_sight := tracked_of(item.machine_number); thread != nil && !first_sight && thread.written != 0 {
 					asked = schedule.weight < thread.written ? schedule.weight : thread.asked
 				}
-				switch system.thread_schedule_write(machine, item.machine_number, {weight = asked, request = schedule.request, weight_limit = op.WEIGHT_FULL}) {
+				#partial switch system.thread_schedule_write(machine, item.machine_number, {weight = asked, request = schedule.request, weight_limit = op.WEIGHT_FULL}) {
 				case .Ok:
 					written += 1
 				case .Bad_State:
