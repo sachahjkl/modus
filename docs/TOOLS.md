@@ -918,7 +918,7 @@ A picture that is taken too early is wrong, and no test fails. So the tool reads
 
 and when no change of the desktop itself waits for a frame (`desktop` of `compositor.screen()`: the pointer, the bar, a menu, the palette, a window that appeared, moved or closed).
 
-Why this is the two facts. A program that waits, then runs, then waits again enters the kernel to wait. So a program that waits in the two reads with the same count of kernel entries did not run between them: each picture that it sent, it sent before the first read. The compositor reads the ring of each window before it answers a call, so it counted each of these pictures. With no picture and no change of the desktop that waits for a frame, the screen shows them.
+Why this is the two facts. A program that waits, then runs, then waits again enters the kernel to wait. So a program that waits in the two reads with the same count of kernel entries did not run between them: each picture that it sent, it sent before the first read. The compositor reads the ring of each window before it answers a call, so it counted each of these pictures. With no picture and no change of the desktop that waits for a frame, the screen shows them. The window of a program that writes in a terminal has the title of that program, and the terminal draws it: so the condition holds for each program `terminal` too, which is in a wait in the two reads with the same count of kernel entries.
 
 **What the condition by calls leaves out.**
 

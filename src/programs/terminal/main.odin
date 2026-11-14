@@ -89,8 +89,8 @@ SCROLL_GAP :: 7 // From the text to the scroll bar: with the bar, three units of
 // column of its border.
 LIST_SCROLL_CELLS :: 2
 // The cells of a row of the completion list that hold its kind icon: an
-// icon of 12 pixels in the 16 pixels of two cells.
-LIST_ICON_CELLS :: 2
+// icon of 12 pixels, then a space before the name.
+LIST_ICON_CELLS :: 3
 #assert(LIST_SCROLL_CELLS * CELL_WIDTH + 1 == SCROLL_WIDTH)
 #assert((SCROLL_GAP + SCROLL_WIDTH) % 8 == 0)
 
@@ -906,10 +906,10 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		interface.draw_rectangle(table, x, y, 1, list_height, COLOR_LIST_BORDER)
 		interface.draw_rectangle(table, x + list_width - 1, y, 1, list_height, COLOR_LIST_BORDER)
 		// The kind icon of each row, over the cells that the row keeps for
-		// it: one pixel for a cell of the icon, in the middle of the two
-		// cells and of the height of the row.
+		// it: one pixel for a cell of the icon, at the left of its cells, in the middle
+		// of the height of the row.
 		if view.list_icon_cells != 0 {
-			icon_x := TEXT_X + (view.list_left + 1) * CELL_WIDTH + (view.list_icon_cells * CELL_WIDTH - kind_icons.ICON_SIZE) / 2
+			icon_x := TEXT_X + (view.list_left + 1) * CELL_WIDTH + 2
 			for index in 0 ..< view.list_rows {
 				icon_y := text_y + (view.list_top + index) * CELL_HEIGHT + (CELL_HEIGHT - kind_icons.ICON_SIZE) / 2
 				interface.draw_kind_icon(table, icon_x, icon_y, view.list_icons[index], 1, view.list_icon_colors[index])
