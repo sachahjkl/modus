@@ -210,6 +210,7 @@ Each export gives a table, or a negative number with an error record. A caller t
 | `breaks()`, `break_remove(number)` | The breakpoints of the debugger; remove one |
 | `step(thread)` | One instruction. The row of the thread at its new instruction; `pending` 1 when the step did not end in 1000 ms |
 | `step_line(thread)` | Instructions until the source line changes, at most 4096 and 2000 ms. The row of the thread; `pending` 1 when the line did not change yet |
+| `step_over(thread)` | As `step_line`, and a call of the line runs to its end: the service puts a breakpoint at the instruction after the call, in a free place of the four, and lets the thread run to it. With no free place the thread stops at the first line of the call. A call that does not return in 2000 ms leaves the thread running with `pending` 1 and the breakpoint in place: the stop at the return is an event |
 | `memory(place, count)` | At most 4096 bytes from an address or from a global, 16 in each row: the address, the bytes in hexadecimal, their printable characters |
 | `events()` | One row for each stop of a thread since the last call: the thread, the kind (`breakpoint N`, `watch N`, `step`, `int3`, `int1`), the instruction, its module, its procedure, its offset, its file and its line |
 | `wait_stop(milliseconds)` | Wait for the next stop, at most the given time and 3000 ms, then the rows of `events()` |
@@ -246,6 +247,7 @@ Each export gives a table, or a negative number with an error record. A caller t
 | `attach` | The answer of the root service | 2000 ms. A later answer is taken when it comes: the service closes the handle and tells the root service that the access ended |
 | `step` | The record of one step | 1000 ms |
 | `step_line` | The records of its steps, together | 2000 ms, and 4096 instructions |
+| `step_over` | The records of its steps and of the return of each call, together | 2000 ms, and 4096 instructions outside the calls |
 | `wait_stop` | The next stop | 3000 ms, whatever the caller gives |
 | `hold`, `break_at`, `watch`, `break_remove`, `continue_all` | The kernel, which waits until a thread on another processor left it | No wait of the service: one kernel operation for each thread |
 | `detach`, and each other export | Nothing | No wait: the end command to the root service is sent with no wait for its answer |
@@ -265,7 +267,7 @@ Each command is an export of the service under a short name (`bound_call`, `CONS
 | `resume(thread)` | `release` | `release` closes a handle of the console |
 | `continue_all()` | `continue_all` | |
 | `break_at(place)`, `watch(place, length)`, `breaks()`, `break_remove(number)` | The same names | |
-| `step(thread)`, `step_line(thread)` | The same names | |
+| `step(thread)`, `step_line(thread)`, `step_over(thread)` | The same names | |
 | `debug_memory(place, count)` | `memory` | `memory` gives the memory of the machine |
 | `events()`, `wait_stop(milliseconds)` | The same names | |
 

@@ -1104,6 +1104,10 @@ break_remove :: proc "c" (number: i64, result: ^[]Break_Row, error: ^errors.Erro
 	if number < 0 || number >= BREAK_CAPACITY || session.breaks[number].kind == .None {
 		return errors.fail(error, ERROR_BREAKPOINTS, .Absent, .Breakpoints, 1)
 	}
+	// The breakpoint of a step over a call: that step ends with it.
+	if session.step_over.active && session.step_over.place == int(number) {
+		session.step_over = {}
+	}
 	session.breaks[number] = {}
 	if status := breaks_apply(); status != .Ok {
 		return refused(error, status)
@@ -1239,6 +1243,213 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 			return refused(error, status)
 		}
 		now := place_of_address(image_of_thread.rip).place
+		if now.line != 0 && (now.line != start.line || now.file != start.file) {
+			pending = 0
+			break
+		}
+	}
+	return thread_rows(result, thread, pending)
+}
+
+// The bytes of the longest call instruction: a call was made when the stack
+// holds, 8 bytes lower, the address of an instruction at most this far after
+// the one that ran.
+CALL_INSTRUCTION_SIZE_LIMIT :: 7
+
+// call_return_of says if the instruction that a step ran was a call, from
+// the registers before and after it: the stack address is 8 bytes lower,
+// and the 8 bytes there are the address of the instruction after the call.
+// It gives that address.
+call_return_of :: proc "contextless" (before, after: op.Thread_Registers) -> (return_address: u64, called: bool) {
+	if after.rsp + 8 != before.rsp {
+		return 0, false
+	}
+	bytes: [8]u8
+	if !program_memory_read(nil, after.rsp, bytes[:]) {
+		return 0, false
+	}
+	return_address = transmute(u64)bytes
+	return return_address, return_address > before.rip && return_address <= before.rip + CALL_INSTRUCTION_SIZE_LIMIT
+}
+
+// step_over_end removes the breakpoint of a step over a call.
+step_over_end :: proc "contextless" () -> (status: system.Status) {
+	if !session.step_over.active {
+		return .Ok
+	}
+	session.breaks[session.step_over.place] = {}
+	session.step_over = {}
+	return breaks_apply()
+}
+
+// call_run_to_return lets a thread that just entered a call run until the
+// call returns, or until a deadline. It puts a breakpoint at the
+// instruction after the call, in a free place of the breakpoints of the
+// session.
+//
+// - `returned`: the thread is at the instruction after the call.
+// - `stopped_inside`: the thread stopped before that: at a breakpoint or a
+//   watch of the caller, or by a fault. Its stop is an event.
+// - neither: no breakpoint was free (the thread is at the first instruction
+//   of the call), or the call did not return before the deadline: the
+//   thread runs, and its breakpoint stays for the next `step_over`.
+call_run_to_return :: proc "contextless" (number: u64, return_address: u64, stack_after_return: u64, deadline: u64) -> (returned: bool, stopped_inside: bool, status: system.Status) {
+	if !session.step_over.active {
+		place := -1
+		for item, index in session.breaks {
+			if item.kind == .None {
+				place = index
+				break
+			}
+		}
+		if place < 0 {
+			return false, false, .Ok
+		}
+		text := "the return of a call, for step_over"
+		session.breaks[place] = {kind = .Execute, address = return_address, place_count = len(text)}
+		copy(session.breaks[place].place[:], text)
+		session.step_over = {active = true, thread = number, place = place, stack = stack_after_return}
+		if status = breaks_apply(); status != .Ok {
+			step_over_end()
+			return false, false, status
+		}
+	}
+	for {
+		if status = thread_release(number); status != .Ok {
+			return false, false, status
+		}
+		for {
+			record, came := system.fault_record_next(deadline)
+			if !came {
+				return false, false, .Ok
+			}
+			record_keep(record, false, record.thread == number ? session.step_over.place : -1)
+			if record.thread == number {
+				break
+			}
+		}
+		registers, read := system.thread_registers_read(session.program, number)
+		if read != .Ok {
+			return false, false, read
+		}
+		if registers.rip != session.breaks[session.step_over.place].address {
+			// Another stop, inside the call: the thread stays there.
+			status = step_over_end()
+			return false, true, status
+		}
+		if registers.rsp == session.step_over.stack {
+			// One line of the log: a reader sees that the thread ran through
+			// the call, and did not stop in it.
+			system.log("debugger: the thread ", number, " of ", system.Module_Name{session_name()}, " ran a call to its end, for step_over")
+			status = step_over_end()
+			return true, false, status
+		}
+		// The return of a deeper call of the same procedure: the thread
+		// passes the breakpoint by one step, then runs again.
+		session.breaks[session.step_over.place].kind = .None
+		if status = breaks_apply(); status != .Ok {
+			return false, false, status
+		}
+		stepped: bool
+		stepped, _, status = step_one(number, deadline)
+		session.breaks[session.step_over.place].kind = .Execute
+		if applied := breaks_apply(); status == .Ok {
+			status = applied
+		}
+		if status != .Ok || !stepped {
+			return false, false, status
+		}
+	}
+}
+
+// step_over runs a thread to the next line of its procedure, and gives its row there: a call of the line runs to its end.
+//
+// It is `step_line`, with one difference. When an instruction of the line
+// calls a procedure, the debugger puts a breakpoint at the instruction
+// after the call and lets the thread run to it: the thread does not stop
+// inside the call. The breakpoint takes one of the four places of the
+// breakpoints of the program, and leaves it when the thread is back. With
+// no free place, the thread stops at the first line of the call, as with
+// `step_line`.
+//
+// A call that does not return within 2000 ms leaves the thread running,
+// with `pending` 1 and the breakpoint in place: the stop at the return
+// comes as an event, and the next `step_over` of the thread goes on from
+// there. A breakpoint, a watch or a fault inside the call stops the thread
+// there, as with no step, and the stop is an event.
+//
+// - **thread**: the number of a thread that is held or stopped.
+//
+// **Errors**: as for `step`.
+//
+// ```
+// debugger.step_over(0)
+// ```
+@(export, link_name = "step_over")
+step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Record) -> i64 {
+	if failure := session_of_caller(error); failure != 0 {
+		return failure
+	}
+	number, failure := thread_of_argument(thread, true, error)
+	if failure != 0 {
+		return failure
+	}
+	// The call of an earlier step over, of this thread: it is back at the
+	// instruction after the call, and its breakpoint goes. Of another
+	// thread, or at another instruction: that step ends here.
+	if session.step_over.active {
+		if status := step_over_end(); status != .Ok {
+			return refused(error, status)
+		}
+	}
+	registers, status := system.thread_registers_read(session.program, number)
+	if status != .Ok {
+		return refused(error, status)
+	}
+	start := place_of_address(registers.rip).place
+	deadline := system.time() + STEP_LINE_WAIT_MILLISECONDS
+	pending: i64 = 1
+	for _ in 0 ..< STEP_LINE_INSTRUCTION_LIMIT {
+		if system.time() >= deadline {
+			break
+		}
+		before := registers
+		stepped, at_breakpoint: bool
+		stepped, at_breakpoint, status = step_one(number, deadline)
+		if status != .Ok {
+			return refused(error, status)
+		}
+		if !stepped {
+			break
+		}
+		if at_breakpoint {
+			pending = 0
+			break
+		}
+		registers, status = system.thread_registers_read(session.program, number)
+		if status != .Ok {
+			return refused(error, status)
+		}
+		if return_address, called := call_return_of(before, registers); called {
+			returned, stopped_inside: bool
+			returned, stopped_inside, status = call_run_to_return(number, return_address, before.rsp, deadline)
+			if status != .Ok {
+				return refused(error, status)
+			}
+			if stopped_inside {
+				pending = 0
+				break
+			}
+			if !returned && session.step_over.active {
+				// The call runs past the deadline.
+				break
+			}
+			registers, status = system.thread_registers_read(session.program, number)
+			if status != .Ok {
+				return refused(error, status)
+			}
+		}
+		now := place_of_address(registers.rip).place
 		if now.line != 0 && (now.line != start.line || now.file != start.file) {
 			pending = 0
 			break
