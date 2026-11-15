@@ -2,7 +2,7 @@
 
 A picture of a window reaches the screen whole, or it does not reach it. This is a rule of the system, for every window. It lives in the package `display` and in the window layer of the interface package. A program writes no code for it.
 
-How a program opens a surface and presents a picture is in [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "2.1 Draw record (format version 9)" and "2.2 Damage by difference". This file records why the rule has this form.
+How a program opens a surface and presents a picture is in [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "2.1 Draw record (format version 10)" and "2.2 Damage by difference". This file records why the rule has this form.
 
 ## The purpose
 

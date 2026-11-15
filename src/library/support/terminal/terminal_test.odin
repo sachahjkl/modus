@@ -15,7 +15,7 @@ hint_form_for_each_width :: proc(t: ^testing.T) {
 	cases := [?]Case {
 		{60, 30, 104, .Long, 60}, // The long form fits.
 		{104, 30, 104, .Long, 104}, // It fits exactly.
-		{105, 30, 104, .Short, 30}, // One byte too long: the short form.
+		{105, 30, 104, .Short, 30}, // One cell too long: the short form.
 		{120, 50, 40, .Short, 40}, // Both too long: the short form, cut.
 		{120, 0, 40, .Long, 40}, // No short form: the long form, cut.
 		{0, 0, 40, .Long, 0}, // No hint.
@@ -23,8 +23,28 @@ hint_form_for_each_width :: proc(t: ^testing.T) {
 	}
 	for item, index in cases {
 		form, shown := hint_form_choose(item.long_count, item.short_count, item.columns)
-		testing.expectf(t, form == item.form && shown == item.shown, "case %d: %v %d bytes, not %v %d bytes", index, form, shown, item.form, item.shown)
+		testing.expectf(t, form == item.form && shown == item.shown, "case %d: %v %d cells, not %v %d cells", index, form, shown, item.form, item.shown)
 	}
+}
+
+// A record takes the start of a text that ends after a whole character:
+// "é" is two bytes, and a cut between them moves before it.
+@(test)
+a_record_cuts_after_a_whole_character :: proc(t: ^testing.T) {
+	testing.expect_value(t, record_part("café", 10), 5)
+	testing.expect_value(t, record_part("café", 4), 3)
+	testing.expect_value(t, record_part("café", 5), 5)
+	testing.expect_value(t, record_part("é", 1), 0)
+	testing.expect_value(t, record_part("abc", 0), 0)
+	// A long text of "é": each record of RUN_LIMIT bytes takes whole characters.
+	// "a", then 128 times "é": the byte RUN_LIMIT - 1 is the first byte of
+	// the last "é".
+	long: [RUN_LIMIT + 1]u8
+	long[0] = 'a'
+	for index := 1; index + 1 < len(long); index += 2 {
+		long[index], long[index + 1] = 0xC3, 0xA9
+	}
+	testing.expect_value(t, record_part(string(long[:]), RUN_LIMIT), RUN_LIMIT - 1)
 }
 
 // A List with no rows of its own shows empty rows, not the rows of the list

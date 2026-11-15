@@ -1,5 +1,6 @@
 package interface
 
+import "modus:contract/text_encoding"
 import "modus:support/graphics"
 import "modus:support/text_shaping"
 
@@ -129,7 +130,10 @@ text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: 
 	last_row := min(grid.rows, (canvas.height - y + graphics.CELL_HEIGHT - 1) / graphics.CELL_HEIGHT)
 	first_column := max(0, -x / graphics.CELL_WIDTH)
 	last_column := min(grid.columns, (canvas.width - x + graphics.CELL_WIDTH - 1) / graphics.CELL_WIDTH)
-	run: [256]u8
+	// The text of a run of cells, as UTF-8: the font draws one cell for
+	// each character.
+	RUN_CHARACTERS :: 256
+	run: [RUN_CHARACTERS * text_encoding.CHARACTER_BYTES_LIMIT]u8
 	for row in first_row ..< last_row {
 		cells := grid.cells[row * grid.stride:][:grid.columns]
 		top := y + row * graphics.CELL_HEIGHT
@@ -139,25 +143,25 @@ text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: 
 			left := x + column * graphics.CELL_WIDTH
 			if cell.reverse {
 				graphics.fill(canvas, left, top, graphics.CELL_WIDTH, graphics.CELL_HEIGHT, cell.color)
-				run[0] = max(cell.character, ' ')
-				text_draw(canvas, left, top, string(run[:1]), graphics.COLOR_BACKGROUND, 1)
+				bytes := cell_character_put(run[:], 0, max(cell.character, ' '))
+				text_draw(canvas, left, top, string(run[:bytes]), graphics.COLOR_BACKGROUND, 1)
 				column += 1
 				continue
 			}
 			if cell.filled {
 				// A run of filled cells of one color and one background:
 				// one fill, then one text. An empty cell is a space.
-				count := 0
-				for column + count < last_column && count < len(run) {
+				count, bytes := 0, 0
+				for column + count < last_column && count < RUN_CHARACTERS {
 					next := cells[column + count]
 					if next.reverse || !next.filled || next.color != cell.color || next.background != cell.background {
 						break
 					}
-					run[count] = max(next.character, ' ')
+					bytes = cell_character_put(run[:], bytes, max(next.character, ' '))
 					count += 1
 				}
 				graphics.fill(canvas, left, top, count * graphics.CELL_WIDTH, graphics.CELL_HEIGHT, cell.background)
-				text_draw(canvas, left, top, string(run[:count]), cell.color, 1)
+				text_draw(canvas, left, top, string(run[:bytes]), cell.color, 1)
 				column += count
 				continue
 			}
@@ -167,19 +171,32 @@ text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: 
 			}
 			// A run: the cells of this color, spaces too, up to a reverse
 			// cell, a filled cell, an empty cell or the end of the room.
-			count := 0
-			for column + count < last_column && count < len(run) {
+			count, bytes := 0, 0
+			for column + count < last_column && count < RUN_CHARACTERS {
 				next := cells[column + count]
 				if next.reverse || next.filled || next.character < ' ' || next.color != cell.color {
 					break
 				}
-				run[count] = next.character
+				bytes = cell_character_put(run[:], bytes, next.character)
 				count += 1
 			}
-			text_draw(canvas, left, top, string(run[:count]), cell.color, 1)
+			text_draw(canvas, left, top, string(run[:bytes]), cell.color, 1)
 			column += count
 		}
 	}
+}
+
+// cell_character_put writes the UTF-8 of the character of a cell at place,
+// and gives the place after it. A code point that is no character of a text
+// (a control, a surrogate, a number past U+10FFFF) is the replacement
+// character: each cell still takes one cell of the run.
+@(private)
+cell_character_put :: proc "contextless" (run: []u8, place: int, character: rune) -> int {
+	length := text_encoding.character_encode(character, run[place:])
+	if length == 0 {
+		length = text_encoding.character_encode(text_encoding.REPLACEMENT_CHARACTER, run[place:])
+	}
+	return place + length
 }
 
 // interface_text_draw draws an Interface_Text record whose x and y are in

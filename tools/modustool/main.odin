@@ -101,6 +101,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/mark",
 	SOURCE_FOLDER_SUPPORT + "/terminal",
 	SOURCE_FOLDER_CONTRACT + "/cut_mark",
+	SOURCE_FOLDER_CONTRACT + "/text_encoding",
 	SOURCE_FOLDER_RUNTIME + "/without_vector_registers",
 	SOURCE_FOLDER_SUPPORT + "/instruction_sets",
 	SOURCE_FOLDER_CONTRACT + "/system_description",

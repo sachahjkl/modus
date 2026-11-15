@@ -191,7 +191,15 @@ hostile_callers_are_refused :: proc(t: ^testing.T) {
 	defer delete(output)
 	wild := system.Table_To_Append(shaping.Placed_Glyph){records = raw_data(output), count = 0, capacity = u64(len(output))}
 	testing.expect_value(t, shape_text(&advances, &pairs, &all_text, &wild, &error), i64(shaping.TEXT_LIMIT))
+	// A control byte and each byte of 127 and above is an invalid sequence:
+	// the replacement glyph, with the advance of "0" (its wild advance,
+	// clamped) and no pair.
+	zero_advance := clamp(wild_advances['0' - 32].advance, 0, glyph_cache.ADVANCE_LIMIT)
 	for glyph in output {
-		testing.expect(t, glyph.advance >= -glyph_cache.ADVANCE_LIMIT && glyph.advance <= 2 * glyph_cache.ADVANCE_LIMIT && glyph.glyph < 95)
+		replacement := glyph.glyph == shaping.REPLACEMENT_GLYPH
+		testing.expect(t, glyph.advance >= -glyph_cache.ADVANCE_LIMIT && glyph.advance <= 2 * glyph_cache.ADVANCE_LIMIT && (glyph.glyph < 95 || replacement))
+		if replacement {
+			testing.expect_value(t, glyph.advance, zero_advance)
+		}
 	}
 }

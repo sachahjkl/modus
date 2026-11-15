@@ -80,6 +80,7 @@ package store
 
 import "base:intrinsics"
 import "modus:contract/blake3"
+import "modus:contract/text_encoding"
 
 BLOCK_SIZE :: 4096 // The bytes of one block of the disk: one page, one block of the block service.
 ROOT_MAGIC :: u64(0x34454741524F5453) // The bytes "STORAGE4": the format with an object as a tree of blocks.
@@ -102,8 +103,8 @@ OBJECT_LEVEL_LIMIT :: 5 // The most levels of the block tree of one object.
 OBJECT_BLOCKS_LIMIT :: u64(1) << 30 // 64^5 blocks.
 OBJECT_SIZE_LIMIT :: OBJECT_BLOCKS_LIMIT * BLOCK_SIZE // 4 TiB.
 
-// The name of an entry: 1 to 64 bytes of UTF-8, with zero bytes after it
-// in its key. A key of 64 bytes gives 24 entries in a leaf: a store of a
+// The name of an entry: 1 to 64 bytes of UTF-8 with no control character
+// (name_refusal checks it), with zero bytes after it in its key. A key of 64 bytes gives 24 entries in a leaf: a store of a
 // million objects has its entries in about 60000 blocks, inside the blocks
 // of a disk. A name has no zero byte (the padding), no byte '/' and is not
 // "." or "..": a name is one step down, so no name reaches past the tree
@@ -386,7 +387,7 @@ Name_Refusal :: enum {
 	None, // The name is valid.
 	Empty, // The name has no byte.
 	Too_Long, // More than ENTRY_NAME_CAPACITY bytes.
-	Bad_Byte, // A zero byte or a byte '/': at `offset`. "." and "..": offset 0.
+	Bad_Byte, // A zero byte or a byte '/', or the first byte of an invalid sequence: at `offset`. "." and "..": offset 0.
 }
 
 // name_refusal says why a name cannot be the name of an entry, or None. A
@@ -407,6 +408,11 @@ name_refusal :: proc "contextless" (name: string) -> (refusal: Name_Refusal, off
 	}
 	if name == "." || name == ".." {
 		return .Bad_Byte, 0, '.'
+	}
+	// A name is a text that a principal reads: UTF-8 with no control
+	// character (src/library/contract/text_encoding).
+	if place, found := text_encoding.invalid_sequence_find(transmute([]u8)name); found {
+		return .Bad_Byte, place, name[place]
 	}
 	return .None, 0, 0
 }

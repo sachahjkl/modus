@@ -11,8 +11,8 @@
 // [interface package](term:interface-package) keeps, in the program, what a
 // program calls many times for each frame: the elements, the layout, the
 // input. The [drawing module](term:drawing-module) takes what a program
-// calls a few times for each frame: `damage_of_draw_table_9` one time, then
-// `execute_draw_table_9` one time for each damage rectangle.
+// calls a few times for each frame: `damage_of_draw_table_10` one time, then
+// `execute_draw_table_10` one time for each damage rectangle.
 //
 // **No copy.** Each parameter is memory of the caller, and a direct call
 // passes its address: the [draw table](term:draw-table) of the frame, the
@@ -38,7 +38,7 @@
 // the text that each export already takes. The terminal draws its grid
 // through the module (src/md/api/text_grid.md).
 //
-// **The version in the names.** The 9 in the name of each export is the
+// **The version in the names.** The 10 in the name of each export is the
 // version of the [draw record](term:draw-record). A draw record of another
 // version has exports with other names, so a module that reads the records
 // in another way cannot take the place of this one.
@@ -54,7 +54,7 @@ import "modus:support/interface"
 import "modus:support/system"
 
 // The names of the exports say which draw record they read.
-#assert(interface.DRAW_RECORD_VERSION == 9)
+#assert(interface.DRAW_RECORD_VERSION == 10)
 
 // A rectangle of the surface, in pixels: right and bottom are not in it.
 Damage_Rectangle :: struct {
@@ -111,7 +111,7 @@ ARGUMENT_AREA :: 5
 // the loader gives each program its own copy.
 //
 // The rule of the callers: one thread of a program at a time calls
-// execute_draw_table_9. It is the rule of the text state of the graphics
+// execute_draw_table_10. It is the rule of the text state of the graphics
 // package, which changes "between two frames" (src/library/support/graphics,
 // text.odin), and each window of the system has one loop that draws. The
 // module takes no lock for it and waits for no other thread: the load
@@ -126,7 +126,7 @@ ARGUMENT_AREA :: 5
 // cache record that is half of one cache and half of the other, and
 // fault. All of it is inside the program that broke the rule: the module
 // runs in its address space, with its own copy of this data.
-// damage_of_draw_table_9 reads no text state: any thread can call it.
+// damage_of_draw_table_10 reads no text state: any thread can call it.
 @(private)
 Program_Text :: struct {
 	loaded:               bool, // The text settings and the interface font were looked for.
@@ -207,9 +207,9 @@ draw_table_of :: proc "contextless" (records: ^system.Table_To_Read(interface.Dr
 	return {records = records.records[:record_count], record_count = int(record_count), text = text.bytes[:text_count], text_count = int(text_count)}, true
 }
 
-// damage_of_draw_table_9 gives the rectangles of the surface that differ between the draw table before and the draw table now. The result is a Table of at most 8 rectangles, which no two of them touch. A text record that names bytes past its text table differs from each record: its rectangle is damaged. A Picture record differs when its generation, its picture memory, its first pixel or its stride differs: the module reads no pixel of a picture. A Text_Grid record of the same place and size in the two tables damages, in each row, the span from the first changed cell to the last one; its cells are in its text table, and a grid whose cells its text table does not hold is damaged whole. Nothing is copied in a direct call: the two tables are read where the caller has them, and the rectangles are written into the buffer of the caller. It fails with -1 and the error record Too_Long, with the argument, for a table over 2^40 records or bytes.
-@(export, link_name = "damage_of_draw_table_9")
-damage_of_draw_table_9 :: proc "c" (before: ^system.Table_To_Read(interface.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 {
+// damage_of_draw_table_10 gives the rectangles of the surface that differ between the draw table before and the draw table now. The result is a Table of at most 8 rectangles, which no two of them touch. A text record that names bytes past its text table differs from each record: its rectangle is damaged. A Picture record differs when its generation, its picture memory, its first pixel or its stride differs: the module reads no pixel of a picture. A Text_Grid record of the same place and size in the two tables damages, in each row, the span from the first changed cell to the last one; its cells are in its text table, and a grid whose cells its text table does not hold is damaged whole. Nothing is copied in a direct call: the two tables are read where the caller has them, and the rectangles are written into the buffer of the caller. It fails with -1 and the error record Too_Long, with the argument, for a table over 2^40 records or bytes.
+@(export, link_name = "damage_of_draw_table_10")
+damage_of_draw_table_10 :: proc "c" (before: ^system.Table_To_Read(interface.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 {
 	before_table, before_ok := draw_table_of(before, before_text, ARGUMENT_BEFORE, ARGUMENT_BEFORE_TEXT, error)
 	if !before_ok {
 		return -1
@@ -229,9 +229,9 @@ damage_of_draw_table_9 :: proc "c" (before: ^system.Table_To_Read(interface.Draw
 	return i64(damage.count)
 }
 
-// execute_draw_table_9 draws the records of a draw table into the pixels of a canvas, in the rectangle of `area`, cut to it. With `fill_background` of the area not 0, the rectangle is painted with the color `background` first. The pixels are memory of the caller, written in place: no copy in a direct call. The text is drawn in the font that the settings of the program choose, from the glyph caches of the program. A Picture record of picture memory 0 copies its pixels from `picture_memory`, from its first pixel, a line each stride pixels. A Text_Grid record draws its cells from `now_text`, from its first byte, a row each `second_color` cells. A text record that names bytes past its text table, a Picture record of another picture memory or with a pixel past `picture_memory`, and a Text_Grid record with no column, with bytes that are not a whole count of rows, past its text table or at an address that is not a multiple of 4, draw nothing. The result is 0. It fails with -1 and an error record: Bad_Value of `area` for a width or a height below 1 or a stride below the width, Too_Small of `pixels` for bytes that do not hold `stride` times `height` pixels, Bad_Address of `pixels` or of `picture_memory` for an address that is not a multiple of 4, Too_Long for a table over 2^40 records or bytes.
-@(export, link_name = "execute_draw_table_9")
-execute_draw_table_9 :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, area: ^Canvas_Rectangle, error: ^errors.Error_Record) -> i64 {
+// execute_draw_table_10 draws the records of a draw table into the pixels of a canvas, in the rectangle of `area`, cut to it. With `fill_background` of the area not 0, the rectangle is painted with the color `background` first. The pixels are memory of the caller, written in place: no copy in a direct call. The text is drawn in the font that the settings of the program choose, from the glyph caches of the program. A Picture record of picture memory 0 copies its pixels from `picture_memory`, from its first pixel, a line each stride pixels. A Text_Grid record draws its cells from `now_text`, from its first byte, a row each `second_color` cells. A text record that names bytes past its text table, a Picture record of another picture memory or with a pixel past `picture_memory`, and a Text_Grid record with no column, with bytes that are not a whole count of rows, past its text table or at an address that is not a multiple of 4, draw nothing. The result is 0. It fails with -1 and an error record: Bad_Value of `area` for a width or a height below 1 or a stride below the width, Too_Small of `pixels` for bytes that do not hold `stride` times `height` pixels, Bad_Address of `pixels` or of `picture_memory` for an address that is not a multiple of 4, Too_Long for a table over 2^40 records or bytes.
+@(export, link_name = "execute_draw_table_10")
+execute_draw_table_10 :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, area: ^Canvas_Rectangle, error: ^errors.Error_Record) -> i64 {
 	// One copy of the area and of each count: the caller can change them
 	// during the call, and a value that is checked is the value that is
 	// used.

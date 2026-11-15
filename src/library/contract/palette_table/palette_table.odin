@@ -24,14 +24,20 @@
 //
 // **The writer** changes the table between two additions to
 // `Header.change_count`: an odd count says that the table changes now.
+//
+// **Each text is UTF-8** (src/library/contract/text_encoding): each length
+// is a count of bytes, and each check refuses a text with an invalid sequence. A
+// capacity holds fewer characters than bytes when a text has characters
+// outside ASCII; a writer cuts a text at a whole character.
 package palette_table
 
 import "base:intrinsics"
 import "modus:contract/settings"
+import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
 MAGIC :: 0x544C4150 // "PALT", little-endian.
-VERSION :: 5 // A new field or a new meaning of a field is a new version.
+VERSION :: 6 // A new field or a new meaning of a field is a new version. 6: each text for a reader is UTF-8, each name ASCII.
 
 ENTRY_CAPACITY :: 256 // The entries of a table: the commands of a console at most.
 NAME_CAPACITY :: 64 // The bytes of the name of an entry.
@@ -109,17 +115,17 @@ Entry :: struct {
 	reserved:         u8, // 0.
 	parameter_name_lengths: [PARAMETER_CAPACITY]u8, // The bytes of each parameter name in use. 0: the parameter has no name.
 	reserved_more:    [2]u8, // 0.
-	name:             [NAME_CAPACITY]u8, // The name: bytes 32 to 126.
-	signature:        [SIGNATURE_CAPACITY]u8, // "revoke(name: Text, grant: Text) -> Integer": bytes 32 to 126.
-	about:            [ABOUT_CAPACITY]u8, // What the entry does, in one sentence: bytes 32 to 126.
-	parameter_names:  [PARAMETER_CAPACITY][PARAMETER_NAME_CAPACITY]u8, // The name of each parameter: bytes 32 to 126.
+	name:             [NAME_CAPACITY]u8, // The name, identifiers joined by spaces: ASCII 32 to 126 (text_encoding.identifier_words_valid).
+	signature:        [SIGNATURE_CAPACITY]u8, // "revoke(name: Text, grant: Text) -> Integer": UTF-8.
+	about:            [ABOUT_CAPACITY]u8, // What the entry does, in one sentence: UTF-8.
+	parameter_names:  [PARAMETER_CAPACITY][PARAMETER_NAME_CAPACITY]u8, // The name of each parameter: UTF-8.
 	act_name_length:     u8, // The bytes of `act_name` in use. 0: no element of a window acts on what the entry does.
 	setting_name_length: u8, // The bytes of `setting_name` in use. 0: the entry joins no setting row. Only on a Setting or Provider_Setting entry.
 	value_name_length:   u8, // The bytes of `value_name` in use. Only on an entry with a setting name, and then at least 1.
 	reserved_end:        u8, // 0.
-	act_name:         [ACT_NAME_CAPACITY]u8, // "settings.set:font", "strategy": bytes 32 to 126.
-	setting_name:     [SETTING_NAME_CAPACITY]u8, // "font", "strategy": bytes 32 to 126.
-	value_name:       [VALUE_NAME_CAPACITY]u8, // "spleen", "eevdf": bytes 32 to 126.
+	act_name:         [ACT_NAME_CAPACITY]u8, // "settings.set:font", "strategy": an identifier, ASCII 33 to 126 (text_encoding.identifier_valid).
+	setting_name:     [SETTING_NAME_CAPACITY]u8, // "font", "strategy": identifiers joined by spaces, ASCII 32 to 126.
+	value_name:       [VALUE_NAME_CAPACITY]u8, // "spleen", "eevdf": an identifier, ASCII 33 to 126.
 	parameter_units:  [PARAMETER_CAPACITY]value_kinds.Integer_Unit, // What the Integer of each parameter counts. {}: a plain number, and each parameter that is no Integer.
 }
 #assert(size_of(Entry) == 536)
@@ -139,7 +145,7 @@ ENTRIES_OFFSET :: CANDIDATES_OFFSET + CANDIDATE_CAPACITY * size_of(Candidate) //
 // One candidate of a parameter, in the candidate area: 32 bytes.
 Candidate :: struct {
 	length: u8, // The bytes of `name` in use: 1 to CANDIDATE_NAME_CAPACITY.
-	name:   [CANDIDATE_NAME_CAPACITY]u8, // A value that the parameter can take: bytes 32 to 126.
+	name:   [CANDIDATE_NAME_CAPACITY]u8, // A value that the parameter can take: UTF-8.
 }
 #assert(size_of(Candidate) == 32)
 
@@ -213,7 +219,7 @@ Outcome :: enum u64 {
 }
 
 // The result area holds lines of runs. One run: a byte Run_Part, a byte
-// length, then that many bytes 32 to 126. A run with the part End_Line and
+// length, then that many bytes of UTF-8. A run with the part End_Line and
 // the length 0 ends a line.
 Run_Part :: enum u8 {
 	Plain     = 0, // A text value.
@@ -255,7 +261,7 @@ Problem :: enum u8 {
 	Too_Many_Entries = 5,
 	Bad_Kind         = 6, // An entry: a kind, a flag, a kind of a parameter or of the result out of its range, an integer unit out of the contract or on a parameter that is no Integer, or a reserved byte that is not 0.
 	Bad_Length       = 7, // An entry: a length or a count past its field, or an empty name.
-	Bad_Byte         = 8, // An entry: a byte of a text under 32 or over 126.
+	Bad_Byte         = 8, // An entry: a text with an invalid sequence of UTF-8 (a broken sequence or a control character), or a name, an act name, a setting name or a value name outside ASCII.
 	Bad_Signature    = 9, // An entry: the signature does not start with the name.
 	Bad_Setting      = 10, // A Setting entry that names no setting or no value of it, or that has parameters; or another entry that names a setting; a Provider_Setting entry that has parameters; the flag In_Use on an entry that is no Provider_Setting; the name of a setting on another kind, or with no name of a value.
 }
@@ -271,19 +277,9 @@ problem_names := [Problem]string {
 	.Too_Many_Entries = "more entries than a table holds",
 	.Bad_Kind         = "a kind or a flag out of its range",
 	.Bad_Length       = "a length past its field, or an empty name",
-	.Bad_Byte         = "a byte that the font does not draw",
+	.Bad_Byte         = "a text that is not UTF-8 or has a control character, or a name that is not ASCII",
 	.Bad_Signature    = "a signature that does not start with the name",
 	.Bad_Setting      = "a setting or a value that the machine does not have",
-}
-
-// printable says if each byte of a text is a character that the font draws.
-printable :: proc "contextless" (bytes: []u8) -> bool {
-	for value in bytes {
-		if value < 32 || value > 126 {
-			return false
-		}
-	}
-	return true
 }
 
 // The bits of the flags that the contract knows: each other bit of a table is refused.
@@ -297,7 +293,12 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 	if int(entry.act_name_length) > ACT_NAME_CAPACITY || int(entry.setting_name_length) > SETTING_NAME_CAPACITY || int(entry.value_name_length) > VALUE_NAME_CAPACITY {
 		return .Bad_Length
 	}
-	if !printable(entry.act_name[:entry.act_name_length]) || !printable(entry.setting_name[:entry.setting_name_length]) || !printable(entry.value_name[:entry.value_name_length]) {
+	// The act name, the name of a setting row and the name of a value are
+	// identifiers of the system: ASCII, one form for each name. Each can be
+	// absent (length 0); the rules of their presence are below.
+	act_name_valid := entry.act_name_length == 0 || text_encoding.identifier_valid(entry.act_name[:entry.act_name_length])
+	value_name_valid := entry.value_name_length == 0 || text_encoding.identifier_valid(entry.value_name[:entry.value_name_length])
+	if !act_name_valid || !value_name_valid || !text_encoding.identifier_words_valid(entry.setting_name[:entry.setting_name_length]) {
 		return .Bad_Byte
 	}
 	// A setting row is made of Setting and Provider_Setting entries only,
@@ -334,11 +335,14 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 		if int(length) > PARAMETER_NAME_CAPACITY {
 			return .Bad_Length
 		}
-		if !printable(entry.parameter_names[index][:length]) {
+		if !text_encoding.text_valid(entry.parameter_names[index][:length]) {
 			return .Bad_Byte
 		}
 	}
-	if !printable(entry.name[:entry.name_length]) || !printable(entry.signature[:entry.signature_length]) || !printable(entry.about[:entry.about_length]) {
+	// The name is a command, an export, or words of identifiers ("set font
+	// to spleen"): ASCII. The signature and the help sentence are text for
+	// a reader: UTF-8.
+	if !text_encoding.identifier_words_valid(entry.name[:entry.name_length]) || !text_encoding.text_valid(entry.signature[:entry.signature_length]) || !text_encoding.text_valid(entry.about[:entry.about_length]) {
 		return .Bad_Byte
 	}
 	if entry.signature_length < entry.name_length || string(entry.signature[:entry.name_length]) != string(entry.name[:entry.name_length]) {
@@ -396,7 +400,7 @@ snapshot_take :: proc "contextless" (memory: []u8, snapshot: ^Snapshot) -> (prob
 }
 
 // result_copy copies the result area of a table and checks the copy: runs
-// that end inside the copy, parts in their range, bytes 32 to 126, at most
+// that end inside the copy, parts in their range, valid UTF-8, at most
 // RESULT_LINE_CAPACITY lines. length is the count that the provider gave.
 // It gives the count of the bytes of the copy, or ok false.
 result_copy :: proc "contextless" (memory: []u8, length: u64, result: ^[RESULT_CAPACITY]u8) -> (count: int, ok: bool) {
@@ -426,7 +430,7 @@ result_valid :: proc "contextless" (runs: []u8) -> bool {
 			lines += 1
 			continue
 		}
-		if part > u8(Run_Part.Operation) || length > len(runs) - place || !printable(runs[place:][:length]) {
+		if part > u8(Run_Part.Operation) || length > len(runs) - place || !text_encoding.text_valid(runs[place:][:length]) {
 			return false
 		}
 		place += length
@@ -445,23 +449,35 @@ Result_Writer :: struct {
 	fits:   bool, // Each run and each line fit so far. The caller sets it true first.
 }
 
-// result_run adds one run of a line. A byte that the font does not draw
-// becomes "?".
+// result_run adds one run of a line. A text of more than 255 bytes is
+// several runs, each cut after a whole character. Each byte of an invalid sequence of
+// the text becomes "?", so that the area passes its check. The column
+// counts characters: the panel draws one cell for each.
 result_run :: proc "contextless" (result: ^Result_Writer, part: Run_Part, text: string) {
-	rest := text
+	rest := transmute([]u8)text
 	for len(rest) > 0 && result.fits {
 		taken := min(len(rest), 255)
-		result.column += taken
-		if result.count + 2 + taken > len(result.buffer) || result.column > RESULT_COLUMN_CAPACITY || result.lines >= RESULT_LINE_CAPACITY {
+		if taken < len(rest) {
+			if whole := text_encoding.complete_characters(rest[:taken]); whole > 0 {
+				taken = whole
+			}
+		}
+		if result.count + 2 + taken > len(result.buffer) || result.lines >= RESULT_LINE_CAPACITY {
+			result.fits = false
+			return
+		}
+		// The columns are counted on the run as it is written: a control
+		// of two bytes becomes "??", two cells.
+		run := result.buffer[result.count + 2:][:taken]
+		copy(run, rest[:taken])
+		text_encoding.invalid_sequences_replace(run)
+		result.column += text_encoding.character_count(run)
+		if result.column > RESULT_COLUMN_CAPACITY {
 			result.fits = false
 			return
 		}
 		result.buffer[result.count] = u8(part)
 		result.buffer[result.count + 1] = u8(taken)
-		for index in 0 ..< taken {
-			value := rest[index]
-			result.buffer[result.count + 2 + index] = value >= 32 && value <= 126 ? value : '?'
-		}
 		result.count += 2 + taken
 		rest = rest[taken:]
 	}
@@ -482,7 +498,7 @@ result_line_end :: proc "contextless" (result: ^Result_Writer) {
 
 // candidates_copy copies the candidate area of a table and checks the
 // copy: a count of CANDIDATE_CAPACITY at most, each length from 1 to
-// CANDIDATE_NAME_CAPACITY, each byte 32 to 126. count is the count that the
+// CANDIDATE_NAME_CAPACITY, each name valid UTF-8. count is the count that the
 // provider gave. On a problem the copy has no candidate.
 candidates_copy :: proc "contextless" (memory: []u8, count: u64, candidates: ^[CANDIDATE_CAPACITY]Candidate) -> (copied: int, ok: bool) {
 	if len(memory) < TABLE_BYTES || count > CANDIDATE_CAPACITY {
@@ -493,7 +509,7 @@ candidates_copy :: proc "contextless" (memory: []u8, count: u64, candidates: ^[C
 		intrinsics.mem_copy_non_overlapping(&candidates[0], &memory[CANDIDATES_OFFSET], copied * size_of(Candidate))
 	}
 	for &candidate in candidates[:copied] {
-		if candidate.length == 0 || int(candidate.length) > CANDIDATE_NAME_CAPACITY || !printable(candidate.name[:candidate.length]) {
+		if candidate.length == 0 || int(candidate.length) > CANDIDATE_NAME_CAPACITY || !text_encoding.text_valid(candidate.name[:candidate.length]) {
 			return 0, false
 		}
 	}
@@ -502,9 +518,13 @@ candidates_copy :: proc "contextless" (memory: []u8, count: u64, candidates: ^[C
 
 // argument_pack gives the values of an Argument command: an Integer in
 // values[1], or the bytes of a Text in values[1..6]. A text longer than
-// ARGUMENT_TEXT_CAPACITY is cut: the sender refuses a longer one before.
+// ARGUMENT_TEXT_CAPACITY is cut after a whole character: the sender
+// refuses a longer one before.
 argument_pack :: proc "contextless" (parameter: int, kind: Value_Kind, integer: i64, text: string) -> (values: [7]u64) {
 	length := min(len(text), ARGUMENT_TEXT_CAPACITY)
+	if length < len(text) {
+		length = text_encoding.complete_characters(transmute([]u8)text[:length])
+	}
 	values[0] = u64(parameter) & 0xFF | u64(kind) << 8 | u64(length) << 16
 	if kind == .Integer {
 		values[1] = u64(integer)
@@ -524,13 +544,13 @@ Argument_Value :: struct {
 	kind:    Value_Kind, // Integer or Text.
 	integer: i64, // An Integer.
 	length:  int, // A Text: its bytes.
-	text:    [ARGUMENT_TEXT_CAPACITY]u8, // A Text: bytes 32 to 126, and no quote.
+	text:    [ARGUMENT_TEXT_CAPACITY]u8, // A Text: UTF-8, and no quote.
 }
 
 // argument_unpack reads the values of an Argument command. ok is false
 // for a parameter past PARAMETER_CAPACITY, a kind that is not Integer or
-// Text, a length past ARGUMENT_TEXT_CAPACITY, a byte that the font does
-// not draw, and a quote: a line has no way to hold one in a text.
+// Text, a length past ARGUMENT_TEXT_CAPACITY, a text that is not valid
+// UTF-8, and a quote: a line has no way to hold one in a text.
 argument_unpack :: proc "contextless" (values: [7]u64) -> (parameter: int, argument: Argument_Value, ok: bool) {
 	parameter = int(values[0] & 0xFF)
 	kind := values[0] >> 8 & 0xFF
@@ -550,8 +570,11 @@ argument_unpack :: proc "contextless" (values: [7]u64) -> (parameter: int, argum
 			packed[index] = values[1 + index]
 		}
 		argument = {kind = .Text, length = length, text = transmute([ARGUMENT_TEXT_CAPACITY]u8)packed}
+		if !text_encoding.text_valid(argument.text[:length]) {
+			return 0, {}, false
+		}
 		for value in argument.text[:length] {
-			if value < 32 || value > 126 || value == '"' {
+			if value == '"' {
 				return 0, {}, false
 			}
 		}

@@ -387,6 +387,11 @@ names_that_are_refused :: proc(t: ^testing.T) {
 		{"/etc", .Bad_Byte, 0},
 		{"a/../b", .Bad_Byte, 1},
 		{"a\x00b", .Bad_Byte, 1},
+		{"résumé", .None, 0}, // UTF-8.
+		{"caf\xc3", .Bad_Byte, 3}, // A character cut short.
+		{"ab\xc0\xaf", .Bad_Byte, 2}, // An overlong form.
+		{"a\x0ab", .Bad_Byte, 1}, // A control character.
+		{"a\xc2\x9bb", .Bad_Byte, 1}, // A control character of C1.
 		{string(long[:]), .Too_Long, 0},
 		{string(long[:format.ENTRY_NAME_CAPACITY]), .None, 0},
 		{"...", .None, 0},

@@ -15,7 +15,7 @@ The border of the drawing module is in [library_modules.md](library_modules.md).
 
 The numbers come from the code of the terminal and of the window layer.
 
-- A terminal has at most 104 columns and 32 rows (`COLUMNS_LIMIT`, `ROWS_LIMIT`): 3,328 cells. A cell is 12 bytes, so a full grid is 39,936 bytes.
+- A terminal has at most 104 columns and 32 rows (`COLUMNS_LIMIT`, `ROWS_LIMIT`): 3,328 cells. A cell is 16 bytes (a code point, two flags, two reserved bytes and two colors: [../data/text_encoding.md](../data/text_encoding.md)), so a full grid is 53,248 bytes.
 - The draw of a grid makes one call of the glyph code for each run of cells: a run ends at a change of color, at a reverse cell, at the end of a group of filled cells, and at an empty cell. A line of plain text is one run. A line of colored code is one run for each token. The most is one run for each cell: 3,328 runs in one frame.
 - With the chosen form, a frame crosses the border one time for the difference and one time for each damage rectangle, at most 8: at most 9 calls, whatever the count of runs.
 - An export for one run of cells would cross the border up to 3,328 times for one frame of a full grid, and each call checks its arguments again.
@@ -27,19 +27,19 @@ The numbers come from the code of the terminal and of the window layer.
 | Field | Value |
 |---|---|
 | `text_start` | The first byte of the cells in the text table, a multiple of 4 from the start of the table |
-| `text_count` | The bytes of the cells: columns × rows × 12 |
+| `text_count` | The bytes of the cells: columns × rows × 16 |
 | `second_color` | The columns |
 | `x`, `y`, `width`, `height` | The place, and columns × 8 by rows × 16 pixels |
 
 - **No new parameter and no new export.** The damage export reads the cells of the frame before in the text table before, and the cells of the frame now in the text table now. The draw export reads the cells in the text table now.
 - **The frame before keeps its cells with no memory of its own.** `draw_table_copy` copies the text table, and the cells with it. `Draw_Table.grids` and the copy of each grid are gone.
 - **The difference.** Two grid records that are equal except their place in the text table are compared cell by cell, as before. A grid that is not valid in one of the two tables is damaged whole.
-- **The version.** The fields of a Text_Grid have another meaning, and the bytes of a cell are now part of the border. The draw record is version 9, and the exports are `damage_of_draw_table_9` and `execute_draw_table_9`.
+- **The version.** The fields of a Text_Grid have another meaning, and the bytes of a cell are now part of the border. The draw record became version 9 for this form, and version 10 when a cell became a code point of 16 bytes; the exports are `damage_of_draw_table_10` and `execute_draw_table_10`.
 
 ### The cost
 
-- **One copy of the cells more in each frame.** The terminal copied its cells one time in each frame already: `draw_table_copy` made the copy of the frame before. It now copies them two times. The compositor measures the copy at its start: 923 ns for 65,536 bytes in the guest, so a full grid costs about 0.6 µs more for each frame. The difference already reads the two copies of the cells, 79,872 bytes, in each frame.
-- **The memory.** The terminal keeps two text tables of 41,984 bytes in place of two of 1,024 bytes and one copy of the cells of 39,936 bytes.
+- **One copy of the cells more in each frame.** The terminal copied its cells one time in each frame already: `draw_table_copy` made the copy of the frame before. It now copies them two times. The compositor measures the copy at its start: 923 ns for 65,536 bytes in the guest, so a full grid of 53,248 bytes costs about 0.75 µs more for each frame (computed from that measure, not measured). The difference already reads the two copies of the cells, 106,496 bytes, in each frame.
+- **The memory.** The terminal keeps two text tables of 54,276 bytes (1,028 bytes of text and the cells) in place of two of 1,024 bytes and one copy of the cells of 53,248 bytes.
 
 ## The refused forms
 
@@ -59,6 +59,6 @@ The numbers come from the code of the terminal and of the window layer.
 
 ## What is built and what is left
 
-Built: the cells in the text table, the draw record of version 9, and the terminal through the module.
+Built: the cells in the text table, the draw record of version 10, and the terminal through the module.
 
 Left: an export for one run of cells, for the programs that draw cell text themselves with no draw table. The count above shows that it is not the border of the terminal. See [library_modules.md](library_modules.md), "What is left, and what blocks it".

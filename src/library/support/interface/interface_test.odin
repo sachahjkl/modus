@@ -877,11 +877,11 @@ grid_text :: proc(words: []u32) -> []u8 {
 text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
 	cells_now: [3 * 8]Text_Grid_Cell
 	for &cell, index in cells_now {
-		cell = {character = u8('a' + index % 26), color = 0xFFFFFF}
+		cell = {character = rune('a' + index % 26), color = 0xFFFFFF}
 	}
 	grid := Text_Grid{cells = cells_now[:], columns = 6, rows = 3, stride = 8}
 	records_now, records_before: [4]Draw_Record
-	words_now, words_before: [64]u32
+	words_now, words_before: [96]u32
 	now := Draw_Table{records = records_now[:], text = grid_text(words_now[:])}
 	before := Draw_Table{records = records_before[:], text = grid_text(words_before[:])}
 	// A text of 3 bytes before the grid: the cells start at byte 4.
@@ -890,7 +890,7 @@ text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
 	testing.expect(t, now.record_count == 2 && !now.full && !now.refused)
 	record := now.records[1]
 	testing.expect_value(t, record.text_start, 4)
-	testing.expect_value(t, record.text_count, 6 * 3 * 12)
+	testing.expect_value(t, record.text_count, 6 * 3 * size_of(Text_Grid_Cell))
 	testing.expect_value(t, record.second_color, 6)
 	testing.expect_value(t, record_rectangle(record), Rectangle{10, 20, 10 + 6 * 8, 20 + 3 * 16})
 	found, ok := grid_of(&now, record)
@@ -958,17 +958,17 @@ text_grid_records_of_a_hostile_caller :: proc(t: ^testing.T) {
 	bytes := grid_text(words[:])
 	table := Draw_Table{text = bytes, text_count = len(bytes)}
 	hostile := [?]Draw_Record {
-		{kind = .Text_Grid, width = 16, height = 16, second_color = 0, text_count = 24},
-		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_count = 25},
-		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = 112, text_count = 24},
-		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = max(u32) - 3, text_count = 24},
+		{kind = .Text_Grid, width = 16, height = 16, second_color = 0, text_count = 32},
+		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_count = 33},
+		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = 112, text_count = 32},
+		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = max(u32) - 3, text_count = 32},
 		{kind = .Text_Grid, width = 16, height = 16, second_color = max(u32), text_count = max(u32)},
-		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = 2, text_count = 24},
+		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = 2, text_count = 32},
 	}
 	pixels: [16 * 16]graphics.Color
 	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = 16, height = 16, stride = 16}
 	for &word in words {
-		word = 0x41414141 // Each cell is the character A in a color.
+		word = 0x41414141 // Each cell: a code point past U+10FFFF, which draws the replacement glyph, in a color.
 	}
 	for record, index in hostile {
 		_, ok := grid_of(&table, record)
@@ -983,7 +983,7 @@ text_grid_records_of_a_hostile_caller :: proc(t: ^testing.T) {
 		testing.expectf(t, damage.count == 1 && damage.rectangles[0] == Rectangle{0, 0, 16, 16}, "the hostile record %d is not damaged whole", index)
 	}
 	// The good record over the same bytes: two cells of a row, one row.
-	good := Draw_Record{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_count = 24}
+	good := Draw_Record{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_count = 32}
 	found, ok := grid_of(&table, good)
 	testing.expect(t, ok && found.rows == 1 && found.columns == 2)
 }
@@ -1094,7 +1094,7 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 	records_now, records_before: [64]Draw_Record
 	// The texts and the cells of the grid, at an address that is a
 	// multiple of 4.
-	words_now, words_before: [256]u32
+	words_now, words_before: [512]u32
 	now := Draw_Table{records = records_now[:], text = grid_text(words_now[:])}
 	before := Draw_Table{records = records_before[:], text = grid_text(words_before[:])}
 	surface := Rectangle{0, 0, WIDTH, HEIGHT}
@@ -1125,7 +1125,7 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 			draw_rectangle(&now, bar * 6, 0, 5, int(bars >> uint(bar * 3)) % 3 * 4, 0x30A050)
 		}
 		for &cell, index in cells {
-			cell = {character = u8('a' + (index / COLUMNS + step * 3) % 26), reverse = (index + step) % 17 == 0, color = 0xE0E0E0}
+			cell = {character = rune('a' + (index / COLUMNS + step * 3) % 26), reverse = (index + step) % 17 == 0, color = 0xE0E0E0}
 			if (index + step) % 5 == 0 {
 				cell.character = 0
 			}
@@ -1459,7 +1459,7 @@ screen_after_damage :: proc(before, now: ^Draw_Table) -> bool {
 @(private = "file")
 Grid_Tables :: struct {
 	records_before, records_now: [8]Draw_Record,
-	words_before, words_now:     [20 * 12 * 3 + 16]u32,
+	words_before, words_now:     [20 * 12 * 4 + 16]u32,
 	cells:                       [20 * 12]Text_Grid_Cell,
 	grid:                        Text_Grid,
 	before, now:                 Draw_Table,
@@ -1468,7 +1468,7 @@ Grid_Tables :: struct {
 @(private = "file")
 grid_tables_make :: proc(tables: ^Grid_Tables, columns, rows, stride: int) {
 	for &cell, index in tables.cells {
-		cell = {character = u8('A' + index % 26), reverse = index % 7 == 0, color = graphics.Color(0x406080 + index % 3 * 0x203010)}
+		cell = {character = rune('A' + index % 26), reverse = index % 7 == 0, color = graphics.Color(0x406080 + index % 3 * 0x203010)}
 	}
 	tables.grid = {cells = tables.cells[:], columns = columns, rows = rows, stride = stride}
 	tables.now = {records = tables.records_now[:], text = grid_text(tables.words_now[:])}

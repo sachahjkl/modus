@@ -151,7 +151,7 @@ disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refu
 		values^ = disk_refused(name, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(len(name)), disk_program.NAME_LIMIT), "the name has more than ", u64(disk_program.NAME_LIMIT), " bytes")
 		return true
 	case .Bad_Byte:
-		values^ = disk_refused(name, errors.ring_fail(kind, .Bad_Byte, .None, 1, i64(offset), 0, i64(name[offset])), "the name is no name of an entry of a tree")
+		values^ = disk_refused(name, errors.ring_fail(kind, .Bad_Byte, .None, 1, i64(offset), 0, i64(name[offset])), "the name is no name of a program: visible characters of ASCII, no \"/\", not \".\" or \"..\"")
 		return true
 	case .Store_Name:
 		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the name is the name of the store of the module files")

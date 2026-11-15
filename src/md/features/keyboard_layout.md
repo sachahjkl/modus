@@ -6,7 +6,7 @@ A key gives a character by the layout of the keyboard that the principal chose. 
 
 - **A setting.** `keyboard_layout` is one value of the settings page: `us`, the default, or `french`. The principal changes it as each other setting, with the program `settings`, the console or the palette.
 - **The input service reads it at each key.** The root service maps the settings page, read-only, in the input service. The service turns a key into a character, so it is the one reader of the layout. A change takes effect at the next key, with no message.
-- **A character is one byte of ASCII.** A key whose character in the layout is outside ASCII gives no character. The text of the system has no other characters yet.
+- **A character is one byte of ASCII.** A key whose character in the layout is outside ASCII gives no character. The text of the system is UTF-8 in every contract ([data/text_encoding.md](../data/text_encoding.md)), so a key that gives é changes the key path, the line editor and the fonts only.
 
 ## The refused forms
 

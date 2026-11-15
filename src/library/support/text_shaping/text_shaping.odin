@@ -1,7 +1,8 @@
 // Text shaping (docs/FONTS.md, section 12.3): the characters of a text
 // become placed glyphs, with the advance of each character and the pair
-// adjustment of each pair of characters that follow each other. No
-// ligature and no other script: one placed glyph for each byte.
+// adjustment of each pair of characters that follow each other. The text
+// is UTF-8 (src/library/contract/text_encoding). No ligature and no other
+// script: one placed glyph for each character, and one for each invalid sequence.
 //
 // A program that links this package calls it directly, over the spacing of
 // a glyph cache that it validated (spacing_of). The module text_shaping
@@ -16,13 +17,17 @@ package text_shaping
 
 import "base:intrinsics"
 import "modus:contract/glyph_cache"
+import "modus:contract/text_encoding"
 
 FIRST_CHARACTER :: 32 // The first character of a glyph cache: the space.
 CHARACTER_COUNT :: glyph_cache.CHARACTER_LIMIT // The characters of a glyph cache: 32 to 126.
-// A character outside the cache (a control character, a byte above 126)
-// is placed as this character: a reader sees that the text has a
-// character that the font does not draw.
-REPLACEMENT_CHARACTER :: '?'
+// The glyph of a character that the cache does not hold, and of each invalid sequence
+// of the text: the reader draws the replacement glyph in its place
+// (graphics.character_replacement), so that a reader sees that a character
+// is there that the font does not draw. It has the advance of
+// REPLACEMENT_ADVANCE_CHARACTER, and no pair.
+REPLACEMENT_GLYPH :: max(u32)
+REPLACEMENT_ADVANCE_CHARACTER :: '0'
 // The most bytes of one text. With an advance and a pair adjustment of at
 // most glyph_cache.ADVANCE_LIMIT each, the place of the last glyph stays
 // in an i32 of 1/64 of a pixel.
@@ -33,10 +38,10 @@ TEXT_LIMIT :: 1 << 16
 // the text; advance includes the pair adjustment with the next character;
 // so the x of a glyph is the sum of the advances before it.
 Placed_Glyph :: struct {
-	glyph:   u32, // The index of the character in the glyph cache: character - 32.
+	glyph:   u32, // The index of the character in the glyph cache: character - 32. REPLACEMENT_GLYPH: a character outside the cache.
 	x:       i32, // In 1/64 of a pixel.
 	advance: i32, // In 1/64 of a pixel.
-	cluster: u32, // 0. A shaper with ligatures gives the first byte of the characters of a glyph here.
+	cluster: u32, // The first byte of the character in the text.
 }
 #assert(size_of(Placed_Glyph) == 16)
 
@@ -75,11 +80,11 @@ spacing_of :: proc "contextless" (cache: ^glyph_cache.Cache, scale: int) -> (spa
 	return {advances = advances, pairs = glyph_cache.pairs_of(cache, scale)}, true
 }
 
-// glyph_of gives the glyph of a character: its index in the cache, or the
-// index of REPLACEMENT_CHARACTER.
-glyph_of :: #force_inline proc "contextless" (character: u8) -> u32 {
+// glyph_of gives the glyph of a character: its index in the cache, or
+// REPLACEMENT_GLYPH.
+glyph_of :: #force_inline proc "contextless" (character: rune) -> u32 {
 	if character < FIRST_CHARACTER || character >= FIRST_CHARACTER + CHARACTER_COUNT {
-		return u32(REPLACEMENT_CHARACTER - FIRST_CHARACTER)
+		return REPLACEMENT_GLYPH
 	}
 	return u32(character - FIRST_CHARACTER)
 }
@@ -87,7 +92,8 @@ glyph_of :: #force_inline proc "contextless" (character: u8) -> u32 {
 // advance_of gives the advance of a glyph, read once, from 0 to
 // glyph_cache.ADVANCE_LIMIT.
 @(private)
-advance_of :: #force_inline proc "contextless" (spacing: ^Spacing, glyph: u32) -> i32 {
+advance_of :: #force_inline proc "contextless" (spacing: ^Spacing, glyph_given: u32) -> i32 {
+	glyph := glyph_given == REPLACEMENT_GLYPH ? u32(REPLACEMENT_ADVANCE_CHARACTER - FIRST_CHARACTER) : glyph_given
 	if int(glyph) >= len(spacing.advances) {
 		return 0
 	}
@@ -100,6 +106,9 @@ advance_of :: #force_inline proc "contextless" (spacing: ^Spacing, glyph: u32) -
 // wrong adjustment, never a read out of the table.
 @(private)
 pair_of :: proc "contextless" (spacing: ^Spacing, left, right: u32) -> i32 {
+	if left >= CHARACTER_COUNT || right >= CHARACTER_COUNT {
+		return 0 // The replacement glyph has no pair.
+	}
 	key := (left + FIRST_CHARACTER) << 8 | (right + FIRST_CHARACTER)
 	low, high := 0, len(spacing.pairs)
 	for low < high {
@@ -120,32 +129,37 @@ pair_of :: proc "contextless" (spacing: ^Spacing, left, right: u32) -> i32 {
 
 // shape places the characters of a text: it writes the placed glyphs that
 // fit from the start of placed, and gives the count of the full answer
-// (one for each byte) and the width of the text, the sum of the advances.
-// ok is false for a text of more than TEXT_LIMIT bytes: nothing is written.
-// Each byte of the text is read once.
+// (one for each character, and one for each invalid sequence) and the width of the
+// text, the sum of the advances. ok is false for a text of more than
+// TEXT_LIMIT bytes: nothing is written. Each character of the text is
+// decoded once: a text that another thread changes during the call gives
+// other glyphs, each one a glyph of the cache or REPLACEMENT_GLYPH, and
+// never a place past the text.
 shape :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: []Placed_Glyph) -> (count: int, width: i64, ok: bool) {
 	if len(text) > TEXT_LIMIT {
 		return 0, 0, false
 	}
-	if len(text) == 0 {
-		return 0, 0, true
-	}
 	x: i64
-	glyph := glyph_of(intrinsics.volatile_load(&text[0]))
-	for index in 0 ..< len(text) {
+	place := 0
+	character, length, _ := text_encoding.character_decode(text, place)
+	glyph := glyph_of(character)
+	for length > 0 {
+		next_place := place + length
+		next_character, next_length, _ := text_encoding.character_decode(text, next_place)
 		advance := advance_of(spacing, glyph)
 		next: u32
-		if index + 1 < len(text) {
-			next = glyph_of(intrinsics.volatile_load(&text[index + 1]))
+		if next_length > 0 {
+			next = glyph_of(next_character)
 			advance += pair_of(spacing, glyph, next)
 		}
-		if index < len(placed) {
-			placed[index] = {glyph = glyph, x = i32(x), advance = advance}
+		if count < len(placed) {
+			placed[count] = {glyph = glyph, x = i32(x), advance = advance, cluster = u32(place)}
 		}
+		count += 1
 		x += i64(advance)
-		glyph = next
+		glyph, place, length = next, next_place, next_length
 	}
-	return len(text), x, true
+	return count, x, true
 }
 
 // text_width gives the width of a text in 1/64 of a pixel: the sum of the

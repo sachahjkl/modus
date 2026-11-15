@@ -110,6 +110,7 @@
 // that is the work of the grants of the root service.
 package console
 
+import "modus:contract/text_encoding"
 import "modus:support/display"
 import "modus:support/key_path"
 import "modus:support/line_editor"
@@ -523,12 +524,18 @@ emit :: proc "contextless" (text: string, style: terminal.Style) {
 			log_count += taken
 			logged = logged[taken:]
 			if log_count == len(log_line) {
-				system.log_text(string(log_line[:log_count]))
-				log_count = 0
+				// A line of the log ends after a whole character; the bytes
+				// of a cut character start the next line.
+				whole := text_encoding.complete_characters(log_line[:log_count])
+				if whole == 0 {
+					whole = log_count
+				}
+				system.log_text(string(log_line[:whole]))
+				log_count = copy(log_line[:], log_line[whole:log_count])
 			}
 		}
 	}
-	rest := text
+	rest := transmute([]u8)text
 	for len(rest) > 0 {
 		if output_column >= WINDOW_COLUMNS {
 			terminal.write(&output, terminal.Run{"", {flags = {.End_Line}}})
@@ -538,10 +545,18 @@ emit :: proc "contextless" (text: string, style: terminal.Style) {
 				terminal.write(&output, terminal.Run{blank[:output_column], {}})
 			}
 		}
-		part := rest[:min(len(rest), WINDOW_COLUMNS - output_column)]
-		terminal.write(&output, terminal.Run{part, style})
-		output_column += len(part)
-		rest = rest[len(part):]
+		// The text is UTF-8 and the terminal shows one column for each
+		// character: the part ends after a whole character.
+		room := WINDOW_COLUMNS - output_column
+		part_bytes, part_columns := 0, 0
+		for part_bytes < len(rest) && part_columns < room {
+			_, length, _ := text_encoding.character_decode(rest, part_bytes)
+			part_bytes += length
+			part_columns += 1
+		}
+		terminal.write(&output, terminal.Run{string(rest[:part_bytes]), style})
+		output_column += part_columns
+		rest = rest[part_bytes:]
 	}
 }
 

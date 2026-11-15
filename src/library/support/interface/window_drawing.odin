@@ -157,12 +157,12 @@ when DRAWING_THROUGH_MODULE {
 	// module with another version has other names, so the loader refuses
 	// it in place of a draw of records that it reads wrong. A new version
 	// stops the build here, until the names follow.
-	#assert(DRAW_RECORD_VERSION == 9)
+	#assert(DRAW_RECORD_VERSION == 10)
 
 	foreign _ {
-		@(link_name = "damage_of_draw_table_9")
+		@(link_name = "damage_of_draw_table_10")
 		module_damage_of_draw_table :: proc "c" (before: ^system.Table_To_Read(Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Module_Rectangle, error: ^errors.Error_Record) -> i64 ---
-		@(link_name = "execute_draw_table_9")
+		@(link_name = "execute_draw_table_10")
 		module_execute_draw_table :: proc "c" (now: ^system.Table_To_Read(Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, area: ^Module_Canvas_Rectangle, error: ^errors.Error_Record) -> i64 ---
 	}
 
@@ -232,7 +232,7 @@ when DRAWING_THROUGH_MODULE {
 	frame_difference :: proc "contextless" (drawing: ^Window_Drawing, before, now: ^Draw_Table, damage: ^Damage) -> bool {
 		drawing.module_calls += 1
 		if !difference_through_module(before, now, damage, &drawing.module_error) {
-			module_refusal_log(drawing, "damage_of_draw_table_9")
+			module_refusal_log(drawing, "damage_of_draw_table_10")
 			return false
 		}
 		return true
@@ -248,7 +248,7 @@ when DRAWING_THROUGH_MODULE {
 	frame_draw :: proc "contextless" (drawing: ^Window_Drawing, now: ^Draw_Table, canvas: graphics.Canvas, rectangles: []Rectangle) -> bool {
 		if len(now.picture_memories) > 1 {
 			drawing.module_error = errors.error_make(.Unsupported, .None, 1, i64(len(now.picture_memories)))
-			module_refusal_log(drawing, "execute_draw_table_9")
+			module_refusal_log(drawing, "execute_draw_table_10")
 			return false
 		}
 		picture_memory: []graphics.Color
@@ -258,7 +258,7 @@ when DRAWING_THROUGH_MODULE {
 		for rectangle in rectangles {
 			drawing.module_calls += 1
 			if !draw_part_through_module(now, 0, now.record_count, picture_memory, canvas, rectangle, true, graphics.COLOR_BACKGROUND, &drawing.module_error) {
-				module_refusal_log(drawing, "execute_draw_table_9")
+				module_refusal_log(drawing, "execute_draw_table_10")
 				return false
 			}
 		}

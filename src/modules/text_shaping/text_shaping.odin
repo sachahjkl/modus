@@ -20,8 +20,9 @@
 //
 // **The units**: each position and width is in 1/64 of a pixel.
 //
-// **What it does not do**: no character outside 32 to 126 (each such byte
-// is placed as "?"), no ligature, no direction other than left to right.
+// **What it does not do**: no glyph outside 32 to 126 (each other
+// character of the UTF-8 text, and each invalid sequence, is the replacement glyph),
+// no ligature, no direction other than left to right.
 package text_shaping_module
 
 import "modus:contract/errors"
@@ -52,7 +53,7 @@ spacing_of_tables :: proc "contextless" (advances: ^system.Table_To_Read(shaping
 	return true
 }
 
-// shape_text appends the placed glyphs of a text: one for each byte, x from the origin of the text and the advance with the pair adjustment, in 1/64 of a pixel. A byte outside 32 to 126 is placed as "?". The result is the count of placed glyphs of the full answer (larger than the capacity: it did not fit), or -1 with an error record: advances that are not 95 records (argument 1), more than 9025 pairs (argument 2), a text of more than 65536 bytes (argument 3), a table of placed glyphs over 2^40 records (argument 4).
+// shape_text appends the placed glyphs of a UTF-8 text: one for each character, x from the origin of the text and the advance with the pair adjustment, in 1/64 of a pixel, and the first byte of the character as its cluster. A character outside 32 to 126 and each invalid sequence (a control character, or a broken sequence of UTF-8) is one replacement glyph (glyph 4294967295), with the advance of "0": a caller that indexes a cache with a glyph checks its range first. The result is the count of placed glyphs of the full answer (larger than the capacity: it did not fit), or -1 with an error record: advances that are not 95 records (argument 1), more than 9025 pairs (argument 2), a text of more than 65536 bytes (argument 3), a table of placed glyphs over 2^40 records (argument 4).
 @(export, link_name = "shape_text")
 shape_text :: proc "c" (advances: ^system.Table_To_Read(shaping.Character_Advance), pairs: ^system.Table_To_Read(glyph_cache.Pair_Entry), text: ^system.Bytes_To_Read, placed: ^system.Table_To_Append(shaping.Placed_Glyph), error: ^errors.Error_Record) -> i64 {
 	spacing: shaping.Spacing
