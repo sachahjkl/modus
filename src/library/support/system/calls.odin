@@ -20,6 +20,10 @@ import "modus:contract/ring"
 // The arguments are the same isolated.Argument records in each way: the
 // export does not know which way ran.
 
+// export_call takes one integer for each argument that a description can
+// have: the receiver of an isolated call passes its isolated.Call to it.
+#assert(CALL_INTEGERS == module.PARAMETER_CAPACITY)
+
 // A way to the exports of a module in another program: a call host that
 // this program started, or a connection to a service.
 Call_Connection :: struct {
@@ -105,7 +109,7 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 			integers[index] = argument.integer
 		}
 	}
-	// record_size checked that a register is free for it.
+	// record_size checked that an argument of the call form is free for it.
 	local_error: errors.Error_Record
 	if function.error_record != 0 {
 		integers[function.parameter_count] = u64(uintptr(error != nil ? error : &local_error))

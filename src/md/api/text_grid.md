@@ -6,7 +6,7 @@ The border of the drawing module is in [library_modules.md](library_modules.md).
 
 ## The constraints
 
-- An export has at most six parameters, the error record included. The damage export has six already: the two draw tables, their two text tables, the rectangles and the error record. The draw export has six: the draw table, its text table, the picture memory, the pixels, the shape and the error record.
+- An export has at most 12 arguments, the error record included ([call_form_arguments.md](call_form_arguments.md)). When this form was chosen, the bound was six. The damage export had six already: the two draw tables, their two text tables, the rectangles and the error record. The draw export had six: the draw table, its text table, the picture memory, the pixels, the shape and the error record. So the cells went into the text table because no parameter was left for them. The bound of 12 leaves room for the cells as a table of their own; the form stays because it keeps the rule of the damage in one body of code and needs no new export.
 - A record holds values only: no address, no slice.
 - The difference of a grid compares the cells of two frames. A change of one cell damages the span of its row only, so a terminal that writes one line draws one line.
 - The order of the records is the order of the draw. The border of the completion list is drawn after the grid, and the scroll bar after both.
@@ -44,8 +44,8 @@ The numbers come from the code of the terminal and of the window layer.
 ## The refused forms
 
 - **The compare of the cells compiled in.** The program compares the cells of its grids and joins its rectangles to the damage of the module; the module skips the grids that it cannot read. The rule of the damage of one table is then in two bodies of code, and the export gives a damage that is too small for a table with a grid.
-- **A second damage export for a grid**, with the cells of the two frames and a record of the shape: five parameters. It is one more crossing in each frame, and its result is joined with the result of the other export: the same split of the rule. The draw export still needs the cells as a seventh parameter, or a second draw export.
-- **The cells of the two frames in one `Bytes` of the program, with their offsets in a record.** The window layer owns the table before; this form makes the program keep the copy of the frame before in its own memory, at a place that the table names. The draw export still has no parameter left for the cells.
+- **A second damage export for a grid**, with the cells of the two frames and a record of the shape: five parameters. It is one more crossing in each frame, and its result is joined with the result of the other export: the same split of the rule. The draw export also needed the cells as a seventh parameter, past the bound of six of that time, or a second draw export.
+- **The cells of the two frames in one `Bytes` of the program, with their offsets in a record.** The window layer owns the table before; this form makes the program keep the copy of the frame before in its own memory, at a place that the table names. Under the bound of six, the draw export also had no parameter left for the cells.
 - **An export for one run of cells.** It is the export that the count above refuses for the terminal: up to 3,328 calls in one frame, and the window layer must cut the table at each grid to keep the order of the draw.
 - **The cells by an address in the record.** The value means nothing in another address space, and an isolated caller cannot give it.
 

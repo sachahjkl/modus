@@ -39,7 +39,7 @@ modus is an operating system for x86-64, written in Odin, that runs on one fixed
 These are the points that an agent gets wrong most often.
 
 1. **Compare first, then build.** A proposal that contradicts a property or the design of an intent file is named as such before any work. Propose the nearest form that keeps the property. A property changes in the documents first, then in the code.
-2. **The described export is the only border between two modules.** There is no second kind of import. A parameter that a description cannot carry (a slice by value, a record that holds an address, a seventh parameter) means that the border is in the wrong place. See [api/library_modules.md](api/library_modules.md).
+2. **The described export is the only border between two modules.** There is no second kind of import. A parameter that a description cannot carry (a slice by value, a record that holds an address, a procedure value) means that the border is in the wrong place. The count of the parameters is not such a sign: an export takes up to 12 arguments, past the six registers on the stack. See [api/library_modules.md](api/library_modules.md) and [api/call_form_arguments.md](api/call_form_arguments.md).
 3. **A new right for a program is the last answer.** First look for the program that already holds the grant, and give it a new face. The palette gives no program a new authority: see [features/palette.md](features/palette.md).
 4. **The policy is outside the kernel, the mechanism inside.** No code of a program runs on the path of the scheduler. A write that a program chooses the moment and the direction of must change no history that a strategy keeps. See [features/scheduling_policy.md](features/scheduling_policy.md).
 5. **A count, an offset or a length from another party is copied, then checked.** A value is never checked once and read again from memory that the other party can change. This holds for a table of another program, a file and a packet.
@@ -78,6 +78,7 @@ The intent of the parts that were built before this folder is in the design sect
 
 ## File Index
 
+- [api/call_form_arguments.md](api/call_form_arguments.md): why an export takes up to 12 arguments, the six past the registers on the stack, why the bound of six was refused, and why a bound stays
 - [api/library_modules.md](api/library_modules.md): which shared library becomes a module that programs import, where the border goes, and why there is no second kind of import
 - [api/module_replacement.md](api/module_replacement.md): who may replace a module: a replacement row signed by the key of a principal over the two hashes and the importer scope, the check of the root service at each `replace`, and the refused forms: a flag for tests, a signature over the new hash only, the description check alone
 - [api/picture.md](api/picture.md): how a Picture record names its pixels with values in a picture memory that the caller passes, why the draw export takes one rectangle for each call, the compositor that draws one part of its screen for each call, and the forms that were refused: a table of places, lent memory objects, one span of addresses

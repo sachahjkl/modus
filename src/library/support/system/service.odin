@@ -345,7 +345,7 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 	}
 	floats: [CALL_FLOATS]u64
 	out: [CALL_RESULTS]u64
-	export_call(address, &prepared.registers, &floats, &out)
+	export_call(address, &prepared.arguments, &floats, &out)
 	isolated.result_store(function, &prepared, region)
 	isolated.counts_store(function, &prepared, region)
 	// A failure: the error record names the export. The export does not

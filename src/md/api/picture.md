@@ -6,7 +6,7 @@ The border of the drawing module is in [library_modules.md](library_modules.md).
 
 ## The constraints
 
-- An export has at most six parameters, the error record included (`PARAMETER_CAPACITY`: the integer registers of the call form). The draw export had six already: the draw table, its text, the rectangles, the pixels of the canvas, the shape and the error record.
+- An export has at most 12 arguments, the error record included (`PARAMETER_CAPACITY`; [call_form_arguments.md](call_form_arguments.md)). When this form was chosen, the bound was six, the integer registers of the call form, and the draw export had six already: the draw table, its text, the rectangles, the pixels of the canvas, the shape and the error record.
 - The description describes each export completely, and a record holds values only: no address, no slice.
 - No adapter copies the pixels of a picture across the border.
 - A draw record stays 40 bytes, and two records compare by their bytes.
@@ -26,7 +26,7 @@ A **picture memory** (`docs/GLOSSARY.md`, "Picture memory") is one run of pixels
 
 - The draw export takes one picture memory as `Bytes(Read)`. A record of picture memory 0 reads its pixels there, in place. This is the rule that a text record already follows: a field of a record is an offset into another parameter of the same call ([`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "What the two users pass").
 - `draw_picture` takes a canvas of the program, finds the first picture memory that holds each of its pixels, and writes the values. A program keeps its canvases and its views as before.
-- **One rectangle for each call.** The picture memory takes the place of the table of rectangles: the one rectangle of a call is in the record of the shape (`Canvas_Rectangle`). A window crosses the border one time for the difference and one time for each damage rectangle, at most 8. Each call runs the same loop over the records as the call for one rectangle did, so the work of a frame is the same; each more crossing costs an import slot (2.4 ns) and the checks of the shape.
+- **One rectangle for each call.** Under the bound of six, the picture memory took the place of the table of rectangles: the one rectangle of a call is in the record of the shape (`Canvas_Rectangle`). A window crosses the border one time for the difference and one time for each damage rectangle, at most 8. Each call runs the same loop over the records as the call for one rectangle did, so the work of a frame is the same; each more crossing costs an import slot (2.4 ns) and the checks of the shape. The bound is now 12, so the table of rectangles has its place again; the change of the exports is planned work in `ROADMAP.md`.
 - **The version.** The fields of a Picture got another meaning in version 8 of the draw record. Version 9 gave the Text_Grid record its values ([text_grid.md](text_grid.md)), and the exports are `damage_of_draw_table_9` and `execute_draw_table_9`. A module of another version has no export of these names, and the load fails by name.
 - **One picture memory for each call.** The window layer refuses a frame with more than one picture memory in a program that draws through the module, with one line on the log. The compositor, which shows many memories, draws one part of its table for each call (below).
 
@@ -46,11 +46,11 @@ The compositor shows the surface of each window as a picture. Each surface is a 
 - **The interface package compiled in, for the compositor only.** It keeps a second copy of the drawing code in the program that holds the surfaces of every window. A correction of the module would not reach it.
 - **A copy of each surface into one picture memory.** It copies the pixels of each window at each frame, and no adapter copies the pixels of a picture across the border.
 - **One span of addresses over the surfaces.** It is refused for each program above: the span holds memory that is not pixels, and holes.
-- **An export with a table of picture memories.** A memory is an address and a size, so the table holds addresses, which a description cannot carry.
+- **An export with a table of picture memories.** A memory is an address and a size, so the table holds addresses, which a description cannot carry. The bound of 12 arguments does not change this: the reason is the kind of the parameter, not the count.
 
 ## The refused forms
 
-- **A table of picture places beside the bytes** (the record keeps an index, and a `Table(Picture_Place, Read)` holds the offset, the size and the stride of each picture). It needs two more parameters, eight in all. Two places then hold the size of one picture, and they can disagree.
+- **A table of picture places beside the bytes** (the record keeps an index, and a `Table(Picture_Place, Read)` holds the offset, the size and the stride of each picture). Two places then hold the size of one picture, and they can disagree. It also needed two more parameters, eight in all, past the bound of six of that time.
 - **A lent memory object for each picture.** A direct call runs in the address space of the caller, where the pixels are mapped already: a handle makes the callee map them again at each call. A handle is one register, so the compositor would need 33 parameters. A table too large for the call region of an isolated call already goes in a lent memory object ([`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "One description, three ways to call", form (iii)): that is the isolated form of the chosen form, not another form.
 - **The text and the pixels in one `Bytes`.** It forces a layout of memory that two owners share: the window layer owns the text table, the program owns its pictures, and the table before has a text of its own.
 - **One `Bytes` from the lowest to the highest address of the pictures.** It names memory that is not the pixels of the program, and holes that are not mapped. An isolated call copies the whole span.
@@ -77,3 +77,5 @@ The host test `the_parts_of_a_screen_draw_the_same_bytes_as_the_package` draws a
 ## What is built and what is left
 
 Built: the picture memory, the Picture record, the two exports with the picture memory, the eight programs that show a picture through the module, and the compositor through the module, one call for each part.
+
+Left: **the rectangles of a frame in one call.** The draw export takes the table of the damage rectangles, now that an export has room for it (`ROADMAP.md`).

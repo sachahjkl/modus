@@ -1455,7 +1455,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "isolate(\"sample\")"},
 	{kind = .Wait, text = "[console]   module     sample"},
-	{kind = .Wait, text = "[console]   commands   11"},
+	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	// The exports that are wrong on purpose are in a module of their own,
 	// which no service holds.
@@ -1524,7 +1524,7 @@ scenario := [?]Step {
 	// console: it has the handles of the console, and kept gives 0.
 	{kind = .Type, text = "unload(\"sample\")"},
 	{kind = .Wait, text = "[console]   module    sample"},
-	{kind = .Wait, text = "[console]   commands  11"},
+	{kind = .Wait, text = "[console]   commands  12"},
 	{kind = .Wait, text = "[console]   memory    its sandboxed program stopped"},
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module    hostile_exports"},
@@ -1532,7 +1532,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "load(\"sample\")"},
 	{kind = .Wait, text = "[console]   module     sample"},
-	{kind = .Wait, text = "[console]   commands   11"},
+	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       direct"},
 	{kind = .Type, text = "load(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module     hostile_exports"},
@@ -1541,9 +1541,16 @@ scenario := [?]Step {
 	{kind = .Type, text = "g = grow(r, 5)"},
 	{kind = .Type, text = "g.width * g.height + keep(b) + kept()"},
 	{kind = .Wait, text = "[console] 12848"},
+	// An export with nine parameters in a direct call: the numbers 7 and 8,
+	// the label and the error record are on the stack. Each number has its
+	// own weight, so a word in the wrong place gives another sum.
+	{kind = .Type, text = "weigh(1, 2, 3, 4, 5, 6, 7, 8, \"A\")"},
+	{kind = .Wait, text = "[console] 269"},
+	{kind = .Type, text = "weigh(1, 2, 3, 4, 5, 6, 7, 8, \"a label of twenty bytes\")"},
+	{kind = .Wait, text = "[console] error: weigh: the argument label has 23 bytes"},
 	{kind = .Type, text = "unload(\"sample\")"},
 	{kind = .Wait, text = "[console]   module    sample"},
-	{kind = .Wait, text = "[console]   commands  11"},
+	{kind = .Wait, text = "[console]   commands  12"},
 	{kind = .Wait, text = "[console]   memory    left the console"},
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module    hostile_exports"},
@@ -2273,7 +2280,7 @@ scenario := [?]Step {
 	// records out of the log.)
 	{kind = .Type, text = "load(\"sample\")"},
 	{kind = .Wait, text = "[console]   module     sample"},
-	{kind = .Wait, text = "[console]   commands   11"},
+	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       direct"},
 	// A table goes into a direct call: the export reads and changes the
 	// memory of the variable, with no copy. A table from where() goes in;
@@ -2292,13 +2299,13 @@ scenario := [?]Step {
 	{kind = .Shot, text = "table_argument"},
 	{kind = .Type, text = "unload(\"sample\")"},
 	{kind = .Wait, text = "[console]   module    sample"},
-	{kind = .Wait, text = "[console]   commands  11"},
+	{kind = .Wait, text = "[console]   commands  12"},
 	{kind = .Wait, text = "[console]   memory    left the console"},
 	// A table goes into an isolated call: the rows go into the call
 	// region, and the rows of a Change table come back.
 	{kind = .Type, text = "isolate(\"sample\")"},
 	{kind = .Wait, text = "[console]   module     sample"},
-	{kind = .Wait, text = "[console]   commands   11"},
+	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	{kind = .Type, text = "t = readings(4)"},
 	{kind = .Type, text = "scale_values(t, 3)"},
@@ -2313,9 +2320,15 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: scale_values_up_to: the argument factor has the value 3, which the call refuses; it takes at most 2 (-1)"},
 	{kind = .Type, text = "sum_values(t)"},
 	{kind = .Wait, text = "[console] 300"},
+	// An export with nine parameters in an isolated call: the receiver
+	// decodes ten arguments and puts four of them on the stack.
+	{kind = .Type, text = "weigh(1, 2, 3, 4, 5, 6, 7, 8, \"A\")"},
+	{kind = .Wait, text = "[console] 269"},
+	{kind = .Type, text = "weigh(1, 2, 3, 4, 5, 6, 7, 8, \"a label of twenty bytes\")"},
+	{kind = .Wait, text = "[console] error: weigh: the argument label has 23 bytes"},
 	{kind = .Type, text = "unload(\"sample\")"},
 	{kind = .Wait, text = "[console]   module    sample"},
-	{kind = .Wait, text = "[console]   commands  11"},
+	{kind = .Wait, text = "[console]   commands  12"},
 	{kind = .Wait, text = "[console]   memory    its sandboxed program stopped"},
 	// The signature of an export with a table and bytes: one form in the
 	// manual, the console and the errors.

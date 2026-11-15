@@ -42,16 +42,32 @@ port_read_32:                    ; (port: u16) -> u32
 
 ; The one routine that calls an export from values in memory: the call form
 ; of docs/MODULE_CONTRACT.md, section 4. Every parameter is a scalar, so the
-; routine does not need the description of the export.
+; routine does not need the description of the export. Integers 1 to 6 go
+; in registers, 7 to 12 on the stack at the call, the 7th at the lowest
+; address, as System V passes them. The routine always writes the six words:
+; a callee reads the words that it has, so no count is needed.
 global export_call
-export_call:                     ; (address, integers: ^[6]u64, floats: ^[8]u64, results: ^[4]u64)
+export_call:                     ; (address, integers: ^[12]u64, floats: ^[8]u64, results: ^[4]u64)
 	push rbp
 	mov rbp, rsp
 	push rbx
-	push r12                     ; The stack is at a multiple of 16 for the call.
+	push r12                     ; The stack is at a multiple of 16 here.
+	sub rsp, 48                  ; Six words of stack arguments keep that multiple for the call.
 	mov r11, rdi
 	mov r10, rsi
 	mov rbx, rcx
+	mov rax, [r10 + 48]
+	mov [rsp], rax
+	mov rax, [r10 + 56]
+	mov [rsp + 8], rax
+	mov rax, [r10 + 64]
+	mov [rsp + 16], rax
+	mov rax, [r10 + 72]
+	mov [rsp + 24], rax
+	mov rax, [r10 + 80]
+	mov [rsp + 32], rax
+	mov rax, [r10 + 88]
+	mov [rsp + 40], rax
 	movq xmm0, [rdx]
 	movq xmm1, [rdx + 8]
 	movq xmm2, [rdx + 16]
@@ -71,6 +87,7 @@ export_call:                     ; (address, integers: ^[6]u64, floats: ^[8]u64,
 	mov [rbx + 8], rdx
 	movq [rbx + 16], xmm0
 	movq [rbx + 24], xmm1
+	add rsp, 48
 	pop r12
 	pop rbx
 	pop rbp
