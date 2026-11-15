@@ -22,6 +22,7 @@ names_that_are_refused :: proc(t: ^testing.T) {
 		{".", .Bad_Byte, 0},
 		{"..", .Bad_Byte, 0},
 		{"programs", .Store_Name, 0},
+		{"grant_table", .Table_Name, 0},
 	}
 	for item in cases {
 		problem, offset := name_problem(item.name)

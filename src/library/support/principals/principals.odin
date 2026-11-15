@@ -16,6 +16,9 @@
 //   program in the session of a principal.
 // - `Principal_File`, `file_encode`, `file_decode`,
 //   `file_additional_data`: the file of `unlock`.
+// - `Machine_File`, `machine_file_encode`, `machine_file_decode`,
+//   `machine_file_additional_data`: the record of the machine passphrase,
+//   with the sealed machine key.
 //
 // See [principal](term:principal), [named principal](term:named-principal)
 // and [passphrase](term:passphrase).
@@ -37,8 +40,17 @@ PASSPHRASE_LIMIT :: 128 // The most bytes of a passphrase.
 
 // The context values of the program `unlock`. 0 to 4 are the roles that the
 // root service gives (the store: 3).
-VALUE_CREATE :: 5 // 1: create the principal named at VALUE_NAME; 0: unlock the principal of the file.
+VALUE_MODE :: 5 // What this start of `unlock` does: a MODE_ value.
 VALUE_NAME :: 6 // 6, 7 and 8: the name, 24 bytes with zero bytes after it.
+
+// What a start of `unlock` does, in VALUE_MODE.
+MODE_UNLOCK :: 0 // Ask for the machine passphrase if one is set, then unlock the principal of the file.
+MODE_CREATE_PRINCIPAL :: 1 // Create the principal named at VALUE_NAME.
+MODE_SET_MACHINE_PASSPHRASE :: 2 // Set the machine passphrase.
+// Unlock the principal of the file: the root service holds the key of the
+// tag of the disk grant table of principal 0 already (after a lock), so
+// the machine passphrase is not asked again.
+MODE_UNLOCK_MACHINE_KEY_HELD :: 3
 
 // The key derivation: Argon2id (RFC 9106) with the first parameter set of
 // the OWASP password storage cheat sheet: 19 MiB, 2 passes, 1 lane. A file
@@ -344,4 +356,92 @@ file_decode :: proc "contextless" (bytes: []u8) -> (file: Principal_File, kept: 
 // that are not sealed: each byte before the sealed keys.
 file_additional_data :: proc "contextless" (bytes: ^[FILE_SIZE]u8) -> []u8 {
 	return bytes^[:OFFSET_SEALED]
+}
+
+// The record of the machine passphrase: the object MACHINE_OBJECT in the
+// store of `unlock` (docs/PRINCIPALS.md, "Principal 0 and its machine
+// passphrase"). It holds the machine key, 32 random bytes, sealed under
+// the key that Argon2id derives from the machine passphrase. The machine key
+// gives the key of the tag of the disk grant table of principal 0
+// (modus:support/disk_program, table_key_of_machine_key). With no record,
+// the machine has no passphrase.
+MACHINE_OBJECT :: "machine"
+MACHINE_MAGIC :: "MACHINEK" // The first 8 bytes of the record.
+MACHINE_FORMAT :: u32(1) // A record of another format number is refused.
+MACHINE_KEY_SIZE :: 32 // The bytes of the machine key.
+MACHINE_OFFSET_MAGIC :: 0 // 8 bytes.
+MACHINE_OFFSET_FORMAT :: 8 // u32.
+MACHINE_OFFSET_MEMORY :: 12 // u32: the KiB of Argon2id.
+MACHINE_OFFSET_PASSES :: 16 // u32.
+MACHINE_OFFSET_SALT :: 20 // SALT_SIZE bytes.
+MACHINE_OFFSET_NONCE :: MACHINE_OFFSET_SALT + SALT_SIZE // 36.
+// The sealed machine key and its tag. The bytes before them are the
+// additional data of the seal: a change of a parameter or of the salt makes
+// the open fail.
+MACHINE_OFFSET_SEALED :: MACHINE_OFFSET_NONCE + NONCE_SIZE // 48.
+MACHINE_SEALED_SIZE :: MACHINE_KEY_SIZE + TAG_SIZE // 48.
+MACHINE_FILE_SIZE :: MACHINE_OFFSET_SEALED + MACHINE_SEALED_SIZE // 96.
+#assert(MACHINE_FILE_SIZE == 96)
+
+// The record of the machine passphrase, decoded.
+Machine_File :: struct {
+	salt:   [SALT_SIZE]u8, // The salt of Argon2id.
+	nonce:  [NONCE_SIZE]u8, // The nonce of the seal.
+	sealed: [MACHINE_SEALED_SIZE]u8, // The machine key, sealed, and the tag.
+}
+
+// machine_file_encode writes the bytes of the record of the machine.
+machine_file_encode :: proc "contextless" (file: ^Machine_File, out: ^[MACHINE_FILE_SIZE]u8) {
+	out^ = {}
+	copy(out^[MACHINE_OFFSET_MAGIC:][:8], MACHINE_MAGIC)
+	u32_put(out^[MACHINE_OFFSET_FORMAT:], MACHINE_FORMAT)
+	u32_put(out^[MACHINE_OFFSET_MEMORY:], DERIVATION_MEMORY_KIBIBYTES)
+	u32_put(out^[MACHINE_OFFSET_PASSES:], DERIVATION_PASSES)
+	copy(out^[MACHINE_OFFSET_SALT:][:SALT_SIZE], file.salt[:])
+	copy(out^[MACHINE_OFFSET_NONCE:][:NONCE_SIZE], file.nonce[:])
+	copy(out^[MACHINE_OFFSET_SEALED:][:MACHINE_SEALED_SIZE], file.sealed[:])
+}
+
+// machine_file_decode reads a record of the machine that the store gave.
+// It copies the bytes once and checks the copy, as file_decode does. It
+// does not check the seal: only the machine passphrase opens it. The
+// problems are those of a file of a principal: Wrong_Size, Wrong_Magic,
+// Wrong_Format and Other_Parameters.
+machine_file_decode :: proc "contextless" (bytes: []u8) -> (file: Machine_File, kept: [MACHINE_FILE_SIZE]u8, problem: File_Problem) {
+	if len(bytes) != MACHINE_FILE_SIZE {
+		return {}, {}, .Wrong_Size
+	}
+	copy(kept[:], bytes)
+	if string(kept[MACHINE_OFFSET_MAGIC:][:8]) != MACHINE_MAGIC {
+		return {}, {}, .Wrong_Magic
+	}
+	if u32_get(kept[MACHINE_OFFSET_FORMAT:]) != MACHINE_FORMAT {
+		return {}, {}, .Wrong_Format
+	}
+	if u32_get(kept[MACHINE_OFFSET_MEMORY:]) != DERIVATION_MEMORY_KIBIBYTES || u32_get(kept[MACHINE_OFFSET_PASSES:]) != DERIVATION_PASSES {
+		return {}, {}, .Other_Parameters
+	}
+	copy(file.salt[:], kept[MACHINE_OFFSET_SALT:][:SALT_SIZE])
+	copy(file.nonce[:], kept[MACHINE_OFFSET_NONCE:][:NONCE_SIZE])
+	copy(file.sealed[:], kept[MACHINE_OFFSET_SEALED:][:MACHINE_SEALED_SIZE])
+	return file, kept, .None
+}
+
+// machine_file_additional_data gives the bytes of a record of the machine
+// that the seal covers and that are not sealed.
+machine_file_additional_data :: proc "contextless" (bytes: ^[MACHINE_FILE_SIZE]u8) -> []u8 {
+	return bytes^[:MACHINE_OFFSET_SEALED]
+}
+
+// machine_file_problem_sentences gives the sentence of each problem of a
+// record of the machine, for the log of `unlock`.
+@(rodata)
+machine_file_problem_sentences := [File_Problem]string {
+	.None             = "",
+	.Wrong_Size       = "the record does not have 96 bytes",
+	.Wrong_Magic      = "the record does not start with MACHINEK",
+	.Wrong_Format     = "the record has another format number",
+	.Other_Parameters = "the record names other parameters of Argon2id than 19456 KiB and 2 passes",
+	.Bad_Name         = "",
+	.Bytes_After_Name = "",
 }

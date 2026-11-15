@@ -478,6 +478,24 @@ commands_start :: proc "contextless" () {
 	// Errors: the nickname has no row; the hash has a wrong form, or is the
 	// hash of its file already.
 	command("nickname_move", {.Text, .Text}, .None, "point a nickname to another file, with its grants and its store", nickname_move)
+	// Sets how long a row of the disk grant table lasts across a restart.
+	// A row persists only when its principal has a key for the table: for
+	// principal 0, the machine passphrase. It gives nothing.
+	//
+	// - `nickname`: a nickname with a row, or no byte for the global
+	//   setting of the table.
+	// - `setting`: `persist`, `forget` (the row lasts until the machine
+	//   stops), or `global` (the row follows the global setting). The
+	//   global setting takes `persist` or `forget`; the default is
+	//   `persist`.
+	//
+	// ```
+	// > disk_persistence("visitor", "forget")
+	// ```
+	//
+	// Errors: the nickname has no row; the setting is not one of these;
+	// the machine passphrase is not typed yet.
+	command("disk_persistence", {.Text, .Text}, .None, "how long a grant of a disk program lasts across a restart", disk_persistence)
 	// Asks the root service to stop a program that runs. It gives nothing.
 	//
 	// - `name`: the name of the program, as `programs()` gives it.
@@ -532,6 +550,17 @@ commands_start :: proc "contextless" () {
 	// keeps each line in its history: the window of unlock opens and asks
 	// for it. `principals()` then has the row of the principal.
 	command("principal_create", {.Text}, .None, "create a named principal: its passphrase is typed in the window of unlock", principal_create)
+	// Asks the root service to set the machine passphrase: an optional
+	// passphrase of principal 0, the machine, that keeps the disk grant
+	// table of principal 0 across a restart. It gives nothing.
+	//
+	// The passphrase is never a text of the console: the window of unlock
+	// opens and asks for it two times. At each start of the machine, the
+	// window then asks for it; until it is typed, the disk programs of
+	// principal 0 start with no grant.
+	//
+	// Errors: the machine has a passphrase already; unlock runs.
+	command("machine_passphrase", {}, .None, "set the machine passphrase: it is typed in the window of unlock", machine_passphrase)
 	// Asks the root service to lock the session of the named principal that
 	// is unlocked, and gives the count of the programs of the session that
 	// stopped.
@@ -2242,6 +2271,8 @@ start_from_disk :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("start_from_disk: the byte ", u64(offset), " of the name cannot be in the name of an entry of a tree")
 	case .Store_Name:
 		return fail("start_from_disk: \"", name, "\" is the name of the store of the module files, and no name of a program")
+	case .Table_Name:
+		return fail("start_from_disk: \"", name, "\" is the name of the object of the disk grant table, and no name of a program")
 	}
 	// An empty hash: the root service takes the hash of the row of the
 	// nickname in the disk grant table.
@@ -2301,8 +2332,10 @@ nickname_check :: proc "contextless" (command_name: string, nickname: string) ->
 		return fail(command_name, ": the nickname is empty; it must have 1 to ", u64(disk_program.NAME_LIMIT), " bytes"), true
 	case .Too_Long:
 		return fail(command_name, ": the nickname has ", u64(len(nickname)), " bytes; a nickname has at most ", u64(disk_program.NAME_LIMIT)), true
-	case .Bad_Byte, .Store_Name:
+	case .Bad_Byte:
 		return fail(command_name, ": the byte ", u64(offset), " of the nickname is not a letter, a digit, '-' or '_'"), true
+	case .Store_Name, .Table_Name:
+		return fail(command_name, ": \"", nickname, "\" is a name that the store of the module files keeps for itself"), true
 	}
 	return {}, false
 }
@@ -2385,6 +2418,55 @@ nickname_move :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	if system.Status(completion.kind) != .Ok {
 		return fail_root("nickname_move: ", completion)
+	}
+	return {}
+}
+
+// disk_persistence asks the root service how long a row of the disk grant
+// table lasts across a restart: "persist", "forget", or "global" for the
+// global setting. An empty nickname sets the global setting.
+disk_persistence :: proc "contextless" (arguments: []Value) -> Value {
+	nickname := arguments[0].text
+	if nickname != "" {
+		if refusal, refused := nickname_check("disk_persistence", nickname); refused {
+			return refusal
+		}
+	}
+	persistence: disk_program.Persistence
+	switch arguments[1].text {
+	case "persist":
+		persistence = .Persist
+	case "forget":
+		persistence = .Forget
+	case "global":
+		if nickname == "" {
+			return fail("disk_persistence: the global setting is \"persist\" or \"forget\"")
+		}
+		persistence = .Global
+	case:
+		return fail("disk_persistence: the setting is \"persist\", \"forget\" or \"global\"")
+	}
+	packed := disk_program.name_pack(nickname)
+	completion, answered := disk_request(.Disk_Grant_Persistence, {0 = packed[0], 1 = packed[1], 2 = packed[2], 4 = u64(persistence)}, 3000)
+	if !answered {
+		return fail_no_answer()
+	}
+	if system.Status(completion.kind) != .Ok {
+		return fail_root("disk_persistence: ", completion)
+	}
+	return {}
+}
+
+// machine_passphrase asks the root service to set the machine passphrase.
+// The passphrase is never a text of the console: the console keeps each
+// line in its history, so it is typed in the window of unlock.
+machine_passphrase :: proc "contextless" (arguments: []Value) -> Value {
+	completion, answered := request_record(.Machine_Passphrase, "")
+	if !answered {
+		return fail_no_answer()
+	}
+	if system.Status(completion.kind) != .Ok {
+		return fail_root("", completion)
 	}
 	return {}
 }

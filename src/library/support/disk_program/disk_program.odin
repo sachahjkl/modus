@@ -9,6 +9,8 @@
 // The parts:
 //
 // - `STORE_NAME`, `STORE_BLOCKS_LIMIT`: the store of the module files.
+//   `TABLE_OBJECT_NAME`: the object of that store that holds the
+//   persisted disk grant table.
 // - `name_problem`, `name_pack`, `name_unpack`: the name of a disk program,
 //   in three values of a record of the root ring.
 // - `hash_parse`, `hash_write`: the hash of the command, as 64 hexadecimal
@@ -18,7 +20,9 @@
 // - `Grant_Table`, `start_file`, `table_allow`, `table_disallow`,
 //   `table_move`, `grant_by_command`, `table_encode`, `table_decode`: the
 //   disk grant table of a principal, its nickname rule, and its persisted
-//   form (grant_table.odin).
+//   form (grant_table.odin). `table_persistence_set`: its setting of
+//   persistence. `table_key_of_machine_key`: the key of the tag of the
+//   table of principal 0.
 // - `PROGRAMS_BUDGET`, `LARGEST_BUDGET` (budget.odin): the one budget that
 //   pays all disk programs, and the most that one of them gets.
 //
@@ -29,6 +33,11 @@ package disk_program
 // program, its name the name of the program. For a named principal the
 // root service adds the principal to this name, as for each store.
 STORE_NAME :: "programs"
+
+// The object of the root tree of the store `programs` that holds the
+// persisted disk grant table of its principal (grant_table.odin). No disk
+// program has this name.
+TABLE_OBJECT_NAME :: "grant_table"
 
 // The limit of blocks of the store `programs`, as the root service grants
 // it and as the modus tool writes it: 16 MiB. The two numbers are one
@@ -62,6 +71,7 @@ Name_Problem :: enum u8 {
 	Too_Long, // More than NAME_LIMIT bytes.
 	Bad_Byte, // A zero byte or a byte '/', or the name is "." or "..": no name of an entry of a tree.
 	Store_Name, // The name of the store of the module files: its private store would be that store.
+	Table_Name, // The name of the object of the disk grant table in that store: the table would be read as a module file, and written over one.
 }
 
 // name_problem says why a text cannot be the name of a disk program, or
@@ -84,6 +94,9 @@ name_problem :: proc "contextless" (name: string) -> (problem: Name_Problem, off
 	}
 	if name == STORE_NAME {
 		return .Store_Name, 0
+	}
+	if name == TABLE_OBJECT_NAME {
+		return .Table_Name, 0
 	}
 	return .None, 0
 }

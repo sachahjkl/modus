@@ -29,18 +29,19 @@
 // system). A program with the grant **Root_Ring** (the console) sends all
 // of them; a program with **Connect** sends `Connect` to the services of
 // `callable_of`, and `Disconnect`; the program with **Principals** sends
-// `Principal_Record` and `Principal_Unlock`, and no other program can; the
-// program with **Debugger** sends `Debug`.
+// `Principal_Record`, `Principal_Unlock` and `Machine_Key`, and no other
+// program can; the program with **Debugger** sends `Debug`.
 //
 // - `Start`, `Stop`: a program by name, in the session of the caller.
 // - `Start_From_Disk`: a disk program, by its name and the hash of its
 //   module file, which this service reads from the store `programs` of the
 //   storage service. Its completion comes when the load ends
 //   (disk_programs.odin; docs/MODULE_CONTRACT.md, "A program from a disk").
-// - `Disk_Grant`, `Nickname_Move`: the disk grant table of the principal
-//   of the caller: a grant to the file that a nickname names, and the move
-//   of a nickname to another file (disk_programs.odin;
-//   docs/MODULE_CONTRACT.md, "The grants of a disk program").
+// - `Disk_Grant`, `Nickname_Move`, `Disk_Grant_Persistence`: the disk
+//   grant table of the principal of the caller: a grant to the file that a
+//   nickname names, the move of a nickname to another file, and how long a
+//   row lasts (disk_programs.odin; docs/MODULE_CONTRACT.md, "The grants of
+//   a disk program").
 // - `Connect`, `Disconnect`, `Connect_History`: a connection to a service.
 // - `Palette_Provide`: the entry table and the ring of the palette
 //   provider, for the program with the grant **Palette**.
@@ -50,6 +51,8 @@
 // - `Replace`: change the replacement table of the machine.
 // - `Principal_Create`, `Principal_Lock`, `Principals`: the named
 //   principals (docs/PRINCIPALS.md, "7. The commands").
+// - `Machine_Passphrase`: the machine passphrase, which guards the key of
+//   the disk grant table of principal 0 (machine_grant_table.odin).
 // - `Debug`: the handle of a program with the right Debug, for the
 //   debugger service, on behalf of a caller of that service that acts for
 //   the principal whose session runs that program (`debug`).
@@ -351,6 +354,11 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	// file of a disk program: the store of the module files, with its
 	// limit, and no grant to act for a principal.
 	if caller == &disk_reader {
+		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false)
+	}
+	// The connection of this service for the disk grant table of principal
+	// 0, an object of the same store (machine_grant_table.odin).
+	if caller == &machine_table_keeper {
 		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false)
 	}
 	// A disk program: the grants of its start, never the grants of a name,
@@ -764,7 +772,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	settings_boot_pass_start()
 	// The named principal, if one was created: `unlock` reads its file and
 	// asks for the passphrase; with no file it stops (principals.odin).
-	unlock_start(false, "")
+	unlock_start(principals.MODE_UNLOCK, "")
 	// A measure, not a check: the pages that this service can still give,
 	// now and at the lowest count that it read since its start. This
 	// service holds the budget of the free memory of the machine, and each
@@ -805,7 +813,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// program can send.
 				command := system.Root_Command(record.kind)
 				role := grants_of(system.name_of(item.name[:]))
-				of_principals := command == .Principal_Record || command == .Principal_Unlock
+				of_principals := command == .Principal_Record || command == .Principal_Unlock || command == .Machine_Key
 				// The command Debug: the debugger service only. It names
 				// one of its own callers, and this service applies the
 				// rule to that caller (debug).
@@ -824,6 +832,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					result = disk_grant_change(&item, record, &completion.values)
 				case .Nickname_Move:
 					result = nickname_move(&item, record, &completion.values)
+				case .Disk_Grant_Persistence:
+					result = disk_grant_persistence(&item, record, &completion.values)
+				case .Machine_Passphrase:
+					result = machine_passphrase_ask()
+				case .Machine_Key:
+					result = machine_key_take(record.values)
+					machine_key_ring_erase(&item.requests.commands)
 				case .Connect:
 					result = connect(&item, system.name_of(name[:]), &completion.values)
 				case .Connect_History:
@@ -889,8 +904,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// grant that refuses, which only debug knows. A refused
 				// Start_From_Disk wrote its own too: its values are a hash
 				// and a name of another form. So do Disk_Grant and
-				// Nickname_Move, whose name is a nickname of three values.
-				if result != .Ok && command != .Debug && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move {
+				// Nickname_Move and Disk_Grant_Persistence, whose name is a
+				// nickname of three values. Machine_Key carries a key where
+				// a name would be: no refusal reads it as a name.
+				if result != .Ok && command != .Debug && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key {
 					completion.values = refusal(system.Root_Command(record.kind), system.name_of(name[:]), record.values[4], result)
 				}
 				completion.kind = u32(result)
@@ -900,6 +917,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		reap()
 		// After reap: a storage service that stopped ended its connections.
 		disk_load_step(&wait)
+		machine_table_step(&wait)
 		network_answers(&wait)
 		system.wait_records(&wait, &control.completions)
 		for &item in started {
@@ -907,9 +925,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.wait_records(&wait, &item.requests.commands)
 			}
 		}
-		// A load from the disk has a deadline: the wait ends there, with or
-		// without an answer of the storage service.
-		system.wait_end(&wait, disk_load_deadline())
+		// A load from the disk and a call for the disk grant table have a
+		// deadline: the wait ends there, with or without an answer of the
+		// storage service.
+		system.wait_end(&wait, min(disk_load_deadline(), machine_table_deadline()))
 	}
 }
 
@@ -1002,6 +1021,15 @@ refusal :: proc "contextless" (command: system.Root_Command, name: string, value
 		if status == .No_Slot {
 			return errors.ring_fail(kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
 		}
+	case .Machine_Passphrase:
+		#partial switch status {
+		case .Bad_State:
+			// The machine has its passphrase: a change is not built.
+			return errors.ring_fail(kind, .Exists, .Principals)
+		case .No_Slot:
+			// unlock runs: one window of unlock at a time.
+			return errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
+		}
 	}
 	return errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
 }
@@ -1077,7 +1105,12 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	}
 	values: [op.CONTEXT_VALUES]u64
 	if name == "unlock" {
-		values[principals.VALUE_CREATE] = u64(unlock_create)
+		// After a lock this service holds the key of the table of principal
+		// 0: unlock does not ask for the machine passphrase again.
+		values[principals.VALUE_MODE] = unlock_mode
+		if unlock_mode == principals.MODE_UNLOCK && machine_key_held() {
+			values[principals.VALUE_MODE] = principals.MODE_UNLOCK_MACHINE_KEY_HELD
+		}
 		packed := principals.name_pack(string(unlock_name[:unlock_name_length]))
 		copy(values[principals.VALUE_NAME:][:3], packed[:])
 	}
@@ -2016,6 +2049,9 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 	// learns here that it ended.
 	if disk_load.connection == connection {
 		disk_load.connection = nil
+	}
+	if machine_table.connection == connection {
+		machine_table.connection = nil
 	}
 	connection^ = {}
 }

@@ -24,6 +24,10 @@ import "modus:support/system"
 // (Principal_Unlock). This service trusts `unlock` for both, as the one
 // holder of the grant Principals, as it trusts `settings` as the one writer
 // of the settings page. The seal by the TPM is not built.
+//
+// `unlock` also keeps the record of the machine passphrase, and gives this
+// service the key of the tag of the disk grant table of principal 0
+// (Machine_Key; machine_grant_table.odin).
 
 Principal_Record :: struct {
 	state:       system.Principal_State,
@@ -36,9 +40,10 @@ Principal_Record :: struct {
 
 principal_records: [principals.PRINCIPAL_CAPACITY]Principal_Record
 
-// What start() gives to the next start of `unlock`: to create the principal
-// with this name, or to unlock the principal of its file.
-unlock_create: bool
+// What start() gives to the next start of `unlock` (principals.VALUE_MODE):
+// to unlock, to create the principal with this name, or to set the machine
+// passphrase.
+unlock_mode: u64
 unlock_name: [principals.NAME_LIMIT]u8
 unlock_name_length: int
 
@@ -79,14 +84,15 @@ principals_start :: proc "contextless" () {
 	}
 }
 
-// unlock_start starts `unlock`: at boot to read its file (with no file it
+// unlock_start starts `unlock`: at boot to read its files (with none it
 // stops at once, and the machine runs as principal 0 only), after a lock,
-// or to create a principal.
-unlock_start :: proc "contextless" (create: bool, name: string) -> system.Status {
-	unlock_create = create
+// to create a principal, or to set the machine passphrase. mode is a
+// principals.MODE_ value.
+unlock_start :: proc "contextless" (mode: u64, name: string) -> system.Status {
+	unlock_mode = mode
 	unlock_name_length = copy(unlock_name[:], name)
 	status := start("unlock")
-	unlock_create = false
+	unlock_mode = principals.MODE_UNLOCK
 	unlock_name_length = 0
 	unlock_name = {}
 	if status != .Ok {
@@ -104,7 +110,7 @@ principal_create :: proc "contextless" (name: string) -> system.Status {
 		return .Bad_State
 	}
 	system.log_in("programs", .Info, "root: the principal \"", name, "\" is created in the window of unlock")
-	status := unlock_start(true, name)
+	status := unlock_start(principals.MODE_CREATE_PRINCIPAL, name)
 	unlock_creating = status == .Ok
 	return status
 }
@@ -171,7 +177,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	principal_records[number].state = .Locked
 	completion^[0] = count
 	system.log_in("programs", .Info, "root: the session of principal ", number, " \"", principal_name(number), "\" ends: ", count, " programs stopped")
-	unlock_start(false, "")
+	unlock_start(principals.MODE_UNLOCK, "")
 	return .Ok
 }
 

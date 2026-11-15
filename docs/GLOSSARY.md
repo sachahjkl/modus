@@ -1915,7 +1915,7 @@ Do not use: alias, pet name, display name.
 
 A disk grant table is the table of the root service that binds each nickname of one principal to the hash of one module file, with the grants of that file.
 
-The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The persisted form has a tag of keyed BLAKE2b under a key that the passphrase of the principal gives; the table of principal 0, which has no passphrase, lasts until the machine stops.
+The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The persisted form is the object `grant_table` of the store `programs` of the principal, with a tag of keyed BLAKE2b under a key that a passphrase gives. For principal 0 that passphrase is optional (see "Machine passphrase", below): with none, the table lasts until the machine stops; with one, the root service reads the table after it is typed and writes it after each change. A table whose tag fails is refused, and gives no grant.
 
 A disk grant table is not the grant table of the root service (`grants_of`), which gives the programs of the boot image their grants by their names, and which a disk program never reaches.
 
@@ -2060,6 +2060,28 @@ It is typed in the window of `unlock` only, shown as dots, and kept nowhere. It 
 The design: `docs/PRINCIPALS.md`, "The passphrase".
 
 Do not use: password, PIN.
+
+### Machine passphrase
+
+A machine passphrase is an optional passphrase of principal 0, the machine, that guards the machine key.
+
+It has the rules of a passphrase, and it is typed in the window of `unlock` only: two times after `machine_passphrase()` in the console, then at each start of the machine. It opens no session: principal 0 stays the machine, and is no person. With no machine passphrase, the disk grant table of principal 0 lasts until the machine stops. With one, the table persists, and until the passphrase is typed the disk programs of principal 0 start with no grant.
+
+The design: `docs/PRINCIPALS.md`, "Principal 0 and its machine passphrase"; `src/md/features/programs_from_a_disk.md`.
+
+Do not use: admin password, root password, master password.
+
+### Machine key
+
+The machine key is a key of 32 random bytes of principal 0 that signs its disk grant table.
+
+The record of the machine passphrase holds it sealed under the key that Argon2id derives from the passphrase. `unlock` opens it, and gives the root service only the key of the tag of the table, which keyed BLAKE2b derives from the machine key: the root service cannot open the seal with it. The seal of the machine key by the TPM is not built.
+
+The machine key is not the attestation key of the TPM, which is another key of principal 0.
+
+The design: `docs/PRINCIPALS.md`, "Principal 0 and its machine passphrase".
+
+Do not use: master key, device key.
 
 ### Acts for the principal
 
