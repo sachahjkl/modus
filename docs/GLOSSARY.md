@@ -4345,11 +4345,11 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each program that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_10` one time for a frame: it gives the damage rectangles from the draw table before and the draw table now. Then it calls `execute_draw_table_10` one time for each damage rectangle: it draws the records in that rectangle into the pixels of the surface. Each argument is memory of the program, passed by address: the two draw tables, the picture memory of the pictures, and the pixels, which the module writes in place. The 10 in the names is the version of the draw record.
+It is the first library module. A window calls `damage_of_draw_table_10` one time for a frame: it gives the damage rectangles from the draw table before and the draw table now. Then it calls `execute_draw_table_in_rectangles_10` one time for the frame, with a table of its damage rectangles, at most 8: it draws the records in each rectangle, in order, into the pixels of the surface. Each argument is memory of the program, passed by address: the two draw tables, the picture memory of the pictures, the rectangles, and the pixels, which the module writes in place. The 10 in the names is the version of the draw record.
 
 The module holds the fills, the gradients, the lines, the pictures, the text grids, the text of the cells and the text of the interface font, with their blends. It keeps the text settings of the program in its own data: the choice of the font, and the glyph caches of the program, validated at the first draw. It reads the choice of the settings page again at each draw.
 
-The drawing module reads the cells of a text grid in the text table, and one picture memory for each call. The terminal draws its grid through it. The compositor, with a picture memory for each surface, draws its screen table in parts: one call for each window and one for the bar.
+The drawing module reads the cells of a text grid in the text table, and one picture memory for each call. The terminal draws its grid through it. The compositor, with a picture memory for each surface, draws its screen table in parts: one call for each window and one for the bar, each with all the damage rectangles that the part meets.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each program, the drawing in a module".
 

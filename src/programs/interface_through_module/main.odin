@@ -57,11 +57,10 @@ Bar_Value :: struct {
 Damage_Rectangle :: struct {
 	left, top, right, bottom: i64,
 }
-Canvas_Rectangle :: struct {
-	width, height, stride:    i64,
-	fill_background:          i64,
-	background:               i64,
-	left, top, right, bottom: i64,
+Canvas_Shape :: struct {
+	width, height, stride: i64,
+	fill_background:       i64,
+	background:            i64,
 }
 
 Drawn :: system.Table_To_Append(interface.Draw_Record)
@@ -75,7 +74,7 @@ foreign _ {
 	draw_bar :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), bar: ^Bar_Value) -> i64 ---
 	// The two exports of the drawing module.
 	damage_of_draw_table_10 :: proc "c" (before: ^system.Table_To_Read(interface.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 ---
-	execute_draw_table_10 :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, area: ^Canvas_Rectangle, error: ^errors.Error_Record) -> i64 ---
+	execute_draw_table_in_rectangles_10 :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Canvas_Shape, rectangles: ^system.Table_To_Read(Damage_Rectangle), error: ^errors.Error_Record) -> i64 ---
 }
 
 WIDTH :: 816
@@ -324,10 +323,14 @@ present :: proc "contextless" (window: ^display.Window) {
 	pixels := system.Bytes_To_Change{bytes = ([^]u8)(canvas.pixels), count = u64(canvas.stride * canvas.height * 4), capacity = u64(canvas.stride * canvas.height * 4)}
 	// The window has no picture: an empty picture memory.
 	no_pictures: system.Bytes_To_Read
-	for rectangle in to_draw.rectangles[:to_draw.count] {
-		area := Canvas_Rectangle{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = 1, background = i64(graphics.COLOR_BACKGROUND), left = i64(rectangle.left), top = i64(rectangle.top), right = i64(rectangle.right), bottom = i64(rectangle.bottom)}
-		execute_draw_table_10(&now_table, &now_text, &no_pictures, &pixels, &area, nil)
+	// All the rectangles of the frame in one call.
+	rectangles: [interface.DAMAGE_CAPACITY]Damage_Rectangle
+	for rectangle, index in to_draw.rectangles[:to_draw.count] {
+		rectangles[index] = {i64(rectangle.left), i64(rectangle.top), i64(rectangle.right), i64(rectangle.bottom)}
 	}
+	places := system.Table_To_Read(Damage_Rectangle){records = &rectangles[0], count = u64(to_draw.count), capacity = interface.DAMAGE_CAPACITY}
+	shape := Canvas_Shape{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = 1, background = i64(graphics.COLOR_BACKGROUND)}
+	execute_draw_table_in_rectangles_10(&now_table, &now_text, &no_pictures, &pixels, &shape, &places, nil)
 	shown.draw_time = system.nanoseconds() - start
 	// The canvas is the frame now. With nothing to present, the screen
 	// shows the frame already, and the canvas stays the one to draw.
@@ -372,8 +375,10 @@ canvases_compare :: proc "contextless" (table: ^interface.Draw_Table, refused: ^
 	bytes := system.Bytes_To_Read{bytes = raw_data(table.text), count = u64(table.text_count), capacity = u64(len(table.text))}
 	no_pictures: system.Bytes_To_Read
 	pixels := system.Bytes_To_Change{bytes = ([^]u8)(raw_data(module_pixels[:])), count = size_of(module_pixels), capacity = size_of(module_pixels)}
-	whole := Canvas_Rectangle{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_WIDTH, fill_background = 1, background = i64(graphics.COLOR_BACKGROUND), right = PROOF_WIDTH, bottom = PROOF_HEIGHT}
-	if execute_draw_table_10(&records, &bytes, &no_pictures, &pixels, &whole, refused) < 0 {
+	shape := Canvas_Shape{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_WIDTH, fill_background = 1, background = i64(graphics.COLOR_BACKGROUND)}
+	whole := [1]Damage_Rectangle{{0, 0, PROOF_WIDTH, PROOF_HEIGHT}}
+	places := system.Table_To_Read(Damage_Rectangle){records = &whole[0], count = 1, capacity = 1}
+	if execute_draw_table_in_rectangles_10(&records, &bytes, &no_pictures, &pixels, &shape, &places, refused) < 0 {
 		return 0, false
 	}
 	for index in 0 ..< len(package_pixels) {
