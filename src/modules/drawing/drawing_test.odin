@@ -880,3 +880,209 @@ the_parts_of_a_screen_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) 
 	testing.expect(t, picture_records > 0, "no screen had a picture")
 	log.infof("the parts of a screen drew the same bytes as the package: %v screens of %v surfaces and a heron, %v calls of the export", PROOF_SEEDS, SURFACE_COUNT, calls)
 }
+
+// A terminal that scrolls, drawn through the exports into the two pictures
+// of a surface, as the window layer draws it (src/library/support/interface,
+// window_drawing.odin): the difference with the last table that was
+// presented, the draw of the changed rectangles and of the debt of the
+// picture, the present of the rectangle where the screen differs, and the
+// copy of the table after a present. The frames scroll by no line, by a few
+// lines, by more than the rows, and by many thousand lines; a line now and
+// then is empty, as a line that the terminal no longer keeps; an error has
+// its label in filled cells; the bars of the head come and go, so the grid
+// record moves in the table; a thumb moves at places that are not on the
+// rows; a status of another length moves the cells in the text table. One
+// Present in 16 is lost, and one frame in 50 has a new font. After each
+// frame the picture and a screen that takes each presented rectangle are
+// the frame drawn whole by the package.
+
+@(private = "file")
+SCROLL_FRAMES :: 600
+
+// scroll_put writes a text into a row of cells from a column, and gives the
+// column after it.
+@(private = "file")
+scroll_put :: proc(row: []interface.Text_Grid_Cell, column: int, text: string, color: graphics.Color, background: graphics.Color = 0) -> int {
+	place := column
+	for character in transmute([]u8)text {
+		if place >= len(row) {
+			break
+		}
+		row[place] = {character = character, color = color, filled = background != 0, background = background}
+		place += 1
+	}
+	return place
+}
+
+// scroll_line_cells writes the line `number` of the terminal into a row:
+// its number in 10 digits, its level, its text. A line whose number is a
+// multiple of 37 is empty.
+@(private = "file")
+scroll_line_cells :: proc(row: []interface.Text_Grid_Cell, number: u64) {
+	for &cell in row {
+		cell = {}
+	}
+	if number % 37 == 0 {
+		return
+	}
+	digits: [10]u8
+	rest := number
+	for place := 9; place >= 0; place -= 1 {
+		digits[place] = u8('0' + rest % 10)
+		rest /= 10
+	}
+	levels := [4]string{"info", "debug", "warning", "error"}
+	messages := [5]string{"the queue was full: the writer waited", "the block 81 244 has the hash", "the line left the view", "a program gave a handle", "one wake for 2048 records"}
+	column := scroll_put(row, 0, string(digits[:]), graphics.COLOR_DIM)
+	level := levels[number % 4]
+	column = scroll_put(row, column + 1, level, level == "error" ? graphics.COLOR_WHITE : graphics.COLOR_PROGRAM, level == "error" ? graphics.COLOR_FAILED : 0)
+	scroll_put(row, column + 1, messages[number % 5], graphics.COLOR_TEXT)
+}
+
+// build_scrolling_frame builds the frame of a terminal whose first row
+// shows the line `top`.
+@(private = "file")
+build_scrolling_frame :: proc(table: ^interface.Draw_Table, cells: []interface.Text_Grid_Cell, top: u64, frame: int) {
+	interface.draw_table_clear(table)
+	// The bars of the head: a bar of 0 or of the full height has no record
+	// for one of its two parts.
+	state := u32(frame) * 2654435761 + 1
+	for bar in 0 ..< 12 {
+		height := next_number(&state) % 4 * 4
+		interface.draw_rectangle(table, 200 + bar * 6, 4, 5, 12 - height, graphics.COLOR_TRACK)
+		interface.draw_rectangle(table, 200 + bar * 6, 16 - height, 5, height, graphics.COLOR_PROGRAM)
+	}
+	x := interface.draw_text(table, 8, 4, "lines ", graphics.COLOR_DIM)
+	x = interface.draw_unsigned(table, x, 4, top + 1, graphics.COLOR_TEXT)
+	for row in 0 ..< GRID_ROWS {
+		scroll_line_cells(cells[row * GRID_COLUMNS:][:GRID_COLUMNS], top + u64(row))
+	}
+	interface.draw_text_grid(table, 8, 24, {cells = cells, columns = GRID_COLUMNS, rows = GRID_ROWS, stride = GRID_COLUMNS})
+	interface.draw_rectangle(table, 0, 24 + GRID_ROWS * graphics.CELL_HEIGHT + 2, PROOF_WIDTH, 1, graphics.COLOR_TRACK)
+	interface.draw_unsigned(table, 8, 24 + GRID_ROWS * graphics.CELL_HEIGHT + 4, top + GRID_ROWS, graphics.COLOR_TEXT)
+	// The thumb of the scroll bar, at places that are not on the rows.
+	interface.draw_rectangle(table, 336 + 8, 24 + int(top * 7 % 170), 6, 13, graphics.COLOR_DIM)
+}
+
+@(test)
+a_scrolling_grid_in_two_pictures_is_each_frame :: proc(t: ^testing.T) {
+	sync.mutex_lock(&draw_lock)
+	defer sync.mutex_unlock(&draw_lock)
+	defer {
+		program_text = {}
+		graphics.text_choice_set(.Vector, .Red_Green_Blue)
+	}
+	graphics.text_choice_set(.Spleen, .Red_Green_Blue)
+	program_text = {loaded = true}
+	before_memory := new(Grid_Proof_Tables)
+	now_memory := new(Grid_Proof_Tables)
+	defer free(before_memory)
+	defer free(now_memory)
+	cells := make([]interface.Text_Grid_Cell, GRID_COLUMNS * GRID_ROWS)
+	defer delete(cells)
+	// Pixels that no frame draws: a picture or a screen that the rule takes
+	// for the frame while it is not shows them.
+	NEVER_DRAWN :: 0xFF00FF
+	buffers: [4][]u32
+	for &buffer in buffers {
+		buffer = make([]u32, PROOF_STRIDE * PROOF_HEIGHT)
+		for &pixel in buffer {
+			pixel = NEVER_DRAWN
+		}
+	}
+	defer {
+		for buffer in buffers {
+			delete(buffer)
+		}
+	}
+	pictures := [2][]u32{buffers[0], buffers[1]}
+	screen, whole := buffers[2], buffers[3]
+	whole_canvas := graphics.Canvas{pixels = raw_data(whole), width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_STRIDE}
+	surface := interface.Rectangle{0, 0, PROOF_WIDTH, PROOF_HEIGHT}
+	before := grid_proof_table(before_memory)
+	now := grid_proof_table(now_memory)
+	debts: interface.Picture_Debts
+	drawn := false // The table before is the last frame that was presented.
+	picture := 0
+	top: u64 = 1000
+	seed: u32 = 11
+	presented_frames, lost_presents, frames_with_no_present, long_scrolls := 0, 0, 0, 0
+	for frame in 0 ..< SCROLL_FRAMES {
+		seed = seed * 1103515245 + 12345
+		chance := int(seed >> 16) % 16
+		switch chance % 4 {
+		case 1:
+			top += u64(1 + chance)
+		case 2:
+			top += u64(GRID_ROWS + chance)
+		case 3:
+			top += 84_000 + u64(chance)
+			long_scrolls += 1
+		}
+		build_scrolling_frame(&now, cells, top, chance == 0 ? frame - 1 : frame)
+		if !testing.expectf(t, !now.full && !now.refused, "frame %v did not fit its tables", frame) {
+			return
+		}
+		if frame % 50 == 49 {
+			debts = {} // A new font: draw_whole_window_next.
+		}
+		// The reference: the frame drawn whole by the package.
+		graphics.clear(whole_canvas, graphics.COLOR_BACKGROUND)
+		interface.execute(&now, whole_canvas)
+		// The difference through the export, as frame_difference.
+		changed: interface.Damage
+		if drawn && !before.full {
+			buffer := ([^]Damage_Rectangle)(&changed.rectangles[0])[:interface.DAMAGE_CAPACITY]
+			before_records, before_text := records_to_read(&before), text_to_read(&before)
+			now_records, now_text := records_to_read(&now), text_to_read(&now)
+			count := damage_of_draw_table_9(&before_records, &before_text, &now_records, &now_text, &buffer, nil)
+			if !testing.expectf(t, count >= 0, "frame %v: the difference was refused", frame) {
+				return
+			}
+			changed.count = int(min(count, interface.DAMAGE_CAPACITY))
+		} else {
+			debts = {}
+		}
+		draw, present: interface.Damage
+		interface.damage_of_picture(&debts, picture, &changed, surface, &draw, &present)
+		if present.count == 0 {
+			frames_with_no_present += 1
+			if place := first_difference(screen, whole); !testing.expectf(t, place < 0, "frame %v: nothing is presented, and the screen differs from the frame at x %v, y %v", frame, place % PROOF_STRIDE, place / PROOF_STRIDE) {
+				return
+			}
+			drawn = interface.draw_table_copy(&before, &now)
+			continue
+		}
+		// The draw through the export, one call for each rectangle, as
+		// frame_draw.
+		rectangles: [interface.DAMAGE_CAPACITY]Damage_Rectangle
+		for rectangle, index in draw.rectangles[:draw.count] {
+			rectangles[index] = {i64(rectangle.left), i64(rectangle.top), i64(rectangle.right), i64(rectangle.bottom)}
+		}
+		draw_through_the_exports(t, &now, pictures[picture], rectangles[:draw.count])
+		if place := first_difference(pictures[picture], whole); !testing.expectf(t, place < 0, "frame %v: the picture %v differs from the frame at x %v, y %v", frame, picture, place % PROOF_STRIDE, place / PROOF_STRIDE) {
+			return
+		}
+		sent := chance != 1
+		interface.picture_debts_after(&debts, picture, &changed, sent)
+		if !sent {
+			lost_presents += 1
+			drawn = false
+			continue
+		}
+		presented_frames += 1
+		// The compositor takes the presented rectangle of the picture.
+		bounds := interface.intersection(interface.damage_bounds(&present), surface)
+		for y in bounds.top ..< bounds.bottom {
+			copy(screen[y * PROOF_STRIDE + bounds.left:y * PROOF_STRIDE + bounds.right], pictures[picture][y * PROOF_STRIDE + bounds.left:y * PROOF_STRIDE + bounds.right])
+		}
+		if place := first_difference(screen, whole); !testing.expectf(t, place < 0, "frame %v: the screen differs from the frame at x %v, y %v", frame, place % PROOF_STRIDE, place / PROOF_STRIDE) {
+			return
+		}
+		drawn = interface.draw_table_copy(&before, &now)
+		testing.expect(t, drawn, "the table before holds the frame")
+		picture = 1 - picture
+	}
+	testing.expectf(t, presented_frames > 300 && lost_presents > 0 && frames_with_no_present > 0 && long_scrolls > 0, "the run must have each case: %v frames presented, %v Present lost, %v frames with no Present, %v long scrolls", presented_frames, lost_presents, frames_with_no_present, long_scrolls)
+	log.infof("a scrolling grid in two pictures through the exports: %v frames presented, %v Present lost, %v frames with no Present, %v scrolls of many thousand lines: the screen was each frame", presented_frames, lost_presents, frames_with_no_present, long_scrolls)
+}
