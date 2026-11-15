@@ -10,11 +10,6 @@ package modustool
 import "core:fmt"
 import "core:strings"
 
-// The documents of docs/ that the check does not read: each is a record
-// of its time. A choice or a decision of the past can name a file that
-// was removed later, and that is not a fault of the record.
-SOURCE_PATH_UNREAD_DOCUMENTS :: [?]string{"FIRST_MILESTONE.md", "HANDOFF.md", "REVIEWS.md", "DECISIONS.md"}
-
 // The documents of the root of the repository that the check reads.
 SOURCE_PATH_ROOT_DOCUMENTS :: [?]string{"README.md", "AGENTS.md"}
 
@@ -167,22 +162,12 @@ source_path_problems :: proc(file, content: string, folders: []string, exists: p
 }
 
 // source_path_documents_read gives each document that the check reads:
-// the documents of docs/ but the records of their time, the documents of
-// the root, and the intent files.
+// the documents of docs/, the documents of the root, and the intent files.
 source_path_documents_read :: proc() -> (documents: []Source_Path_Document, ok: bool) {
 	list := make([dynamic]Source_Path_Document, context.temp_allocator)
-	unread := SOURCE_PATH_UNREAD_DOCUMENTS
 	paths := make([dynamic]string, context.temp_allocator)
 	guides := files_with_suffix(DOCUMENT_FOLDER, ".md") or_return
-	for guide in guides {
-		is_unread := false
-		for name in unread {
-			is_unread ||= strings.has_suffix(guide, strings.concatenate({"/", name}, context.temp_allocator))
-		}
-		if !is_unread {
-			append(&paths, guide)
-		}
-	}
+	append(&paths, ..guides)
 	roots := SOURCE_PATH_ROOT_DOCUMENTS
 	for root in roots {
 		append(&paths, root)

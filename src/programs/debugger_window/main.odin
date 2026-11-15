@@ -791,8 +791,11 @@ rest_line :: proc "contextless" (area: interface.Area, y: int, shown, total: int
 // row_element makes a row of a card an element of the frame: a press and a
 // release on it activate it, with the focus, Tab and Enter of each other
 // element. The row is lit while the pointer is over it, under its text.
-row_element :: proc "contextless" (frame: ^interface.Frame, element: interface.Element_Identity, area: interface.Area, chosen: bool) -> bool {
+// The name of the row and its number are its element name: "frame 0".
+row_element :: proc "contextless" (frame: ^interface.Frame, element: interface.Element_Identity, area: interface.Area, chosen: bool, row_name: string, row_number: u64) -> bool {
 	result := interface.element_interact(frame, element, area, .Button)
+	name_buffer: [interface.ELEMENT_NAME_CAPACITY]u8
+	interface.element_name(frame, area, system.format(name_buffer[:], row_name, " ", row_number))
 	switch {
 	case chosen:
 		interface.draw_rectangle(frame_table, area.x, area.y, area.width, area.height, graphics.COLOR_CHOSEN)
@@ -871,7 +874,7 @@ draw_program :: proc "contextless" (frame: ^interface.Frame) {
 			break
 		}
 		chosen := index == thread_chosen
-		if row_element(frame, interface.identity_with(thread_row, index), {inside.x - 4, inside.y + y - 2, inside.width + 8, height + 2}, chosen) {
+		if row_element(frame, interface.identity_with(thread_row, index), {inside.x - 4, inside.y + y - 2, inside.width + 8, height + 2}, chosen, "thread", u64(max(row.thread, 0))) {
 			act_ask(.Choose_Thread, index)
 		}
 		number: [24]u8
@@ -910,7 +913,7 @@ draw_breakpoints :: proc "contextless" (frame: ^interface.Frame) {
 		if y + height > inside.height - LINE {
 			break
 		}
-		if row_element(frame, interface.identity_with(break_row, int(row.number)), {inside.x - 4, inside.y + y - 2, inside.width + 8, height + 2}, false) {
+		if row_element(frame, interface.identity_with(break_row, int(row.number)), {inside.x - 4, inside.y + y - 2, inside.width + 8, height + 2}, false, "breakpoint", u64(max(row.number, 0))) {
 			act_ask(.Remove_Breakpoint, int(row.number))
 		}
 		number: [24]u8
@@ -939,7 +942,7 @@ draw_source :: proc "contextless" (frame: ^interface.Frame) {
 			break
 		}
 		// A row with a line takes a click: a breakpoint at that line.
-		if row.line != 0 && row_element(frame, interface.identity_with(source_row, index), {inside.x - 4, inside.y + y - 2, inside.width + 8, height + 2}, false) {
+		if row.line != 0 && row_element(frame, interface.identity_with(source_row, index), {inside.x - 4, inside.y + y - 2, inside.width + 8, height + 2}, false, "source row", u64(index)) {
 			act_ask(.Break_At_Source_Row, index)
 		}
 		marked := system.name_of(row.mark[:]) != ""
@@ -1009,7 +1012,7 @@ draw_stack :: proc "contextless" (frame: ^interface.Frame) {
 			break
 		}
 		chosen := index == frame_chosen
-		if row_element(frame, interface.identity_with(frame_row, index), {inside.x - 4, inside.y + y - 2, inside.width + 8, height + 2}, chosen) {
+		if row_element(frame, interface.identity_with(frame_row, index), {inside.x - 4, inside.y + y - 2, inside.width + 8, height + 2}, chosen, "frame", u64(index)) {
 			act_ask(.Choose_Frame, index)
 		}
 		number: [24]u8

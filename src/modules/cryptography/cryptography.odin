@@ -554,8 +554,8 @@ ARGON2ID_LANES_LIMIT :: 16
 ARGON2ID_TAG_LEAST :: 4
 ARGON2ID_TAG_LIMIT :: 64
 
-// The cost of one derivation of Argon2id, as one record: an export has at
-// most 6 parameters (docs/MODULE_CONTRACT.md, section 4).
+// The cost of one derivation of Argon2id, as one record: the numbers of one
+// cost go together to each export that derives.
 Argon2id_Cost :: struct {
 	memory_kibibytes: i64, // The KiB of the blocks: 8 for each lane at least.
 	passes:           i64, // 1 to 64.

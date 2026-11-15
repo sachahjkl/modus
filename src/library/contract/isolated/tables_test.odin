@@ -104,7 +104,7 @@ read_table_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, size, 32)
 	call: Call
 	testing.expect(t, decode(file, function, offset, size, region[:], &call))
-	place := (^module.Table_Place)(uintptr(call.registers[0]))
+	place := (^module.Table_Place)(uintptr(call.arguments[0]))
 	testing.expect(t, place == &call.places[0], "the place is a copy in memory of the receiver")
 	testing.expect_value(t, place.count, 3)
 	testing.expect_value(t, place.capacity, 3)
@@ -136,7 +136,7 @@ change_table_round_trip :: proc(t: ^testing.T) {
 	testing.expect(t, encoded)
 	call: Call
 	testing.expect(t, decode(file, function, offset, size, region[:], &call))
-	place := (^module.Table_Place)(uintptr(call.registers[0]))
+	place := (^module.Table_Place)(uintptr(call.arguments[0]))
 	got := ([^]Reading)(uintptr(place.address))
 	got[0].value, got[1].value = 11, 21
 	// A hostile export writes the whole call region after the records.
@@ -177,7 +177,7 @@ append_table_round_trip :: proc(t: ^testing.T) {
 		testing.expect(t, encoded)
 		call: Call
 		testing.expect(t, decode(file, function, offset, size, region[:], &call))
-		place := (^module.Table_Place)(uintptr(call.registers[0]))
+		place := (^module.Table_Place)(uintptr(call.arguments[0]))
 		testing.expect_value(t, place.count, 2)
 		testing.expect_value(t, place.capacity, 5)
 		records := ([^]Reading)(uintptr(place.address))
@@ -264,9 +264,9 @@ bytes_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, size, 64)
 	call: Call
 	testing.expect(t, decode(nil, function, offset, size, region[:], &call))
-	read := (^module.Table_Place)(uintptr(call.registers[0]))
+	read := (^module.Table_Place)(uintptr(call.arguments[0]))
 	testing.expect_value(t, string(([^]u8)(uintptr(read.address))[:read.count]), "hello")
-	appended := (^module.Table_Place)(uintptr(call.registers[1]))
+	appended := (^module.Table_Place)(uintptr(call.arguments[1]))
 	written := ([^]u8)(uintptr(appended.address))
 	copy(written[appended.count:appended.capacity], "cdefghij") // 6 fit.
 	appended.count += 8

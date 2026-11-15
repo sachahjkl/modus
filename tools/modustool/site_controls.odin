@@ -45,6 +45,8 @@ site_controls := [?]Site_Control {
 	{name = "a button of a section of the bar", selector = ".bar-sections a", form = .Button, current = ".bar-sections a[aria-current=\"page\"]"},
 	{name = "the button of the project menu", selector = ".project-menu-button", form = .Button, current = ".project-menu-current > .project-menu-button", wide_only = true},
 	{name = "a line of the panel of the project menu", selector = ".bar-sections .project-menu-panel a", form = .Menu_Line, current = ".bar-sections .project-menu-panel a[aria-current=\"page\"]", wide_only = true},
+	{name = "the button of the subscribe menu", selector = ".subscribe-button", form = .Button, current = ".subscribe-menu[open] > .subscribe-button"},
+	{name = "a line of the panel of the subscribe menu", selector = ".subscribe-panel a", form = .Menu_Line},
 	{name = "the button of the site menu", selector = ".bar-menu-button", form = .Button, current = ".bar-menu[open] > .bar-menu-button"},
 	{name = "a door of the home, and a link to a group of the gallery", selector = ".doors a", form = .Button},
 	{name = "a numbered link of the carousel", selector = ".carousel-controls a", form = .Button, current = ".carousel-controls a[aria-current=\"true\"]"},

@@ -722,8 +722,8 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		if description.error_record != 0 && (description.result == .Record || description.result == .None) {
 			return describe_fail(path, declaration, "%s: an export with an error record gives an i64 result: it fails when the result is negative", name)
 		}
-		if len(parameters) + int(description.result == .Text || description.result == .Record || description.result == .Table) + int(description.error_record != 0) > module.PARAMETER_CAPACITY {
-			return describe_fail(path, declaration, "%s has more than %d parameters", name, module.PARAMETER_CAPACITY)
+		if arguments := module.call_argument_count(len(parameters), description.result, description.error_record != 0); arguments > module.PARAMETER_CAPACITY {
+			return describe_fail(path, declaration, "%s takes %d arguments in the call form, the buffer of a result and the error record included; an export takes at most %d", name, arguments, module.PARAMETER_CAPACITY)
 		}
 		description.parameters = parameters[:]
 		description.names = names[:]

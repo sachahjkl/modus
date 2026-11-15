@@ -774,11 +774,16 @@ number :: proc "contextless" (buffer: ^[27]u8, value: u64) -> string {
 	return string(buffer[place:])
 }
 
-// The drawing of the window with the interface package: the cells of the
+// The drawing of the window through the drawing module: the cells of the
 // view are a text grid, so a frame damages only the cells that changed.
-// The table before has its own copy of the cells.
+// draw_text_grid copies the cells into the text table of the frame, and
+// the table before keeps them in its own copy of the text. The text
+// tables are words: the cells hold 4-byte colors, so the table starts at
+// an address that is a multiple of 4. Each holds the texts of a frame, the
+// 3 bytes at most before the cells, and the cells of the largest grid.
 records_now, records_before: [384]interface.Draw_Record
-text_now, text_before: [1024]u8
+TEXT_WORDS :: (1024 + 4 + ROWS_LIMIT * COLUMNS_LIMIT * size_of(Cell)) / 4
+text_words_now, text_words_before: [TEXT_WORDS]u32
 // What the pointer did to the scroll bar of the lines in the last frame.
 scroll_result: interface.Scroll_Bar_Result
 // The scroll bar of the completion list in the last frame: its area (no
@@ -795,16 +800,18 @@ list_first_when_asked: int
 // The pointer shape that the terminal asked for last is the arrow: the
 // pointer was over a scroll bar, or held one. If not, it is the text shape.
 pointer_shape_is_arrow: bool
-cells_before: [ROWS_LIMIT * COLUMNS_LIMIT]Cell
-grids_now, grids_before: [1]interface.Text_Grid
 drawing: interface.Window_Drawing
 
 drawing_start :: proc "contextless" () {
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	grids_now[0] = {cells = ([^]Cell)(&view.cells[0][0])[:ROWS_LIMIT * COLUMNS_LIMIT], columns = columns, rows = rows, stride = COLUMNS_LIMIT}
-	grids_before[0] = {cells = cells_before[:]}
-	drawing.now.grids = grids_now[:]
-	drawing.before.grids = grids_before[:]
+	text_now := ([^]u8)(&text_words_now[0])[:TEXT_WORDS * 4]
+	text_before := ([^]u8)(&text_words_before[0])[:TEXT_WORDS * 4]
+	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now, text_before)
+}
+
+// view_grid gives the cells of the view that the window shows: the rows
+// and the columns of this terminal, in the cells of the largest view.
+view_grid :: proc "contextless" () -> interface.Text_Grid {
+	return {cells = ([^]Cell)(&view.cells[0][0])[:ROWS_LIMIT * COLUMNS_LIMIT], columns = columns, rows = rows, stride = COLUMNS_LIMIT}
 }
 
 tile :: proc "contextless" (table: ^interface.Draw_Table, x: int, label: string, value: u64, color: graphics.Color) {
@@ -837,7 +844,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	}
 
 	// The text: only the rows of the window, as one text grid.
-	interface.draw_text_grid(table, TEXT_X, text_y, 0)
+	interface.draw_text_grid(table, TEXT_X, text_y, view_grid())
 
 	// The status of the program: a text, and a value of a total. With the
 	// rates it has its own line. If not, it takes the place of the line count.
@@ -940,7 +947,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	if !view.gone && view.top >= view.oldest {
 		first_line = min(view.top - view.oldest, kept - shown_lines)
 	}
-	scroll_result = interface.scroll_bar(&frame, scroll_area, scroll_identity, .Vertical, {total = int(max(kept, 1)), visible = int(max(shown_lines, 1)), first = int(first_line)}, {page = rows - 1})
+	scroll_result = interface.scroll_bar(&frame, scroll_area, scroll_identity, .Vertical, {total = int(max(kept, 1)), visible = int(max(shown_lines, 1)), first = int(first_line)}, {page = rows - 1}, "scroll bar")
 	interface.window_frame_end(&drawing, &frame, window)
 	if table.full {
 		system.log("terminal: the draw table is full: records are missing")

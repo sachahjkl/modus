@@ -1,8 +1,8 @@
 # The policy of scheduling: the placement of a thread, and a share for each program
 
-The scheduler is in the kernel, and its strategies are a closed set (`docs/DECISIONS.md`, D-226). A custom scheduling has this form: a program that holds a right sets the weights, the budgets and the placement of threads at a slow rate, and the kernel applies them at each tick with its own strategy. No code of a program runs on the path of the scheduler (`docs/DECISIONS.md`, D-227).
+The scheduler is in the kernel, and its strategies are a closed set ([`docs/SCHEDULING.md`](../../../docs/SCHEDULING.md), "5. What this system refuses, and why"). A custom scheduling has this form: a program that holds a right sets the weights, the budgets and the placement of threads at a slow rate, and the kernel applies them at each tick with its own strategy. No code of a program runs on the path of the scheduler, and the kernel gets no verifier and no compiler: the policy is outside the kernel, the mechanism inside.
 
-This file records the design of two layers of that policy. The placement of a thread on processors is built in the kernel. A share of processor time for each budget is not built in the kernel: it is a policy of the program `scheduler` (`docs/DECISIONS.md`, D-233).
+This file records the design of two layers of that policy. The placement of a thread on processors is built in the kernel. A share of processor time for each budget is not built in the kernel: it is a policy of the program `scheduler`.
 
 The rules that a caller reads are in [`docs/SCHEDULING.md`](../../../docs/SCHEDULING.md), "The placement of a thread" and "The schedule of a live thread".
 
@@ -10,7 +10,7 @@ The rules that a caller reads are in [`docs/SCHEDULING.md`](../../../docs/SCHEDU
 
 The first layer of the policy lets a program write the weight and the request of a live thread. Four designs of it failed their review, each with the same cause: the program chose the moment and the direction of a write while the strategy kept a history of the thread. A thread gained processor time by the moment of its writes, or an honest thread waited for seconds.
 
-The rule that was built takes that choice away (`docs/DECISIONS.md`, D-231): a write by the program only lowers, and changes no field of the strategy. Only the holder of the machine handle with Schedule and Inspect raises, and a raised thread starts as a new thread.
+The rule that was built takes that choice away: a write by the program only lowers, and changes no field of the strategy. Only the holder of the machine handle with Schedule and Inspect raises, and a raised thread starts as a new thread.
 
 So a design of a policy layer answers one question first: which history does a write convert, and who chooses its moment.
 

@@ -282,7 +282,11 @@ malformed_modules :: proc(t: ^testing.T) {
 		{"a segment that executes and that the loader writes", proc(file: []u8) {record(file, .Segments, 1, module.Segment).flags += {.Write}}, .Segment, .Segments, 1},
 		{"an export with no description", proc(file: []u8) {record(file, .Exports, 2, module.Export).function = 9}, .Export, .Exports, 2},
 		{"a name out of the string table", proc(file: []u8) {record(file, .Functions, 2, module.Function).name_offset = 60000}, .Text, .Functions, 2},
-		{"seven parameters", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameter_count = 7}, .Function, .Functions, 2},
+		{"more parameters than an export has", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameter_count = module.PARAMETER_CAPACITY + 1}, .Function, .Functions, 2},
+		{"as many parameters as an export has, and the buffer of a Text result", proc(file: []u8) {
+				function := record(file, .Functions, 2, module.Function)
+				function.parameter_count, function.result = module.PARAMETER_CAPACITY, .Text
+			}, .Function, .Functions, 2},
 		{"a type that does not exist", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameters[0] = module.Type(9)}, .Function, .Functions, 2},
 		{"a parameter that names no record", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameter_details[0] = 5}, .Function, .Functions, 2},
 		{"an Integer parameter with a unit out of the contract", proc(file: []u8) {

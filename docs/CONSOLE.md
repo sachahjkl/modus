@@ -87,7 +87,7 @@ A command gives a result and never prints. A command that does something and has
 
 ### Calls
 
-A call is `name(argument, ...)`, with at most 6 arguments. Each argument is an expression: a number, a text, a variable, an operation, or another call.
+A call is `name(argument, ...)`, with at most 12 arguments: the arguments of an export at most (`module.PARAMETER_CAPACITY`). A command that makes a record takes one argument for each field, so a record of up to 12 fields is a command. Each argument is an expression: a number, a text, a variable, an operation, or another call.
 
 **Where a command comes from.** A name can be called when the command table of the console has it. A command comes from one of three places:
 
@@ -588,7 +588,7 @@ The console is the palette provider of the desktop: each of its commands is an e
 
 **The grant.** The console has the grant `Palette`. At its start it sends `Palette_Provide` to the root service, which makes two memory objects and gives them to the console and to the compositor: the entry table, which the console writes and the compositor maps read-only, and one ring. `grants("console")` shows the grant as `palette`. `revoke("console", "palette")` ends the table and the ring in the console, and the compositor unmaps its side: the palette then lists the programs and the windows only, and its footer says "the console gives no commands". The console stops its use of the two objects before it asks for the revocation. No kernel operation is new.
 
-**The entry table** (`src/library/contract/palette_table`). A header (a magic number, a version, the change count, the count of entries), a result area of 2048 bytes, a candidate area of 96 names, then at most 256 entries of 536 bytes. The version is 5. One entry is one command of the command table of now: a built-in command, a short name bound to an export, or an export of a module or of a service. A command that makes a record from its fields is not listed, and of two commands with one name the table has the one that a call runs.
+**The entry table** (`src/library/contract/palette_table`). A header (a magic number, a version, the change count, the count of entries), a result area of 2048 bytes, a candidate area of 96 names, then at most 256 entries of 536 bytes. The version is 5. One entry is one command of the command table of now: a built-in command, a short name bound to an export, or an export of a module or of a service. A command that makes a record from its fields is not listed. A command with more parameters than an entry holds (6, `palette_table.PARAMETER_CAPACITY`: the fields of the form of the panel) is not listed: the console line calls it. Of two commands with one name the table has the one that a call runs.
 
 | Field of an entry | Content |
 |---|---|

@@ -1,4 +1,4 @@
-// The module format, version 1 (docs/MODULE_CONTRACT.md, sections 1 and 2).
+// The module format, version 2 (docs/MODULE_CONTRACT.md, sections 1 and 2).
 //
 // A module is one file:
 //
@@ -32,7 +32,7 @@
 package module
 
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
-VERSION :: 1 // The version of the format that this code reads and writes. A file of another version is refused.
+VERSION :: 2 // The version of the format that this code reads and writes. A file of another version is refused. 2: a Function record of 168 bytes, with 12 parameters.
 PAGE_SIZE :: 4096 // The alignment of each segment in the file and in memory: one page of the processor.
 HASH_SIZE :: 32 // The bytes of a BLAKE3 hash: the name of a module.
 
@@ -51,7 +51,7 @@ Machine :: enum u32 {
 // the file when one field is not one that it takes (`validate`).
 //
 // Example: the header of a program starts with the bytes "MODULE", the
-// version 1, the machine `X86_64`, and `entry_export` the index of its
+// version 2, the machine `X86_64`, and `entry_export` the index of its
 // export `main`.
 Header :: struct {
 	magic:           u64, // `MAGIC`.
@@ -223,7 +223,12 @@ Table_Place :: struct {
 }
 #assert(size_of(Table_Place) == 24)
 
-PARAMETER_CAPACITY :: 6 // The integer registers of the call form.
+// The arguments of the call form of one export: its parameters, the buffer
+// or the place of a result, and the address of an error record. The first 6
+// are in the integer registers, the others on the stack, as the convention of
+// the machine passes them (docs/MODULE_CONTRACT.md, section 4). A fixed bound
+// keeps a Function record and the private copy of a receiver of one size.
+PARAMETER_CAPACITY :: 12
 
 // The description of one export. It is sufficient to call the export: the
 // console reads it. The loader does not.
@@ -233,10 +238,13 @@ Function :: struct {
 	about_offset:          u32, // One line of help, in the string table.
 	about_count:           u32, // The bytes of the line of help.
 	parameter_names:       [PARAMETER_CAPACITY]u32, // The name of each parameter, in the string table.
-	parameter_count:       u8, // At most PARAMETER_CAPACITY.
+	parameter_count:       u8, // At most PARAMETER_CAPACITY, and call_argument_count at most PARAMETER_CAPACITY.
 	result:                Type, // The type of the result: None, Integer, Text, Record or Table.
-	parameters:            [PARAMETER_CAPACITY]Type, // The type of each parameter, in the order of the registers.
+	parameters:            [PARAMETER_CAPACITY]Type, // The type of each parameter, in the order of the arguments.
 	parameter_name_counts: [PARAMETER_CAPACITY]u8, // The bytes of the name of each parameter.
+	// The direction of each Table or Bytes parameter, 0 (Read) for each other
+	// parameter.
+	parameter_directions:  [PARAMETER_CAPACITY]Direction,
 	reserved:              [2]u8, // 0.
 	text_offset:           u32, // The documentation text of the export, in the string table.
 	text_count:            u32, // The bytes of the documentation text.
@@ -251,14 +259,19 @@ Function :: struct {
 	// the address of the record. The export writes it when it fails, and only
 	// then: it fails when its integer result is negative.
 	error_record:          u32,
-	// Added at the end of the record after the other fields (the growth rule of the
-	// table directory): the direction of each Table or Bytes parameter, 0
-	// (Read) for each other parameter. A file with records of 96 bytes has
-	// the direction Read for each parameter.
-	parameter_directions:  [PARAMETER_CAPACITY]Direction,
-	reserved3:             [2]u8, // 0.
 }
-#assert(size_of(Function) == 104)
+#assert(size_of(Function) == 168)
+
+// call_argument_count gives the arguments of the call form of an export:
+// its parameters, one for the buffer of a Text or Table result or the place
+// of a Record result, and one for the address of an error record. A
+// description is valid only when it is at most PARAMETER_CAPACITY.
+//
+// Example: an export with 9 parameters, a Text result and an error record
+// has 11 arguments.
+call_argument_count :: proc "contextless" (parameter_count: int, result: Type, has_error_record: bool) -> int {
+	return parameter_count + int(result == .Text || result == .Table || result == .Record) + int(has_error_record)
+}
 
 RECORD_SIZE_LIMIT :: 256 // The bytes of a record that a call carries.
 HANDLE_CAPACITY :: 16 // The handles that one call lends: its Handle parameters, and the Handle fields of its Record parameters.

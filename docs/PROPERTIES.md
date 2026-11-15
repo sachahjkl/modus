@@ -58,7 +58,7 @@ Three rules apply to every decision:
 ## Assumptions
 
 - **64 bits only.** An address is 64 bits on every machine of the system. The system has no 32-bit target and runs no 32-bit program. The targets are x86-64 first, and ARM64 at best.
-- **Result**: an address, a count, a handle and a register value have one size: 8 bytes. A record has one layout on all machines. The call form passes each scalar in one register. No contract has a second form for a smaller machine.
+- **Result**: an address, a count, a handle and a register value have one size: 8 bytes. A record has one layout on all machines. The call form passes each scalar in one word of 8 bytes: a register, or a word of the stack past the sixth integer argument. No contract has a second form for a smaller machine.
 - **Forbids**: a type whose size depends on the machine, a 32-bit variant of a record, a compatibility mode for 32-bit code.
 
 ## Summary
@@ -551,7 +551,7 @@ Licences in this table come from memory. Verify each one before the code is impo
 
 1. **Module contract**: the open questions of `MODULE_CONTRACT.md`.
 
-Fixed choices: implementation language (Odin), storage licence (new engine under MIT), properties 4, 7, 14, 15 and 16 (decided), kernel entry (kernel ring only), threads (several threads per program), call form (registers, `MODULE_CONTRACT.md` section 4), graphics implementation (written from nothing, no port of wgpu or Dawn), kernel operation limit (the modus tool counts the kinds of kernel operation; no fixed limit yet).
+Fixed choices: implementation language (Odin), storage licence (new engine under MIT), properties 4, 7, 14, 15 and 16 (decided), kernel entry (kernel ring only), threads (several threads per program), call form (registers, then the stack past the sixth integer, `MODULE_CONTRACT.md` section 4), graphics implementation (written from nothing, no port of wgpu or Dawn), kernel operation limit (the modus tool counts the kinds of kernel operation; no fixed limit yet).
 
 ## First milestone
 
@@ -566,4 +566,4 @@ This milestone uses properties 1, 2, 4, 6, 10, 13 and 17 in their smallest form.
 Secure Boot and the TPM measurement come after it, because they need only the boot program.
 Each later step adds one capability to a system that already works.
 
-**State**: reached. The system has since grown past it; the order of the next steps is in `FIRST_MILESTONE.md`, section "Next steps".
+**State**: reached. The system has since grown past it; the planned work is in `ROADMAP.md`.
