@@ -2623,7 +2623,7 @@ A physical address is the number that the memory and the devices use for a byte 
 
 A program sees only virtual addresses: the page tables of its program translate each one to a physical address, and the program never learns the result. A device sees only physical addresses: it reads and writes memory by itself (direct memory access), with no page table of a program between. So a device service must know the physical address of the memory that it gives to its device, and nothing else in the system needs one.
 
-A device service gets a physical address with the kernel operation `Memory_Physical`. It needs the machine handle with the right **Physical**, which the root service gives to each device service and to no other program. The memory object must have pages that follow each other in physical memory and do not move: an object made with the flag `Contiguous` or `Large_Pages`, or device memory. An object whose pages get their frames at their first use gives `Bad_Operation`: its pages are anywhere, and a page can still have no frame. Example: the block service gives the device the physical address of the data region of its client, plus the place that a request names.
+A device service gets the address for its device with the kernel operation `Memory_Physical`. It needs the machine handle with the right **Physical**, which the root service gives to each device service and to no other program. For a memory object whose pages follow each other in physical memory and do not move (an object made with the flag `Contiguous` or `Large_Pages`, or device memory), the call gives the physical address of its first page. With no IOMMU, an object whose pages get their frames at their first use gives `Bad_Operation`: its pages are anywhere, and a page can still have no frame. With an IOMMU, such an object gets a device window (see "Device address"). Example: the block service gives the device the physical address of the data region of its client, plus the place that a request names.
 
 A physical address is not a handle and gives no access to a program: a program that knows one cannot map it. On a machine with an IOMMU, the call of a device service is also its declaration: its device can then reach those pages, and no other page (see "IOMMU"). On a machine with no IOMMU, a device can reach any physical address, and the device services are trusted for that reason.
 
@@ -2665,7 +2665,7 @@ Do not use: MSI, vector.
 
 The IOMMU is the unit of the machine that translates each address that a device gives before the access reaches memory, through tables that the kernel writes.
 
-A device reads and writes memory by itself. Without an IOMMU, a device service with a fault can make its device write any page of the machine. With it, the kernel maps in the tables of a device only the pages that its service declared, so a device reaches no other memory. The kernel programs the unit of Intel (VT-d) when the firmware lists one in the ACPI table DMAR; the test machine has one in the part `iommu` of the test only. A service declares a memory object with `Memory_Physical`, the call that already gives it the address for its device: the kernel maps the pages in the domain of each device whose registers the service holds by a handle (see "Device domain"). A machine with no IOMMU writes one line at its start and runs as before, with no such isolation.
+A device reads and writes memory by itself. Without an IOMMU, a device service with a fault can make its device write any page of the machine. With it, the kernel maps in the tables of a device only the pages that its service declared, so a device reaches no other memory. The kernel programs the remapping units of Intel (VT-d) when the firmware lists them in the ACPI table DMAR; the test machine has one in the part `iommu` of the test only. A service declares a memory object with `Memory_Physical`, the call that already gives it the address for its device: the kernel maps the pages in the domain of each device whose registers the service holds by a handle (see "Device domain"). A machine with no IOMMU writes one line at its start and runs as before, with no such isolation; its `Boot_Report.iommu_unit_count` is 0.
 
 The IOMMU is not the page table of a program: a program never sees it, and it translates the addresses of devices only. It does not remap interrupts in this system.
 
@@ -2673,17 +2673,65 @@ The design: `src/md/infrastructure/iommu.md`; the guide: `docs/ARCHITECTURE.md`,
 
 Do not use: DMA remapper, SMMU.
 
+### Remapping unit
+
+A remapping unit is one part of the IOMMU, with its own registers and tables, that translates the accesses of the devices that the table DMAR gives it.
+
+A machine of Intel has several: one for its graphics device, and one that covers every other device (the flag `INCLUDE_PCI_ALL`). The table DMAR names the devices of a unit by device scopes: an endpoint, or a bridge and each bus behind it. The kernel programs at most 4 units, and gives each device the unit that names it, else the unit that covers every device. A device has its domain, its invalidations and its DMA faults on its unit. A device that no unit covers reaches all memory, and `Device_Create` of its registers writes one line that says so.
+
+A remapping unit is not a device domain: a unit holds the domains of many devices.
+
+The design: `src/md/infrastructure/iommu.md`, "The hardware".
+
+Do not use: DRHD, IOMMU unit.
+
 ### Device domain
 
-A device domain is the memory that one device can reach through the IOMMU: the pages that its service declared, mapped at their own physical addresses.
+A device domain is the memory that one device can reach through the IOMMU: the pages that its service declared, at their device addresses.
 
-The kernel keeps one domain for each device that has a service: a context entry for the requester of the device, and second-level tables that map each declared page to the same address. A page is writable for the device only while the service holds a handle with **Write** to its object. The first program that declares memory to a device owns its domain; its budget pays for the tables. A declared object leaves the domain when the service closes or loses its last handle to it, or when the object ends, before its frames are free; the whole domain ends when its service stops or closes its last handle to the registers of the device. A device with no service has no context entry: an empty domain, in which each access is refused. Example: the block service of the data disk declares its queue and the data region of the storage service, and its device reaches those pages and no other.
+The kernel keeps one domain for each device that has a service: a context entry for the requester of the device on its remapping unit, and second-level tables that map each declared page at its device address. A page is writable for the device only while the service holds a handle with **Write** to its object. The first program that declares memory to a device owns its domain; its budget pays for the tables. A declared object leaves the domain when the service closes or loses its last handle to it, or when the object ends, before its frames are free; the whole domain ends when its service stops, or when it holds neither a handle nor a mapping of the registers of the device. A device with no service has no context entry: an empty domain, in which each access is refused. A device that a reserved memory range names has a standing domain with its ranges instead. A device behind a conventional bridge of PCI gets no domain: every device behind that bridge gives the same requester. Example: the block service of the data disk declares its queue and the data region of the storage service, and its device reaches those pages and no other.
 
 A device domain is not an address space of a program, and it gives no right to a program.
 
 The design: `src/md/infrastructure/iommu.md`, "Mechanism in the kernel, policy outside".
 
 Do not use: IOMMU domain, DMA window.
+
+### Device address
+
+A device address is the address that a device gives for a page of a memory object, which the IOMMU translates to the frame of that page.
+
+`Memory_Physical` gives it. For a contiguous object, it is the physical address of the page, with and without an IOMMU. For an object that is not contiguous, on a machine with an IOMMU, the kernel gives the object a device window: 128 MiB of device addresses above 2^38, chosen by the slot of the object in the table of memory objects, where its pages follow each other in their order. A device then sees one run, and a service gives one address, as for a contiguous object. Example: the datagram region of an endpoint is not contiguous on a machine with an IOMMU, and the network device reads the data of a send through its device window.
+
+A device address is not a physical address: only the IOMMU knows the frame behind a device window. A device window needs a device that gives at least 39 bits of address.
+
+The design: `src/md/infrastructure/iommu.md`, "Device addresses".
+
+Do not use: bus address, IOVA, DMA address.
+
+### Device window
+
+A device window is the run of device addresses where the IOMMU shows the pages of a memory object that is not contiguous, in their order.
+
+Each memory object has one window of 128 MiB, from 2^38 plus its slot in the table of memory objects times 128 MiB, the same in every device domain. `Memory_Physical` from a device service gives an object its window, and gives each page of the object its frame first; the frames then stay until the object ends. An object of more than 128 MiB, an `Uncommitted` object, or an object for a device whose remapping unit translates fewer than 39 bits of address, gets no window. `Device_Create` of the registers of a device says whether it gets windows (`Device_Memory_Facts`). Example: a datagram region of 128 pages that are anywhere in memory is one run of 512 KiB for the network device.
+
+A device window is not a mapping of a program: no program reads through it, and it exists only in the tables of the IOMMU.
+
+The design: `src/md/infrastructure/iommu.md`, "Device addresses".
+
+Do not use: aperture.
+
+### Reserved memory range
+
+A reserved memory range is memory that the firmware keeps for a device, listed in the table DMAR, which the device keeps reading and writing after the start.
+
+The firmware uses one, for example, to emulate a USB keyboard, or as the memory of an integrated graphics device. The kernel maps each range at its own address in a standing domain of each device that the range names, before translation is on, so the device keeps working; a service that takes the device has the ranges in its domain too. `Device_Create` refuses a range that meets it, and no declaration maps it: no program gets it. A range that meets memory that the firmware gave as free or loaded is not mapped, with one line.
+
+A reserved memory range is not device memory: it is memory, not registers, and no program holds it.
+
+The design: `src/md/infrastructure/iommu.md`, "Reserved memory ranges".
+
+Do not use: RMRR.
 
 ### DMA fault
 
@@ -2703,9 +2751,9 @@ The bus is the PCI bus of the machine: each device has a place on it (bus, devic
 
 The configuration of a device says what it is (its vendor and its device numbers), where its registers are (its base address registers), and how it interrupts. A program that can write the configuration of any device can make any device read or write any memory. For that reason only the root service holds the two ports of the configuration (`0xCF8` and `0xCFC`), as a ports handle that it makes with `Device_Create`.
 
-The root service reads the configuration at a fixed place, checks that the device there is the expected virtio device, enables it, gives it the right to use memory (bus master), sets its message interrupt, and starts its device service. The service gets a copy of the first 256 bytes of the configuration, read only (`GRANT_CONFIGURATION`), the device memory of its registers and one message interrupt. On the first machine the places are fixed: the data disk at device 16 (`0x10`), the disk of the measures at 17, the network device at 18. If no device of the right kind is at the place, the root service logs "root: no virtio device for block at the place 16 of the bus" and starts no service.
+The root service reads the configuration at a fixed place, checks that the device there is the expected virtio device, enables it, gives it the right to use memory (bus master), sets its message interrupt, and starts its device service. The service gets a copy of the first 256 bytes of the configuration, read only (`GRANT_CONFIGURATION`), the device memory of its registers and one message interrupt. On the first machine the places are fixed: the data disk at device 16 (`0x10`), the disk of the measures at 17, the network device at 18. On the machine with the IOMMU, the disk of the measures is at the place 0 of the bus behind a root port at the place 28 (`0x1C`). If no device of the right kind is at the place, the root service logs "root: no virtio device for block at the place 16 of the bus" and starts no service.
 
-The bus is not a tree that the kernel walks: the kernel does not read it at all. The code of the bus is `src/library/support/pci`.
+The kernel finds no device on the bus and starts none. With an IOMMU, it reads the bus, and writes nothing to it: it walks bus 0 and the buses behind each bridge to know which function the registers of a memory object belong to, and which remapping unit translates its accesses. The code of the bus is `src/library/support/pci`.
 
 The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts", and `docs/ARCHITECTURE.md`, "U4. Device services".
 
@@ -2911,7 +2959,7 @@ Do not use: DMA buffer, skb, mbuf.
 
 A read region is a memory object that the client of a frame service gives with the right Read only, where the device reads the second part of a frame to send.
 
-The read region lets the device read data where its writer put it, so that no service copies it. The network service gives the datagram region of each endpoint as a read region, at the place of the endpoint, with `Read_Region_Add`. A `Send` then names the headers in the frame region and the data in the read region: the device reads the two as one frame. The frame service refuses a read region with the right Write, or one that is not contiguous. With the IOMMU, the device can read a read region and cannot write it.
+The read region lets the device read data where its writer put it, so that no service copies it. The network service gives the datagram region of each endpoint as a read region, at the place of the endpoint, with `Read_Region_Add`. A `Send` then names the headers in the frame region and the data in the read region: the device reads the two as one frame. The frame service refuses a read region with the right Write, or one that `Memory_Physical` refuses: with no IOMMU, one that is not contiguous. With the IOMMU, a read region that is not contiguous has a device window, and the device can read a read region and cannot write it.
 
 The frame service keeps its handle of a read region until the last `Send` that reads it is complete. So the memory stays while the device reads it, whatever its other holders close.
 

@@ -60,9 +60,9 @@ NO_VECTOR :: 0xFFFF // No message interrupt.
 
 FEATURE_VERSION_1 :: 32 // The bit of the virtio 1 interface, in the second word of the features.
 // The device sends its accesses through the IOMMU of the machine
-// (ACCESS_PLATFORM): the address in a descriptor is the address that the
-// IOMMU translates, and with an identity domain it is the physical address
-// that Memory_Physical gave (src/md/infrastructure/iommu.md).
+// (ACCESS_PLATFORM): the address in a descriptor is the device address
+// that Memory_Physical gave, which the IOMMU translates
+// (src/md/infrastructure/iommu.md, "Device addresses").
 FEATURE_ACCESS_PLATFORM :: 33
 
 DESCRIPTOR_NEXT :: 1 // The flag of a descriptor that continues in `next`.

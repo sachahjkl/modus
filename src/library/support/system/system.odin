@@ -519,8 +519,10 @@ thread_memory_read :: proc "contextless" (thread: Handle, number: u64, source: u
 	return results[0], status
 }
 
-// memory_physical gives the physical address of the first page of a memory
-// object: its pages follow each other. The machine handle needs the right
+// memory_physical gives the device address of the first page of a memory
+// object: the devices of the caller see its pages follow each other from
+// there. It is the physical address of a contiguous object, or with the
+// IOMMU the window of another object. The machine handle needs the right
 // Physical.
 memory_physical :: proc "contextless" (machine: Handle, memory: Handle, error: ^errors.Error_Record = nil) -> (address: u64, status: Status) {
 	results: [7]u64

@@ -1084,13 +1084,14 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	block_ring: system.Handle
 	if .Data_Disk in role || .Scratch_Disk in role {
 		status: system.Status
-		driver, block_ring, status = driver_start(.Data_Disk in role ? pci.DATA_DISK_DEVICE : pci.SCRATCH_DISK_DEVICE, name == "iommu" ? DRIVER_IOMMU_DEVICE : DRIVER_BLOCK)
+		place := .Data_Disk in role ? pci.Place{device = pci.DATA_DISK_DEVICE} : scratch_disk_place()
+		driver, block_ring, status = driver_start(place, name == "iommu" ? DRIVER_IOMMU_DEVICE : DRIVER_BLOCK)
 		if status != .Ok {
 			return status
 		}
 	} else if .Network_Device in role {
 		status: system.Status
-		driver, block_ring, status = driver_start(pci.NETWORK_DEVICE, DRIVER_FRAME)
+		driver, block_ring, status = driver_start(pci.Place{device = pci.NETWORK_DEVICE}, DRIVER_FRAME)
 		if status != .Ok {
 			return status
 		}

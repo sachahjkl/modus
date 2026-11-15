@@ -50,7 +50,7 @@ Region :: struct {
 	committed:  u64, // Uncommitted: the committed pages. Region lock and frame lock to change it.
 	marked_pages: u64, // The pages whose slot has a mark of protection (Memory_Protect of a part). Region lock; read atomically.
 	serial:     u64, // A number that no other memory object has had: a slot of the table serves many objects in time.
-	requester:  u32, // Device memory over the registers of a function of bus 0: 1 + its requester identifier, when the IOMMU is in use (iommu.odin). 0: none.
+	requester:  u32, // Device memory over the registers of a function of the bus: 1 + its requester identifier, when the IOMMU is in use and a unit gives it a domain (iommu.odin). 0: none.
 	declared:          u32, // A bit for each device slot of the IOMMU whose domain maps the pages (iommu.odin). Frame lock.
 	declared_writable: u32, // The slots of `declared` whose device can also write the pages. Frame lock.
 }
@@ -724,6 +724,9 @@ region_release :: proc "contextless" (index: u32) {
 		frames_free_held(region.physical, region.page_count)
 		budgets[region.budget].amounts.pages += region.page_count
 	case:
+		// A device that the window of the object was declared to reaches it
+		// no more before its frames are free.
+		iommu_region_end_held(index)
 		// The frames go to the stack of this processor: its next pages on
 		// first use take them with no frame lock (memory.odin).
 		// The walk ends at the last frame (`present`): an object of 1 GiB
@@ -1184,6 +1187,9 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 		lock_free(lock, .Region)
 	}
 	program.mapped_pages -= mapping.page_count
+	// A mapping of the registers of a device keeps the domain of that device
+	// as a handle does: the last one of the two ends it.
+	iommu_mapping_ended(program, mapping)
 	region_release(mapping.region)
 	mapping^ = {} // The count of the present pages ends with the mapping (under the program lock: the caller holds it).
 }
