@@ -439,8 +439,16 @@ run_film :: proc(args: []string) -> int {
 	if !make_folder(FILM_FOLDER) || !make_folder(SCREENSHOT_FOLDER) {
 		return EXIT_FAILURE
 	}
+	// The machine starts paused only for a scenario that lets it run with a
+	// step Monitor "cont": a paused machine with no such step never starts.
+	paused := false
+	for step in film.steps {
+		if step.kind == .Monitor && step.text == "cont" {
+			paused = true
+		}
+	}
 	// The tool ends QEMU: status 0.
-	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) || !machine_test(film.steps, BOOT_VOLUME, film.output, 0, TEST_DATA_DISK, vnc = true, paused = true) {
+	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) || !machine_test(film.steps, BOOT_VOLUME, film.output, 0, TEST_DATA_DISK, vnc = true, paused = paused) {
 		return EXIT_FAILURE
 	}
 	return film_write(film.name) ? 0 : EXIT_FAILURE

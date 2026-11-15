@@ -29,9 +29,10 @@ palette_frames, palette_time: u64
 // The panel as draw records: the table of now, the table that the screen
 // shows, the interface state.
 // The records hold the icons of the 12 rows too: an icon is at most
-// kind_icons.RECTANGLE_LIMIT rectangles, 240 for a full list.
-palette_records_now, palette_records_before: [512]interface.Draw_Record
-palette_text_now, palette_text_before: [4096]u8
+// kind_icons.RECTANGLE_LIMIT rectangles, 240 for a full list; and the
+// buttons of the setting rows, at most 3 records for each of 6 values.
+palette_records_now, palette_records_before: [768]interface.Draw_Record
+palette_text_now, palette_text_before: [6144]u8
 palette_now, palette_before: interface.Draw_Table
 palette_interface_state: interface.Interface_State
 // The pointer, as the next frame of the panel reads it: the scroll bar of
@@ -81,6 +82,8 @@ Ranking :: struct {
 palette_ranking: Ranking
 palette_published_seen: u32 // The value of `published` that the loop saw last.
 palette_enter_waits: bool // Enter came while the list of the typed part was not made yet: it runs when the list comes.
+palette_go_to_waits: bool // Shift with Enter came while the list of the typed part was not made yet: it goes when the list comes.
+palette_pressed_value: int = -1 // The value of a setting row where the left button went down, until it goes up; or palette.NO_ROW.
 palette_tab_waits: bool // Tab came while the candidates of the field were on their way: it acts when they come.
 // The measures of one open of the panel: the lists that the loop adopted
 // while it was open, and how many of them showed what the list before
@@ -97,6 +100,11 @@ palette_tags: u32 // The tag of the last choice sent.
 palette_candidates_awaited: u32 // Not 0: the tag of the request for the candidates of the current field of the form.
 palette_sent_setting: bool // The entry that the panel sent is a setting: the panel then goes back to its list.
 palette_answer_awaited: u32 // Not 0: the tag of the choice whose answer the desktop still acts on.
+// The name of the setting row that the log named last: the line of a row
+// is written when the chosen row changes, not at each list.
+palette_row_logged: [palette.NAME_CAPACITY]u8
+palette_row_logged_length: int
+ACT_NAME_SETS_LOGGED :: 8 // The sets of act names of one window that the log names: a window that changes its set at each frame does not fill the log.
 
 // palette_start gives the draw tables their memory and their font, starts
 // the ranking thread and asks for the first list. The compositor calls it
@@ -274,6 +282,7 @@ palette_turn :: proc "contextless" () {
 		if adoption == .Moved {
 			system.log_in("surfaces", .Info, "compositor: the chosen entry of the palette left the list: the first entry is chosen, and Enter waits for a frame")
 			palette_enter_waits = false
+			palette_go_to_waits = false
 		}
 		if palette_list_is_current() {
 			palette_list_log()
@@ -284,6 +293,12 @@ palette_turn :: proc "contextless" () {
 		palette_enter_waits = false
 		if palette_panel.state == .Search {
 			palette_act(.Run, .Enter, 0, "")
+		}
+	}
+	if palette_go_to_waits && palette_list_is_current() {
+		palette_go_to_waits = false
+		if palette_panel.state == .Search {
+			palette_act(.Go_To, .Shift_Enter, 0, "")
 		}
 	}
 }
@@ -371,12 +386,91 @@ palette_provider_remove :: proc "contextless" () {
 // palette_choose sends an entry of the provider on its ring: the
 // generation of the table that had the entry, the index of the entry and
 // the hash of its name, the mode, and the count of the Argument records
-// before it. It gives false with no provider or a full ring.
+// before it. A setting row sends the entry of its chosen value
+// (palette.entry_sent). It gives false with no provider or a full ring.
 palette_choose :: proc "contextless" (generation: u32, picked: ^palette.Entry, mode: palette_table.Choose_Mode, argument_count: int, tag: u32) -> bool {
 	if palette_provider_ring.head == nil {
 		return false
 	}
-	return system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Choose), tag = tag, values = {0 = u64(generation), 1 = u64(picked.number), 2 = palette_table.name_hash(palette.entry_name(picked)), 3 = u64(mode), 4 = u64(argument_count)}})
+	number, name := palette.entry_sent(&palette_panel, picked)
+	return system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Choose), tag = tag, values = {0 = u64(generation), 1 = u64(number), 2 = palette_table.name_hash(name), 3 = u64(mode), 4 = u64(argument_count)}})
+}
+
+// palette_act_names_take takes the record Act_Names of a window: the set of
+// what its elements act on. The values are those of another program: the
+// set is checked (palette.act_name_set_of_record), and a set that fails
+// leaves the window with none. The log names the first sets of a window.
+palette_act_names_take :: proc "contextless" (client: ^Client, record: ring.Record) {
+	set, ok := palette.act_name_set_of_record(record.values)
+	if !ok {
+		set = {}
+	}
+	if set == client.act_names {
+		return
+	}
+	client.act_names = set
+	if client.act_name_sets_logged < ACT_NAME_SETS_LOGGED {
+		client.act_name_sets_logged += 1
+		if ok {
+			system.log_in("surfaces", .Info, "compositor: the window ", system.name_of(client.title[:]), " gave ", u64(set.count), " act names")
+		} else {
+			system.log_in("surfaces", .Warning, "compositor: the window ", system.name_of(client.title[:]), " gave a set of act names that is refused: it has none now")
+		}
+	}
+	// An open panel offers go to by these sets.
+	palette_refresh()
+}
+
+// palette_act_window gives the position in the order of the window in
+// front that names the act name of an entry, or -1. The work is one pass
+// over the windows, at most 32 sets of 6 hashes.
+palette_act_window :: proc "contextless" (picked: ^palette.Entry) -> int {
+	if picked == nil || picked.act == 0 {
+		return -1
+	}
+	sets: [CLIENT_CAPACITY]^palette.Act_Name_Set
+	positions: [CLIENT_CAPACITY]int
+	count := 0
+	for position := order_count - 1; position >= 0; position -= 1 {
+		sets[count] = &clients[order[position]].act_names
+		positions[count] = position
+		count += 1
+	}
+	found := palette.act_name_front(sets[:count], picked.act)
+	return found == palette.NO_ROW ? -1 : positions[found]
+}
+
+// palette_go_to raises the window in front that names the act name of the
+// chosen entry, and sends it the event Go_To: its window layer gives the
+// focus to the element. The panel closes, as after each choice that
+// brings a window to the front.
+palette_go_to :: proc "contextless" () {
+	panel := &palette_panel
+	if !palette_list_is_current() {
+		// The list of the typed part is not made yet: go to waits for it,
+		// as Enter does, and never acts on an entry of the list before.
+		palette_go_to_waits = true
+		return
+	}
+	picked := palette.chosen_entry(panel)
+	if picked == nil {
+		return
+	}
+	position := palette_act_window(picked)
+	if position < 0 {
+		system.log_in("surfaces", .Info, "compositor: no open window names what ", palette.entry_name(picked), " acts on: the palette does not go to it")
+		return
+	}
+	name: [palette.NAME_CAPACITY]u8
+	name_text := string(name[:copy(name[:], palette.entry_name(picked))])
+	act := picked.act
+	index := order[position]
+	palette.recent_note(panel, picked)
+	palette_close("")
+	raise(position)
+	send(&clients[index], ring.Record{kind = u32(display.Event_Kind.Go_To), values = {0 = act}})
+	system.log_in("surfaces", .Info, "compositor: the palette goes to ", name_text, " in the window ", system.name_of(clients[index].title[:]), ", now in front")
+	palette_entries_refresh()
 }
 
 // palette_window_to_front brings the window with a title to the front:
@@ -420,8 +514,8 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 		}
 		if outcome == u64(palette_table.Outcome.Candidates_Ready) && palette_panel.state == .Arguments {
 			form := &palette_panel.form
-			palette.form_candidates_set(form, palette_ranking.table, record.values[2], record.values[1])
-			system.log_in("surfaces", .Info, "compositor: the palette has ", u64(form.candidate_count), " candidates for the field ", u64(form.current))
+			palette.form_candidates_set(form, palette_ranking.table, record.values[2], record.values[1], record.values[3])
+			system.log_in("surfaces", .Info, "compositor: the palette has ", u64(form.candidate_count), " candidates for the field ", u64(form.current), palette.field_control(form, form.current) == .Buttons ? ", as a row of buttons" : "")
 			// Tab that came before the candidates acts now, on them.
 			if palette_tab_waits {
 				palette_tab_waits = false
@@ -533,12 +627,16 @@ palette_key :: proc "contextless" (code: u32, character: u8, pressed: bool, modi
 	}
 	if key == .Enter && modifiers & display.MODIFIER_CONTROL != 0 {
 		key = .Control_Enter
+	} else if key == .Enter && modifiers & display.MODIFIER_SHIFT != 0 {
+		key = .Shift_Enter
 	}
 	if key == .Character && modifiers & display.MODIFIER_CONTROL != 0 {
 		key = .Other // Control with a key types no character.
 	}
 	was_open := palette_is_open()
-	action := palette.key_action(palette_panel.state, key)
+	// On a setting row, and in a field with a row of buttons, Left and
+	// Right choose a value.
+	action := palette.key_action_for(&palette_panel, key)
 	if !was_open && action == .None {
 		return false
 	}
@@ -596,6 +694,7 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		drawn, text_changed := palette.typed_edit(panel, key, character)
 		if text_changed {
 			palette_enter_waits = false
+			palette_go_to_waits = false
 			palette_entries_refresh()
 		}
 		if drawn {
@@ -634,6 +733,10 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			break
 		}
 		if state_next == .Running {
+			if palette.entry_is_setting_row(picked) {
+				// The pointer acts with the key Other: a press on a button.
+				system.log_in("surfaces", .Info, "compositor: the palette sets ", palette.entry_name(picked), " to ", palette.value_name(panel.list, picked, palette.value_chosen(panel, picked)), key == .Other ? ", by a press" : ", by a key")
+			}
 			palette_entry_send(picked)
 			break
 		}
@@ -719,6 +822,15 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			system.log_in("surfaces", .Info, "compositor: the palette refuses the arguments: ", palette.form_message(&panel.form))
 		}
 		palette_refresh()
+	case .Go_To:
+		palette_go_to()
+	case .Value_Previous, .Value_Next:
+		if palette.value_move(panel, action == .Value_Next ? 1 : -1) {
+			if picked := palette.chosen_entry(panel); picked != nil {
+				system.log_in("surfaces", .Info, "compositor: the palette chooses the value ", palette.value_name(panel.list, picked, palette.value_chosen(panel, picked)), " of ", palette.entry_name(picked))
+			}
+			palette_refresh()
+		}
 	case .Open_In_Console:
 		// The entry of a provider goes to the edit line of its window,
 		// where a line can compose its arguments.
@@ -946,6 +1058,9 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool) {
 			}
 		} else {
 			panel.pressed_row = palette.row_is_entry(panel, row) ? row : palette.NO_ROW
+			// A press on a button of a setting row: its release sets that
+			// value. The layout is the one that the last frame drew.
+			_, palette_pressed_value = palette.value_at(panel, &palette_before, left, top, pointer_x, pointer_y)
 		}
 	}
 	if released {
@@ -953,8 +1068,18 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool) {
 		panel.pressed_row = palette.NO_ROW
 		#partial switch panel.state {
 		case .Search:
+			pressed_value := palette_pressed_value
+			palette_pressed_value = palette.NO_ROW
 			if pressed_row != palette.NO_ROW && pressed_row == row {
 				palette.choice_set(panel, row)
+				// The release on the button that took the press chooses
+				// its value; a release elsewhere on the row sets the value
+				// that the row shows chosen.
+				if value_row, value := palette.value_at(panel, &palette_before, left, top, pointer_x, pointer_y); value_row == row && value != palette.NO_ROW && value == pressed_value {
+					if picked := palette.chosen_entry(panel); picked != nil {
+						palette.value_set(panel, picked, value)
+					}
+				}
 				interface.input_clear(given)
 				palette_act(.Run, .Other, 0, "")
 				return
@@ -997,6 +1122,9 @@ palette_refresh :: proc "contextless" () {
 			palette_panel.settings_in_use[int(setting)] = u8(in_use.values[setting])
 		}
 	}
+	// The band offers go to when a window in front of the others names
+	// what the chosen entry acts on.
+	palette_panel.go_to_offered = palette_act_window(palette.chosen_entry(&palette_panel)) >= 0
 	left, top := palette_place()
 	// The frame reads the pointer for the scroll bar of the panel, and the
 	// clock for a held arrow button. When the scroll bar moved the view,
@@ -1083,6 +1211,25 @@ palette_list_log :: proc "contextless" () {
 		named += 1
 	}
 	system.log_in("surfaces", .Info, "compositor: the palette lists ", u64(list.matched_count), " of ", u64(list.entry_count), " for \"", palette.typed_text(panel), "\": ", system.written(&writer))
+	palette_row_log()
+}
+
+// palette_row_log writes one line when the chosen entry becomes a setting
+// row: "compositor: the palette shows the setting font as one row of 2
+// values". The line is written when the chosen row changes, not at each
+// list of a typed key.
+palette_row_log :: proc "contextless" () {
+	picked := palette.chosen_entry(&palette_panel)
+	if picked == nil || !palette.entry_is_setting_row(picked) {
+		palette_row_logged_length = 0
+		return
+	}
+	name := palette.entry_name(picked)
+	if string(palette_row_logged[:palette_row_logged_length]) == name {
+		return
+	}
+	palette_row_logged_length = copy(palette_row_logged[:], name)
+	system.log_in("surfaces", .Info, "compositor: the palette shows the setting ", name, " as one row of ", u64(picked.value_count), " values")
 }
 
 // palette_choice_log writes the chosen entry on the log: "compositor: the
@@ -1091,6 +1238,7 @@ palette_choice_log :: proc "contextless" () {
 	if picked := palette.chosen_entry(&palette_panel); picked != nil {
 		system.log_in("surfaces", .Info, "compositor: the palette chooses ", palette.entry_name(picked), " (", palette.kind_words(picked.kind), ")")
 	}
+	palette_row_log()
 }
 
 // palette_close closes the panel, and writes on the log the measures of
@@ -1111,6 +1259,8 @@ palette_close :: proc "contextless" (cause: string) {
 	interface.input_clear(&palette_input)
 	palette_scroll_dragged = false
 	palette_enter_waits = false
+	palette_go_to_waits = false
+	palette_row_logged_length = 0
 	damage_palette()
 	interface.draw_table_clear(&palette_before)
 	per_frame := palette_time / max(palette_frames, 1)

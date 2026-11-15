@@ -1,5 +1,5 @@
 {
-  description = "Next-Gen Kernel";
+  description = "A fast, modular operating system, sandboxed by default";
 
   inputs = {
     nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.2605";

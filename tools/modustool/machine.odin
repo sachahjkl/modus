@@ -1133,14 +1133,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the scroll bar of the palette: a press on the arrow down, the rows from 1"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
-	// The settings: the palette starts the program settings, then ":"
-	// lists one entry for each value of each setting. The font changes
-	// behind the open panel, and the value in use has the mark. After the
-	// first choice a new list comes for the same typed part (the console
-	// has new commands, and the chosen entry is a recent one): the choice
-	// stays on its entry at whatever row it has, so one arrow down from
-	// "spleen" is "vector" in each order of the two rows, and Enter runs
-	// the row that the screen shows.
+	// The settings: the palette starts the program settings. Its window
+	// names the button of the value in use of each setting, and gives the
+	// compositor the set of these act names; the two programs write their
+	// lines in an order that the system does not fix. Then ":font" lists
+	// the font as one setting row, with a button for each value and the
+	// value in use marked. Right chooses spleen, Enter sets it behind the
+	// open panel, and the panel shows its list again with the value on its
+	// row. Left and Enter set vector back.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "settings"},
@@ -1148,27 +1148,47 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
-	{kind = .Wait, text = "settings: ok, "},
+	{kind = .Wait, text = "compositor: the window settings gave 5 act names", any_order = true},
+	{kind = .Wait, text = "settings: ok, ", any_order = true},
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = ":font"},
-	{kind = .Wait, text = " for \":font\": set font to vector (setting), set font to spleen (setting)"},
-	{kind = .Key, text = "down"},
-	{kind = .Wait, text = "compositor: the palette chooses set font to spleen (setting)"},
+	// The row of font is the first row of ":" already: its line can come
+	// before the list of ":font", which keeps the same row and writes no
+	// second line. The row line is found from the open, in either order.
+	{kind = .Wait, text = "compositor: the palette shows the setting font as one row of 2 values", any_order = true},
+	{kind = .Wait, text = " for \":font\": font (setting)"},
+	{kind = .Key, text = "right"},
+	{kind = .Wait, text = "compositor: the palette chooses the value spleen of font"},
 	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette sets font to spleen, by a key"},
 	{kind = .Wait, text = "compositor: the palette sends set font to spleen to the console", any_order = true},
 	{kind = .Wait, text = "console: the palette runs setting(\"font\", \"spleen\")"},
+	{kind = .Wait, text = "settings: font spleen, ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: set font to spleen"},
-	{kind = .Shot, text = "palette_settings"},
-	{kind = .Key, text = "down"},
-	{kind = .Wait, text = "compositor: the palette chooses set font to vector (setting)"},
+	{kind = .Shot, text = "palette_setting_row"},
+	{kind = .Key, text = "left"},
+	{kind = .Wait, text = "compositor: the palette chooses the value vector of font"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "console: the palette runs setting(\"font\", \"vector\")"},
+	{kind = .Wait, text = "settings: font vector, ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: set font to vector"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// Go to: the window of settings names what the row of the grid fit
+	// acts on, so the band offers Shift with Enter (the picture). Shift
+	// with Enter raises the window, and its window layer puts the focus on
+	// the button of the value in use.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ":grid"},
+	{kind = .Wait, text = " for \":grid\": grid fit (setting)"},
+	{kind = .Shot, text = "palette_go_to"},
+	{kind = .Key, text = "shift-ret"},
+	{kind = .Wait, text = "compositor: the palette goes to grid fit in the window settings, now in front", any_order = true},
+	{kind = .Wait, text = "interface: settings: the focus is on the element of settings.set:grid_fit", any_order = true},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
 	{kind = .Close, text = "plasma"},
@@ -1176,10 +1196,12 @@ scenario := [?]Step {
 	// The scheduling strategy: the program scheduler holds the right to
 	// change it and serves strategy_set after its checks, so the palette
 	// starts the program and the scenario waits for the end of the checks.
-	// ":strat" then lists one entry for each strategy, with the mark on the
-	// one in use. Enter sets the strategy through the console, which calls
-	// the export, and the program writes the change on the log. The second
-	// choice gives the machine back the strategy of its start.
+	// ":strat" then lists the strategies as one setting row, with the mark
+	// on the one in use, EEVDF, the last value. Left chooses fair, and
+	// Enter sets the strategy through the console, which calls the export,
+	// and the program writes the change on the log. The second choice, Right
+	// from fair at the next open, gives the machine back the strategy of
+	// its start.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "scheduler"},
@@ -1195,11 +1217,13 @@ scenario := [?]Step {
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = ":strat"},
-	{kind = .Wait, text = " for \":strat\": set strategy to "},
+	{kind = .Wait, text = " for \":strat\": strategy (setting)"},
+	{kind = .Wait, text = "compositor: the palette shows the setting strategy as one row of 3 values"},
 	{kind = .Shot, text = "palette_strategy"},
-	{kind = .Keys, text = "egyfair"},
-	{kind = .Wait, text = " for \":strategyfair\": set strategy to fair (setting)"},
+	{kind = .Key, text = "left"},
+	{kind = .Wait, text = "compositor: the palette chooses the value fair of strategy"},
 	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette sets strategy to fair, by a key"},
 	{kind = .Wait, text = "compositor: the palette sends set strategy to fair to the console", any_order = true},
 	{kind = .Wait, text = "console: the palette runs strategy(\"fair\")"},
 	{kind = .Wait, text = "scheduler: the strategy is now fair, it was EEVDF"},
@@ -1211,8 +1235,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
-	{kind = .Keys, text = ":strategyeevdf"},
-	{kind = .Wait, text = " for \":strategyeevdf\": set strategy to eevdf (setting)"},
+	{kind = .Keys, text = ":strat"},
+	{kind = .Wait, text = " for \":strat\": strategy (setting)"},
+	{kind = .Key, text = "right"},
+	{kind = .Wait, text = "compositor: the palette chooses the value eevdf of strategy"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "console: the palette runs strategy(\"eevdf\")"},
 	{kind = .Wait, text = "scheduler: the strategy is now EEVDF, it was fair"},

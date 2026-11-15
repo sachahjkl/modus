@@ -95,7 +95,7 @@ Refused: a view that leaves its choice behind (above); a scroll bar that the pan
 
 ## The form of an entry, from its descriptions
 
-The panel shows each entry in the form that its action asks for, and offers to go where the action lives (`docs/DECISIONS.md`, D-261). Nothing is written for one command: three rules derive the form.
+The panel shows each entry in the form that its act asks for, and offers to go where the act lives (`docs/DECISIONS.md`, D-261). Nothing is written for one command: three rules derive the form. What an element or an entry acts on is its act name (`docs/GLOSSARY.md`): the word "action" is already what a key asks of the panel (`palette.Action`), and "place" is a term of the storage service.
 
 **Rule 1: the control comes from the field.** One table of the support package of the palette gives a control for a field, from what the field is:
 
@@ -106,26 +106,36 @@ The panel shows each entry in the form that its action asks for, and offers to g
 | An Integer with a value kind Size or Time | A number, with its unit after it |
 | A free Text | A text field |
 
-A closed list is a fact of the candidates: the provider says, in the answer `Candidates_Ready`, whether its candidates are the only values that the parameter takes, or suggestions. The values of a setting are closed: the entries of one setting become one row, `font  [vector] spleen`, in place of one entry for each value. Left and Right choose a value, Enter sets it.
+A closed list is a fact of the candidates: the provider says, in the answer `Candidates_Ready`, whether its candidates are the only values that the parameter takes, or suggestions. The scheduling strategies and the names of the settings are closed; the programs, the modules and the grants are suggestions. The table of the controls is `field_control` in the support package; the number with its unit is not built yet, so an Integer is a typed field.
 
-**Rule 2: the mode comes from the facts of the entry.** Three modes: run, destroy, go to. The band of the panel names the mode of the chosen entry and its key: an entry with the flag `Destroys` is destroy, with its second Enter; an entry with a place offers go to on Shift and Enter; each other entry runs on Enter. Enter runs by default.
+**The setting row.** The values of a setting are closed too: the entries of one setting become one row, `font  [vector] spleen`, in place of one entry for each value. The provider gives each Setting and Provider_Setting entry the name of its setting and the name of its value, in fields of the table. The panel joins the entries that follow each other in the table and have the same kind, the same name of a setting and the same act name: they differ only in their value. The row has the name of the setting, which the typed part matches, then one button for each value, the value in use marked by a line under its name. Left and Right choose a value, Enter sets it: the panel sends the entry of that value, as it sent one entry before, so the provider and its checks do not change. A press on a button chooses the row and the value, and sets it. A run of more than 6 values stays entries, one for each value.
 
-**Rule 3: the place comes from the window.** An element that a program builds with the interface package can name the action that it acts on: a text, `settings.set:font`. The window layer sends these names to the compositor in one record of the ring of its window, when its set changes. The compositor keeps the places of each window. An entry whose action an open window names offers go to. On go to, the compositor raises the window, and sends it an event with the name; the window layer puts the focus on the element, and the next frame shows it. A program writes no code for go to: it names an element when it builds it.
+**A field with a few closed values.** In a form, a field whose candidates are closed and at most 6 shows them as a row of buttons, in the band at the right of the call when they fit there, else on the first row under the band. Left and Right choose, Tab takes the chosen value, and Enter takes it before it goes on, so one key sets a strategy.
 
-**Why a provider gives data only.** The panel is in the compositor, which reads each hostile surface. A provider that sent a widget, a layout or a drawing would draw in the program that holds each pixel. The provider gives values, candidates and facts; the panel chooses from its closed set of controls. A program gives names of places, never a rectangle: the window layer finds its own element.
+**Rule 2: the mode comes from the facts of the entry.** Three modes: run, destroy, go to. The input band names the mode of the chosen entry and its key, at its right: an entry with the flag `Destroys`, and the close of a window, is "enter enter: destroy", with its second Enter; each other entry is "enter: run". An entry whose act name an open window names adds "shift enter: go to". Enter runs by default. The words are measured against the room that the typed part leaves: the word of a prefix leaves first, then the mode. The footer keeps the act of Enter on the entry ("enter: close", "enter: start"): the mode is the kind of the act, the footer the act itself.
+
+**Rule 3: where to go comes from the window.** An element that a program builds with the interface package can name what it acts on: an act name, a text of at most 32 bytes, such as `settings.set:font`. The window layer sends the set of the act names of a frame to the compositor in one record of the ring of its window, only when the set changes. The compositor keeps the act names of each window. The provider writes the act name of each entry in the table, so the compositor reads it and never parses the name of an entry. An entry whose act name an open window names offers go to. On go to, the compositor raises the window, and sends it an event with the act name; the window layer puts the focus on the element, and the next frame shows it. A program writes no code for go to: it names an element when it builds it.
+
+**One record, so a hash.** A record of a ring holds 7 values of 8 bytes. The names of the settings already need more than 56 bytes. So the record holds a count and at most 6 hashes, the FNV-1a hash of each name (`display.act_name_hash`), and the event holds one hash. The panel hashes the act name of an entry when it collects the list, on its second thread. The window layer keeps the text of each name of its last frame, for its own line of the log. A second record for each name was refused: the set of a window then arrives in parts, and the compositor needs a state for a set that is not whole.
+
+**Which element takes the focus.** The first element of the frame with the act name. A program chooses which element names it: `settings` names the button of the value in use of each setting, and `scheduler` the tile of the strategy in use, so go to puts the focus on what the machine uses now.
+
+**Why a provider gives data only.** The panel is in the compositor, which reads each hostile surface. A provider that sent a widget, a layout or a drawing would draw in the program that holds each pixel. The provider gives values, candidates and facts; the panel chooses from its closed set of controls. A program gives act names, never a rectangle: the window layer finds its own element.
 
 **Refused forms.**
 
 - **A form for each command**, written in the panel or in the provider: each new command and each program of another project needs code in the compositor.
 - **A mode "set" beside run.** A setting is a command whose field is a closed list: its row of buttons comes from rule 1, and it runs.
 - **Go to as an export of each program.** Each program writes the same code, and a program with no service cannot be called. The window layer of each program already holds its elements and its focus.
-- **A place as a rectangle that the program gives.** A program can name a rectangle over another window, or one that moves after the next frame. A name, found by the window layer at the time of the event, cannot point outside its own window.
+- **A rectangle that the program gives, in place of a name.** A program can name a rectangle over another window, or one that moves after the next frame. A name, found by the window layer at the time of the event, cannot point outside its own window.
 
 **The subtle points.**
 
-- **A name of a place is hostile input** for the compositor: it is copied with a bound, and compared byte by byte with the action of an entry; it is never shown as the name of the entry.
-- **A window that closes** takes its places with it: the compositor drops them with the window.
-- **Two windows that name one action**, as two windows of one program: go to takes the window in front.
+- **A set of act names is hostile input** for the compositor: it copies the record, refuses a count over 6 and a hash of 0, and compares a hash with the hash of the act name of an entry; a hash is never shown. A window that names an act that it does not have gains nothing: go to raises that window only, and its window layer finds no element.
+- **A window that closes** takes its act names with it: the compositor drops them with the window. The compositor writes a line for the first 8 sets of a window only, so a window that changes its set at each frame does not fill the log.
+- **Two windows that name one act**, as two windows of one program: go to takes the window in front.
+- **A frame with more than 6 act names** sends the first 6; the window layer writes one line for the life of the window.
+- **Left and Right on a setting row** choose a value, so they do not move the caret of the typed part there; Home and End still do.
 
 ## The film
 
@@ -133,7 +143,7 @@ A film of the palette needed a change of the tool: the old step that took pictur
 
 ## State
 
-Built: the panel with the programs and the windows; the provider with the commands of the console, their arguments and their candidates; the settings; the scheduling strategy; the four prefixes; the kind icons; the pointer in a field, on a candidate and on the scroll bar; the film.
+Built: the panel with the programs and the windows; the provider with the commands of the console, their arguments and their candidates; the settings; the scheduling strategy; the four prefixes; the kind icons; the pointer in a field, on a candidate and on the scroll bar; the film; the setting row; the row of buttons of a field with a few closed values; the mode in the input band; go to, with the act names of `settings` and `scheduler`.
 
 Left:
 
@@ -141,4 +151,6 @@ Left:
 - The wheel of the pointing device does not exist in the system: the input service reads no wheel.
 - A Table result is not drawn in the panel: it opens in the console.
 - A second provider (a service that runs its own entries) waits for a real need.
-- The form of an entry from its descriptions (above): decided, the prototype in progress.
+- A number with its unit for an Integer of a size or a time: the table of the palette has no unit of a parameter yet.
+- The pointer on the buttons of a field of a form: the keys choose them.
+- The values of the second field of `setting(name, value)` depend on the first field: the request for candidates carries no value of another field, so the field has no candidates.

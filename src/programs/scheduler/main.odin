@@ -1660,9 +1660,16 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		x := TILE_X + index * (TILE_WIDTH + MARGIN)
 		color := strategy_color(index)
 		// A tile is a button of the package: the pointer, or Tab and Enter.
-		tile := interface.element_interact(frame, interface.identity_with(interface.identity("strategy"), index), {x, TILE_Y, TILE_WIDTH, TILE_HEIGHT}, .Button)
+		tile_identity := interface.identity_with(interface.identity("strategy"), index)
+		tile := interface.element_interact(frame, tile_identity, {x, TILE_Y, TILE_WIDTH, TILE_HEIGHT}, .Button)
 		if tile.activated {
 			choose(index)
+		}
+		if index == max(in_use, 0) {
+			// The palette sets the strategy with the command strategy, and
+			// its entries have this act name: go to puts the focus on the
+			// tile of the strategy in use.
+			interface.element_act_name(frame, tile_identity, "strategy")
 		}
 		label := system.format(line[:], u64(index + 1), "  ", op.STRATEGY_NAMES[strategies[index]])
 		if index == in_use {

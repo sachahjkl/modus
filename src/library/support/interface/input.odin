@@ -120,6 +120,69 @@ Interface_State :: struct {
 	scroll_bar_grab:      int, // A held thumb: the pixels from the start of the thumb to the pointer, along the bar.
 	scroll_bar_repeat_at: u64, // A held arrow button: the time of its next step, in milliseconds of the clock of the system. 0: no step is due.
 	scroll_bar_lit:       Element_Identity, // The scroll bar that the last frame drew lit, or 0.
+	// The act names of the last frame (element_act_name): go to finds its
+	// element here, and the window layer sends their set to the compositor.
+	act_names:      [display.ACT_NAME_SET_CAPACITY]Act_Name,
+	act_name_count: int, // The entries of `act_names` in use.
+}
+#assert(size_of(Interface_State) == 920)
+
+// One act name of a frame: what an element acts on, in the words of a
+// palette entry that does the same thing
+// (docs/INTERFACE.md, "4.2 Act names").
+Act_Name :: struct {
+	element: Element_Identity, // The first element of the frame that named it.
+	hash:    u64, // display.act_name_hash of the text.
+	length:  u8, // The bytes of `text` in use: 1 to display.ACT_NAME_CAPACITY.
+	text:    [display.ACT_NAME_CAPACITY]u8, // "settings.set:font".
+}
+
+// act_name_text gives the text of an act name.
+act_name_text :: proc "contextless" (name: ^Act_Name) -> string {
+	return string(name.text[:min(int(name.length), display.ACT_NAME_CAPACITY)])
+}
+
+// element_act_name says that an element of the frame acts on what an act
+// name names: the palette then offers to go to it, and go to gives it the
+// focus. Call it in each frame that draws the element, with the identity
+// that the element has. The first element of a frame with one act name
+// keeps it: a program names the element that go to must reach. A name that
+// is empty or longer than display.ACT_NAME_CAPACITY, and a name past the
+// display.ACT_NAME_SET_CAPACITY names of a frame, are counted in
+// Frame.act_names_dropped and kept nowhere.
+element_act_name :: proc "contextless" (frame: ^Frame, element: Element_Identity, name: string) {
+	if len(name) == 0 || len(name) > display.ACT_NAME_CAPACITY {
+		frame.act_names_dropped += 1
+		return
+	}
+	hash := display.act_name_hash(name)
+	for &kept in frame.act_names[:frame.act_name_count] {
+		if kept.hash == hash {
+			return
+		}
+	}
+	if frame.act_name_count >= display.ACT_NAME_SET_CAPACITY {
+		frame.act_names_dropped += 1
+		return
+	}
+	added := &frame.act_names[frame.act_name_count]
+	added^ = {element = element, hash = hash, length = u8(len(name))}
+	copy(added.text[:], name)
+	frame.act_name_count += 1
+}
+
+// focus_by_act_name gives the focus to the element of the last frame that
+// named an act name, by its hash: the palette went there. The next frame
+// draws the focus. found is false when no element of the last frame named
+// it; name is the text of the act name, for a line of the log.
+focus_by_act_name :: proc "contextless" (state: ^Interface_State, hash: u64) -> (name: string, found: bool) {
+	for &kept in state.act_names[:clamp(state.act_name_count, 0, display.ACT_NAME_SET_CAPACITY)] {
+		if kept.hash == hash {
+			state.focus = kept.element
+			return act_name_text(&kept), true
+		}
+	}
+	return "", false
 }
 
 // One frame: the table that it fills, the state, the input of the frame.
@@ -139,6 +202,9 @@ Frame :: struct {
 	// Elements after the first FOCUS_ORDER_CAPACITY that can take the focus:
 	// a press reaches them, Tab does not.
 	focus_overflow:      int,
+	act_names:           [display.ACT_NAME_SET_CAPACITY]Act_Name, // The act names of this frame, so far: the first element of each one.
+	act_name_count:      int, // The entries of `act_names` in use.
+	act_names_dropped:   int, // The act names that the frame did not keep: too long, empty, or past the capacity.
 }
 
 // frame_begin clears the table and starts a frame. Tab and Shift+Tab move
@@ -174,6 +240,8 @@ frame_end :: proc "contextless" (frame: ^Frame) {
 	state.focus_order = frame.focus_order
 	state.focus_count = frame.focus_count
 	state.scroll_bar_lit = frame.scroll_bar_lit
+	state.act_names = frame.act_names
+	state.act_name_count = frame.act_name_count
 	// A held scroll bar that the frame does not have takes no step: with a
 	// step still due, a program that wakes for it would never sleep.
 	if !frame.scroll_bar_held_drawn {

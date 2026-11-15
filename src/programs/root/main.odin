@@ -37,6 +37,10 @@
 //   module file, which this service reads from the store `programs` of the
 //   storage service. Its completion comes when the load ends
 //   (disk_programs.odin; docs/MODULE_CONTRACT.md, "A program from a disk").
+// - `Disk_Grant`, `Nickname_Move`: the disk grant table of the principal
+//   of the caller: a grant to the file that a nickname names, and the move
+//   of a nickname to another file (disk_programs.odin;
+//   docs/MODULE_CONTRACT.md, "The grants of a disk program").
 // - `Connect`, `Disconnect`, `Connect_History`: a connection to a service.
 // - `Palette_Provide`: the entry table and the ring of the palette
 //   provider, for the program with the grant **Palette**.
@@ -345,6 +349,11 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	if caller == &disk_reader {
 		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false)
 	}
+	// A disk program: the grants of its start, never the grants of a name,
+	// and never the grant to act for a principal.
+	if caller.from_disk {
+		return isolated.caller_grant_make(disk_store_limit(caller, service), caller.principal, false)
+	}
 	name := system.name_of(caller.name[:])
 	role := grants_of(name)
 	amount: u64
@@ -402,6 +411,11 @@ Started :: struct {
 	// Debug (Root_Command.Debug): the debugger service. nil: none, or it
 	// stopped, or the grant was revoked.
 	debugger:        ^Started,
+	// A disk program: its name is a nickname, which no table by name of
+	// this service reads. Its grants are `role`, from the disk grant table
+	// of its principal at its start, and its store is the store of the
+	// nickname (disk_programs.odin).
+	from_disk:       bool,
 	// The caller of the debugger service for which this service gave that
 	// handle: the grant `debug` is a grant of this caller. nil with no
 	// debugger.
@@ -802,6 +816,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				#partial switch command {
 				case .Start_From_Disk:
 					result, held = disk_start_begin(&item, record, &completion.values)
+				case .Disk_Grant:
+					result = disk_grant_change(&item, record, &completion.values)
+				case .Nickname_Move:
+					result = nickname_move(&item, record, &completion.values)
 				case .Connect:
 					result = connect(&item, system.name_of(name[:]), &completion.values)
 				case .Connect_History:
@@ -866,8 +884,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// A refused Debug wrote its own error record: it names the
 				// grant that refuses, which only debug knows. A refused
 				// Start_From_Disk wrote its own too: its values are a hash
-				// and a name of another form.
-				if result != .Ok && command != .Debug && command != .Start_From_Disk {
+				// and a name of another form. So do Disk_Grant and
+				// Nickname_Move, whose name is a nickname of three values.
+				if result != .Ok && command != .Debug && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move {
 					completion.values = refusal(system.Root_Command(record.kind), system.name_of(name[:]), record.values[4], result)
 				}
 				completion.kind = u32(result)
@@ -1921,7 +1940,14 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	// another store.
 	store_name: system.Name
 	if system.name_of(service.name[:]) == "storage" {
-		if !principals.store_name_write(&store_name, system.name_of(caller.name[:]), caller.principal, history) {
+		// The store of a disk program is the store of its nickname, with a
+		// prefix that no module name has (disk_programs.odin).
+		program_of_the_store := system.name_of(caller.name[:])
+		disk_store_name: [32]u8
+		if caller.from_disk {
+			program_of_the_store = disk_program.store_program_name(&disk_store_name, program_of_the_store)
+		}
+		if !principals.store_name_write(&store_name, program_of_the_store, caller.principal, history) {
 			system.log_in("calls", .Warning, "root: the name of the store of ", system.Module_Name{system.name_of(caller.name[:])}, " for principal ", caller.principal, " has more than 31 bytes: no connection")
 			return nil, nil, 0, 0, .Bad_Operation
 		}
