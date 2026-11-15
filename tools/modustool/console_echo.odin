@@ -55,6 +55,12 @@ console_echo_note_step :: proc(echo: ^Console_Echo, step: Step) {
 		// A press in a window brings it to the front; a press in the
 		// palette leaves the keys to the palette.
 		echo.console_in_front = step.text == CONSOLE_TITLE
+	case .Wheel:
+		// The step brings its window to the front; the wheel in the
+		// palette leaves the front window where it is.
+		if step.text != PALETTE_ELEMENTS {
+			echo.console_in_front = step.text == CONSOLE_TITLE
+		}
 	case .Key:
 		if step.text == PALETTE_KEY {
 			echo.console_in_front = false

@@ -153,6 +153,146 @@ pointer_moves_merge_and_button_changes_wait :: proc(t: ^testing.T) {
 	}
 }
 
+// Notches at a window that does not read: 300 records with notches join
+// into one record, which holds their sum and the newest place, so they
+// take one place of the queue. A change of a button and a key after them
+// keep their places and their order, and a move waits after them. In the
+// backlog of the input service, the notches of two packets with the same
+// buttons add, cut to WHEEL_NOTCHES_LIMIT.
+@(test)
+wheel_notches_wait_in_order_and_add_in_the_backlog :: proc(t: ^testing.T) {
+	memory := new(Ring_Memory)
+	defer free(memory)
+	opened := window_ring(memory)
+	target := &opened.completions
+	storage := make([]ring.Record, WINDOW_QUEUE_CAPACITY)
+	defer delete(storage)
+	queue := Window_Queue{records = storage}
+	read: [dynamic]ring.Record
+	defer delete(read)
+
+	NOTCH :: 1 // One notch toward the end of a content (display.WHEEL_TOWARD_THE_END).
+	NOTCH_RECORDS :: 300 // More than the places of the queue.
+	PRESS_X :: NOTCH_RECORDS + 100
+	BUTTON_LEFT :: 1 // display.BUTTON_LEFT.
+	RING_RECORDS :: 32 // The records of the smallest ring.
+	for number in 0 ..< RING_RECORDS {
+		window_queue_put(&queue, target, key_record(number), .Key)
+	}
+	for x in 0 ..< NOTCH_RECORDS {
+		turned := pointer_record(x, 0)
+		turned.values[POINTER_RECORD_WHEEL] = u64(i64(NOTCH))
+		result := window_queue_put_pointer(&queue, target, turned, 0, NOTCH)
+		testing.expect(t, !result.loss_began)
+	}
+	testing.expect_value(t, queue.count, 1)
+	testing.expect_value(t, queue.wheel_records_merged, NOTCH_RECORDS - 1)
+	window_queue_put_pointer(&queue, target, pointer_record(PRESS_X, BUTTON_LEFT), BUTTON_LEFT)
+	window_queue_put(&queue, target, key_record(RING_RECORDS), .Key)
+	window_queue_put_pointer(&queue, target, pointer_record(PRESS_X + 1, BUTTON_LEFT), BUTTON_LEFT)
+	testing.expect_value(t, queue.count, 3)
+	testing.expect(t, queue.move_waits, "the move after the key waits after it")
+	testing.expect_value(t, queue.refused[Record_Class.Key], 0)
+	testing.expect_value(t, queue.refused[Record_Class.Pointer], 0)
+	for round := 0; window_queue_waits(&queue) && round < 100; round += 1 {
+		read_some(target, 5, &read)
+		window_queue_send_waiting(&queue, target)
+	}
+	read_some(target, 64, &read)
+	testing.expect_value(t, len(read), RING_RECORDS + 4)
+	if len(read) == RING_RECORDS + 4 {
+		notches := read[RING_RECORDS]
+		testing.expect_value(t, i64(notches.values[POINTER_RECORD_WHEEL]), NOTCH_RECORDS * NOTCH)
+		testing.expect_value(t, notches.values[POINTER_RECORD_X], NOTCH_RECORDS - 1)
+		press := read[RING_RECORDS + 1]
+		testing.expect_value(t, press.values[POINTER_RECORD_X], PRESS_X)
+		testing.expect_value(t, press.values[POINTER_RECORD_BUTTONS], BUTTON_LEFT)
+		testing.expect_value(t, read[RING_RECORDS + 2].values[0], RING_RECORDS)
+		testing.expect_value(t, read[RING_RECORDS + 3].values[POINTER_RECORD_X], PRESS_X + 1)
+		testing.expect_value(t, read[RING_RECORDS + 3].values[POINTER_RECORD_WHEEL], 0)
+	}
+	testing.expect_value(t, wheel_notches_add(WHEEL_NOTCHES_LIMIT, NOTCH), WHEEL_NOTCHES_LIMIT)
+	testing.expect_value(t, wheel_notches_add(-WHEEL_NOTCHES_LIMIT, -NOTCH), -WHEEL_NOTCHES_LIMIT)
+
+	backlog: Pointer_Backlog
+	testing.expect(t, pointer_backlog_add(&backlog, {motion_x = 1, wheel = NOTCH}))
+	testing.expect(t, pointer_backlog_add(&backlog, {motion_x = 2, wheel = NOTCH}))
+	testing.expect(t, pointer_backlog_add(&backlog, {wheel = -NOTCH}))
+	testing.expect_value(t, backlog.count, 1)
+	testing.expect_value(t, backlog.packets[0], Pointer_Packet{motion_x = 3, wheel = NOTCH})
+}
+
+// The packets of a mouse with a wheel: a whole packet gives its move, its
+// buttons and its notches; a lost first byte whose next byte looks like a
+// first byte gives a fourth byte that is not a count of notches, and the
+// decoder starts again one byte later, with no false notches; a packet
+// with an overflow bit is dropped; a mouse left in the Explorer protocol
+// gives its notches in the low 4 bits.
+@(test)
+mouse_packets_start_again_after_a_lost_byte :: proc(t: ^testing.T) {
+	feed :: proc(decoder: ^Mouse_Decoder, bytes: []u8, packets: ^[dynamic]Pointer_Packet) {
+		for value in bytes {
+			if packet, whole := mouse_decoder_byte(decoder, value); whole {
+				append(packets, packet)
+			}
+		}
+	}
+	packets: [dynamic]Pointer_Packet
+	defer delete(packets)
+	testing.expect_value(t, mouse_protocol_of_identity(MOUSE_IDENTITY_WHEEL), Mouse_Protocol.Wheel)
+	testing.expect_value(t, mouse_protocol_of_identity(MOUSE_IDENTITY_WHEEL_AND_BUTTONS), Mouse_Protocol.Wheel_And_Buttons)
+	testing.expect_value(t, mouse_protocol_of_identity(0), Mouse_Protocol.Standard)
+
+	START :: MOUSE_FIRST_BYTE_ALWAYS_SET
+	LEFT_BUTTON :: 0x01 // display.BUTTON_LEFT, the low bit of MOUSE_FIRST_BYTE_BUTTONS.
+	UP_ONE :: 0xFF // The fourth byte of one notch away from the principal: -1.
+	decoder := Mouse_Decoder{protocol = .Wheel}
+	// One packet: the left button, 5 to the right, 3 up, one notch away.
+	feed(&decoder, []u8{START | LEFT_BUTTON, 5, 3, UP_ONE}, &packets)
+	testing.expect_value(t, len(packets), 1)
+	if len(packets) == 1 {
+		testing.expect_value(t, packets[0], Pointer_Packet{motion_x = 5, motion_y = -3, buttons = LEFT_BUTTON, wheel = -1})
+	}
+	clear(&packets)
+
+	// A packet whose first byte is lost: its second byte (72, which has
+	// the bit of a first byte) is read as a first byte, and the first byte
+	// of the next packet as a fourth byte: 8 is past MOUSE_WHEEL_MOST. The
+	// decoder starts again, and the next packet is right.
+	MOVE_THAT_LOOKS_LIKE_A_START :: 0x48
+	feed(&decoder, []u8{MOVE_THAT_LOOKS_LIKE_A_START, 0x30, 0x00}, &packets)
+	feed(&decoder, []u8{START, 2, 3, UP_ONE}, &packets)
+	testing.expect_value(t, decoder.resyncs, 1)
+	testing.expect_value(t, len(packets), 1)
+	if len(packets) == 1 {
+		testing.expect_value(t, packets[0], Pointer_Packet{motion_x = 2, motion_y = -3, wheel = -1})
+	}
+	clear(&packets)
+
+	// An overflow of x: the packet is dropped, the next one is right.
+	feed(&decoder, []u8{START | MOUSE_FIRST_BYTE_OVERFLOW_X, 1, 1, 0}, &packets)
+	feed(&decoder, []u8{START, 1, 0, 1}, &packets)
+	testing.expect_value(t, decoder.overflows, 1)
+	testing.expect_value(t, len(packets), 1)
+	if len(packets) == 1 {
+		testing.expect_value(t, packets[0], Pointer_Packet{motion_x = 1, wheel = 1})
+	}
+	clear(&packets)
+
+	// The Explorer protocol: the low 4 bits 0xF are -1, beside the bit of
+	// a fifth button; a fourth byte with a bit that is always 0 starts the
+	// packet again.
+	FIFTH_BUTTON_AND_UP_ONE :: 0x2F
+	explorer := Mouse_Decoder{protocol = .Wheel_And_Buttons}
+	feed(&explorer, []u8{START, 0, 0, FIFTH_BUTTON_AND_UP_ONE}, &packets)
+	feed(&explorer, []u8{START, 0, 0, MOUSE_EXPLORER_ZERO_BITS}, &packets)
+	testing.expect_value(t, len(packets), 1)
+	if len(packets) == 1 {
+		testing.expect_value(t, packets[0].wheel, -1)
+	}
+	testing.expect_value(t, explorer.resyncs, 1)
+}
+
 // The move that waits goes to the window after the records that have an
 // order.
 @(test)

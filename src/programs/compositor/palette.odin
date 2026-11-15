@@ -1029,13 +1029,16 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 // The scroll bar of the list is an element of the interface package: a
 // press on it, and each move while it holds the press, builds a frame of
 // the panel with the pointer, and the element moves the view. While the
-// scroll bar holds the press, the pointer chooses and runs no row.
-palette_pointer :: proc "contextless" (moved, pressed, released: bool) {
+// scroll bar holds the press, the pointer chooses and runs no row. A notch
+// of the wheel over the rows or over the bar builds a frame too, and the
+// element moves the view by it; a notch elsewhere moves nothing.
+palette_pointer :: proc "contextless" (moved, pressed, released: bool, wheel: int) {
 	panel := &palette_panel
 	left, top := palette_place()
 	given := &palette_input
 	given.pointer_x, given.pointer_y = pointer_x, pointer_y
 	given.pointer_known = true
+	given.wheel += wheel
 	if pressed {
 		given.press_x, given.press_y = pointer_x, pointer_y
 	}
@@ -1044,9 +1047,11 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool) {
 	given.button_held = buttons & display.BUTTON_LEFT != 0
 	bar_area, bar_shown := palette.scroll_bar_area(panel, left, top)
 	bar_identity := palette.scroll_bar_identity()
-	// The pointer is over the scroll bar, holds it, or leaves it lit: the
-	// panel needs a frame for it.
-	bar_wants_frame := interface.scroll_bar_wants_frame(&palette_interface_state, given, bar_area, bar_identity)
+	// The pointer is over the scroll bar, holds it, leaves it lit, or turns
+	// the wheel over the rows: the panel needs a frame for it. A panel with
+	// no scroll bar has no view that the wheel moves.
+	view_area := bar_shown ? palette.scroll_view_area(left, top) : interface.Area{}
+	bar_wants_frame := interface.scroll_bar_wants_frame(&palette_interface_state, given, bar_area, bar_identity, view_area)
 	if palette_interface_state.pressed == bar_identity || pressed && bar_shown && interface.area_contains(bar_area, pointer_x, pointer_y) {
 		panel.pressed_row = palette.NO_ROW
 		palette_refresh()
@@ -1187,6 +1192,9 @@ palette_refresh :: proc "contextless" () {
 			palette_scroll_dragged ||= scrolled.held == .Thumb
 			if scrolled.pressed_now != .None && scrolled.pressed_now != .Thumb {
 				system.log_in("surfaces", .Info, "compositor: the scroll bar of the palette: a press on ", palette_scroll_part_words(scrolled.pressed_now), ", the rows from ", u64(scrolled.first))
+			}
+			if scrolled.wheel_taken {
+				system.log_in("surfaces", .Info, "compositor: the wheel moves the rows of the palette: the rows from ", u64(scrolled.first))
 			}
 		}
 		if scrolled.drag_ended {

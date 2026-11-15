@@ -76,7 +76,7 @@ the_seal_and_the_unseal_have_their_bytes :: proc(t: ^testing.T) {
 		secret[index] = u8(index + 1)
 		policy[index] = u8(0xA0 + index)
 	}
-	count := create_sealed_command(buffer[:], 0x8000_0000, &secret, &policy)
+	count := create_sealed_command(buffer[:], 0x8000_0000, &secret, &policy, nil)
 	testing.expect_value(t, count, 125)
 	header := [?]u8 {
 		0x80, 0x02, 0x00, 0x00, 0x00, 0x7D, 0x00, 0x00, 0x01, 0x53,
@@ -101,7 +101,7 @@ the_seal_and_the_unseal_have_their_bytes :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, string(buffer[public_start + len(public_head) + 32:count]) == string(tail[:]))
 
-	count = unseal_command(buffer[:], 0x8000_0001, 0x0300_0000)
+	count = unseal_command(buffer[:], 0x8000_0001, 0x0300_0000, nil)
 	expected_unseal := [?]u8 {
 		0x80, 0x02, 0x00, 0x00, 0x00, 0x1B, 0x00, 0x00, 0x01, 0x5E,
 		0x80, 0x00, 0x00, 0x01, // The sealed object.
@@ -275,19 +275,19 @@ a_forged_sealed_object_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, digest == this_system)
 	policy := policy_pcr_digest(&this_system)
 	public_buffer: [PUBLIC_AREA_LIMIT]u8
-	testing.expect(t, sealed_public_check(public_write(public_buffer[:], policy, SEALED_OBJECT_ATTRIBUTES), &policy))
+	testing.expect(t, sealed_public_check(public_write(public_buffer[:], policy, SEALED_OBJECT_ATTRIBUTES), &policy, SEALED_OBJECT_ATTRIBUTES))
 	// The object of the other system: the policy of this system, the
 	// creation data of the other one.
 	other_creation_buffer: [CREATION_DATA_LIMIT]u8
 	other_digest, other_read := creation_data_pcr_digest(creation_data_write(other_creation_buffer[:], other_system))
 	testing.expect(t, other_read)
 	policy_of_the_other_creation := policy_pcr_digest(&other_digest)
-	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], policy, SEALED_OBJECT_ATTRIBUTES), &policy_of_the_other_creation))
+	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], policy, SEALED_OBJECT_ATTRIBUTES), &policy_of_the_other_creation, SEALED_OBJECT_ATTRIBUTES))
 	// The attributes: userWithAuth set, adminWithPolicy clear, another
 	// fixed bit clear.
-	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], policy, SEALED_OBJECT_ATTRIBUTES | ATTRIBUTE_USER_WITH_AUTH), &policy))
-	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], policy, SEALED_OBJECT_ATTRIBUTES &~ ATTRIBUTE_ADMIN_WITH_POLICY), &policy))
-	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], policy, SEALED_OBJECT_ATTRIBUTES &~ ATTRIBUTE_FIXED_TPM), &policy))
+	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], policy, SEALED_OBJECT_ATTRIBUTES | ATTRIBUTE_USER_WITH_AUTH), &policy, SEALED_OBJECT_ATTRIBUTES))
+	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], policy, SEALED_OBJECT_ATTRIBUTES &~ ATTRIBUTE_ADMIN_WITH_POLICY), &policy, SEALED_OBJECT_ATTRIBUTES))
+	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], policy, SEALED_OBJECT_ATTRIBUTES &~ ATTRIBUTE_FIXED_TPM), &policy, SEALED_OBJECT_ATTRIBUTES))
 	// A creation data with PCR 11 only, a byte after it, or a cut digest.
 	changed := creation_buffer
 	changed[2 + 4 + 2 + 1] = 0x00 // No PCR 7.
@@ -384,7 +384,7 @@ the_answer_of_swtpm_to_the_seal_is_taken :: proc(t: ^testing.T) {
 	pcr_digest, named := creation_data_pcr_digest(created.creation_data)
 	testing.expect(t, named)
 	policy := policy_pcr_digest(&pcr_digest)
-	testing.expect(t, sealed_public_check(created.public_area, &policy))
+	testing.expect(t, sealed_public_check(created.public_area, &policy, SEALED_OBJECT_ATTRIBUTES))
 	// The creation hash of the answer: after the header, the size of the
 	// parameters, the two areas and the creation data, then its size field.
 	HEADER_AND_PARAMETERS_SIZE :: 10 + 4
@@ -479,4 +479,118 @@ the_areas_and_the_secret_are_taken_within_their_limits :: proc(t: ^testing.T) {
 	testing.expect(t, !area_fits(good[:3], PUBLIC_AREA_LIMIT))
 	testing.expect(t, !area_fits(good[:1], PUBLIC_AREA_LIMIT))
 	testing.expect(t, !area_fits(good[:], 3))
+}
+
+// The seal of the keys of a named principal: the authorization value in the
+// sensitive part, noDA clear; the unseal sends the value as the password of
+// the policy session.
+@(test)
+the_seal_with_an_authorization_value_has_its_bytes :: proc(t: ^testing.T) {
+	buffer: [512]u8
+	secret, policy: [SECRET_SIZE]u8
+	authorization: [AUTHORIZATION_VALUE_SIZE]u8
+	for index in 0 ..< SECRET_SIZE {
+		secret[index] = u8(index + 1)
+		policy[index] = u8(0xA0 + index)
+		authorization[index] = u8(0x61 + index % 26)
+	}
+	without_count := create_sealed_command(buffer[:], 0x8000_0000, &secret, &policy, nil)
+	count := create_sealed_command(buffer[:], 0x8000_0000, &secret, &policy, authorization[:])
+	testing.expect_value(t, count, without_count + AUTHORIZATION_VALUE_SIZE)
+	// After the header, the storage key and its password session: the size
+	// of the sensitive part, then the authorization value with its size.
+	SENSITIVE_PLACE :: 10 + 4 + 13
+	sensitive_size := 2 + AUTHORIZATION_VALUE_SIZE + 2 + SECRET_SIZE
+	testing.expect_value(t, int(buffer[SENSITIVE_PLACE]) << 8 | int(buffer[SENSITIVE_PLACE + 1]), sensitive_size)
+	testing.expect_value(t, int(buffer[SENSITIVE_PLACE + 3]), AUTHORIZATION_VALUE_SIZE)
+	testing.expect(t, string(buffer[SENSITIVE_PLACE + 4:][:AUTHORIZATION_VALUE_SIZE]) == string(authorization[:]))
+	testing.expect(t, string(buffer[SENSITIVE_PLACE + 4 + AUTHORIZATION_VALUE_SIZE + 2:][:SECRET_SIZE]) == string(secret[:]))
+	// The attributes, after the size of the public part, its kind and its
+	// hash: noDA clear.
+	attributes_place := SENSITIVE_PLACE + 2 + sensitive_size + 2 + 2 + 2
+	attributes := u32(buffer[attributes_place]) << 24 | u32(buffer[attributes_place + 1]) << 16 | u32(buffer[attributes_place + 2]) << 8 | u32(buffer[attributes_place + 3])
+	testing.expect_value(t, attributes, AUTHORIZED_SEALED_OBJECT_ATTRIBUTES)
+	testing.expect(t, attributes & ATTRIBUTE_NO_DICTIONARY_ATTACK == 0)
+	testing.expect_value(t, sealed_object_attributes(false), SEALED_OBJECT_ATTRIBUTES)
+	// A value longer than the digest of the name of the object gives no
+	// command.
+	too_long: [AUTHORIZATION_VALUE_SIZE + 1]u8
+	testing.expect_value(t, create_sealed_command(buffer[:], 0x8000_0000, &secret, &policy, too_long[:]), 0)
+
+	empty_count := unseal_command(buffer[:], 0x8000_0001, 0x0300_0000, nil)
+	count = unseal_command(buffer[:], 0x8000_0001, 0x0300_0000, authorization[:])
+	testing.expect_value(t, count, empty_count + AUTHORIZATION_VALUE_SIZE)
+	expected_head := [?]u8 {
+		0x80, 0x02, 0x00, 0x00, 0x00, u8(count), 0x00, 0x00, 0x01, 0x5E,
+		0x80, 0x00, 0x00, 0x01, // The sealed object.
+		0x00, 0x00, 0x00, u8(9 + AUTHORIZATION_VALUE_SIZE), 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, SESSION_CONTINUE, 0x00, u8(AUTHORIZATION_VALUE_SIZE), // The policy session: no nonce, continue, the value as the password.
+	}
+	testing.expect(t, string(buffer[:len(expected_head)]) == string(expected_head[:]))
+	testing.expect(t, string(buffer[len(expected_head):count]) == string(authorization[:]))
+	testing.expect_value(t, unseal_command(buffer[:], 0x8000_0001, 0x0300_0000, too_long[:]), 0)
+
+	count = policy_password_command(buffer[:], 0x0300_0000)
+	expected_password := [?]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0E, 0x00, 0x00, 0x01, 0x8C, 0x03, 0x00, 0x00, 0x00}
+	testing.expect_value(t, count, len(expected_password))
+	testing.expect(t, string(buffer[:count]) == string(expected_password[:]))
+	count = shutdown_command(buffer[:])
+	expected_shutdown := [?]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0C, 0x00, 0x00, 0x01, 0x45, 0x00, 0x00}
+	testing.expect_value(t, count, len(expected_shutdown))
+	testing.expect(t, string(buffer[:count]) == string(expected_shutdown[:]))
+}
+
+// The policy with TPM2_PolicyPassword, from the digest of sha256sum: the
+// policy of PCR 7 and PCR 11 whose digest is 32 bytes of 0x11, then the
+// code of TPM2_PolicyAuthValue.
+@(test)
+the_policy_with_the_password_has_its_digest :: proc(t: ^testing.T) {
+	pcr_digest: [DIGEST_SIZE]u8
+	for &item in pcr_digest {
+		item = 0x11
+	}
+	policy := sealed_object_policy(&pcr_digest, true)
+	expected := [DIGEST_SIZE]u8{0x69, 0x03, 0xef, 0xb5, 0x9a, 0x7e, 0x86, 0x94, 0x6e, 0xb6, 0xae, 0x93, 0x71, 0x49, 0xe3, 0xf3, 0xcf, 0xd3, 0x3c, 0x57, 0xed, 0x80, 0x60, 0xb1, 0x58, 0x6d, 0x6d, 0x96, 0xf3, 0xf0, 0x5d, 0x8a}
+	testing.expect(t, policy == expected)
+	testing.expect(t, sealed_object_policy(&pcr_digest, false) == policy_pcr_digest(&pcr_digest))
+}
+
+// An object of a named principal passes only with its own attributes and
+// its own policy: an object with noDA set, whose wrong values the TPM would
+// not count, or an object with the policy of the PCRs only, which opens
+// with no passphrase, is refused.
+@(test)
+an_object_with_an_authorization_value_is_checked :: proc(t: ^testing.T) {
+	this_system: [DIGEST_SIZE]u8
+	for index in 0 ..< DIGEST_SIZE {
+		this_system[index] = u8(index)
+	}
+	authorized_policy := sealed_object_policy(&this_system, true)
+	pcr_policy := sealed_object_policy(&this_system, false)
+	public_buffer: [PUBLIC_AREA_LIMIT]u8
+	testing.expect(t, sealed_public_check(public_write(public_buffer[:], authorized_policy, AUTHORIZED_SEALED_OBJECT_ATTRIBUTES), &authorized_policy, AUTHORIZED_SEALED_OBJECT_ATTRIBUTES))
+	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], authorized_policy, AUTHORIZED_SEALED_OBJECT_ATTRIBUTES | ATTRIBUTE_NO_DICTIONARY_ATTACK), &authorized_policy, AUTHORIZED_SEALED_OBJECT_ATTRIBUTES))
+	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], pcr_policy, AUTHORIZED_SEALED_OBJECT_ATTRIBUTES), &authorized_policy, AUTHORIZED_SEALED_OBJECT_ATTRIBUTES))
+	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], authorized_policy, AUTHORIZED_SEALED_OBJECT_ATTRIBUTES | ATTRIBUTE_USER_WITH_AUTH), &authorized_policy, AUTHORIZED_SEALED_OBJECT_ATTRIBUTES))
+	// The object of the machine key is no object of a named principal.
+	testing.expect(t, !sealed_public_check(public_write(public_buffer[:], pcr_policy, SEALED_OBJECT_ATTRIBUTES), &authorized_policy, AUTHORIZED_SEALED_OBJECT_ATTRIBUTES))
+}
+
+// The response codes of an authorization value: a wrong value that the TPM
+// counted, one that it did not count, the lockout, and a retry.
+@(test)
+the_codes_of_an_authorization_value_are_named :: proc(t: ^testing.T) {
+	SESSION_ONE :: u32(0x900) // The bits of session 1 in a format 1 code.
+	RESPONSE_BAD_AUTHORIZATION :: u32(0x022) // TPM_RC_BAD_AUTH: a failure that the TPM does not count.
+	counted := RESPONSE_FORMAT_ONE | RESPONSE_AUTHORIZATION_FAIL | SESSION_ONE
+	testing.expect_value(t, counted, u32(0x98E))
+	testing.expect(t, authorization_fails(counted))
+	testing.expect(t, !authorization_fails(RESPONSE_FORMAT_ONE | RESPONSE_BAD_AUTHORIZATION | SESSION_ONE))
+	testing.expect(t, !authorization_fails(RESPONSE_FORMAT_ONE | RESPONSE_POLICY_FAIL | SESSION_ONE))
+	testing.expect(t, !policy_fails(counted))
+	testing.expect(t, locked_out(RESPONSE_LOCKOUT))
+	testing.expect(t, !locked_out(RESPONSE_RETRY))
+	testing.expect(t, retry_asked(RESPONSE_RETRY))
+	testing.expect(t, !retry_asked(counted))
+	// The format 0 codes are no format 1 failure.
+	testing.expect(t, !authorization_fails(RESPONSE_LOCKOUT))
 }

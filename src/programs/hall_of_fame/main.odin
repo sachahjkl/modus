@@ -347,7 +347,9 @@ build :: proc "contextless" (frame: ^interface.Frame) -> (drawn: int) {
 	last := last_first_row()
 	if last > 0 {
 		rows := interface.Scroll_Range{total = ROW_COUNT, visible = ROW_COUNT - last, first = first_row}
-		moved := interface.scroll_bar(frame, {SCROLL_BAR_X, GRID_TOP, interface.SCROLL_BAR_THICKNESS, VIEW_HEIGHT}, interface.identity("people"), .Vertical, rows, {}, "people")
+		// The wheel over the cards moves the rows too.
+		cards_view := interface.Area{MARGIN, GRID_TOP, SCROLL_BAR_X - MARGIN, VIEW_HEIGHT}
+		moved := interface.scroll_bar(frame, {SCROLL_BAR_X, GRID_TOP, interface.SCROLL_BAR_THICKNESS, VIEW_HEIGHT}, interface.identity("people"), .Vertical, rows, {}, "people", cards_view)
 		if moved.changed {
 			first_row = moved.first
 		}

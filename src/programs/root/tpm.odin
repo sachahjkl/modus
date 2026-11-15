@@ -109,9 +109,9 @@ tpm_grants_give :: proc "contextless" (grants: ^[op.CONTEXT_HANDLES]system.Grant
 // tools/modustool/modules.odin, which only the boot image of the test of
 // the seal holds, under the name root. It lets a seal run when the boot
 // program verified the system and the firmware did not verify the boot
-// program: the firmware with Secure Boot loses an answer of the software
-// TPM of the test host at each start (docs/TRUSTED_BOOT.md, "The machines
-// of the TPM"), so the seal is tested with no Secure Boot. The module
+// program: the test machines with Secure Boot have no TPM device
+// (docs/TRUSTED_BOOT.md, "The machines of the TPM"), so the seal is tested
+// with no Secure Boot. The module
 // "root" has no define, so this is false in it; a root service with it
 // writes TEST_BUILD_LINE_SEAL_WITHOUT_SECURE_BOOT at boot, and the tool
 // fails each machine of another volume that prints that line.

@@ -60,6 +60,10 @@ Input :: struct {
 	// moves after it: the pointer is then at the end of the moves, and a
 	// drag needs the place where it began.
 	press_x, press_y:     int,
+	// The notches of the wheel in this frame, signed
+	// (display.WHEEL_TOWARD_THE_END). The first view under the pointer
+	// takes them (scroll_bar), and sets this to 0: no other view moves.
+	wheel:                int,
 	keys:                 [KEY_CAPACITY]Key_Press, // The keys of the frame, in order.
 	key_count:            int, // The keys in use.
 }
@@ -78,6 +82,9 @@ input_add :: proc "contextless" (input: ^Input, event: display.Event) -> bool {
 		input.pressed ||= held && !input.button_held
 		input.released ||= !held && input.button_held
 		input.button_held = held
+		// Each event cuts its notches to key_path.WHEEL_NOTCHES_LIMIT, so
+		// the sum of a frame stays far inside an int.
+		input.wheel += event.wheel
 		return true
 	case .Key:
 		if !event.pressed || input.key_count >= KEY_CAPACITY {
@@ -101,6 +108,7 @@ input_has_room :: proc "contextless" (input: ^Input) -> bool {
 input_clear :: proc "contextless" (input: ^Input) {
 	input.pressed = false
 	input.released = false
+	input.wheel = 0
 	input.key_count = 0
 }
 
