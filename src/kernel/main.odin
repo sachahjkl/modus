@@ -85,8 +85,10 @@ ROOT_NAME :: "root"
 // 3. It starts this processor (`processor_start`), chooses the strategy of
 //    each run queue (`strategy_start`), then starts the other processors
 //    (`processors_start`).
-// 4. It writes the count of processors, the free memory, the framebuffer
-//    and the mark `kernel: ok` on the log.
+// 4. It writes the count of processors, the free memory and the
+//    framebuffer on the log, turns the translation of the IOMMU on when the
+//    firmware lists one (`iommu_start`; else one line says that there is
+//    none), and writes the mark `kernel: ok`.
 // 5. It builds the [root service](term:root-service) from the module
 //    `root` of the boot image, and gives it every handle that exists at
 //    boot (`root_start`). If that fails, the log names the reason and the
@@ -124,6 +126,9 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	log("kernel: ", u64(processor_count), " processors")
 	log("kernel: free memory ", Size{free_frames * PAGE_SIZE >> 20, .Mebibytes})
 	log("kernel: framebuffer ", u64(boot.framebuffer.width), "x", u64(boot.framebuffer.height), " at ", Hex(boot.framebuffer.address))
+	// Before any device service: from translation on, a device reaches only
+	// the memory that its service declares.
+	iommu_start(boot)
 	log(KERNEL_MARK)
 	control_take()
 	root_start(boot)

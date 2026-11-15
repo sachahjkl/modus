@@ -50,6 +50,9 @@ Region :: struct {
 	committed:  u64, // Uncommitted: the committed pages. Region lock and frame lock to change it.
 	marked_pages: u64, // The pages whose slot has a mark of protection (Memory_Protect of a part). Region lock; read atomically.
 	serial:     u64, // A number that no other memory object has had: a slot of the table serves many objects in time.
+	requester:  u32, // Device memory over the registers of a function of bus 0: 1 + its requester identifier, when the IOMMU is in use (iommu.odin). 0: none.
+	declared:          u32, // A bit for each device slot of the IOMMU whose domain maps the pages (iommu.odin). Frame lock.
+	declared_writable: u32, // The slots of `declared` whose device can also write the pages. Frame lock.
 }
 
 // The state of a page in its slot of the frame list (docs/ARCHITECTURE.md,
@@ -715,6 +718,9 @@ region_release :: proc "contextless" (index: u32) {
 	switch {
 	case region.device:
 	case region.contiguous:
+		// A device that the object was declared to reaches it no more
+		// before its frames are free.
+		iommu_region_end_held(index)
 		frames_free_held(region.physical, region.page_count)
 		budgets[region.budget].amounts.pages += region.page_count
 	case:
@@ -849,6 +855,9 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 	origin_detach(holding_of_handle(program, slot))
 	#partial switch slot.kind {
 	case .Memory:
+		// A device of this service reaches the object no more once the
+		// service holds no handle to it, before the object can end.
+		iommu_handle_closed(program, slot)
 		region_release(slot.object)
 	case .Program:
 		// A program runs only while a handle names it: nobody can stop a
@@ -1699,6 +1708,9 @@ program_cleanup :: proc "contextless" (index: u32) {
 		control_register_3_write(kernel_table)
 	}
 	processor_sync(processors_with_table(program.table))
+	// The devices of a device service reach no page from now: before its
+	// handles close, which can free the pages.
+	iommu_program_end(index)
 	for &mapping in program.mappings {
 		if mapping.page_count != 0 {
 			unmap(program, &mapping)
@@ -1873,6 +1885,8 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			intrinsics.atomic_store(&time_milliseconds, now)
 			intrinsics.volatile_store(&time_record.milliseconds, now)
 			budget_period(now)
+			// The fault records that the last fault event of the IOMMU left.
+			iommu_tick()
 			// The deadlines: read with no lock, then checked under the run
 			// lock by thread_wake.
 			for &waiting in threads[1:] {
@@ -1897,6 +1911,12 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		}
 		apic_write(APIC_END, 0)
 	case frame.vector == VECTOR_SPURIOUS:
+	case frame.vector == VECTOR_IOMMU_FAULT:
+		// A device reached memory that its service did not declare: a line
+		// of the log, and the program that runs goes on.
+		cpu.interrupts += 1
+		iommu_faults_take()
+		apic_write(APIC_END, 0)
 	case frame.vector >= VECTOR_INTERRUPT_BASE && frame.vector < VECTOR_INTERRUPT_BASE + INTERRUPT_LINES:
 		line := frame.vector - VECTOR_INTERRUPT_BASE
 		cpu.interrupts += 1

@@ -679,7 +679,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 
 ### The parts of the machine test
 
-`modustool test` with no argument runs every machine in this order: a start that fails, the trusted boot, the shortage of frames, the self tests of the kernel, the main machine, the network, TCP, QUIC, QUIC against a real client, the randomness, the extended state, the return to a program, the fault ring, the debugger of a program, the kernel events, the cryptography, the persistence, the principals, the hierarchy, the ranges, the disk programs, and the loss of power. Each machine writes its log in a file `build/test_output*.txt` and its pictures in `build/screenshots`.
+`modustool test` with no argument runs every machine in this order: a start that fails, the trusted boot, the shortage of frames, the self tests of the kernel, the main machine, the network, TCP, QUIC, QUIC against a real client, the randomness, the extended state, the return to a program, the fault ring, the debugger of a program, the kernel events, the IOMMU, the cryptography, the persistence, the principals, the hierarchy, the ranges, the disk programs, and the loss of power. Each machine writes its log in a file `build/test_output*.txt` and its pictures in `build/screenshots`.
 
 `modustool test <part>` runs one part only, for the work on it. The parts that the command accepts:
 
@@ -697,6 +697,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `fault_ring` | The machine of the fault ring |
 | `debugger` | The two machines of the debugger: the contract of the kernel, then the commands of the service `debugger` |
 | `kernel_events` | The machine of the kernel events |
+| `iommu` | The machine with the IOMMU of Intel: the system with translation on, then the test device service `iommu_device`, whose device does not reach a page that it did not declare (`ARCHITECTURE.md`, "K5. Device grant and interrupts") |
 | `shortage` | The machine of the shortage of frames |
 | `principals` | The two machines of the principals |
 | `hierarchy` | The machines of the hierarchy of storage |

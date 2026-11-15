@@ -638,6 +638,16 @@ page_table_count_broken :: proc "contextless" (what: string) -> ! {
 // under the frame lock (budget_release).
 frame_paid :: proc "contextless" (budget_field: ^u32) -> u64 {
 	lock_take(&frame_lock, .Frame)
+	frame := frame_paid_held(budget_field)
+	lock_free(&frame_lock, .Frame)
+	frames_zero(frame, 1)
+	return frame
+}
+
+// frame_paid_held takes one page frame that a budget pays for, not zero.
+// 0: the budget has no page. The caller holds the frame lock: the tables of
+// a device domain change under it (iommu.odin).
+frame_paid_held :: proc "contextless" (budget_field: ^u32) -> u64 {
 	frame: u64
 	budget := budget_field^
 	if budgets[budget].live && budgets[budget].amounts.pages != 0 {
@@ -650,8 +660,6 @@ frame_paid :: proc "contextless" (budget_field: ^u32) -> u64 {
 			budgets[budget].amounts.pages -= 1
 		}
 	}
-	lock_free(&frame_lock, .Frame)
-	frames_zero(frame, 1)
 	return frame
 }
 

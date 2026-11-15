@@ -63,6 +63,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_MODULES + "/cryptography",
 	SOURCE_FOLDER_SUPPORT + "/quic",
 	SOURCE_FOLDER_CONTRACT + "/date",
+	SOURCE_FOLDER_CONTRACT + "/iommu",
 	SOURCE_FOLDER_SUPPORT + "/storage_mount",
 	SOURCE_FOLDER_SUPPORT + "/storage_object",
 	SOURCE_FOLDER_SUPPORT + "/storage_tree",
@@ -655,7 +656,7 @@ run_machine :: proc(args: []string) -> int {
 }
 
 // The parts of the machine test that `test <part>` runs alone.
-test_parts := [?]string{"main", "network", "power", "hierarchy", "ranges", "disk_programs", "tcp", "quic", "quic-real", "crypto", "random", "shortage", "extended_state", "return_fault", "fault_ring", "debugger", "kernel_events", "principals", "outside_module", "trusted_boot"}
+test_parts := [?]string{"main", "network", "power", "hierarchy", "ranges", "disk_programs", "tcp", "quic", "quic-real", "crypto", "random", "shortage", "extended_state", "return_fault", "fault_ring", "debugger", "kernel_events", "iommu", "principals", "outside_module", "trusted_boot"}
 
 // test_arguments_problem gives the refusal of the arguments of `test`, or
 // "" when they name the whole test, one part, or `trusted_boot tpm`. A word
@@ -773,6 +774,10 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "kernel_events" {
 		return kernel_events_tests_run() ? 0 : EXIT_FAILURE
 	}
+	// `test iommu`: the machine with the IOMMU only.
+	if len(args) == 1 && args[0] == "iommu" {
+		return iommu_tests_run() ? 0 : EXIT_FAILURE
+	}
 	// `test return_fault`: the machine of the return to a program only.
 	if len(args) == 1 && args[0] == "return_fault" {
 		return return_fault_tests_run() ? 0 : EXIT_FAILURE
@@ -798,7 +803,7 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "quic-real" {
 		return quic_real_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !debugger_tests_run() || !kernel_events_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !hierarchy_tests_run() || !ranges_tests_run() || !disk_programs_tests_run() || !power_loss_run() || !power_loss_settings_run() || !power_loss_ranges_run() || !test_modules() || !test_descriptions() || !test_debug_objects() || !outside_module_examples_check() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !debugger_tests_run() || !kernel_events_tests_run() || !iommu_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !hierarchy_tests_run() || !ranges_tests_run() || !disk_programs_tests_run() || !power_loss_run() || !power_loss_settings_run() || !power_loss_ranges_run() || !test_modules() || !test_descriptions() || !test_debug_objects() || !outside_module_examples_check() {
 		return EXIT_FAILURE
 	}
 	fmt.println("modustool: all tests passed")
@@ -1054,7 +1059,7 @@ processor_models := [Processor_Model]string {
 // The network device goes to the peer (`-netdev dgram`), or, when forward
 // has a port, to QEMU user networking with its TCP (web_host.odin).
 // processor gives the processor of the machine (Processor_Model).
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false) -> (command: []string, ok: bool) {
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu := false) -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -1129,6 +1134,17 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-netdev",
 		network_device,
 	)
+	// The machine of the part iommu: the remapping unit of Intel, before
+	// each device of PCI, which takes its place behind it. No interrupt
+	// remapping: the kernel does not program it
+	// (src/md/infrastructure/iommu.md, "Interrupt remapping"). Each virtio
+	// device sends its accesses through the unit only with iommu_platform,
+	// which a device with the legacy interface refuses.
+	virtio_iommu := ""
+	if iommu {
+		append(&list, "-device", "intel-iommu,intremap=off")
+		virtio_iommu = ",iommu_platform=on"
+	}
 	if paused {
 		// The machine waits for the step Monitor "cont" of the scenario: a
 		// film catches each line of the start that a viewer must read.
@@ -1142,7 +1158,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	append(
 		&list,
 		"-device",
-		fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x", MACHINE_HARDWARE, pci.NETWORK_DEVICE),
+		fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x%s", MACHINE_HARDWARE, pci.NETWORK_DEVICE, virtio_iommu),
 		"-drive",
 		strings.concatenate({"if=pflash,format=raw,readonly=on,file=", firmware_code}, context.temp_allocator),
 		"-drive",
@@ -1153,15 +1169,17 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// The boot volume is the first boot option of the firmware: with no
 		// bootindex, the order of its options follows its own enumeration,
 		// and a firmware with a network stack can try a network boot first.
-		"virtio-blk-pci,drive=boot,bootindex=0",
+		// On the machine with the IOMMU, the boot disk has the modern
+		// interface only, so that it too goes through the unit.
+		iommu ? "virtio-blk-pci,drive=boot,bootindex=0,disable-legacy=on,iommu_platform=on" : "virtio-blk-pci,drive=boot,bootindex=0",
 		"-drive",
 		strings.concatenate({"if=none,id=data,format=raw,file=", data_disk}, context.temp_allocator),
 		"-device",
-		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x", pci.DATA_DISK_DEVICE),
+		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x%s", pci.DATA_DISK_DEVICE, virtio_iommu),
 		"-drive",
 		"if=none,id=scratch,format=raw,file=" + SCRATCH_DISK,
 		"-device",
-		fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x", pci.SCRATCH_DISK_DEVICE),
+		fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x%s", pci.SCRATCH_DISK_DEVICE, virtio_iommu),
 	)
 	if firmware != .Usual {
 		if test_output == "" {

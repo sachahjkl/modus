@@ -53,9 +53,17 @@ STATUS_ACKNOWLEDGE :: 1 // The driver saw the device.
 STATUS_DRIVER :: 2 // The driver knows how to drive it.
 STATUS_DRIVER_OK :: 4 // The driver is ready: the device can use the queues.
 STATUS_FEATURES_OK :: 8 // The driver chose the features; the device keeps the bit when it accepts them.
+// The device met an error that it cannot recover from (a buffer that the
+// IOMMU refused): it does no more requests until a reset.
+STATUS_NEEDS_RESET :: 64
 NO_VECTOR :: 0xFFFF // No message interrupt.
 
 FEATURE_VERSION_1 :: 32 // The bit of the virtio 1 interface, in the second word of the features.
+// The device sends its accesses through the IOMMU of the machine
+// (ACCESS_PLATFORM): the address in a descriptor is the address that the
+// IOMMU translates, and with an identity domain it is the physical address
+// that Memory_Physical gave (src/md/infrastructure/iommu.md).
+FEATURE_ACCESS_PLATFORM :: 33
 
 DESCRIPTOR_NEXT :: 1 // The flag of a descriptor that continues in `next`.
 DESCRIPTOR_DEVICE_WRITES :: 2 // The flag of a descriptor whose buffer the device writes.
@@ -243,7 +251,10 @@ start :: proc "contextless" (device: ^Device, wanted: u32) -> (offered: u32, err
 	store_32(device.common + COMMON_DRIVER_FEATURE_SELECT, 0)
 	store_32(device.common + COMMON_DRIVER_FEATURE, offered & wanted)
 	store_32(device.common + COMMON_DRIVER_FEATURE_SELECT, 1)
-	store_32(device.common + COMMON_DRIVER_FEATURE, 1 << (FEATURE_VERSION_1 - 32))
+	// A device that offers ACCESS_PLATFORM can refuse a driver that does
+	// not take it: the driver takes it, since each address that it gives
+	// comes from Memory_Physical.
+	store_32(device.common + COMMON_DRIVER_FEATURE, 1 << (FEATURE_VERSION_1 - 32) | high & (1 << (FEATURE_ACCESS_PLATFORM - 32)))
 	status_write(device, STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK)
 	if status_read(device) & STATUS_FEATURES_OK == 0 {
 		return offered, .Features_Refused

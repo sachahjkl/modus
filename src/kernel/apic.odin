@@ -151,8 +151,8 @@ load :: proc "contextless" (bytes: [^]u8, offset: u64, $T: typeid) -> T {
 
 ACPI_HEADER_SIZE :: 36
 
-// acpi_table gives the ACPI table with this signature, and its size.
-@(private = "file")
+// acpi_table gives the ACPI table with this signature, and its size. The
+// IOMMU reads the tables DMAR and MCFG with it (iommu.odin).
 acpi_table :: proc "contextless" (root: u64, signature: string) -> (table: [^]u8, size: u64) {
 	record := acpi_bytes(root, 36)
 	if record == nil || string(record[:8]) != "RSD PTR " {

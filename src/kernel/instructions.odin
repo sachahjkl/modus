@@ -185,6 +185,15 @@ page_flush :: asm(address: u64) [#volatile, #clobber memory] {
 	invlpg [address]
 }
 
+// cache_line_write_back writes the cache line that holds this address to
+// memory and drops it from the caches (clflush): a reader of memory that
+// does not snoop the caches, as an IOMMU that is not coherent, then reads
+// the new bytes. The processor orders it after each earlier write and
+// before each later write, also a write to a register of a device.
+cache_line_write_back :: asm(address: rawptr) [#volatile, #clobber memory] {
+	clflush [address]
+}
+
 // interrupt_table_load loads the interrupt table from its descriptor
 // (lidt): the limit (2 bytes) and the address (8 bytes).
 interrupt_table_load :: asm(descriptor: rawptr) [#volatile, #clobber memory] {

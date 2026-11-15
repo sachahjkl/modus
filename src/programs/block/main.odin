@@ -55,9 +55,11 @@
 // yes` on the log. A failure at the start writes a line at the level error
 // on the channel `block` and stops the service.
 //
-// **What it does not prove.** It drives virtio under QEMU only, with no
-// IOMMU: the device can reach memory beyond the data region, and only the
-// code of this service keeps it inside
+// **What it does not prove.** It drives virtio under QEMU only. On a
+// machine with no IOMMU the device can reach memory beyond the data region,
+// and only the code of this service keeps it inside; with the IOMMU, the
+// device reaches only the queue and the data region, which this service
+// declares with `Memory_Physical`
 // (docs/ARCHITECTURE.md, "K5. Device grant and interrupts"). The design of the storage above it is in
 // docs/STORAGE.md.
 package block_service

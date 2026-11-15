@@ -16,7 +16,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The debug object of an outside module in a machine.** The debug image of a machine holds the debug object of a module that runs from a disk. A stop report of that module then names its procedures and its lines, and the debugger shows its source. [Design](src/md/infrastructure/third_party_module.md)
 - **A key sealed by the TPM, and a recovery key.** The TPM releases the key of a principal only to the system whose measure it holds, so an older or a changed system opens no store. A principal who loses the passphrase opens the stores again with a recovery key.
 - **A send with no copy in the network service.** A frame to send holds its headers in the memory of the network service and its data in the memory of the program, which the device reads. The network service then reads no byte of the data that a program sends. [Design](src/md/infrastructure/network_data_path.md)
-- **The IOMMU.** A device reaches only the memory that its service was granted. A device service that has a fault then damages no other program.
+- **The IOMMU of AMD, and interrupt remapping.** A device on a machine with an AMD processor reaches only the memory that its service declared, as on Intel, and a device cannot send an interrupt that its service was not given. [Design](src/md/infrastructure/iommu.md)
 - **A guest.** A program runs another system in a guest, with the virtualization support of the processor. The first guest writes to a port, and the write arrives as a record in the program that runs it. [Design](src/md/features/foreign_systems.md)
 
 ## Later
