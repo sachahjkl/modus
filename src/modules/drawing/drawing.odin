@@ -67,8 +67,8 @@ Damage_Rectangle :: struct {
 // The shape of the pixels of a canvas, 4 bytes for each pixel, the one
 // rectangle of the canvas that a call draws, and what the draw does in it
 // before the records. One record, and not a table of rectangles beside a
-// shape: an export has six parameters, and the picture memory takes the
-// place that the table of rectangles had.
+// shape: an export had six parameters at most when this form was chosen,
+// and the picture memory took the place that the table of rectangles had.
 Canvas_Rectangle :: struct {
 	width:           i64, // Pixels of a line that belong to the canvas.
 	height:          i64, // Lines.

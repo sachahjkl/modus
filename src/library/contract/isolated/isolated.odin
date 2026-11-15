@@ -23,7 +23,7 @@
 // The argument record is derived from the description of the export
 // (module.Function). It has one field per parameter, in order:
 //   Integer   8 bytes: the value.
-//   Text      16 bytes: a Slice. In a direct call the register holds the
+//   Text      16 bytes: a Slice. In a direct call the argument holds the
 //             address of a slice record. An address has no meaning in another
 //             program, so the field holds the slice record itself, and the
 //             slice holds an offset in the call region.
@@ -49,14 +49,14 @@
 // copies it to that place.
 //
 // An export with a Text result has one more field after the parameters, and
-// one more register in the direct call: a buffer, {start, capacity}. The
+// one more argument in the direct call: a buffer, {start, capacity}. The
 // caller owns the buffer; the callee writes the text in it and gives the
 // count of bytes of the full text as its integer result. For an isolated
 // call the buffer is in the call region: the callee writes the result where
 // the caller reads it, with no copy between.
 //
 // An export with a Table result has one more field after the parameters,
-// and one more register in the direct call: a buffer, {start, capacity},
+// and one more argument in the direct call: a buffer, {start, capacity},
 // where the capacity is a count of records. In an isolated call the buffer
 // is the rest of the call region, from a multiple of 8 bytes. The callee
 // gives the count of records of the full table as its integer result.
@@ -64,7 +64,7 @@
 // An export with an error record (module.Function.error_record) has one
 // more field, after all the others: the offset of the place of the record in
 // the call region (src/library/contract/errors, 56 bytes). In the direct call it is one
-// more register, after the buffer of a result. The receiver gives the export
+// more argument, after the buffer of a result. The receiver gives the export
 // the address of that place: the export only writes it, when it fails.
 //
 // The receiver trusts nothing in the call region. It copies the argument
@@ -225,10 +225,11 @@ Lent :: struct {
 	rights: u32, // The rights that the description asks: op.Rights.
 }
 
-// What decode gives: the registers of the call form, and the private
-// memory that they name.
+// What decode gives: the arguments of the call form, and the private
+// memory that they name. export_call puts the first 6 in registers and the
+// others on the stack.
 Call :: struct {
-	registers:  [module.PARAMETER_CAPACITY]u64, // Register n has the value of parameter n.
+	arguments:  [module.PARAMETER_CAPACITY]u64, // Argument n of the call form: the value of parameter n, then the buffer or the place of a result, then the error record.
 	slices:     [module.PARAMETER_CAPACITY]Slice, // slices[n]: the slice record of a Text.
 	records:    [module.PARAMETER_CAPACITY][module.RECORD_SIZE_LIMIT / 8]u64, // records[n]: the copy of a Record.
 	lent:       [module.HANDLE_CAPACITY]Lent, // The handles to prove before the call, and to close after it.
@@ -241,7 +242,9 @@ Call :: struct {
 	mapping_count: int, // The entries of `mappings` in use.
 }
 
-// The largest argument record: 6 table fields, a buffer and an error record.
+// The largest argument record: a table field for each argument of the call
+// form, a buffer and an error record. The buffer and the error record take
+// arguments of the call form, so this bounds each valid description.
 ARGUMENT_RECORD_LIMIT :: module.PARAMETER_CAPACITY * size_of(Table_Field) + size_of(Slice) + 8
 
 ERROR_RECORD_SIZE :: 56 // src/library/contract/errors: Error_Record.
@@ -267,7 +270,10 @@ field_size :: proc "contextless" (type: module.Type) -> u64 {
 // ok is false when the description has a type that this code does not know.
 record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok: bool) {
 	function := function
-	if function.parameter_count > module.PARAMETER_CAPACITY || !directions_valid(function) {
+	// The buffer of a result and the error record are arguments of the call
+	// form too: an export whose parameters fit can still have no argument
+	// free for them.
+	if function.parameter_count > module.PARAMETER_CAPACITY || module.call_argument_count(int(function.parameter_count), function.result, function.error_record != 0) > module.PARAMETER_CAPACITY || !directions_valid(function) {
 		return 0, false
 	}
 	for type in function.parameters[:function.parameter_count] {
@@ -280,21 +286,15 @@ record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok:
 	#partial switch function.result {
 	case .None, .Integer:
 	case .Text, .Table:
-		if function.parameter_count == module.PARAMETER_CAPACITY {
-			return 0, false // No register is free for the buffer.
-		}
 		size += size_of(Slice)
 	case .Record:
-		if function.parameter_count == module.PARAMETER_CAPACITY {
-			return 0, false // No register is free for the address of the result.
-		}
 		size += 8
 	case:
 		return 0, false
 	}
 	if function.error_record != 0 {
-		registers := u64(function.parameter_count) + u64(function.result == .Text || function.result == .Table || function.result == .Record)
-		if registers >= module.PARAMETER_CAPACITY || function.result == .Record {
+		// A Record result gives no integer result, so a failure has no sign.
+		if function.result == .Record {
 			return 0, false
 		}
 		size += 8
@@ -449,15 +449,15 @@ result_table :: proc "contextless" (region: []u8, result: Slice, count: u64, siz
 }
 
 // decode reads the argument record of a call from the call region, and gives
-// the integer registers of the call form (Call).
-//   Integer: the register has the value.
-//   Text:    the register has the address of call.slices[n]: the address of
+// the integer arguments of the call form (Call).
+//   Integer: the argument has the value.
+//   Text:    the argument has the address of call.slices[n]: the address of
 //            the bytes in the call region, and their count. The buffer of a
 //            Text result is one more Text, after the last parameter.
-//   Record:  the register has the address of call.records[n], a copy.
-//   Handle:  the register has the handle. call.lent has it, and each
+//   Record:  the argument has the address of call.records[n], a copy.
+//   Handle:  the argument has the handle. call.lent has it, and each
 //            handle of each record: the receiver proves them.
-//   A Record result: the register after the last parameter has the address
+//   A Record result: the argument after the last parameter has the address
 //   of call.records of that place, all zero. After the call, result_store
 //   copies it to the call region.
 // file is the module of the export. ok is false when a part of the argument
@@ -495,7 +495,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		argument := i64(index + 1)
 		#partial switch type {
 		case .Integer:
-			call.registers[index] = load(record[:], field, u64)
+			call.arguments[index] = load(record[:], field, u64)
 		case .Text:
 			slice := load(record[:], field, Slice)
 			if slice.start > limit || slice.count > limit - slice.start {
@@ -506,7 +506,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 				start = u64(uintptr(raw_data(region))) + slice.start,
 				count = slice.count,
 			}
-			call.registers[index] = u64(uintptr(&call.slices[index]))
+			call.arguments[index] = u64(uintptr(&call.slices[index]))
 		case .Record:
 			described_record, valid := module.record_type(file, function.parameter_details[index])
 			if !valid {
@@ -527,11 +527,11 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 					}
 				}
 			}
-			call.registers[index] = u64(uintptr(&call.records[index]))
+			call.arguments[index] = u64(uintptr(&call.records[index]))
 		case .Handle:
-			call.registers[index] = load(record[:], field, u64)
-			if !lent_handle_add(call, call.registers[index], function.parameter_details[index]) {
-				return refuse(refusal, call.registers[index] >> 32 != 0 ? .Handle_Absent : .Full, .Handles, argument, call.registers[index], len(call.lent))
+			call.arguments[index] = load(record[:], field, u64)
+			if !lent_handle_add(call, call.arguments[index], function.parameter_details[index]) {
+				return refuse(refusal, call.arguments[index] >> 32 != 0 ? .Handle_Absent : .Full, .Handles, argument, call.arguments[index], len(call.lent))
 			}
 		case .Table, .Bytes:
 			table_decode(file, type, function.parameter_details[index], function.parameter_directions[index], index, load(record[:], field, Table_Field), offset + field, region, call, &ranges, refusal) or_return
@@ -550,7 +550,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 			start = u64(uintptr(raw_data(region))) + slice.start,
 			count = slice.count,
 		}
-		call.registers[index] = u64(uintptr(&call.slices[index]))
+		call.arguments[index] = u64(uintptr(&call.slices[index]))
 	case .Table:
 		described_record, valid := module.record_type(file, function.result_detail)
 		slice := load(record[:], field, Slice)
@@ -565,7 +565,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 			start = u64(uintptr(raw_data(region))) + slice.start,
 			count = slice.count,
 		}
-		call.registers[index] = u64(uintptr(&call.slices[index]))
+		call.arguments[index] = u64(uintptr(&call.slices[index]))
 	case .Record:
 		described_record, valid := module.record_type(file, function.result_detail)
 		if !valid {
@@ -578,7 +578,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		region_range_add(&ranges, {start, start + u64(described_record.size), true, 0}, refusal) or_return
 		call.records[index] = {}
 		call.result = {start = start, count = u64(described_record.size)}
-		call.registers[index] = u64(uintptr(&call.records[index]))
+		call.arguments[index] = u64(uintptr(&call.records[index]))
 	}
 	// The error record: the export writes it in the call region, at a place
 	// that the caller chose and the receiver checked. The receiver does not
@@ -592,8 +592,8 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		}
 		region_range_add(&ranges, {start, start + ERROR_RECORD_SIZE, true, 0}, refusal) or_return
 		call.error = {start = start, count = ERROR_RECORD_SIZE}
-		registers := u64(function.parameter_count) + u64(function.result == .Text || function.result == .Table)
-		call.registers[registers] = u64(uintptr(raw_data(region))) + start
+		error_argument := u64(function.parameter_count) + u64(function.result == .Text || function.result == .Table)
+		call.arguments[error_argument] = u64(uintptr(raw_data(region))) + start
 	}
 	return true
 }

@@ -102,11 +102,13 @@ palette_active :: proc "contextless" () -> bool {
 
 // palette_entry_make makes the entry of one command. ok is false for a
 // command that the palette does not list: a command that makes a record
-// from its fields, a name that does not fit or that the font does not
-// draw, and a command that a later command with the same name hides.
+// from its fields, a command with more parameters than the form of the
+// panel has fields (the console line calls it), a name that does not fit or
+// that the font does not draw, and a command that a later command with the
+// same name hides.
 palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.Entry, ok: bool) {
 	item := &commands[number]
-	if item.record != 0 || len(item.name) == 0 || len(item.name) > palette_table.NAME_CAPACITY || !palette_table.printable(transmute([]u8)item.name) {
+	if item.record != 0 || item.parameter_count > palette_table.PARAMETER_CAPACITY || len(item.name) == 0 || len(item.name) > palette_table.NAME_CAPACITY || !palette_table.printable(transmute([]u8)item.name) {
 		return {}, false
 	}
 	for &later in commands[number + 1:command_count] {
@@ -123,7 +125,7 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 			}
 		}
 	}
-	entry.parameter_count = u8(clamp(item.parameter_count, 0, palette_table.PARAMETER_CAPACITY))
+	entry.parameter_count = u8(item.parameter_count)
 	for kind, index in item.parameters[:entry.parameter_count] {
 		entry.parameters[index] = palette_table.Value_Kind(u8(kind))
 		// What the number counts, where the command or the description of
@@ -168,7 +170,8 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 	return entry, true
 }
 
-#assert(palette_table.PARAMETER_CAPACITY == ARGUMENT_CAPACITY)
+// An entry never holds more parameters than a call of the console takes.
+#assert(palette_table.PARAMETER_CAPACITY <= ARGUMENT_CAPACITY)
 #assert(u8(Kind.Bytes) == u8(palette_table.Value_Kind.Bytes))
 
 // The entries that the next table holds: made here, then compared with
@@ -523,8 +526,11 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 	if palette_table.Choose_Mode(mode) == .Run_With_Arguments {
 		// Each value has the kind of its parameter, and each parameter
 		// has a value: the console checks them as it checks a line.
-		count := clamp(found.parameter_count, 0, ARGUMENT_CAPACITY)
-		fits := palette_arguments_tag == record.tag && palette_arguments_bad != record.tag && record.values[4] == u64(count) && count > 0
+		// The values of a choice are in an array of the size of the form: a
+		// command with more parameters has no entry, and the command table
+		// can change between the entry and the choice.
+		count := found.parameter_count
+		fits := count <= palette_table.PARAMETER_CAPACITY && palette_arguments_tag == record.tag && palette_arguments_bad != record.tag && record.values[4] == u64(count) && count > 0
 		for index in 0 ..< count {
 			if !fits || index not_in palette_arguments_given {
 				fits = false
