@@ -316,11 +316,11 @@ Debugging from another machine needs no mechanism of its own.
 
 ### The window of the debugger
 
-The program `debugger_window` shows the rows of the service in one window, with a key for each act. Start it from the menu of the programs, or with `start("debugger_window")`.
+The program `debugger_window` shows the rows of the service in one window, with a key or a click for each act: a developer needs the console for no act of the debugger. Start it from the menu of the programs, or with `start("debugger_window")`.
 
 ![The window of the debugger, attached to a program, with the frame of the caller of a held thread](screenshots/debugger_window.png)
 
-With no program attached, the keys type a name: letters, digits and `_`, Backspace, then Enter to attach. With a program attached:
+With no program attached, the keys type a name in the name field, then Enter attaches. With a program attached, and no focus in the debug place field:
 
 | Key | What it does | The export |
 |---|---|---|
@@ -336,8 +336,23 @@ With no program attached, the keys type a name: letters, digits and `_`, Backspa
 | `0` to `3` | Removes the breakpoint with that number | `break_remove` |
 | `g` | Shows the registers of the chosen thread in the card of the variables, or the variables again | `registers` |
 | `d` | Detaches | `detach` |
+| Escape | Takes the focus from the debug place field: the keys above act again | |
 
-The four cards: the program, its threads, each with its state and its place, and its breakpoints, each with the number that removes it; the source line of the chosen frame; the stack of the chosen thread; the variables of the chosen frame, or the registers of the chosen thread in two columns. A thread that runs has no stack to read: the cards say so, and `h` holds it. The window reads the threads again each 500 ms, so a thread that stops at a breakpoint shows as stopped with no key. The line under the name of the program says what the last act did, or the code of an export that failed.
+**The debug place field.** A debug place is a text that names a place of the debugged program, as the console gives it to the export. A press on the field gives it the focus; then each key is a character of the place. Three buttons under the field take its text:
+
+| Button | The debug place | The export |
+|---|---|---|
+| break at (or Enter in the field) | A procedure (`debug_target::add_step`), or a file and a line (`src/programs/debug_target/main.odin:82`) | `break_at` |
+| watch | An address (`0x403010`) or a global (`debug_target::rounds`). A last word `1`, `2`, `4` or `8` after a space is the bytes of the watch: 8 with none | `watch` |
+| memory | An address or a global: the memory view shows 128 bytes from it | `memory` |
+
+A breakpoint or a watch that the service took empties the field: its text is in the card of the breakpoints. The memory view keeps the text in the field. The service parses the place: a place that it refuses gives the code of its error on the status line.
+
+**A click on a row** does what a key does: a row of the threads chooses that thread; a row of the stack chooses that frame; a row of the source puts a breakpoint at its line; a row of the breakpoints removes that breakpoint.
+
+![The window of the debugger with a breakpoint and a watch at typed places, and the memory view of a global](screenshots/debugger_window_memory.png)
+
+The cards: the program, with the debug place field and its threads, each with its state and its place; under it the breakpoints and the watches, each with the number that removes it; the source line of the chosen frame; the memory view, each row an address, 16 bytes in hexadecimal and their printable characters; the stack of the chosen thread; the variables of the chosen frame, or the registers of the chosen thread in two columns. A thread that runs has no stack to read: the cards say so, and `h` holds it. The window reads the threads and the memory view again each 500 ms, so a thread that stops at a breakpoint shows as stopped with no key, and a byte that the program writes shows at the next read. The line under the field says what the last act did, or the code of an export that failed.
 
 **What the window holds.** A connection to the service `debugger` and to no other service, the boot image to read the description of the exports of that service, and the grant to act for the principal, which the service asks of each caller. It holds no right over a program. The service debugs one program at a time: while the console is attached, the window attaches to nothing, and the other way.
 

@@ -1699,6 +1699,20 @@ The design: `docs/TOOLS.md`, "The variables and the types".
 
 Do not use: expression, watch expression, selector, accessor.
 
+### Debug place
+
+A debug place is the text that names a place of a debugged program for the debugger service: a procedure, a file and a line, an address or a value path of a global.
+
+`break_at` takes a procedure (`debug_target::add_step`) or a file and a line (`src/programs/debug_target/main.odin:82`); `watch` and `memory` take an address (`0x403010`) or a global (`debug_target::rounds`). The service parses it: the console and the window of the debugger pass the text as it is, and compute no address. The window of the debugger has a field for it, with the buttons break at, watch and memory.
+
+It is not a place of the storage service ("Place"), which a connection holds as a number.
+
+Example: `debugger.break_at("src/programs/fault/main.odin:15")`; in the window, `debug_target::rounds 4` then the button watch.
+
+The design: `docs/TOOLS.md`, "The window of the debugger"; `src/md/features/debugger_window.md`.
+
+Do not use: breakpoint location, location spec, address expression.
+
 ### Debug handler
 
 A debug handler is the thread of a debugger whose fault ring receives the faults of the kinds Debug and Breakpoint of the debugged program.

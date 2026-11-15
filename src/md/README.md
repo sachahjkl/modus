@@ -81,7 +81,7 @@ The intent of the parts that were built before this folder is in other documents
 ## File Index
 
 - [api/library_modules.md](api/library_modules.md): which shared library becomes a module that programs import, where the border goes, and why there is no second kind of import
-- [features/debugger_window.md](features/debugger_window.md): why the window of the debugger is a client of the service with no right over a program, and how it reads the rows of the exports
+- [features/debugger_window.md](features/debugger_window.md): why the window of the debugger is a client of the service with no right over a program, how it reads the rows of the exports, the debug place that it types, its memory view, and a click on a row that does what a key does
 - [features/foreign_systems.md](features/foreign_systems.md): why a foreign system runs whole inside a guest, and the forms of a Linux and an NT layer that were refused
 - [features/gpu_access.md](features/gpu_access.md): the access to a GPU through a driver domain and one serialization of commands, and the forms that were refused
 - [features/heron_program.md](features/heron_program.md): the program that plays the animations of the mark: one source of each rule in `src/library/support/mark`, a move on the grid against the free way, and the fault of its window that made the rule of the whole frame
