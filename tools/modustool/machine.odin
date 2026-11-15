@@ -1160,6 +1160,28 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the palette goes back to the search"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// An export states the unit of a number in its description, as a
+	// built-in command states it: the third parameter of
+	// hkdf_sha256_expand is a count of bytes. The console loads the module,
+	// and the palette shows the unit of the export with no code for it.
+	// Escape leaves the form, and nothing runs.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "load(\"cryptography\")"},
+	{kind = .Wait, text = "[console]   module     cryptography"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ">hkdf_sha256_expand"},
+	{kind = .Wait, text = " for \">hkdf_sha256_expand\": hkdf_sha256_expand (export)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks for the arguments of hkdf_sha256_expand"},
+	{kind = .Wait, text = "compositor: the field 2 of hkdf_sha256_expand takes a number in bytes"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "unload(\"cryptography\")"},
+	{kind = .Wait, text = "[console]   module    cryptography"},
 	// The buttons of a field take the pointer. The field of strategy is a
 	// row of three buttons in the band, from the first column of the grid
 	// after the call "strategy(name: )". Right chooses fair; a press and a
@@ -1236,6 +1258,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface: settings: the focus is on the element of settings.set:grid_fit", any_order = true},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
+	// The console came in front for the load of a module, and its window
+	// can cover the close box of plasma.
+	{kind = .Front, text = "plasma"},
 	{kind = .Close, text = "plasma"},
 	{kind = .Wait, text = "root: plasma stopped"},
 	// The scheduling strategy: the program scheduler holds the right to
@@ -3279,8 +3304,9 @@ log_last_line :: proc(machine: ^Machine, text: string) -> string {
 }
 
 // machine_test runs a scenario on a boot volume. It passes when each step
-// passes and QEMU ends with the status exit_status.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu := false) -> bool {
+// passes and QEMU ends with the status exit_status. With user_network, the
+// listener of the tool also serves served_files (web_host.odin).
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu := false, served_files: []Listener_File = nil) -> bool {
 	machine_test_started := time.tick_now()
 	// The software TPM runs before QEMU and ends after it, with a folder of
 	// its own for each machine.
@@ -3298,7 +3324,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	forward: Forward
 	if user_network {
 		port, free := free_port()
-		if !free || !listener_start(&listener) {
+		if !free || !listener_start(&listener, served_files) {
 			fmt.eprintln("modustool: no port of the loopback for the TCP of QEMU")
 			return false
 		}

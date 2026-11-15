@@ -9,6 +9,8 @@
 // The parts:
 //
 // - `STORE_NAME`, `STORE_BLOCKS_LIMIT`: the store of the module files.
+//   `SERVICE_VALUE_PRINCIPAL`: the principal of the module file service,
+//   whose private store it is.
 //   `TABLE_OBJECT_NAME`: the object of that store that holds the
 //   persisted disk grant table.
 // - `name_problem`, `name_pack`, `name_unpack`: the name of a disk program,
@@ -59,6 +61,13 @@ FILE_BYTES_LIMIT :: 4 << 20
 // It frees the one place of the load when the storage service gives no
 // answer; it is not a measure of the disk.
 LOAD_DEADLINE_MILLISECONDS :: 30_000
+
+// The value of the context of the module file service, the program
+// `programs`, that holds the number of its principal: its private store
+// is the store `programs` of that principal, and it serves the callers
+// that act for that principal only. The other values of 0 to 15 that a
+// service with a store and an endpoint receives are 1, 2 and 3.
+SERVICE_VALUE_PRINCIPAL :: 4
 
 HASH_SIZE :: 32 // The bytes of a hash.
 HASH_DIGITS :: 2 * HASH_SIZE // The hexadecimal digits of a hash.

@@ -129,3 +129,63 @@ each_kind_has_one_name :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+// The detail of an Integer parameter gives back the unit that made it, for
+// each unit of the contract, and a plain number is the detail 0.
+@(test)
+each_integer_unit_survives_its_detail :: proc(t: ^testing.T) {
+	units := make([dynamic]Integer_Unit, context.temp_allocator)
+	append(&units, Integer_Unit{})
+	for unit in Size_Unit {
+		append(&units, size_in(unit))
+	}
+	for unit in Duration_Unit {
+		append(&units, time_in(unit))
+	}
+	for integer_unit in units {
+		detail := integer_unit_detail(integer_unit)
+		testing.expectf(t, detail & 0xFF == 0, "the detail of %v uses byte 0", integer_unit)
+		back, ok := integer_unit_of_detail(detail)
+		testing.expectf(t, ok && back == integer_unit, "the detail %x of %v gives %v", detail, integer_unit, back)
+	}
+	testing.expect_value(t, integer_unit_detail({}), 0)
+}
+
+// A detail that is not one of the contract is refused: the size of an
+// Integer field in byte 0, a byte 3, a unit past its enumeration, a unit
+// of no kind, a kind that has no unit, a kind past the enumeration.
+@(test)
+a_detail_out_of_the_contract_is_no_unit :: proc(t: ^testing.T) {
+	refused := [?]u32 {
+		2, // The size of a field of 2 bytes, which the console keeps in the same word.
+		4,
+		0x0100_0000,
+		u32(Value_Kind.Size) << 8 | (u32(max(Size_Unit)) + 1) << 16,
+		u32(Value_Kind.Time) << 8 | (u32(max(Duration_Unit)) + 1) << 16,
+		1 << 16,
+		u32(Value_Kind.Handle) << 8,
+		(u32(max(Value_Kind)) + 1) << 8,
+	}
+	for detail in refused {
+		_, ok := integer_unit_of_detail(detail)
+		testing.expectf(t, !ok, "the detail %x is taken as a unit", detail)
+	}
+}
+
+// The table of the types names each unit of the contract once, with
+// different names: a unit with no type cannot be stated by an export.
+@(test)
+each_integer_unit_has_one_type :: proc(t: ^testing.T) {
+	testing.expect_value(t, len(INTEGER_UNIT_TYPES), len(Size_Unit) + len(Duration_Unit))
+	for item, index in INTEGER_UNIT_TYPES {
+		testing.expectf(t, integer_unit_valid(item.integer_unit) && item.integer_unit.kind != .None, "the type %s has no unit", item.name)
+		found, ok := integer_unit_of_type_name(item.name)
+		testing.expectf(t, ok && found == item.integer_unit, "the name %s gives %v", item.name, found)
+		for other in INTEGER_UNIT_TYPES[:index] {
+			testing.expectf(t, other.name != item.name && other.integer_unit != item.integer_unit, "the types %s and %s collide", other.name, item.name)
+		}
+	}
+	_, found := integer_unit_of_type_name("i64")
+	testing.expect(t, !found)
+	testing.expect_value(t, size_of(Size_In_Pages), size_of(i64))
+}

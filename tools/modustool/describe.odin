@@ -2,6 +2,7 @@ package modustool
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "core:reflect"
 import "core:fmt"
 import "core:odin/ast"
@@ -18,6 +19,10 @@ import "core:strings"
 //   - An export is a function, with the calling convention "c".
 //   - A parameter of type i64 is an Integer. A parameter of type ^string is
 //     a Text.
+//   - A parameter of a type of value_kinds.INTEGER_UNIT_TYPES
+//     (value_kinds.Size_In_Pages, value_kinds.Time_In_Milliseconds) is an
+//     Integer that counts in that unit: its detail is the integer unit
+//     (value_kinds.integer_unit_detail).
 //   - A result of type i64 is an Integer. If the last parameter has the type
 //     ^[]u8, it is the buffer of a Text result, and the result type is i64.
 //   - A parameter of type ^Name is a Record, if Name is a struct of the
@@ -298,6 +303,27 @@ record_of :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> (num
 		return 0, false, false
 	}
 	return struct_record(state, pointer.elem, result)
+}
+
+// integer_unit_of_parameter reads a type of an Integer parameter with a
+// unit: `value_kinds.Size_In_Pages` and the other names of
+// value_kinds.INTEGER_UNIT_TYPES, through an import of the contract package
+// value_kinds under any name. is_unit is false for another type: a type of
+// the same name in another package is not a unit of the contract.
+integer_unit_of_parameter :: proc(state: ^Describe_State, type: ^ast.Expr) -> (integer_unit: value_kinds.Integer_Unit, is_unit: bool) {
+	selector, is_selector := type.derived.(^ast.Selector_Expr)
+	if !is_selector {
+		return {}, false
+	}
+	library, is_name := selector.expr.derived.(^ast.Ident)
+	if !is_name {
+		return {}, false
+	}
+	folder, imported := state.imports[library.name]
+	if !imported || folder != SOURCE_FOLDER_CONTRACT + "/value_kinds" {
+		return {}, false
+	}
+	return value_kinds.integer_unit_of_type_name(selector.field.name)
 }
 
 // table_of gives the number of the description of the record of a Table
@@ -619,6 +645,10 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 				description.result = .Text
 				continue
 			case:
+				if integer_unit, is_unit := integer_unit_of_parameter(state, field.type); is_unit {
+					kind, detail = .Integer, value_kinds.integer_unit_detail(integer_unit)
+					break
+				}
 				if rights, is_lent, lent_ok := lent_rights(field.type); is_lent {
 					if !lent_ok {
 						return describe_fail(path, field, "%s: write the rights of a handle as Lent({{.Read, .Write}})", name)
@@ -657,7 +687,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 				return describe_fail(
 					path,
 					field,
-					"%s: the type %s has no description. Use i64 (Integer), ^string (Text), Lent({{...}}) (Handle), the address of a struct of the package (Record), ^Table_To_Read(Name) and its forms (Table), ^Bytes_To_Read and its forms (Bytes), a last parameter ^[]u8 (the buffer of a Text result), or a last parameter result: ^[]Name (the buffer of a Table result)",
+					"%s: the type %s has no description. Use i64 (Integer), value_kinds.Size_In_Bytes and the other types of value_kinds.INTEGER_UNIT_TYPES (an Integer with its unit), ^string (Text), Lent({{...}}) (Handle), the address of a struct of the package (Record), ^Table_To_Read(Name) and its forms (Table), ^Bytes_To_Read and its forms (Bytes), a last parameter ^[]u8 (the buffer of a Text result), or a last parameter result: ^[]Name (the buffer of a Table result)",
 					name,
 					text,
 				)

@@ -84,7 +84,27 @@ The storage service starts on demand, after the root service, as before. The roo
 
 ### How the file reaches the disk
 
-The tool writes a data disk of the format of the storage service that holds the store `programs` with its module files (`modustool` builds such a disk for the test part `disk_programs`). It prints the hash of each file. The module is a row of the module table of the tool that is not in the boot image.
+Two ways: the network, on a machine that runs, or a disk that the tool writes.
+
+**The network.** The module file service ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Module file service") is the program `programs` of the boot image. Its private store is the store `programs` of its principal: the root service names the private store of a program by the name of the program, and the store of the module files has the name `programs`. So the service writes there with the grant `Store` that each program with a store has, and with no grant of a new kind. Its other grants: `Network`, a client grant of TCP to one web server (10.0.2.100 port 80, the address that QEMU gives to a server of the host), and `Serve`.
+
+The console calls its two exports through a connection, as for each service (`connect("programs")`):
+
+- `programs.receive(nickname, path)` sends `GET path` to the web server, takes a body of 1 to 4 MiB with a `Content-Length`, writes it as the object `nickname` of the root tree of the store, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that it received. The log says the same. The principal then types `start_from_disk(nickname, hash)`.
+- `programs.list()` gives one row for each object of the root tree but `grant_table`: its name, its bytes, and the BLAKE3 hash of its bytes, which the service reads again and computes. The service writes one line of the log for each row.
+
+The hash that `receive` gives is a help for the principal, not a proof: the root service still reads the bytes and checks them against the hash of the command. A service that another party changed, or a web server that gave other bytes, can make the store hold any bytes under the nickname. It cannot make them run under a hash that they do not have.
+
+The rules of the service:
+
+- **A caller that acts for the principal of the store.** The root service gives the service the number of its principal in its context (`disk_program.SERVICE_VALUE_PRINCIPAL`). A caller that does not act for its principal, or whose principal is another, is refused: a service that writes for any caller is a confused deputy.
+- **The nickname has the rules of a disk program** (`disk_program.name_problem`): `programs` and `grant_table` are refused, so the service never writes over the disk grant table.
+- **The path is one line of 1 to 200 bytes that starts with `/`**, with no space and no control byte: a request carries no second line that the caller wrote.
+- **The bounds of a load.** The body has 1 to 4 MiB, the limit of the root service, and the whole call ends 30 seconds after it starts, the deadline of a load. A response with no `Content-Length`, a status that is not 200, or a connection that ends early writes nothing.
+- **The store first, then the answer.** The object is written in ranges and made one commit; the hash goes back only after the commit.
+- **One call at a time.** The service holds one file in memory, 4 MiB of its own budget.
+
+**The tool.** The tool writes a data disk of the format of the storage service that holds the store `programs` with its module files (`modustool` builds such a disk for the test part `disk_programs`). It prints the hash of each file. The module is a row of the module table of the tool that is not in the boot image.
 
 The writer of the tool is checked by the open of the storage service: a host test opens the image with the code that the service uses, and compares each object byte for byte and each hash.
 
@@ -170,7 +190,13 @@ The table of a named principal is not persisted yet. The console, the only progr
 - **The file states the grants that it asks for.** A file then grants itself. In the model of the storage, a package states the grants that it asks for and a principal grants them ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "1. The model"): the statement is data for the principal, never a grant.
 - **The storage service starts the program.** It would need the right to create a program with a window and a log. Then two programs create access.
 - **The root service reads the disk.** It would hold the block ring and the code of the format. The storage service is the one client of the data disk.
-- **The console reads the bytes and gives them to the root service.** This is a good form for bytes that come from the network. It needs a second path for the bytes, a memory object that the console lends. It is left; the check of the hash is the same.
+- **The console reads the bytes and gives them to the root service.** It needs a second path for the bytes, a memory object that the console lends, and a load from memory beside the load from the store. The console has no grant of the network either. The module file service puts the bytes in the store, so the one load of the root service stays the one path.
+- **The console fetches the file.** The console would need the grant `Network`, and the console already holds the most grants of the machine. The module file service holds the one remote and the one store, and nothing else.
+- **The root service fetches the file.** The root service would hold TCP and HTTP, the code that reads the most hostile input of the machine.
+- **The console writes the store `programs` through `open_store`.** A place of another store reads, restores and clones only. A write there for each caller that acts for the principal lets that caller write each store of the principal, the stores of `notes` and of `unlock` too.
+- **A start grant of a new kind for the store `programs`.** The store of a program already has the name of the program; the name `programs` gives the store with the grant `Store` of each program, and a new kind of grant adds a case to each table of the grants.
+- **The service starts the program after the write.** Two programs would then start programs, and the service would need the root ring.
+- **The hash of the list read from the entry.** The entry of an object holds the hash of the object, which differs from the BLAKE3 hash of its bytes when the object has a hole ("Subtle points", below).
 - **A call that waits in the loop of the root service.** One storage service that does not answer stops every command of the machine.
 - **A deadline for each answer in place of one for the load.** The bound is then the deadline times the count of the calls. One deadline is one number to state.
 - **The table of prepared modules for a disk program.** The budget of the root service would hold the code of a program that has no row.
@@ -203,11 +229,14 @@ The table of a named principal is not persisted yet. The console, the only progr
 - **A read makes no commit.** The storage service writes the limit of a store at a change only. A machine whose disk has no store `programs` gets no new store from a refused command.
 - **The tag does not stop an older table.** The storage service keeps the versions of `grant_table`, and a caller that acts for principal 0 can restore one. The tag of an older version verifies: a grant that `disallow` took can come back. A counter that only grows, in the TPM, ends it; it is not built.
 - **The key passes through the ring of `unlock`.** The ring is memory of the root service that only `unlock` maps, and the root service closes it when `unlock` stops. `unlock` erases its own copies of the keys. The root service writes zeros over the record in the ring and over its local copy after it takes the key; the copy of the record in its loop is overwritten by the next record. A refusal of `Machine_Key` puts no value of the record in its answer.
+- **The store `programs` has three writers.** The module file service writes the module files, the root service writes `grant_table`, and a caller that acts for the principal restores a version. The storage service keeps the pending changes of each connection apart, and each commit is one commit of the store. The limit of the store is one constant for each of them (`disk_program.STORE_BLOCKS_LIMIT`).
+- **A block of zero bytes in a module file is a hole.** The service writes the file in ranges; the storage service keeps a block of zero bytes as a hole, and the hash of the entry then differs from the BLAKE3 hash of the file. The list and the root service compute the hash on the bytes, so a file with a page of zero bytes still has its own hash.
+- **The service is no row of the disk grant table, and the store is no grant of a disk program.** A disk program never reaches the store `programs`: the store of a nickname has the prefix `disk-`.
 - **A grant made between the start and the report of `unlock`.** The root service learns that the machine has a passphrase only when `unlock` read its store. A change made before is in the table in memory, and the read replaces it; the line of the read counts the rows that it replaced.
 
 ## Built and left
 
-Built: the command `Start_From_Disk` of the root ring and the command `start_from_disk` of the console; the load as a state of the loop of the root service, with its four bounds; the check of the hash; the least right, with the rule of the names; the disk of the tool with the store `programs`; the test part `disk_programs`. The disk grant table: the nickname rule, `allow`, `disallow` and `nickname_move` (the commands `Disk_Grant` and `Nickname_Move` of the root ring), the grant `store` with the store of the nickname, and the format of the persisted table with its tag. The machine passphrase: its record in the store of `unlock`, `machine_passphrase()`, the ask at the start, the key of the tag in the root service, the read and the write of the table of principal 0, and the setting of persistence (`disk_persistence`).
+Built: the command `Start_From_Disk` of the root ring and the command `start_from_disk` of the console; the load as a state of the loop of the root service, with its four bounds; the check of the hash; the least right, with the rule of the names; the disk of the tool with the store `programs`; the test part `disk_programs`. The disk grant table: the nickname rule, `allow`, `disallow` and `nickname_move` (the commands `Disk_Grant` and `Nickname_Move` of the root ring), the grant `store` with the store of the nickname, and the format of the persisted table with its tag. The machine passphrase: its record in the store of `unlock`, `machine_passphrase()`, the ask at the start, the key of the tag in the root service, the read and the write of the table of principal 0, and the setting of persistence (`disk_persistence`). The module file service: `programs.receive`, a file from a web server into the store, and `programs.list`, the files with the hash of their bytes.
 
 Left:
 
@@ -220,7 +249,8 @@ Left:
 - **The principal in the tag.** The table of a named principal needs its number in the tagged bytes or in the text of its key, so that a table of one principal cannot move to the store of another.
 - **A store size from the module.** The size of the store of a nickname from the budget that the module asks for, by a policy that the principal sets.
 - **The nickname in the windows.** The monitor and the menu show the nickname with the hash faded beside it. The kernel report of a program has its name and no hash, so the monitor needs the hash from the root service.
-- **A file that comes without the tool.** A console command that stores bytes that came from the network in the store `programs`.
-- **Imports from the same store.** The load source of a disk program is the boot image. An import by hash from the store needs the index from a hash to an object ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "5. Not built: the next steps").
-- **A list.** No command lists the entries of the store `programs` with their hashes.
+- **Imports from the same store.** The load source of a disk program is the boot image. The root service must find an import by its hash in the store `programs`, read it with the bounds of a load, and check its hash. The storage service has no index from a hash to an object ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "5. Not built: the next steps"): without it, the root service reads each object of the store to find one hash. The loader also needs a load source with files beside the boot image.
+- **Another web server.** The grant of the module file service names one remote. A remote that the principal chooses is a grant that the principal gives, as the grant of a client of `remote` is.
+- **The module file service for a named principal.** The service runs for principal 0, which the console acts for. A named principal needs a caller that acts for it, as for its disk grant table.
+- **A file from another store.** A copy of an object of another store of the principal into the store `programs`, with no network.
 - **A service from a disk.** A disk program has no service ring, so no program connects to it.

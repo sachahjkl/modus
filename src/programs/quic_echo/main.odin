@@ -53,6 +53,7 @@ package quic_echo
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/network"
 import "modus:support/quic"
@@ -72,7 +73,7 @@ foreign _ {
 	sha256 :: proc "c" (text: ^string, result: ^[]u8) -> i64 ---
 	hmac_sha256 :: proc "c" (key, text: ^string, result: ^[]u8) -> i64 ---
 	hkdf_sha256_extract :: proc "c" (salt, input: ^string, result: ^[]u8) -> i64 ---
-	hkdf_sha256_expand :: proc "c" (key, info: ^string, length: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
+	hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
 	x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
 	ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
 	ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---

@@ -1,0 +1,3 @@
+type: Added
+
+**A disk program without the tool.** The module file service `programs` puts a module file in the store `programs` on a machine that runs: `programs.receive(nickname, path)` fetches the file from a web server (10.0.2.100 port 80, the address that QEMU gives to a server of the host), stores it under the nickname, and gives the BLAKE3 hash of its bytes to type in `start_from_disk`. `programs.list()` gives each module file of the store with the hash of its bytes, which the service reads again. The service needs no new kind of grant: its private store is the store `programs`, and it serves a caller that acts for the principal of the store only. The root service still checks the bytes at each start. An import of a disk program from the same store is not built.

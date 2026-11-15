@@ -1,6 +1,7 @@
 package modustool
 
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:odin/ast"
 import "core:os"
@@ -23,7 +24,8 @@ import "core:strings"
 // `foreign` procedure of those sources, also inside a `when`, with the
 // rules that read the description of an export (describe.odin), and
 // compares the two call forms: the count of the parameters, the type of
-// each, the direction of each table, the rights of each handle, the layout
+// each, the direction of each table, the rights of each handle, the unit
+// of each Integer, the layout
 // of each record, the result, and the error record. The names of the
 // parameters, of the records and of their fields are for a reader: they
 // can differ. A `foreign` procedure that no import exports is a procedure
@@ -39,6 +41,7 @@ Call_Parameter :: struct {
 	kind:      module.Type,
 	direction: module.Direction, // A Table or Bytes.
 	rights:    u32, // A Handle: the rights that the callee needs.
+	unit:      value_kinds.Integer_Unit, // An Integer: what it counts; {} for a plain number.
 	record:    Record_Description, // A Record or a Table: the layout of its record.
 }
 
@@ -223,6 +226,10 @@ call_form_of_declaration :: proc(state: ^Describe_State, source: string, type: ^
 			form.result = .Text
 			continue
 		case:
+			if integer_unit, is_unit := integer_unit_of_parameter(state, field.type); is_unit {
+				parameter.kind, parameter.unit = .Integer, integer_unit
+				break
+			}
 			if rights, is_lent, lent_ok := lent_rights(field.type); is_lent {
 				if !lent_ok {
 					return {}, "the rights of a handle are not written as Lent({.Read, .Write})", false
@@ -259,7 +266,7 @@ call_form_of_declaration :: proc(state: ^Describe_State, source: string, type: ^
 			// follows no alias: that needs the constants of each package,
 			// which is the work of the compiler. The declaration is where a
 			// reader finds the call form, so the type is written there.
-			return {}, fmt.tprintf("the type %s has no description. The tool does not read a type alias: write the type itself in the declaration, as ^system.Table_To_Append(Record), ^system.Bytes_To_Read, ^string or i64", text), false
+			return {}, fmt.tprintf("the type %s has no description. The tool does not read a type alias: write the type itself in the declaration, as ^system.Table_To_Append(Record), ^system.Bytes_To_Read, ^string, i64 or value_kinds.Size_In_Bytes", text), false
 		}
 		for _ in field.names {
 			append(&parameters, parameter)
@@ -294,6 +301,10 @@ call_form_of_description :: proc(description: Export_Description, records: []Rec
 	for kind, index in description.parameters {
 		parameters[index] = {kind = kind, direction = description.directions[index]}
 		#partial switch kind {
+		case .Integer:
+			// The describe step wrote the detail from a unit of the
+			// contract, so it always reads back.
+			parameters[index].unit, _ = value_kinds.integer_unit_of_detail(description.details[index])
 		case .Handle:
 			parameters[index].rights = description.details[index]
 		case .Record, .Table:
@@ -336,6 +347,10 @@ call_form_of_export :: proc(file: []u8, export_index: u32) -> (form: Call_Form, 
 	for &parameter, index in parameters {
 		parameter = {kind = function.parameters[index], direction = function.parameter_directions[index]}
 		#partial switch parameter.kind {
+		case .Integer:
+			// A file is read as it is: a detail out of the contract is no
+			// call form that a declaration can agree with.
+			parameter.unit = value_kinds.integer_unit_of_detail(function.parameter_details[index]) or_return
 		case .Handle:
 			parameter.rights = function.parameter_details[index]
 		case .Record, .Table:
@@ -374,6 +389,16 @@ record_layouts_difference :: proc(declared, described: Record_Description) -> st
 	return ""
 }
 
+// integer_unit_words names what an Integer counts, for a sentence: "a
+// number in pages", "a plain number".
+@(private = "file")
+integer_unit_words :: proc(integer_unit: value_kinds.Integer_Unit) -> string {
+	if integer_unit.kind == .None {
+		return "a plain number"
+	}
+	return strings.concatenate({"a number in", value_kinds.integer_unit_text(integer_unit)}, context.temp_allocator)
+}
+
 // call_forms_difference says how the call form of a declaration differs
 // from the call form of the export that it names. "" when a call through
 // the declaration passes what the export reads.
@@ -405,6 +430,12 @@ call_forms_difference :: proc(declared, described: Call_Form) -> string {
 		}
 		if parameter.kind == .Handle && parameter.rights != other.rights {
 			return fmt.tprintf("its parameter %d is a handle with other rights than the export needs", index + 1)
+		}
+		// The unit is the meaning of the number: a call that passes a count
+		// of bytes where the export reads pages has the right registers and
+		// the wrong value.
+		if parameter.kind == .Integer && parameter.unit != other.unit {
+			return fmt.tprintf("its parameter %d is %s, the export takes %s", index + 1, integer_unit_words(parameter.unit), integer_unit_words(other.unit))
 		}
 		if parameter.kind == .Record || parameter.kind == .Table {
 			if difference := record_layouts_difference(parameter.record, other.record); difference != "" {

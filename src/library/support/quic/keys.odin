@@ -6,6 +6,7 @@ package quic
 // integrity tag of a Retry packet.
 
 import "modus:contract/errors"
+import "modus:contract/value_kinds"
 
 // Cryptography holds the procedures of the module `cryptography` that QUIC calls.
 //
@@ -43,7 +44,7 @@ Cryptography :: struct {
 	hkdf_sha256_extract:                 proc "c" (salt, input: ^string, result: ^[]u8) -> i64,
 	// HKDF-Expand with SHA-256 (RFC 5869, section 2.3): `length` bytes from a key and an info text. The
 	// info is an HkdfLabel of TLS 1.3 here (`hkdf_expand_label`).
-	hkdf_sha256_expand:                  proc "c" (key, info: ^string, length: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64,
+	hkdf_sha256_expand:                  proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> i64,
 	// The header protection mask of the suites with AES: 5 bytes from a key of 16 bytes and a sample of
 	// 16 bytes (RFC 9001, section 5.4.3).
 	header_protection_mask_with_aes_128: Mask_Procedure,
@@ -273,7 +274,7 @@ hkdf_expand_label :: proc "contextless" (cryptography: ^Cryptography, secret: []
 	key := string(secret)
 	info := string(hkdf_label)
 	result := output
-	return cryptography.hkdf_sha256_expand(&key, &info, i64(len(output)), &result, error) == i64(len(output))
+	return cryptography.hkdf_sha256_expand(&key, &info, value_kinds.Size_In_Bytes(len(output)), &result, error) == i64(len(output))
 }
 
 // packet_keys_from_secret gives the key, the iv and the header protection key of one direction from its secret.

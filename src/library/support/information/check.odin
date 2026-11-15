@@ -1,6 +1,7 @@
 package information
 
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "modus:support/system"
 
 // What is wrong in a module file, or in a question.
@@ -257,6 +258,11 @@ function_check :: proc "contextless" (file: []u8, index: u32, function: module.F
 		}
 		if type == .Bytes && function.parameter_details[number] != 0 {
 			return {kind = .Function, table = .Functions, index = index, offset = detail_at, value = u64(function.parameter_details[number]), limit = 1}
+		}
+		// The detail of an Integer is its unit: a reader shows the unit, so
+		// a word out of the contract is a fault of the file.
+		if _, valid := value_kinds.integer_unit_of_detail(function.parameter_details[number]); type == .Integer && !valid {
+			return {kind = .Function, table = .Functions, index = index, offset = detail_at, value = u64(function.parameter_details[number])}
 		}
 		direction := function.parameter_directions[number]
 		if direction > max(module.Direction) || direction != .Read && type != .Table && type != .Bytes {

@@ -102,7 +102,7 @@ The loader reads none of these tables: they are for a caller that must know the 
 | Strings | The bytes of all names, help lines and documentation texts |
 | Documentation | Record 1: the documentation of the module, one line and a text |
 
-A type is one byte (`module.Type`): Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The detail of a parameter says what its type needs: the index of a record description, or the rights of a handle. Section 5 gives the types.
+A type is one byte (`module.Type`): Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The detail of a parameter says what its type needs: the index of a record description, the rights of a handle, or the unit of an Integer (section 5, "The unit of an Integer parameter"). Section 5 gives the types.
 
 The documentation is part of the file, so it has the hash of the module: a text cannot describe another version of the code. A record of the Functions table also names the documentation text of its export. A documentation text is UTF-8 bytes, in a small part of Markdown. Lines that follow each other are one paragraph: the reader breaks it at the width that it has. A line that starts with a space, outside a list, stays as it is. An empty line separates two blocks. No loader reads these records.
 
@@ -302,9 +302,28 @@ Without this rule a file named `notes` would start with the store of `notes`.
 
 **The refusals of the command**, as the kinds of its error record: `Not_Authentic` (the bytes have another hash; argument 2), `Absent` (no entry has the name; with the unit `Grants`, an empty hash and no row for the nickname), `Exists` (a module of the boot image has the name; with the unit `Grants`, the nickname names another file), `Reserved` (the grant table names it), `Busy` (another load runs), `Too_Long` (the file passes the limit, or the name has more than 23 bytes), `Malformed` (the loader refuses the file), `No_Answer` (the deadline), `Damaged` (a block of the object has a wrong check), `Refused` with the status for the rest.
 
+**The file from the network.** The module file service, the program `programs`, puts a module file in the store on a machine that runs. Its private store is the store `programs` of its principal: the root service names a private store by the name of its program. Its other grants are a client grant of TCP to one web server, 10.0.2.100 port 80 (the address that QEMU gives to a server of the host), and its exports. The console calls them through a connection:
+
+```
+> connect("programs")
+> programs.receive("visitor", "/visitor")
+5f0c…
+> programs.list()
+> start_from_disk("visitor", "5f0c…")
+```
+
+- `programs.receive(nickname, path)` sends `GET path`, takes a body of 1 to 4 MiB with a `Content-Length` before the deadline of a load (30 seconds), writes it as the object `nickname` in one commit, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that came. The nickname follows the rules of the name of a disk program: `programs` and `grant_table` are refused, so no file is written over the disk grant table. The path is 1 to 200 visible bytes that start with `/`.
+- `programs.list()` gives a row for each object of the root tree but `grant_table`: `name`, `bytes`, and `hash`, the BLAKE3 hash of its bytes, which the service reads again. An object over 4 MiB has no hash.
+
+The caller must act for the principal of the store: the root service gives the service the number of its principal (`disk_program.SERVICE_VALUE_PRINCIPAL`). The hash that the service gives is a help, not a proof: the root service checks the bytes at the start, so a changed service or a changed web server cannot make other bytes run under the hash that the principal types. The log has one line for each file stored, and one for each row of a list:
+
+```
+programs: stored visitor from /visitor: <count> bytes, the BLAKE3 hash of its bytes 5f0c…
+```
+
 **The file on the disk.** `modustool` writes a data disk that holds the store `programs` (`TOOLS.md`, "The disk of the disk programs"), and prints the hash of each file.
 
-Not built: a budget above the largest budget of a disk program; a command that stores a file that came from the network; an import from the store; a list of the entries of the store with their hashes; a disk program that is a service.
+Not built: a budget above the largest budget of a disk program; an import from the store; a remote that the principal chooses for the module file service; a disk program that is a service.
 
 ### The grants of a disk program
 
@@ -697,14 +716,14 @@ A source names an export of an import in a `foreign` block. The compiler trusts 
 
 - **Where**: the conversion of the importer (`tools/modustool/import_declarations.odin`). It is the one step that has both sides: the sources that the compiler read for the module (the list that the compiler wrote), and the module file of each import with its descriptions. The build key of the conversion holds the key of the compile step and the file of each import, so a change of either side runs the check again.
 - **What it reads**: each procedure of each `foreign` block of those sources, also inside a `when`, with the rules that read the description of an export (section 5, "From the Odin source to the type").
-- **What it compares** with the description of the export of that name: the count of the parameters, the type of each, the direction of each Table and Bytes, the rights of each Handle, the layout of each record (its size; the offset, the type, the size and the sign of each field), the result, and the error record. The names of the parameters, of the records and of the fields are for a reader: they can differ.
+- **What it compares** with the description of the export of that name: the count of the parameters, the type of each, the direction of each Table and Bytes, the rights of each Handle, the unit of each Integer (section 5, "The unit of an Integer parameter"), the layout of each record (its size; the offset, the type, the size and the sign of each field), the result, and the error record. The names of the parameters, of the records and of the fields are for a reader: they can differ.
 - **The calling convention**: an export is called with the convention "c". A declaration of an import with another convention written (`proc "odin"`), or with none in a block whose attribute `default_calling_convention` is not "c", is refused: it passes one more argument than its parameters say.
 - **What it leaves**: a `foreign` procedure that no import exports is a procedure of an assembly file of the module.
 - **Each call has one compared declaration.** The converter gives the check the symbol of each slot of the importer: each import that the code calls. Each such symbol must have a declaration that the check compared. A symbol with none stops the build and is named: "the import seal is called, and the tool found no declaration of it to compare". This covers each declaration that the tool does not find: a `foreign` block in the body of a procedure, and a `link_name` or a `link_prefix` that is a constant and not a text. Two declarations of one symbol pass, because each is compared with the same description: a program and a package that it compiles can both declare an export. So a declaration of an import is in a `foreign` block at the level of the file, or of a `when` there, with its name or its `link_name` as a text.
 - **A type alias is not read.** A parameter whose type is a name for a type of the contract (`^Drawn` for `^system.Table_To_Append(Record)`) is refused, and the sentence says what to write: "The tool does not read a type alias: write the type itself in the declaration". To follow an alias the tool needs the constants of each package, which is the work of the compiler; the declaration is also where a reader finds the call form.
 - **A failure** stops the build with the file, the line and the first difference: "the declaration of execute_draw_table_9 does not agree with the export of drawing: it has 4 parameters, the export has 5".
 - **A second reader**: the host test `each_declaration_of_the_repository_agrees_with_its_export` makes the same comparison against the descriptions that the tool reads from the source of each import, with no build.
-- **What it does not prove**: the meaning of a value. A declaration and an export that agree on each type can still disagree on what a field means; the version in the name of an export is the answer for a record with versions.
+- **What it does not prove**: the meaning of a value. A declaration and an export that agree on each type can still disagree on what a field means; the version in the name of an export is the answer for a record with versions, and the unit of an Integer parameter is the answer for a number that counts a size or a time.
 
 ### Memory
 
@@ -790,6 +809,7 @@ The description of an export names each parameter and the result with one member
 | In the source | Type of the description |
 |---|---|
 | A parameter or a result `i64` | `Integer` |
+| A parameter `value_kinds.Size_In_Bytes`, `Size_In_Pages`, `Time_In_Milliseconds` and the other types of `value_kinds.INTEGER_UNIT_TYPES` | `Integer`, with its unit in the detail |
 | A parameter `^string` | `Text` |
 | A last parameter `^[]u8`, with the result `i64` | The buffer of a `Text` result |
 | A parameter `^Name`, `Name` a struct | `Record` |
@@ -811,6 +831,30 @@ fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64) -> i64
 ```
 
 **What is not built.** Floating-point values, an unsigned Integer parameter, enumerations as their own type, flags as their own type, variants and optional values have no member of `module.Type`. An enumeration or a set of flags crosses the boundary as an `Integer`. A struct of a record has the layout of the C language: no `#packed`, no `#align`, no `using`.
+
+### The unit of an Integer parameter
+
+An Integer parameter can state what it counts: a size or a time, in one unit. It is the integer unit of the parameter (`GLOSSARY.md`, "Integer unit"). The palette shows the unit after the number of the field, and the checks treat a different unit as a different meaning.
+
+- **In the file**: the detail of the Integer parameter, `Function.parameter_details[n]`. Byte 1 is the value kind (`Size` or `Time`), byte 2 the unit (`Size_Unit` or `Duration_Unit`), bytes 0 and 3 are 0 (`value_kinds.integer_unit_detail`). The detail 0 is a plain number. The record keeps its 104 bytes, and the format version stays 1.
+- **In the source**: the type of the parameter is one of the distinct types of `src/library/contract/value_kinds`, in place of `i64`:
+
+  | Type | Unit |
+  |---|---|
+  | `Size_In_Bytes`, `Size_In_Kibibytes`, `Size_In_Mebibytes`, `Size_In_Pages`, `Size_In_Blocks` | A size in bytes, KiB, MiB, pages or blocks |
+  | `Time_In_Nanoseconds`, `Time_In_Microseconds`, `Time_In_Milliseconds`, `Time_In_Seconds` | A time in ns, us, ms or s |
+
+  Each type is `distinct i64`: the call form is the one of an `i64`, and the compiler refuses a plain `i64` or a number of another unit at each call in the build. The body of the export converts the value where it needs an `i64`: `i64(length)`. The describe tool reads the name only through an import of `modus:contract/value_kinds`, under any name; a type of the same name in another package has no description.
+
+  ```odin
+  hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> i64
+  ```
+
+- **The check of a replacement** compares the detail of each Integer parameter, as it compares the rights of a Handle: another unit, or no unit where the import states one, is `Difference.Parameter_Detail`, with the sentence "export reserve of pager_in_bytes: parameter 1 is Integer in bytes, pager has Integer in pages".
+- **The check of an import declaration** compares the unit of each Integer parameter: "the declaration of reserve does not agree with the export of pager: its parameter 1 is a plain number, the export takes a number in pages". An importer writes the type of the export in its declaration, so the compiler checks each call of the importer too.
+- **The readers**: `information.check` refuses a detail of an Integer parameter that is not an integer unit of the contract. The console copies the unit of each Integer parameter of an export into the command, and the palette provider writes it in the entry (`CONSOLE.md`, "8. The palette provider"). The manual, the site and the signature that the console prints show an Integer with no unit.
+- **What it does not prove**: that the code of the export counts in the unit that it states. A unit is a statement of the author of the export.
+- **Not built**: a unit on a result, or on an Integer field of a record. A field of a record has its own detail: its size.
 
 ## 6. The context
 

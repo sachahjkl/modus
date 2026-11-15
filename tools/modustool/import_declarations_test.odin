@@ -1,5 +1,7 @@
 package modustool
 
+import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "core:odin/ast"
 import "core:slice"
 import "core:strings"
@@ -141,6 +143,100 @@ a_declaration_with_another_call_form_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, !readable)
 	testing.expect(t, strings.has_prefix(problem, "the type ^Rows_Of_The_Test has no description"), problem)
 	testing.expect(t, strings.contains(problem, "The tool does not read a type alias: write the type itself in the declaration"), problem)
+}
+
+// The source of a module whose export counts a size in pages, for the
+// tests of the unit of an Integer parameter. The package value_kinds has
+// another name in this file: the tool follows the import, not the name.
+@(private = "file")
+EXPORT_WITH_UNIT_SOURCE :: `// A module of the tests.
+package units_of_the_test
+
+import kinds "modus:contract/value_kinds"
+
+// reserve takes pages.
+@(export, link_name = "reserve")
+reserve :: proc "c" (pages: kinds.Size_In_Pages, extra: i64) -> i64 {
+	return 0
+}
+`
+
+// declared_unit_difference compares a declaration of reserve with the
+// signature given, in an importer that imports value_kinds under its own
+// name and a package other_units with types of the same names.
+@(private = "file")
+declared_unit_difference :: proc(t: ^testing.T, signature: string) -> (difference: string, readable: bool) {
+	exports := make([dynamic]Export_Description, context.temp_allocator)
+	records: []Record_Description
+	if !testing.expect(t, describe_source("units_of_the_test.odin", EXPORT_WITH_UNIT_SOURCE, &exports, nil, &records)) || !testing.expect_value(t, len(exports), 1) {
+		return "the export was not described", false
+	}
+	described := call_form_of_description(exports[0], records)
+	source := strings.concatenate({`package importer_of_units
+
+import "modus:contract/value_kinds"
+import other_units "modus:support/system"
+
+foreign _ {
+	reserve :: proc "c" `, signature, ` ---
+}
+`}, context.temp_allocator)
+	// The state of the parse holds the imports of the importer: the tool
+	// finds value_kinds through them.
+	state: Describe_State
+	state.records = make([dynamic]Record_Description, context.temp_allocator)
+	state.structs = make(map[string]Struct_Source, context.temp_allocator)
+	file, parsed := parse_source("importer_of_units.odin", source, &state)
+	if !testing.expect(t, parsed) {
+		return "the importer was not parsed", false
+	}
+	declarations := make([dynamic]Foreign_Declaration, context.temp_allocator)
+	foreign_declarations_collect(file.decls[:], &declarations)
+	if !testing.expect_value(t, len(declarations), 1) {
+		return "the declaration was not found", false
+	}
+	declared, problem, form_readable := call_form_of_declaration(&state, source, declarations[0].type)
+	if !form_readable {
+		return problem, false
+	}
+	return call_forms_difference(declared, described), true
+}
+
+// The describe step writes the unit in the detail of the Integer, and
+// leaves a plain Integer at 0. A declaration agrees only with the unit of
+// the export: another unit, or none, is a difference with a sentence that
+// names both. A type of the same name in a package that is not
+// value_kinds is not a unit.
+@(test)
+the_unit_of_an_integer_parameter_is_described_and_checked :: proc(t: ^testing.T) {
+	exports := make([dynamic]Export_Description, context.temp_allocator)
+	if testing.expect(t, describe_source("units_of_the_test.odin", EXPORT_WITH_UNIT_SOURCE, &exports)) && testing.expect_value(t, len(exports), 1) {
+		testing.expect_value(t, exports[0].parameters[0], module.Type.Integer)
+		testing.expect_value(t, exports[0].details[0], value_kinds.integer_unit_detail(value_kinds.size_in(.Pages)))
+		testing.expect_value(t, exports[0].parameters[1], module.Type.Integer)
+		testing.expect_value(t, exports[0].details[1], 0)
+	}
+	difference, readable := declared_unit_difference(t, `(count: value_kinds.Size_In_Pages, more: i64) -> i64`)
+	testing.expect(t, readable, difference)
+	testing.expect_value(t, difference, "")
+	Case :: struct {
+		signature: string,
+		sentence:  string,
+	}
+	cases := [?]Case {
+		{`(count: i64, more: i64) -> i64`, "its parameter 1 is a plain number, the export takes a number in pages"},
+		{`(count: value_kinds.Size_In_Bytes, more: i64) -> i64`, "its parameter 1 is a number in bytes, the export takes a number in pages"},
+		{`(count: value_kinds.Size_In_Pages, more: value_kinds.Time_In_Milliseconds) -> i64`, "its parameter 2 is a number in ms, the export takes a plain number"},
+	}
+	for item in cases {
+		difference, readable = declared_unit_difference(t, item.signature)
+		testing.expectf(t, readable, "the declaration %s was not read: %s", item.signature, difference)
+		testing.expectf(t, difference == item.sentence, "the declaration %s: the difference is \"%s\", not \"%s\"", item.signature, difference, item.sentence)
+	}
+	problem: string
+	problem, readable = declared_unit_difference(t, `(count: other_units.Size_In_Pages, more: i64) -> i64`)
+	testing.expect(t, !readable)
+	testing.expect(t, strings.has_prefix(problem, "the type other_units.Size_In_Pages has no description"), problem)
 }
 
 // declarations_of_source parses one source and gives the procedures of its

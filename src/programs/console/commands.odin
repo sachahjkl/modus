@@ -76,7 +76,7 @@ Command :: struct {
 	name:            string,
 	parameters:      [ARGUMENT_CAPACITY]Kind,
 	parameter_names: [ARGUMENT_CAPACITY]string, // From the description of an export. "": no name.
-	parameter_units: [ARGUMENT_CAPACITY]value_kinds.Integer_Unit, // What the Integer of each parameter counts, as a built-in command states it. {}: a plain number.
+	parameter_units: [ARGUMENT_CAPACITY]value_kinds.Integer_Unit, // What the Integer of each parameter counts, as a built-in command or the description of an export states it. {}: a plain number.
 	parameter_count: int,
 	result:          Kind,
 	about:           string,
@@ -1196,6 +1196,13 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 		for type, parameter in function.parameters[:function.parameter_count] {
 			item.parameters[parameter] = Kind(type)
 			item.parameter_names[parameter] = module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
+			// The description of the export states what its number counts,
+			// as a built-in command states it in `command`. A detail out of
+			// the contract comes from another party: the field is then a
+			// plain number.
+			if type == .Integer {
+				item.parameter_units[parameter], _ = value_kinds.integer_unit_of_detail(function.parameter_details[parameter])
+			}
 		}
 		// The table of error details is the last parameter: the console
 		// gives it, and the command shows the parameters before it.

@@ -285,6 +285,10 @@ malformed_modules :: proc(t: ^testing.T) {
 		{"seven parameters", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameter_count = 7}, .Function, .Functions, 2},
 		{"a type that does not exist", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameters[0] = module.Type(9)}, .Function, .Functions, 2},
 		{"a parameter that names no record", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameter_details[0] = 5}, .Function, .Functions, 2},
+		{"an Integer parameter with a unit out of the contract", proc(file: []u8) {
+				function := record(file, .Functions, 2, module.Function)
+				function.parameters[0], function.parameter_details[0] = .Integer, 2
+			}, .Function, .Functions, 2},
 		{"a field out of its record", proc(file: []u8) {record(file, .Fields, 2, module.Field).offset = 12}, .Record, .Fields, 2},
 		{"a record of 300 bytes", proc(file: []u8) {record(file, .Records, 1, module.Record).size = 300}, .Record, .Records, 1},
 		{"an entry that names no export", proc(file: []u8) {(^module.Header)(&file[0]).entry_export = 7}, .Entry, .None, 0},
