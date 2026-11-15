@@ -32,6 +32,8 @@ QUIC_ECHO_PORT :: 4433 // The UDP port of quic_echo: the port of the examples of
 //           remotes that send a segment to it.
 //   fetch   a segment endpoint with a client grant: 10.0.2.100 port 80, the
 //           web server of the test (the tool behind QEMU user networking).
+//   programs  the same client grant: the module file service fetches a
+//           module file from the web server that QEMU gives that address.
 //   quic_echo  a datagram endpoint with a listen grant: the UDP port 4433,
 //           and the remotes that send a datagram of 1200 bytes to it.
 endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
@@ -42,7 +44,7 @@ endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
 		return {address = remote.HOST_ADDRESS, port = remote.LISTEN_PORT, listen = true}
 	case "server":
 		return {port = 80, tcp = true, listen = true}
-	case "fetch":
+	case "fetch", "programs":
 		return {address = 0x0A000264, port = 80, tcp = true}
 	case "quic_echo":
 		return {port = QUIC_ECHO_PORT, listen = true}
