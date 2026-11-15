@@ -797,6 +797,13 @@ Operation :: enum u32 {
 	// a device. A device service gives these addresses to its device, which reads and writes the memory
 	// with no processor (direct memory access).
 	//
+	// When the IOMMU is in use, the call is also the declaration: each page of the object, which is not
+	// device memory, becomes memory that each device whose registers the caller holds by a handle can read,
+	// and write only while the caller holds a handle with **Write** to the object. A program that holds no
+	// such handle declares nothing. The pages leave the device when the program closes or loses its last
+	// handle to the object or to the registers of the device, when the object ends, or when the program
+	// stops (docs/ARCHITECTURE.md, "K5. Device grant and interrupts").
+	//
 	// **Arguments**
 	//
 	// - `machine`: the machine handle, with **Physical**.
@@ -809,6 +816,12 @@ Operation :: enum u32 {
 	// - `Bad_Handle`, `No_Right`: `machine` or `memory` is not a handle of its kind with its right.
 	// - `Bad_Operation`: the pages of the object are not contiguous: they get their frames at their first
 	//   use, from anywhere.
+	// - `Bad_Operation`: also, with the IOMMU in use, a page of the object is past the addresses that the
+	//   tables of a device map (2^39 or 2^48).
+	// - `Bad_State`: another program declared memory to the same device, and it still runs.
+	// - `No_Slot`: the caller holds the registers of more than 4 devices, or the 32 slots of the devices of
+	//   the kernel are in use.
+	// - `No_Budget`: the budget of the caller cannot pay for a page of the tables of the device.
 	Program_Module = 26, // (program, record: Module_Record).
 	// Records a module that a loader put in a program, in the module records of the program. The kernel
 	// does not read the module: the record is what the loader asserts. The kernel names the module of the

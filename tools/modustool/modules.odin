@@ -149,6 +149,8 @@ module_builds := [?]Module_Build {
 	{name = "log", source = PROGRAM_SOURCES + "log", image = true},
 	{name = "block", source = PROGRAM_SOURCES + "block", image = true},
 	{name = "frame", source = PROGRAM_SOURCES + "frame", image = true},
+	{name = "iommu_device", source = PROGRAM_SOURCES + "iommu_device", image = true},
+	{name = "iommu", source = PROGRAM_SOURCES + "iommu", image = true},
 	{name = "network", source = PROGRAM_SOURCES + "network", image = true},
 	{name = "net", source = PROGRAM_SOURCES + "net", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "server", source = PROGRAM_SOURCES + "server", image = true},

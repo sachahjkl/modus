@@ -30,6 +30,7 @@ VECTOR_INTERRUPT_BASE :: 32 // The 16 lines of the 8259 are the vectors 32 to 47
 VECTOR_TIMER :: 48 // The timer of the processor.
 VECTOR_WAKE :: 49 // Another processor made a thread ready.
 VECTOR_SYNC :: 50 // Another processor waits for this one: see processor_sync.
+VECTOR_IOMMU_FAULT :: 51 // The remapping unit recorded a DMA fault: see iommu.odin.
 VECTOR_SPURIOUS :: 63
 VECTOR_MESSAGE_BASE :: 64 // The message interrupts (operation.Device_Kind.Message): vectors 64 to 79.
 VECTOR_KERNEL_ENTER :: 128

@@ -3232,7 +3232,7 @@ log_last_line :: proc(machine: ^Machine, text: string) -> string {
 
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false) -> bool {
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu := false) -> bool {
 	machine_test_started := time.tick_now()
 	// The software TPM runs before QEMU and ends after it, with a folder of
 	// its own for each machine.
@@ -3257,7 +3257,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		forward = {host_port = port, listener = &listener}
 	}
 	defer listener_stop(&listener)
-	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor, firmware, vnc, paused)
+	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor, firmware, vnc, paused, iommu)
 	if !ok {
 		return false
 	}

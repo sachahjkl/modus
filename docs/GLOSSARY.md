@@ -2537,7 +2537,7 @@ A program sees only virtual addresses: the page tables of its program translate 
 
 A device service gets a physical address with the kernel operation `Memory_Physical`. It needs the machine handle with the right **Physical**, which the root service gives to each device service and to no other program. The memory object must have pages that follow each other in physical memory and do not move: an object made with the flag `Contiguous` or `Large_Pages`, or device memory. An object whose pages get their frames at their first use gives `Bad_Operation`: its pages are anywhere, and a page can still have no frame. Example: the block service gives the device the physical address of the data region of its client, plus the place that a request names.
 
-A physical address is not a handle and gives no access to a program: a program that knows one cannot map it. The kernel does not yet program the IOMMU, so a device can today reach any physical address; the device services are trusted for that reason only.
+A physical address is not a handle and gives no access to a program: a program that knows one cannot map it. On a machine with an IOMMU, the call of a device service is also its declaration: its device can then reach those pages, and no other page (see "IOMMU"). On a machine with no IOMMU, a device can reach any physical address, and the device services are trusted for that reason.
 
 The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
 
@@ -2572,6 +2572,42 @@ A message interrupt is not a vector: the vector is the number that the kernel ch
 The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
 
 Do not use: MSI, vector.
+
+### IOMMU
+
+The IOMMU is the unit of the machine that translates each address that a device gives before the access reaches memory, through tables that the kernel writes.
+
+A device reads and writes memory by itself. Without an IOMMU, a device service with a fault can make its device write any page of the machine. With it, the kernel maps in the tables of a device only the pages that its service declared, so a device reaches no other memory. The kernel programs the unit of Intel (VT-d) when the firmware lists one in the ACPI table DMAR; the test machine has one in the part `iommu` of the test only. A service declares a memory object with `Memory_Physical`, the call that already gives it the address for its device: the kernel maps the pages in the domain of each device whose registers the service holds by a handle (see "Device domain"). A machine with no IOMMU writes one line at its start and runs as before, with no such isolation.
+
+The IOMMU is not the page table of a program: a program never sees it, and it translates the addresses of devices only. It does not remap interrupts in this system.
+
+The design: `src/md/infrastructure/iommu.md`; the guide: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
+
+Do not use: DMA remapper, SMMU.
+
+### Device domain
+
+A device domain is the memory that one device can reach through the IOMMU: the pages that its service declared, mapped at their own physical addresses.
+
+The kernel keeps one domain for each device that has a service: a context entry for the requester of the device, and second-level tables that map each declared page to the same address. A page is writable for the device only while the service holds a handle with **Write** to its object. The first program that declares memory to a device owns its domain; its budget pays for the tables. A declared object leaves the domain when the service closes or loses its last handle to it, or when the object ends, before its frames are free; the whole domain ends when its service stops or closes its last handle to the registers of the device. A device with no service has no context entry: an empty domain, in which each access is refused. Example: the block service of the data disk declares its queue and the data region of the storage service, and its device reaches those pages and no other.
+
+A device domain is not an address space of a program, and it gives no right to a program.
+
+The design: `src/md/infrastructure/iommu.md`, "Mechanism in the kernel, policy outside".
+
+Do not use: IOMMU domain, DMA window.
+
+### DMA fault
+
+A DMA fault is an access of a device to an address that its device domain does not map, which the IOMMU refuses.
+
+The unit records the requester of the device, the page, and whether it was a read or a write, and sends its fault event to the first processor. The kernel then writes one line on the log with the device, its service, the address and the count of faults of that device, and frees the record. After the first 4 faults of a device, it writes only one line of the count at each power of two, so a device that faults in a loop does not flood the log. A DMA fault stops no program and not the machine: the bytes of the page do not change. A virtio device of QEMU that the unit refuses stops its own requests until a reset, which its service sees in the status of the device.
+
+A DMA fault is not a page fault: no thread caused it, and no fault ring receives it.
+
+The design: `src/md/infrastructure/iommu.md`, "A DMA fault".
+
+Do not use: IOMMU fault, DMAR fault.
 
 ### Bus
 

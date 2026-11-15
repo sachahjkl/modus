@@ -583,7 +583,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			}
 			slot = {kind = .Interrupt, rights = RIGHTS_INTERRUPT, object = u32(v[2])}
 		case .Memory:
-			if !device_range(v[2], v[3]) {
+			// The registers of the IOMMU and the configuration of the bus
+			// that it reads belong to the kernel while it is in use.
+			if !device_range(v[2], v[3]) || iommu_owns_range(v[2], v[3]) {
 				return .Bad_Address
 			}
 			region := region_device(v[2], v[3])
@@ -591,6 +593,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .No_Slot
 			}
 			regions[region].uncached = true
+			// The function whose registers these are: the program that holds
+			// the handle is its service for the IOMMU.
+			regions[region].requester = iommu_requester_of(v[2])
 			handle := handle_insert(program, {kind = .Memory, rights = {.Give, .Read, .Write}, object = region})
 			if handle == 0 {
 				regions[region].references = 1
@@ -842,6 +847,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if !regions[slot.object].contiguous {
 			return .Bad_Operation // Its frames come at first use, from anywhere: no one address names them.
 		}
+		// The call of a device service declares the object to its devices,
+		// which write it only when this handle can.
+		iommu_declare(program_index, slot.object, .Write in slot.rights) or_return
 		results[0] = regions[slot.object].physical
 		return .Ok
 

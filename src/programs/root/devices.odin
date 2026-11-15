@@ -31,6 +31,9 @@ Driver :: struct {
 
 DRIVER_BLOCK :: Driver{"block", pci.DEVICE_VIRTIO_BLOCK, block.RING_CAPACITY, block.SERVICE_RING}
 DRIVER_FRAME :: Driver{"frame", pci.DEVICE_VIRTIO_NETWORK, frame.RING_CAPACITY, frame.SERVICE_RING}
+// The test device service of the IOMMU, for its one client `iommu`, on the
+// disk of the measures (src/md/infrastructure/iommu.md, "The proof").
+DRIVER_IOMMU_DEVICE :: Driver{"iommu_device", pci.DEVICE_VIRTIO_BLOCK, block.RING_CAPACITY, block.SERVICE_RING}
 
 // driver_start starts the device service of the device at a place of bus 0.
 // It gives the ring of the device service: this service gives it to the

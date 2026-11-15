@@ -200,6 +200,10 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// It measures the block service on the disk of the measures, which
 		// holds no data of a program: its writes destroy nothing.
 		return {.Scratch_Disk}
+	case "iommu":
+		// The client of the test of the IOMMU: its device service on the
+		// disk of the measures is the test device service iommu_device.
+		return {.Scratch_Disk}
 	case "storage":
 		// It is the one client of the block service of the data disk, and it
 		// serves a private store to each caller with the grant Store.
@@ -1014,7 +1018,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 			break
 		}
 	}
-	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" || name == "frame" {
+	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" || name == "frame" || name == "iommu_device" {
 		return .Bad_Operation
 	}
 	role := grants_of(name)
@@ -1039,7 +1043,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	block_ring: system.Handle
 	if .Data_Disk in role || .Scratch_Disk in role {
 		status: system.Status
-		driver, block_ring, status = driver_start(.Data_Disk in role ? pci.DATA_DISK_DEVICE : pci.SCRATCH_DISK_DEVICE)
+		driver, block_ring, status = driver_start(.Data_Disk in role ? pci.DATA_DISK_DEVICE : pci.SCRATCH_DISK_DEVICE, name == "iommu" ? DRIVER_IOMMU_DEVICE : DRIVER_BLOCK)
 		if status != .Ok {
 			return status
 		}
