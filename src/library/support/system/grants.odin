@@ -103,9 +103,10 @@ Root_Command :: enum u32 {
 	// have the role, and after a revocation of the grant History.
 	Connect_History = 8,
 	// The commands of the principals (docs/PRINCIPALS.md). The root service
-	// takes Principal_Create, Principal_Lock and Principals from a program
-	// with the grant Root_Ring, and Principal_Record and Principal_Unlock
-	// from the program `unlock` only.
+	// takes Principal_Create, Principal_Lock, Principals and
+	// Machine_Passphrase from a program with the grant Root_Ring, and
+	// Principal_Record, Principal_Unlock and Machine_Key from the program
+	// `unlock` only.
 	//
 	// Principal_Create records a new named principal: the name is in
 	// values[0..4]. The root service starts `unlock`, which asks for the
@@ -222,11 +223,45 @@ Root_Command :: enum u32 {
 	// and its store follow. A nickname with no row is refused with `Absent`
 	// (unit `Grants`); the same file with `Bad_Value`.
 	Nickname_Move = 18,
+	// Machine_Passphrase starts `unlock` to set the machine passphrase
+	// (docs/PRINCIPALS.md, "Principal 0 and its machine passphrase"): its
+	// window asks for it two times. The completion comes at once. A machine
+	// that has a machine passphrase refuses a second one with `Exists`
+	// (unit `Principals`); while `unlock` runs, `Busy`.
+	Machine_Passphrase = 19,
+	// Machine_Key comes from `unlock` only; values[4] says what it reports.
+	// MACHINE_KEY_AWAITED: the machine has a machine passphrase that is not
+	// typed yet, so a change of the disk grant table of principal 0 is
+	// refused until the key comes. MACHINE_KEY_UNREADABLE: the store holds a
+	// record of the machine passphrase that `unlock` cannot read; a change
+	// and a new machine passphrase are refused. MACHINE_KEY_OPENED and
+	// MACHINE_KEY_NEW: values[0..3] is the key of the tag of that table
+	// (modus:support/disk_program, table_key_of_machine_key), from the open
+	// of the record or from a new machine passphrase. The root service
+	// reads the table, then writes it after each change. A table that does
+	// not verify under an opened key is refused and kept; under a new key
+	// it is written over, as no record signed it. A second key is refused
+	// with Bad_State.
+	Machine_Key = 20,
+	// Disk_Grant_Persistence sets how long a row of the disk grant table of
+	// the principal of the caller lasts across a restart: values[0..2] the
+	// nickname, as Disk_Grant carries it, or no byte for the global
+	// setting; values[4] a disk_program.Persistence (0 the global setting,
+	// 1 persist, 2 forget; the global setting takes 1 or 2). The caller
+	// must act for its principal. A nickname with no row is refused with
+	// `Absent` (unit `Grants`).
+	Disk_Grant_Persistence = 21,
 }
 
 // The action of a Disk_Grant command, in values[4].
 DISK_GRANT_ALLOW :: 1
 DISK_GRANT_DISALLOW :: 2
+
+// The state that a Machine_Key command gives, in values[4].
+MACHINE_KEY_AWAITED :: 1
+MACHINE_KEY_OPENED :: 2
+MACHINE_KEY_NEW :: 3
+MACHINE_KEY_UNREADABLE :: 4
 
 // The state of a principal in the root service.
 Principal_State :: enum u64 {
@@ -330,6 +365,9 @@ root_command_names := [Root_Command]string {
 	.Start_From_Disk = "Start_From_Disk",
 	.Disk_Grant = "Disk_Grant",
 	.Nickname_Move = "Nickname_Move",
+	.Machine_Passphrase = "Machine_Passphrase",
+	.Machine_Key = "Machine_Key",
+	.Disk_Grant_Persistence = "Disk_Grant_Persistence",
 }
 
 // root_command_name gives the name of a command of the root ring, or "an
@@ -358,6 +396,8 @@ root_argument_name :: proc "contextless" (command: i64, argument: i64) -> string
 			return "hash"
 		case .Disk_Grant:
 			return "grant"
+		case .Disk_Grant_Persistence:
+			return "setting"
 		}
 	}
 	return ""

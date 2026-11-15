@@ -121,11 +121,47 @@ The size of the store is a line of the budget that the module asks for (`src/md/
 
 **The grants that no command gives.** A disk program never gets the ring of the root service (`root_ring`, `connect`, `principals`, `debugger`), a right over the machine or a device (`inspect`, `stop`, `schedule`, `events`, `data_disk`, `scratch_disk`, `network_device`, `settings`, `clock`, `replace`, `system_part`), or the right to act for the principal: each one is the whole machine, or the principal. The root service refuses each one with a sentence that says it. The other grants are not built: a command gives `store` only.
 
-**How long a grant lasts.** The disk grant table of a named principal persists across a restart. It is an object of a store of the principal, with a tag of keyed BLAKE2b (32 bytes) under a key that is derived from the passphrase, as the key of the unlock is. A reader of the disk who has no passphrase then cannot add a grant: a table whose tag fails is refused with a line of the log, and no grant. The persistence is a setting in the table: global, with an exception for each row. The default is to persist.
+**How long a grant lasts.** A persisted table is the object `grant_table` of the store `programs` of its principal, next to the module files that it grants. It has a tag of keyed BLAKE2b (32 bytes) under a key that a passphrase gives. A reader of the disk who has no passphrase then cannot add a grant: a table whose tag fails is refused with a line of the log, and gives no grant. The persistence is a setting in the table: global, with an exception for each row (`disk_persistence`). The default is to persist.
 
-Principal 0 has no passphrase, so no key signs its table: the table of principal 0 lasts until the machine stops. Its data stays: the store of a nickname is on the disk, and the next grant of `store` finds it.
+The name `grant_table` is kept, as the name `programs` is: no disk program has it, so the table is never read as a module file and never written over one.
 
-The format of the persisted table is built and tested on the host: `table_encode`, `table_decode`. The root service does not read or write it yet. The console, the only program that sends `allow`, acts for principal 0 only ([`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "5. The session"), so no caller can change the table of a named principal yet, and a key with no use is only a target.
+**Principal 0 and the machine passphrase** (`docs/DECISIONS.md`, D-263). Principal 0 is the machine, and a passphrase for it is optional ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Machine passphrase"):
+
+- **No machine passphrase.** No key signs the table of principal 0: it lasts until the machine stops. Its data stays: the store of a nickname is on the disk, and the next grant of `store` finds it.
+- **A machine passphrase.** The table of principal 0 is read after the passphrase is typed at the start, and written after each change.
+
+The record of the machine passphrase is the object `machine` of the store of `unlock` (a store of principal 0), beside the file of a named principal. It holds the salt of Argon2id, with the parameters of a named principal, and the machine key sealed with ChaCha20-Poly1305 under the key that Argon2id derives ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Machine key"). The machine key is 32 random bytes. A wrong passphrase does not open the seal, so it never gives a wrong key that would write a table no one can read.
+
+**Who holds which key.** `unlock` derives the key of the seal, opens the machine key, and derives from it the key of the tag: keyed BLAKE2b of the machine key over the text `modus disk grant table` (`disk_program.table_key_of_machine_key`). It gives the root service the key of the tag only, in one record of its ring (`Machine_Key`), erases the other keys, and stops. The root service holds the key of the tag in its own memory until the machine stops. So the program that writes the table holds no key that opens the seal or that could sign another thing; the machine key stays a key that the TPM can seal later, with its other uses outside the root service.
+
+**Where the passphrase is set.** `machine_passphrase()` in the console asks the root service (`Machine_Passphrase`), which starts `unlock` in a mode of its own. The window asks for the passphrase two times; it is never a text of the console or of the log, as for a named principal. A machine with a passphrase refuses a second one: a change and a removal are not built.
+
+**The three states of the record.** `unlock` reads the record `machine` as absent, present, or unreadable (a read error of the store, or a record that does not decode). Only an absent record lets a new passphrase be set: an unreadable record can hold a good machine key, and a new record over it would lose that key and, with it, the table. An unreadable record gives no key: `unlock` tells the root service (`Machine_Key`, "unreadable"), which refuses each change of the table of principal 0 and `machine_passphrase()`, each with a sentence.
+
+**One record in a run.** `unlock` writes the record before it gives the key. After the write it never writes a second record in the same run: when the root service does not answer the key in time, `unlock` stops with a line of the log. A root service that took the key late then holds the key of the record on the disk, and the passphrase opens that record at the next start.
+
+**At the start.** The root service starts `unlock`, and tells it whether the root service holds the key already (after a lock it does). `unlock` reads the record of the machine; with a record and no key held, it tells the root service (`Machine_Key`, "awaited") and asks for the machine passphrase before the passphrase of a named principal. Until the passphrase is typed:
+
+- the machine runs, and each other ring is served: the root service waits for nothing;
+- the table of principal 0 holds no row, so a disk program of principal 0 starts with no grant;
+- a change of the table of principal 0 is refused with a sentence that says to type the passphrase: a change made then would be lost at the read.
+
+Enter with no passphrase skips it: the disk grants of principal 0 stay absent until `unlock` asks again, at the next start of the machine or after a lock.
+
+**The read and the write.** A key always comes with a read, before any write, so no write loses a table that the key signed:
+
+1. The key arrives with its origin: the open of an existing record, or a new passphrase on a machine with no record (`Machine_Key`, "opened" or "new"). The root service reads `grant_table`.
+2. A table whose tag verifies becomes the table of principal 0. An absent table gives no row, and the root service writes its own table there.
+3. A table that is refused (its tag, or a field) gives no grant, and its line is on the log (`docs/DECISIONS.md`, D-260). What follows depends on the origin of the key (`disk_program.table_read_decision`):
+   - **An opened key.** The table is kept: nothing is written over it, and each change of the table of principal 0 is refused with a sentence until the machine starts again. Such a table can be a good table of an older machine key, or one that a byte changed; a write over it would lose its grants with no sign. The way out today is a version of the table that verifies: a caller that acts for principal 0 restores it in the store `programs`, and the next start reads it. A change of the machine passphrase is the other way out, and it is not built.
+   - **A new key.** No record existed before this passphrase, so no key of a record signed that table. It is written over with the table of this machine, which holds the rows made before the passphrase.
+4. Each later change writes the table again. A change during a write marks one more write after it.
+
+The read and the write are states of the loop of the root service, as the load of a module file is: one call of the storage service at a time, through a connection of its own to the store `programs`, with the deadline of a load. A storage service that stops, or that gives no answer, ends the call with a line of the log. A read that ends so leaves the table unread: changes stay refused, as the root service does not know what the disk holds.
+
+**A write that fails is tried again at once, 3 tries at most.** A `disallow` whose write does not reach the disk would give the grant back at the next start, so the retry cannot wait for a later change. The retry, and not a completion held until the write ends, fits the loop of the root service: each command is answered in the pass that reads it, and one write carries every change that came during it (a held completion would need a queue of completions for each write). Each try has the deadline of a load, so the tries end in a bound. After the third failure the table is unwritten: the log says that the disk keeps an older table and that a grant taken since can come back at the next start, and each change is refused until the machine starts again.
+
+The table of a named principal is not persisted yet. The console, the only program that sends `allow`, acts for principal 0 only ([`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "5. The session"), so no caller can change the table of a named principal, and a key with no use is only a target.
 
 ## Refused forms
 
@@ -143,6 +179,16 @@ The format of the persisted table is built and tested on the host: `table_encode
 - **A row of the table is made at the first start of a nickname.** A row with no grant protects nothing, and fills a table of 16 rows.
 - **`allow` on a nickname with no row and no program that runs, with a read of the bytes.** It needs a second load from the disk for a command that changes a table. The principal starts the program by its hash first.
 - **A table of principal 0 on the disk, with no tag or a tag under a key that the disk holds.** A reader of the disk could then add a grant.
+- **The key of the tag from the passphrase alone, with no sealed key.** A wrong passphrase then gives a wrong key with no sign of it: the read refuses the table, and the next write signs a table under the wrong key. The seal tells a wrong passphrase at once. It also gives the TPM one random key to seal later, with no change of the table.
+- **`unlock` gives the root service the machine key, or the key of the seal.** The root service would then hold a key that opens the record, or that signs what is not a table. It needs the tag only.
+- **`unlock` stays, and tags each table for the root service.** A program with the passphrase would run for the whole session, and each change would wait for a second program.
+- **The table in the store of the root service, or of `unlock`.** The table grants the files of the store `programs`, and the root service already reads that store. A second store adds a name to reserve and a second limit, for no gain: the tag protects the table in any store.
+- **The root service waits at the start for the passphrase.** A machine whose passphrase nobody types would not start. The read is a state of the loop, so the start never waits.
+- **A change before the read, merged with the table read.** Two tables with a row of one nickname need a rule of which wins. The change is refused until the read, with a sentence that says why.
+- **The machine passphrase as a line of the console.** The console keeps each line in its history and in its store.
+- **A table that does not verify is written over after any key.** D-260 says that such a table is refused. Under an opened key it can be a good table of another key, and the write would lose it with only a line of the log.
+- **A record that cannot be read is taken as no record.** A read error or one changed byte would then let a new passphrase replace a good machine key.
+- **The completion of a change held until its write ends.** It needs a queue of completions for each write, as a change during a write joins the next write; a bounded retry gives the same result in the loop.
 - **The console acts for the named principal of the session.** The console acts for its own session only; a console that acts for another principal is a confused deputy.
 
 ## Subtle points
@@ -155,14 +201,23 @@ The format of the persisted table is built and tested on the host: `table_encode
 - **The root service finds a disk program by a flag of its slot, not by its name.** The connection of a disk program to the storage service gets the store of its nickname and the limit of that store, from the grants of its start, and never the grants that `grants_of` gives a name.
 - **A move does not change a program that runs.** It keeps its grants and its connections. The next start reads the row again.
 - **A read makes no commit.** The storage service writes the limit of a store at a change only. A machine whose disk has no store `programs` gets no new store from a refused command.
+- **The tag does not stop an older table.** The storage service keeps the versions of `grant_table`, and a caller that acts for principal 0 can restore one. The tag of an older version verifies: a grant that `disallow` took can come back. A counter that only grows, in the TPM, ends it; it is not built.
+- **The key passes through the ring of `unlock`.** The ring is memory of the root service that only `unlock` maps, and the root service closes it when `unlock` stops. `unlock` erases its own copies of the keys. The root service writes zeros over the record in the ring and over its local copy after it takes the key; the copy of the record in its loop is overwritten by the next record. A refusal of `Machine_Key` puts no value of the record in its answer.
+- **A grant made between the start and the report of `unlock`.** The root service learns that the machine has a passphrase only when `unlock` read its store. A change made before is in the table in memory, and the read replaces it; the line of the read counts the rows that it replaced.
 
 ## Built and left
 
-Built: the command `Start_From_Disk` of the root ring and the command `start_from_disk` of the console; the load as a state of the loop of the root service, with its four bounds; the check of the hash; the least right, with the rule of the names; the disk of the tool with the store `programs`; the test part `disk_programs`. The disk grant table: the nickname rule, `allow`, `disallow` and `nickname_move` (the commands `Disk_Grant` and `Nickname_Move` of the root ring), the grant `store` with the store of the nickname, and the format of the persisted table with its tag.
+Built: the command `Start_From_Disk` of the root ring and the command `start_from_disk` of the console; the load as a state of the loop of the root service, with its four bounds; the check of the hash; the least right, with the rule of the names; the disk of the tool with the store `programs`; the test part `disk_programs`. The disk grant table: the nickname rule, `allow`, `disallow` and `nickname_move` (the commands `Disk_Grant` and `Nickname_Move` of the root ring), the grant `store` with the store of the nickname, and the format of the persisted table with its tag. The machine passphrase: its record in the store of `unlock`, `machine_passphrase()`, the ask at the start, the key of the tag in the root service, the read and the write of the table of principal 0, and the setting of persistence (`disk_persistence`).
 
 Left:
 
-- **The persisted table in the machine.** The root service reads the table of a named principal after the unlock and writes it after each change, with the key that `unlock` derives; the setting of persistence as a command. It needs a caller that acts for a named principal and sends `allow`.
+- **The machine key sealed by the TPM** (`docs/DECISIONS.md`, D-263). By default the TPM seals the machine key and no one types anything; with a passphrase, the TPM and the passphrase together open it. Until then a machine with no passphrase keeps the table of principal 0 until it stops.
+- **A change and a removal of the machine passphrase.** A change seals the same machine key under a new passphrase, so the table stays valid.
+- **The table of a named principal on the disk.** The same read and write, with a key that `unlock` derives at the unlock. It needs a caller that acts for a named principal and sends `allow`.
+- **An older table.** A counter that only grows, in the TPM, so that a restored version of the table is refused.
+- **A second ask after a skip.** A command that asks for the machine passphrase again, with no restart and no lock.
+- **A second read after a failed read, and a write after a failed write.** Today both wait for the next start of the machine.
+- **The principal in the tag.** The table of a named principal needs its number in the tagged bytes or in the text of its key, so that a table of one principal cannot move to the store of another.
 - **A store size from the module.** The size of the store of a nickname from the budget that the module asks for, by a policy that the principal sets.
 - **The nickname in the windows.** The monitor and the menu show the nickname with the hash faded beside it. The kernel report of a program has its name and no hash, so the monitor needs the hash from the root service.
 - **A file that comes without the tool.** A console command that stores bytes that came from the network in the store `programs`.

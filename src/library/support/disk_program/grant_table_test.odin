@@ -95,6 +95,7 @@ nicknames_that_a_grant_refuses :: proc(t: ^testing.T) {
 		{"a b", .Bad_Byte, 1},
 		{"", .Empty, 0},
 		{"programs", .Store_Name, 0},
+		{"grant_table", .Table_Name, 0},
 		{"twenty_four_bytes_long__", .Too_Long, 0},
 	}
 	for item in cases {
@@ -147,6 +148,84 @@ a_table_through_its_persisted_form :: proc(t: ^testing.T) {
 	table_encode(&table, &key, &bytes)
 	read, problem = table_decode(bytes[:], &key)
 	testing.expect(t, problem == .None && read.count == 1 && read.forget_by_default && table_find(&read, "kept") != nil)
+	testing.expect_value(t, table_persisted_rows(&table), 1)
+}
+
+// The setting of persistence: a row takes each value, the global setting
+// takes Persist or Forget, and a nickname with no row is refused. The
+// count of the rows written follows.
+@(test)
+the_setting_of_persistence :: proc(t: ^testing.T) {
+	table: Grant_Table
+	testing.expect_value(t, table_allow(&table, "visitor", hash_of(1), .Store), Table_Problem.None)
+	testing.expect_value(t, table_allow(&table, "other", hash_of(9), .Store), Table_Problem.None)
+	testing.expect_value(t, table_persisted_rows(&table), 2)
+	testing.expect_value(t, table_persistence_set(&table, "visitor", .Forget), Table_Problem.None)
+	testing.expect_value(t, table_persisted_rows(&table), 1)
+	testing.expect_value(t, table_persistence_set(&table, "", .Forget), Table_Problem.None)
+	testing.expect_value(t, table_persisted_rows(&table), 0)
+	testing.expect_value(t, table_persistence_set(&table, "other", .Persist), Table_Problem.None)
+	testing.expect_value(t, table_persisted_rows(&table), 1)
+	testing.expect_value(t, table_persistence_set(&table, "", .Global), Table_Problem.Not_Held)
+	testing.expect_value(t, table_persistence_set(&table, "nobody", .Persist), Table_Problem.Absent)
+	testing.expect_value(t, table_persistence_set(&table, "visitor", .Global), Table_Problem.None)
+	testing.expect_value(t, table_persistence_set(&table, "", .Persist), Table_Problem.None)
+	testing.expect_value(t, table_persisted_rows(&table), 2)
+	// The row stays with its grants: the setting changes how long it lasts.
+	_, grants, problem := start_file(&table, "visitor", {})
+	testing.expect(t, problem == .None && grants == {.Store})
+}
+
+// A table that does not verify is written over only under the key of a new
+// passphrase; under the key of a record it is kept. A table that verifies is
+// taken, and no table is written.
+@(test)
+the_decision_of_a_read :: proc(t: ^testing.T) {
+	testing.expect_value(t, table_read_decision(true, .None, false), Read_Decision.Write_Over)
+	testing.expect_value(t, table_read_decision(true, .None, true), Read_Decision.Write_Over)
+	testing.expect_value(t, table_read_decision(false, .None, false), Read_Decision.Take)
+	testing.expect_value(t, table_read_decision(false, .None, true), Read_Decision.Take)
+	for problem in Table_File_Problem {
+		if problem == .None {
+			continue
+		}
+		testing.expectf(t, table_read_decision(false, problem, false) == .Keep, "%v under the key of a record", problem)
+		testing.expectf(t, table_read_decision(false, problem, true) == .Write_Over, "%v under the key of a new passphrase", problem)
+	}
+	// A forged table on the disk: refused, and kept under the key of a
+	// record.
+	table: Grant_Table
+	testing.expect_value(t, table_allow(&table, "visitor", hash_of(1), .Store), Table_Problem.None)
+	forged_key, machine_key := key_of(0), key_of(5)
+	key := table_key_of_machine_key(&machine_key)
+	bytes: [TABLE_SIZE]u8
+	table_encode(&table, &forged_key, &bytes)
+	_, problem := table_decode(bytes[:], &key)
+	testing.expect_value(t, table_read_decision(false, problem, false), Read_Decision.Keep)
+}
+
+// The key of the tag comes from the machine key, and from nothing else: two
+// machine keys give two keys, one machine key gives one key, and the key of
+// the tag is not the machine key. A table that one machine signed does not
+// verify under the key of another machine.
+@(test)
+the_key_of_the_tag_of_the_machine :: proc(t: ^testing.T) {
+	first_machine, second_machine := key_of(3), key_of(4)
+	first := table_key_of_machine_key(&first_machine)
+	testing.expect(t, first == table_key_of_machine_key(&first_machine))
+	testing.expect(t, first != table_key_of_machine_key(&second_machine))
+	testing.expect(t, first != first_machine)
+	testing.expect(t, first != {})
+	second := table_key_of_machine_key(&second_machine)
+	table: Grant_Table
+	testing.expect_value(t, table_allow(&table, "visitor", hash_of(1), .Store), Table_Problem.None)
+	bytes: [TABLE_SIZE]u8
+	table_encode(&table, &first, &bytes)
+	_, problem := table_decode(bytes[:], &second)
+	testing.expect_value(t, problem, Table_File_Problem.Not_Authentic)
+	read: Grant_Table
+	read, problem = table_decode(bytes[:], &first)
+	testing.expect(t, problem == .None && read.count == 1)
 }
 
 // A reader of the disk with no key cannot add a grant: a table with one

@@ -148,3 +148,65 @@ hostile_files_are_refused :: proc(t: ^testing.T) {
 	changed[OFFSET_NAME + 10] = 'x'
 	expect(t, changed[:], .Bytes_After_Name)
 }
+
+test_machine_file :: proc() -> (file: Machine_File) {
+	for index in 0 ..< SALT_SIZE {
+		file.salt[index] = u8(7 + index)
+	}
+	for index in 0 ..< NONCE_SIZE {
+		file.nonce[index] = u8(90 + index)
+	}
+	for index in 0 ..< MACHINE_SEALED_SIZE {
+		file.sealed[index] = u8(index * 5 + 1)
+	}
+	return file
+}
+
+@(test)
+a_machine_record_round_trip :: proc(t: ^testing.T) {
+	file := test_machine_file()
+	bytes: [MACHINE_FILE_SIZE]u8
+	machine_file_encode(&file, &bytes)
+	decoded, kept, problem := machine_file_decode(bytes[:])
+	testing.expect_value(t, problem, File_Problem.None)
+	testing.expect(t, decoded == file)
+	testing.expect(t, kept == bytes)
+	testing.expect_value(t, len(machine_file_additional_data(&kept)), MACHINE_OFFSET_SEALED)
+	testing.expect_value(t, string(bytes[:8]), "MACHINEK")
+	// The salt, the nonce and the seal are at their offsets of the guide.
+	testing.expect_value(t, bytes[20], u8(7))
+	testing.expect_value(t, bytes[36], u8(90))
+	testing.expect_value(t, bytes[48], u8(1))
+}
+
+// The record of the machine is data from the disk, as the file of a
+// principal is: a record cannot ask for a cheaper derivation.
+@(test)
+hostile_machine_records_are_refused :: proc(t: ^testing.T) {
+	file := test_machine_file()
+	good: [MACHINE_FILE_SIZE]u8
+	machine_file_encode(&file, &good)
+	expect :: proc(test: ^testing.T, bytes: []u8, wanted: File_Problem) {
+		_, _, problem := machine_file_decode(bytes)
+		testing.expect_value(test, problem, wanted)
+	}
+	expect(t, good[:MACHINE_FILE_SIZE - 1], .Wrong_Size)
+	expect(t, nil, .Wrong_Size)
+	// A file of a named principal is no record of the machine.
+	principal_bytes: [FILE_SIZE]u8
+	principal_file := test_file()
+	file_encode(&principal_file, &principal_bytes)
+	expect(t, principal_bytes[:], .Wrong_Size)
+	changed := good
+	changed[1] = 'X'
+	expect(t, changed[:], .Wrong_Magic)
+	changed = good
+	changed[MACHINE_OFFSET_FORMAT] = 2
+	expect(t, changed[:], .Wrong_Format)
+	changed = good
+	changed[MACHINE_OFFSET_MEMORY] = 8
+	expect(t, changed[:], .Other_Parameters)
+	changed = good
+	changed[MACHINE_OFFSET_PASSES] = 1
+	expect(t, changed[:], .Other_Parameters)
+}

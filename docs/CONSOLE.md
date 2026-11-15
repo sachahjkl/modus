@@ -289,9 +289,11 @@ When the export has a table of error details and wrote more than one detail, one
 | `start_from_disk(name, hash)` | none | A disk program: its module file is an object of the store `programs`, and `hash` is 64 hexadecimal digits, or empty for the file of the row of the nickname (`MODULE_CONTRACT.md`, "A program from a disk") |
 | `allow(nickname, grant)`, `disallow(nickname, grant)` | none | A grant of the disk grant table to the file that a nickname names, from its next start: `store` only (`MODULE_CONTRACT.md`, "The grants of a disk program") |
 | `nickname_move(nickname, hash)` | none | Points a nickname to another file; its grants and its store follow |
+| `disk_persistence(nickname, setting)` | none | How long a row lasts across a restart: `persist`, `forget`, or `global`; an empty nickname sets the global setting, `persist` or `forget` |
 | `grants(name)` | Table of `Grant` | One row for each grant that the program has or lost: `program`, `grant`, `state` (`held` or `lost`), `principal`, `principal_name` |
 | `revoke(name, grant)` | Integer | The holdings that ended |
 | `principal_create(name)` | none | The window of unlock opens |
+| `machine_passphrase()` | none | The window of unlock opens and asks for the machine passphrase two times (`PRINCIPALS.md`, "Principal 0 and its machine passphrase") |
 | `lock()` | Integer | The programs of the session that stopped |
 | `principals()` | Table of `Principal` | `number`, `name`, `state` (`machine`, `locked`, `unlocked`, `creating`), `public_key_head`, `measure_head` |
 | `replace(name, by)` | none | |
@@ -349,7 +351,7 @@ A fact that a service holds is an export of that service, and the console calls 
 | `programs()` | The export `monitor.programs()`. With no service `monitor`, or when `monitor` lost its grant, the line fails with the error of the connection or of the export |
 | `setting(name, value)`, `manual_page(name)`, `strategy(name)` | The exports `settings.set`, `manual.show` and `scheduler.strategy_set`. The palette runs them ("8. The palette provider"). Each program must run: the command starts none. `strategy("eevdf")` sets the scheduling strategy of the machine, with `round_robin`, `fair` or `eevdf`: the console holds no right to change it, and the program `scheduler` holds it (`SCHEDULING.md`, "The change at run time") |
 | `debug`, `detach`, `threads`, `hold`, `resume`, `continue_all`, `registers`, `stack`, `locals`, `value`, `source`, `break_at`, `watch`, `breaks`, `break_remove`, `step`, `step_line`, `step_over`, `debug_memory`, `events`, `wait_stop` | The exports of the service `debugger`, which the root service starts when the console connects to it ("The commands of the debugger") |
-| `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `replace`, `connect` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |
+| `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `machine_passphrase`, `replace`, `connect` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |
 | `modules()` | The boot image that the root service granted to the console. `manual.modules()` gives the same modules with more fields, when the program `manual` runs |
 | `replacements()` | The replacement table that the root service granted to the console, read-only. `manual.replacements()` gives it too, when `manual` runs |
 | `program_modules()`, `memory()`, `locks()` | The reports of the kernel, with the grant of the console to inspect the machine. `manual.running()` gives the modules of the programs, and `monitor.counts()` the counts, when those programs run |

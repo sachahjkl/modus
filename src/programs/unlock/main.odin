@@ -24,6 +24,16 @@
 // strength of the record is the strength of the passphrase against
 // Argon2id with 19 MiB and 2 passes, on a copy of the disk.
 //
+// It also keeps the record of the machine passphrase, the object "machine"
+// of its store: the machine key, 32 random bytes, sealed in the same way
+// (docs/PRINCIPALS.md, "Principal 0 and its machine passphrase"). With
+// that record, and when the root service does not hold the key yet, it
+// asks for the machine passphrase first. When the seal opens, it gives the
+// root service the key of the tag of the disk grant table of principal 0,
+// which the machine key gives, and erases the other keys: the root service
+// then needs no key that opens the seal. The root service starts it with
+// the mode MODE_SET_MACHINE_PASSPHRASE after `machine_passphrase()`.
+//
 // **What it is for.** It separates who holds the machine (principal 0) from
 // a named principal whose programs run in a session of their own, with
 // stores of their own. It is the only program that the root service
@@ -38,9 +48,10 @@
 // **Grants**, as the root service gives them:
 //
 // - **Store**: its private store, which holds the file "principal".
-// - **Principals**: a ring to the root service for `Principal_Record` and
-//   `Principal_Unlock` only. No other program can send these two commands,
-//   so no other program can start a session.
+// - **Principals**: a ring to the root service for `Principal_Record`,
+//   `Principal_Unlock` and `Machine_Key` only. No other program can send
+//   these commands, so no other program can start a session or give the
+//   key of the disk grant table of principal 0.
 //
 // **What a reader sees**: a window with the name of the principal and the
 // passphrase as dots; Enter tries it, Backspace removes one byte, Escape
@@ -48,7 +59,8 @@
 //
 // - `unlock: principal 1 "alice" is locked: its passphrase opens its session`;
 // - `unlock: the passphrase of principal 1 "alice" opens its seal; ...`;
-// - `unlock: the passphrase of principal 1 "alice" is wrong: ...`.
+// - `unlock: the passphrase of principal 1 "alice" is wrong: ...`;
+// - `unlock: the machine passphrase opens the machine key; ...`.
 //
 // **What it does not prove**: the secret keys sign and decrypt nothing yet.
 // A wrong passphrase costs one derivation of Argon2id; nothing counts or
@@ -60,6 +72,7 @@ package unlock
 import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/ring"
+import "modus:support/disk_program"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -103,10 +116,19 @@ Mode :: enum {
 	Unlock, // The passphrase of the principal of the file.
 	Create_First, // The passphrase of a new principal.
 	Create_Again, // The same passphrase again.
+	Machine_Unlock, // The machine passphrase, before the passphrase of a named principal.
+	Machine_Create_First, // A new machine passphrase.
+	Machine_Create_Again, // The same machine passphrase again.
 	Done,
 }
 
 mode: Mode
+principal_found: bool // The store holds the file of a named principal: its unlock comes after the machine passphrase.
+
+// The record of the machine passphrase, as the store gave it.
+machine_file: principals.Machine_File
+machine_file_bytes: [principals.MACHINE_FILE_SIZE]u8
+machine_refusals: u64 // The wrong machine passphrases since the start.
 requests: ring.Ring
 request_tag: u32
 generator: random.Generator
@@ -177,10 +199,11 @@ record_give :: proc "contextless" () -> bool {
 	return true
 }
 
-// derive gives the key of the seal from a passphrase and the salt of the file.
-derive :: proc "contextless" (passphrase: []u8, key: ^[principals.KEY_SIZE]u8) -> bool {
+// derive gives the key of a seal from a passphrase and the salt of its
+// record.
+derive :: proc "contextless" (passphrase: []u8, salt_bytes: []u8, key: ^[principals.KEY_SIZE]u8) -> bool {
 	password := string(passphrase)
-	salt := string(file.salt[:])
+	salt := string(salt_bytes)
 	result := key^[:]
 	error: errors.Error_Record
 	cost := Argon2id_Cost {
@@ -239,7 +262,7 @@ create :: proc "contextless" () {
 	}
 	file.name, file.name_length = name, name_length
 	started := system.time()
-	if !derive(typed[:typed_count], &key) {
+	if !derive(typed[:typed_count], file.salt[:], &key) {
 		message, message_failed = "the derivation of the key failed", true
 		return
 	}
@@ -275,7 +298,7 @@ passphrase_try :: proc "contextless" () {
 	key: [principals.KEY_SIZE]u8
 	defer erase(secrets[:])
 	defer erase(key[:])
-	if !derive(typed[:typed_count], &key) {
+	if !derive(typed[:typed_count], file.salt[:], &key) {
 		message, message_failed = "the derivation of the key failed", true
 		return
 	}
@@ -303,6 +326,153 @@ passphrase_try :: proc "contextless" () {
 	session_start()
 }
 
+// machine_key_give gives the root service the key of the tag of the disk
+// grant table of principal 0, which the machine key gives, and nothing
+// else: the root service needs no key that opens the record. origin is
+// MACHINE_KEY_OPENED or MACHINE_KEY_NEW: the root service writes over a
+// table that does not verify only under a key of a new passphrase.
+machine_key_give :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8, origin: u64) -> bool {
+	table_key := disk_program.table_key_of_machine_key(machine_key)
+	values := transmute([4]u64)table_key
+	defer erase(table_key[:])
+	defer erase(([^]u8)(rawptr(&values))[:size_of(values)])
+	completion, answered := root_command(.Machine_Key, {values[0], values[1], values[2], values[3], origin, 0, 0})
+	if !answered || system.Status(completion.kind) != .Ok {
+		system.log("unlock: the root service did not take the key of the disk grant table of principal 0: status ", u64(completion.kind))
+		return false
+	}
+	return true
+}
+
+// after_machine goes on after the machine passphrase: to the passphrase of
+// the named principal of the file, or to the end.
+after_machine :: proc "contextless" () {
+	erase(typed[:])
+	typed_count = 0
+	if !principal_found {
+		mode = .Done
+		return
+	}
+	mode = .Unlock
+	message, message_failed = "", false
+	system.log("unlock: principal ", number, " \"", the_name(), "\" is locked: its passphrase opens its session")
+}
+
+// machine_try opens the record of the machine with the passphrase typed. A
+// wrong passphrase gives another key: the open fails, and the root service
+// receives nothing.
+machine_try :: proc "contextless" () {
+	machine_key: [principals.MACHINE_KEY_SIZE]u8
+	key: [principals.KEY_SIZE]u8
+	defer erase(machine_key[:])
+	defer erase(key[:])
+	if !derive(typed[:typed_count], machine_file.salt[:], &key) {
+		message, message_failed = "the derivation of the key failed", true
+		return
+	}
+	error: errors.Error_Record
+	key_text := string(key[:])
+	nonce_text := string(machine_file.nonce[:])
+	additional := string(principals.machine_file_additional_data(&machine_file_bytes))
+	sealed := string(machine_file.sealed[:])
+	result := machine_key[:]
+	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.MACHINE_KEY_SIZE {
+		machine_refusals += 1
+		system.log("unlock: the machine passphrase is wrong: the seal does not open, the disk grants of principal 0 stay absent (", machine_refusals, " in all)")
+		message, message_failed = "the passphrase is wrong: nothing is opened", true
+		return
+	}
+	if !machine_key_give(&machine_key, system.MACHINE_KEY_OPENED) {
+		message, message_failed = "the root service did not take the key", true
+		return
+	}
+	system.log("unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only")
+	after_machine()
+}
+
+// machine_create sets the machine passphrase: a new machine key, sealed in
+// the record "machine" of the store of this program, and the key of the tag
+// to the root service. It writes at most one record in a run: after the
+// write it ends with the mode Done, or stops the program.
+machine_create :: proc "contextless" () {
+	machine_key: [principals.MACHINE_KEY_SIZE]u8
+	key: [principals.KEY_SIZE]u8
+	defer erase(machine_key[:])
+	defer erase(key[:])
+	error: errors.Error_Record
+	// The key comes from the generator of this program, seeded by the root
+	// service from the sources of the processor; a weak seed is refused.
+	if !random.fill_for_a_key(&generator, machine_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, machine_file.salt[:], .Processor, &error) || !random.fill_for_a_key(&generator, machine_file.nonce[:], .Processor, &error) {
+		system.log("unlock: the seed of this program is too weak for a key: no machine passphrase is set")
+		message, message_failed = "the seed of the machine is too weak for a key", true
+		return
+	}
+	started := system.time()
+	if !derive(typed[:typed_count], machine_file.salt[:], &key) {
+		message, message_failed = "the derivation of the key failed", true
+		return
+	}
+	derived := system.time() - started
+	principals.machine_file_encode(&machine_file, &machine_file_bytes)
+	key_text := string(key[:])
+	nonce_text := string(machine_file.nonce[:])
+	additional := string(principals.machine_file_additional_data(&machine_file_bytes))
+	text := string(machine_key[:])
+	sealed := machine_file.sealed[:]
+	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.MACHINE_SEALED_SIZE {
+		message, message_failed = "the seal of the key failed", true
+		return
+	}
+	principals.machine_file_encode(&machine_file, &machine_file_bytes)
+	if _, status := storage.write(&client, storage.ROOT, principals.MACHINE_OBJECT, machine_file_bytes[:]); status != .Ok {
+		system.log("unlock: the store did not keep the record of the machine passphrase: status ", u64(status))
+		message, message_failed = "the store did not keep the record", true
+		return
+	}
+	system.log("unlock: the machine passphrase is set: the machine key is sealed in the store of unlock under a key of Argon2id, 19456 KiB and 2 passes, derived in ", derived, " ms")
+	// The record is on the disk now: this run never writes a second one.
+	// A root service that answers late can still take this key, and a new
+	// record would then hold another key than the root service.
+	if !machine_key_give(&machine_key, system.MACHINE_KEY_NEW) {
+		system.log("unlock: the root service did not take the key of the new machine passphrase; the record stays, and its passphrase opens it at the next start")
+		erase(machine_key[:])
+		erase(key[:])
+		erase(typed[:])
+		erase(first[:])
+		system.stop(1)
+	}
+	mode = .Done
+}
+
+// What the store holds for the record of the machine passphrase.
+Record_State :: enum u8 {
+	Absent, // No record: the machine has no passphrase, and one can be set.
+	Present, // A record that decodes: its passphrase opens it.
+	Unreadable, // The store failed to give it, or it does not decode: it can hold a good key, so no new record is written over it.
+}
+
+// machine_record_read reads the record of the machine passphrase from the
+// store. Only a store that answers "no object" gives Absent: a read error
+// or a changed byte must never let a new passphrase replace a good key.
+machine_record_read :: proc "contextless" () -> Record_State {
+	buffer: [principals.MACHINE_FILE_SIZE + 1]u8
+	bytes, found, read_status := storage.read(&client, storage.ROOT, principals.MACHINE_OBJECT, buffer[:])
+	if read_status != .Ok {
+		system.log("unlock: the store did not give the record of the machine passphrase: status ", u64(read_status))
+		return .Unreadable
+	}
+	if !found {
+		return .Absent
+	}
+	problem: principals.File_Problem
+	machine_file, machine_file_bytes, problem = principals.machine_file_decode(bytes)
+	if problem != .None {
+		system.log("unlock: the record of the machine passphrase is refused: ", principals.machine_file_problem_sentences[problem])
+		return .Unreadable
+	}
+	return .Present
+}
+
 session_start :: proc "contextless" () {
 	completion, answered := root_command(.Principal_Unlock, {4 = number})
 	if !answered || system.Status(completion.kind) != .Ok {
@@ -320,14 +490,33 @@ draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
-	x := interface.draw_text(table, 12, 12, mode == .Unlock ? "principal  " : "new principal  ", graphics.COLOR_DIM)
-	interface.draw_text(table, x, 12, the_name(), graphics.COLOR_TEXT)
+	// What the window asks for: the passphrase of a named principal, or
+	// the machine passphrase of principal 0. The widest line, the hint of
+	// Machine_Unlock, has 54 cells of 8 pixels: it fits in the window.
+	label := "principal  "
+	subject := the_name()
 	prompt := "passphrase  "
+	hint := "enter: unlock; escape: clear"
 	switch mode {
+	case .Unlock, .Done:
+	case .Create_First:
+		label = "new principal  "
 	case .Create_Again:
+		label = "new principal  "
 		prompt = "again  "
-	case .Unlock, .Create_First, .Done:
+	case .Machine_Unlock:
+		label, subject = "machine passphrase  ", "principal 0"
+		hint = "enter: unlock; enter with nothing: skip; escape: clear"
+	case .Machine_Create_First:
+		label, subject = "new machine passphrase  ", "principal 0"
+		hint = "enter: set; escape: clear"
+	case .Machine_Create_Again:
+		label, subject = "new machine passphrase  ", "principal 0"
+		prompt = "again  "
+		hint = "enter: set; escape: clear"
 	}
+	x := interface.draw_text(table, 12, 12, label, graphics.COLOR_DIM)
+	interface.draw_text(table, x, 12, subject, graphics.COLOR_TEXT)
 	x = interface.draw_text(table, 12, 48, prompt, graphics.COLOR_DIM)
 	// One dot for each byte typed: the passphrase itself is never drawn.
 	for index in 0 ..< typed_count {
@@ -338,7 +527,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_text(table, 12, 84, message, message_failed ? graphics.COLOR_FAILED : graphics.COLOR_PROGRAM)
 	}
 	interface.draw_text(table, 12, 116, "no TPM seal: the passphrase alone protects the keys", graphics.COLOR_DIM)
-	interface.draw_text(table, 12, HEIGHT - 26, "enter: unlock; escape: clear", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, HEIGHT - 26, hint, graphics.COLOR_DIM)
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
@@ -349,24 +538,40 @@ enter :: proc "contextless" (window: ^display.Window) {
 		message, message_failed = "deriving the key", false
 		draw(window)
 		passphrase_try()
-	case .Create_First:
+	case .Machine_Unlock:
+		// Enter with nothing skips the machine passphrase: the machine runs,
+		// and the disk grants of principal 0 stay absent.
+		if typed_count == 0 {
+			system.log("unlock: the machine passphrase is not typed: the disk grants of principal 0 stay absent until unlock asks again")
+			after_machine()
+			return
+		}
+		message, message_failed = "deriving the key", false
+		draw(window)
+		machine_try()
+	case .Create_First, .Machine_Create_First:
 		if problem := principals.passphrase_problem(typed[:typed_count]); problem != .None {
 			message, message_failed = principals.passphrase_problem_sentences[problem], true
 		} else {
 			first_count = copy(first[:], typed[:typed_count])
-			mode = .Create_Again
+			mode = mode == .Create_First ? Mode.Create_Again : Mode.Machine_Create_Again
 			message, message_failed = "type it again", false
 		}
-	case .Create_Again:
+	case .Create_Again, .Machine_Create_Again:
+		of_the_machine := mode == .Machine_Create_Again
 		if string(first[:first_count]) != string(typed[:typed_count]) {
 			message, message_failed = "the two passphrases differ: type a new one", true
-			mode = .Create_First
+			mode = of_the_machine ? Mode.Machine_Create_First : Mode.Create_First
 		} else {
 			message, message_failed = "deriving the key", false
 			draw(window)
-			create()
+			if of_the_machine {
+				machine_create()
+			} else {
+				create()
+			}
 			if mode != .Done {
-				mode = .Create_First
+				mode = of_the_machine ? Mode.Machine_Create_First : Mode.Create_First
 			}
 		}
 		erase(first[:])
@@ -384,12 +589,19 @@ enter :: proc "contextless" (window: ^display.Window) {
 // and its private store; with no ring or no store it stops with the code 1.
 // Then:
 //
-// - **Create** (the context value `VALUE_CREATE` is 1): it checks the name
-//   of the new principal and asks for a passphrase of 8 bytes at least.
-// - **Unlock**: it reads the file "principal". With no file it writes
-//   "unlock: no named principal: the machine runs as principal 0, with no
-//   unlock" and stops with the code 0. A file that does not decode, or a
-//   record that the root service refuses, stops it with the code 1.
+// - **Create** (the context value `VALUE_MODE` is `MODE_CREATE_PRINCIPAL`):
+//   it checks the name of the new principal and asks for a passphrase of 8
+//   bytes at least.
+// - **Set the machine passphrase** (`MODE_SET_MACHINE_PASSPHRASE`): with
+//   no record "machine", it asks for a passphrase two times, makes the
+//   machine key, seals it, and gives the root service the key of the tag.
+// - **Unlock**: it reads the file "principal", and the record "machine"
+//   unless the mode is `MODE_UNLOCK_MACHINE_KEY_HELD`. With a record of the
+//   machine it asks for the machine passphrase first; Enter with nothing
+//   skips it. With neither it writes "unlock: no named principal: the
+//   machine runs as principal 0, with no unlock" and stops with the code 0.
+//   A file that does not decode, or a record that the root service
+//   refuses, stops it with the code 1.
 //
 // It reserves the memory of Argon2id (about 19 MiB), opens its window, and
 // reads keys until the passphrase opens the seal and the root service
@@ -411,7 +623,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("unlock: no store: no named principal can be kept")
 		system.stop(1)
 	}
-	if ctx.values[principals.VALUE_CREATE] == 1 {
+	switch ctx.values[principals.VALUE_MODE] {
+	case principals.MODE_CREATE_PRINCIPAL:
 		name, name_length = principals.name_unpack({ctx.values[principals.VALUE_NAME], ctx.values[principals.VALUE_NAME + 1], ctx.values[principals.VALUE_NAME + 2]})
 		if principals.name_problem(the_name()) != .None {
 			system.log("unlock: the name of the new principal is refused")
@@ -419,29 +632,80 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		mode = .Create_First
 		message = "type a passphrase of 8 bytes at least"
-	} else {
+	case principals.MODE_SET_MACHINE_PASSPHRASE:
+		// The root service refuses a second machine passphrase; the record
+		// is read again here, as the store is the truth. Only a store that
+		// holds no record lets a new one be written.
+		switch machine_record_read() {
+		case .Absent:
+		case .Present:
+			system.log("unlock: the machine has a passphrase already: a change is not built")
+			system.stop(1)
+		case .Unreadable:
+			system.log("unlock: the record of the machine passphrase cannot be read: no new passphrase replaces it")
+			system.stop(1)
+		}
+		mode = .Machine_Create_First
+		message = "type a passphrase of 8 bytes at least"
+	case:
 		buffer: [principals.FILE_SIZE + 1]u8
 		bytes, found, read_status := storage.read(&client, storage.ROOT, principals.FILE_OBJECT, buffer[:])
-		if read_status == .Ok && !found {
-			system.log("unlock: no named principal: the machine runs as principal 0, with no unlock")
-			system.stop(0)
-		}
 		if read_status != .Ok {
 			system.log("unlock: the store did not give the file of the principal: status ", u64(read_status))
 			system.stop(1)
 		}
-		problem: principals.File_Problem
-		file, file_bytes, problem = principals.file_decode(bytes)
-		if problem != .None {
-			system.log("unlock: the file of the principal is refused: ", principals.file_problem_sentences[problem])
-			system.stop(1)
+		if found {
+			problem: principals.File_Problem
+			file, file_bytes, problem = principals.file_decode(bytes)
+			if problem != .None {
+				system.log("unlock: the file of the principal is refused: ", principals.file_problem_sentences[problem])
+				system.stop(1)
+			}
+			name, name_length = file.name, file.name_length
+			if !record_give() {
+				system.stop(1)
+			}
+			principal_found = true
 		}
-		name, name_length = file.name, file.name_length
-		if !record_give() {
-			system.stop(1)
+		// After a lock the root service holds the key of the table of
+		// principal 0 already: the machine passphrase is not asked again.
+		record_state := Record_State.Absent
+		if ctx.values[principals.VALUE_MODE] != principals.MODE_UNLOCK_MACHINE_KEY_HELD {
+			record_state = machine_record_read()
 		}
-		mode = .Unlock
-		system.log("unlock: principal ", number, " \"", the_name(), "\" is locked: its passphrase opens its session")
+		machine_asked := false
+		switch record_state {
+		case .Absent:
+		case .Present:
+			machine_asked = true
+			completion, answered := root_command(.Machine_Key, {4 = system.MACHINE_KEY_AWAITED})
+			if !answered || system.Status(completion.kind) != .Ok {
+				system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
+				machine_asked = false
+			}
+		case .Unreadable:
+			// No key comes from a record that cannot be read. The root
+			// service refuses each change of the table of principal 0, and
+			// a new machine passphrase, so nothing is written over a table
+			// or a record that can be good.
+			completion, answered := root_command(.Machine_Key, {4 = system.MACHINE_KEY_UNREADABLE})
+			if !answered || system.Status(completion.kind) != .Ok {
+				system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
+			}
+			system.log("unlock: the record of the machine passphrase cannot be read: the disk grants of principal 0 stay absent, and nothing replaces the record")
+		}
+		switch {
+		case machine_asked:
+			mode = .Machine_Unlock
+			message = "the disk grants of the machine wait for it"
+			system.log("unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed")
+		case principal_found:
+			mode = .Unlock
+			system.log("unlock: principal ", number, " \"", the_name(), "\" is locked: its passphrase opens its session")
+		case:
+			system.log("unlock: no named principal: the machine runs as principal 0, with no unlock")
+			system.stop(0)
+		}
 	}
 	// The blocks of Argon2id.
 	memory, memory_status := system.memory_create(principals.DERIVATION_MEMORY_PAGES)

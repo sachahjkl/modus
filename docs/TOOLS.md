@@ -702,7 +702,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `principals` | The two machines of the principals |
 | `hierarchy` | The machines of the hierarchy of storage |
 | `ranges` | The machines of the ranges of storage |
-| `disk_programs` | The two machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart ("The disk of the disk programs") |
+| `disk_programs` | The four machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over ("The disk of the disk programs") |
 | `power` | The loss of power: of the storage, of the settings, of the ranges |
 | `trusted_boot` | The volumes of the trusted boot; `trusted_boot tpm` adds the two machines with a software TPM |
 
@@ -719,7 +719,7 @@ The persistence and the self tests of the kernel have no part of their own: only
 
 ### The disk of the disk programs
 
-The part `disk_programs` needs a data disk that holds a module file before any machine runs. The tool writes that disk itself (`tools/modustool/disk_programs.odin`): a file `build/test_disk_programs_disk.img` in the format of the storage service (`STORAGE.md`, "3. The format on the disk"), with one store, `programs`, whose root tree holds the module files. The writer makes one commit of a new disk: the blocks of data and the object nodes of each file, one leaf with the entries in the order of their names, the store block, then the root. A block of zero bytes is a hole, as in the storage service. The writer changes no disk that exists, and takes at most the 24 entries of one leaf.
+The part `disk_programs` needs a data disk that holds a module file before any machine runs. The tool writes that disk itself (`tools/modustool/disk_programs.odin`): a file `build/test_disk_programs_disk.img` in the format of the storage service (`STORAGE.md`, "3. The format on the disk"), with one store, `programs`, whose root tree holds the module files and, for the test, a disk grant table. The writer makes one commit of a new disk: the blocks of data and the object nodes of each file, one leaf with the entries in the order of their names, the store block, then the root. A block of zero bytes is a hole, as in the storage service. The writer changes no disk that exists, and takes at most the 24 entries of one leaf.
 
 The tool prints one line for each file, with the hash that the command `start_from_disk` names:
 
@@ -734,6 +734,7 @@ The module of the test is `visitor`: a row of the module table of the tool with 
 | `visitor` | The module file | The root service starts it; the program writes that its context holds the log, a window and its budget, and no handle of a grant; with the grant store, it counts its visits in the store of its nickname |
 | `changed` | The module file with one byte changed | The line names the hash of the module file: the root service refuses the bytes, and the log holds their hash |
 | `notes` | The module file | The grant table of the root service gives the name `notes` a store: the root service refuses the name before any read |
+| `grant_table` | A disk grant table that gives `visitor` the grant store, with a tag under a key of zero bytes | What a reader of the disk with no passphrase can write: the root service refuses it when the machine passphrase is set, and writes over it; restored later, it is refused under the opened key and kept |
 
 The scenario also asks for a name with no entry. It starts the storage service before the first line that reads the store, so no step depends on the time of the open of the disk.
 
@@ -745,7 +746,11 @@ Then the scenario checks the disk grant table of principal 0 (`MODULE_CONTRACT.m
 4. `start_from_disk("visitor", "")` starts the file of the row with the store `disk-visitor`; the program writes its visit 1 there and reads it again.
 5. Two calls of `nickname_move` point the nickname to another file and back; the log says "root: the file ... will get the data of visitor" before each change. The next start has the store, and the visit 2.
 
-A second machine starts on the same disk. The table of principal 0 did not last: `start_from_disk("visitor", "")` is refused. After a start by the hash and a new `allow`, the program finds the visit 3 in the store of its nickname.
+A second machine starts on the same disk. The table of principal 0 did not last: `start_from_disk("visitor", "")` is refused. After a start by the hash and a new `allow`, the program finds the visit 3 in the store of its nickname. Then `machine_passphrase()` opens the window of `unlock`, and the scenario types the passphrase two times there. The root service reads `grant_table`, refuses it with its line ("its tag does not verify under the key of the principal"), and writes its own table of 1 row (`PRINCIPALS.md`, "Principal 0 and its machine passphrase").
+
+A third machine starts on the same disk, and the window of `unlock` asks for the machine passphrase. Before it is typed, `start_from_disk("visitor", "")` is refused, as the table has no row, and `allow` is refused. A wrong passphrase opens nothing. The right one gives the row back: the program has the store of its nickname, and finds the visit 4 there. `disk_persistence("visitor", "forget")` then writes a table of 0 rows. The console then restores the first version of `grant_table`, which the tool signed with the key of zero bytes (`storage.restore`).
+
+A fourth machine starts on the same disk. The machine passphrase opens the record, and the table on the disk does not verify under its key: the root service refuses it and keeps it, with no write. `start_from_disk("visitor", "")`, `allow` and `machine_passphrase()` are refused.
 
 Host tests check the writer with the code of the open of the storage service (`src/library/support/storage_mount`): no block of the image is wrong, the counts of the store are the counts of what it names, each object gives its bytes, each entry has the hash that its block tree gives, and a file with no hole has the BLAKE3 hash of its bytes.
 

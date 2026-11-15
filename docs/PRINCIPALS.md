@@ -53,6 +53,8 @@ The root service makes the record of principal 0 at each boot, before the first 
 - the measure of the system: the value of PCR 11, when the boot program measured the system description into the TPM;
 - no key. The key of principal 0 is the attestation key of the TPM. It is not built: the two test machines with a software TPM are opt-in, and their answers are not reliable.
 
+Principal 0 can have a machine passphrase. It guards the machine key, which signs the disk grant table of principal 0; it makes principal 0 no person (section 5, "Principal 0 and its machine passphrase").
+
 The log says which: "root: principal 0 is the machine: the system is measured, PCR 11 = ..." or "root: principal 0 is the machine: the system is not measured; its key, the attestation key of the TPM, is not built".
 
 The programs of the system belong to principal 0: the services, the console, and each program that the console starts. The stores of the system (the settings, the line history of the console) are stores of principal 0, and keep their names.
@@ -154,6 +156,38 @@ A caller acts for the principal when its role has the grant `acts_for_principal`
 
 **The grant records name the principal.** `grants("notes")` in the console gives the grants of a program, then "notes runs for principal 1 "alice"". `revoke` works on a program of a session as on any other program.
 
+### Principal 0 and its machine passphrase
+
+Principal 0 stays the machine. A machine passphrase is optional: it guards the machine key, and it opens no session. With no machine passphrase, nothing is typed, and the disk grant table of principal 0 lasts until the machine stops (`MODULE_CONTRACT.md`, "The grants of a disk program").
+
+**The record.** `unlock` keeps it in its store, as the object `machine`. Its format is in `src/library/support/principals`. Each number is little-endian.
+
+| Offset | Bytes | Field |
+|---|---|---|
+| 0 | 8 | `MACHINEK` |
+| 8 | 4 | The format: 1 |
+| 12 | 4 | The KiB of Argon2id: 19456 |
+| 16 | 4 | The passes of Argon2id: 2 |
+| 20 | 16 | The salt of Argon2id |
+| 36 | 12 | The nonce of the seal |
+| 48 | 48 | The machine key (32 random bytes) sealed with ChaCha20-Poly1305, and the tag |
+
+The additional data of the seal is each byte before the sealed key. The key derivation and the passphrase have the rules of a named principal (section 3).
+
+**The setting.** `machine_passphrase()` in the console starts `unlock`, whose window asks for the passphrase two times. `unlock` makes the machine key from its generator, seals it, writes the record, and gives the root service the key of the tag of the table. A machine with a machine passphrase refuses a second one. `unlock` writes one record in a run at most: when the root service does not take the key in time, `unlock` stops, and the passphrase opens that record at the next start.
+
+**A record that cannot be read.** `unlock` reads the record as absent, present, or unreadable: the store gave an error, or the record does not decode. Only an absent record lets a passphrase be set. An unreadable record gives no key: the disk programs of principal 0 start with no grant, and a change of the table and `machine_passphrase()` are refused, each with a line of the log:
+
+```
+root: refused a machine passphrase: the record of the machine passphrase cannot be read, and a new one would replace a key that can be good
+```
+
+**The keys.** `unlock` gives the root service one key: the key of the tag of the disk grant table, keyed BLAKE2b of the machine key over a fixed text. It erases the key of the seal and the machine key, and stops. The root service holds the key of the tag until the machine stops; it cannot open the record with it.
+
+**At the start.** The root service starts `unlock` at boot, as before. With a record of the machine, `unlock` asks for the machine passphrase first, then for the passphrase of a named principal if a file of one exists. The window says which one it asks for. Until the machine passphrase is typed, the machine runs, the disk programs of principal 0 start with no grant, and a change of the table of principal 0 is refused. Enter with no passphrase skips it until the next start of `unlock`. After a lock, the root service tells `unlock` that it holds the key, and `unlock` does not ask again.
+
+The log says each step: "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", "root: read the disk grant table of principal 0 from the store programs: 1 rows, with the tag of the machine key".
+
 ## 6. The store of a principal
 
 One program run for two principals has two stores, so the data of each principal stay apart. The name of a store carries its principal, and one procedure of the storage service decides from it which stores a caller is allowed to name.
@@ -189,21 +223,25 @@ So two principals that run one program have two stores, and the stores of the sy
 | `Principal_Record` | `unlock` only | Gives the public key (values[0..3]) and the name (values[4..6]) of the named principal; the completion has its number |
 | `Principal_Unlock` | `unlock` only | Starts the session of the principal values[4] |
 | `Grants` | A program with the grant `Root_Ring` | Also gives the number (values[2]) and the name (values[3..6]) of the principal of the program |
+| `Machine_Passphrase` | A program with the grant `Root_Ring` | Starts `unlock` to set the machine passphrase |
+| `Machine_Key` | `unlock` only | values[4] 1: the machine has a passphrase, not typed yet; 4: its record cannot be read; 2 or 3: values[0..3] is the key of the tag of the disk grant table of principal 0, from the open of the record (2) or from a new passphrase (3) |
 
-A refusal is an error record with the unit `Principals`: a second named principal ("no free place: the table has its 1 named principals"), a lock with no session, a number with no record.
+A refusal is an error record with the unit `Principals`: a second named principal ("no free place: the table has its 1 named principals"), a lock with no session, a number with no record, a second machine passphrase.
 
-**The console:** `principal_create("name")`, `lock()`, `principals()`, and `grants("name")`.
+**The console:** `principal_create("name")`, `lock()`, `principals()`, `grants("name")`, and `machine_passphrase()`.
 
 ## 8. The tests
 
-- `odin test src/library/support/principals`: the names of the stores, a name that does not fit, the names and the passphrases, a round trip of the file, and ten hostile files.
+- `odin test src/library/support/principals`: the names of the stores, a name that does not fit, the names and the passphrases, a round trip of the file, and ten hostile files; a round trip of the record of the machine, and its hostile forms.
+- `modustool test disk_programs`: the machine passphrase is set in the window of `unlock`, a table that another key signed is refused, and at the next start the passphrase gives back the grants of principal 0; a table that does not verify under the opened key is refused and kept, with no write (`TOOLS.md`, "The disk of the disk programs").
 - `odin test src/library/support/cryptography/vectors`: BLAKE2b of RFC 7693 and Argon2id of RFC 9106, section 5.3; the blocks are erased after the derivation, and a supply of blocks that is too small gives `Out_Of_Memory`.
 - `modustool test principals`: two machines on one data disk. The first one: no named principal; a note of `notes` started by the console belongs to principal 0; the creation of `alice` in the window of `unlock`; `notes` from the menu has a new store, `notes.principal.1`; the grants name the principal; the console connects acting for principal 0: `storage.open_store("notes.principal.1")` is refused with `No_Grant`, and `storage.stores()` does not list that store; the lock stops `notes`; a wrong passphrase opens nothing; the right one starts the session again and `notes` finds the note and the count of alice; a revocation of the store of `notes`. The second machine, on the same disk: the passphrase starts the session, and the note of alice is there. Picture: `principals_unlock`.
 
 ## 9. Not built
 
 - **The seal by the TPM.** The TPM seals the key of the principal to the measure of the system (PCR 11), behind a PIN. With it, a copy of the disk does not allow tries without limit.
-- **The key of principal 0**: the attestation key of the TPM.
+- **The key of principal 0**: the attestation key of the TPM. The TPM seals the machine key; with a machine passphrase, the TPM and the passphrase together open it.
+- **A change and a removal of the machine passphrase.**
 - **The encryption of the stores of a principal** with its unlock key. Today the data of a principal is on the disk in clear, as each store.
 - **Recovery.** A lost passphrase is a lost principal: no administrator can reset it. Property 21 asks for recovery from the first version of layer 3: a second device or a printed recovery key. It is not built.
 - **The desktop while locked.** The desktop stays: programs of principal 0 run and can be started. A desktop that shows only `unlock` while a named principal is locked is not built.

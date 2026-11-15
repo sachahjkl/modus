@@ -211,6 +211,87 @@ table_move :: proc "contextless" (table: ^Grant_Table, nickname: string, hash: [
 	return .None
 }
 
+// table_persistence_set changes the setting of persistence: of the row of
+// a nickname, or with an empty nickname the global setting, which takes
+// Persist or Forget only. The row stays: it still binds the nickname to its
+// file.
+table_persistence_set :: proc "contextless" (table: ^Grant_Table, nickname: string, persistence: Persistence) -> Table_Problem {
+	if nickname == "" {
+		switch persistence {
+		case .Persist:
+			table.forget_by_default = false
+		case .Forget:
+			table.forget_by_default = true
+		case .Global:
+			return .Not_Held
+		}
+		return .None
+	}
+	row := table_find(table, nickname)
+	if row == nil {
+		return .Absent
+	}
+	row.persistence = persistence
+	return .None
+}
+
+// table_persisted_rows counts the rows that table_encode writes.
+table_persisted_rows :: proc "contextless" (table: ^Grant_Table) -> int {
+	count := 0
+	for &row in table.rows[:clamp(table.count, 0, ROW_CAPACITY)] {
+		if row_persists(table, &row) {
+			count += 1
+		}
+	}
+	return count
+}
+
+// The text over which the machine key gives the key of the tag of the
+// table of principal 0. A key for another use takes another text, so the
+// key of the tag reveals nothing of the machine key or of that other key.
+TABLE_KEY_TEXT :: "modus disk grant table"
+
+// table_key_of_machine_key gives the key of the tag of the disk grant table
+// of principal 0: keyed BLAKE2b of the machine key over TABLE_KEY_TEXT. The
+// program `unlock` computes it, and gives only this key to the root service
+// (docs/PRINCIPALS.md, "Principal 0 and its machine passphrase").
+table_key_of_machine_key :: proc "contextless" (machine_key: ^[KEY_SIZE]u8) -> (key: [KEY_SIZE]u8) {
+	context_of_the_hash: blake2.Blake2b_Context
+	configuration := blake2.Blake2_Config {
+		size = KEY_SIZE,
+		key  = machine_key^[:],
+	}
+	text := TABLE_KEY_TEXT
+	blake2.init(&context_of_the_hash, &configuration)
+	blake2.update(&context_of_the_hash, transmute([]u8)text)
+	blake2.final(&context_of_the_hash, key[:])
+	return key
+}
+
+// What the root service does with the answer of the read of a persisted
+// table: the result of `table_read_decision`.
+Read_Decision :: enum u8 {
+	Take, // The table verifies: it becomes the table of the principal.
+	Write_Over, // Write the table in memory there: no table, or a table that no key of a record signed.
+	Keep, // Refuse the table and keep it: no grant, no write over it, and no change until a table that verifies is there.
+}
+
+// table_read_decision decides what a read gives. absent: the store has no
+// table. key_new: the key is the key of a passphrase set now, on a machine
+// with no record, so no key of a record signed the table on the disk. A
+// table that does not verify under a key that opened a record can be a
+// good table of another key, or a table that a byte changed: a write over
+// it would lose its grants with no sign, so it is kept.
+table_read_decision :: proc "contextless" (absent: bool, problem: Table_File_Problem, key_new: bool) -> Read_Decision {
+	if absent {
+		return .Write_Over
+	}
+	if problem == .None {
+		return .Take
+	}
+	return key_new ? Read_Decision.Write_Over : Read_Decision.Keep
+}
+
 // row_persists says if a row is kept across a restart: its exception, else
 // the global setting.
 row_persists :: proc "contextless" (table: ^Grant_Table, row: ^Grant_Row) -> bool {

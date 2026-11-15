@@ -50,7 +50,7 @@ Grant :: enum i64 {
 	Clock              = 18, // The date page with Write and the two ports of the real-time clock (modus:contract/date): the one writer of the date.
 	History_Store      = 19, // A store of its own in the storage service for the line history of the program, apart from its private store (Root_Command.Connect_History).
 	Events             = 20, // The machine, with the right Events: give the event table of the machine (kernel events of every program).
-	Principals         = 21, // A ring to the root service for Principal_Record and Principal_Unlock only: the program that keeps the records of the named principals (docs/PRINCIPALS.md).
+	Principals         = 21, // A ring to the root service for Principal_Record, Principal_Unlock and Machine_Key only: the program that keeps the records of the named principals (docs/PRINCIPALS.md).
 	Debug_Image        = 22, // The debug image, read-only: the names of the procedures and the source lines of a stop report (src/programs/root/debug_image.odin).
 	Debugger           = 23, // A ring to the root service for Debug only: the service that debugs a program on behalf of a caller of its connections (Root_Command.Debug).
 	Palette            = 24, // The palette provider of the desktop: the entry table with Write and the ring to the compositor (Root_Command.Palette_Provide).

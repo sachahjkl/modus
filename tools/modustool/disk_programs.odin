@@ -195,7 +195,9 @@ program_disk_encode :: proc(files: []Program_File, disk_size: int, allocator := 
 		return a.name < b.name
 	})
 	for file, index in sorted {
-		if problem, _ := disk_program.name_problem(file.name); problem != .None {
+		// The object of the disk grant table is no module file: a test puts
+		// a table there that the root service must refuse.
+		if problem, _ := disk_program.name_problem(file.name); problem != .None && problem != .Table_Name {
 			fmt.eprintfln("modustool: %q is no name of a disk program: %v", file.name, problem)
 			return nil, false
 		}
@@ -298,7 +300,27 @@ program_disk_write :: proc(path: string, files: []Program_File) -> bool {
 //
 // A second machine starts on the same disk. Principal 0 has no passphrase,
 // so its table did not last: the nickname has no row. A new grant finds
-// the store of the nickname with its two visits.
+// the store of the nickname with its two visits. Then the machine
+// passphrase is set in the window of unlock: the root service reads the
+// table that the tool wrote on the disk, refuses it, as another key signed
+// it, and writes its own table.
+//
+// A third machine starts on the same disk: until the machine passphrase is
+// typed, the nickname has no row and a change is refused; a wrong
+// passphrase opens nothing; the right one gives back the row, and the
+// store of the nickname with its three visits. A row set to last until the
+// machine stops leaves the disk. Then the console, which acts for principal
+// 0, restores the first version of grant_table, which the tool signed.
+//
+// A fourth machine starts on the same disk: the machine passphrase opens
+// the record, and the table on the disk does not verify under its key. It
+// is refused and kept: nothing is written over it, a change is refused, and
+// so is a second machine passphrase.
+//
+// The tool writes, as the object grant_table of the store programs, a
+// table that gives the grant store to the nickname visitor, with a tag
+// under a key of zero bytes: what a reader of the disk with no passphrase
+// can write. No machine passphrase gives that key.
 disk_programs_tests_run :: proc() -> bool {
 	module_file := read_file(module_path(DISK_PROGRAM_MODULE)) or_return
 	changed_file := slice.clone(module_file, context.temp_allocator)
@@ -306,7 +328,15 @@ disk_programs_tests_run :: proc() -> bool {
 	// A module of another project: built from a folder outside the
 	// sources, under a name that the boot image does not have.
 	outsider_file := outside_program_for_a_disk() or_return
-	files := [?]Program_File{{DISK_PROGRAM_MODULE, module_file}, {"changed", changed_file}, {"notes", module_file}, {OUTSIDE_DISK_PROGRAM, outsider_file}}
+	forged: disk_program.Grant_Table
+	if disk_program.table_allow(&forged, DISK_PROGRAM_MODULE, blake3.hash(module_file), .Store) != .None {
+		fmt.eprintln("modustool: the table of the disk of the disk programs takes no row")
+		return false
+	}
+	forged_key: [disk_program.KEY_SIZE]u8
+	forged_bytes: [disk_program.TABLE_SIZE]u8
+	disk_program.table_encode(&forged, &forged_key, &forged_bytes)
+	files := [?]Program_File{{DISK_PROGRAM_MODULE, module_file}, {"changed", changed_file}, {"notes", module_file}, {OUTSIDE_DISK_PROGRAM, outsider_file}, {disk_program.TABLE_OBJECT_NAME, forged_bytes[:]}}
 	program_disk_write(TEST_DISK_PROGRAMS_DISK, files[:]) or_return
 	hash_digits, changed_digits, outsider_digits: [disk_program.HASH_DIGITS]u8
 	disk_program.hash_write(&outsider_digits, blake3.hash(outsider_file))
@@ -325,7 +355,7 @@ disk_programs_tests_run :: proc() -> bool {
 	// The storage service takes the disk of the tool before or after the
 	// console has its window: the system fixes no order, so neither wait
 	// moves the place of the log.
-	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 4 objects", any_order = true})
+	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 5 objects", any_order = true})
 	append(&steps, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
 	append(&steps, Step{kind = .Front, text = "console"})
 	append(&steps, Step{kind = .Type, text = "connect(\"storage\")"})
@@ -398,10 +428,98 @@ disk_programs_tests_run :: proc() -> bool {
 	append(&again, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", DISK_PROGRAM_MODULE)})
 	// The store of the nickname kept its two visits across the restart.
 	disk_programs_store_steps(&again, hash, 3)
+	// The machine passphrase, typed two times in the window of unlock and
+	// never in the console. The key comes with a read: the table on the
+	// disk has a tag of another key, so it is refused, and the table of
+	// this machine is written over it.
+	append(&again, Step{kind = .Type, text = "machine_passphrase()"})
+	append(&again, Step{kind = .Wait, text = "root: the machine passphrase is set in the window of unlock"})
+	append(&again, Step{kind = .Wait, text = "compositor: surface unlock"})
+	append(&again, Step{kind = .Front, text = "unlock"})
+	append(&again, Step{kind = .Type, text = MACHINE_PASSPHRASE})
+	append(&again, Step{kind = .Type, text = MACHINE_PASSPHRASE})
+	append(&again, Step{kind = .Wait, text = "unlock: the machine passphrase is set: the machine key is sealed in the store of unlock under a key of Argon2id, 19456 KiB and 2 passes, derived in "})
+	append(&again, Step{kind = .Wait, text = "root: refused the disk grant table of principal 0 from the store programs: its tag does not verify under the key of the principal: another key wrote it, or a byte changed; it gives no grant, and the table of the new machine passphrase is written over it"})
+	append(&again, Step{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store programs: 1 rows, with the tag of the machine key"})
+	append(&again, Step{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true})
+	append(&again, Step{kind = .Front, text = "console"})
 	append(&again, Step{kind = .Type, text = "shutdown()"})
 	append(&again, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
-	return machine_test(again[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 2), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK)
+	machine_test(again[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 2), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK) or_return
+
+	// The third machine, on the same disk, with the machine passphrase.
+	third := make([dynamic]Step)
+	defer delete(third)
+	append(&third, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
+	append(&third, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&third, Step{kind = .Wait, text = "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", any_order = true})
+	append(&third, Step{kind = .Wait, text = "compositor: surface unlock"})
+	// Before the passphrase: the machine runs, the table holds no row, and
+	// a change is refused.
+	append(&third, Step{kind = .Front, text = "console"})
+	append(&third, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"\")", DISK_PROGRAM_MODULE)})
+	append(&third, Step{kind = .Wait, text = fmt.aprintf("root: refused %s from the disk: the nickname has no row in the disk grant table of principal 0: name the hash of its file", DISK_PROGRAM_MODULE)})
+	append(&third, Step{kind = .Type, text = fmt.aprintf("allow(\"%s\", \"store\")", DISK_PROGRAM_MODULE)})
+	append(&third, Step{kind = .Wait, text = "root: refused a change of the disk grant table of principal 0: the machine passphrase is not typed; type it in the window of unlock"})
+	// A wrong passphrase opens nothing; the right one gives the key.
+	append(&third, Step{kind = .Front, text = "unlock"})
+	append(&third, Step{kind = .Type, text = "wrong passphrase"})
+	append(&third, Step{kind = .Wait, text = "unlock: the machine passphrase is wrong: the seal does not open, the disk grants of principal 0 stay absent (1 in all)"})
+	append(&third, Step{kind = .Type, text = MACHINE_PASSPHRASE})
+	append(&third, Step{kind = .Wait, text = "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", any_order = true})
+	append(&third, Step{kind = .Wait, text = "root: read the disk grant table of principal 0 from the store programs: 1 rows, with the tag of the machine key"})
+	append(&third, Step{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true})
+	append(&third, Step{kind = .Front, text = "console"})
+	append(&third, Step{kind = .Type, text = "connect(\"storage\")"})
+	append(&third, Step{kind = .Wait, text = "[console]   module     storage"})
+	// The grant survived the restart, and the store of the nickname has its
+	// three visits.
+	disk_programs_store_steps(&third, hash, 4)
+	// A row that lasts until the machine stops is not written: the table on
+	// the disk then holds no row.
+	append(&third, Step{kind = .Type, text = fmt.aprintf("disk_persistence(\"%s\", \"forget\")", DISK_PROGRAM_MODULE)})
+	append(&third, Step{kind = .Wait, text = fmt.aprintf("root: the row of the nickname %s in the disk grant table of principal 0 has the setting: last until the machine stops; the machine passphrase keeps the disk grant table of principal 0 on the disk", DISK_PROGRAM_MODULE)})
+	append(&third, Step{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store programs: 0 rows, with the tag of the machine key"})
+	// The console acts for principal 0 and restores the first version of
+	// the table, which the tool signed with another key: what a holder of
+	// the store can do. The first place of a new start is 1.
+	append(&third, Step{kind = .Type, text = fmt.aprintf("storage.open_store(\"%s\")", disk_program.STORE_NAME)})
+	append(&third, Step{kind = .Wait, text = "[console] 1"})
+	append(&third, Step{kind = .Type, text = fmt.aprintf("storage.restore(1, \"%s\", %d)", disk_program.TABLE_OBJECT_NAME, PROGRAM_DISK_GENERATION)})
+	append(&third, Step{kind = .Wait, text = "[console] "})
+	append(&third, Step{kind = .Type, text = "shutdown()"})
+	append(&third, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
+	machine_test(third[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 3), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK) or_return
+
+	// The fourth machine: the machine passphrase opens the record, and the
+	// table on the disk does not verify under its key. It is refused and
+	// kept: nothing is written over it, and each change is refused.
+	fourth := make([dynamic]Step)
+	defer delete(fourth)
+	append(&fourth, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
+	append(&fourth, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&fourth, Step{kind = .Wait, text = "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", any_order = true})
+	append(&fourth, Step{kind = .Wait, text = "compositor: surface unlock"})
+	append(&fourth, Step{kind = .Front, text = "unlock"})
+	append(&fourth, Step{kind = .Type, text = MACHINE_PASSPHRASE})
+	append(&fourth, Step{kind = .Wait, text = "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", any_order = true})
+	append(&fourth, Step{kind = .Wait, text = "root: refused the disk grant table of principal 0 from the store programs: its tag does not verify under the key of the principal: another key wrote it, or a byte changed; it gives no grant, and it is kept: no change is written over it", fails_on = "root: the disk grant table of principal 0 is written in the store programs"})
+	append(&fourth, Step{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true})
+	append(&fourth, Step{kind = .Front, text = "console"})
+	append(&fourth, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"\")", DISK_PROGRAM_MODULE)})
+	append(&fourth, Step{kind = .Wait, text = fmt.aprintf("root: refused %s from the disk: the nickname has no row in the disk grant table of principal 0: name the hash of its file", DISK_PROGRAM_MODULE)})
+	append(&fourth, Step{kind = .Type, text = fmt.aprintf("allow(\"%s\", \"store\")", DISK_PROGRAM_MODULE)})
+	append(&fourth, Step{kind = .Wait, text = "root: refused a change of the disk grant table of principal 0: the table on the disk does not verify under the machine key, and it is kept; restore a version of it that verifies, then start the machine again"})
+	append(&fourth, Step{kind = .Type, text = "machine_passphrase()"})
+	append(&fourth, Step{kind = .Wait, text = "root: refused a machine passphrase: the machine has one, and a change is not built", fails_on = "root: the disk grant table of principal 0 is written in the store programs"})
+	append(&fourth, Step{kind = .Type, text = "shutdown()"})
+	append(&fourth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
+	return machine_test(fourth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 4), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK)
 }
+
+// The machine passphrase of the test. It is a constant of the tool: a test
+// passphrase guards nothing.
+MACHINE_PASSPHRASE :: "a machine of the test"
 
 // disk_programs_store_steps adds the steps of one start of the nickname
 // visitor with no hash and the grant store: the root service takes the
