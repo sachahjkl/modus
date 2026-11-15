@@ -4,8 +4,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **The terminal and the compositor import the drawing module.** The terminal, whose text grid needs the cells of two frames for its damage, and the compositor, which shows the surfaces of other programs as pictures, use the drawing module, as 32 programs do today. The code of the drawing is then loaded one time, and one correction reaches every program. [Design](src/md/api/picture.md)
-
 ## Next
 
 - **The grants of a disk program of a named principal persist across a restart.** A named principal grants a disk program from its own session, and its signed disk grant table is read after the unlock, as the table of the machine is after the machine passphrase. The monitor and the menu show each nickname with its hash. [Design](src/md/features/programs_from_a_disk.md)

@@ -863,27 +863,49 @@ card_caption_stays_inside :: proc(t: ^testing.T) {
 	}
 }
 
-// A grid where one cell changed damages that cell only; a grid that the
-// table before does not have is damaged whole; the copy keeps the cells.
+// grid_text gives a text table for the cells of a grid: words, so that it
+// starts at an address that is a multiple of 4, as a table with a grid must.
+@(private = "file")
+grid_text :: proc(words: []u32) -> []u8 {
+	return ([^]u8)(raw_data(words))[:len(words) * 4]
+}
+
+// A grid where one cell changed damages that cell only; the copy of the
+// text table keeps the cells; the cells are copied into the text table
+// with no gap between two rows, at a place that is a multiple of 4.
 @(test)
 text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
 	cells_now: [3 * 8]Text_Grid_Cell
-	cells_drawn: [3 * 8]Text_Grid_Cell
 	for &cell, index in cells_now {
 		cell = {character = u8('a' + index % 26), color = 0xFFFFFF}
 	}
+	grid := Text_Grid{cells = cells_now[:], columns = 6, rows = 3, stride = 8}
 	records_now, records_before: [4]Draw_Record
-	grids_now := [1]Text_Grid{{cells = cells_now[:], columns = 6, rows = 3, stride = 8}}
-	grids_before := [1]Text_Grid{{cells = cells_drawn[:]}}
-	now := Draw_Table{records = records_now[:], grids = grids_now[:]}
-	before := Draw_Table{records = records_before[:], grids = grids_before[:]}
-	draw_text_grid(&now, 10, 20, 0)
-	testing.expect(t, now.record_count == 1 && !now.full)
+	words_now, words_before: [64]u32
+	now := Draw_Table{records = records_now[:], text = grid_text(words_now[:])}
+	before := Draw_Table{records = records_before[:], text = grid_text(words_before[:])}
+	// A text of 3 bytes before the grid: the cells start at byte 4.
+	draw_text(&now, 0, 0, "abc", 0xFFFFFF)
+	draw_text_grid(&now, 10, 20, grid)
+	testing.expect(t, now.record_count == 2 && !now.full && !now.refused)
+	record := now.records[1]
+	testing.expect_value(t, record.text_start, 4)
+	testing.expect_value(t, record.text_count, 6 * 3 * 12)
+	testing.expect_value(t, record.second_color, 6)
+	testing.expect_value(t, record_rectangle(record), Rectangle{10, 20, 10 + 6 * 8, 20 + 3 * 16})
+	found, ok := grid_of(&now, record)
+	testing.expect(t, ok, "the cells of the record are in the text table")
+	testing.expect(t, found.columns == 6 && found.rows == 3 && found.stride == 6)
+	testing.expect_value(t, found.cells[1 * 6 + 4], cells_now[1 * 8 + 4])
 	testing.expect(t, draw_table_copy(&before, &now))
 	damage: Damage
 	damage_by_difference(&before, &now, &damage)
 	testing.expect_value(t, damage.count, 0)
+	// One cell changed: the next frame copies the cells again.
 	cells_now[1 * 8 + 4].character = 'Z'
+	draw_table_clear(&now)
+	draw_text(&now, 0, 0, "abc", 0xFFFFFF)
+	draw_text_grid(&now, 10, 20, grid)
 	damage_by_difference(&before, &now, &damage)
 	testing.expect_value(t, damage.count, 1)
 	testing.expect_value(t, damage.rectangles[0], Rectangle{10 + 4 * 8, 20 + 16, 10 + 5 * 8, 20 + 32})
@@ -891,18 +913,79 @@ text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
 	damage = {}
 	testing.expect(t, draw_table_copy(&before, &now))
 	cells_now[7].character = 'Q'
+	draw_table_clear(&now)
+	draw_text(&now, 0, 0, "abc", 0xFFFFFF)
+	draw_text_grid(&now, 10, 20, grid)
 	damage_by_difference(&before, &now, &damage)
 	testing.expect_value(t, damage.count, 0)
-	// A table before with no room for the cells cannot keep a copy.
-	small: [4]Text_Grid_Cell
-	grids_small := [1]Text_Grid{{cells = small[:]}}
-	before.grids = grids_small[:]
-	testing.expect(t, !draw_table_copy(&before, &now))
-	// Cells fewer than the rows of the grid: no record.
-	grids_now[0].rows = 4
+	// The grid at another place in the text table: a longer text before
+	// it moves the cells, and the same cells damage nothing.
 	draw_table_clear(&now)
-	draw_text_grid(&now, 0, 0, 0)
+	draw_text(&now, 0, 0, "abcdefg", 0xFFFFFF)
+	draw_text_grid(&now, 10, 20, grid)
+	testing.expect_value(t, now.records[1].text_start, 8)
+	damage = {}
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], record_rectangle(now.records[0]))
+	// A table before with no room for the cells cannot keep a copy.
+	small: [4]u32
+	before.text = grid_text(small[:])
+	testing.expect(t, !draw_table_copy(&before, &now))
+	// A text table with no room for the cells: the table is full.
+	little := Draw_Table{records = records_now[:], text = grid_text(small[:])}
+	draw_text_grid(&little, 0, 0, grid)
+	testing.expect(t, little.full && little.record_count == 0)
+	// Cells fewer than the rows of the grid: no record.
+	grid.rows = 4
+	draw_table_clear(&now)
+	draw_text_grid(&now, 0, 0, grid)
 	testing.expect(t, now.refused && !now.full && now.record_count == 0)
+	// A text table at an address that is not a multiple of 4: no record.
+	grid.rows = 3
+	shifted := Draw_Table{records = records_now[:], text = grid_text(words_now[:])[1:]}
+	draw_text_grid(&shifted, 0, 0, grid)
+	testing.expect(t, shifted.refused && shifted.record_count == 0)
+}
+
+// Text_Grid records of a hostile caller, with any bytes: no column, bytes
+// that are not a whole count of rows, a range past the text table, a range
+// that would wrap, a place that is not a multiple of 4. None names cells,
+// none draws, and the difference damages each one whole.
+@(test)
+text_grid_records_of_a_hostile_caller :: proc(t: ^testing.T) {
+	words: [32]u32
+	bytes := grid_text(words[:])
+	table := Draw_Table{text = bytes, text_count = len(bytes)}
+	hostile := [?]Draw_Record {
+		{kind = .Text_Grid, width = 16, height = 16, second_color = 0, text_count = 24},
+		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_count = 25},
+		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = 112, text_count = 24},
+		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = max(u32) - 3, text_count = 24},
+		{kind = .Text_Grid, width = 16, height = 16, second_color = max(u32), text_count = max(u32)},
+		{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_start = 2, text_count = 24},
+	}
+	pixels: [16 * 16]graphics.Color
+	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = 16, height = 16, stride = 16}
+	for &word in words {
+		word = 0x41414141 // Each cell is the character A in a color.
+	}
+	for record, index in hostile {
+		_, ok := grid_of(&table, record)
+		testing.expectf(t, !ok, "the hostile record %d names cells", index)
+		records := [1]Draw_Record{record}
+		one := Draw_Table{records = records[:], record_count = 1, text = bytes, text_count = len(bytes)}
+		pixels = {}
+		execute(&one, canvas)
+		testing.expectf(t, pixels == [16 * 16]graphics.Color{}, "the hostile record %d draws", index)
+		damage: Damage
+		damage_by_difference(&one, &one, &damage)
+		testing.expectf(t, damage.count == 1 && damage.rectangles[0] == Rectangle{0, 0, 16, 16}, "the hostile record %d is not damaged whole", index)
+	}
+	// The good record over the same bytes: two cells of a row, one row.
+	good := Draw_Record{kind = .Text_Grid, width = 16, height = 16, second_color = 2, text_count = 24}
+	found, ok := grid_of(&table, good)
+	testing.expect(t, ok && found.rows == 1 && found.columns == 2)
 }
 
 // A grid draws its characters and its reverse cells, cut to the canvas.
@@ -1007,13 +1090,13 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 		return {pixels = raw_data(pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
 	}
 	cells: [ROWS * COLUMNS]Text_Grid_Cell
-	copies: [ROWS * COLUMNS]Text_Grid_Cell
+	grid := Text_Grid{cells = cells[:], columns = COLUMNS, rows = ROWS, stride = COLUMNS}
 	records_now, records_before: [64]Draw_Record
-	text_now, text_before: [256]u8
-	grids_now := [1]Text_Grid{{cells = cells[:], columns = COLUMNS, rows = ROWS, stride = COLUMNS}}
-	grids_before := [1]Text_Grid{{cells = copies[:]}}
-	now := Draw_Table{records = records_now[:], text = text_now[:], grids = grids_now[:]}
-	before := Draw_Table{records = records_before[:], text = text_before[:], grids = grids_before[:]}
+	// The texts and the cells of the grid, at an address that is a
+	// multiple of 4.
+	words_now, words_before: [256]u32
+	now := Draw_Table{records = records_now[:], text = grid_text(words_now[:])}
+	before := Draw_Table{records = records_before[:], text = grid_text(words_before[:])}
 	surface := Rectangle{0, 0, WIDTH, HEIGHT}
 	debts: Picture_Debts
 	drawn := false // The table before is the last frame that was presented.
@@ -1047,7 +1130,7 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 				cell.character = 0
 			}
 		}
-		draw_text_grid(&now, 4, 16, 0)
+		draw_text_grid(&now, 4, 16, grid)
 		draw_rectangle(&now, 110, 16 + step * 7 % 60, 6, 13, 0x5080C0)
 		draw_text(&now, 4, 100, step % 2 == 0 ? "line 12" : "line 3", 0xFFFFFF)
 		if frame % 50 == 49 {
@@ -1371,29 +1454,31 @@ screen_after_damage :: proc(before, now: ^Draw_Table) -> bool {
 	return string(transmute([]u8)surface) == string(transmute([]u8)whole)
 }
 
-// Two tables with one grid each, in their own cells.
+// Two tables, each with a text table that holds the cells of one grid; the
+// cells of the caller, and the grid that describes them.
 @(private = "file")
 Grid_Tables :: struct {
 	records_before, records_now: [8]Draw_Record,
-	cells_before, cells_now:     [20 * 12]Text_Grid_Cell,
-	grids_before, grids_now:     [1]Text_Grid,
+	words_before, words_now:     [20 * 12 * 3 + 16]u32,
+	cells:                       [20 * 12]Text_Grid_Cell,
+	grid:                        Text_Grid,
 	before, now:                 Draw_Table,
 }
 
 @(private = "file")
 grid_tables_make :: proc(tables: ^Grid_Tables, columns, rows, stride: int) {
-	for &cell, index in tables.cells_now {
+	for &cell, index in tables.cells {
 		cell = {character = u8('A' + index % 26), reverse = index % 7 == 0, color = graphics.Color(0x406080 + index % 3 * 0x203010)}
 	}
-	tables.grids_now[0] = {cells = tables.cells_now[:], columns = columns, rows = rows, stride = stride}
-	tables.grids_before[0] = {cells = tables.cells_before[:]}
-	tables.now = {records = tables.records_now[:], grids = tables.grids_now[:]}
-	tables.before = {records = tables.records_before[:], grids = tables.grids_before[:]}
+	tables.grid = {cells = tables.cells[:], columns = columns, rows = rows, stride = stride}
+	tables.now = {records = tables.records_now[:], text = grid_text(tables.words_now[:])}
+	tables.before = {records = tables.records_before[:], text = grid_text(tables.words_before[:])}
 }
 
-// The grid of the frame before is the copy that draw_table_copy keeps; the
-// grid now changes its size, its stride, its place or some cells. In each
-// case the surface drawn again in the damage is the frame drawn whole.
+// The grid of the frame before is the copy of the text table that
+// draw_table_copy keeps; the grid now changes its size, its stride, its
+// place or some cells. In each case the surface drawn again in the damage
+// is the frame drawn whole.
 @(test)
 grid_damage_for_each_change :: proc(t: ^testing.T) {
 	Change :: enum {
@@ -1406,48 +1491,49 @@ grid_damage_for_each_change :: proc(t: ^testing.T) {
 	for change in Change {
 		tables: Grid_Tables
 		grid_tables_make(&tables, 12, 6, 16)
-		// The frame before: its own copy of the cells.
-		before_grid := tables.grids_now[0]
-		draw_text_grid(&tables.now, 20, 30, 0)
+		draw_text_grid(&tables.now, 20, 30, tables.grid)
 		testing.expect(t, draw_table_copy(&tables.before, &tables.now), "the copy fits")
-		testing.expect_value(t, tables.before.grids[0].columns, before_grid.columns)
+		copied, copied_ok := grid_of(&tables.before, tables.before.records[0])
+		testing.expect(t, copied_ok && copied.columns == tables.grid.columns && copied.rows == tables.grid.rows, "the table before holds the cells")
 		draw_table_clear(&tables.now)
 		place_x := 20
 		switch change {
 		case .Cells:
-			tables.cells_now[2 * 16 + 5].character = '#'
-			tables.cells_now[4 * 16 + 11].reverse = !tables.cells_now[4 * 16 + 11].reverse
+			tables.cells[2 * 16 + 5].character = '#'
+			tables.cells[4 * 16 + 11].reverse = !tables.cells[4 * 16 + 11].reverse
 		case .Columns:
-			tables.grids_now[0].columns = 9
+			tables.grid.columns = 9
 		case .Rows:
-			tables.grids_now[0].rows = 8
+			tables.grid.rows = 8
 		case .Stride:
-			tables.grids_now[0].stride = 13
+			tables.grid.stride = 13
 		case .Place:
 			place_x = 28
 		}
-		draw_text_grid(&tables.now, place_x, 30, 0)
+		draw_text_grid(&tables.now, place_x, 30, tables.grid)
 		testing.expect_value(t, tables.now.record_count, 1)
 		testing.expectf(t, screen_after_damage(&tables.before, &tables.now), "%v: the surface drawn in the damage is not the frame", change)
 	}
 }
 
-// A table before whose grid has fewer cells than its rows (a copy that a
-// caller made by hand) is damaged whole: no cell is read past its end.
+// A table before whose text holds fewer cells than the rows of its grid (a
+// copy that a caller made by hand) is damaged whole: no cell is read past
+// its end.
 @(test)
 grid_damage_with_too_few_cells_before :: proc(t: ^testing.T) {
 	tables: Grid_Tables
 	grid_tables_make(&tables, 12, 6, 16)
-	draw_text_grid(&tables.now, 20, 30, 0)
+	draw_text_grid(&tables.now, 20, 30, tables.grid)
 	tables.records_before[0] = tables.records_now[0]
 	tables.before.record_count = 1
-	tables.grids_before[0] = {cells = tables.cells_before[:10], columns = 12, rows = 6, stride = 16}
+	tables.before.text_count = 10 * size_of(Text_Grid_Cell)
 	damage: Damage
 	damage_by_difference(&tables.before, &tables.now, &damage)
 	testing.expect_value(t, damage.count, 1)
 	testing.expect_value(t, damage.rectangles[0], record_rectangle(tables.records_now[0]))
-	// An index past the grids of the table before: the same.
-	tables.before.grids = nil
+	// A table before with no text: the same.
+	tables.before.text = nil
+	tables.before.text_count = 0
 	damage = {}
 	damage_by_difference(&tables.before, &tables.now, &damage)
 	testing.expect_value(t, damage.rectangles[0], record_rectangle(tables.records_now[0]))
@@ -1460,7 +1546,7 @@ grid_damage_with_too_few_cells_before :: proc(t: ^testing.T) {
 text_grid_in_rectangles_equals_whole :: proc(t: ^testing.T) {
 	tables: Grid_Tables
 	grid_tables_make(&tables, 20, 12, 20)
-	draw_text_grid(&tables.now, -13, -21, 0)
+	draw_text_grid(&tables.now, -13, -21, tables.grid)
 	whole := make([]graphics.Color, 320 * 200)
 	defer delete(whole)
 	parts := make([]graphics.Color, 320 * 200)
@@ -1633,10 +1719,10 @@ grid_numbers_that_wrap_are_refused :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, grid_valid({cells = cells[:], columns = 4, rows = 4, stride = 4}))
 	testing.expect_value(t, grid_size({cells = cells[:], columns = 3, rows = 4, stride = 4}), 15)
-	grids := [1]Text_Grid{wrapping[0]}
 	records: [2]Draw_Record
-	table := Draw_Table{records = records[:], grids = grids[:]}
-	draw_text_grid(&table, 0, 0, 0)
+	words: [64]u32
+	table := Draw_Table{records = records[:], text = grid_text(words[:])}
+	draw_text_grid(&table, 0, 0, wrapping[0])
 	testing.expect(t, table.refused && !table.full && table.record_count == 0)
 }
 

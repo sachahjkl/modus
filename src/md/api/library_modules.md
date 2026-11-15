@@ -66,8 +66,8 @@ The last row is a bundle with no table of what it holds yet. A fault in the text
 ## What is left, and what blocks it
 
 - **The Picture: done.** A Picture record names its pixels by values in a picture memory that the caller passes as bytes, so the programs that show a picture draw through the module. See [picture.md](picture.md).
-- **The terminal and the compositor.** A Text_Grid record names its cells by an address, and the damage of a grid needs the cells of two frames: two more parameters than an export has. The pictures of the compositor are the surfaces of other programs, one picture memory for each, and an export takes one. See [picture.md](picture.md), "What is built and what is left".
-- **The cell text** of the programs that draw text themselves: one more export of the drawing module, for one run of cells, not for one glyph. Count the calls of a full terminal first.
+- **The terminal and the compositor: done.** The terminal copies the cells of its grid into the text table of the frame, so the two exports read them with no new parameter: see [text_grid.md](text_grid.md). The compositor draws its screen table in parts, one call for each part, and each part has the one picture memory of its surface: see [picture.md](picture.md), "The compositor: one call for each part".
+- **The cell text** of the programs that draw text themselves with no draw table: one more export of the drawing module, for one run of cells, not for one glyph. A full terminal is 3,328 cells and up to 3,328 runs in one frame, so the terminal does not use such an export: its grid crosses the border in the text table ([text_grid.md](text_grid.md), "The count of a full terminal").
 - **The error sentences**: a record in, a text out, a cold path.
 - **The network libraries**: two users each. The gain is the graph and the replacement of a protocol stack, not the bytes.
 

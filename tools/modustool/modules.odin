@@ -100,10 +100,12 @@ module_builds := [?]Module_Build {
 	{name = "kernel_without_return_check", source = SOURCE_FOLDER_KERNEL, kernel = true, defines = {"TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true"}},
 	{name = "root", source = PROGRAM_SOURCES + "root", image = true},
 	{name = "input", source = PROGRAM_SOURCES + "input", image = true},
-	{name = "compositor", source = PROGRAM_SOURCES + "compositor", image = true},
-	{name = "console", source = PROGRAM_SOURCES + "console", image = true},
 	// The drawing of a window, for each program below that imports it.
 	{name = DRAWING_MODULE, source = MODULE_SOURCES + "drawing", image = true, library = true},
+	// It draws its screen in parts, one call of the drawing module for each
+	// part (src/md/api/picture.md).
+	{name = "compositor", source = PROGRAM_SOURCES + "compositor", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "console", source = PROGRAM_SOURCES + "console", image = true},
 	{name = "monitor", source = PROGRAM_SOURCES + "monitor", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "plasma", source = PROGRAM_SOURCES + "plasma", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "life", source = PROGRAM_SOURCES + "life", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
@@ -132,7 +134,7 @@ module_builds := [?]Module_Build {
 	{name = "debugger", source = PROGRAM_SOURCES + "debugger", image = true},
 	{name = "debug_target", source = PROGRAM_SOURCES + "debug_target", image = true},
 	{name = "kernel_events", source = PROGRAM_SOURCES + "kernel_events", image = true},
-	{name = "terminal", source = PROGRAM_SOURCES + "terminal", image = true},
+	{name = "terminal", source = PROGRAM_SOURCES + "terminal", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "flood", source = PROGRAM_SOURCES + "flood", image = true},
 	{name = "processors", source = PROGRAM_SOURCES + "processors", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "boot", source = PROGRAM_SOURCES + "boot", image = true},
