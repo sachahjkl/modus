@@ -283,6 +283,26 @@ pointer_button :: proc(machine: ^Machine, down: bool) -> bool {
 	return false
 }
 
+// One notch of the wheel toward the principal: a view moves toward the end
+// of its content (display.WHEEL_TOWARD_THE_END). A step Wheel counts its
+// notches in this unit; the negative is a notch away from the principal.
+NOTCH_TOWARD_THE_END :: 1
+
+// pointer_wheel turns the wheel of the virtual mouse by a count of notches
+// (NOTCH_TOWARD_THE_END), one packet for each, at the place of the
+// pointer. The step after it waits for the line of the view that moved.
+// Without the confirmation of the pointer, it waits until the system read
+// each packet.
+pointer_wheel :: proc(machine: ^Machine, notches: int) -> bool {
+	for _ in 0 ..< abs(notches) {
+		pointer_packet_send(machine, qmp_pointer_wheel_command(notches * NOTCH_TOWARD_THE_END > 0)) or_return
+	}
+	if !machine.confirm {
+		return input_read_wait(machine)
+	}
+	return true
+}
+
 // One picture of the screen that a worker thread turns into a PNG file,
 // while the scenario goes on.
 Picture_Job :: struct {

@@ -483,3 +483,151 @@ the_recovery_seal_key_and_the_key_check_differ :: proc(t: ^testing.T) {
 	zero: [KEY_SIZE]u8
 	testing.expect(t, check != zero)
 }
+
+test_principal_tpm_file :: proc() -> (file: Principal_Tpm_File) {
+	principal := test_file()
+	file.name, file.name_length = principal.name, principal.name_length
+	file.signing_public_key, file.unlock_public_key = principal.signing_public_key, principal.unlock_public_key
+	file.salt = principal.salt
+	file.pcrs = tpm2.PCR_SET
+	// The four parts of the record of the machine key: the same form.
+	file.object = test_machine_tpm_file().object
+	for index in 0 ..< NONCE_SIZE {
+		file.nonce[index] = u8(60 + index)
+		file.recovery_nonce[index] = u8(70 + index)
+	}
+	for index in 0 ..< SEALED_SIZE {
+		file.sealed[index] = u8(index * 7 + 3)
+		file.recovery_sealed[index] = u8(index * 11 + 5)
+	}
+	return file
+}
+
+@(test)
+a_principal_file_sealed_by_the_tpm_round_trip :: proc(t: ^testing.T) {
+	file := test_principal_tpm_file()
+	bytes: [PRINCIPAL_TPM_FILE_SIZE]u8
+	principal_tpm_file_encode(&file, &bytes)
+	decoded, kept, problem := principal_tpm_file_decode(bytes[:])
+	testing.expect_value(t, problem, File_Problem.None)
+	testing.expect(t, decoded == file)
+	testing.expect(t, kept == bytes)
+	testing.expect_value(t, string(bytes[:8]), PRINCIPAL_TPM_MAGIC)
+	// The offsets of the table of the guide (docs/PRINCIPALS.md).
+	guide_offsets := [?][2]int {
+		{PRINCIPAL_TPM_OFFSET_PCRS, 124},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PUBLIC, 136},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PRIVATE, 264},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_CREATION, 520},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_TICKET, 776},
+		{PRINCIPAL_TPM_OFFSET_NONCE, 848},
+		{PRINCIPAL_TPM_OFFSET_SEALED, 860},
+		{PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE, 940},
+		{PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED, 952},
+		{PRINCIPAL_TPM_FILE_SIZE, 1032},
+	}
+	for pair in guide_offsets {
+		testing.expect_value(t, pair[0], pair[1])
+	}
+	// The first part has the form of the file under the passphrase alone.
+	testing.expect_value(t, bytes[OFFSET_NAME_LENGTH], u8(file.name_length))
+	testing.expect_value(t, bytes[OFFSET_SIGNING_PUBLIC_KEY], file.signing_public_key[0])
+	testing.expect_value(t, bytes[OFFSET_SALT], file.salt[0])
+	testing.expect_value(t, bytes[PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PUBLIC + 2], file.public_area[2])
+	testing.expect_value(t, bytes[PRINCIPAL_TPM_OFFSET_NONCE], file.nonce[0])
+	testing.expect_value(t, bytes[PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED + SEALED_SIZE - 1], file.recovery_sealed[SEALED_SIZE - 1])
+	// The two seals cover their parts: the recovery seal stops before the
+	// salt, so a new passphrase keeps it valid.
+	testing.expect_value(t, len(principal_tpm_file_additional_data(&kept)), PRINCIPAL_TPM_OFFSET_PCRS)
+	testing.expect_value(t, len(principal_tpm_file_recovery_additional_data(&kept)), OFFSET_SALT)
+	// The form, by the first 8 bytes.
+	testing.expect_value(t, principal_record_form(bytes[:]), Principal_Record_Form.Sealed_By_The_Tpm)
+	principal := test_file()
+	principal_bytes: [FILE_SIZE]u8
+	file_encode(&principal, &principal_bytes)
+	testing.expect_value(t, principal_record_form(principal_bytes[:]), Principal_Record_Form.Passphrase)
+	testing.expect_value(t, principal_record_form(bytes[:7]), Principal_Record_Form.Unknown)
+	testing.expect_value(t, principal_record_form(nil), Principal_Record_Form.Unknown)
+	testing.expect(t, PRINCIPAL_FILE_LIMIT >= FILE_SIZE && PRINCIPAL_FILE_LIMIT >= PRINCIPAL_TPM_FILE_SIZE)
+}
+
+// The file is data from the disk: each field that the code trusts is
+// checked, as in the two other forms.
+@(test)
+hostile_principal_files_sealed_by_the_tpm_are_refused :: proc(t: ^testing.T) {
+	file := test_principal_tpm_file()
+	good: [PRINCIPAL_TPM_FILE_SIZE]u8
+	principal_tpm_file_encode(&file, &good)
+	expect :: proc(test: ^testing.T, bytes: []u8, wanted: File_Problem) {
+		_, _, problem := principal_tpm_file_decode(bytes)
+		testing.expect_value(test, problem, wanted)
+	}
+	expect(t, good[:PRINCIPAL_TPM_FILE_SIZE - 1], .Wrong_Size)
+	expect(t, nil, .Wrong_Size)
+	changed := good
+	changed[7] = 'L'
+	expect(t, changed[:], .Wrong_Magic)
+	changed = good
+	changed[OFFSET_FORMAT] = u8(PRINCIPAL_TPM_FORMAT + 1) // A format that this system does not know.
+	expect(t, changed[:], .Wrong_Format)
+	changed = good
+	changed[OFFSET_PASSES] = u8(DERIVATION_PASSES - 1) // A cheaper derivation.
+	expect(t, changed[:], .Other_Parameters)
+	changed = good
+	changed[PRINCIPAL_TPM_OFFSET_PCRS] = 0x00 // PCR 11 only: no PCR 7.
+	expect(t, changed[:], .Other_Parameters)
+	changed = good
+	changed[OFFSET_NAME_LENGTH] = NAME_LIMIT + 1
+	expect(t, changed[:], .Bad_Name)
+	changed = good
+	changed[OFFSET_NAME + NAME_LIMIT - 1] = 'x'
+	expect(t, changed[:], .Bytes_After_Name)
+	changed = good
+	changed[PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PUBLIC_BYTES] = u8(tpm2.PUBLIC_AREA_LIMIT + 1) // Past the limit of the public area.
+	expect(t, changed[:], .Bad_Area)
+	changed = good
+	changed[PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PRIVATE + file.private_bytes] = 1 // A byte after the private area.
+	expect(t, changed[:], .Bad_Area)
+	changed = good
+	changed[PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_TICKET + 1] ~= 0x01 // A ticket with another tag.
+	expect(t, changed[:], .Bad_Area)
+	// The other forms are no file sealed by the TPM.
+	principal := test_file()
+	principal_bytes: [FILE_SIZE]u8
+	file_encode(&principal, &principal_bytes)
+	expect(t, principal_bytes[:], .Wrong_Size)
+	machine := test_machine_tpm_file()
+	machine_bytes: [MACHINE_TPM_FILE_SIZE]u8
+	machine_tpm_file_encode(&machine, &machine_bytes)
+	expect(t, machine_bytes[:], .Wrong_Size)
+}
+
+// The keys of a named principal: each use has its own text, the seal key
+// needs the TPM secret and the key of the passphrase together, and the
+// recovery seal of a principal is not the recovery seal of the machine key.
+@(test)
+the_keys_of_a_principal_sealed_by_the_tpm_differ :: proc(t: ^testing.T) {
+	passphrase_key: [KEY_SIZE]u8
+	tpm_secret: [PRINCIPAL_TPM_SECRET_SIZE]u8
+	recovery: [RECOVERY_KEY_SIZE]u8
+	for index in 0 ..< KEY_SIZE {
+		passphrase_key[index] = u8(index + 1)
+		tpm_secret[index] = u8(index + 1)
+	}
+	for index in 0 ..< RECOVERY_KEY_SIZE {
+		recovery[index] = u8(index + 1)
+	}
+	authorization := principal_authorization_value(&passphrase_key)
+	seal_key := principal_tpm_seal_key(&tpm_secret, &passphrase_key)
+	testing.expect(t, seal_key == principal_tpm_seal_key(&tpm_secret, &passphrase_key))
+	testing.expect(t, authorization != seal_key)
+	other_secret := tpm_secret
+	other_secret[0] ~= 1
+	testing.expect(t, principal_tpm_seal_key(&other_secret, &passphrase_key) != seal_key)
+	other_passphrase_key := passphrase_key
+	other_passphrase_key[KEY_SIZE - 1] ~= 1
+	testing.expect(t, principal_tpm_seal_key(&tpm_secret, &other_passphrase_key) != seal_key)
+	testing.expect(t, principal_authorization_value(&other_passphrase_key) != authorization)
+	testing.expect(t, principal_recovery_seal_key(&recovery) != recovery_seal_key(&recovery))
+	testing.expect_value(t, len(authorization), tpm2.AUTHORIZATION_VALUE_SIZE)
+}

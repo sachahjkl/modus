@@ -17,9 +17,10 @@ import "core:strings"
 // the queue is full. The tool never sends more than this before the system
 // read the bytes before.
 DEVICE_QUEUE_BYTES :: 16
-// The bytes of one packet of the virtual mouse: a move or a change of a
-// button.
-POINTER_PACKET_BYTES :: 3
+// The bytes of one packet of the virtual mouse: a move, a change of a
+// button or a notch of the wheel. The input service asks the mouse for the
+// IntelliMouse protocol, whose packets have a fourth byte for the wheel.
+POINTER_PACKET_BYTES :: 4
 // Bit 0 of the status of the keyboard controller: the controller holds a
 // byte that the system has not read.
 CONTROLLER_OUTPUT_FULL :: 0x01
@@ -178,6 +179,22 @@ qmp_pointer_button_command :: proc(down: bool) -> string {
 	strings.write_string(&builder, "{\"execute\":\"input-send-event\",\"arguments\":{\"events\":[{\"type\":\"btn\",\"data\":{\"down\":")
 	strings.write_string(&builder, down ? "true" : "false")
 	strings.write_string(&builder, ",\"button\":\"left\"}}]}}")
+	return strings.to_string(builder)
+}
+
+// qmp_pointer_wheel_command gives the command that turns the wheel of the
+// virtual mouse by one notch: toward the principal (the button wheel-down
+// of QEMU) when toward_the_end, else away from the principal (wheel-up).
+// The button goes down and up in one command: QEMU counts the notch at the
+// press, and sends one packet at the end of the command.
+qmp_pointer_wheel_command :: proc(toward_the_end: bool) -> string {
+	button := toward_the_end ? "wheel-down" : "wheel-up"
+	builder := strings.builder_make(context.temp_allocator)
+	strings.write_string(&builder, "{\"execute\":\"input-send-event\",\"arguments\":{\"events\":[{\"type\":\"btn\",\"data\":{\"down\":true,\"button\":\"")
+	strings.write_string(&builder, button)
+	strings.write_string(&builder, "\"}},{\"type\":\"btn\",\"data\":{\"down\":false,\"button\":\"")
+	strings.write_string(&builder, button)
+	strings.write_string(&builder, "\"}}]}}")
 	return strings.to_string(builder)
 }
 

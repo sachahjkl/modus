@@ -80,6 +80,14 @@ Step_Kind :: enum {
 	// window to the front first when another window covers the element
 	// (machine_elements.odin).
 	Click_Element,
+	// Turn the wheel of the pointer by `notches` (NOTCH_TOWARD_THE_END for
+	// each notch toward the end of a content; negative: toward its start)
+	// over the middle of the element `element` of the window with the title
+	// text, or of the palette when text is PALETTE_ELEMENTS. The window
+	// comes to the front first: only the window in front gets the wheel
+	// (machine_elements.odin). The next step waits for the line of the view
+	// that moved.
+	Wheel,
 	// The four steps of a film (film.odin; docs/TOOLS.md, "The film"). Only
 	// the scenario of a film has them: Film_Type and Film_Hold are the only
 	// steps with a fixed time, because a film shows time.
@@ -151,7 +159,8 @@ Step :: struct {
 	inside_window: string, // For Click and Drag: (x, y), and the end of a Drag, are inside the surface of the window with this title, as the log of the compositor places it. For Point: from the corner of the window.
 	date_after: string, // For Call: the number after this text in what the tool prints is a date of the machine in milliseconds since 1970, which date_check checks by order against the clock of the host.
 	milliseconds: int, // For Film_Hold: how long the state stays on the screen.
-	element:    string, // For Click_Element: the element name ("watch", "frame 0", "round_robin").
+	element:    string, // For Click_Element and Wheel: the element name ("watch", "frame 0", "round_robin").
+	notches:    int, // For Wheel: the notches of the wheel, in NOTCH_TOWARD_THE_END.
 }
 
 // The two clocks agree to whole seconds: the machine reads its real-time
@@ -886,7 +895,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "boot program: ok"},
 	{kind = .Wait, text = "kernel: ok"},
 	{kind = .Wait, text = "root: ok"},
-	{kind = .Wait, text = "input: ok"},
+	// The virtual mouse of QEMU answers the IntelliMouse sequence: its
+	// packets have the wheel.
+	{kind = .Wait, text = "input: ok, the mouse has a wheel"},
 	// The date: the program `date` starts after the input service and reads the real-time clock of the machine,
 	// which QEMU takes from the clock of the host. The date must be within a
 	// few seconds of the host.
@@ -1146,6 +1157,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = " for \">\": "},
 	{kind = .Click_Element, text = PALETTE_ELEMENTS, element = "scroll bar arrow down"},
 	{kind = .Wait, text = "compositor: the scroll bar of the palette: a press on the arrow down, the rows from 1"},
+	// The wheel over the rows moves them too: one notch toward the end,
+	// three rows (interface.SCROLL_WHEEL_LINES_PER_NOTCH).
+	{kind = .Wheel, text = PALETTE_ELEMENTS, element = "scroll bar view", notches = NOTCH_TOWARD_THE_END},
+	{kind = .Wait, text = "compositor: the wheel moves the rows of the palette: the rows from 4"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	// A field that counts a size shows its unit after the number: the
@@ -2379,6 +2394,13 @@ scenario := [?]Step {
 	{kind = .Wait, text = "terminal: a press on the arrow up of the scroll bar of console: the view starts at line "},
 	{kind = .Click_Element, text = "console", element = "scroll bar arrow down"},
 	{kind = .Wait, text = "terminal: a press on the arrow down of the scroll bar of console: the view follows the last lines"},
+	// The wheel over the lines moves the view: one notch up holds it
+	// three lines above the end, one notch down brings it back to the
+	// last lines.
+	{kind = .Wheel, text = "console", element = "scroll bar view", notches = -NOTCH_TOWARD_THE_END},
+	{kind = .Wait, text = "terminal: the wheel moves the view of console: the view starts at line "},
+	{kind = .Wheel, text = "console", element = "scroll bar view", notches = NOTCH_TOWARD_THE_END},
+	{kind = .Wait, text = "terminal: the wheel moves the view of console: the view follows the last lines"},
 	// Over the scroll bar the pointer is the arrow, and over the text of
 	// the terminal the text shape: the terminal asks for each one when the
 	// pointer crosses the edge of the bar. The picture has the arrow.
@@ -2683,6 +2705,12 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "interface_elements: the damage is shown"},
 	{kind = .Shot, text = "interface_damage"},
+	// The wheel over the list moves its view by three lines, and the
+	// choice follows the view: from clock, in the view of three lines that
+	// starts at boot, to compositor, the last line of the view that starts
+	// at the fourth name, and the last of the six names.
+	{kind = .Wheel, text = "interface_elements", element = "list", notches = NOTCH_TOWARD_THE_END},
+	{kind = .Wait, text = "interface_elements: the list chooses compositor"},
 	{kind = .Close, text = "interface_elements"},
 	{kind = .Wait, text = "root: interface_elements stopped"},
 	// The vector font of the system (docs/FONTS.md): the seven candidates,
@@ -3762,6 +3790,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			window_front_bring(machine, step.text, index) or_return
 		case .Click_Element:
 			element_click(machine, step.text, step.element, index) or_return
+		case .Wheel:
+			element_wheel(machine, step.text, step.element, step.notches, index) or_return
 		case .Screen_Text:
 			read := screen_text_read(machine, step.text, step.element, index) or_return
 			delete(screen_text_kept)

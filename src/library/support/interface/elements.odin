@@ -247,8 +247,8 @@ List_Options :: struct {
 // list_with_choice draws the lines of a list, the chosen line in blue, and
 // a scroll bar at the right when the lines do not fit. With the focus, up
 // and down move the choice; Enter, or a press on a line, activates it. The
-// scroll bar moves the choice, which the view follows. It gives changed
-// when the choice changed.
+// scroll bar, and the wheel over the list, move the choice, which the view
+// follows. It gives changed when the choice changed.
 list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, names: []string, choice: ^int, options: List_Options = {}) -> Element_Result {
 	result := element_interact(frame, element, area, .List)
 	rows := max(area.height / TABLE_LINE, 1)
@@ -279,7 +279,9 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 		// The view of this list follows its choice, so the scroll bar
 		// moves the choice: to the last line of the view that it asks for.
 		bar_area := Area{area.x + area.width - scroll_width, area.y, scroll_width, rows * TABLE_LINE}
-		moved := scroll_bar(frame, bar_area, identity_in(element, "scroll bar"), .Vertical, {total = len(names), visible = rows, first = first})
+		// The wheel over the lines moves the view too: the whole list is
+		// the view of the bar.
+		moved := scroll_bar(frame, bar_area, identity_in(element, "scroll bar"), .Vertical, {total = len(names), visible = rows, first = first}, {}, "", area)
 		if moved.changed {
 			choice^ = min(moved.first + rows - 1, len(names) - 1)
 			first = max(choice^ - rows + 1, 0)
@@ -488,8 +490,9 @@ draw_kind_icon :: proc "contextless" (table: ^Draw_Table, x, y: int, icon: ^kind
 // right its hint when the caller gives one, else the same text as the
 // other rows. The caller owns the choice and gives only the rows that the
 // area shows, so the work is the rows on the screen, not the rows of the
-// list. The rows take no input; the scroll bar takes the pointer when the
-// caller names it (List_Rows_Options.scroll_bar). It gives the count of the
+// list. The rows take no input; the scroll bar takes the pointer, and the
+// wheel over the rows, when the caller names it
+// (List_Rows_Options.scroll_bar). It gives the count of the
 // rows that it drew.
 list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row, options: List_Rows_Options) -> int {
 	table := frame.table
@@ -572,7 +575,8 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 		bar_area := Area{area.x + area.width - scroll_width, area.y, scroll_width, bar_length}
 		range := Scroll_Range{total = options.total, visible = visible_rows, first = options.first}
 		if options.scroll_bar != 0 {
-			moved := scroll_bar(frame, bar_area, options.scroll_bar, .Vertical, range, {}, options.scroll_bar_name)
+			// The rows are the view of the bar: the wheel over them moves it.
+			moved := scroll_bar(frame, bar_area, options.scroll_bar, .Vertical, range, {}, options.scroll_bar_name, area)
 			if options.scrolled != nil {
 				options.scrolled^ = moved
 			}

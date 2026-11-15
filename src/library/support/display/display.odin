@@ -41,6 +41,7 @@ import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:support/graphics"
 import "modus:contract/ring"
+import "modus:support/key_path"
 import "modus:contract/fixed_addresses"
 import "modus:contract/glyph_cache"
 import "modus:contract/pointer_pictures"
@@ -95,7 +96,7 @@ act_names_send :: proc "contextless" (window: ^Window, hashes: []u64) -> bool {
 Event_Kind :: enum u32 {
 	None             = 0, // No event.
 	Key              = 1, // values: code, character, 1 when pressed, modifiers
-	Pointer          = 2, // values: x, y in the surface (signed), buttons
+	Pointer          = 2, // values: x, y in the surface (signed), buttons, wheel notches (signed: WHEEL_TOWARD_THE_END for each notch toward the end of the content)
 	// The settings of the owner changed (modus:contract/settings): next_event
 	// already gave the new font to src/library/support/graphics; the program draws its
 	// window again. values: the change count of the settings page.
@@ -130,8 +131,14 @@ Control :: enum u32 {
 Input :: enum u32 {
 	None    = 0, // Not a command.
 	Key     = 1, // values: code, character (a code point, or 0), 1 when pressed, modifiers
-	Pointer = 2, // values: x motion, y motion (signed), buttons
+	Pointer = 2, // values: x motion, y motion (signed), buttons, wheel notches (signed)
 }
+
+// The sign of the wheel notches of a pointer record and of an `Event`: a
+// notch toward the principal (the wheel turned down) moves a view toward
+// the end of its content, as the key Down does. A notch away from the
+// principal is the negative of this.
+WHEEL_TOWARD_THE_END :: 1
 
 // The codes of the keys: the scan code of set 1 of the keyboard of the PC.
 // A key whose scan code comes after the prefix 0xE0 has KEY_EXTENDED added.
@@ -161,7 +168,7 @@ SURFACE_LIMIT :: 2048 // The largest width and height.
 
 // One event of a window, as `next_event` gives it. A key event fills
 // `code`, `character`, `pressed` and `modifiers`; a pointer event fills
-// `x`, `y` and `buttons`.
+// `x`, `y`, `buttons` and `wheel`.
 Event :: struct {
 	kind:      Event_Kind, // What happened.
 	code:      u32, // A key: its code (`KEY_` constants).
@@ -170,6 +177,7 @@ Event :: struct {
 	modifiers: u32, // A key: the `MODIFIER_` bits.
 	x, y:      int, // The pointer: its place in the surface, in pixels; it can be outside the surface.
 	buttons:   u32, // The pointer: the `BUTTON_` bits.
+	wheel:     int, // The pointer: the notches that the wheel turned since the event before, signed (WHEEL_TOWARD_THE_END).
 	act:       u64, // Go_To: the act_name_hash of the act name.
 }
 
@@ -472,6 +480,9 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		event.x = int(i64(record.values[0]))
 		event.y = int(i64(record.values[1]))
 		event.buttons = u32(record.values[2])
+		// The compositor writes the notches: a count past the limit is cut,
+		// so that a sum of them stays far inside an int.
+		event.wheel = int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
 	case .Settings_Changed:
 		text_settings_apply()
 	case .Go_To:
