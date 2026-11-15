@@ -2,6 +2,7 @@ package modustool
 
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/replacement_list"
 import "modus:contract/system_description"
 import "core:fmt"
 import "core:mem"
@@ -285,6 +286,15 @@ boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, cha
 	}
 	kernel := read_file(module_path(kernel_name)) or_return
 
+	key := signing_key_read() or_return
+	// The private key leaves the memory of the tool after its uses: the
+	// replacement rows, then the description.
+	defer ed25519.private_key_clear(&key.private_key)
+	// The replacement list is a resource before the description, so the
+	// description lists it, and its rows are signed by the same key.
+	replacement_rows := replacement_list_of_the_build(files[:module_count], &key) or_return
+	append(&files, Image_File{name = replacement_list.RESOURCE_NAME, file = replacement_rows})
+
 	description := make([dynamic]u8, context.temp_allocator)
 	header := system_description.Header{magic = system_description.MAGIC, version = system_description.VERSION, entry_count = u32(1 + len(files))}
 	append(&description, ..mem.ptr_to_bytes(&header))
@@ -300,9 +310,6 @@ boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, cha
 		return
 	}
 
-	key := signing_key_read() or_return
-	// The private key leaves the memory of the tool after this one use.
-	defer ed25519.private_key_clear(&key.private_key)
 	message := system_description.signed_message(description[:])
 	signature: [system_description.SIGNATURE_SIZE]u8
 	ed25519.sign(&key.private_key, message[:], signature[:])
