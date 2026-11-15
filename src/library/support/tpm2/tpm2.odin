@@ -209,127 +209,127 @@ Command_Writer :: struct {
 }
 
 @(private)
-put_bytes :: proc "contextless" (writer: ^Command_Writer, bytes: []u8) {
-	if writer.overflowed || len(bytes) > len(writer.buffer) - writer.count {
-		writer.overflowed = true
+put_bytes :: proc "contextless" (command_writer: ^Command_Writer, bytes: []u8) {
+	if command_writer.overflowed || len(bytes) > len(command_writer.buffer) - command_writer.count {
+		command_writer.overflowed = true
 		return
 	}
-	copy(writer.buffer[writer.count:], bytes)
-	writer.count += len(bytes)
+	copy(command_writer.buffer[command_writer.count:], bytes)
+	command_writer.count += len(bytes)
 }
 
 @(private)
-put_u8 :: proc "contextless" (writer: ^Command_Writer, value: u8) {
+put_u8 :: proc "contextless" (command_writer: ^Command_Writer, value: u8) {
 	bytes := [1]u8{value}
-	put_bytes(writer, bytes[:])
+	put_bytes(command_writer, bytes[:])
 }
 
 @(private)
-put_u16 :: proc "contextless" (writer: ^Command_Writer, value: u16) {
+put_u16 :: proc "contextless" (command_writer: ^Command_Writer, value: u16) {
 	bytes := [2]u8{u8(value >> 8), u8(value)}
-	put_bytes(writer, bytes[:])
+	put_bytes(command_writer, bytes[:])
 }
 
 @(private)
-put_u32 :: proc "contextless" (writer: ^Command_Writer, value: u32) {
+put_u32 :: proc "contextless" (command_writer: ^Command_Writer, value: u32) {
 	bytes := [4]u8{u8(value >> 24), u8(value >> 16), u8(value >> 8), u8(value)}
-	put_bytes(writer, bytes[:])
+	put_bytes(command_writer, bytes[:])
 }
 
 // put_sized puts a sized buffer of the TPM (a TPM2B): its bytes as a u16,
 // then the bytes.
 @(private)
-put_sized :: proc "contextless" (writer: ^Command_Writer, bytes: []u8) {
+put_sized :: proc "contextless" (command_writer: ^Command_Writer, bytes: []u8) {
 	if len(bytes) > 0xFFFF {
-		writer.overflowed = true
+		command_writer.overflowed = true
 		return
 	}
-	put_u16(writer, u16(len(bytes)))
-	put_bytes(writer, bytes)
+	put_u16(command_writer, u16(len(bytes)))
+	put_bytes(command_writer, bytes)
 }
 
 // set_u16_at and set_u32_at write a number at a place that the writer
 // passed: a size that is known only after the bytes that it counts.
 @(private)
-set_u16_at :: proc "contextless" (writer: ^Command_Writer, place: int, value: u16) {
-	if writer.overflowed || place + 2 > writer.count {
+set_u16_at :: proc "contextless" (command_writer: ^Command_Writer, place: int, value: u16) {
+	if command_writer.overflowed || place + 2 > command_writer.count {
 		return
 	}
-	writer.buffer[place], writer.buffer[place + 1] = u8(value >> 8), u8(value)
+	command_writer.buffer[place], command_writer.buffer[place + 1] = u8(value >> 8), u8(value)
 }
 
 @(private)
-set_u32_at :: proc "contextless" (writer: ^Command_Writer, place: int, value: u32) {
-	if writer.overflowed || place + 4 > writer.count {
+set_u32_at :: proc "contextless" (command_writer: ^Command_Writer, place: int, value: u32) {
+	if command_writer.overflowed || place + 4 > command_writer.count {
 		return
 	}
-	writer.buffer[place], writer.buffer[place + 1], writer.buffer[place + 2], writer.buffer[place + 3] = u8(value >> 24), u8(value >> 16), u8(value >> 8), u8(value)
+	command_writer.buffer[place], command_writer.buffer[place + 1], command_writer.buffer[place + 2], command_writer.buffer[place + 3] = u8(value >> 24), u8(value >> 16), u8(value >> 8), u8(value)
 }
 
 // begin writes the header of a command: the tag, the size that end writes,
 // and the code.
 @(private)
-begin :: proc "contextless" (buffer: []u8, tag: u16, code: u32) -> (writer: Command_Writer) {
-	writer.buffer = buffer
-	put_u16(&writer, tag)
-	put_u32(&writer, 0)
-	put_u32(&writer, code)
+begin :: proc "contextless" (buffer: []u8, tag: u16, code: u32) -> (command_writer: Command_Writer) {
+	command_writer.buffer = buffer
+	put_u16(&command_writer, tag)
+	put_u32(&command_writer, 0)
+	put_u32(&command_writer, code)
 	return
 }
 
 // end writes the size of the command in its header, and gives its bytes: 0
 // when it did not fit.
 @(private)
-end :: proc "contextless" (writer: ^Command_Writer) -> int {
-	if writer.overflowed {
+end :: proc "contextless" (command_writer: ^Command_Writer) -> int {
+	if command_writer.overflowed {
 		return 0
 	}
-	set_u32_at(writer, 2, u32(writer.count))
-	return writer.count
+	set_u32_at(command_writer, 2, u32(command_writer.count))
+	return command_writer.count
 }
 
 // put_password_session puts the authorization area of one session of the
 // empty password: the owner hierarchy and the storage key have no
 // authorization value.
 @(private)
-put_password_session :: proc "contextless" (writer: ^Command_Writer) {
-	put_u32(writer, 9) // The bytes of the area: one session of 9 bytes.
-	put_u32(writer, HANDLE_PASSWORD)
-	put_u16(writer, 0) // No nonce.
-	put_u8(writer, 0) // No attribute.
-	put_u16(writer, 0) // The empty password.
+put_password_session :: proc "contextless" (command_writer: ^Command_Writer) {
+	put_u32(command_writer, 9) // The bytes of the area: one session of 9 bytes.
+	put_u32(command_writer, HANDLE_PASSWORD)
+	put_u16(command_writer, 0) // No nonce.
+	put_u8(command_writer, 0) // No attribute.
+	put_u16(command_writer, 0) // The empty password.
 }
 
 // create_primary_command builds TPM2_CreatePrimary of the storage key under
 // the owner hierarchy: an ECC P-256 key that decrypts with AES-128 in CFB
 // mode, restricted, with no unique bytes.
 create_primary_command :: proc "contextless" (buffer: []u8) -> int {
-	writer := begin(buffer, TAG_SESSIONS, COMMAND_CREATE_PRIMARY)
-	put_u32(&writer, HANDLE_OWNER)
-	put_password_session(&writer)
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_CREATE_PRIMARY)
+	put_u32(&command_writer, HANDLE_OWNER)
+	put_password_session(&command_writer)
 	// The sensitive part: no authorization value and no data.
-	put_u16(&writer, 4)
-	put_u16(&writer, 0)
-	put_u16(&writer, 0)
+	put_u16(&command_writer, 4)
+	put_u16(&command_writer, 0)
+	put_u16(&command_writer, 0)
 	// The public part, with its size first.
-	size_place := writer.count
-	put_u16(&writer, 0)
-	put_u16(&writer, ALGORITHM_ECC)
-	put_u16(&writer, ALGORITHM_SHA256)
-	put_u32(&writer, STORAGE_KEY_ATTRIBUTES)
-	put_u16(&writer, 0) // No policy.
-	put_u16(&writer, ALGORITHM_AES)
-	put_u16(&writer, 128)
-	put_u16(&writer, ALGORITHM_CFB)
-	put_u16(&writer, ALGORITHM_NULL) // The scheme of a restricted decryption key.
-	put_u16(&writer, CURVE_NIST_P256)
-	put_u16(&writer, ALGORITHM_NULL) // No key derivation function.
-	put_u16(&writer, 0) // The unique point: x empty,
-	put_u16(&writer, 0) // and y empty.
-	set_u16_at(&writer, size_place, u16(writer.count - size_place - 2))
-	put_u16(&writer, 0) // No outside information.
-	put_u32(&writer, 0) // No PCR in the creation data.
-	return end(&writer)
+	size_place := command_writer.count
+	put_u16(&command_writer, 0)
+	put_u16(&command_writer, ALGORITHM_ECC)
+	put_u16(&command_writer, ALGORITHM_SHA256)
+	put_u32(&command_writer, STORAGE_KEY_ATTRIBUTES)
+	put_u16(&command_writer, 0) // No policy.
+	put_u16(&command_writer, ALGORITHM_AES)
+	put_u16(&command_writer, 128)
+	put_u16(&command_writer, ALGORITHM_CFB)
+	put_u16(&command_writer, ALGORITHM_NULL) // The scheme of a restricted decryption key.
+	put_u16(&command_writer, CURVE_NIST_P256)
+	put_u16(&command_writer, ALGORITHM_NULL) // No key derivation function.
+	put_u16(&command_writer, 0) // The unique point: x empty,
+	put_u16(&command_writer, 0) // and y empty.
+	set_u16_at(&command_writer, size_place, u16(command_writer.count - size_place - 2))
+	put_u16(&command_writer, 0) // No outside information.
+	put_u32(&command_writer, 0) // No PCR in the creation data.
+	return end(&command_writer)
 }
 
 // start_session_command builds TPM2_StartAuthSession of a session with no
@@ -338,50 +338,50 @@ create_primary_command :: proc "contextless" (buffer: []u8) -> int {
 // a policy, or SESSION_POLICY, to satisfy one. The nonce of the caller is
 // 16 zero bytes: a session with an empty key computes no HMAC from it.
 start_session_command :: proc "contextless" (buffer: []u8, kind: u8) -> int {
-	writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_START_AUTH_SESSION)
-	put_u32(&writer, HANDLE_NULL)
-	put_u32(&writer, HANDLE_NULL)
+	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_START_AUTH_SESSION)
+	put_u32(&command_writer, HANDLE_NULL)
+	put_u32(&command_writer, HANDLE_NULL)
 	nonce: [NONCE_SIZE]u8
-	put_sized(&writer, nonce[:])
-	put_u16(&writer, 0) // No salt.
-	put_u8(&writer, kind)
-	put_u16(&writer, ALGORITHM_NULL)
-	put_u16(&writer, ALGORITHM_SHA256)
-	return end(&writer)
+	put_sized(&command_writer, nonce[:])
+	put_u16(&command_writer, 0) // No salt.
+	put_u8(&command_writer, kind)
+	put_u16(&command_writer, ALGORITHM_NULL)
+	put_u16(&command_writer, ALGORITHM_SHA256)
+	return end(&command_writer)
 }
 
 // policy_pcr_command builds TPM2_PolicyPCR with PCR 7 and PCR 11 of the
 // SHA-256 bank and no digest: the TPM takes the values of the PCRs now.
 policy_pcr_command :: proc "contextless" (buffer: []u8, session: u32) -> int {
-	writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_POLICY_PCR)
-	put_u32(&writer, session)
-	put_u16(&writer, 0) // No digest.
-	put_pcr_selection(&writer)
-	return end(&writer)
+	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_POLICY_PCR)
+	put_u32(&command_writer, session)
+	put_u16(&command_writer, 0) // No digest.
+	put_pcr_selection(&command_writer)
+	return end(&command_writer)
 }
 
 // policy_get_digest_command builds TPM2_PolicyGetDigest of a session.
 policy_get_digest_command :: proc "contextless" (buffer: []u8, session: u32) -> int {
-	writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_POLICY_GET_DIGEST)
-	put_u32(&writer, session)
-	return end(&writer)
+	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_POLICY_GET_DIGEST)
+	put_u32(&command_writer, session)
+	return end(&command_writer)
 }
 
 // policy_password_command builds TPM2_PolicyPassword: the use of the
 // object then needs its authorization value, sent in the session as a
 // password.
 policy_password_command :: proc "contextless" (buffer: []u8, session: u32) -> int {
-	writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_POLICY_PASSWORD)
-	put_u32(&writer, session)
-	return end(&writer)
+	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_POLICY_PASSWORD)
+	put_u32(&command_writer, session)
+	return end(&command_writer)
 }
 
 // shutdown_command builds TPM2_Shutdown(CLEAR): the TPM writes its state,
 // and the next start is orderly. The TPM goes on to take commands after it.
 shutdown_command :: proc "contextless" (buffer: []u8) -> int {
-	writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_SHUTDOWN)
-	put_u16(&writer, SHUTDOWN_CLEAR)
-	return end(&writer)
+	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_SHUTDOWN)
+	put_u16(&command_writer, SHUTDOWN_CLEAR)
+	return end(&command_writer)
 }
 
 // create_sealed_command builds TPM2_Create of a keyed-hash object under the
@@ -389,42 +389,42 @@ shutdown_command :: proc "contextless" (buffer: []u8) -> int {
 // authorization value (not empty), the object has it, with the attributes
 // AUTHORIZED_SEALED_OBJECT_ATTRIBUTES; with none, SEALED_OBJECT_ATTRIBUTES.
 create_sealed_command :: proc "contextless" (buffer: []u8, parent: u32, secret: ^[SECRET_SIZE]u8, policy: ^[DIGEST_SIZE]u8, authorization: []u8) -> int {
-	writer := begin(buffer, TAG_SESSIONS, COMMAND_CREATE)
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_CREATE)
 	if len(authorization) > AUTHORIZATION_VALUE_SIZE {
 		return 0
 	}
-	put_u32(&writer, parent)
-	put_password_session(&writer)
+	put_u32(&command_writer, parent)
+	put_password_session(&command_writer)
 	// The sensitive part: the authorization value, and the secret as data.
-	put_u16(&writer, u16(2 + len(authorization) + 2 + SECRET_SIZE))
-	put_sized(&writer, authorization)
-	put_sized(&writer, secret^[:])
+	put_u16(&command_writer, u16(2 + len(authorization) + 2 + SECRET_SIZE))
+	put_sized(&command_writer, authorization)
+	put_sized(&command_writer, secret^[:])
 	// The public part.
-	size_place := writer.count
-	put_u16(&writer, 0)
-	put_u16(&writer, ALGORITHM_KEYED_HASH)
-	put_u16(&writer, ALGORITHM_SHA256)
-	put_u32(&writer, sealed_object_attributes(len(authorization) > 0))
-	put_sized(&writer, policy^[:])
-	put_u16(&writer, ALGORITHM_NULL) // No scheme: a sealed object signs nothing.
-	put_u16(&writer, 0) // No unique bytes: the TPM computes them.
-	set_u16_at(&writer, size_place, u16(writer.count - size_place - 2))
-	put_u16(&writer, 0) // No outside information.
+	size_place := command_writer.count
+	put_u16(&command_writer, 0)
+	put_u16(&command_writer, ALGORITHM_KEYED_HASH)
+	put_u16(&command_writer, ALGORITHM_SHA256)
+	put_u32(&command_writer, sealed_object_attributes(len(authorization) > 0))
+	put_sized(&command_writer, policy^[:])
+	put_u16(&command_writer, ALGORITHM_NULL) // No scheme: a sealed object signs nothing.
+	put_u16(&command_writer, 0) // No unique bytes: the TPM computes them.
+	set_u16_at(&command_writer, size_place, u16(command_writer.count - size_place - 2))
+	put_u16(&command_writer, 0) // No outside information.
 	// PCR 7 and PCR 11 in the creation data: the TPM writes their digest at
 	// the creation, and the creation ticket covers it.
-	put_pcr_selection(&writer)
-	return end(&writer)
+	put_pcr_selection(&command_writer)
+	return end(&command_writer)
 }
 
 // put_pcr_selection puts the selection of PCR 7 and PCR 11 of the SHA-256
 // bank, as one list of one selection.
 @(private)
-put_pcr_selection :: proc "contextless" (writer: ^Command_Writer) {
-	put_u32(writer, 1)
-	put_u16(writer, ALGORITHM_SHA256)
+put_pcr_selection :: proc "contextless" (command_writer: ^Command_Writer) {
+	put_u32(command_writer, 1)
+	put_u16(command_writer, ALGORITHM_SHA256)
 	selection := PCR_SELECTION
-	put_u8(writer, u8(len(selection)))
-	put_bytes(writer, selection[:])
+	put_u8(command_writer, u8(len(selection)))
+	put_bytes(command_writer, selection[:])
 }
 
 // certify_creation_command builds TPM2_CertifyCreation of a loaded object
@@ -433,27 +433,27 @@ put_pcr_selection :: proc "contextless" (writer: ^Command_Writer) {
 // name of the object, and signs nothing. A ticket that is not answers
 // TPM_RC_TICKET.
 certify_creation_command :: proc "contextless" (buffer: []u8, object: u32, creation_hash: ^[DIGEST_SIZE]u8, ticket: []u8) -> int {
-	writer := begin(buffer, TAG_SESSIONS, COMMAND_CERTIFY_CREATION)
-	put_u32(&writer, HANDLE_NULL)
-	put_u32(&writer, object)
-	put_password_session(&writer)
-	put_u16(&writer, 0) // No qualifying data.
-	put_sized(&writer, creation_hash^[:])
-	put_u16(&writer, ALGORITHM_NULL) // No scheme: no signature.
-	put_bytes(&writer, ticket)
-	return end(&writer)
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_CERTIFY_CREATION)
+	put_u32(&command_writer, HANDLE_NULL)
+	put_u32(&command_writer, object)
+	put_password_session(&command_writer)
+	put_u16(&command_writer, 0) // No qualifying data.
+	put_sized(&command_writer, creation_hash^[:])
+	put_u16(&command_writer, ALGORITHM_NULL) // No scheme: no signature.
+	put_bytes(&command_writer, ticket)
+	return end(&command_writer)
 }
 
 // load_command builds TPM2_Load of a sealed object under the storage key.
 // The two areas are the sized buffers that TPM2_Create gave, with their
 // size fields.
 load_command :: proc "contextless" (buffer: []u8, parent: u32, public_area: []u8, private_area: []u8) -> int {
-	writer := begin(buffer, TAG_SESSIONS, COMMAND_LOAD)
-	put_u32(&writer, parent)
-	put_password_session(&writer)
-	put_bytes(&writer, private_area)
-	put_bytes(&writer, public_area)
-	return end(&writer)
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_LOAD)
+	put_u32(&command_writer, parent)
+	put_password_session(&command_writer)
+	put_bytes(&command_writer, private_area)
+	put_bytes(&command_writer, public_area)
+	return end(&command_writer)
 }
 
 // unseal_command builds TPM2_Unseal of a loaded object with a policy
@@ -462,25 +462,25 @@ load_command :: proc "contextless" (buffer: []u8, parent: u32, public_area: []u8
 // TPM2_PolicyPassword: the field of the HMAC holds the value itself, which
 // the TPM compares with the value of the object.
 unseal_command :: proc "contextless" (buffer: []u8, item: u32, session: u32, authorization: []u8) -> int {
-	writer := begin(buffer, TAG_SESSIONS, COMMAND_UNSEAL)
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_UNSEAL)
 	if len(authorization) > AUTHORIZATION_VALUE_SIZE {
 		return 0
 	}
-	put_u32(&writer, item)
-	put_u32(&writer, u32(4 + 2 + 1 + 2 + len(authorization)))
-	put_u32(&writer, session)
-	put_u16(&writer, 0)
-	put_u8(&writer, SESSION_CONTINUE)
-	put_sized(&writer, authorization)
-	return end(&writer)
+	put_u32(&command_writer, item)
+	put_u32(&command_writer, u32(4 + 2 + 1 + 2 + len(authorization)))
+	put_u32(&command_writer, session)
+	put_u16(&command_writer, 0)
+	put_u8(&command_writer, SESSION_CONTINUE)
+	put_sized(&command_writer, authorization)
+	return end(&command_writer)
 }
 
 // flush_command builds TPM2_FlushContext of a session or of a loaded
 // object.
 flush_command :: proc "contextless" (buffer: []u8, handle: u32) -> int {
-	writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_FLUSH_CONTEXT)
-	put_u32(&writer, handle)
-	return end(&writer)
+	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_FLUSH_CONTEXT)
+	put_u32(&command_writer, handle)
+	return end(&command_writer)
 }
 
 // The read of one answer: each read checks the bytes that are left first.
@@ -680,9 +680,9 @@ policy_pcr_digest :: proc "contextless" (pcr_digest: ^[DIGEST_SIZE]u8) -> [DIGES
 	empty: [DIGEST_SIZE]u8
 	code := [4]u8{u8(COMMAND_POLICY_PCR >> 24), u8(COMMAND_POLICY_PCR >> 16 & 0xFF), u8(COMMAND_POLICY_PCR >> 8 & 0xFF), u8(COMMAND_POLICY_PCR & 0xFF)}
 	selection_bytes: [10]u8
-	writer := Command_Writer{buffer = selection_bytes[:]}
-	put_pcr_selection(&writer)
-	return sha256_of(empty[:], code[:], selection_bytes[:writer.count], pcr_digest^[:])
+	command_writer := Command_Writer{buffer = selection_bytes[:]}
+	put_pcr_selection(&command_writer)
+	return sha256_of(empty[:], code[:], selection_bytes[:command_writer.count], pcr_digest^[:])
 }
 
 // policy_with_password_digest gives the policy that follows a policy with
