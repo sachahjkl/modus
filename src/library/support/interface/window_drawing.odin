@@ -56,6 +56,23 @@ Window_Drawing :: struct {
 	act_names_sent_count: int,
 	act_names_sent_once:  bool, // A set went to the compositor: before it, the compositor has none.
 	act_names_dropped_logged: bool, // The line of a frame with act names that it did not keep is on the log: a window writes it one time.
+	// The named elements that the log has from this window: a drawn frame
+	// writes the lines of what differs (element_places_publish).
+	element_places_written: Element_Places,
+	element_places_dropped_logged: bool, // The line of a frame with element names that it did not keep is on the log: a window writes it one time.
+}
+
+// element_places_write writes on the log the element places of a frame
+// that the window draws, when they changed: a machine test presses an
+// element by its name from these lines.
+@(private = "file")
+element_places_write :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) {
+	title := string(window.title[:window.title_count])
+	if frame.element_places.dropped > 0 && !drawing.element_places_dropped_logged {
+		drawing.element_places_dropped_logged = true
+		system.log_in("programs", .Warning, "interface: ", title, ": a frame names ", u64(frame.element_places.dropped), " elements that the window does not keep: empty, longer than ", u64(ELEMENT_NAME_CAPACITY), " bytes, or past ", u64(ELEMENT_PLACE_CAPACITY), "; they have no element line. A window writes this line one time")
+	}
+	element_places_publish(&drawing.element_places_written, &frame.element_places, "programs", "interface: ", title)
 }
 
 // act_names_differ says if the act names of a frame differ from the set
@@ -391,6 +408,7 @@ window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame,
 	drawing.difference_time = measured - start
 	count := window_frame_show(drawing, window, &changes)
 	drawing.draw_time = system.nanoseconds() - measured
+	element_places_write(drawing, frame, window)
 	return count
 }
 
@@ -495,6 +513,7 @@ window_frame_end_without_present :: proc "contextless" (drawing: ^Window_Drawing
 	}
 	drawing.damage.rectangles[0] = whole_surface[0]
 	drawing.damage.count = 1
+	element_places_write(drawing, frame, window)
 	return true
 }
 

@@ -101,6 +101,9 @@ candidate_at :: proc "contextless" (panel: ^Panel, panel_x, panel_y, x, y: int) 
 // the entries and the candidates of a form are never on the screen
 // together, so one name serves both.
 SCROLL_BAR_NAME :: "the scroll bar of the palette"
+// The element name of that scroll bar: its parts are "scroll bar arrow
+// down" and the others (interface.scroll_bar).
+SCROLL_BAR_ELEMENT_NAME :: "scroll bar"
 
 // scroll_bar_identity gives the identity of the scroll bar of the panel in
 // the interface state of its owner.
@@ -638,6 +641,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 			// The scroll bar takes the pointer in the search. The question
 			// of an entry that destroys keeps its row: its bar only shows.
 			options.scroll_bar = scroll_bar_identity()
+			options.scroll_bar_name = SCROLL_BAR_ELEMENT_NAME
 			options.scrolled = &panel.scrolled
 		}
 		interface.list_of_rows(frame, list_area, rows[:shown_count], options)
@@ -888,11 +892,14 @@ form_button_at :: proc "contextless" (panel: ^Panel, table: ^interface.Draw_Tabl
 // form_buttons_draw draws the buttons of the current field of a form: the
 // chosen candidate filled. In the band, a button that is not chosen has
 // the surface of a card, so it shows on the track of the band; under the
-// band, the track.
+// band, the track. The name of each candidate is the element name of its
+// button: a machine test presses "round_robin".
 @(private)
-form_buttons_draw :: proc "contextless" (table: ^interface.Draw_Table, form: ^Form, buttons: ^Form_Buttons) {
+form_buttons_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, buttons: ^Form_Buttons) {
+	table := frame.table
 	for index in 0 ..< buttons.count {
 		area := buttons.areas[index]
+		interface.element_name(frame, area, candidate_name(form, index))
 		chosen := index == form.candidate_choice
 		fill := graphics.Color(buttons.in_band ? graphics.COLOR_CARD_TOP : graphics.COLOR_TRACK)
 		color := graphics.Color(graphics.COLOR_TEXT)
@@ -949,10 +956,32 @@ form_band_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, x, y
 		interface.draw_text(table, text_x + (start - first) * BAND_CELL_WIDTH, text_y, string(characters[start:end]), color, font)
 		start = end
 	}
+	// Each field that the band shows is an element: "field 1", from the
+	// first character of its name to the end of its unit, as much of it as
+	// the band shows. A press there puts the caret in it (form_place_at).
+	// The number of a field has two digits at most.
+	#assert(FIELD_CAPACITY <= 100)
+	for field in 0 ..< min(form.field_count, FIELD_CAPACITY) {
+		field_start := max(band.field_starts[field], first)
+		field_end := min(band.value_starts[field] + band.value_counts[field] + len(field_unit_text(form, field)), last)
+		if field_end <= field_start {
+			continue
+		}
+		digits: [2]u8
+		digit_count := 0
+		if field >= 10 {
+			digits[0] = u8('0' + field / 10)
+			digit_count = 1
+		}
+		digits[digit_count] = u8('0' + field % 10)
+		digit_count += 1
+		area := interface.Area{text_x + (field_start - first) * BAND_CELL_WIDTH, y, (field_end - field_start) * BAND_CELL_WIDTH, INPUT_BAND_HEIGHT - 2}
+		interface.element_name_joined(frame, area, "field", string(digits[:digit_count]))
+	}
 	// A field with a few closed values: its buttons at the right of the
 	// call, when the band has the room.
 	if buttons := form_buttons_layout(table, form, x, y); buttons.in_band {
-		form_buttons_draw(table, form, &buttons)
+		form_buttons_draw(frame, form, &buttons)
 	}
 }
 
@@ -1001,7 +1030,7 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 		// A few closed values: a row of buttons in place of the list, in
 		// the band or on the first row, and what the keys do under it.
 		if !buttons.in_band {
-			form_buttons_draw(table, form, &buttons)
+			form_buttons_draw(frame, form, &buttons)
 		}
 		hint_top := buttons.in_band ? y + LIST_TOP + 4 : y + LIST_TOP + ROW_HEIGHT + 4
 		interface.draw_text(table, x + TEXT_MARGIN, hint_top, interface.text_fit(table, interface.FONT_INTERFACE, WORDS_OF_BUTTONS, text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
@@ -1014,7 +1043,7 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 			rows[index] = {kind = .Entry, name = candidate_name(form, first + index), icon = candidates_icon, icon_color = candidates_color, right_text = words}
 		}
 		chosen_shown := choice >= first && choice < first + shown_count ? choice - first : NO_ROW
-		interface.list_of_rows(frame, list_area, rows[:shown_count], {chosen = chosen_shown, first = first, total = form.shown_count, scroll_bar = scroll_bar_identity(), scrolled = &panel.scrolled})
+		interface.list_of_rows(frame, list_area, rows[:shown_count], {chosen = chosen_shown, first = first, total = form.shown_count, scroll_bar = scroll_bar_identity(), scrolled = &panel.scrolled, scroll_bar_name = SCROLL_BAR_ELEMENT_NAME})
 	}
 	if form.shown_count == 0 {
 		prompt: interface.Text_Builder

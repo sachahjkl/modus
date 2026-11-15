@@ -205,6 +205,7 @@ Frame :: struct {
 	act_names:           [display.ACT_NAME_SET_CAPACITY]Act_Name, // The act names of this frame, so far: the first element of each one.
 	act_name_count:      int, // The entries of `act_names` in use.
 	act_names_dropped:   int, // The act names that the frame did not keep: too long, empty, or past the capacity.
+	element_places:      Element_Places, // The named elements of this frame, so far (element_name): a window writes their changes on the log.
 }
 
 // frame_begin clears the table and starts a frame. Tab and Shift+Tab move

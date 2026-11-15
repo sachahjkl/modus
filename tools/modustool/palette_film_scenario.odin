@@ -230,8 +230,8 @@ scenario_palette_film := [?]Step {
 
 	// Scene 10: a field with a few closed values is a row of buttons in the
 	// band. The command strategy takes one of three names: the form shows
-	// them as buttons, Right moves the choice, a press on the first button
-	// takes round_robin, and Escape leaves with no change: the program
+	// them as buttons, Right moves the choice, a press on the button
+	// round_robin takes it, and Escape leaves with no change: the program
 	// scheduler that serves it does not run here.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
@@ -246,7 +246,7 @@ scenario_palette_film := [?]Step {
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
 	{kind = .Key, text = "right"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
-	{kind = .Click, x = PALETTE_STRATEGY_FIRST_BUTTON_X, y = PALETTE_INPUT_BAND_Y},
+	{kind = .Click_Element, text = PALETTE_ELEMENTS, element = "round_robin"},
 	{kind = .Wait, text = "compositor: a press takes the button round_robin of the field 0"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
 	{kind = .Key, text = "esc"},
