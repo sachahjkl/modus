@@ -759,7 +759,7 @@ test_part_volumes := [?]Volumes_Of_Part {
 	// With `principals tpm`, the machines of the machine key sealed by the
 	// TPM too: the two volumes of the test of the seal, and the main volume,
 	// on which the seal is refused.
-	{part = "principals", procedures = {"principals_tests_run", "principals_tpm_tests_run", "tpm_key_machine_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_SEAL_TEST, BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM}},
+	{part = "principals", procedures = {"principals_tests_run", "principals_tpm_tests_run", "principals_tpm_principal_tests_run", "tpm_key_machine_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_SEAL_TEST, BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM}},
 	// No machine starts: the part needs the built modules, which the build
 	// of a volume gives.
 	{part = "outside_module", procedures = {"outside_module_examples_check"}, volumes = {BOOT_VOLUME}},
