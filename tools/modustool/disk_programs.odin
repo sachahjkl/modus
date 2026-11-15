@@ -18,7 +18,9 @@ package modustool
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strings"
 import "modus:contract/blake3"
+import debug_object "modus:contract/debug_object"
 import format "modus:contract/store"
 import "modus:support/disk_program"
 import block_tree "modus:support/storage_object"
@@ -26,6 +28,18 @@ import block_tree "modus:support/storage_object"
 // The module that the tool writes on the disk of the test: a row of the
 // module table that is not in the boot image.
 DISK_PROGRAM_MODULE :: "visitor"
+
+// A library module and a program that imports it: two rows of the module
+// table that are not in the boot image. The root service finds the import
+// in the store `programs` by the hash of its bytes.
+STORE_LIBRARY_MODULE :: "store_library"
+STORE_IMPORTER_MODULE :: "store_importer"
+
+// The path at which the listener of the tool serves the library with one
+// byte changed: the module file service writes it over the entry of the
+// library, and the import scan then finds no file with the hash of the
+// import.
+STORE_LIBRARY_CHANGED_PATH :: "/store_library_changed"
 
 TEST_DISK_PROGRAMS_DISK :: BUILD_FOLDER + "/test_disk_programs_disk.img"
 TEST_OUTPUT_DISK_PROGRAMS :: BUILD_FOLDER + "/test_output_disk_programs_%d.txt"
@@ -196,8 +210,10 @@ program_disk_encode :: proc(files: []Program_File, disk_size: int, allocator := 
 	})
 	for file, index in sorted {
 		// The object of the disk grant table is no module file: a test puts
-		// a table there that the root service must refuse.
-		if problem, _ := disk_program.name_problem(file.name); problem != .None && problem != .Table_Name {
+		// a table there that the root service must refuse. The debug object
+		// of a module file has the hash of the module as its name.
+		debug_object_file := disk_program.debug_object_name_is(file.name)
+		if problem, _ := disk_program.name_problem(file.name); problem != .None && problem != .Table_Name && !debug_object_file {
 			fmt.eprintfln("modustool: %q is no name of a disk program: %v", file.name, problem)
 			return nil, false
 		}
@@ -205,8 +221,9 @@ program_disk_encode :: proc(files: []Program_File, disk_size: int, allocator := 
 			fmt.eprintfln("modustool: two files of the store %s have the name %s", disk_program.STORE_NAME, file.name)
 			return nil, false
 		}
-		if len(file.bytes) == 0 || len(file.bytes) > disk_program.FILE_BYTES_LIMIT {
-			fmt.eprintfln("modustool: the file %s has %d bytes; a module file of a disk program has 1 to %d", file.name, len(file.bytes), disk_program.FILE_BYTES_LIMIT)
+		limit := debug_object_file ? disk_program.DEBUG_OBJECT_BYTES_LIMIT : disk_program.FILE_BYTES_LIMIT
+		if len(file.bytes) == 0 || len(file.bytes) > limit {
+			fmt.eprintfln("modustool: the file %s has %d bytes; a %s of a disk program has 1 to %d", file.name, len(file.bytes), debug_object_file ? "debug object" : "module file", limit)
 			return nil, false
 		}
 	}
@@ -269,12 +286,37 @@ program_disk_write :: proc(path: string, files: []Program_File) -> bool {
 		return false
 	}
 	for file in files {
+		if disk_program.debug_object_name_is(file.name) {
+			fmt.printfln("modustool: %s: the store %s holds the debug object of the module %s, %d bytes", path, disk_program.STORE_NAME, file.name, len(file.bytes))
+			continue
+		}
 		hash := blake3.hash(file.bytes)
 		digits: [disk_program.HASH_DIGITS]u8
 		disk_program.hash_write(&digits, hash)
 		fmt.printfln("modustool: %s: the store %s holds %s, %d bytes, hash %s", path, disk_program.STORE_NAME, file.name, len(file.bytes), string(digits[:]))
 	}
 	return true
+}
+
+// program_debug_object_file gives the object of the store `programs` that
+// holds the debug object of a module file: its name is the hash of the
+// module (src/md/features/debug_object_of_a_disk_program.md). It refuses
+// an object that the readers refuse, and one that names another module: a
+// debug object of another build names the wrong procedures.
+program_debug_object_file :: proc(module_name: string, module_file: []u8, object: []u8) -> (file: Program_File, ok: bool) {
+	if fault := debug_object.check(object); fault != .None {
+		fmt.eprintfln("modustool: the debug object of %s is refused: %s", module_name, debug_object.fault_sentences[fault])
+		return {}, false
+	}
+	module_hash := blake3.hash(module_file)
+	named, described := debug_object.module_hash_of(object)
+	if !described || named != module_hash {
+		fmt.eprintfln("modustool: the debug object of %s names the module %s, and the module file has the hash %s: it describes another build", module_name, hash_as_hexadecimal(named), hash_as_hexadecimal(module_hash))
+		return {}, false
+	}
+	digits: [disk_program.HASH_DIGITS]u8
+	disk_program.debug_object_name_write(&digits, module_hash)
+	return {name = strings.clone(string(digits[:]), context.temp_allocator), bytes = object}, true
 }
 
 // The machine of the disk programs: its data disk holds the store
@@ -289,6 +331,20 @@ program_disk_write :: proc(path: string, files: []Program_File) -> bool {
 //             service gives a store: the name gives nothing, and the root
 //             service refuses it before it reads.
 //
+// The store also holds outsider, the module of visitor built outside the
+// sources, and its debug object under the hash of the module: the
+// debugger attaches to outsider, reads the debug object through the
+// storage service, and names a frame of it by its procedure, its file and
+// its line (disk_programs_debugger_steps).
+//
+// And two modules that no boot image holds: store_library, a library
+// module, and store_importer, a program that imports it.
+//
+// The disk holds 8 objects: 6 module files (visitor, changed, notes,
+// outsider, store_library, store_importer), the debug object of outsider
+// and grant_table. The list of the module file service skips the debug
+// object and grant_table, and counts received, which it writes: 7 files.
+//
 // The storage service runs before the first line that reads the store, so
 // no step depends on the time of the open of the disk.
 //
@@ -300,7 +356,11 @@ program_disk_write :: proc(path: string, files: []Program_File) -> bool {
 // Then the module file service of the machine fetches the same module file
 // from the listener of the tool, through QEMU user networking, and stores
 // it under the nickname `received`; its list gives the hash of the bytes of
-// each file; the root service starts `received` by that hash.
+// each file; the root service starts `received` by that hash. Then the
+// program store_importer starts with its import store_library, which the
+// root service finds in the store by the hash of its bytes; after the
+// module file service writes other bytes under the name store_library, the
+// same start is refused.
 //
 // A second machine starts on the same disk. Principal 0 has no passphrase,
 // so its table did not last: the nickname has no row. A new grant finds
@@ -331,7 +391,10 @@ disk_programs_tests_run :: proc() -> bool {
 	changed_file[len(changed_file) - 1] ~= 0x01
 	// A module of another project: built from a folder outside the
 	// sources, under a name that the boot image does not have.
-	outsider_file := outside_program_for_a_disk() or_return
+	outsider_file, outsider_debug_object := outside_program_for_a_disk() or_return
+	// Its debug object, beside it in the store, under the hash of the
+	// module: the debugger reads it at an attach.
+	outsider_debug_file := program_debug_object_file(OUTSIDE_DISK_PROGRAM, outsider_file, outsider_debug_object) or_return
 	forged: disk_program.Grant_Table
 	if disk_program.table_allow(&forged, DISK_PROGRAM_MODULE, blake3.hash(module_file), .Store) != .None {
 		fmt.eprintln("modustool: the table of the disk of the disk programs takes no row")
@@ -340,7 +403,14 @@ disk_programs_tests_run :: proc() -> bool {
 	forged_key: [disk_program.KEY_SIZE]u8
 	forged_bytes: [disk_program.TABLE_SIZE]u8
 	disk_program.table_encode(&forged, &forged_key, &forged_bytes)
-	files := [?]Program_File{{DISK_PROGRAM_MODULE, module_file}, {"changed", changed_file}, {"notes", module_file}, {OUTSIDE_DISK_PROGRAM, outsider_file}, {disk_program.TABLE_OBJECT_NAME, forged_bytes[:]}}
+	library_file := read_file(module_path(STORE_LIBRARY_MODULE)) or_return
+	importer_file := read_file(module_path(STORE_IMPORTER_MODULE)) or_return
+	// The listener serves these bytes during the machine, after the steps
+	// that free the temporary memory: they have memory of their own.
+	changed_library_file := slice.clone(library_file)
+	defer delete(changed_library_file)
+	changed_library_file[len(changed_library_file) - 1] ~= 0x01
+	files := [?]Program_File{{DISK_PROGRAM_MODULE, module_file}, {"changed", changed_file}, {"notes", module_file}, {OUTSIDE_DISK_PROGRAM, outsider_file}, outsider_debug_file, {disk_program.TABLE_OBJECT_NAME, forged_bytes[:]}, {STORE_LIBRARY_MODULE, library_file}, {STORE_IMPORTER_MODULE, importer_file}}
 	program_disk_write(TEST_DISK_PROGRAMS_DISK, files[:]) or_return
 	hash_digits, changed_digits, outsider_digits: [disk_program.HASH_DIGITS]u8
 	disk_program.hash_write(&outsider_digits, blake3.hash(outsider_file))
@@ -354,12 +424,20 @@ disk_programs_tests_run :: proc() -> bool {
 	defer delete(outsider_hash)
 	defer delete(hash)
 	defer delete(changed_hash)
+	import_hashes := Store_Import_Hashes {
+		importer        = hash_digits_of(importer_file),
+		library         = hash_digits_of(library_file),
+		changed_library = hash_digits_of(changed_library_file),
+	}
+	defer delete(import_hashes.importer)
+	defer delete(import_hashes.library)
+	defer delete(import_hashes.changed_library)
 	steps := make([dynamic]Step)
 	defer delete(steps)
 	// The storage service takes the disk of the tool before or after the
 	// console has its window: the system fixes no order, so neither wait
 	// moves the place of the log.
-	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 5 objects", any_order = true})
+	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 8 objects", any_order = true})
 	append(&steps, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
 	append(&steps, Step{kind = .Front, text = "console"})
 	append(&steps, Step{kind = .Type, text = "connect(\"storage\")"})
@@ -377,6 +455,7 @@ disk_programs_tests_run :: proc() -> bool {
 	append(&steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", OUTSIDE_DISK_PROGRAM, outsider_hash)})
 	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with no grant", OUTSIDE_DISK_PROGRAM, outsider_hash), any_order = true})
 	append(&steps, Step{kind = .Wait, text = "visitor: no ring to the root service: the open of its handle is refused: as it must"})
+	disk_programs_debugger_steps(&steps, outsider_hash)
 	append(&steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", OUTSIDE_DISK_PROGRAM)})
 	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", OUTSIDE_DISK_PROGRAM)})
 	// The bytes of the entry are not the bytes of the hash of the line.
@@ -410,11 +489,17 @@ disk_programs_tests_run :: proc() -> bool {
 	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: the file %s will get the data of %s", hash, DISK_PROGRAM_MODULE)})
 	disk_programs_store_steps(&steps, hash, 2)
 	disk_programs_network_steps(&steps, hash, changed_hash, len(module_file), len(changed_file))
+	disk_programs_import_steps(&steps, import_hashes, len(changed_library_file))
 	append(&steps, Step{kind = .Type, text = "shutdown()"})
 	append(&steps, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
 	// The listener of the tool is the web server of the module file
 	// service: QEMU gives it the address 10.0.2.100 port 80.
-	served := [?]Listener_File{{path = "/" + DISK_PROGRAM_MODULE, bytes = module_file}}
+	// The listener sends the file during a later step: the memory of
+	// context.temp_allocator is free again after each step, so the bytes
+	// that it serves live until the end of the test.
+	served_bytes := slice.clone(module_file)
+	defer delete(served_bytes)
+	served := [?]Listener_File{{path = "/" + DISK_PROGRAM_MODULE, bytes = served_bytes}, {path = STORE_LIBRARY_CHANGED_PATH, bytes = changed_library_file}}
 	machine_test(steps[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 1), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK, user_network = true, served_files = served[:]) or_return
 
 	// The second machine, on the same disk.
@@ -527,6 +612,46 @@ disk_programs_tests_run :: proc() -> bool {
 	return machine_test(fourth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 4), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK)
 }
 
+// The line of the source of the program visitor where its entry calls
+// sleep_for_ever: the place of the frame of the entry while the thread
+// sleeps. A change of that file above the call changes it.
+VISITOR_LINE_OF_THE_SLEEP :: "81"
+
+// disk_programs_debugger_steps adds the steps of the debugger on the
+// outside module that runs from the disk. The debugger service reads the
+// debug object of the module from the store programs, through a
+// connection that reads only and that the root service gives with the
+// debug access, and which the root service ends after the read; then a
+// frame of the held thread has the procedure, the file and the line of the
+// source of the outside module, by the name of its folder.
+//
+// Each row is drawn through `columns`, so that the widths of its columns
+// depend only on values that the scenario knows.
+disk_programs_debugger_steps :: proc(steps: ^[dynamic]Step, outsider_hash: string) {
+	append(steps, Step{kind = .Type, text = fmt.aprintf("columns(debug(\"%s\"), \"program described\")", OUTSIDE_DISK_PROGRAM)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: gave debugger a connection that reads only to the store %s of principal 0, for the debug object of %s", disk_program.STORE_NAME, OUTSIDE_DISK_PROGRAM)})
+	// The object of the store has the hash of the module as its name.
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("debugger: read the debug object %s of %s from the store %s of principal 0: ", outsider_hash, OUTSIDE_DISK_PROGRAM, disk_program.STORE_NAME)})
+	// The connection lives for the read only: the root service ends it
+	// when the debugger read the object. The root service writes its line
+	// before or after the console draws the row: the system fixes no order.
+	append(steps, Step{kind = .Wait, text = "root: disconnected programs from the service storage", any_order = true})
+	// The one module of the program has a debug object: the one of the store.
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s          1", OUTSIDE_DISK_PROGRAM)})
+	append(steps, Step{kind = .Type, text = "columns(hold(0), \"thread state\")"})
+	append(steps, Step{kind = .Wait, text = "[console]      0  held"})
+	// The thread sleeps in a call of the system, whose stub keeps no frame
+	// of its own: the walk of the frame pointers reaches the entry of the
+	// program, at the line where it calls sleep_for_ever. That frame names
+	// the procedure, the source of the copy by the name of its folder, and
+	// the line: what only the debug object from the store gives.
+	append(steps, Step{kind = .Type, text = "columns(where(stack(0), \"procedure\", \"entry\"), \"module procedure file line\")"})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s  entry      %s/main.odin    %s", OUTSIDE_DISK_PROGRAM, OUTSIDE_DISK_PROGRAM, VISITOR_LINE_OF_THE_SLEEP)})
+	// The detach gives the thread back and ends the debug access.
+	append(steps, Step{kind = .Type, text = "detach()"})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: debugger ended the debugging of %s for console", OUTSIDE_DISK_PROGRAM)})
+}
+
 // The nickname under which the module file service stores the file that
 // comes over the network: a name that the disk of the tool does not hold.
 RECEIVED_NICKNAME :: "received"
@@ -554,7 +679,7 @@ disk_programs_network_steps :: proc(steps: ^[dynamic]Step, hash: string, changed
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: the file changed, %d bytes, the BLAKE3 hash of its bytes %s", changed_size, changed_hash)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: the file %s, %d bytes, the BLAKE3 hash of its bytes %s", RECEIVED_NICKNAME, module_size, hash)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: the file %s, %d bytes, the BLAKE3 hash of its bytes %s", DISK_PROGRAM_MODULE, module_size, hash)})
-	append(steps, Step{kind = .Wait, text = "programs: listed 5 module files of the store programs, each hash computed on its bytes"})
+	append(steps, Step{kind = .Wait, text = "programs: listed 7 module files of the store programs, each hash computed on its bytes"})
 	// The file that came over the network starts by its hash, with no
 	// grant: its nickname has no row.
 	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", RECEIVED_NICKNAME, hash)})
@@ -562,6 +687,49 @@ disk_programs_network_steps :: proc(steps: ^[dynamic]Step, hash: string, changed
 	append(steps, Step{kind = .Wait, text = "visitor: the context holds the log, a window and the budget, and no handle of a grant: as it must"})
 	append(steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", RECEIVED_NICKNAME)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", RECEIVED_NICKNAME)})
+}
+
+// The hashes of the files of the import scan, as 64 hexadecimal digits.
+Store_Import_Hashes :: struct {
+	importer:        string, // The program store_importer.
+	library:         string, // The module store_library: the hash that the import of store_importer names.
+	changed_library: string, // That module with one byte changed.
+}
+
+// hash_digits_of gives the BLAKE3 hash of bytes as 64 hexadecimal digits,
+// in memory that the caller deletes: a text of a step outlives the
+// temporary memory of the step.
+hash_digits_of :: proc(bytes: []u8) -> string {
+	digits: [disk_program.HASH_DIGITS]u8
+	disk_program.hash_write(&digits, blake3.hash(bytes))
+	return fmt.aprintf("%s", string(digits[:]))
+}
+
+// disk_programs_import_steps adds the steps of the import scan. The
+// program store_importer imports store_library, and the boot image holds
+// neither: the root service finds the library in the store by the hash of
+// its bytes, and the program calls it. Then the module file service writes
+// the library with one byte changed over its entry: no file of the store
+// has the hash of the import any more, and the start is refused with one
+// line. The scan reads each of the 6 files of the store but the program
+// and the disk grant table: changed, notes, outsider, received,
+// store_library and visitor.
+disk_programs_import_steps :: proc(steps: ^[dynamic]Step, hashes: Store_Import_Hashes, changed_library_size: int) {
+	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", STORE_IMPORTER_MODULE, hashes.importer)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s imports 1 modules that the boot image does not hold: the import scan reads the store programs to find them by the hash of their bytes", STORE_IMPORTER_MODULE)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s: the import %s of %s is the file %s of the store programs, checked on its bytes", STORE_IMPORTER_MODULE, hashes.library, STORE_IMPORTER_MODULE, STORE_LIBRARY_MODULE)})
+	// The program writes its line when it runs, and the root service
+	// writes its line when the start returned: the system fixes no order.
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with no grant", STORE_IMPORTER_MODULE, hashes.importer), any_order = true})
+	append(steps, Step{kind = .Wait, text = "store_importer: triple(14) of the module store_library of the store programs gives 42: as it must"})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", STORE_IMPORTER_MODULE)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", STORE_IMPORTER_MODULE)})
+	// The entry of the library now holds other bytes under the same name:
+	// the name gives nothing, and the start is refused.
+	append(steps, Step{kind = .Type, text = fmt.aprintf("programs.receive(\"%s\", \"%s\")", STORE_LIBRARY_MODULE, STORE_LIBRARY_CHANGED_PATH)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: stored %s from %s: %d bytes, the BLAKE3 hash of its bytes %s", STORE_LIBRARY_MODULE, STORE_LIBRARY_CHANGED_PATH, changed_library_size, hashes.changed_library)})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", STORE_IMPORTER_MODULE, hashes.importer)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: refused %s from the disk: %s imports %s, and no file of the boot image or of the store programs has bytes with this hash; the import scan read 6 files", STORE_IMPORTER_MODULE, STORE_IMPORTER_MODULE, hashes.library), fails_on = "root: started store_importer from the disk"})
 }
 
 // The machine passphrase of the test. It is a constant of the tool: a test

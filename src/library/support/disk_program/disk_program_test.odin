@@ -33,6 +33,40 @@ names_that_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, len("twenty_three_bytes_long"), NAME_LIMIT)
 }
 
+// The name of a debug object is the hash of its module in 64 digits of
+// lower case: no nickname has it, and an upper case digit, a shorter
+// name or a byte that is no digit is no such name.
+@(test)
+the_name_of_a_debug_object :: proc(t: ^testing.T) {
+	hash: [HASH_SIZE]u8
+	for &byte, index in hash {
+		byte = u8(index * 11 + 3)
+	}
+	digits: [HASH_DIGITS]u8
+	debug_object_name_write(&digits, hash)
+	testing.expect(t, debug_object_name_is(string(digits[:])))
+	parsed, ok := hash_parse(string(digits[:]))
+	testing.expect(t, ok && parsed == hash)
+	testing.expect(t, !debug_object_name_is(string(digits[:HASH_DIGITS - 1])))
+	upper := digits
+	upper[0] = 'A'
+	testing.expect(t, !debug_object_name_is(string(upper[:])))
+	other := digits
+	other[5] = 'g'
+	testing.expect(t, !debug_object_name_is(string(other[:])))
+	for name in ([]string{"visitor", "twenty_three_bytes_long", "grant_table"}) {
+		testing.expect(t, !debug_object_name_is(name))
+	}
+	// A debug object has its own limit, larger than the limit of a module
+	// file.
+	_, answer := read_begin(DEBUG_OBJECT_BYTES_LIMIT, DEBUG_OBJECT_BYTES_LIMIT)
+	testing.expect_value(t, answer, Size_Answer.Good)
+	_, answer = read_begin(DEBUG_OBJECT_BYTES_LIMIT + 1, DEBUG_OBJECT_BYTES_LIMIT)
+	testing.expect_value(t, answer, Size_Answer.Too_Large)
+	_, answer = read_begin(FILE_BYTES_LIMIT + 1)
+	testing.expect_value(t, answer, Size_Answer.Too_Large)
+}
+
 // A name goes through three values of a record and comes back, with a zero
 // byte after it whatever the values hold.
 @(test)

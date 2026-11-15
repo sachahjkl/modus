@@ -1,6 +1,8 @@
 // The formats of the IOMMU of Intel (VT-d) that the kernel reads and
 // writes: the ACPI tables DMAR and MCFG, the registers of a remapping unit,
-// the root, context and second-level entries, and a fault record. The two
+// the root, context and second-level entries, the descriptors of the queue
+// of invalidations, the entries of the interrupt table and the address of a
+// remapped message, and a fault record. The two
 // parties are the kernel and the hardware; the formats are those of the
 // "Intel Virtualization Technology for Directed I/O, Architecture
 // Specification". The design is src/md/infrastructure/iommu.md.
@@ -18,6 +20,11 @@ ACPI_HEADER_SIZE :: 36
 // flags, 10 reserved bytes, then the remapping structures.
 DMAR_STRUCTURES_START :: 48
 DMAR_HOST_ADDRESS_WIDTH :: 36
+DMAR_FLAGS :: 37
+// The flag INTR_REMAP of the table: the platform supports interrupt
+// remapping. A firmware clears it on a platform whose remapping has a fault,
+// even when each unit offers remapping.
+DMAR_FLAG_INTERRUPT_REMAPPING :: 1
 
 // The kinds of a remapping structure of the table DMAR.
 STRUCTURE_UNIT :: 0 // A remapping unit (DRHD): its registers and its devices.
@@ -73,6 +80,7 @@ Scope :: struct {
 // What the kernel found in the table DMAR.
 Dmar :: struct {
 	host_address_width:   u32, // The bits of a physical address that a device can give.
+	interrupt_remapping:  bool, // The flag INTR_REMAP: the platform supports interrupt remapping.
 	unit_count:           u32,
 	units:                [UNIT_CAPACITY]Unit,
 	reserved_range_count: u32,
@@ -128,6 +136,7 @@ dmar_read :: proc "contextless" (table: []u8) -> (dmar: Dmar, problem: Dmar_Prob
 		return {}, .Too_Short
 	}
 	dmar.host_address_width = u32(table[DMAR_HOST_ADDRESS_WIDTH]) + 1
+	dmar.interrupt_remapping = table[DMAR_FLAGS] & DMAR_FLAG_INTERRUPT_REMAPPING != 0
 	offset := DMAR_STRUCTURES_START
 	for offset + 4 <= len(table) {
 		kind := load_16(table, offset)
@@ -443,12 +452,14 @@ REGISTER_EXTENDED_CAPABILITY :: 0x10 // u64
 REGISTER_GLOBAL_COMMAND :: 0x18 // u32
 REGISTER_GLOBAL_STATUS :: 0x1C // u32
 REGISTER_ROOT_TABLE :: 0x20 // u64: the physical address of the root table.
-REGISTER_CONTEXT_COMMAND :: 0x28 // u64
 REGISTER_FAULT_STATUS :: 0x34 // u32
 REGISTER_FAULT_EVENT_CONTROL :: 0x38 // u32
 REGISTER_FAULT_EVENT_DATA :: 0x3C // u32: the vector of the fault event.
 REGISTER_FAULT_EVENT_ADDRESS :: 0x40 // u32: the interrupt controller that receives it.
 REGISTER_FAULT_EVENT_UPPER_ADDRESS :: 0x44 // u32
+REGISTER_QUEUE_TAIL :: 0x88 // u64: the descriptor after the last that the kernel wrote, as queue_tail_register gives it.
+REGISTER_QUEUE_ADDRESS :: 0x90 // u64: the queue of invalidations, as queue_address_register gives it.
+REGISTER_INTERRUPT_TABLE :: 0xB8 // u64: the interrupt table, as interrupt_table_register gives it.
 // The registers of a unit fit in this many bytes; a capability that places
 // a register past it is refused.
 REGISTER_SPACE :: 0x10000
@@ -460,6 +471,9 @@ GLOBAL_ROOT_TABLE :: u32(1) << 30 // Take the root table of the register (SRTP, 
 GLOBAL_WRITE_BUFFER :: u32(1) << 27 // Flush the write buffer (WBF); the status bit is set while it runs.
 GLOBAL_QUEUED_INVALIDATION :: u32(1) << 26 // The queue of invalidations is on (QIE, QIES): the registers of invalidation do not work then.
 GLOBAL_INTERRUPT_REMAPPING :: u32(1) << 25 // Interrupt remapping is on (IRE, IRES): each message interrupt then needs an entry.
+GLOBAL_INTERRUPT_TABLE :: u32(1) << 24 // Take the interrupt table of the register (SIRTP, IRTPS).
+// The bit CFI (23) stays 0: with remapping on, the unit then blocks every
+// message in the compatible form, which names a vector with no entry.
 
 // Why the kernel does not take a unit in this global status at its start:
 // a mode that the firmware left on.
@@ -501,36 +515,79 @@ global_command :: proc "contextless" (status: u32, bit: u32) -> u32 {
 	return status & GLOBAL_KEPT_BITS | bit
 }
 
-CONTEXT_INVALIDATE :: u64(1) << 63 // Set to start; the unit clears it when done.
-CONTEXT_GLOBAL :: u64(1) << 61 // Each context entry of the unit.
-CONTEXT_DOMAIN :: u64(2) << 61 // The context entries of one domain identifier, in the bits 15:0.
+// The queue of invalidations: a ring of descriptors of 16 bytes in memory
+// that the unit reads from its head to the tail that the kernel writes. Its
+// size is one page, the smallest that the register gives (QS 0): the kernel
+// waits for each invalidation, which has at most QUEUE_LARGEST_BATCH
+// descriptors, so the queue never holds more than one.
+QUEUE_DESCRIPTORS :: 256
+QUEUE_LARGEST_BATCH :: 8
+DESCRIPTOR_SIZE :: 16
 
-IOTLB_INVALIDATE :: u64(1) << 63
-IOTLB_GLOBAL :: u64(1) << 60 // Each translation of each domain.
-IOTLB_DOMAIN :: u64(2) << 60 // The translations of one domain identifier, in the bits 47:32.
-IOTLB_DRAIN_READS :: u64(1) << 49
-IOTLB_DRAIN_WRITES :: u64(1) << 48
+// The kinds of a descriptor, in its bits 3:0.
+DESCRIPTOR_CONTEXT :: u64(1) // The context cache.
+DESCRIPTOR_IOTLB :: u64(2) // The translations of the second-level tables.
+DESCRIPTOR_INTERRUPT_ENTRY :: u64(4) // The interrupt entry cache.
+DESCRIPTOR_WAIT :: u64(5) // The wait: the unit writes a number when it has done each descriptor before it.
 
-// The command of the context cache that forgets every context entry: once,
-// at the start of a unit.
-CONTEXT_COMMAND_GLOBAL :: CONTEXT_INVALIDATE | CONTEXT_GLOBAL
+// The granularity of a descriptor of the context cache or of the IOTLB, in
+// its bits 5:4.
+GRANULARITY_GLOBAL :: u64(1) << 4 // Each entry of each domain.
+GRANULARITY_DOMAIN :: u64(2) << 4 // The entries of one domain identifier, in the bits 31:16.
 
-// context_command_domain gives the command of the context cache that
-// forgets the context entries of one domain identifier. A unit with the
-// caching mode tags an entry that is not present with the identifier 0.
-context_command_domain :: proc "contextless" (domain: u16) -> u64 {
-	return CONTEXT_INVALIDATE | CONTEXT_DOMAIN | u64(domain)
+IOTLB_DRAIN_WRITES :: u64(1) << 6
+IOTLB_DRAIN_READS :: u64(1) << 7
+INTERRUPT_ENTRY_ONE :: u64(1) << 4 // The interrupt entry of the index in the bits 47:32; with 0, each entry.
+WAIT_STATUS_WRITE :: u64(1) << 5 // The unit writes the number of the bits 63:32 at the address of the second word.
+WAIT_FENCE :: u64(1) << 6 // The descriptors after it wait until it is done.
+
+// descriptor_context gives the descriptor that forgets the context entries
+// of one domain identifier, or every context entry with global. A unit with
+// the caching mode tags an entry that is not present with the identifier 0.
+descriptor_context :: proc "contextless" (domain: u16, global: bool = false) -> [2]u64 {
+	if global {
+		return {DESCRIPTOR_CONTEXT | GRANULARITY_GLOBAL, 0}
+	}
+	return {DESCRIPTOR_CONTEXT | GRANULARITY_DOMAIN | u64(domain) << 16, 0}
 }
 
-// The command of the IOTLB that forgets every translation, with the drain
-// of the reads and the writes in flight: once, at the start of a unit.
-IOTLB_COMMAND_GLOBAL :: IOTLB_INVALIDATE | IOTLB_GLOBAL | IOTLB_DRAIN_READS | IOTLB_DRAIN_WRITES
+// descriptor_iotlb gives the descriptor that forgets the translations of
+// one domain identifier, or of each domain with global, with the drain of
+// the reads and the writes in flight.
+descriptor_iotlb :: proc "contextless" (domain: u16, global: bool = false) -> [2]u64 {
+	drains := IOTLB_DRAIN_READS | IOTLB_DRAIN_WRITES
+	if global {
+		return {DESCRIPTOR_IOTLB | GRANULARITY_GLOBAL | drains, 0}
+	}
+	return {DESCRIPTOR_IOTLB | GRANULARITY_DOMAIN | drains | u64(domain) << 16, 0}
+}
 
-// iotlb_command_domain gives the command of the IOTLB that forgets the
-// translations of one domain identifier, with the drain of the reads and
-// the writes in flight.
-iotlb_command_domain :: proc "contextless" (domain: u16) -> u64 {
-	return IOTLB_INVALIDATE | IOTLB_DOMAIN | IOTLB_DRAIN_READS | IOTLB_DRAIN_WRITES | u64(domain) << 32
+// descriptor_interrupt_entry gives the descriptor that forgets the interrupt
+// entry of one index, or each interrupt entry with global.
+descriptor_interrupt_entry :: proc "contextless" (index: u16, global: bool = false) -> [2]u64 {
+	if global {
+		return {DESCRIPTOR_INTERRUPT_ENTRY, 0}
+	}
+	return {DESCRIPTOR_INTERRUPT_ENTRY | INTERRUPT_ENTRY_ONE | u64(index) << 32, 0}
+}
+
+// descriptor_wait gives the wait descriptor that writes number at the
+// physical address status (4 bytes, aligned to 4) when the unit has done
+// every descriptor before it.
+descriptor_wait :: proc "contextless" (status: u64, number: u32) -> [2]u64 {
+	return {DESCRIPTOR_WAIT | WAIT_STATUS_WRITE | WAIT_FENCE | u64(number) << 32, status &~ 3}
+}
+
+// queue_address_register gives the value of the register of the queue: its
+// page, the descriptors of 16 bytes (DW 0) and the size of one page (QS 0).
+queue_address_register :: proc "contextless" (queue: u64) -> u64 {
+	return queue &~ 0xFFF
+}
+
+// queue_tail_register gives the value of the tail register for a
+// descriptor index: the index in the bits 18:4.
+queue_tail_register :: proc "contextless" (index: u32) -> u64 {
+	return u64(index % QUEUE_DESCRIPTORS) << 4
 }
 
 // The device addresses of the objects that are not contiguous
@@ -553,20 +610,14 @@ window_address :: proc "contextless" (slot: u32) -> u64 {
 // tables are memory of the kernel, which no budget pays.
 RESERVED_RANGE_PAGE_LIMIT :: (u64(1) << 30) / 4096
 
-// context_invalidation_done says if the context command register shows a
-// finished invalidation that the unit made: the bit of the command is
-// clear, and the granularity that it made (CAIG, bits 60:59) is not 0.
-context_invalidation_done :: proc "contextless" (register: u64) -> (finished: bool, made: bool) {
-	return register & CONTEXT_INVALIDATE == 0, register >> 59 & 3 != 0
-}
-
-// iotlb_invalidation_done says the same of the IOTLB register: the
-// granularity that the unit made is IAIG, bits 58:57.
-iotlb_invalidation_done :: proc "contextless" (register: u64) -> (finished: bool, made: bool) {
-	return register & IOTLB_INVALIDATE == 0, register >> 57 & 3 != 0
-}
-
 FAULT_STATUS_OVERFLOW :: u32(1) // A fault came when no record was free; written 1 to clear.
+FAULT_STATUS_QUEUE_ERROR :: u32(1) << 4 // The unit refused a descriptor of the queue (IQE), and reads no more of it.
+FAULT_STATUS_COMPLETION_ERROR :: u32(1) << 5 // A device gave no answer to an invalidation of its own cache (ICE).
+FAULT_STATUS_TIME_OUT_ERROR :: u32(1) << 6 // An invalidation of the cache of a device took too long (ITE).
+// The bits of the fault status that the firmware can leave set, each
+// cleared by a write of 1: the start clears them all, so an error of the
+// queue of the firmware does not stop the first invalidation of the kernel.
+FAULT_STATUS_CLEARED_AT_START :: FAULT_STATUS_OVERFLOW | FAULT_STATUS_QUEUE_ERROR | FAULT_STATUS_COMPLETION_ERROR | FAULT_STATUS_TIME_OUT_ERROR
 FAULT_EVENT_MASKED :: u32(1) << 31
 
 // capability_levels gives the levels of the second-level tables that the
@@ -632,10 +683,16 @@ capability_domain_count :: proc "contextless" (capability: u64) -> u64 {
 	return u64(1) << (4 + 2 * (capability & 7))
 }
 
-// extended_iotlb_offset gives the offset of the two registers of the
-// IOTLB: the address register, then the command register 8 bytes after.
-extended_iotlb_offset :: proc "contextless" (extended: u64) -> u64 {
-	return (extended >> 8 & 0x3FF) * 16
+// extended_queue says if the unit has a queue of invalidations (QI, bit
+// 1): the kernel invalidates through it only.
+extended_queue :: proc "contextless" (extended: u64) -> bool {
+	return extended >> 1 & 1 != 0
+}
+
+// extended_interrupt_remapping says if the unit offers interrupt remapping
+// (IR, bit 3).
+extended_interrupt_remapping :: proc "contextless" (extended: u64) -> bool {
+	return extended >> 3 & 1 != 0
 }
 
 // extended_coherent says if the unit snoops the caches of the processors
@@ -688,13 +745,57 @@ level_index :: proc "contextless" (address: u64, level: u32) -> u64 {
 	return address >> (12 + 9 * u64(level - 1)) & 511
 }
 
+// The interrupt table: one entry of 16 bytes for each message interrupt,
+// at the index of the message interrupt. The register gives the count of
+// its entries as 2^(size + 1).
+INTERRUPT_TABLE_ENTRIES :: 16
+INTERRUPT_TABLE_SIZE_FIELD :: 3
+#assert(1 << (INTERRUPT_TABLE_SIZE_FIELD + 1) == INTERRUPT_TABLE_ENTRIES)
+INTERRUPT_ENTRY_SIZE :: 16
+
+// interrupt_table_register gives the value of the register of the interrupt
+// table: its page, the size, and the destination of 8 bits (EIME 0), which
+// names a processor whose identifier is below 256.
+interrupt_table_register :: proc "contextless" (table: u64) -> u64 {
+	return table &~ 0xFFF | INTERRUPT_TABLE_SIZE_FIELD
+}
+
+INTERRUPT_ENTRY_PRESENT :: u64(1)
+INTERRUPT_ENTRY_VERIFY_REQUESTER :: u64(1) << 18 // SVT 1 with SQ 0: the requester of the message must be the requester of the entry, all 16 bits.
+
+// interrupt_entry gives the entry of a message interrupt: present, fixed
+// delivery of the vector to the processor of the interrupt controller
+// identifier processor in the physical mode, at the edge; the unit refuses
+// it to every requester but this one. The faults of the entry are recorded
+// (FPD 0).
+interrupt_entry :: proc "contextless" (vector: u8, processor: u8, requester: u16) -> [2]u64 {
+	return {INTERRUPT_ENTRY_PRESENT | u64(vector) << 16 | u64(processor) << 40, u64(requester) | INTERRUPT_ENTRY_VERIFY_REQUESTER}
+}
+
+// message_address gives the address that a device writes for the message
+// interrupt of an index of the interrupt table, in the remappable form:
+// 0xFEE, the index in the bits 19:5 and its bit 15 in the bit 2, the bit 4
+// that says the form, and no subhandle (SHV 0), so the value of the message
+// is not read.
+message_address :: proc "contextless" (index: u16) -> u64 {
+	return 0xFEE0_0000 | u64(index & 0x7FFF) << 5 | u64(index >> 15) << 2 | 1 << 4
+}
+
 // One fault that the unit recorded.
 Fault :: struct {
-	address:   u64, // The page of the request.
+	address:   u64, // The page of the request; 0 for a refused interrupt.
 	requester: u16,
 	reason:    u8, // The fault reason of the specification.
 	read:      bool, // A read; else a write.
+	interrupt: bool, // A refused message interrupt: a reason from 0x20 to 0x2F.
+	index:     u16, // A refused interrupt: the index of the entry that the message named.
 }
+
+// The reasons of a refused interrupt: 0x20 (a reserved field of the
+// message) to 0x26 (another requester); 0x2x is the group of the
+// specification for interrupt remapping.
+FAULT_REASON_INTERRUPT_FIRST :: 0x20
+FAULT_REASON_INTERRUPT_LAST :: 0x2F
 
 // FAULT_CLEAR is written to the last 4 bytes of a fault recording register:
 // it clears the bit F, and the record is free.
@@ -729,7 +830,17 @@ fault_line :: proc "contextless" (count: u64) -> Fault_Line {
 }
 
 // fault_read reads a fault recording register from its first 8 bytes and
-// its last 8 bytes. recorded is false when the record is free.
+// its last 8 bytes. recorded is false when the record is free. The record of
+// a refused interrupt holds the index of the entry in the bits 63:48 of its
+// first word, and no address.
 fault_read :: proc "contextless" (low: u64, high: u64) -> (fault: Fault, recorded: bool) {
-	return {address = low & ENTRY_ADDRESS, requester = u16(high), reason = u8(high >> 32), read = high >> 62 & 1 != 0}, high >> 63 != 0
+	fault = {requester = u16(high), reason = u8(high >> 32), read = high >> 62 & 1 != 0}
+	if fault.reason >= FAULT_REASON_INTERRUPT_FIRST && fault.reason <= FAULT_REASON_INTERRUPT_LAST {
+		fault.interrupt = true
+		fault.index = u16(low >> 48)
+		fault.read = false
+	} else {
+		fault.address = low & ENTRY_ADDRESS
+	}
+	return fault, high >> 63 != 0
 }

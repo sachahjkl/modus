@@ -284,7 +284,7 @@ COMMANDS :: [?]Command {
 	// (docs/TOOLS.md, "A module from a source outside the repository").
 	// Writes a data disk whose store of the programs holds module files: a
 	// machine with that disk starts each one from its console, by its hash.
-	{name = "program-disk", about = "program-disk <disk file to write> <module file> [<module file> ...]: write a data disk whose store `programs` holds each module file under the name of its file, and print the line of the console that starts each one", run = run_program_disk},
+	{name = "program-disk", about = "program-disk <disk file to write> <module file> [<module file> ...]: write a data disk whose store `programs` holds each module file under the name of its file, with the debug object `<name>.debug` beside it under the hash of the module, and print the line of the console that starts each one", run = run_program_disk},
 	{name = "module-build", about = "module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]: build one module from a folder outside the repository, with its module build file `" + MODULE_BUILD_FILE_NAME + "`: write <name>.module and <name>.debug, and print the hash of the module and the names of its exports", run = run_module_build},
 	// Builds one boot volume in this process: its boot image with the system
 	// description, its boot program, and the volume file.
@@ -1142,8 +1142,10 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"qemu-system-x86_64",
 		"-machine",
 		// The firmware with Secure Boot needs the system management mode of
-		// the processor: its variables are written only there.
-		firmware == .With_Secure_Boot ? "q35,smm=on" : "q35",
+		// the processor: its variables are written only there. QEMU refuses
+		// interrupt remapping when KVM holds the whole interrupt controller:
+		// the machine with the IOMMU splits it. QEMU accepts both together.
+		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu ? ",kernel-irqchip=split" : ""}, context.temp_allocator),
 		"-accel",
 		"kvm",
 		"-accel",
@@ -1166,14 +1168,13 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		network_device,
 	)
 	// The machine of the part iommu: the remapping unit of Intel, before
-	// each device of PCI, which takes its place behind it. No interrupt
-	// remapping: the kernel does not program it
-	// (src/md/infrastructure/iommu.md, "Interrupt remapping"). Each virtio
-	// device sends its accesses through the unit only with iommu_platform,
-	// which a device with the legacy interface refuses.
+	// each device of PCI, which takes its place behind it, with interrupt
+	// remapping (src/md/infrastructure/iommu.md, "Interrupt remapping").
+	// Each virtio device sends its accesses through the unit only with
+	// iommu_platform, which a device with the legacy interface refuses.
 	virtio_iommu := ""
 	if iommu {
-		append(&list, "-device", "intel-iommu,intremap=off")
+		append(&list, "-device", "intel-iommu,intremap=on")
 		virtio_iommu = ",iommu_platform=on"
 	}
 	if paused {

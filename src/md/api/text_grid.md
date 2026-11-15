@@ -17,7 +17,7 @@ The numbers come from the code of the terminal and of the window layer.
 
 - A terminal has at most 104 columns and 32 rows (`COLUMNS_LIMIT`, `ROWS_LIMIT`): 3,328 cells. A cell is 16 bytes (a code point, two flags, two reserved bytes and two colors: [../data/text_encoding.md](../data/text_encoding.md)), so a full grid is 53,248 bytes.
 - The draw of a grid makes one call of the glyph code for each run of cells: a run ends at a change of color, at a reverse cell, at the end of a group of filled cells, and at an empty cell. A line of plain text is one run. A line of colored code is one run for each token. The most is one run for each cell: 3,328 runs in one frame.
-- With the chosen form, a frame crosses the border one time for the difference and one time for each damage rectangle, at most 8: at most 9 calls, whatever the count of runs.
+- With the chosen form, a frame crosses the border one time for the difference and one time for the draw of all its damage rectangles: 2 calls, whatever the count of runs ([picture.md](picture.md), "The draw export: the rectangles of a frame in one call"). When this form was chosen, the draw took one rectangle for each call: at most 9 calls.
 - An export for one run of cells would cross the border up to 3,328 times for one frame of a full grid, and each call checks its arguments again.
 
 ## The chosen form: the cells are in the text table
@@ -34,7 +34,7 @@ The numbers come from the code of the terminal and of the window layer.
 - **No new parameter and no new export.** The damage export reads the cells of the frame before in the text table before, and the cells of the frame now in the text table now. The draw export reads the cells in the text table now.
 - **The frame before keeps its cells with no memory of its own.** `draw_table_copy` copies the text table, and the cells with it. `Draw_Table.grids` and the copy of each grid are gone.
 - **The difference.** Two grid records that are equal except their place in the text table are compared cell by cell, as before. A grid that is not valid in one of the two tables is damaged whole.
-- **The version.** The fields of a Text_Grid have another meaning, and the bytes of a cell are now part of the border. The draw record became version 9 for this form, and version 10 when a cell became a code point of 16 bytes; the exports are `damage_of_draw_table_10` and `execute_draw_table_10`.
+- **The version.** The fields of a Text_Grid have another meaning, and the bytes of a cell are now part of the border. The draw record became version 9 for this form, and version 10 when a cell became a code point of 16 bytes; the exports are `damage_of_draw_table_10` and `execute_draw_table_in_rectangles_10`.
 
 ### The cost
 

@@ -200,7 +200,7 @@ Do not use: GOT entry, import address, stub.
 
 The load source is what a loader can read: the files that its program was granted, each named by its hash, and the replacements that the starter of the program gives.
 
-The load source closes the hole of a global library directory. A loader finds an import only in its load source, and checks the hash and the tables of each file before it uses it. The root service and the console give the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports and the modules of the replacements. The first module of a disk program comes from the storage service, checked against the hash that the principal named; its imports come from the boot image.
+The load source closes the hole of a global library directory. A loader finds an import only in its load source, and checks the hash and the tables of each file before it uses it. The root service and the console give the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports and the modules of the replacements. The first module of a disk program comes from the storage service, checked against the hash that the principal named; an import that the boot image does not hold comes from the same store, by an import scan. The root service gives such a file beside the boot image, and the loader looks at the boot image first.
 
 A file that the load source does not hold gives the load error Find; a file whose bytes do not have their hash gives the load error Read.
 
@@ -214,7 +214,7 @@ A disk program is a program whose module file is an object of the store `program
 
 A disk program adds a program to a machine with no new boot image. The principal names it by its name and by the hash of its file: `start_from_disk("visitor", "5f0c…")`. The root service reads the object, computes the BLAKE3 hash of the bytes, and starts them only when that hash is the hash of the command: the storage service carries the bytes and does not choose them. The store is the store `programs` of the principal of the caller, and each entry of its root tree is one module file, named after its program.
 
-A disk program has no row in the tables by name of the root service. It receives the log and a window, the grants of its nickname in the disk grant table and no other grant, and the budget that its file asks for, up to the largest budget of a disk program, paid by the one budget of all disk programs. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image, by hash.
+A disk program has no row in the tables by name of the root service. It receives the log and a window, the grants of its nickname in the disk grant table and no other grant, and the budget that its file asks for, up to the largest budget of a disk program, paid by the one budget of all disk programs. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image by hash, and an import that the boot image does not hold from the same store, by an import scan. Its debug object is beside its module file in the store, under the hash of the module, and the debugger reads it there.
 
 A disk program is not a package: it has no signer, no version number and no statement of the grants that it asks for. It is not installed: nothing of the machine changes when its file is written. Its file comes from a disk that the modus tool writes, or from the network through the module file service.
 
@@ -233,6 +233,18 @@ The module file service starts no program and proves nothing: the root service c
 The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
 
 Do not use: package manager, installer, downloader.
+
+### Import scan
+
+An import scan is the read of the store `programs` of a principal by the root service, to find each import of a disk program that the boot image does not hold by the BLAKE3 hash of the bytes of a file.
+
+A developer adds a program and its library modules to a machine that runs: both files go in the store `programs`, under any nicknames, and the import of the program still names the hash of the library. At the start, the root service lists the root tree of the store, reads each entry, computes the hash of its bytes, and keeps the bytes whose hash an import names; then it walks the imports of each kept file. It gives the kept files to the loader beside the boot image. A hash that no file has refuses the start with one line of the log. The scan is a part of the load of the disk program: it has its connection, its deadline of 30 seconds and its rules for each answer, and three bounds of its own: 64 entries, 8 modules on 4 levels, and a count of reads.
+
+An import scan trusts no name and no hash that the storage service gives: the name of an entry only says which object to read next. It is not an index, and it is not a search path: the import names one hash, and only bytes with that hash are kept. A module of the boot image wins over a file of the store with the same hash.
+
+The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
+
+Do not use: dependency resolution, library lookup, search of an import.
 
 ### Module space
 
@@ -520,6 +532,8 @@ The modus tool writes the debug object at the build, from the linked ELF file of
 The debug object names its module by the hash of the module file. The module names nothing: its bytes are the same with and without its debug object, and `modustool check` proves it by a third build with no debug information. The build asks the compiler for a kind of debug information that adds no instruction, `-debug-info:same-code` (`docs/REPRODUCIBLE_BUILD.md`, "8. The debug information"). The hash proves only that the tool wrote the object for that module, not that the names are true. A reader shows the names; no decision of the system uses them. A reader uses a debug object only for a loaded module whose file has that hash (`debug_object.describes_module`): the tables of another build are wrong for it.
 
 The file table ties each line to one version of its source: a reader shows the text of a line only from a file whose BLAKE3 hash is the hash of the table (`debug_object.source_line_of`), and says so when the hash differs.
+
+The debug object of a module of the boot image is in the debug image. The debug object of a disk program is an object of the store `programs`, beside its module file, named by the 64 hexadecimal digits of the hash of the module; the debugger service reads it at an attach, through a connection that reads only and that the root service gives with the debug access (`docs/MODULE_CONTRACT.md`, "The debug object of a disk program").
 
 A debug object is not the whole debug information of the compiler. A variable location that the compiler gives as an expression to compute is "not readable" in it: a debugger of the host reads those in the DWARF of `build/modules/<name>/linked.elf`.
 
@@ -2715,7 +2729,7 @@ A message interrupt is an interrupt that a device sends as a write of a value to
 
 A device signals that it has done work by an interrupt. The old interrupt lines are few and shared between devices; a message interrupt belongs to one device, so the kernel knows which device signalled with no question to it. The kernel gives each message interrupt a vector of its own on the first processor; it has 16 (`MESSAGE_CAPACITY`).
 
-The root service makes one with `Device_Create`, the kind `Message`, with the machine handle and the right **Devices**. The results are an interrupt handle with **Give** and **Read**, the address that the device must write, and the value that it must write there. The root service writes the address and the value in the table of the device on the bus, enables the table, and gives the interrupt handle to the device service with the right **Read**. The device service never writes the configuration of its device.
+The root service makes one with `Device_Create`, the kind `Message`, with the machine handle and the right **Devices**, and the base of a memory base address register of the device, which names the device. The results are an interrupt handle with **Give** and **Read**, the address that the device must write, and the value that it must write there. The root service writes the address and the value in the table of the device on the bus, enables the table, and gives the interrupt handle to the device service with the right **Read**. The device service never writes the configuration of its device. With interrupt remapping, only that device can send it (see "Interrupt remapping").
 
 When the device writes the value, the kernel adds 1 to the count of the interrupt and to the `events` word of each thread of the program that holds the handle, and wakes them. The device service reads and resets the count with `Interrupt_Read`, then reads its queues.
 
@@ -2731,7 +2745,7 @@ The IOMMU is the unit of the machine that translates each address that a device 
 
 A device reads and writes memory by itself. Without an IOMMU, a device service with a fault can make its device write any page of the machine. With it, the kernel maps in the tables of a device only the pages that its service declared, so a device reaches no other memory. The kernel programs the remapping units of Intel (VT-d) when the firmware lists them in the ACPI table DMAR; the test machine has one in the part `iommu` of the test only. A service declares a memory object with `Memory_Physical`, the call that already gives it the address for its device: the kernel maps the pages in the domain of each device whose registers the service holds by a handle (see "Device domain"). A machine with no IOMMU writes one line at its start and runs as before, with no such isolation; its `Boot_Report.iommu_unit_count` is 0.
 
-The IOMMU is not the page table of a program: a program never sees it, and it translates the addresses of devices only. It does not remap interrupts in this system.
+The IOMMU is not the page table of a program: a program never sees it, and it translates the addresses of devices and checks their message interrupts only. The kernel programs no IOMMU of AMD yet.
 
 The design: `src/md/infrastructure/iommu.md`; the guide: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
 
@@ -2803,11 +2817,35 @@ A DMA fault is an access of a device to an address that its device domain does n
 
 The unit records the requester of the device, the page, and whether it was a read or a write, and sends its fault event to the first processor. The kernel then writes one line on the log with the device, its service, the address and the count of faults of that device, and frees the record. After the first 4 faults of a device, it writes only one line of the count at each power of two, so a device that faults in a loop does not flood the log. A DMA fault stops no program and not the machine: the bytes of the page do not change. A virtio device of QEMU that the unit refuses stops its own requests until a reset, which its service sees in the status of the device.
 
-A DMA fault is not a page fault: no thread caused it, and no fault ring receives it.
+A DMA fault is not a page fault: no thread caused it, and no fault ring receives it. It is not a refused interrupt either, which has its own line and its own count (see "Interrupt remapping").
 
 The design: `src/md/infrastructure/iommu.md`, "A DMA fault".
 
 Do not use: IOMMU fault, DMAR fault.
+
+### Queue of invalidations
+
+The queue of invalidations is a ring of descriptors in memory of the kernel through which the kernel tells a remapping unit to forget the entries that it keeps.
+
+A unit keeps the context entries, the translations and the interrupt entries that it read. When the kernel clears or changes one, it writes descriptors that name the domain or the interrupt entry, then a wait descriptor, moves the tail of the queue, and waits until the unit writes the number of the wait in a word of the kernel. The unit then forgot each entry, and drained the accesses in flight. Each unit has one queue of one page; each invalidation waits for its end, so the queue never fills. A unit with no queue leaves the IOMMU off, with one line. A unit that does not reach the wait in one second, or that refuses a descriptor, stops the machine.
+
+A queue of invalidations is not a ring between programs: no program sees it, and only the kernel and the unit read it.
+
+The design: `src/md/infrastructure/iommu.md`, "The end of a grant".
+
+Do not use: QI, invalidation queue, IQ.
+
+### Interrupt remapping
+
+Interrupt remapping is the check by the IOMMU of each message interrupt of a device against an interrupt table that the kernel writes, so a device sends only the message interrupts that its service was given.
+
+A message interrupt is a write of 4 bytes to the interrupt addresses, and a device can make that write as any other: without remapping, a device service can make its device send any vector of any processor. With remapping, the kernel writes one interrupt entry for each message interrupt that `Device_Create` makes: the vector, the first processor, and the requester of its device. The device writes the index of its entry, and the unit refuses the message to every other device, the compatible form, and an entry that is not present. A refused interrupt is a line of the log with its device, the entry and the reason, and a count of its own, by the rule of the lines of a DMA fault; nothing stops. The kernel turns remapping on in every unit or in none, and only when the table DMAR allows it. Example: a test device service that reads a block into the interrupt addresses makes its device send messages to entries that it was not given, and the kernel writes `kernel: an interrupt of the device at bus 255, device 31, function 7 (service no service) is refused: entry 30720; ...`.
+
+Interrupt remapping is not a route of the lines of the 8259: those lines do not go through the IOMMU.
+
+The design: `src/md/infrastructure/iommu.md`, "Interrupt remapping".
+
+Do not use: IR, IRTE, interrupt translation.
 
 ### Bus
 
@@ -4375,11 +4413,11 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each program that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_10` one time for a frame: it gives the damage rectangles from the draw table before and the draw table now. Then it calls `execute_draw_table_10` one time for each damage rectangle: it draws the records in that rectangle into the pixels of the surface. Each argument is memory of the program, passed by address: the two draw tables, the picture memory of the pictures, and the pixels, which the module writes in place. The 10 in the names is the version of the draw record.
+It is the first library module. A window calls `damage_of_draw_table_10` one time for a frame: it gives the damage rectangles from the draw table before and the draw table now. Then it calls `execute_draw_table_in_rectangles_10` one time for the frame, with a table of its damage rectangles, at most 8: it draws the records in each rectangle, in order, into the pixels of the surface. Each argument is memory of the program, passed by address: the two draw tables, the picture memory of the pictures, the rectangles, and the pixels, which the module writes in place. The 10 in the names is the version of the draw record.
 
 The module holds the fills, the gradients, the lines, the pictures, the text grids, the text of the cells and the text of the interface font, with their blends. It keeps the text settings of the program in its own data: the choice of the font, and the glyph caches of the program, validated at the first draw. It reads the choice of the settings page again at each draw.
 
-The drawing module reads the cells of a text grid in the text table, and one picture memory for each call. The terminal draws its grid through it. The compositor, with a picture memory for each surface, draws its screen table in parts: one call for each window and one for the bar.
+The drawing module reads the cells of a text grid in the text table, and one picture memory for each call. The terminal draws its grid through it. The compositor, with a picture memory for each surface, draws its screen table in parts: one call for each window and one for the bar, each with all the damage rectangles that the part meets.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each program, the drawing in a module".
 

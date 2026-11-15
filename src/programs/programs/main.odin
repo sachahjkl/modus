@@ -487,7 +487,8 @@ bytes_hash :: proc "contextless" (name: string, size: int) -> (hash: [disk_progr
 //
 // The service reads the bytes of each object again and computes the hash: the hash that the storage service keeps for
 // an entry differs from the hash of the bytes when the object has a hole. The object `grant_table`, the disk grant
-// table of the principal, is no module file and has no row. An object over 4 MiB, the limit of a module file, or whose
+// table of the principal, is no module file and has no row; nor has the debug object of a module file, an object named
+// by the 64 hexadecimal digits of the hash of its module. An object over 4 MiB, the limit of a module file, or whose
 // bytes did not come, has a row with no hash. The log has one line for each row.
 //
 // - **result**: a table of `Program_File_Row` rows; the call fills at most its length.
@@ -530,7 +531,9 @@ list :: proc "c" (result: ^[]Program_File_Row, error: ^errors.Error_Record) -> i
 			}
 			entry_name := string(names[item.name_offset:][:item.name_count])
 			after_length = copy(after[:], entry_name)
-			if item.kind != storage.ENTRY_OBJECT || entry_name == disk_program.TABLE_OBJECT_NAME {
+			// The disk grant table and the debug object of a module file
+			// are objects of the store, and no module file.
+			if item.kind != storage.ENTRY_OBJECT || entry_name == disk_program.TABLE_OBJECT_NAME || disk_program.debug_object_name_is(entry_name) {
 				continue
 			}
 			digits: [disk_program.HASH_DIGITS]u8

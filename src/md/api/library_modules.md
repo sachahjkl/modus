@@ -29,7 +29,7 @@ It was refused for three reasons.
 - No contract depends on a feature of one programming language. The calling convention of the language is such a feature.
 - The check of a replacement compares descriptions. An import with no description cannot be checked, so a replacement of a library has no check at all.
 
-A parameter that the description cannot carry, by its kind, is a sign that the border is in the wrong place. The count of the parameters is not: the description describes each export completely at each count, up to 12 arguments. The bound of six came from the integer registers of the calling convention, and it bent borders that were right: the drawing module took one damage rectangle for each call. See [call_form_arguments.md](call_form_arguments.md).
+A parameter that the description cannot carry, by its kind, is a sign that the border is in the wrong place. The count of the parameters is not: the description describes each export completely at each count, up to 12 arguments. The bound of six came from the integer registers of the calling convention, and it bent borders that were right: the drawing module took one damage rectangle for each call, until its draw export took the table of the rectangles. See [call_form_arguments.md](call_form_arguments.md).
 
 ## What stays compiled in, and why
 
@@ -66,9 +66,9 @@ The last row is a bundle with no table of what it holds yet. A fault in the text
 ## What is left, and what blocks it
 
 - **The Picture: done.** A Picture record names its pixels by values in a picture memory that the caller passes as bytes, so the programs that show a picture draw through the module. See [picture.md](picture.md).
-- **The terminal and the compositor: done.** The terminal copies the cells of its grid into the text table of the frame, so the two exports read them with no new parameter: see [text_grid.md](text_grid.md). The compositor draws its screen table in parts, one call for each part, and each part has the one picture memory of its surface: see [picture.md](picture.md), "The compositor: one call for each part".
+- **The terminal and the compositor: done.** The terminal copies the cells of its grid into the text table of the frame, so the two exports read them with no new parameter: see [text_grid.md](text_grid.md). The compositor draws its screen table in parts, one call for each part with all its damage rectangles, and each part has the one picture memory of its surface: see [picture.md](picture.md), "The compositor: one call for each part".
 - **The cell text** of the programs that draw text themselves with no draw table: one more export of the drawing module, for one run of cells, not for one glyph. A full terminal is 3,328 cells and up to 3,328 runs in one frame, so the terminal does not use such an export: its grid crosses the border in the text table ([text_grid.md](text_grid.md), "The count of a full terminal").
-- **The forms that the bound of six forced.** The cells of a grid copied into the text table, and one draw call for each damage rectangle, were chosen when an export had six arguments at most. An export now has 12 ([call_form_arguments.md](call_form_arguments.md)), so a table of rectangles, or the cells as a table of their own, can be a parameter. The drawing exports that take the rectangles of a frame in one call are planned work in `ROADMAP.md`.
+- **The forms that the bound of six forced.** The cells of a grid copied into the text table, and one draw call for each damage rectangle, were chosen when an export had six arguments at most. An export now has 12 ([call_form_arguments.md](call_form_arguments.md)). The draw export takes the rectangles of a frame in one call: done, see [picture.md](picture.md), "The draw export: the rectangles of a frame in one call". The cells stay in the text table, for the reason of [text_grid.md](text_grid.md).
 - **The error sentences**: a record in, a text out, a cold path.
 - **The network libraries**: two users each. The gain is the graph and the replacement of a protocol stack, not the bytes.
 

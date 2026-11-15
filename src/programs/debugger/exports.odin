@@ -192,6 +192,13 @@ thread_rows :: proc "contextless" (result: ^[]Thread_Row, only: i64 = -1, pendin
 // service is refused for each caller (docs/TOOLS.md, "Who can debug which
 // program").
 //
+// For a disk program, the service also reads the debug object of its
+// module from the store `programs`, where it is beside the module file,
+// through a connection that the root service gives with the debug access
+// (docs/MODULE_CONTRACT.md, "The debug object of a disk program"). A read
+// that fails is one line of the log, and `described` does not count the
+// module.
+//
 // - **program**: the name of a program that runs, at most 31 bytes.
 //
 // **Errors**:
@@ -284,10 +291,15 @@ attach :: proc "c" (program: ^string, result: ^[]Attached, error: ^errors.Error_
 	}
 	session.name_count = copy(session.name[:], name)
 	reports_read()
+	// The module of a disk program has its debug object in the store
+	// `programs`, beside its module file, and not in the debug image.
+	if disk_hash, from_disk := disk_module_of(); from_disk {
+		disk_debug_object_read(name, caller.ring_memory, disk_hash, completion.values[5])
+	}
 	described := 0
 	module_count := int(min(report_modules.count, op.PROGRAM_MODULE_CAPACITY))
 	for &record in report_modules.modules[:module_count] {
-		if system.debug_object_of(&debug_names, record.hash) != nil {
+		if debug_object_for(record.hash) != nil {
 			described += 1
 		}
 	}
@@ -728,7 +740,7 @@ Named_Value :: struct {
 // program whose debug object has it.
 global_find :: proc "contextless" (name: string) -> (value: Named_Value, found: bool) {
 	for &record in report_modules.modules[:min(report_modules.count, op.PROGRAM_MODULE_CAPACITY)] {
-		object := system.debug_object_of(&debug_names, record.hash)
+		object := debug_object_for(record.hash)
 		if object == nil {
 			continue
 		}
@@ -987,7 +999,7 @@ break_at :: proc "c" (place: ^string, result: ^[]Break_Row, error: ^errors.Error
 	}
 	described := 0
 	for &record in report_modules.modules[:min(report_modules.count, op.PROGRAM_MODULE_CAPACITY)] {
-		object := system.debug_object_of(&debug_names, record.hash)
+		object := debug_object_for(record.hash)
 		if object == nil {
 			continue
 		}

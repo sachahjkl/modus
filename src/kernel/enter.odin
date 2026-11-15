@@ -657,11 +657,12 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if handle == 0 {
 				return .No_Slot
 			}
-			// The first processor receives each message: the address names
-			// its interrupt controller, the value is the vector.
+			// The first processor receives each message. With interrupt
+			// remapping, the entry of the message names the device whose
+			// base address register starts at a, so no other device sends
+			// it (src/md/infrastructure/iommu.md, "Interrupt remapping").
 			results[0] = u64(handle)
-			results[1] = 0xFEE0_0000 | u64(processors[0].apic_id & 0xFF) << 12
-			results[2] = u64(VECTOR_MESSAGE_BASE + message - INTERRUPT_LINES)
+			results[1], results[2] = iommu_message_bind(message - INTERRUPT_LINES, v[2])
 			return .Ok
 		case .None:
 			return .Bad_Operation

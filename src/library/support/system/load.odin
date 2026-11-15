@@ -143,7 +143,19 @@ Prepared_Modules :: struct {
 // program reaches only the modules that it was granted.
 Load_Source :: struct {
 	image:        []u8, // The files that the program was granted, in the form of the boot image. A file has the hash that names it, or the loader refuses it.
+	files:        []Source_File, // Files beside the image, which the starter read and gives. A file of the image with the same hash is taken first.
 	replacements: []module.Replacement, // From the party that starts the program. The program cannot change them.
+}
+
+// A module file of a load source that is not in the image: the root
+// service gives the files of the store `programs` that an import scan kept
+// (docs/MODULE_CONTRACT.md, "A program from a disk"). The loader checks the
+// hash and the tables of the bytes before it uses them, as for a file of
+// the image.
+Source_File :: struct {
+	hash:  [32]u8, // The hash that names the file.
+	bytes: []u8, // The file. The starter keeps it mapped until the load ends.
+	name:  string, // The name that a load error gives the hash: for a file of a store, the name of its entry. It names no module.
 }
 
 MODULE_SPACE_CAPACITY :: op.PROGRAM_MODULE_CAPACITY // The modules of one space: the module records that the kernel keeps for one program.
@@ -328,19 +340,36 @@ named_of :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (value: mo
 	value.hash = hash
 	if entry := image_entry_of(source.image, hash); entry != nil {
 		module.name_set(&value.name, name_of(entry.name[:]))
+		return value
+	}
+	for item in source.files {
+		if item.hash == hash {
+			module.name_set(&value.name, item.name)
+			break
+		}
 	}
 	return value
 }
 
 // source_file gives the file of the load source with a hash, after it
-// checked the hash and the tables.
+// checked the hash and the tables. The image comes first: a file beside it
+// with the same hash has the same bytes, or it fails its check.
 @(private)
 source_file :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (file: []u8, stage: module.Load_Stage, file_error: module.Error) {
-	entry := image_entry_of(source.image, hash)
-	if entry == nil {
+	found := false
+	if entry := image_entry_of(source.image, hash); entry != nil {
+		file, found = source.image[entry.offset:][:entry.size], true
+	} else {
+		for item in source.files {
+			if item.hash == hash {
+				file, found = item.bytes, true
+				break
+			}
+		}
+	}
+	if !found {
 		return nil, .Find, .None
 	}
-	file = source.image[entry.offset:][:entry.size]
 	if file_error = module.validate(file); file_error != .None || blake3.hash(file) != hash {
 		return nil, .Read, file_error
 	}
@@ -773,8 +802,8 @@ segment_copy :: proc "contextless" (file: []u8, segment: module.Segment, base: u
 // import both the module that the import names and the module of the
 // replacement. files[0] is the module. A caller gives these files, and only
 // these, to a program that loads the module (a call host). A hash that the
-// load source does not have is left out: the loader of the other program
-// reports it.
+// image of the load source does not have is left out, a file beside the
+// image too: the loader of the other program reports it.
 source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry) -> (count: int) {
 	add :: proc "contextless" (files: ^[MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry, count: ^int, entry: ^info.Image_Entry) -> bool {
 		if entry == nil {

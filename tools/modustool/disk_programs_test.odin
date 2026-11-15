@@ -7,6 +7,19 @@ import format "modus:contract/store"
 import "modus:support/disk_program"
 import "modus:support/storage_mount"
 
+// The line that the scenario of the debugger names is the line of the
+// call of sleep_for_ever in the entry of visitor.
+@(test)
+visitor_line_of_the_sleep_is_the_call :: proc(t: ^testing.T) {
+	content, read := read_file(PROGRAM_SOURCES + DISK_PROGRAM_MODULE + "/main.odin")
+	if !testing.expect(t, read) {
+		return
+	}
+	line, found := source_line_of_content(string(content), 81)
+	testing.expect_value(t, VISITOR_LINE_OF_THE_SLEEP, "81")
+	testing.expect(t, found && line == "\tsleep_for_ever()", line)
+}
+
 // The bytes of a test file: no block of them is all zero.
 @(private = "file")
 test_file_bytes :: proc(count: int, seed: u8) -> []u8 {
@@ -140,6 +153,45 @@ a_file_with_a_hole :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(stored.blocks), 5)
 }
 
+// A debug object goes beside its module file under the hash of the module,
+// with a limit of its own; the open of the storage service takes it as an
+// object of the store. A debug object that names another module is refused.
+@(test)
+a_debug_object_beside_its_module_file :: proc(t: ^testing.T) {
+	module_file := test_file_bytes(300, 7)
+	// A debug object that the readers take is made by the build: here,
+	// only the refusals that need no build are checked, and the name.
+	refused, accepted := program_debug_object_file("small", module_file, test_file_bytes(200, 8))
+	testing.expect(t, !accepted && refused.name == "")
+	digits: [disk_program.HASH_DIGITS]u8
+	disk_program.debug_object_name_write(&digits, blake3.hash(module_file))
+	// An object larger than a module file may be, and under the limit of a
+	// debug object.
+	large := test_file_bytes(disk_program.FILE_BYTES_LIMIT + format.BLOCK_SIZE, 9)
+	files := [?]Program_File{{"small", module_file}, {string(digits[:]), large}}
+	image, encoded := program_disk_encode(files[:], 2 * disk_program.FILE_BYTES_LIMIT)
+	if !testing.expect(t, encoded) {
+		return
+	}
+	defer delete(image)
+	state := new(storage_mount.State)
+	defer free(state)
+	contents := disk_contents(image, state)
+	testing.expect(t, !contents.mount.failed && !contents.mount.needs_format)
+	testing.expect_value(t, contents.mount.objects, u64(2))
+	stored := stored_program(&contents, string(digits[:]))
+	// The reader of the test keeps the bytes of an object of at most
+	// CONTENTS_BYTES_LIMIT only: this one is larger, so its size and its
+	// blocks are checked.
+	if testing.expect(t, stored != nil) {
+		testing.expect_value(t, stored.size, u64(len(large)))
+		testing.expect(t, !stored.damaged)
+	}
+	over := [?]Program_File{{string(digits[:]), test_file_bytes(disk_program.DEBUG_OBJECT_BYTES_LIMIT + 1, 3)}}
+	_, over_encoded := program_disk_encode(over[:], 4 * disk_program.DEBUG_OBJECT_BYTES_LIMIT)
+	testing.expect(t, !over_encoded)
+}
+
 // The writer refuses what the root service would refuse: a name that is no
 // name of a disk program, two files of one name, a file with no byte, and
 // more files than one leaf holds.
@@ -159,6 +211,11 @@ the_writer_refuses_a_wrong_store :: proc(t: ^testing.T) {
 		image, encoded := program_disk_encode(files, 64 * format.BLOCK_SIZE)
 		testing.expectf(t, !encoded && image == nil, "%d files are refused", len(files))
 	}
+	// A debug object takes the hash of its module as its name, and no other
+	// name of 64 bytes: upper case digits are no such name.
+	upper_case_digits := "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
+	_, upper_encoded := program_disk_encode([]Program_File{{upper_case_digits, good}}, 64 * format.BLOCK_SIZE)
+	testing.expect(t, !upper_encoded)
 	many := make([]Program_File, format.LEAF_CAPACITY + 1, context.temp_allocator)
 	for &file in many {
 		file = {"x", good}

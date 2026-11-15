@@ -18,7 +18,11 @@
 // - `hash_parse`, `hash_write`: the hash of the command, as 64 hexadecimal
 //   digits.
 // - `Read`, `read_begin`, `read_step`: the rules of the answers of the
-//   storage service while the root service reads a file.
+//   storage service while the root service reads a file, and while the
+//   debugger service reads a debug object.
+// - `debug_object_name_write`, `debug_object_name_is`,
+//   `DEBUG_OBJECT_BYTES_LIMIT`: the debug object of a module file, an
+//   object of the same store named by the hash of the module.
 // - `Grant_Table`, `start_file`, `table_allow`, `table_disallow`,
 //   `table_move`, `grant_by_command`, `table_encode`, `table_decode`: the
 //   disk grant table of a principal, its nickname rule, and its persisted
@@ -27,6 +31,10 @@
 //   table of principal 0.
 // - `PROGRAMS_BUDGET`, `LARGEST_BUDGET` (budget.odin): the one budget that
 //   pays all disk programs, and the most that one of them gets.
+// - `Import_Scan`, `scan_want`, `scan_entry_add`, `scan_next`,
+//   `scan_read_done`, `scan_skip` (import_scan.odin): the account of the
+//   import scan that finds an import of a disk program in the store
+//   `programs` by the hash of its bytes, with its bounds.
 //
 // See [disk program](term:disk-program).
 package disk_program
@@ -56,6 +64,13 @@ NAME_LIMIT :: 23
 // reads the file into memory of its own budget before it checks the hash:
 // the limit bounds what a file of a disk takes from that budget.
 FILE_BYTES_LIMIT :: 4 << 20
+
+// The most bytes of the debug object of a module file of the store. The
+// debugger service reads the object into memory of its own budget: the
+// limit bounds what an object of a disk takes from that budget. A debug
+// object is often larger than its module: it holds the names of the
+// procedures, the line table, the types and the variables.
+DEBUG_OBJECT_BYTES_LIMIT :: 8 << 20
 
 // The deadline of one load, from the command to the start of the program.
 // It frees the one place of the load when the storage service gives no
@@ -175,6 +190,32 @@ hash_write :: proc "contextless" (out: ^[HASH_DIGITS]u8, hash: [HASH_SIZE]u8) {
 	}
 }
 
+// debug_object_name_write writes the name of the object of the store that
+// holds the debug object of a module: the 64 hexadecimal digits of the hash
+// of the module, in lower case. The module names it, not the principal: one
+// file can have two nicknames, and a nickname can move to another file
+// (src/md/features/debug_object_of_a_disk_program.md).
+debug_object_name_write :: proc "contextless" (out: ^[HASH_DIGITS]u8, module_hash: [HASH_SIZE]u8) {
+	hash_write(out, module_hash)
+}
+
+// debug_object_name_is says if the name of an object of the store is the
+// name of a debug object: 64 hexadecimal digits in lower case. No nickname
+// is such a name: a nickname has at most NAME_LIMIT bytes.
+debug_object_name_is :: proc "contextless" (name: string) -> bool {
+	if len(name) != HASH_DIGITS {
+		return false
+	}
+	for index in 0 ..< len(name) {
+		if !(name[index] >= '0' && name[index] <= '9' || name[index] >= 'a' && name[index] <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+#assert(HASH_DIGITS > NAME_LIMIT)
+
 // The read of one file: the size that the storage service gave, and the
 // bytes that came. The root service keeps one for the load that runs.
 Read :: struct {
@@ -184,19 +225,20 @@ Read :: struct {
 
 // What the answer to the question of the size gives.
 Size_Answer :: enum u8 {
-	Good, // The file has 1 to FILE_BYTES_LIMIT bytes.
-	Empty, // The object has no byte: no module.
-	Too_Large, // More than FILE_BYTES_LIMIT bytes.
+	Good, // The file has 1 to `limit` bytes.
+	Empty, // The object has no byte: no module, no debug object.
+	Too_Large, // More than `limit` bytes.
 }
 
 // read_begin starts the read of a file from the size that the storage
 // service gave. The size is checked here, one time: no later answer
-// changes it.
-read_begin :: proc "contextless" (size: u64) -> (read: Read, answer: Size_Answer) {
+// changes it. `limit` is FILE_BYTES_LIMIT for a module file, and
+// DEBUG_OBJECT_BYTES_LIMIT for a debug object.
+read_begin :: proc "contextless" (size: u64, limit: u64 = FILE_BYTES_LIMIT) -> (read: Read, answer: Size_Answer) {
 	if size == 0 {
 		return {}, .Empty
 	}
-	if size > FILE_BYTES_LIMIT {
+	if size > limit {
 		return {}, .Too_Large
 	}
 	return {size = size}, .Good

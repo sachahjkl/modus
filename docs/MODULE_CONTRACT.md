@@ -209,7 +209,7 @@ The loader does five steps:
 
 Status of the loader in user space (`src/library/support/system/load.odin`):
 
-- **The load source**: the loader finds a module only in its load source: the files that the program was granted, each named by its hash, and the replacements that the starter of the program gives. The loader checks the hash and the tables of each file before it uses it. It has no search path and no ambient store (P20). The root service and the console give the boot image. The first module of a program can come from another place: the root service reads the file of a disk program from the storage service, and checks its hash against the hash of the command ("A program from a disk", below); its imports still come from the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports, and the modules of the replacements.
+- **The load source**: the loader finds a module only in its load source: the files that the program was granted, each named by its hash, and the replacements that the starter of the program gives. The loader checks the hash and the tables of each file before it uses it. It has no search path and no ambient store (P20). The root service and the console give the boot image. The first module of a program can come from another place: the root service reads the file of a disk program from the storage service, and checks its hash against the hash of the command ("A program from a disk", below). An import of a disk program that the boot image does not hold comes from the same store: the root service finds the file by the hash of its bytes, and gives it beside the boot image (`system.Source_File` in `Load_Source.files`). The loader looks at the boot image first, and checks the hash and the tables of a file beside it as of a file of the image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports, and the modules of the replacements.
 - **The module space**: the modules that a loader put in one program. Each module is in it one time: two modules that import a third one call the same copy. A module that another module of the space uses stays when the caller unloads it; a module with no use leaves, and its imports lose one use.
 - **Refusals**: a missing import, an import cycle, a bad file, a replacement that fails its check, a slot that cannot be bound, no room, a kernel operation that fails. On a failure, the space is as it was before the load, and the caller has a load error (below).
 - **Shared code**: a prepared module has two parts. The code is the segments with no Write: the loader never writes them (a rebase and a slot are in a segment with Write, and the loader checks it), so their pages are the same at each base and with each binding, and the table keys them by the hash of the module only. Two programs that import one module at two places map one copy of its code. The fixed part is the segments that are read-only after the load: the loader writes their rebases and their slots, so the table keys them by the hash, the base, and the hash and the base of the module of each import. A writable segment, with its slots, is bound in the copy of each program. The tool gives a segment of the range that the linker makes read-only after the load, and that holds no rebase and no slot, the flags of a constant segment: no loader writes it, so it is a part of the code, shared at each base (`segment_flags_after_the_relocations` in `tools/modustool/convert.odin`). The linker always makes that range, for a table of its own that the tool does not copy; in a module with no table of addresses and no import it is such a segment, of one page with no byte.
@@ -298,9 +298,35 @@ root: refused notes from the disk: the grant table of the root service names it,
 
 Without this rule a file named `notes` would start with the store of `notes`.
 
-**The imports.** A disk program imports by hash. Its load source is the boot image and the replacements of the machine: an import whose hash is not in the boot image fails the load at the stage Find. The modules of a disk program are copies that its own budget pays: it maps no prepared module of the root service.
+**The imports.** A disk program imports by hash. Its load source is the boot image, the replacements of the machine, and the files of the store `programs` of its principal that an import scan found for this load. The modules of a disk program are copies that its own budget pays: it maps no prepared module of the root service.
 
-**The refusals of the command**, as the kinds of its error record: `Not_Authentic` (the bytes have another hash; argument 2), `Absent` (no entry has the name; with the unit `Grants`, an empty hash and no row for the nickname), `Exists` (a module of the boot image has the name; with the unit `Grants`, the nickname names another file), `Reserved` (the grant table names it), `Busy` (another load runs), `Too_Long` (the file passes the limit, or the name has more than 23 bytes), `Malformed` (the loader refuses the file), `No_Answer` (the deadline), `Damaged` (a block of the object has a wrong check), `Refused` with the status for the rest.
+**The import scan.** When the program file imports a hash that no module of the boot image has, the root service looks for it in the same store, after the check of the program file and before the start (`GLOSSARY.md`, "Import scan"). It lists the root tree, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. A name finds nothing: the name of an entry only says which object to read next. The imports of a kept file are wanted too, and a replacement of the machine applies as in the loader. The scan runs inside the load, with its connection, its deadline and its rules for each answer, and has three bounds of its own:
+
+| Bound | Value |
+|---|---|
+| The entries that the scan notes | 64 (`disk_program.SCAN_ENTRY_CAPACITY`) |
+| The modules of the store for one program | 8 (`disk_program.SCAN_WANTED_CAPACITY`), on 4 levels of imports (`disk_program.SCAN_DEPTH_LIMIT`) |
+| The reads | Each entry one time, and two reads for each wanted hash (`disk_program.SCAN_READ_LIMIT`) |
+
+The bytes of a kept file are memory of the root service, paid by the one budget of all disk programs, until the end of the load. The log has a line for the start of the scan and one for each kept file:
+
+```
+> start_from_disk("store_importer", "8e21…")
+root: store_importer imports 1 modules that the boot image does not hold: the import scan reads the store programs to find them by the hash of their bytes
+root: store_importer: the import 3a9c… of store_importer is the file store_library of the store programs, checked on its bytes
+root: started store_importer from the disk, hash 8e21…, with no grant
+store_importer: triple(14) of the module store_library of the store programs gives 42: as it must
+```
+
+A hash that no file has refuses the start with one line, which names the importer and the import:
+
+```
+root: refused store_importer from the disk: store_importer imports 3a9c…, and no file of the boot image or of the store programs has bytes with this hash; the import scan read 6 files
+```
+
+A disk program whose imports are all in the boot image makes no scan.
+
+**The refusals of the command**, as the kinds of its error record: `Not_Authentic` (the bytes have another hash; argument 2), `Absent` (no entry has the name; with the unit `Grants`, an empty hash and no row for the nickname; with the unit `Modules`, an import that no file has), `Full` with the unit `Modules` (the imports pass the bounds of the import scan), `Exists` (a module of the boot image has the name; with the unit `Grants`, the nickname names another file), `Reserved` (the grant table names it), `Busy` (another load runs), `Too_Long` (the file passes the limit, or the name has more than 23 bytes), `Malformed` (the loader refuses the file), `No_Answer` (the deadline), `Damaged` (a block of the object has a wrong check), `Refused` with the status for the rest.
 
 **The file from the network.** The module file service, the program `programs`, puts a module file in the store on a machine that runs. Its private store is the store `programs` of its principal: the root service names a private store by the name of its program. Its other grants are a client grant of TCP to one web server, 10.0.2.100 port 80 (the address that QEMU gives to a server of the host), and its exports. The console calls them through a connection:
 
@@ -313,7 +339,7 @@ Without this rule a file named `notes` would start with the store of `notes`.
 ```
 
 - `programs.receive(nickname, path)` sends `GET path`, takes a body of 1 to 4 MiB with a `Content-Length` before the deadline of a load (30 seconds), writes it as the object `nickname` in one commit, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that came. The nickname follows the rules of the name of a disk program: `programs` and `grant_table` are refused, so no file is written over the disk grant table. The path is 1 to 200 visible bytes that start with `/`.
-- `programs.list()` gives a row for each object of the root tree but `grant_table`: `name`, `bytes`, and `hash`, the BLAKE3 hash of its bytes, which the service reads again. An object over 4 MiB has no hash.
+- `programs.list()` gives a row for each object of the root tree but `grant_table` and the debug objects (section "The debug object of a disk program"): `name`, `bytes`, and `hash`, the BLAKE3 hash of its bytes, which the service reads again. An object over 4 MiB has no hash.
 
 The caller must act for the principal of the store: the root service gives the service the number of its principal (`disk_program.SERVICE_VALUE_PRINCIPAL`). The hash that the service gives is a help, not a proof: the root service checks the bytes at the start, so a changed service or a changed web server cannot make other bytes run under the hash that the principal types. The log has one line for each file stored, and one for each row of a list:
 
@@ -321,7 +347,7 @@ The caller must act for the principal of the store: the root service gives the s
 programs: stored visitor from /visitor: <count> bytes, the BLAKE3 hash of its bytes 5f0c…
 ```
 
-**The file on the disk.** `modustool` writes a data disk that holds the store `programs` (`TOOLS.md`, "The disk of the disk programs"), and prints the hash of each file.
+**The file on the disk.** `modustool` writes a data disk that holds the store `programs` (`TOOLS.md`, "The disk of the disk programs"), and prints the hash of each file. The debug object of each file goes beside it, under the hash of the module: the debugger names the procedures and the lines of a disk program (section "The debug object of a disk program").
 
 Not built: a budget above the largest budget of a disk program; an import from the store; a remote that the principal chooses for the module file service; a disk program that is a service.
 
@@ -442,7 +468,7 @@ The description of a function is its list of parameters and results, each with a
 
 ### Why an export takes more than six arguments
 
-The bound was six arguments: the integer registers of the convention, with no parameter on the stack. It bent borders of modules that were right: the drawing module takes one damage rectangle for each call, because its table of rectangles had no place, and the cells of a text grid are copied into the text table of the frame, because the damage of a grid needs two more tables and no parameter was left for them. The description describes each export completely at each count, so the count of the parameters is no sign that a border is wrong. The bound is now 12: twice the registers, and four more than the largest export that is planned. A bound stays because a `Function` record and the private copy of a receiver have a fixed size. The design: `src/md/api/call_form_arguments.md`.
+The bound was six arguments: the integer registers of the convention, with no parameter on the stack. It bent borders of modules that were right: the drawing module took one damage rectangle for each call, because its table of rectangles had no place (its draw export now takes the table as its sixth parameter), and the cells of a text grid are copied into the text table of the frame, because the damage of a grid needs two more tables and no parameter was left for them. The description describes each export completely at each count, so the count of the parameters is no sign that a border is wrong. The bound is now 12: twice the registers, and four more than the largest export that is planned. A bound stays because a `Function` record and the private copy of a receiver have a fixed size. The design: `src/md/api/call_form_arguments.md`.
 
 The export `weigh` of `src/modules/sample` takes nine parameters and an error record: ten arguments, four on the stack. Each of its numbers has its own weight, so a value in the place of another gives another sum: `weigh(1, 2, 3, 4, 5, 6, 7, 8, "A")` is 269. The machine test of the console calls it in a direct call and in an isolated call.
 
@@ -619,7 +645,7 @@ The program `tables` measures `sample.sum_values` (it reads 8 bytes of each reco
 - An isolated call costs a wake of the other program and its answer, 3 to 12 us under this load; the copy of 40 KiB into the call region adds about 2 us.
 - (iii) adds the lend of the handle, its proof, the map and the unmap, and the revocation: about 6 us more than (ii) at 64 and 1024 rows. It wins only when the table does not fit in the call region: then it is the one way, and 2.5 MiB cost 76 us, 50 us more than the direct call.
 - **The elements of the interface package as a module** (`src/programs/interface_through_module`, QEMU with KVM, one run, the least of 200 builds): one frame of 31 draw records in 25 element calls, 6 556 ns through `interface_module` against 4 055 ns with the package compiled in: about 100 ns more for each element call (an import slot, a frame of the package made on the stack of the export at each call, and the copy of its records to the tables of the caller). The two draw tables are equal, record for record and byte for byte.
-- **The drawing of a window as a module** (`src/modules/drawing`; section "A library as a module"): one call for the damage of a frame and one for each damage rectangle, each with tables, the picture memory and the pixels of the caller by address. The program prints the time of the damage and of the draw through the module on its log, and compares one frame drawn by the package and by the module, byte for byte.
+- **The drawing of a window as a module** (`src/modules/drawing`; section "A library as a module"): one call for the damage of a frame and one for the draw of all its damage rectangles, each with tables, the picture memory and the pixels of the caller by address. The program prints the time of the damage and of the draw through the module on its log, and compares one frame drawn by the package and by the module, byte for byte.
 
 ### A call from the host
 
@@ -709,7 +735,7 @@ A library module (`GLOSSARY.md`) is a module that holds code that many programs 
 - An export is not one small step that a caller repeats many times for one result. Such a step needs an adapter on each side of the border, and the adapter costs more than the call: one element of the interface through the adapter of `interface_module` costs about 100 ns more than the element compiled in, and a call through an import slot costs 2.4 ns (`INTERFACE.md`, section 7).
 - A parameter that the description cannot carry by its kind (a record that holds an address, a slice by value, a procedure value) is a sign that the border is in the wrong place, not a reason for a second call form. The description stays the one form: the same export serves a direct call, a call host and a service (P12, P19).
 - The count of the parameters is not such a sign. The description describes each export completely at each count, up to 12 arguments (section 4, "Why an export takes more than six arguments"). An export takes each table of its work as its own parameter: no record and no second call carries a table that has no place.
-- The version of a record whose values have a meaning that the description does not hold (a kind of draw record) is in the name of each export that reads it: `execute_draw_table_10`. Another version is another name, so a replacement with another version fails the check by name.
+- The version of a record whose values have a meaning that the description does not hold (a kind of draw record) is in the name of each export that reads it: `execute_draw_table_in_rectangles_10`. Another version is another name, so a replacement with another version fails the check by name.
 
 **What stays compiled into each program, and why.**
 
@@ -727,7 +753,7 @@ A library module (`GLOSSARY.md`) is a module that holds code that many programs 
 - The module can keep a cache of a fixed size in its own writable data. The loader gives each program its own copy of each writable segment (rule 3 of "Closed rules"), so the cache is data of one program with no new mechanism. The drawing module keeps the text settings of the program and the blend tables there: 29 KiB.
 - A module has no code that runs at its load. It fills its cache at its first call, from the context of the program at `CONTEXT_ADDRESS`.
 - **No segment that the loader writes and that is read-only after the load.** A library module has no table of addresses (a table of texts, a table of procedures) and no import: no rebase and no slot outside its writable data. Reason: the segments with no Write are shared code at each address; a segment that is read-only after the load holds addresses that the loader wrote for one base, so a starter keeps one prepared module of it for each address (`GLOSSARY.md`, "Prepared module"). A library module is at another address in each importer, after the module of the program. With such a segment, 40 importers take 40 places of the table of prepared modules of the root service, which has 64, and the next program does not start. The modus tool refuses the conversion of a library module with such a segment (the field `library` of the module table). The range that the linker makes read-only after the load is not such a segment when the loader writes nowhere in it: the tool gives it the flags of a constant segment (section 2, "Shared code"), and it is a part of the shared code.
-- **A cache with no lock has a rule for its callers.** A module that writes its cache with no guard states how many threads of a program can call it at a time. The drawing module: one thread of a program at a time calls `execute_draw_table_10`; a program that breaks the rule can draw a wrong text or fault, inside its own address space only (`INTERFACE.md`, section 7).
+- **A cache with no lock has a rule for its callers.** A module that writes its cache with no guard states how many threads of a program can call it at a time. The drawing module: one thread of a program at a time calls `execute_draw_table_in_rectangles_10`; a program that breaks the rule can draw a wrong text or fault, inside its own address space only (`INTERFACE.md`, section 7).
 
 **What changes for a program that imports it.**
 
@@ -749,7 +775,7 @@ A source names an export of an import in a `foreign` block. The compiler trusts 
 - **What it leaves**: a `foreign` procedure that no import exports is a procedure of an assembly file of the module.
 - **Each call has one compared declaration.** The converter gives the check the symbol of each slot of the importer: each import that the code calls. Each such symbol must have a declaration that the check compared. A symbol with none stops the build and is named: "the import seal is called, and the tool found no declaration of it to compare". This covers each declaration that the tool does not find: a `foreign` block in the body of a procedure, and a `link_name` or a `link_prefix` that is a constant and not a text. Two declarations of one symbol pass, because each is compared with the same description: a program and a package that it compiles can both declare an export. So a declaration of an import is in a `foreign` block at the level of the file, or of a `when` there, with its name or its `link_name` as a text.
 - **A type alias is not read.** A parameter whose type is a name for a type of the contract (`^Drawn` for `^system.Table_To_Append(Record)`) is refused, and the sentence says what to write: "The tool does not read a type alias: write the type itself in the declaration". To follow an alias the tool needs the constants of each package, which is the work of the compiler; the declaration is also where a reader finds the call form.
-- **A failure** stops the build with the file, the line and the first difference: "the declaration of execute_draw_table_10 does not agree with the export of drawing: it has 4 parameters, the export has 5".
+- **A failure** stops the build with the file, the line and the first difference: "the declaration of execute_draw_table_in_rectangles_10 does not agree with the export of drawing: it has 5 parameters, the export has 6".
 - **A second reader**: the host test `each_declaration_of_the_repository_agrees_with_its_export` makes the same comparison against the descriptions that the tool reads from the source of each import, with no build.
 - **What it does not prove**: the meaning of a value. A declaration and an export that agree on each type can still disagree on what a field means; the version in the name of an export is the answer for a record with versions, and the unit of an Integer parameter is the answer for a number that counts a size or a time.
 
@@ -1340,13 +1366,35 @@ A variable range, 12 bytes:
 - **The kernel** checks the range that the boot program gives: on a page, inside the bound, and inside one range of the memory of the boot. Then it gives these pages to the root service as a memory object with Read (`op.ROOT_DEBUG_IMAGE`, its size at `op.ROOT_VALUE_DEBUG_IMAGE_SIZE`). A refused range is one line of the log and no debug image, never a stop. It reads none of the bytes.
 - **Who pays**: no budget. The pages are memory of the boot, as the boot image: the kernel never gives them as free frames, and they stay taken for the whole run of the machine (the build prints its size: "modustool: the debug image has ..."). Each program that maps the debug image pays, from its own budget, the page tables of its mapping, as for each mapping.
 - **The root service** maps it read-only at the fixed range `Debug_Image` in each program with the grant `Debug_Image` (`console`, `inspect`, `errors`, `debugger`), with its size at the value 21 of the context (`op.CONTEXT_VALUE_DEBUG_IMAGE_SIZE`). A program finds it with `system.debug_image_of`, and the object of a module with `system.debug_object_of`.
-- **Why not the data disk**: an object of the storage service has at most 32 blocks (128 KiB) (`STORAGE.md`, section 3.4); the debug object of `console` is larger. **Why not the network**: a reader would need a network grant to show a stop report.
+- **Why not the data disk, for a module of the boot image**: a reader of the debug image needs no service to name a frame, so a stop report of the storage service itself has names, and the console needs no connection to show one. The module of a disk program has no other place: its debug object is on the data disk (section "The debug object of a disk program"). **Why not the network**: a reader would need a network grant to show a stop report.
 - **When modules load from storage** (`STORAGE.md`, section 5, step 4): a debug object is an object of the tree of the system or of its package, beside its module, and the reader finds it by the hash of the module, as today. The boot program then reads no debug image, and `system.debug_object_of` takes the object from the store. The format and the lookup do not change. Large objects (step 1) come before it.
+
+### The debug object of a disk program
+
+The module of a disk program is not in the boot image, so the debug image has no object for it. Its debug object is an object of the same store `programs`, beside its module file. The design is `src/md/features/debug_object_of_a_disk_program.md`.
+
+- **Its name** is the 64 hexadecimal digits of the hash of the module, in lower case (`disk_program.debug_object_name_write`). The module names it, not the principal: one file can have two nicknames. A nickname has at most 23 bytes, so no nickname is such a name. `programs.list()` does not list it.
+- **The tool writes it.** `modustool program-disk disk.img build/my_program.module` puts `build/my_program.debug` beside the module file in the store, when the file is there. It refuses a debug object that names another module.
+- **The debugger service reads it** at `attach`, for the module of the program that the boot image does not hold and the debug image does not describe. It sends the command `Debug_Store` of the root ring, with the name of the program and the call ring of its caller, as for `Debug`. The root service gives a connection to the store `programs` of the principal of the program only when it gave the service the debug access to that program for that caller, and only for a disk program. The connection reads only (`isolated.CALLER_READS_ONLY`): the storage service refuses each change on it. It reaches the whole store, for the read of one object: after the read, on each path, the service sends `Debug_Store` with the flag of an end, and the root service ends the connection. It ends at the latest with the debug access.
+- **The bounds.** The object has at most 8 MiB (`disk_program.DEBUG_OBJECT_BYTES_LIMIT`), in memory of the budget of the debugger service. The answer of the root service and the read have one deadline of 1500 ms. With the 2000 ms of the answer to `Debug`, the waits of `attach` take at most 3500 ms, under the 5000 ms after which `remote` ends a call. Each answer of the storage service must make progress, as in the load of a module file.
+- **The check.** The storage service chose the bytes: the service uses the object only when `debug_object.check` takes it and when the hash that it names is the hash of the module record. A read that fails is one line of the log, and the attach goes on with no debug object for the module.
+- **The use.** The debugger names the procedures, the lines, the types and the variables of the module, as for a module of the boot image, and names the module by the name of the program. The console, `inspect` and `errors` read the debug image only: their stop report of a disk program names offsets.
+
+The log of the attach, for the outside module of the test part `disk_programs`:
+
+```
+root: gave debugger a connection that reads only to the store programs of principal 0, for the debug object of outsider
+debugger: read the debug object 5f0c… of outsider from the store programs of principal 0: <size> bytes, checked whole
+root: disconnected programs from the service storage
+```
+
+Then `columns(where(stack(0), "procedure", "entry"), "module procedure file line")` in the console gives `outsider  entry      outsider/main.odin    81`: the source of the copy, by the name of its folder.
 
 ### The readers
 
 - `system.frame_text` writes a frame of a stop report: "fault::three + 0x8 in fault (src/programs/fault/main.odin:15)". Frame 0 is the instruction. Each next frame is a return address: the procedure and the line are those of the call, the byte before it. With no debug image, the frame is "fault + 0x1478".
 - The console (`fault_print`), the program `errors` (the stack of `fault`) and `inspect` (the stop report, made when the report changes) use it. `TOOLS.md`, "Names and lines".
+- The debugger service reads the debug image, and the debug object of a disk program from the store `programs` (section "The debug object of a disk program").
 - The modus tool reads the same debug objects with the same reader: the step `Trace` of the machine test, and the test of the build that reads the debug object of `fault` against its linked file.
 
 ### What the debug information does not give
