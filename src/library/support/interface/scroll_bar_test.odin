@@ -349,7 +349,11 @@ scroll_bar_takes_the_wheel_over_its_view :: proc(t: ^testing.T) {
 	input_add(&input, {kind = .Pointer, x = 8, y = 200, wheel = NOTCH})
 	result = wheel_frame(&table, &state, &input, {}, range)
 	testing.expect_value(t, result.first, 37 + SCROLL_WHEEL_LINES_PER_NOTCH)
-	// Elsewhere: no frame and no move.
+	// Elsewhere: no frame and no move. The pointer leaves the bar first: the
+	// frame of the notch over the bar drew it lit, so the next frame draws
+	// it unlit whatever the wheel does.
+	input_add(&input, {kind = .Pointer, x = 300, y = 200})
+	wheel_frame(&table, &state, &input, VIEW_AREA, range)
 	input_add(&input, {kind = .Pointer, x = 300, y = 200, wheel = NOTCH})
 	testing.expect(t, !scroll_bar_wants_frame(&state, &input, BAR_AREA, bar_identity, VIEW_AREA))
 	result = wheel_frame(&table, &state, &input, VIEW_AREA, range)
