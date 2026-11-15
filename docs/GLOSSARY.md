@@ -2849,7 +2849,7 @@ A frame service is the device service of one network device: it sends and receiv
 
 The frame service keeps the code that knows a network device out of the kernel and out of the network service. The first one is the program `frame`, for a virtio network device; a service for another class of device can serve the same contract, `src/library/contract/frame`.
 
-The root service starts it with exactly one device, as for a block service: device memory of its registers, one message interrupt, memory for its queues, the machine handle with the right **Physical** only, and a copy of the configuration. Its one client is the network service. The client sends `Attach` with its frame region, then `Send` for each frame to send and `Receive` for each place where a frame can arrive. The device reads and writes the frames in the frame region with no copy.
+The root service starts it with exactly one device, as for a block service: device memory of its registers, one message interrupt, memory for its queues, the machine handle with the right **Physical** only, and a copy of the configuration. Its one client is the network service. The client sends `Attach` with its frame region, then `Send` for each frame to send and `Receive` for each place where a frame can arrive. The device reads and writes the frames in the frame region with no copy. With `Read_Region_Add` the client also gives read regions, where the device reads a second part of a frame to send.
 
 The service checks no address and computes no check: the client builds and checks each frame. If no `Receive` waits when a frame arrives, the device drops the frame. Example of its first line: "frame: ok, the hardware address 52:54:00:12:34:56, the link is up, ...", then the sizes of its two queues of the device and the count of places for frames that arrive.
 
@@ -2867,9 +2867,11 @@ The frame ring has a capacity of 256 records (`RING_CAPACITY` of `src/library/co
 
 - `Attach`: the handle of the frame region.
 - `Info`: the hardware address, whether the link is up, the most bytes of a frame, the most `Receive` and `Send` in flight.
-- `Send`: a place in the frame region and a count of bytes, from 14 to 1514.
+- `Send`: a place in the frame region and a count of bytes, 14 at least, and a second part in a read region: an offset and a count. The two counts are 1514 at most. Its completion comes when the device read the frame.
 - `Receive`: a place and its room. Its completion comes only when a frame arrives there, with the count of bytes of the frame.
 - `Statistics`: the frames and bytes sent and received, the kernel entries and the interrupts of the service.
+- `Read_Region_Add`: the handle of a read region and its place, from 0 to 7.
+- `Read_Region_Remove`: the place of a read region. Its completion comes when no `Send` that reads it is in flight.
 
 Many requests are in flight. A `Receive` can stay in flight for a long time: the client gives the places before the frames arrive, so the service allocates no memory for a frame. More `Receive` in flight than the device has places gives `Too_Many`; a frame of more than 1514 bytes gives `Too_Large`.
 
@@ -2885,13 +2887,27 @@ The frame region is the memory object of the client of a frame service where the
 
 It is the data region of the frame contract: contiguous, so that the device uses one physical address for each place, and given to the service with `Attach` through the frame ring. A request names a place in the region in bytes, never an address; the service refuses a byte outside it with `Out_Of_Range`. A place for a frame that arrives has 2048 bytes (`PLACE_SIZE`): less room than 1514 bytes can lose a frame.
 
-The network service owns the frame region. It copies the data of each datagram one time, between the datagram region of a program and the frame region.
+The network service owns the frame region. It copies the data of each datagram that arrives one time, from the frame region to the datagram region of a program. For a datagram to send, it writes only the headers in the frame region.
 
 A frame region is not a socket buffer: a program with an endpoint never sees it.
 
 The design: `src/library/contract/frame`.
 
 Do not use: DMA buffer, skb, mbuf.
+
+### Read region
+
+A read region is a memory object that the client of a frame service gives with the right Read only, where the device reads the second part of a frame to send.
+
+The read region lets the device read data where its writer put it, so that no service copies it. The network service gives the datagram region of each endpoint as a read region, at the place of the endpoint, with `Read_Region_Add`. A `Send` then names the headers in the frame region and the data in the read region: the device reads the two as one frame. The frame service refuses a read region with the right Write, or one that is not contiguous. With the IOMMU, the device can read a read region and cannot write it.
+
+The frame service keeps its handle of a read region until the last `Send` that reads it is complete. So the memory stays while the device reads it, whatever its other holders close.
+
+A read region is not a frame region: the device never writes it, and no frame that arrives goes there.
+
+The design: `src/md/infrastructure/network_data_path.md`, "The send with no copy", and `src/library/contract/frame`.
+
+Do not use: send buffer, transmit buffer, scatter list.
 
 ### Virtio
 
@@ -2915,7 +2931,7 @@ The network service is the one client of the frame service: it gives each progra
 
 Only one program can read the frames of the device of the first machine, because the device has one pair of queues. The network service is that program. It is also the place where the grant of each program is enforced: a program reaches only the remote that its grant names, so no program has ambient access to the network.
 
-The network service speaks Ethernet, ARP, IPv4 and ICMP echo with the protocol library `src/library/support/network`. It has one static address, 10.0.2.15/24, and the gateway 10.0.2.2. For UDP and TCP it checks the lengths and the ports of the header of each datagram and each segment, writes the IPv4 header, and keeps no state of a connection: the protocol of TCP is a library in the program (`src/library/support/tcp`), and the program writes and checks the header and the checksum of UDP (`src/library/support/network`). It copies each datagram or segment one time, between the datagram region of the program and its own frame region, and computes no checksum of it: it is on the control path of each one, and on the data path for that one copy. It has one thread, which waits on the frame ring, on the control ring of the root service and on the command queue of each endpoint.
+The network service speaks Ethernet, ARP, IPv4 and ICMP echo with the protocol library `src/library/support/network`. It has one static address, 10.0.2.15/24, and the gateway 10.0.2.2. For UDP and TCP it checks the lengths and the ports of the header of each datagram and each segment, writes the IPv4 header, and keeps no state of a connection: the protocol of TCP is a library in the program (`src/library/support/tcp`), and the program writes and checks the header and the checksum of UDP (`src/library/support/network`). It copies each datagram or segment that arrives one time, from its own frame region to the datagram region of the program. For one that leaves, it copies the first 8 bytes of the header for its check, and the device reads the rest from the datagram region. It computes no checksum: it is on the control path of each one, and on the data path for the one copy on receive. It has one thread, which waits on the frame ring, on the control ring of the root service and on the command queue of each endpoint.
 
 The root service starts it when the first program with a network grant starts, and adds each endpoint with the command `Endpoint_Add` of its control ring. Example of its first line: "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up, ..."; then, for each endpoint, a line such as "network: an endpoint for server: TCP, the listen port 80, the remotes that send to it".
 
@@ -2931,7 +2947,7 @@ The data path is the code that reads or writes the bytes of the data that a prog
 
 The term sorts the parts of the system by one question: does this code touch the bytes? The kernel is off the data path: it maps a ring or a device queue one time, and no kernel entry carries data after that. A service of user space can be on it. One read or one write of each byte by one program is a pass: a copy is a pass, and a sum for a checksum is a pass. The fewer passes outside the program that uses the data, the nearer the system is to its rule.
 
-Example: the network service is on the data path of a datagram and of a segment for one pass in each direction, the copy between its frame region and the datagram region of the program. It computes no checksum, so it makes no second pass. It counts its passes for each endpoint, and writes them on the log when the endpoint ends. The frame service is not on the data path: it gives places of the frame region to the device and reads no frame.
+Example: the network service is on the data path of a datagram and of a segment that arrives for one pass, the copy from its frame region to the datagram region of the program. It is not on the data path of one that leaves: the device reads the data from the datagram region, and the service copies only 8 bytes of the header. It computes no checksum, so it makes no second pass. It counts its passes for each endpoint, and writes them on the log when the endpoint ends. The frame service is not on the data path: it gives places of the frame region to the device and reads no frame.
 
 The data path is not the control path of a packet: code that reads only the headers and decides where the bytes go is not on the data path.
 
@@ -2979,7 +2995,7 @@ A datagram is one UDP datagram: its header of 8 bytes and its data, 1472 bytes o
 
 1472 bytes is the data of one Ethernet frame after the IPv4 header (20 bytes) and the UDP header (8 bytes): the system never fragments, so a datagram is one frame (`DATA_LIMIT` of `src/library/contract/datagram`; `DATAGRAM_LIMIT`, 1480 bytes, counts the header). A larger `Send` fails with `Too_Large`.
 
-The program writes the whole datagram in a place of the datagram region: the data, then the header and its checksum with `network.udp_header_write`. It sends it with the command `Send` of its datagram ring: the place, the count of bytes with the header, and the remote address. The network service copies the datagram, reads the ports in its copy and checks them against the endpoint and the grant, and computes no checksum. The completion comes when the network service has copied the datagram: the place is then free again. A program gives a place for a datagram that arrives with `Receive`; its completion carries the place, the count of bytes and the remote. The program reads the data with `network.udp_data_read`, which checks the checksum when the program asks for it. Example: QUIC is a library in the program over datagrams; `quic_echo` and `remote` send and receive each datagram of QUIC through their datagram endpoint.
+The program writes the whole datagram in a place of the datagram region: the data, then the header and its checksum with `network.udp_header_write`. It sends it with the command `Send` of its datagram ring: the place, the count of bytes with the header, and the remote address. The network service copies the first 8 bytes of the datagram, reads the ports in its copy and checks them against the endpoint and the grant, and computes no checksum; the device reads the rest from the place. The completion comes when the device has read the datagram: the place is then free again. A program gives a place for a datagram that arrives with `Receive`; its completion carries the place, the count of bytes and the remote. The program reads the data with `network.udp_data_read`, which checks the checksum when the program asks for it. Example: QUIC is a library in the program over datagrams; `quic_echo` and `remote` send and receive each datagram of QUIC through their datagram endpoint.
 
 A datagram is not a frame and not a segment: the frame is the whole Ethernet unit, and a segment is the unit of a segment endpoint, with its TCP header.
 
@@ -3186,7 +3202,7 @@ Do not use: socket, channel.
 
 The datagram region is the memory of an endpoint, 512 KiB, where the program writes the data to send and the network service writes the data that arrives.
 
-The root service makes the datagram region with the datagram ring and gives it to the program and to the network service (the role 13 of the context of the program). A program does not give a region of its own: if the program gave it, a revocation of that memory by the program stops the network service on a page fault, for all programs. A request names a place in the region in bytes; a byte outside it gives `Out_Of_Range`. The network service copies each datagram or segment one time between the region and a frame. It checks the ports of what the program sends in that copy, never in the region, which the program can still change; it computes no checksum.
+The root service makes the datagram region with the datagram ring and gives it to the program and to the network service (the role 13 of the context of the program). A program does not give a region of its own: if the program gave it, a revocation of that memory by the program stops the network service on a page fault, for all programs. A request names a place in the region in bytes; a byte outside it gives `Out_Of_Range`. The region is contiguous: the network service gives it to the frame service as a read region, and the device reads the data of each datagram or segment to send there. The network service copies each datagram or segment that arrives one time, from a frame to the region. Of one that leaves it copies the first 8 bytes, and checks the ports in that copy, never in the region, which the program can still change; it computes no checksum. The completion of a `Send` comes when the device read the place: the program writes the place again only after it.
 
 The program organizes the region itself. Example: `server` divides it into 256 places of 2048 bytes, and its TCP library writes each segment directly in one place.
 

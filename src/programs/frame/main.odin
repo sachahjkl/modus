@@ -11,10 +11,10 @@
 // library. The code of virtio that the block service also uses is in
 // src/library/support/virtio.
 //
-// The device reads and writes the frame region of the client: the kernel is
-// not on the path of the data, so data moves with no kernel entry. This
-// service does not read a
-// frame: the client builds and checks each one.
+// The device reads and writes the frame region of the client, and reads its
+// read regions: the kernel is not on the path of the data, so data moves
+// with no kernel entry. This service does not read a frame: the client
+// builds and checks each one.
 //
 // **What it is for.** It shows that a network driver is a program, with no
 // right beyond its one device, and that the frames move with no copy by
@@ -32,24 +32,31 @@
 // - `Info`: the [hardware address](term:hardware-address), whether the
 //   link is up, the most bytes of a frame, and the most `Receive` and
 //   `Send` in flight.
-// - `Send`: send the frame at a place of the frame region.
+// - `Send`: send the frame at a place of the frame region, with a second
+//   part from a read region when the client names one; the completion
+//   comes when the device read the frame.
 // - `Receive`: give a place of the frame region for the next frame that
 //   arrives; the completion comes with the frame.
+// - `Read_Region_Add`, `Read_Region_Remove`: take, then end, a
+//   [read region](term:read-region): memory that the device only reads,
+//   where the network service lets the device read the data of a datagram
+//   in the datagram region of the program that sends it.
 // - `Statistics`: the frames and bytes sent and received, the kernel
 //   entries and the interrupts of the service, for a measure.
 //
 // **What a reader sees.** No window: the line `frame: ok, the hardware
-// address <address>, the link is up, queues of ...` on the log. A failure
+// address <address>, the link is up, queues of ...` on the log, then one
+// line for each read region that it takes. A failure
 // at the start writes a line at the level error on the channel `frame` and
 // stops the service.
 //
-// **What it does not prove.** It drives virtio under QEMU only, with no
-// IOMMU, and sends no offload. The design of the network is in
-// docs/NETWORK.md.
+// **What it does not prove.** It drives virtio under QEMU only, and sends
+// no offload. The design of the network is in docs/NETWORK.md.
 package frame_service
 
 import "modus:contract/errors"
 import "modus:contract/frame"
+import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:support/pci"
 import "modus:support/system"
@@ -75,13 +82,35 @@ PAGE_RECEIVE :: 0
 PAGE_SEND :: virtio.QUEUE_PAGES
 PAGE_HEADERS :: 2 * virtio.QUEUE_PAGES
 SEND_HEADER_PLACE :: 2048 // In the page of the headers.
+// Zero bytes after the header of a Send, never written: the end of a frame
+// shorter than frame.FRAME_LEAST. A device of a real wire pads such a frame,
+// but a virtual device sends it as it is, and the frame contract promises
+// the least length. The bytes come from here, so that this service never
+// copies the data of a read region to pad it.
+SEND_PAD_PLACE :: SEND_HEADER_PLACE + 64
+#assert(SEND_PAD_PLACE + frame.FRAME_LEAST <= system.PAGE_SIZE)
 
-SLOT_CAPACITY :: virtio.QUEUE_SIZE_LIMIT / 2 // Two descriptors for each request.
+SLOT_CAPACITY :: virtio.QUEUE_SIZE_LIMIT / 2 // Two descriptors for each Receive.
+// A Send has four descriptors: the header, the part in the frame region,
+// the part in a read region, and the zero bytes of a short frame.
+SEND_DESCRIPTORS :: 4
 
 // A request in flight.
 Slot :: struct {
-	tag:  u32,
-	busy: bool,
+	tag:               u32,
+	busy:              bool,
+	reads_region:      bool, // A Send with a part in a read region.
+	read_region_place: u32,
+}
+
+// A read region of the client: memory that the device only reads.
+Read_Region :: struct {
+	memory:     system.Handle, // 0: the place is free.
+	physical:   u64,
+	size:       u64, // In bytes.
+	sends:      u32, // The Send in flight that read it.
+	removing:   bool, // A Read_Region_Remove waits for the end of those Send.
+	remove_tag: u32,
 }
 
 device: virtio.Device
@@ -103,6 +132,7 @@ ring_memory: system.Handle
 region_memory: system.Handle
 region_physical: u64
 region_size: u64
+read_regions: [frame.READ_REGION_CAPACITY]Read_Region
 
 frames_sent: u64
 frames_received: u64
@@ -158,15 +188,18 @@ start :: proc "contextless" (queues: system.Handle) {
 	headers_physical = physical + PAGE_HEADERS * system.PAGE_SIZE
 	virtio.ready(&device)
 
-	// Each place of a request has its two descriptors: the header, the frame.
+	// Each place of a Receive has its two descriptors: the header, the
+	// frame. Each place of a Send has four: the header, the part in the
+	// frame region, the part in a read region, the zero bytes of a short
+	// frame; submit links the third and the fourth when a frame needs them.
 	receive_slot_count = min(receive_queue.size / 2, SLOT_CAPACITY)
 	for slot in 0 ..< receive_slot_count {
 		first := slot * 2
 		receive_queue.descriptors[first] = {address = headers_physical + u64(slot) * HEADER_SIZE, length = HEADER_SIZE, flags = virtio.DESCRIPTOR_NEXT | virtio.DESCRIPTOR_DEVICE_WRITES, next = u16(first + 1)}
 	}
-	send_slot_count = min(send_queue.size / 2, SLOT_CAPACITY)
+	send_slot_count = min(send_queue.size / SEND_DESCRIPTORS, SLOT_CAPACITY)
 	for slot in 0 ..< send_slot_count {
-		first := slot * 2
+		first := slot * SEND_DESCRIPTORS
 		send_queue.descriptors[first] = {address = headers_physical + SEND_HEADER_PLACE, length = HEADER_SIZE, flags = virtio.DESCRIPTOR_NEXT, next = u16(first + 1)}
 	}
 }
@@ -209,6 +242,75 @@ attach :: proc "contextless" (handle: system.Handle) -> (frame.Status, [7]u64) {
 	return .Ok, {}
 }
 
+// read_region_add takes a read region of the client at a place. The handle
+// must have come through the frame ring, with Read and without Write: the
+// device then only reads the region, and with the IOMMU the kernel maps
+// its pages with no write bit (src/md/infrastructure/iommu.md).
+read_region_add :: proc "contextless" (command: ring.Record) -> (status: frame.Status, outcome: Outcome, values: [7]u64) {
+	ADD :: u32(frame.Command.Read_Region_Add)
+	handle, place := system.Handle(command.values[0]), command.values[1]
+	kind, rights, through := system.handle_state(handle, ring_memory)
+	// Only a handle that came through the ring is closed on a refusal: a
+	// number of the client can name a handle of this service.
+	switch {
+	case kind != .Memory:
+		return .No_Region, .Done, errors.ring_fail(ADD, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind))
+	case !through:
+		return .No_Region, .Done, errors.ring_fail(ADD, .Absent, .Region, 1)
+	case .Read not_in rights || .Write in rights:
+		system.close(handle)
+		return .No_Region, .Done, errors.ring_fail(ADD, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)system.Rights{.Read}), i64(transmute(u32)rights))
+	case place >= frame.READ_REGION_CAPACITY:
+		system.close(handle)
+		return .Bad_Command, .Done, errors.ring_fail(ADD, .Out_Of_Range, .None, 2, i64(min(place, 1 << 62)), frame.READ_REGION_CAPACITY)
+	}
+	region := &read_regions[place]
+	if region.memory != 0 {
+		if region.removing {
+			// The sends of the region before are still in flight: the
+			// command waits for them, as a Send waits for a free slot.
+			return .Ok, .Full, {}
+		}
+		system.close(handle)
+		return .Bad_Command, .Done, errors.ring_fail(ADD, .Busy, .None, 2, i64(place))
+	}
+	physical, physical_status := system.memory_physical(machine, handle)
+	if physical_status != .Ok {
+		system.close(handle)
+		return .No_Region, .Done, errors.ring_fail(ADD, .Refused, .None, 1, i64(handle), 0, i64(physical_status))
+	}
+	pages := system.memory_size(handle)
+	region^ = {memory = handle, physical = physical, size = pages * system.PAGE_SIZE}
+	system.log("frame: a read region of ", pages, " pages at the place ", place, ", held with the right Read only: the device reads the data of the frames to send there")
+	return .Ok, .Done, {}
+}
+
+// read_region_close ends a read region with no Send in flight: the close
+// of the handle takes its pages out of the device.
+read_region_close :: proc "contextless" (region: ^Read_Region) {
+	system.close(region.memory)
+	region^ = {}
+}
+
+// read_region_remove ends a read region now, or when its last Send is
+// complete: the device must not read memory that the client no longer
+// lends, and the object must stay while the device reads it.
+read_region_remove :: proc "contextless" (command: ring.Record) -> (status: frame.Status, outcome: Outcome, values: [7]u64) {
+	REMOVE :: u32(frame.Command.Read_Region_Remove)
+	place := command.values[0]
+	if place >= frame.READ_REGION_CAPACITY || read_regions[place].memory == 0 || read_regions[place].removing {
+		return .No_Region, .Done, errors.ring_fail(REMOVE, .Absent, .Region, 1, i64(min(place, 1 << 62)))
+	}
+	region := &read_regions[place]
+	if region.sends == 0 {
+		read_region_close(region)
+		return .Ok, .Done, {}
+	}
+	region.removing, region.remove_tag = true, command.tag
+	in_flight += 1 // Its completion comes with the last Send: keep its room.
+	return .Ok, .Sent, {}
+}
+
 Outcome :: enum {
 	Done, // The command has its status: no request goes to the device.
 	Sent, // The device has the request.
@@ -233,6 +335,22 @@ submit :: proc "contextless" (command: ring.Record) -> (status: frame.Status, ou
 		if count > frame.FRAME_LIMIT {
 			return .Too_Large, .Done, errors.ring_fail(command.kind, .Too_Long, .Bytes, 2, i64(count), frame.FRAME_LIMIT)
 		}
+		// The second part, in a read region: the data that the client did
+		// not copy. Each value is a copy in this record, checked once.
+		data_offset, data_count, region_place := command.values[2], command.values[3], command.values[4]
+		if data_count > frame.FRAME_LIMIT - count {
+			return .Too_Large, .Done, errors.ring_fail(command.kind, .Too_Long, .Bytes, 4, i64(min(data_count, 1 << 62) + count), frame.FRAME_LIMIT)
+		}
+		read_region: ^Read_Region
+		if data_count != 0 {
+			if region_place >= frame.READ_REGION_CAPACITY || read_regions[region_place].memory == 0 || read_regions[region_place].removing {
+				return .No_Region, .Done, errors.ring_fail(command.kind, .Absent, .Region, 5, i64(min(region_place, 1 << 62)))
+			}
+			read_region = &read_regions[region_place]
+			if data_offset > read_region.size || data_count > read_region.size - data_offset {
+				return .Out_Of_Range, .Done, errors.ring_fail(command.kind, .Out_Of_Range, .Bytes, 3, i64(min(data_offset, 1 << 62) + data_count), i64(read_region.size))
+			}
+		}
 		slot: u32 = SLOT_CAPACITY
 		for candidate in 0 ..< send_slot_count {
 			if !send_slots[candidate].busy {
@@ -243,11 +361,28 @@ submit :: proc "contextless" (command: ring.Record) -> (status: frame.Status, ou
 		if slot == SLOT_CAPACITY {
 			return .Ok, .Full, {}
 		}
-		head := slot * 2
-		send_queue.descriptors[head + 1] = {address = region_physical + place, length = u32(count)}
-		send_slots[slot] = {tag = command.tag, busy = true}
+		head := slot * SEND_DESCRIPTORS
+		// The parts of the frame, linked in order: the part in the frame
+		// region, the part in a read region, the zero bytes of a short frame.
+		last := head + 1
+		send_queue.descriptors[last] = {address = region_physical + place, length = u32(count)}
+		if read_region == nil {
+			send_slots[slot] = {tag = command.tag, busy = true}
+		} else {
+			send_queue.descriptors[last].flags = virtio.DESCRIPTOR_NEXT
+			send_queue.descriptors[last].next = u16(head + 2)
+			last = head + 2
+			send_queue.descriptors[last] = {address = read_region.physical + data_offset, length = u32(data_count)}
+			send_slots[slot] = {tag = command.tag, busy = true, reads_region = true, read_region_place = u32(region_place)}
+			read_region.sends += 1
+		}
+		if count + data_count < frame.FRAME_LEAST {
+			send_queue.descriptors[last].flags = virtio.DESCRIPTOR_NEXT
+			send_queue.descriptors[last].next = u16(head + 3)
+			send_queue.descriptors[head + 3] = {address = headers_physical + SEND_PAD_PLACE, length = u32(frame.FRAME_LEAST - (count + data_count))}
+		}
 		in_flight += 1
-		bytes_sent += count
+		bytes_sent += count + data_count
 		virtio.give(&send_queue, u16(head))
 		return .Ok, .Sent, {}
 	}
@@ -279,12 +414,25 @@ submit :: proc "contextless" (command: ring.Record) -> (status: frame.Status, ou
 // harvest gives a completion to the client for each request that the device used.
 harvest :: proc "contextless" () -> (count: int) {
 	for used in virtio.used(&send_queue) {
-		slot := used.id / 2
+		slot := used.id / SEND_DESCRIPTORS
 		if slot >= send_slot_count || !send_slots[slot].busy {
 			continue
 		}
 		complete(send_slots[slot].tag, .Ok)
 		frames_sent += 1
+		if send_slots[slot].reads_region {
+			region := &read_regions[send_slots[slot].read_region_place]
+			region.sends -= 1
+			// The last Send of a region that ends: the device no longer
+			// reads it, so the handle closes and the removal completes.
+			if region.removing && region.sends == 0 {
+				tag := region.remove_tag
+				read_region_close(region)
+				complete(tag, .Ok)
+				in_flight -= 1
+				count += 1
+			}
+		}
 		send_slots[slot] = {}
 		in_flight -= 1
 		count += 1
@@ -365,9 +513,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				results, _ := system.call(.Interrupt_Read, u64(interrupt))
 				interrupts += results[0]
 				values = {0 = frames_sent, 1 = frames_received, 2 = system.kernel_entries(), 3 = interrupts, 4 = bytes_sent, 5 = bytes_received}
-			case .Send, .Receive:
+			case .Send, .Receive, .Read_Region_Add, .Read_Region_Remove:
 				outcome: Outcome
-				result, outcome, values = submit(command)
+				#partial switch frame.Command(command.kind) {
+				case .Read_Region_Add:
+					result, outcome, values = read_region_add(command)
+				case .Read_Region_Remove:
+					result, outcome, values = read_region_remove(command)
+				case:
+					result, outcome, values = submit(command)
+				}
 				if outcome == .Sent {
 					continue
 				}

@@ -92,6 +92,8 @@ The part `iommu` of the test runs the whole system on the machine with the IOMMU
 
 The kernel writes the line of the DMA fault with the device and the address, and the client then gets an answer from the service: the machine goes on.
 
+Then `net` runs its cases. The network device reads the data of each datagram from the datagram region of `net`, which the frame service declared through a handle with Read only ([network_data_path.md](network_data_path.md), "The send with no copy"). The echo of its datagram comes back, and the step fails on a DMA fault of the network device.
+
 The step 2 is the means of the test, and the rule of the close at the same time: a page that the service can read after the write, at an address that it no longer holds by a handle. A real fault gives the device a wrong address by a wrong computation; the result is the same refusal. A close of the handles of the registers would not serve: it ends the whole domain, and the device would then fault on its own queue.
 
 The main test does not move to the machine with the IOMMU yet. Its risks: every virtio device of the main test then goes through the emulated unit (a cost in time for each access of the disk and of the network, which is a measure, not a check), and a page that a service forgets to declare stops a part of the main test with a DMA fault, which is the purpose. The part `iommu` finds such a page first.

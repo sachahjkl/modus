@@ -20,6 +20,18 @@
 // ring (Handle_State), as for a lent handle. The region is contiguous: the
 // device uses one physical address for each place.
 //
+// A frame to send can have a second part: bytes of a read region. A read
+// region is a contiguous memory object that the client gives with the
+// right Read only (Read_Region_Add), at one of READ_REGION_CAPACITY places;
+// the device reads it and never writes it. The network service gives the
+// datagram region of each endpoint as a read region, so the device reads
+// the data of a datagram where the program wrote it, and the network
+// service writes only the headers in its frame region
+// (src/md/infrastructure/network_data_path.md). The frame service keeps
+// its handle of a read region until the last Send that reads it is
+// complete: the memory object, and its declaration to the device, outlive
+// the client's own handle while the device reads it.
+//
 // Many requests are in flight at the same time. A Receive stays in flight
 // until a frame arrives in its place: the client gives the places for the
 // frames before they arrive (the client supplies the memory: the service
@@ -40,6 +52,7 @@ FRAME_LIMIT :: 1514 // An Ethernet frame with 1500 bytes of data, with no check 
 FRAME_LEAST :: 60 // The device adds zero bytes to a shorter frame that it sends.
 PLACE_SIZE :: 2048 // A Receive with less room than FRAME_LIMIT can lose a frame.
 RING_CAPACITY :: 256 // The capacity of the frame ring.
+READ_REGION_CAPACITY :: 8 // The places of read regions of one client.
 
 // The role of the frame ring in the context of a frame service.
 SERVICE_RING :: 0
@@ -59,7 +72,12 @@ Command :: enum u32 {
 	// flight, values[4] the most Send in flight.
 	Info       = 2,
 	// values[0]: the place of the frame in the frame region, in bytes.
-	// values[1]: its count of bytes, from 14 to FRAME_LIMIT.
+	// values[1]: its count of bytes there, 14 at least. values[2], values[3]:
+	// the offset and the count of bytes of the second part of the frame, in
+	// the read region at the place values[4]; a count of 0 is a frame with
+	// one part, and values[2] and values[4] are not read. The two counts
+	// together are FRAME_LIMIT at most. The completion comes when the device
+	// read the frame: the client can then write both parts again.
 	Send       = 3,
 	// values[0]: the place in the frame region, in bytes. values[1]: the room
 	// there, in bytes. The completion comes when a frame arrives: values[0]
@@ -70,6 +88,16 @@ Command :: enum u32 {
 	// the interrupts that it received, values[4] the bytes sent, values[5]
 	// the bytes received, all since it started.
 	Statistics = 5,
+	// values[0]: the handle of a read region, as the frame service names it:
+	// a contiguous memory object with Read and without Write, given through
+	// the frame ring. values[1]: its place, under READ_REGION_CAPACITY. A
+	// place whose Read_Region_Remove still waits for its sends makes the
+	// command wait for them; a place that holds a region gives Bad_Command.
+	Read_Region_Add    = 6,
+	// values[0]: the place of a read region. The completion comes when no
+	// Send that reads the region is in flight: the frame service has then
+	// closed its handle, and the device no longer reaches the region.
+	Read_Region_Remove = 7,
 }
 
 // The status of a request: the kind of its completion record. When it is
@@ -78,8 +106,8 @@ Command :: enum u32 {
 Status :: enum u32 {
 	Ok           = 0, // The request is done: the values are its results.
 	Bad_Command  = 1, // The command is not known, or a value is wrong.
-	Out_Of_Range = 2, // A byte is not in the frame region.
-	No_Region    = 3, // No frame region, or the handle did not come through the frame ring.
+	Out_Of_Range = 2, // A byte is not in the frame region or in the read region.
+	No_Region    = 3, // No frame region or no read region at the place, or the handle did not come through the frame ring, or a read region with Write or that is not contiguous.
 	Device_Error = 4, // The device reported an error.
 	Too_Large    = 5, // A Send of more than FRAME_LIMIT bytes or of less than a header.
 	Too_Many     = 6, // More Receive in flight than the device has places.
@@ -103,6 +131,8 @@ COMMAND_NAMES := [Command]string {
 	.Send = "Send",
 	.Receive = "Receive",
 	.Statistics = "Statistics",
+	.Read_Region_Add = "Read_Region_Add",
+	.Read_Region_Remove = "Read_Region_Remove",
 }
 
 // command_name gives the name of a command from an error record, or "an
@@ -121,7 +151,13 @@ argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
 		names := [?]string{"region"}
 		return argument <= len(names) ? names[argument - 1] : ""
 	case .Send:
-		names := [?]string{"place", "count"}
+		names := [?]string{"place", "count", "data offset", "data count", "read region"}
+		return argument <= len(names) ? names[argument - 1] : ""
+	case .Read_Region_Add:
+		names := [?]string{"region", "place"}
+		return argument <= len(names) ? names[argument - 1] : ""
+	case .Read_Region_Remove:
+		names := [?]string{"place"}
 		return argument <= len(names) ? names[argument - 1] : ""
 	case .Receive:
 		names := [?]string{"place", "room"}
