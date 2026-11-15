@@ -94,9 +94,8 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 				graphics.copy(view, x, y, picture)
 			}
 		case .Text_Grid:
-			index := int(record.text_start)
-			if index < len(table.grids) {
-				text_grid_draw(view, x, y, table.grids[index])
+			if grid, ok := grid_of(table, record); ok {
+				text_grid_draw(view, x, y, grid)
 			}
 		case .Line:
 			// (x, y) is the first end in the view; the path is the one of

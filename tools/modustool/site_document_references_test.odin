@@ -58,7 +58,7 @@ site_document_pointers_of_each_form :: proc(t: ^testing.T) {
 		{"The speeds of docs/CRYPTOGRAPHY.md, section 6, with the cost.", "docs/CRYPTOGRAPHY.md", {"section 6"}, false, "docs/CRYPTOGRAPHY.md, section 6"},
 		{"The versions: docs/ARCHITECTURE.md, U5, \"Versions\".", "docs/ARCHITECTURE.md", {"U5", "\"Versions\""}, false, "docs/ARCHITECTURE.md, U5, \"Versions\""},
 		{"A rule, see docs/DESIGN.md, section 3.", "docs/DESIGN.md", {"section 3"}, true, ", see docs/DESIGN.md, section 3"},
-		{"A gap (a gap of docs/FIRST_MILESTONE.md) stays.", "docs/FIRST_MILESTONE.md", {}, false, "docs/FIRST_MILESTONE.md"},
+		{"A page (a page of docs/SITE.md) stays.", "docs/SITE.md", {}, false, "docs/SITE.md"},
 		{"The kernel: the interrupts (docs/ARCHITECTURE.md, U3)", "docs/ARCHITECTURE.md", {"U3"}, true, " (docs/ARCHITECTURE.md, U3)"},
 	}
 	for item in cases {
@@ -120,7 +120,7 @@ site_document_pointers_find_their_headings :: proc(t: ^testing.T) {
 		{{"\"The grant\""}, "The grant", "docs/guides/ARCHITECTURE/index.html#5-the-grant", true},
 		{{"\"No such heading\""}, "", page, false},
 		{{"section 99"}, "", page, false},
-		{{"decision 6"}, "", page, false},
+		{{"item 999"}, "", page, false},
 		{{"\"Kernel systems\"", "section 5a"}, "", page, false},
 	}
 	for item in cases {
@@ -148,31 +148,32 @@ site_document_pointers_find_their_headings :: proc(t: ^testing.T) {
 @(test)
 site_document_pointers_to_a_working_record :: proc(t: ^testing.T) {
 	site := reference_test_site()
-	content, ok := site_read_quiet(SITE_MILESTONE_FILE)
+	record :: "docs/SITE.md"
+	content, ok := site_read_quiet(record)
 	testing.expect(t, ok)
-	gaps_line := 0
+	pages_line := 0
 	for line, index in site_lines(content) {
-		if line == "## Gaps" {
-			gaps_line = index + 1
+		if line == "## The pages" {
+			pages_line = index + 1
 			break
 		}
 	}
-	testing.expect(t, gaps_line > 0, "the file has no heading \"## Gaps\"")
-	targets := site_document_targets(&site, SITE_MILESTONE_FILE, []string{"\"Gaps\""})
+	testing.expect(t, pages_line > 0, "the file has no heading \"## The pages\"")
+	targets := site_document_targets(&site, record, []string{"\"The pages\""})
 	testing.expect_value(t, len(targets), 1)
 	if len(targets) == 1 {
 		testing.expect(t, targets[0].outside && targets[0].resolved)
-		testing.expect_value(t, targets[0].title, "First milestone")
-		testing.expect_value(t, targets[0].heading, "Gaps")
-		testing.expect_value(t, targets[0].link, site_line_address(&site, SITE_MILESTONE_FILE, gaps_line))
+		testing.expect_value(t, targets[0].title, "The site")
+		testing.expect_value(t, targets[0].heading, "The pages")
+		testing.expect_value(t, targets[0].link, site_line_address(&site, record, pages_line))
 		b := strings.builder_make(context.temp_allocator)
 		site_document_reference_write(&site, &b, "docs/reference/modules/kernel/index.html", targets[0])
 		html := strings.to_string(b)
-		testing.expect(t, strings.has_prefix(html, SITE_DOCUMENT_REFERENCE_OPEN + SITE_REPOSITORY_ADDRESS + "/blob/master/docs/FIRST_MILESTONE.md#L"), html)
-		testing.expect(t, strings.has_suffix(html, ">First milestone: Gaps<span class=\"document-outside\"> in the repository</span></a>"), html)
+		testing.expect(t, strings.has_prefix(html, SITE_DOCUMENT_REFERENCE_OPEN + SITE_REPOSITORY_ADDRESS + "/blob/master/docs/SITE.md#L"), html)
+		testing.expect(t, strings.has_suffix(html, ">The site: The pages<span class=\"document-outside\"> in the repository</span></a>"), html)
 	}
-	whole := site_document_targets(&site, SITE_MILESTONE_FILE, nil)
-	testing.expect(t, len(whole) == 1 && whole[0].link == site_repository_file(&site, SITE_MILESTONE_FILE))
+	whole := site_document_targets(&site, record, nil)
+	testing.expect(t, len(whole) == 1 && whole[0].link == site_repository_file(&site, record))
 }
 
 // The markup of a reference: a link in the style of the kind Guide, the
@@ -233,13 +234,13 @@ site_source_comment_text :: proc(t: ^testing.T) {
 	testing.expect_value(t, site_source_comment_plain(nil, "The kernel (docs/ARCHITECTURE.md)."), "The kernel (docs/ARCHITECTURE.md).")
 
 	// A label with no heading: the guide alone, counted and named.
-	stale := site_source_comment_html(&site, page, "A thread (docs/ARCHITECTURE.md, decision 6).", .Paragraphs)
-	testing.expect(t, strings.contains(stale, ">Architecture</a>") && !strings.contains(stale, "decision"), stale)
+	stale := site_source_comment_html(&site, page, "A thread (docs/ARCHITECTURE.md, item 999).", .Paragraphs)
+	testing.expect(t, strings.contains(stale, ">Architecture</a>") && !strings.contains(stale, "item 999"), stale)
 	count, unresolved := site_document_references_summary(&site)
 	testing.expect(t, count >= 4, "too few references counted")
 	testing.expect_value(t, len(unresolved), 1)
 	if len(unresolved) == 1 {
-		testing.expect_value(t, unresolved[0], "docs/ARCHITECTURE.md, decision 6")
+		testing.expect_value(t, unresolved[0], "docs/ARCHITECTURE.md, item 999")
 	}
 }
 
@@ -303,22 +304,14 @@ site_module_page_of_the_kernel :: proc(t: ^testing.T) {
 }
 
 // A comment holds code in backticks: on a page each pair is a code
-// element, and the summary has no backticks. The identifier of a decision
-// (a capital D, a hyphen and a number) is a label.
+// element, and the summary has no backticks.
 @(test)
-site_source_comment_code_and_decisions :: proc(t: ^testing.T) {
+site_source_comment_code :: proc(t: ^testing.T) {
 	site := reference_test_site()
 	page := "docs/reference/modules/kernel/index.html"
 	testing.expect_value(t, site_source_comment_html(&site, page, "For one machine of `test return_fault` only, `a<b`.", .Line), "For one machine of <code>test return_fault</code> only, <code>a&lt;b</code>.")
 	testing.expect_value(t, site_source_comment_html(&site, page, "One ` alone.", .Line), "One ` alone.")
 	testing.expect_value(t, site_source_comment_plain(&site, "For `test return_fault` only."), "For test return_fault only.")
-
-	targets := site_document_targets(&site, "docs/DECISIONS.md", []string{"D-163"})
-	testing.expect_value(t, len(targets), 1)
-	if len(targets) == 1 {
-		testing.expect(t, targets[0].resolved && targets[0].outside, "D-163 is not found")
-		testing.expect_value(t, targets[0].heading, "A technical site")
-	}
 }
 
 // The check of the pointers names the file and the line of a stale one,
@@ -382,7 +375,7 @@ site_document_pointers_of_the_repository :: proc(t: ^testing.T) {
 site_document_names_are_never_bare :: proc(t: ^testing.T) {
 	site := reference_test_site()
 	names := site_document_names(&site)
-	testing.expect(t, "ARCHITECTURE.md" in names && "CHANGELOG.md" in names && "FIRST_MILESTONE.md" in names)
+	testing.expect(t, "ARCHITECTURE.md" in names && "CHANGELOG.md" in names && "SITE.md" in names)
 	// The test site has no guide of the design rules; the repository has.
 	names["DESIGN.md"] = true
 	bare := [?]string {

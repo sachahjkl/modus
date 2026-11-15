@@ -190,7 +190,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 - The pointer has pictures in a format of the system (`docs/POINTERS.md`): the tool converts the Xcursor theme Posy's Cursor from a build input, and a theme of the system drawn as grids of squares; each is a resource of the boot image with its hash. The compositor chooses the shape from what is under the pointer (a title bar, a close button, a text input) and blends its picture at its hot spot; a program asks for a shape over its own surface. `pointers` shows each theme.
 - A program that faults stops alone. The system continues.
 
-`docs/FIRST_MILESTONE.md` gives the details, the design choices and the gaps.
+The guides below give the details. `docs/DEMONSTRATIONS.md` says what the test shows of each property, and `ROADMAP.md` gives the planned work.
 
 ## Documents
 
@@ -199,7 +199,6 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/PROPERTIES.md` | The 21 properties that the system is built on: each rule, what it forbids, what it costs, and its state |
 | `docs/ARCHITECTURE.md` | The systems of the kernel and of user space, what each owns and how they connect; then the inside of the kernel: its locks, the virtual memory of a program, the extended state, the return to a program, kernel events |
 | `docs/MODULE_CONTRACT.md` | The module format, the loader, the call form (direct, isolated, from the host), the types, the context of a program, and the errors that diagnose |
-| `docs/FIRST_MILESTONE.md` | What the code does now, the choices made, the gaps |
 | `docs/TOOLS.md` | The developer tools, and what each one reads |
 | `docs/SITE.md` | The site of the system: what `modustool site` writes, and where each part of the page comes from |
 | `docs/GLOSSARY.md` | The terms of the project. One term per concept: its short definition, then what it is for, how it works, and what it is not |
@@ -221,8 +220,6 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/SIMD.md` | Which procedures compute with vectors, in which form, and how to measure each one |
 | `CHANGELOG.md` | What each release brings, newest first. `changelog.d/` holds the changes that are not in a release yet |
 | `ROADMAP.md` | The planned work, in the sections Now, Next and Later: what each work gives the user |
-| `docs/DECISIONS.md` | The record of the decisions of the project, the open questions and the rules of work |
-| `docs/REVIEWS.md` | The reviews: each concession found, and what removes it |
 | `docs/research/` | Research notes with sources, and video transcripts |
 | `src/md/README.md` | The intent of each part of the system, by the standard of [srcmd.org](https://srcmd.org): why a part has its form, the forms that were refused, the subtle points. An overview of the system and a file index. Read it before a change of the code |
 

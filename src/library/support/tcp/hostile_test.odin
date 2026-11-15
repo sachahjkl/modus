@@ -4,8 +4,7 @@ package tcp
 import "core:testing"
 
 // The tests of the faults that a read of the library as hostile input
-// found (docs/FIRST_MILESTONE.md, "Faults of the library from the hostile
-// read"), and the cases that it found with no test. Each test failed before
+// found, and the cases that it found with no test. Each test failed before
 // its correction.
 
 // A RST with data whose first byte is before RCV.NXT and whose end is

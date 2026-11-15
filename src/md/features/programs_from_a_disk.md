@@ -110,7 +110,7 @@ The writer of the tool is checked by the open of the storage service: a host tes
 
 ### The grants of a disk program
 
-The principal gives a disk program a grant with a command (`docs/DECISIONS.md`, D-260). The rules of the table are in `src/library/support/disk_program` (`grant_table.odin`), with no allocator and no kernel operation, so the host tests run each rule.
+The principal gives a disk program a grant with a command. The rules of the table are in `src/library/support/disk_program` (`grant_table.odin`), with no allocator and no kernel operation, so the host tests run each rule.
 
 **The nickname.** The name of the entry of a file in the store `programs` is its nickname: the principal chooses it, and the file never does. The root service names the program by its nickname (the slot, the log, `grants`, `stop`, the monitor), and the log writes the hash of the file beside it.
 
@@ -145,7 +145,7 @@ The size of the store is a line of the budget that the module asks for (`src/md/
 
 The name `grant_table` is kept, as the name `programs` is: no disk program has it, so the table is never read as a module file and never written over one.
 
-**Principal 0 and the machine passphrase** (`docs/DECISIONS.md`, D-263). Principal 0 is the machine, and a passphrase for it is optional ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Machine passphrase"):
+**Principal 0 and the machine passphrase.** Principal 0 is the machine, and a passphrase for it is optional ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Machine passphrase"):
 
 - **No machine passphrase.** No key signs the table of principal 0: it lasts until the machine stops. Its data stays: the store of a nickname is on the disk, and the next grant of `store` finds it.
 - **A machine passphrase.** The table of principal 0 is read after the passphrase is typed at the start, and written after each change.
@@ -172,7 +172,7 @@ Enter with no passphrase skips it: the disk grants of principal 0 stay absent un
 
 1. The key arrives with its origin: the open of an existing record, or a new passphrase on a machine with no record (`Machine_Key`, "opened" or "new"). The root service reads `grant_table`.
 2. A table whose tag verifies becomes the table of principal 0. An absent table gives no row, and the root service writes its own table there.
-3. A table that is refused (its tag, or a field) gives no grant, and its line is on the log (`docs/DECISIONS.md`, D-260). What follows depends on the origin of the key (`disk_program.table_read_decision`):
+3. A table that is refused (its tag, or a field) gives no grant, and its line is on the log. What follows depends on the origin of the key (`disk_program.table_read_decision`):
    - **An opened key.** The table is kept: nothing is written over it, and each change of the table of principal 0 is refused with a sentence until the machine starts again. Such a table can be a good table of an older machine key, or one that a byte changed; a write over it would lose its grants with no sign. The way out today is a version of the table that verifies: a caller that acts for principal 0 restores it in the store `programs`, and the next start reads it. A change of the machine passphrase is the other way out, and it is not built.
    - **A new key.** No record existed before this passphrase, so no key of a record signed that table. It is written over with the table of this machine, which holds the rows made before the passphrase.
 4. Each later change writes the table again. A change during a write marks one more write after it.
@@ -212,7 +212,7 @@ The table of a named principal is not persisted yet. The console, the only progr
 - **The root service waits at the start for the passphrase.** A machine whose passphrase nobody types would not start. The read is a state of the loop, so the start never waits.
 - **A change before the read, merged with the table read.** Two tables with a row of one nickname need a rule of which wins. The change is refused until the read, with a sentence that says why.
 - **The machine passphrase as a line of the console.** The console keeps each line in its history and in its store.
-- **A table that does not verify is written over after any key.** D-260 says that such a table is refused. Under an opened key it can be a good table of another key, and the write would lose it with only a line of the log.
+- **A table that does not verify is written over after any key.** The rule is that such a table is refused. Under an opened key it can be a good table of another key, and the write would lose it with only a line of the log.
 - **A record that cannot be read is taken as no record.** A read error or one changed byte would then let a new passphrase replace a good machine key.
 - **The completion of a change held until its write ends.** It needs a queue of completions for each write, as a change during a write joins the next write; a bounded retry gives the same result in the loop.
 - **The console acts for the named principal of the session.** The console acts for its own session only; a console that acts for another principal is a confused deputy.
@@ -240,7 +240,7 @@ Built: the command `Start_From_Disk` of the root ring and the command `start_fro
 
 Left:
 
-- **The machine key sealed by the TPM** (`docs/DECISIONS.md`, D-263). By default the TPM seals the machine key and no one types anything; with a passphrase, the TPM and the passphrase together open it. Until then a machine with no passphrase keeps the table of principal 0 until it stops.
+- **The machine key sealed by the TPM.** By default the TPM seals the machine key and no one types anything; with a passphrase, the TPM and the passphrase together open it. Until then a machine with no passphrase keeps the table of principal 0 until it stops.
 - **A change and a removal of the machine passphrase.** A change seals the same machine key under a new passphrase, so the table stays valid.
 - **The table of a named principal on the disk.** The same read and write, with a key that `unlock` derives at the unlock. It needs a caller that acts for a named principal and sends `allow`.
 - **An older table.** A counter that only grows, in the TPM, so that a restored version of the table is refused.

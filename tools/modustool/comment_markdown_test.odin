@@ -141,7 +141,7 @@ comment_markdown_link_targets :: proc(t: ^testing.T) {
 	testing.expect(t, declaration_problem == "" && declaration.kind == .Declaration, declaration_problem)
 	unqualified, unqualified_problem := site_comment_link_target(&site, "fault_deliver")
 	testing.expect(t, unqualified_problem == "" && unqualified.kind == .Declaration, unqualified_problem)
-	for target in ([]string{"term:nothing", "docs/ARCHITECTURE.md#no-such-heading", "docs/NOPE.md", "docs/HANDOFF.md", "manual.nothing", "count", "nothing_at_all", "a b"}) {
+	for target in ([]string{"term:nothing", "docs/ARCHITECTURE.md#no-such-heading", "docs/NOPE.md", "docs/SITE.md", "manual.nothing", "count", "nothing_at_all", "a b"}) {
 		_, problem := site_comment_link_target(&site, target)
 		testing.expectf(t, problem != "", "the target %s names something", target)
 	}

@@ -12,7 +12,7 @@ The form of the file and each rule of its check are in [`docs/TOOLS.md`](../../.
 - A fixed shape: `# Roadmap`, then `## Now`, `## Next`, `## Later`. Each section is a list.
 - An entry says what the work gives the user, in one or two sentences after a short bold summary. It does not say how the code changes.
 - No date. A planned date that passed is a false sentence that nothing corrects.
-- No name of a person and no identifier of a decision. That record is `docs/DECISIONS.md`.
+- No name of a person. Git keeps who decided what.
 - A work that is done leaves the file in the commit of its changelog fragment.
 - The tool checks the format, as it checks the changelog.
 
