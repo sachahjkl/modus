@@ -62,6 +62,12 @@ PALETTE_INPUT_BAND_Y :: 96 + 24 // The middle line of the input band.
 // 16 pixels from the left of the panel, in cells of 16 pixels, and the
 // character 25 is in the name of the second parameter.
 PALETTE_REVOKE_SECOND_FIELD_X :: 192 + 16 + 25 * 16
+// In the band of the form "strategy(name: )", 16 characters: the buttons
+// of the field start 4 + 16 pixels after the caret at the end of the call,
+// on the next column of the grid of 8 (form_buttons_layout): 192 + 16 + 16
+// * 16 + 20 = 484, then 488. The press is 8 pixels inside the first button,
+// at the start of its name.
+PALETTE_STRATEGY_FIRST_BUTTON_X :: 488 + 8
 PALETTE_SCROLL_BAR_X :: 192 + 640 - 1 - 9 // The middle column of the scroll bar of the list: 17 pixels wide, inside the border of the panel.
 PALETTE_SCROLL_BAR_ARROW_DOWN_Y :: 96 + 48 + 288 - 9 // The middle of its arrow button at the bottom: the list is 288 pixels high under the input band of 48.
 
@@ -1133,6 +1139,41 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the scroll bar of the palette: a press on the arrow down, the rows from 1"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// A field that counts a size shows its unit after the number: the
+	// console states that buffer takes a count of pages (the picture).
+	// Escape leaves the form, and no memory object is made.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ">buffer"},
+	{kind = .Wait, text = " for \">buffer\": buffer (command)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks for the arguments of buffer"},
+	// The shot shows the unit of the empty field: no line of the log says
+	// that a typed digit is drawn, so a shot after a digit could show it or not.
+	{kind = .Wait, text = "compositor: the field 0 of buffer takes a number in pages"},
+	{kind = .Shot, text = "palette_unit"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// The buttons of a field take the pointer. The field of strategy is a
+	// row of three buttons in the band, from the first column of the grid
+	// after the call "strategy(name: )". Right chooses fair; a press and a
+	// release on the first button take round_robin, as Tab takes the value
+	// that the keys chose. Escape leaves with no change of the strategy.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ">strategy"},
+	{kind = .Wait, text = " for \">strategy\": strategy (command)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = " candidates for the field 0, as a row of buttons"},
+	{kind = .Key, text = "right"},
+	{kind = .Click, x = PALETTE_STRATEGY_FIRST_BUTTON_X, y = PALETTE_INPUT_BAND_Y},
+	{kind = .Wait, text = "compositor: a press takes the button round_robin of the field 0"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	// The settings: the palette starts the program settings. Its window
 	// names the button of the value in use of each setting, and gives the
 	// compositor the set of these act names; the two programs write their
@@ -1217,7 +1258,10 @@ scenario := [?]Step {
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = ":strat"},
-	{kind = .Wait, text = " for \":strat\": strategy (setting)"},
+	// The row of the setting is drawn at the first list that holds it, which
+	// can be the list of a shorter text: the line of the list does not move
+	// the place of the log.
+	{kind = .Wait, text = " for \":strat\": strategy (setting)", any_order = true},
 	{kind = .Wait, text = "compositor: the palette shows the setting strategy as one row of 3 values"},
 	{kind = .Shot, text = "palette_strategy"},
 	{kind = .Key, text = "left"},

@@ -872,6 +872,16 @@ The design: `docs/TOOLS.md`, "The log".
 
 Do not use: span (for this), token, highlight range.
 
+### Integer unit
+
+An integer unit is what an Integer parameter of a command counts: a value kind, Size or Time, and one unit of that kind, such as pages or milliseconds.
+
+A command states it beside the kind of its parameter, and the palette provider writes it in the palette table (`value_kinds.Integer_Unit`). The palette shows the unit after the number of the field, `buffer(count: 4 pages)`, so the principal types the number in the unit that the command reads. The units are those of a value run of the log: bytes, KiB, MiB, pages, blocks, ns, us, ms and s. The text of a unit comes from the contract, never from the provider. It converts nothing: `4` stays the number 4. A plain count, such as the number of a thread, has no integer unit. The built-in commands of the console state theirs; the description of an export has no place for one yet.
+
+The design: `src/md/features/palette.md`, "The form of an entry, from its descriptions".
+
+Do not use: dimension, measure (for this).
+
 ### Cut mark
 
 A cut mark is the end of a text that a place of a fixed size does not hold: the start of the text, cut after a whole character, then "... and N bytes more" (`modus:contract/cut_mark`).
@@ -4111,7 +4121,7 @@ Do not use: palette source, palette backend, palette plugin.
 
 The palette form is the input band of the palette while it holds the call of a command with parameters: one typed field for each parameter.
 
-The form lets the input give the arguments of a command without a line. Each field has the name and the kind of its parameter: an Integer field takes digits, a Text field takes each character but a quote. The list under the band shows the candidates of the field that has the caret, which the palette provider gives: the programs that run, the modules of the boot image, the grants. Tab takes a candidate or goes to the next field; Enter in the last field runs. A press of the pointer in a field puts the caret there, and a press on a candidate takes it. The values go to the provider as typed values, an Integer as a number and a Text as its bytes, and the provider builds the line. Example: `revoke(name: plasma, grant: log)`.
+The form lets the input give the arguments of a command without a line. Each field has the name and the kind of its parameter: an Integer field takes digits, a Text field takes each character but a quote. The list under the band shows the candidates of the field that has the caret, which the palette provider gives: the programs that run, the modules of the boot image, the grants. Tab takes a candidate or goes to the next field; Enter in the last field runs. A press of the pointer in a field puts the caret there, and a press on a candidate or on a button of a field takes it. An Integer field with an integer unit shows the unit after its number. The values go to the provider as typed values, an Integer as a number and a Text as its bytes, and the provider builds the line. Example: `revoke(name: plasma, grant: log)`.
 
 The palette form is not an edit line: it holds no expression, no variable and no call inside a call. A command whose parameter is a Table or a Record has no form, and opens in the console.
 
@@ -4121,9 +4131,9 @@ Do not use: dialog, prompt, argument box.
 
 ### Field control
 
-A field control is the form in which the palette shows one field of a palette form, chosen from what the field is: a typed text, a typed Integer, a list of candidates, or a row of buttons.
+A field control is the form in which the palette shows one field of a palette form, chosen from what the field is: a typed text, a typed Integer, a typed number with its unit, a list of candidates, or a row of buttons.
 
-The field chooses its control, so no command needs a form of its own and a provider gives data only. One table of the code gives it (`palette.field_control`): the field that has the caret and at most 6 candidates that the provider says are closed, the only values of the parameter, is a row of buttons; other candidates are the list under the band, with the icon of their kind; a field with no candidate is typed, as a Text or as an Integer. Example: the field of `strategy(name: )` is a row of three buttons, `round_robin`, `fair`, `eevdf`.
+The field chooses its control, so no command needs a form of its own and a provider gives data only. One table of the code gives it (`palette.field_control`): the field that has the caret and at most 6 candidates that the provider says are closed, the only values of the parameter, is a row of buttons; other candidates are the list under the band, with the icon of their kind; a field with no candidate is typed, as a Text or as an Integer, and an Integer with an integer unit shows its unit after the number. Example: the field of `strategy(name: )` is a row of three buttons, `round_robin`, `fair`, `eevdf`.
 
 A field control is not an element of the interface package: the palette draws it in its own panel, and a program cannot give the palette one.
 

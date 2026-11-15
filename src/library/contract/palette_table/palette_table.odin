@@ -28,9 +28,10 @@ package palette_table
 
 import "base:intrinsics"
 import "modus:contract/settings"
+import "modus:contract/value_kinds"
 
 MAGIC :: 0x544C4150 // "PALT", little-endian.
-VERSION :: 4 // A new field or a new meaning of a field is a new version.
+VERSION :: 5 // A new field or a new meaning of a field is a new version.
 
 ENTRY_CAPACITY :: 256 // The entries of a table: the commands of a console at most.
 NAME_CAPACITY :: 64 // The bytes of the name of an entry.
@@ -79,9 +80,14 @@ Value_Kind :: enum u8 {
 	Bytes   = 6,
 }
 
-// One entry: 524 bytes.
+// One entry: 536 bytes.
 //
-// The three texts at its end are for the form of the entry in the panel
+// The integer unit of a parameter says what its Integer counts, a size or
+// a time and its unit, as the command states it: the panel shows the unit
+// after the number of the field. The panel takes the text of the unit
+// from the contract, so the provider writes a number and no text there.
+//
+// The three texts before the units are for the form of the entry in the panel
 // (docs/DESIGN.md, "Palette"). The act name says what the entry acts on,
 // in the words that an element of a window uses for the same thing: the
 // panel offers to go to a window that names it. The name of a setting and
@@ -114,8 +120,9 @@ Entry :: struct {
 	act_name:         [ACT_NAME_CAPACITY]u8, // "settings.set:font", "strategy": bytes 32 to 126.
 	setting_name:     [SETTING_NAME_CAPACITY]u8, // "font", "strategy": bytes 32 to 126.
 	value_name:       [VALUE_NAME_CAPACITY]u8, // "spleen", "eevdf": bytes 32 to 126.
+	parameter_units:  [PARAMETER_CAPACITY]value_kinds.Integer_Unit, // What the Integer of each parameter counts. {}: a plain number, and each parameter that is no Integer.
 }
-#assert(size_of(Entry) == 524)
+#assert(size_of(Entry) == 536)
 
 // The start of the memory object.
 Header :: struct {
@@ -246,7 +253,7 @@ Problem :: enum u8 {
 	Bad_Magic        = 3,
 	Bad_Version      = 4,
 	Too_Many_Entries = 5,
-	Bad_Kind         = 6, // An entry: a kind, a flag, a kind of a parameter or of the result out of its range, or a reserved byte that is not 0.
+	Bad_Kind         = 6, // An entry: a kind, a flag, a kind of a parameter or of the result out of its range, an integer unit out of the contract or on a parameter that is no Integer, or a reserved byte that is not 0.
 	Bad_Length       = 7, // An entry: a length or a count past its field, or an empty name.
 	Bad_Byte         = 8, // An entry: a byte of a text under 32 or over 126.
 	Bad_Signature    = 9, // An entry: the signature does not start with the name.
@@ -312,8 +319,14 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 	if entry.name_length == 0 || int(entry.name_length) > NAME_CAPACITY || int(entry.signature_length) > SIGNATURE_CAPACITY || int(entry.about_length) > ABOUT_CAPACITY || int(entry.parameter_count) > PARAMETER_CAPACITY {
 		return .Bad_Length
 	}
-	for kind in entry.parameters {
+	for kind, index in entry.parameters {
 		if kind > max(Value_Kind) {
+			return .Bad_Kind
+		}
+		// A unit only on an Integer that the entry has: the panel shows
+		// the unit of each field, and a field of another kind has no number.
+		integer_unit := entry.parameter_units[index]
+		if !value_kinds.integer_unit_valid(integer_unit) || integer_unit.kind != .None && (kind != .Integer || index >= int(entry.parameter_count)) {
 			return .Bad_Kind
 		}
 	}
