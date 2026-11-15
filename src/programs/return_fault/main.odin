@@ -54,7 +54,7 @@ import "modus:support/random"
 import "modus:support/system"
 
 // One child at a time, with one thread.
-MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 2, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1353, programs = 2, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 896

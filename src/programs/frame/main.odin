@@ -55,9 +55,9 @@ import "modus:support/pci"
 import "modus:support/system"
 import "modus:support/virtio"
 
-// The amounts that the root service gave it by its name before its module
-// stated a request: no part is counted yet.
-MODULE_BUDGET :: system.Budget_Request{pages = 256, programs = 1, threads = 1}
+// The working memory: the rest of the pages that the root service gave it
+// by its name, once the tool counts its module and its thread.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 179, programs = 1, threads = 1}
 
 // The features of a virtio network device that this service takes.
 FEATURE_MAC :: 5 // The configuration has the hardware address.

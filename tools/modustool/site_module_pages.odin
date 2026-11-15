@@ -260,33 +260,45 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			strings.write_string(&b, "</td>")
 			site_comment_cell(site, &b, item.page, named_in_grants ? grants.comment : "Not named in `grants_of`: the grants of each other program.")
 			strings.write_string(&b, "</tr>\n<tr><td>Budget that it asks for</td><td>")
-			// A part that the source does not state asks for the least budget
-			// of that part: its starter chooses that amount.
-			request := budget.request
+			// The parts that the source states, and the counted parts that
+			// the source alone gives: the threads and the window. The pages
+			// of the module and of its imports come from the files of a
+			// build, which the site does not read. A part of programs or of
+			// threads that the source does not state asks for the least
+			// budget of that part: its starter chooses that amount.
 			amounts := make([dynamic]string, context.temp_allocator)
-			parts := [3]struct {
-				name:  string,
-				value: u64,
-			}{{"pages", request.pages}, {"programs", request.programs}, {"threads", request.threads}}
-			for part in parts {
-				if part.value == 0 {
-					append(&amounts, strings.concatenate({site_text_html(part.name), " the least"}, context.temp_allocator))
-					continue
+			if budget.stated {
+				counted, _ := budget_count(budget.parts, 0, nil)
+				parts := [6]struct {
+					name:  string,
+					value: u64,
+					least: bool, // 0 is the least budget of the part, not none.
+				}{{"working memory pages", counted.working_memory_pages, false}, {"pages of its threads", counted.thread_pages, false}, {"pages of the pictures of its window", counted.window_pages, false}, {"pages of the module and its imports", 0, false}, {"programs", counted.request.programs, true}, {"threads", counted.request.threads, true}}
+				for part in parts {
+					switch {
+					case part.name == "pages of the module and its imports":
+						append(&amounts, strings.concatenate({site_text_html(part.name), " from the files of the build"}, context.temp_allocator))
+					case part.value == 0 && part.least:
+						append(&amounts, strings.concatenate({site_text_html(part.name), " the least"}, context.temp_allocator))
+					case:
+						// The pages are a size; the programs and the threads are counts.
+						kind := part.least ? value_kinds.Value_Kind.Number : value_kinds.Value_Kind.Size
+						append(&amounts, strings.concatenate({site_text_html(part.name), " ", site_value_html_with_icon(kind, fmt.tprintf("%d", part.value))}, context.temp_allocator))
+					}
 				}
-				// The pages are a size; the programs and the threads are counts.
-				kind := part.name == "pages" ? value_kinds.Value_Kind.Size : value_kinds.Value_Kind.Number
-				append(&amounts, strings.concatenate({site_text_html(part.name), " ", site_value_html_with_icon(kind, fmt.tprintf("%d", part.value))}, context.temp_allocator))
+			} else {
+				append(&amounts, "the least budget")
 			}
 			site_value_list(&b, amounts[:])
 			strings.write_string(&b, "</td>")
 			site_comment_cell(site, &b, item.page, budget.stated ? budget.comment : "No `MODULE_BUDGET` in its source: it asks for the least budget.")
 			strings.write_string(&b, "</tr>\n")
 			site_table_end(&b, budget_table)
-			fmt.sbprintf(&b, "<p class=\"source\">The grants are read from <code>grants_of</code> in <a href=\"%s\"><code>%s</code></a>. The budget is read from the constant <code>MODULE_BUDGET</code> of the source of the module", site_repository_file(site, SITE_ROOT_FILE), SITE_ROOT_FILE)
+			fmt.sbprintf(&b, "<p class=\"source\">The grants are read from <code>grants_of</code> in <a href=\"%s\"><code>%s</code></a>. The stated budget is read from the constant <code>MODULE_BUDGET</code> of the source of the module", site_repository_file(site, SITE_ROOT_FILE), SITE_ROOT_FILE)
 			if budget.stated {
 				fmt.sbprintf(&b, " (<a href=\"%s\">its line</a>)", site_line_address(site, budget.file, budget.line))
 			}
-			fmt.sbprintf(&b, "; the root service accepts it up to the largest budget of a program, and adds the limits of processor time and of log records (<a href=\"%s\"><code>%s</code></a>).</p>\n", site_repository_file(site, SITE_ROOT_BUDGETS_FILE), SITE_ROOT_BUDGETS_FILE)
+			fmt.sbprintf(&b, "; the build adds the counted parts and writes the sum in the module (<a href=\"%s\"><code>tools/modustool/budget_count.odin</code></a>); the root service accepts it up to the largest budget of a program, and adds the limits of processor time and of log records (<a href=\"%s\"><code>%s</code></a>).</p>\n", site_repository_file(site, "tools/modustool/budget_count.odin"), site_repository_file(site, SITE_ROOT_BUDGETS_FILE), SITE_ROOT_BUDGETS_FILE)
 			append(&sources, SITE_ROOT_FILE, SITE_ROOT_BUDGETS_FILE)
 		}
 		about := description.about != "" ? site_source_comment_plain(site, description.about) : "no documentation"

@@ -33,8 +33,8 @@ import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-// The two pictures of its window, then the pages that its cases spend.
-MODULE_BUDGET :: system.Budget_Request{pages = 1280, programs = 1, threads = 4}
+// The pages that its cases spend.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 598, programs = 1, threads = 4, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record
@@ -45,9 +45,13 @@ LINE :: 22
 ANSWER_X :: 336
 BAR_X :: 560
 BAR_WIDTH :: 150
-WIDTH :: BAR_X + BAR_WIDTH + 64
+// The size of the window is two literals, because the tool counts its
+// pictures from them; each assertion keeps a literal equal to its layout.
+WIDTH :: 774
+#assert(WIDTH == BAR_X + BAR_WIDTH + 64)
 ROW_CAPACITY :: 11
-HEIGHT :: 12 + 3 * LINE + ROW_CAPACITY * LINE + 12
+HEIGHT :: 332
+#assert(HEIGHT == 12 + 3 * LINE + ROW_CAPACITY * LINE + 12)
 
 OBJECT_PAGES :: 64
 OBJECT_CAPACITY :: 64

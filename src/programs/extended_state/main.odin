@@ -48,9 +48,8 @@ import sets "modus:support/instruction_sets"
 import "modus:support/interface"
 import "modus:support/system"
 
-// The main thread and up to 31 threads that hold their registers; the two
-// pictures of a window of 1024 x 720, 1440 pages.
-MODULE_BUDGET :: system.Budget_Request{pages = 3072, programs = 1, threads = 32}
+// The main thread and up to 31 threads that hold their registers.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 928, programs = 1, threads = 32, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 1000 // The window and its borders fit the screen of 1024 columns.

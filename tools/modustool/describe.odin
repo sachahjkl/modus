@@ -48,13 +48,16 @@ import "core:strings"
 //     sentence, without the name of the export.
 //   - The export "entry" has one parameter, an address. Its form is fixed by
 //     the contract, and its description has no parameter.
-//   - The constant MODULE_BUDGET, at most one in the package, is the budget
-//     that the module asks for: system.Budget_Request{pages = N, programs =
-//     N, threads = N}, or MODULE_BUDGET : system.Budget_Request : {...};
-//     each part an integer literal from 1, decimal or with a prefix 0x, 0o
-//     or 0b; a part left out 0 (the least); a comment before it that gives
-//     the reasons; at the top level of a file, alone in its declaration
-//     (budget_request_read).
+//   - The constant MODULE_BUDGET, at most one in the package, is the stated
+//     budget of the module: system.Stated_Budget{working_memory_pages = N,
+//     programs = N, threads = N, window_width = N, window_height = N}, or
+//     MODULE_BUDGET : system.Stated_Budget : {...}; each part an integer
+//     literal from 1, decimal or with a prefix 0x, 0o or 0b; a window part
+//     also the name of a constant of the package whose value is one integer
+//     literal; a part left out 0; a comment before it that gives the
+//     reasons; at the top level of a file, alone in its declaration
+//     (budget_request_read). The conversion adds the counted parts
+//     (budget_count.odin).
 // Another type is an error: the tool does not guess a description.
 
 ENTRY_NAME :: "entry"
@@ -71,6 +74,9 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 	state.records = make([dynamic]Record_Description, context.temp_allocator)
 	state.structs = make(map[string]Struct_Source, context.temp_allocator)
 	files := make([dynamic]^ast.File, context.temp_allocator)
+	// The constants of integer literals of all the files: a window part of
+	// the stated budget can name a constant of another file.
+	integer_constants := make(map[string]u64, context.temp_allocator)
 	// The structs of all the files first: an export of one file can use a
 	// struct of another file.
 	for path in files_with_suffix(folder, ".odin") or_return {
@@ -80,12 +86,14 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 		source := read_file(path) or_return
 		file := parse_source(path, string(source), &state) or_return
 		budget_request_read(file, &description.budget) or_return
+		integer_constants_read(file, &integer_constants)
 		append(&files, file)
 		if markdown := markdown_of(file.docs); description.markdown == "" {
 			description.markdown = markdown
 			description.text = markdown
 		}
 	}
+	budget_window_resolve(&description.budget, integer_constants) or_return
 	for file in files {
 		describe_file(file, &list, &state) or_return
 	}
@@ -716,19 +724,26 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 	return true
 }
 
-// The constant of a source that states the budget that its module asks for
+// The constant of a source that states the budget of its module
 // (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
 BUDGET_REQUEST_NAME :: "MODULE_BUDGET"
 
+// The largest width and the largest height of a window part: the limit of
+// a surface of display.open. A larger part is a fault of the source, and
+// the product of two parts stays far from the end of 64 bits.
+BUDGET_WINDOW_PART_LIMIT :: 2048
+
 // budget_request_read reads the constant BUDGET_REQUEST_NAME of one parsed
-// file into budget. A file with no such constant leaves budget as it is.
-// The tool reads integer literals only, so the number of the table is the
-// number of the source; the compiler checks the type and the names of the
-// fields, because the constant has the type of the record.
+// file into budget: the stated budget. A file with no such constant leaves
+// budget as it is. The tool reads integer literals only, so the number of
+// the table comes from the numbers of the source; the compiler checks the
+// type and the names of the fields, because the constant has the type of
+// the record. A window part that names a constant keeps the name:
+// budget_window_resolve reads it when each file of the package is read.
 budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> bool {
 	path := file.fullpath
 	// An argument of the format, not a part of it: its braces are text.
-	FORM :: "the form is " + BUDGET_REQUEST_NAME + " :: system.Budget_Request{pages = N, programs = N, threads = N}"
+	FORM :: "the form is " + BUDGET_REQUEST_NAME + " :: system.Stated_Budget{working_memory_pages = N, programs = N, threads = N, window_width = WIDTH, window_height = HEIGHT}"
 	for statement in file.decls {
 		// A declaration inside a `when`: the tool reads the source with no
 		// setting of the build, so it cannot know the branch that the
@@ -760,7 +775,7 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 			return describe_fail(path, declaration, "%s is not a record literal: the tool reads the parts of a literal and evaluates no expression; %s", BUDGET_REQUEST_NAME, FORM)
 		}
 		// The type is on the literal, or on the declaration in the form
-		// `MODULE_BUDGET : system.Budget_Request : {...}`.
+		// `MODULE_BUDGET : system.Stated_Budget : {...}`.
 		types := [2]^ast.Expr{literal.type, declaration.type}
 		typed := false
 		for type in types {
@@ -775,14 +790,15 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 			case ^ast.Selector_Expr:
 				type_name = named.field.name
 			}
-			if type_name != "Budget_Request" {
-				return describe_fail(path, declaration, "%s has the type %s: its type is system.Budget_Request, the record of the table Budget, so that the compiler checks the names of its parts", BUDGET_REQUEST_NAME, type_text(file.src, type))
+			if type_name != "Stated_Budget" {
+				return describe_fail(path, declaration, "%s has the type %s: its type is system.Stated_Budget, the parts that a source states, so that the compiler checks the names of its parts", BUDGET_REQUEST_NAME, type_text(file.src, type))
 			}
 		}
 		if !typed {
-			return describe_fail(path, declaration, "%s has no type: give it the type system.Budget_Request, so that the compiler checks the names of its parts; %s", BUDGET_REQUEST_NAME, FORM)
+			return describe_fail(path, declaration, "%s has no type: give it the type system.Stated_Budget, so that the compiler checks the names of its parts; %s", BUDGET_REQUEST_NAME, FORM)
 		}
-		request: module.Budget_Request
+		stated: Stated_Budget
+		window_names: [2]string
 		for element in literal.elems {
 			field_value, is_field := element.derived.(^ast.Field_Value)
 			field: ^ast.Ident
@@ -790,49 +806,126 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 				field, _ = field_value.field.derived.(^ast.Ident)
 			}
 			if field == nil {
-				return describe_fail(path, element, "%s: each part has its name (pages = N), so that a part never takes the place of another", BUDGET_REQUEST_NAME)
+				return describe_fail(path, element, "%s: each part has its name (threads = N), so that a part never takes the place of another", BUDGET_REQUEST_NAME)
+			}
+			place: ^u64
+			// The window parts can name a constant: the program passes the
+			// same constant to display.open.
+			window_index := -1
+			switch field.name {
+			case "working_memory_pages":
+				place = &stated.working_memory_pages
+			case "programs":
+				place = &stated.programs
+			case "threads":
+				place = &stated.threads
+			case "window_width":
+				place, window_index = &stated.window_width, 0
+			case "window_height":
+				place, window_index = &stated.window_height, 1
+			case:
+				return describe_fail(path, element, "%s has no part %s: its parts are working_memory_pages, programs, threads, window_width and window_height; the tool counts the other pages, and processor time and log records are limits that the starter sets", BUDGET_REQUEST_NAME, field.name)
+			}
+			if place^ != 0 || (window_index >= 0 && window_names[window_index] != "") {
+				return describe_fail(path, element, "%s states the part %s two times", BUDGET_REQUEST_NAME, field.name)
+			}
+			if constant, is_name := field_value.value.derived.(^ast.Ident); is_name {
+				if window_index < 0 {
+					return describe_fail(path, element, "%s: the part %s is the name %s: write its number; the tool reads integer literals, and a name only for the size of a window", BUDGET_REQUEST_NAME, field.name, constant.name)
+				}
+				window_names[window_index] = constant.name
+				continue
 			}
 			number, is_number := field_value.value.derived.(^ast.Basic_Lit)
 			if !is_number {
-				if constant, is_name := field_value.value.derived.(^ast.Ident); is_name {
-					return describe_fail(path, element, "%s: the part %s is the name %s: write its number; the tool reads integer literals and evaluates no name", BUDGET_REQUEST_NAME, field.name, constant.name)
-				}
-				return describe_fail(path, element, "%s: the part %s is an expression: write one integer literal; the tool evaluates no expression, so the number of the file is the number of the source", BUDGET_REQUEST_NAME, field.name)
+				return describe_fail(path, element, "%s: the part %s is an expression: write one integer literal; the tool evaluates no expression, so the number of the file comes from the numbers of the source", BUDGET_REQUEST_NAME, field.name)
 			}
-			if number.tok.kind != .Integer {
-				return describe_fail(path, element, "%s: the part %s is %s, which is not an integer: a part counts pages, programs or threads", BUDGET_REQUEST_NAME, field.name, number.tok.text)
-			}
-			// A separator of digits, as in 41_984, is no digit. A prefix
-			// 0x, 0o or 0b gives the base.
-			digits, _ := strings.remove_all(number.tok.text, "_", context.temp_allocator)
-			value, parsed := strconv.parse_u64_maybe_prefixed(digits)
-			if !parsed {
-				return describe_fail(path, element, "%s: the part %s is %s, which is not an integer of 64 bits that the tool can read", BUDGET_REQUEST_NAME, field.name, number.tok.text)
+			value, readable := integer_literal_value(number)
+			if !readable {
+				return describe_fail(path, element, "%s: the part %s is %s, which is not an integer of 64 bits that the tool can read: a part counts pages, programs, threads or pixels", BUDGET_REQUEST_NAME, field.name, number.tok.text)
 			}
 			if value == 0 {
-				return describe_fail(path, element, "%s: the part %s is 0: leave the part out to ask for the least budget of that part", BUDGET_REQUEST_NAME, field.name)
-			}
-			place: ^u64
-			switch field.name {
-			case "pages":
-				place = &request.pages
-			case "programs":
-				place = &request.programs
-			case "threads":
-				place = &request.threads
-			case:
-				return describe_fail(path, element, "%s has no part %s: its parts are pages, programs and threads; processor time and log records are limits that the starter sets", BUDGET_REQUEST_NAME, field.name)
-			}
-			if place^ != 0 {
-				return describe_fail(path, element, "%s states the part %s two times", BUDGET_REQUEST_NAME, field.name)
+				return describe_fail(path, element, "%s: the part %s is 0: leave the part out", BUDGET_REQUEST_NAME, field.name)
 			}
 			place^ = value
 		}
+		has_width := stated.window_width != 0 || window_names[0] != ""
+		has_height := stated.window_height != 0 || window_names[1] != ""
+		if has_width != has_height {
+			return describe_fail(path, declaration, "%s states one part of the size of its window: state window_width and window_height, or neither", BUDGET_REQUEST_NAME)
+		}
 		comment := markdown_of(declaration.docs)
 		if comment == "" {
-			return describe_fail(path, declaration, "%s has no comment: the comment before it gives the reason of each amount", BUDGET_REQUEST_NAME)
+			return describe_fail(path, declaration, "%s has no comment: the comment before it gives the reasons of its working memory and of its threads", BUDGET_REQUEST_NAME)
 		}
-		budget^ = {stated = true, request = request, comment = comment, file = path, line = declaration.pos.line}
+		budget^ = {stated = true, parts = stated, window_names = window_names, comment = comment, file = path, line = declaration.pos.line}
+	}
+	return true
+}
+
+// integer_literal_value reads one integer literal of a source. A separator
+// of digits, as in 41_984, is no digit; a prefix 0x, 0o or 0b gives the
+// base. readable is false for a literal that is not an integer of 64 bits.
+@(private = "file")
+integer_literal_value :: proc(number: ^ast.Basic_Lit) -> (value: u64, readable: bool) {
+	if number.tok.kind != .Integer {
+		return 0, false
+	}
+	digits, _ := strings.remove_all(number.tok.text, "_", context.temp_allocator)
+	return strconv.parse_u64_maybe_prefixed(digits)
+}
+
+// integer_constants_read adds to constants each constant of the top level
+// of one file whose value is one integer literal: `WIDTH :: 1000`, or
+// `WIDTH : int : 1000`. A constant of an expression is left out: the tool
+// evaluates none.
+integer_constants_read :: proc(file: ^ast.File, constants: ^map[string]u64) {
+	for statement in file.decls {
+		declaration, is_value := statement.derived.(^ast.Value_Decl)
+		if !is_value || declaration.is_mutable || len(declaration.names) != 1 || len(declaration.values) != 1 {
+			continue
+		}
+		name, is_name := declaration.names[0].derived.(^ast.Ident)
+		number, is_number := declaration.values[0].derived.(^ast.Basic_Lit)
+		if !is_name || !is_number {
+			continue
+		}
+		if value, readable := integer_literal_value(number); readable {
+			constants^[name.name] = value
+		}
+	}
+}
+
+// budget_window_resolve gives each window part of a stated budget that
+// names a constant the value of that constant, and checks the size of the
+// window. constants holds the constants of integer literals of each file
+// of the package.
+budget_window_resolve :: proc(budget: ^Budget_Description, constants: map[string]u64) -> bool {
+	if !budget.stated {
+		return true
+	}
+	places := [2]^u64{&budget.parts.window_width, &budget.parts.window_height}
+	part_names := [2]string{"window_width", "window_height"}
+	for name, index in budget.window_names {
+		if name == "" {
+			continue
+		}
+		value, found := constants[name]
+		if !found {
+			fmt.eprintfln("modustool: describe %s(%d): %s: the part %s names %s, which is not a constant of one integer literal in the package: write %s :: N, and if its value is an expression, put #assert(%s == <expression>) beside it, so that the compiler checks the number; the tool evaluates no expression", budget.file, budget.line, BUDGET_REQUEST_NAME, part_names[index], name, name, name)
+			return false
+		}
+		if value == 0 {
+			fmt.eprintfln("modustool: describe %s(%d): %s: the part %s names %s, which is 0: a window has one pixel at least", budget.file, budget.line, BUDGET_REQUEST_NAME, part_names[index], name)
+			return false
+		}
+		places[index]^ = value
+	}
+	for place, index in places {
+		if place^ > BUDGET_WINDOW_PART_LIMIT {
+			fmt.eprintfln("modustool: describe %s(%d): %s: the part %s is %d, above %d, the largest size of a surface", budget.file, budget.line, BUDGET_REQUEST_NAME, part_names[index], place^, BUDGET_WINDOW_PART_LIMIT)
+			return false
+		}
 	}
 	return true
 }

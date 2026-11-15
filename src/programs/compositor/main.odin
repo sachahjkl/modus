@@ -83,8 +83,9 @@ import "modus:support/system"
 import "modus:contract/pointer_pictures"
 import "base:intrinsics"
 
-// Its loop, and the thread that makes the lists of the palette.
-MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 2}
+// Its loop, and the thread that makes the lists of the palette. The
+// working memory: its surfaces, its tables and the screen.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3799, programs = 1, threads = 2}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0

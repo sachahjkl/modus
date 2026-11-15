@@ -41,11 +41,11 @@ import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-// The amounts that the root service gave it by its name before its module
-// stated a request: no part is counted yet. Its small limits of processor
-// time and of log records are an exception of the root service: a request
-// holds no limit in time.
-MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 1, threads = 5}
+// The working memory: the rest of the pages that the root service gave it
+// by its name, once the tool counts its module, its threads and its window.
+// Its small limits of processor time and of log records are an exception
+// of the root service: a request holds no limit in time.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1406, programs = 1, threads = 5, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record
@@ -58,7 +58,10 @@ BAR_X :: 232
 BAR_WIDTH :: 380 // Two processors.
 BAR_FULL :: 2_000_000
 ROW_COUNT :: 4
-HEIGHT :: 12 + 3 * LINE + ROW_COUNT * 2 * LINE + 4 * LINE + 12
+// A literal, because the tool counts the pictures of the window from it;
+// the assertion keeps it equal to its layout.
+HEIGHT :: 354
+#assert(HEIGHT == 12 + 3 * LINE + ROW_COUNT * 2 * LINE + 4 * LINE + 12)
 INTERVAL :: 1000
 BURST :: 100
 

@@ -40,7 +40,7 @@ import "base:intrinsics"
 import "modus:support/system"
 
 // Its main thread, and one thread that only waits.
-MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 1, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1954, programs = 1, threads = 2}
 
 // What the program does now.
 Phase :: enum u8 {

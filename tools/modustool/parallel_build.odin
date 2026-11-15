@@ -300,6 +300,7 @@ build_modules_in_parallel :: proc() -> bool {
 	build_measure.modules_converted += converted_count
 	build_measure.modules_kept += kept_count
 	build_measure.modules += time.tick_since(modules_started)
+	build_measure_budget_requests()
 	if built_count + converted_count == 0 {
 		fmt.printfln("modustool: %d of %d modules kept: the inputs of each one are the same, and its outputs have their recorded hashes", kept_count, len(module_builds))
 	} else if kept_count + converted_count > 0 || !build_whole {

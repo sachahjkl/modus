@@ -43,7 +43,7 @@ import op "modus:contract/operation"
 import "modus:support/system"
 
 // Itself and one program that only receives.
-MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 2, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1372, programs = 2, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record
@@ -54,7 +54,10 @@ LINE :: 22
 ANSWER_X :: 424
 WIDTH :: 640
 CASE_CAPACITY :: 12
-HEIGHT :: 12 + 4 * LINE + CASE_CAPACITY * LINE + 3 * LINE + 12
+// A literal, because the tool counts the pictures of the window from it;
+// the assertion keeps it equal to its layout.
+HEIGHT :: 442
+#assert(HEIGHT == 12 + 4 * LINE + CASE_CAPACITY * LINE + 3 * LINE + 12)
 
 COLOR_WRONG :: 0xE0B040
 
