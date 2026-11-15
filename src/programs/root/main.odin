@@ -53,6 +53,8 @@
 //   principals (docs/PRINCIPALS.md, "7. The commands").
 // - `Machine_Passphrase`: the machine passphrase, which guards the key of
 //   the disk grant table of principal 0 (persisted_grant_table.odin).
+// - `Machine_Seal`: a machine key that the TPM service seals to the
+//   measure of the system, with a recovery key (tpm.odin).
 // - `Debug`: the handle of a program with the right Debug, for the
 //   debugger service, on behalf of a caller of that service that acts for
 //   the principal whose session runs that program (`debug`).
@@ -223,9 +225,10 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Store}
 	case "unlock":
 		// The records of the named principals in its private store, the
-		// passphrase in its window, and the two commands of the principals
-		// (docs/PRINCIPALS.md).
-		return {.Store, .Principals}
+		// passphrase in its window, the commands of the principals, and the
+		// ring of the TPM service, which seals the machine key to the
+		// measure of the system (docs/PRINCIPALS.md).
+		return {.Store, .Principals, .Tpm}
 	case "hierarchy":
 		return {.Store} // The test of the trees of a store.
 	case "ranges":
@@ -616,7 +619,8 @@ entropy_report: random.Entropy_Report
 // 7. starts `input` with the ports and the interrupts of the PS/2
 //    controller, then the compositor with the framebuffer;
 // 8. starts `date`, then the console, then the settings that were kept,
-//    then `unlock` if a named principal exists.
+//    then the TPM service when the system is measured into a TPM, then
+//    `unlock`.
 //
 // A failure in steps 1 to 8 calls `fail`: the boot display shows the cause,
 // and the machine waits until it is stopped from outside.
@@ -806,6 +810,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// The settings that were kept (text_settings.odin).
 	settings_boot_pass_start()
+	// The TPM service, when the system is measured into a TPM: `unlock`
+	// unseals the machine key with it (tpm.odin).
+	tpm_service_start()
 	// The named principal, if one was created: `unlock` reads its file and
 	// asks for the passphrase; with no file it stops (principals.odin).
 	unlock_start(principals.MODE_UNLOCK, "")
@@ -873,6 +880,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					result = disk_grant_persistence(&item, record, &completion.values)
 				case .Machine_Passphrase:
 					result = machine_passphrase_ask()
+				case .Machine_Seal:
+					result = machine_seal_ask()
 				case .Machine_Key:
 					result = machine_key_take(record.values)
 					key_ring_erase(&item.requests.commands)
@@ -1065,11 +1074,19 @@ refusal :: proc "contextless" (command: system.Root_Command, name: string, value
 		if status == .No_Slot {
 			return errors.ring_fail(kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
 		}
-	case .Machine_Passphrase:
+	case .Machine_Passphrase, .Machine_Seal:
 		#partial switch status {
 		case .Bad_State:
-			// The machine has its passphrase: a change is not built.
+			// The machine has a record of its machine key: a change is not
+			// built.
 			return errors.ring_fail(kind, .Exists, .Principals)
+		case .Bad_Handle:
+			// No TPM service: the system is not measured into a TPM.
+			return errors.ring_fail(kind, .Unsupported, .Principals)
+		case .No_Right:
+			// Secure Boot is off: no seal trusts a boot program that
+			// nothing verified.
+			return errors.ring_fail(kind, .Refused, .Principals)
 		case .No_Slot:
 			// unlock runs: one window of unlock at a time.
 			return errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
@@ -1090,8 +1107,14 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 			break
 		}
 	}
-	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" || name == "frame" || name == "iommu_device" {
+	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" || name == "frame" || name == "iommu_device" || name == "tpm" {
 		return .Bad_Operation
+	}
+	// One `unlock` at a time, and only from unlock_start: two runs would
+	// share the ring of the principals and the ring and the region of the
+	// TPM service, and one would read the answers of the other.
+	if name == "unlock" && (!unlock_start_asked || find("unlock") != nil) {
+		return .Bad_State
 	}
 	role := grants_of(name)
 	// A program with an endpoint: the network service starts first.
@@ -1158,6 +1181,10 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 		}
 		packed := principals.name_pack(string(unlock_name[:unlock_name_length]))
 		copy(values[principals.VALUE_NAME:][:3], packed[:])
+	}
+	if .Tpm in role {
+		tpm_grants_give(&grants)
+		values[principals.VALUE_SEAL_ALLOWED] = u64(tpm_seal_allowed())
 	}
 	if name == "programs" {
 		// The module file service serves the callers of the principal of
@@ -1502,13 +1529,15 @@ debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) 
 // - Network: an endpoint names its own remote and its own ports;
 // - Connect: the services that a program can connect to are its own list;
 // - Principals: a ring of its own, and the records of the principals;
+// - Tpm: the ring and the region of the TPM service, which hold the
+//   machine key during a request;
 // - Debugger: a ring of its own, and the debuggings of its callers;
 // - System_Part: handles that no other grant names.
 // Each other grant reaches one thing that each of its holders reaches: the
 // machine by its rights, the boot image, the debug image, the replacement
 // table, the settings page, the date page, the records of the log, the
 // commands of the root ring.
-GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Network, .Connect, .Principals, .Debugger, .System_Part}
+GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part}
 
 // debug gives the debugger service the handle of the program with a name,
 // with the right Debug and no other, on behalf of one of its callers:
@@ -2123,6 +2152,7 @@ release :: proc "contextless" (item: ^Started) {
 	if item.is_driver {
 		driver_end(item)
 	}
+	tpm_service_end(item)
 	endpoint_close(item)
 	disk_load_forget(item)
 	if palette_provider == item {

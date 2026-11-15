@@ -562,6 +562,13 @@ commands_start :: proc "contextless" () {
 	//
 	// Errors: the machine has a passphrase already; unlock runs.
 	command("machine_passphrase", {}, .None, "set the machine passphrase: it is typed in the window of unlock", machine_passphrase)
+	// Asks the root service to seal a new machine key to the measure of the
+	// system with the TPM: the window of unlock shows the recovery key one
+	// time. It needs Secure Boot that verified the boot program.
+	//
+	// Errors: the machine has a record of its key already; no TPM service
+	// runs; Secure Boot did not verify the boot program; unlock runs.
+	command("machine_seal", {}, .None, "seal a machine key to the measure of the system with the TPM: the window of unlock shows its recovery key one time", machine_seal)
 	// Asks the root service to lock the session of the named principal that
 	// is unlocked, and gives the count of the programs of the session that
 	// stopped.
@@ -2498,6 +2505,20 @@ disk_persistence :: proc "contextless" (arguments: []Value) -> Value {
 // line in its history, so it is typed in the window of unlock.
 machine_passphrase :: proc "contextless" (arguments: []Value) -> Value {
 	completion, answered := request_record(.Machine_Passphrase, "")
+	if !answered {
+		return fail_no_answer()
+	}
+	if system.Status(completion.kind) != .Ok {
+		return fail_root("", completion)
+	}
+	return {}
+}
+
+// machine_seal asks the root service for a machine key that the TPM seals
+// to the measure of the system. The recovery key is never a text of the
+// console: the window of unlock shows it one time.
+machine_seal :: proc "contextless" (arguments: []Value) -> Value {
+	completion, answered := request_record(.Machine_Seal, "")
 	if !answered {
 		return fail_no_answer()
 	}

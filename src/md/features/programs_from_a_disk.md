@@ -193,6 +193,7 @@ The name `grant_table` is kept, as the name `programs` is: no disk program has i
 **Principal 0 and the machine passphrase.** Principal 0 is the machine, and a passphrase for it is optional ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Machine passphrase"):
 
 - **No machine passphrase.** No key signs the table of principal 0: it lasts until the machine stops. Its data stays: the store of a nickname is on the disk, and the next grant of `store` finds it.
+- **A machine key sealed by the TPM** (`machine_seal()`). The TPM releases the machine key at each start of the same system, with no typing, and the table of principal 0 is read and written as with a machine passphrase. A changed system asks for the recovery key ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md)).
 - **A machine passphrase.** The table of principal 0 is read after the passphrase is typed at the start, and written after each change.
 
 The record of the machine passphrase is the object `machine` of the store of `unlock` (a store of principal 0), beside the file of a named principal. It holds the salt of Argon2id, with the parameters of a named principal, and the machine key sealed with ChaCha20-Poly1305 under the key that Argon2id derives ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Machine key"). The machine key is 32 random bytes. A wrong passphrase does not open the seal, so it never gives a wrong key that would write a table no one can read.
@@ -333,7 +334,7 @@ Built: the command `Start_From_Disk` of the root ring and the command `start_fro
 
 Left:
 
-- **The machine key sealed by the TPM.** By default the TPM seals the machine key and no one types anything; with a passphrase, the TPM and the passphrase together open it. Until then a machine with no passphrase keeps the table of principal 0 until it stops.
+- **The TPM and the machine passphrase together.** `machine_seal()` gives a machine with no passphrase a machine key that the TPM releases to the measured system, with a recovery key ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md)). With a passphrase, the TPM and the passphrase together open it; that form is left.
 - **A change and a removal of the machine passphrase.** A change seals the same machine key under a new passphrase, so the table stays valid.
 - **An older table.** A counter that only grows, in the TPM, so that a restored version of the table is refused.
 - **A second ask after a skip.** A command that asks for the machine passphrase again, with no restart and no lock.

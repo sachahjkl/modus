@@ -22,19 +22,33 @@
 // starts it with a name: the passphrase is typed two times, the keys are
 // made from the generator of the program, and the session starts.
 //
-// The passphrase shows as dots. The seal by the TPM is not built: the
-// strength of the record is the strength of the passphrase against
-// Argon2id with 19 MiB and 2 passes, on a copy of the disk.
+// The passphrase shows as dots. The keys of a named principal are not
+// sealed by the TPM: the strength of their record is the strength of the
+// passphrase against Argon2id with 19 MiB and 2 passes, on a copy of the
+// disk.
 //
-// It also keeps the record of the machine passphrase, the object "machine"
-// of its store: the machine key, 32 random bytes, sealed in the same way
-// (docs/PRINCIPALS.md, "Principal 0 and its machine passphrase"). With
-// that record, and when the root service does not hold the key yet, it
-// asks for the machine passphrase first. When the seal opens, it gives the
-// root service the key of the tag of the disk grant table of principal 0,
-// which the machine key gives, and erases the other keys: the root service
-// then needs no key that opens the seal. The root service starts it with
-// the mode MODE_SET_MACHINE_PASSPHRASE after `machine_passphrase()`.
+// It also keeps the record of the machine key, the object "machine" of its
+// store, in one of two forms
+// (docs/PRINCIPALS.md, "Principal 0 and its machine passphrase";
+// docs/PRINCIPALS.md, "The machine key sealed by the TPM"):
+//
+// - the machine key, 32 random bytes, sealed under the machine passphrase
+//   as the keys of a named principal are. With that record, and when the
+//   root service does not hold the key yet, it asks for the machine
+//   passphrase first. The root service starts it with the mode
+//   MODE_SET_MACHINE_PASSPHRASE after `machine_passphrase()`;
+// - the machine key sealed by the TPM service to PCR 7 and PCR 11, with a
+//   copy under a recovery key. At each start the TPM releases the key with
+//   no typing; when it refuses (another system, another machine, no TPM),
+//   the window asks for the recovery key, and the key is sealed again to
+//   the system that runs. The root service starts it with the mode
+//   MODE_SEAL_MACHINE_KEY after `machine_seal()`: the window shows the
+//   recovery key one time.
+//
+// When a record gives the machine key, it gives the root service the key of
+// the tag of the disk grant table of principal 0, which the machine key
+// gives, and erases the other keys: the root service then needs no key
+// that opens a seal.
 //
 // **What it is for.** It separates who holds the machine (principal 0) from
 // a named principal whose programs run in a session of their own, with
@@ -54,6 +68,8 @@
 //   `Principal_Unlock` and `Machine_Key` only. No other program can send
 //   these commands, so no other program can start a session or give the
 //   key of a disk grant table.
+// - **Tpm**: the ring and the region of the TPM service, when the system is
+//   measured into a TPM: Seal and Unseal only (modus:contract/tpm_service).
 //
 // **What a reader sees**: a window with the name of the principal and the
 // passphrase as dots; Enter tries it, Backspace removes one byte, Escape
@@ -62,7 +78,9 @@
 // - `unlock: principal 1 "alice" is locked: its passphrase opens its session`;
 // - `unlock: the passphrase of principal 1 "alice" opens its seal; ...`;
 // - `unlock: the passphrase of principal 1 "alice" is wrong: ...`;
-// - `unlock: the machine passphrase opens the machine key; ...`.
+// - `unlock: the machine passphrase opens the machine key; ...`;
+// - `unlock: the TPM releases the machine key: the system is the system of
+//   the seal; ...`.
 //
 // **What it does not prove**: the secret keys sign and decrypt nothing yet;
 // the unlock key only gives the key of the tag of the disk grant table.
@@ -75,6 +93,7 @@ package unlock
 import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/ring"
+import "modus:contract/tpm_service"
 import "modus:support/disk_program"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -122,16 +141,42 @@ Mode :: enum {
 	Machine_Unlock, // The machine passphrase, before the passphrase of a named principal.
 	Machine_Create_First, // A new machine passphrase.
 	Machine_Create_Again, // The same machine passphrase again.
+	Machine_Recovery, // The TPM did not release the machine key: the recovery key, before the passphrase of a named principal.
+	Recovery_Shown, // The recovery key of a new machine key sealed by the TPM, shown one time.
 	Done,
 }
 
 mode: Mode
-principal_found: bool // The store holds the file of a named principal: its unlock comes after the machine passphrase.
+principal_found: bool // The store holds the file of a named principal: its unlock comes after the machine key.
 
-// The record of the machine passphrase, as the store gave it.
+// The record of the machine key, as the store gave it, in its form.
+machine_form: principals.Machine_Record_Form
 machine_file: principals.Machine_File
 machine_file_bytes: [principals.MACHINE_FILE_SIZE]u8
-machine_refusals: u64 // The wrong machine passphrases since the start.
+machine_tpm_file: principals.Machine_Tpm_File
+machine_tpm_file_bytes: [principals.MACHINE_TPM_FILE_SIZE]u8
+machine_refusals: u64 // The wrong machine passphrases and recovery keys since the start.
+
+// The TPM service: its ring and its region, when the root service gave
+// them. The first tag is random: a completion that an earlier run of this
+// program left in the ring never has the tag of a command of this run.
+has_tpm: bool
+tpm_requests: ring.Ring
+tpm_region: []u8
+tpm_tag: u32
+tpm_program: system.Handle // The TPM service, with the right Read: its state says at once when it stopped.
+seal_allowed: bool // The firmware verified the boot program: a seal and a new seal are allowed (principals.VALUE_SEAL_ALLOWED).
+// The bound of an answer of the TPM service. It only ends a wait for a TPM
+// that does not answer; the service ends each request at its own bound,
+// which is below this one, and a stop of the service ends the wait at once.
+TPM_ANSWER_LIMIT :: 600_000
+
+// The recovery key of a new seal, as its user reads it, while the window
+// shows it; erased when the window ends it.
+recovery_text: [principals.RECOVERY_TEXT_SIZE]u8
+// The most characters of a typed recovery key: its 39 characters and some
+// spaces. The typed text is drawn: a recovery key is copied from paper.
+RECOVERY_TYPED_LIMIT :: principals.RECOVERY_TEXT_SIZE + 8
 requests: ring.Ring
 request_tag: u32
 generator: random.Generator
@@ -447,18 +492,328 @@ machine_create :: proc "contextless" () {
 	mode = .Done
 }
 
-// What the store holds for the record of the machine passphrase.
+// tpm_open maps the ring and the region of the TPM service, when the root
+// service gave them, and drops each completion that an earlier run of this
+// program left in the ring.
+tpm_open :: proc "contextless" (ctx: ^system.Context) {
+	seal_allowed = ctx.values[principals.VALUE_SEAL_ALLOWED] == 1
+	if ctx.handles[tpm_service.GRANT_RING] == 0 || ctx.handles[tpm_service.GRANT_REGION] == 0 || ctx.handles[tpm_service.GRANT_SERVICE] == 0 {
+		return
+	}
+	tpm_program = ctx.handles[tpm_service.GRANT_SERVICE]
+	if !tpm_service_runs() {
+		system.log("unlock: the TPM service stopped: the machine key sealed by the TPM opens with its recovery key only")
+		return
+	}
+	status: system.Status
+	if tpm_requests, status = system.ring_open(ctx.handles[tpm_service.GRANT_RING]); status != .Ok {
+		system.log("unlock: the ring of the TPM service does not open: status ", u64(status))
+		return
+	}
+	address, map_status := system.memory_map(ctx.handles[tpm_service.GRANT_REGION], {.Write})
+	if map_status != .Ok {
+		system.ring_close(&tpm_requests)
+		system.log("unlock: the region of the TPM service does not map: status ", u64(map_status))
+		return
+	}
+	tpm_region = ([^]u8)(address)[:tpm_service.REGION_SIZE]
+	for {
+		_, has_record := system.receive(&tpm_requests.completions)
+		if !has_record {
+			break
+		}
+	}
+	tag_bytes: [4]u8
+	random.fill(&generator, tag_bytes[:])
+	tpm_tag = transmute(u32)tag_bytes
+	has_tpm = true
+}
+
+// tpm_service_runs says if the TPM service has not stopped.
+tpm_service_runs :: proc "contextless" () -> bool {
+	state, _ := system.program_state(tpm_program)
+	return state != .Stopped && state != .None
+}
+
+// tpm_request sends one command to the TPM service and waits for its
+// completion. The stop of the service is an event of this thread, as it
+// holds the handle of the service: the wait ends at once, and no TPM is
+// asked again in this run.
+tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64) -> (completion: ring.Record, answered: bool) {
+	tpm_tag += 1
+	if !system.send(&tpm_requests.commands, ring.Record{kind = u32(command), tag = tpm_tag, values = values}) {
+		return {}, false
+	}
+	limit := system.time() + TPM_ANSWER_LIMIT
+	for {
+		wait := system.wait_begin()
+		for record in system.receive(&tpm_requests.completions) {
+			if record.tag == tpm_tag {
+				return record, true
+			}
+		}
+		if !tpm_service_runs() {
+			system.log("unlock: the TPM service stopped during a request")
+			has_tpm = false
+			return {}, false
+		}
+		system.wait_records(&wait, &tpm_requests.completions)
+		if system.wait_end(&wait, limit) >= limit {
+			return {}, false
+		}
+	}
+}
+
+// tpm_refusal_log writes why the TPM service did not do a request.
+tpm_refusal_log :: proc "contextless" (what: string, completion: ring.Record, answered: bool) {
+	if !answered {
+		system.log("unlock: the TPM service gave no answer to the ", what)
+		return
+	}
+	#partial switch tpm_service.Status(completion.kind) {
+	case .Policy_Fails:
+		system.log("unlock: the TPM refuses the ", what, ": PCR 7 and PCR 11 do not hold the values of the seal: another system, another state of Secure Boot, or another machine")
+	case .Refused:
+		system.log("unlock: the TPM refuses the ", what, ": response code ", system.Hex(completion.values[0]), " to the command ", system.Hex(completion.values[1]))
+	case .Device_Error:
+		system.log("unlock: the interface of the TPM failed at the ", what, ": step ", completion.values[0])
+	case .Not_Authentic:
+		system.log("unlock: the TPM service refuses the ", what, ": this TPM did not make the sealed object of the record under the PCR values of its policy; the record was written by another system, and only its recovery key opens it")
+	case:
+		system.log("unlock: the TPM service refuses the ", what, ": status ", u64(completion.kind))
+	}
+}
+
+// tpm_seal asks the TPM service to seal the machine key to PCR 7 and PCR
+// 11, and puts the two areas of the sealed object in machine_tpm_file. On
+// a failure machine_tpm_file keeps its areas.
+tpm_seal :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8) -> bool {
+	copy(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE], machine_key^[:])
+	completion, answered := tpm_request(.Seal, {})
+	if !answered || tpm_service.Status(completion.kind) != .Ok {
+		// The service erases the secret when it takes the request; a
+		// service that did not answer can leave it in the region.
+		erase(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE])
+		tpm_refusal_log("seal", completion, answered)
+		return false
+	}
+	// The counts come from the service: they are checked before a copy.
+	if completion.values[0] > principals.MACHINE_TPM_PUBLIC_LIMIT || completion.values[1] > principals.MACHINE_TPM_PRIVATE_LIMIT || completion.values[2] != u64(principals.MACHINE_TPM_PCRS) || completion.values[3] > principals.MACHINE_TPM_CREATION_LIMIT || completion.values[4] > principals.MACHINE_TPM_TICKET_LIMIT {
+		system.log("unlock: the TPM service gave parts or PCRs that the record of the machine key does not take")
+		return false
+	}
+	public_bytes, private_bytes := int(completion.values[0]), int(completion.values[1])
+	creation_bytes, ticket_bytes := int(completion.values[3]), int(completion.values[4])
+	machine_tpm_file.public_area = {}
+	machine_tpm_file.private_area = {}
+	machine_tpm_file.creation_data = {}
+	machine_tpm_file.creation_ticket = {}
+	copy(machine_tpm_file.public_area[:public_bytes], tpm_region[tpm_service.REGION_PUBLIC_AREA:][:public_bytes])
+	copy(machine_tpm_file.private_area[:private_bytes], tpm_region[tpm_service.REGION_PRIVATE_AREA:][:private_bytes])
+	copy(machine_tpm_file.creation_data[:creation_bytes], tpm_region[tpm_service.REGION_CREATION_DATA:][:creation_bytes])
+	copy(machine_tpm_file.creation_ticket[:ticket_bytes], tpm_region[tpm_service.REGION_CREATION_TICKET:][:ticket_bytes])
+	machine_tpm_file.public_bytes, machine_tpm_file.private_bytes = public_bytes, private_bytes
+	machine_tpm_file.creation_bytes, machine_tpm_file.ticket_bytes = creation_bytes, ticket_bytes
+	machine_tpm_file.pcrs = principals.MACHINE_TPM_PCRS
+	return true
+}
+
+// tpm_unseal asks the TPM service for the machine key of the record. The
+// TPM gives it only while PCR 7 and PCR 11 hold the values of the seal.
+tpm_unseal :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8) -> bool {
+	public_bytes, private_bytes := machine_tpm_file.public_bytes, machine_tpm_file.private_bytes
+	creation_bytes, ticket_bytes := machine_tpm_file.creation_bytes, machine_tpm_file.ticket_bytes
+	copy(tpm_region[tpm_service.REGION_PUBLIC_AREA:][:public_bytes], machine_tpm_file.public_area[:public_bytes])
+	copy(tpm_region[tpm_service.REGION_PRIVATE_AREA:][:private_bytes], machine_tpm_file.private_area[:private_bytes])
+	copy(tpm_region[tpm_service.REGION_CREATION_DATA:][:creation_bytes], machine_tpm_file.creation_data[:creation_bytes])
+	copy(tpm_region[tpm_service.REGION_CREATION_TICKET:][:ticket_bytes], machine_tpm_file.creation_ticket[:ticket_bytes])
+	completion, answered := tpm_request(.Unseal, {0 = u64(public_bytes), 1 = u64(private_bytes), 2 = u64(creation_bytes), 3 = u64(ticket_bytes)})
+	defer erase(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE])
+	if !answered || tpm_service.Status(completion.kind) != .Ok {
+		tpm_refusal_log("unseal", completion, answered)
+		return false
+	}
+	if completion.values[0] != tpm_service.SECRET_SIZE {
+		system.log("unlock: the TPM service gave a machine key of ", completion.values[0], " bytes")
+		return false
+	}
+	copy(machine_key^[:], tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE])
+	return true
+}
+
+// machine_key_passes says if a machine key has the key check of the record:
+// a key that the TPM or the recovery key gives must have it.
+machine_key_passes :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8) -> bool {
+	check := principals.machine_key_check(machine_key)
+	return check == machine_tpm_file.key_check
+}
+
+// machine_seal_create makes a machine key sealed by the TPM: the key and a
+// recovery key from the generator of this program, the seal by the TPM
+// service, the copy under the recovery key, the record, and the key of the
+// table to the root service. It keeps the text of the recovery key for the
+// window, which shows it one time. It writes at most one record in a run.
+machine_seal_create :: proc "contextless" () -> bool {
+	machine_key: [principals.MACHINE_KEY_SIZE]u8
+	recovery_key: [principals.RECOVERY_KEY_SIZE]u8
+	seal_key: [principals.KEY_SIZE]u8
+	defer erase(machine_key[:])
+	defer erase(recovery_key[:])
+	defer erase(seal_key[:])
+	error: errors.Error_Record
+	machine_tpm_file = {}
+	// The keys come from the generator of this program, seeded by the root
+	// service from the sources of the processor; a weak seed is refused.
+	if !random.fill_for_a_key(&generator, machine_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, recovery_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, machine_tpm_file.recovery_nonce[:], .Processor, &error) {
+		system.log("unlock: the seed of this program is too weak for a key: no machine key is sealed by the TPM")
+		return false
+	}
+	if !tpm_seal(&machine_key) {
+		system.log("unlock: no machine key is sealed by the TPM: the TPM service did not seal it")
+		return false
+	}
+	machine_tpm_file.key_check = principals.machine_key_check(&machine_key)
+	seal_key = principals.recovery_seal_key(&recovery_key)
+	principals.machine_tpm_file_encode(&machine_tpm_file, &machine_tpm_file_bytes)
+	key_text := string(seal_key[:])
+	nonce_text := string(machine_tpm_file.recovery_nonce[:])
+	additional := string(principals.machine_tpm_file_additional_data(&machine_tpm_file_bytes))
+	text := string(machine_key[:])
+	sealed := machine_tpm_file.recovery_sealed[:]
+	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.MACHINE_SEALED_SIZE {
+		system.log("unlock: the seal of the copy under the recovery key failed: no machine key is sealed by the TPM")
+		return false
+	}
+	principals.machine_tpm_file_encode(&machine_tpm_file, &machine_tpm_file_bytes)
+	// The record goes to the disk only when it decodes: the next start reads
+	// it with the same checks.
+	if _, _, problem := principals.machine_tpm_file_decode(machine_tpm_file_bytes[:]); problem != .None {
+		system.log("unlock: the record of the machine key sealed by the TPM does not decode: ", principals.machine_tpm_file_problem_sentences[problem])
+		return false
+	}
+	if _, status := storage.write(&client, storage.ROOT, principals.MACHINE_OBJECT, machine_tpm_file_bytes[:]); status != .Ok {
+		system.log("unlock: the store did not keep the record of the machine key: status ", u64(status))
+		return false
+	}
+	system.log("unlock: the machine key is sealed by the TPM to PCR 7 and PCR 11, with a copy under a recovery key, in the store of unlock; the window shows the recovery key one time")
+	recovery_text = principals.recovery_key_text(&recovery_key)
+	// The record is on the disk now: this run never writes a second one, and
+	// the recovery key shows even when the root service does not take the
+	// key, as the record holds the copy under it.
+	if !machine_key_give(&machine_key, system.MACHINE_KEY_NEW) {
+		system.log("unlock: the root service did not take the key of the new machine key; the record stays, and the TPM opens it at the next start")
+	}
+	return true
+}
+
+// What the unseal at the start gave.
+Unseal_Outcome :: enum u8 {
+	Opened, // The root service has the key of the table.
+	Refused, // The TPM did not release a key that passes its check: the window asks for the recovery key.
+	Not_Taken, // The key passed, and the root service did not take it: a recovery key would not help, so the window does not ask for it.
+}
+
+// machine_tpm_unseal asks the TPM service for the machine key at the start,
+// and gives the root service the key of the table when the key passes its
+// check.
+machine_tpm_unseal :: proc "contextless" () -> Unseal_Outcome {
+	if !has_tpm {
+		system.log("unlock: the machine key is sealed by the TPM, and no TPM service runs: the recovery key opens it")
+		return .Refused
+	}
+	machine_key: [principals.MACHINE_KEY_SIZE]u8
+	defer erase(machine_key[:])
+	if !tpm_unseal(&machine_key) {
+		return .Refused
+	}
+	if !machine_key_passes(&machine_key) {
+		system.log("unlock: the key that the TPM released does not have the key check of the record: it is erased, and the recovery key opens the record")
+		return .Refused
+	}
+	if !machine_key_give(&machine_key, system.MACHINE_KEY_OPENED) {
+		system.log("unlock: the TPM released the machine key, and the root service did not take the key of its table: the disk grants of principal 0 stay absent until the next start")
+		return .Not_Taken
+	}
+	system.log("unlock: the TPM releases the machine key: the system is the system of the seal; the root service receives the key of the disk grant table only")
+	return .Opened
+}
+
+// machine_reseal seals the machine key again after a recovery, to PCR 7 and
+// PCR 11 of the system that runs now: its next start then needs no
+// recovery key. The copy under the recovery key and the key check stay:
+// the machine key did not change, and the disk grant table keeps its tag.
+// With Secure Boot off it does not: an attacker who turns Secure Boot off
+// makes the TPM refuse as an update does, and a new seal after the
+// recovery would then trust any boot program.
+machine_reseal :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8) {
+	if !has_tpm {
+		system.log("unlock: no TPM service: the machine key is not sealed again, and the recovery key opens it at the next start too")
+		return
+	}
+	if !seal_allowed {
+		system.log("unlock: the firmware did not verify the boot program (Secure Boot is off): the machine key is not sealed again, as its seal would trust a boot program that nothing verified; the recovery key opens it at the next start too")
+		return
+	}
+	if !tpm_seal(machine_key) {
+		system.log("unlock: the machine key is not sealed again: the recovery key opens it at the next start too")
+		return
+	}
+	principals.machine_tpm_file_encode(&machine_tpm_file, &machine_tpm_file_bytes)
+	if _, status := storage.write(&client, storage.ROOT, principals.MACHINE_OBJECT, machine_tpm_file_bytes[:]); status != .Ok {
+		system.log("unlock: the store did not keep the new seal of the machine key: status ", u64(status), "; the recovery key opens it at the next start too")
+		return
+	}
+	system.log("unlock: the machine key is sealed again to PCR 7 and PCR 11 of the system that runs: its next start needs no recovery key")
+}
+
+// recovery_try opens the copy of the machine key with the recovery key
+// typed. A wrong recovery key does not open the seal, and the root service
+// receives nothing.
+recovery_try :: proc "contextless" () {
+	recovery_key, problem := principals.recovery_key_parse(typed[:typed_count])
+	defer erase(recovery_key[:])
+	if problem != .None {
+		message, message_failed = principals.recovery_problem_sentences[problem], true
+		return
+	}
+	seal_key := principals.recovery_seal_key(&recovery_key)
+	defer erase(seal_key[:])
+	machine_key: [principals.MACHINE_KEY_SIZE]u8
+	defer erase(machine_key[:])
+	error: errors.Error_Record
+	key_text := string(seal_key[:])
+	nonce_text := string(machine_tpm_file.recovery_nonce[:])
+	additional := string(principals.machine_tpm_file_additional_data(&machine_tpm_file_bytes))
+	sealed := string(machine_tpm_file.recovery_sealed[:])
+	result := machine_key[:]
+	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.MACHINE_KEY_SIZE || !machine_key_passes(&machine_key) {
+		machine_refusals += 1
+		system.log("unlock: the recovery key is wrong: the copy of the machine key does not open, the disk grants of principal 0 stay absent (", machine_refusals, " in all)")
+		message, message_failed = "the recovery key is wrong: nothing is opened", true
+		return
+	}
+	if !machine_key_give(&machine_key, system.MACHINE_KEY_OPENED) {
+		message, message_failed = "the root service did not take the key", true
+		return
+	}
+	system.log("unlock: the recovery key opens the machine key; the root service receives the key of the disk grant table only")
+	machine_reseal(&machine_key)
+	after_machine()
+}
+
+// What the store holds for the record of the machine key.
 Record_State :: enum u8 {
 	Absent, // No record: the machine has no passphrase, and one can be set.
 	Present, // A record that decodes: its passphrase opens it.
 	Unreadable, // The store failed to give it, or it does not decode: it can hold a good key, so no new record is written over it.
 }
 
-// machine_record_read reads the record of the machine passphrase from the
-// store. Only a store that answers "no object" gives Absent: a read error
-// or a changed byte must never let a new passphrase replace a good key.
+// machine_record_read reads the record of the machine key from the store,
+// in its form: under the machine passphrase, or sealed by the TPM. Only a
+// store that answers "no object" gives Absent: a read error or a changed
+// byte must never let a new key replace a good key.
 machine_record_read :: proc "contextless" () -> Record_State {
-	buffer: [principals.MACHINE_FILE_SIZE + 1]u8
+	buffer: [principals.MACHINE_TPM_FILE_SIZE + 1]u8
 	bytes, found, read_status := storage.read(&client, storage.ROOT, principals.MACHINE_OBJECT, buffer[:])
 	if read_status != .Ok {
 		system.log("unlock: the store did not give the record of the machine passphrase: status ", u64(read_status))
@@ -467,10 +822,23 @@ machine_record_read :: proc "contextless" () -> Record_State {
 	if !found {
 		return .Absent
 	}
+	machine_form = principals.machine_record_form(bytes)
 	problem: principals.File_Problem
-	machine_file, machine_file_bytes, problem = principals.machine_file_decode(bytes)
-	if problem != .None {
-		system.log("unlock: the record of the machine passphrase is refused: ", principals.machine_file_problem_sentences[problem])
+	switch machine_form {
+	case .Passphrase:
+		machine_file, machine_file_bytes, problem = principals.machine_file_decode(bytes)
+		if problem != .None {
+			system.log("unlock: the record of the machine passphrase is refused: ", principals.machine_file_problem_sentences[problem])
+			return .Unreadable
+		}
+	case .Sealed_By_The_Tpm:
+		machine_tpm_file, machine_tpm_file_bytes, problem = principals.machine_tpm_file_decode(bytes)
+		if problem != .None {
+			system.log("unlock: the record of the machine key sealed by the TPM is refused: ", principals.machine_tpm_file_problem_sentences[problem])
+			return .Unreadable
+		}
+	case .Unknown:
+		system.log("unlock: the record of the machine key is refused: it starts with neither MACHINEK nor MACHINET")
 		return .Unreadable
 	}
 	return .Present
@@ -506,9 +874,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
-	// What the window asks for: the passphrase of a named principal, or
-	// the machine passphrase of principal 0. The widest line, the hint of
-	// Machine_Unlock, has 54 cells of 8 pixels: it fits in the window.
+	// What the window asks for: the passphrase of a named principal, the
+	// machine passphrase or the recovery key of principal 0, or what it
+	// shows: a new recovery key. The widest line, the message after a new
+	// seal, has 60 cells of 8 pixels after a margin of 12 pixels: it fits in
+	// the window of 520 pixels.
 	label := "principal  "
 	subject := the_name()
 	prompt := "passphrase  "
@@ -530,19 +900,47 @@ draw :: proc "contextless" (window: ^display.Window) {
 		label, subject = "new machine passphrase  ", "principal 0"
 		prompt = "again  "
 		hint = "enter: set; escape: clear"
+	case .Machine_Recovery:
+		label, subject = "machine key  ", "principal 0"
+		prompt = "recovery key  "
+		hint = "enter: open; enter with nothing: skip; escape: clear"
+	case .Recovery_Shown:
+		label, subject = "machine key sealed by the TPM  ", "principal 0"
+		prompt = "recovery key  "
+		hint = "it is shown one time; enter: done"
 	}
 	x := interface.draw_text(table, 12, 12, label, graphics.COLOR_DIM)
 	interface.draw_text(table, x, 12, subject, graphics.COLOR_TEXT)
 	x = interface.draw_text(table, 12, 48, prompt, graphics.COLOR_DIM)
-	// One dot for each byte typed: the passphrase itself is never drawn.
-	for index in 0 ..< typed_count {
-		interface.draw_rectangle(table, x + 2 + index * 10, 54, 6, 6, graphics.COLOR_TEXT)
+	of_the_tpm := mode == .Machine_Recovery || mode == .Recovery_Shown
+	#partial switch mode {
+	case .Recovery_Shown:
+		// The recovery key, in the font of the cells: 39 cells of 8 pixels
+		// after a prompt of 14 cells fit in the window. Its element name
+		// gives a machine test its place.
+		shown := string(recovery_text[:])
+		interface.draw_text(table, x, 48, shown, graphics.COLOR_TEXT)
+		interface.element_name(&frame, {x, 48, len(shown) * graphics.CELL_WIDTH, graphics.CELL_HEIGHT}, "recovery_key")
+	case .Machine_Recovery:
+		// The recovery key typed is drawn: it is copied from paper, and its
+		// user checks it. At most RECOVERY_TYPED_LIMIT cells: it fits.
+		end := interface.draw_text(table, x, 48, string(typed[:typed_count]), graphics.COLOR_TEXT)
+		interface.draw_rectangle(table, end + 2, 48, 2, 16, graphics.COLOR_TEXT)
+	case:
+		// One dot for each byte typed: the passphrase itself is never drawn.
+		for index in 0 ..< typed_count {
+			interface.draw_rectangle(table, x + 2 + index * 10, 54, 6, 6, graphics.COLOR_TEXT)
+		}
+		interface.draw_rectangle(table, x + 2 + typed_count * 10, 48, 2, 16, graphics.COLOR_TEXT)
 	}
-	interface.draw_rectangle(table, x + 2 + typed_count * 10, 48, 2, 16, graphics.COLOR_TEXT)
 	if message != "" {
 		interface.draw_text(table, 12, 84, message, message_failed ? graphics.COLOR_FAILED : graphics.COLOR_PROGRAM)
 	}
-	interface.draw_text(table, 12, 116, "no TPM seal: the passphrase alone protects the keys", graphics.COLOR_DIM)
+	if of_the_tpm {
+		interface.draw_text(table, 12, 116, "sealed by the TPM to PCR 7 and 11, with a copy for recovery", graphics.COLOR_DIM)
+	} else {
+		interface.draw_text(table, 12, 116, "no TPM seal: the passphrase alone protects the keys", graphics.COLOR_DIM)
+	}
 	interface.draw_text(table, 12, HEIGHT - 26, hint, graphics.COLOR_DIM)
 	interface.window_frame_end(&drawing, &frame, window)
 }
@@ -565,6 +963,23 @@ enter :: proc "contextless" (window: ^display.Window) {
 		message, message_failed = "deriving the key", false
 		draw(window)
 		machine_try()
+	case .Machine_Recovery:
+		// Enter with nothing skips the recovery key, as the machine
+		// passphrase: the machine runs, and the disk grants of principal 0
+		// stay absent.
+		if typed_count == 0 {
+			system.log("unlock: the recovery key is not typed: the disk grants of principal 0 stay absent until unlock asks again")
+			after_machine()
+			return
+		}
+		message, message_failed = "opening the copy of the machine key", false
+		draw(window)
+		recovery_try()
+	case .Recovery_Shown:
+		// Its user wrote the recovery key down: it is erased, and never
+		// shown again.
+		erase(recovery_text[:])
+		mode = .Done
 	case .Create_First, .Machine_Create_First:
 		if problem := principals.passphrase_problem(typed[:typed_count]); problem != .None {
 			message, message_failed = principals.passphrase_problem_sentences[problem], true
@@ -611,11 +1026,20 @@ enter :: proc "contextless" (window: ^display.Window) {
 // - **Set the machine passphrase** (`MODE_SET_MACHINE_PASSPHRASE`): with
 //   no record "machine", it asks for a passphrase two times, makes the
 //   machine key, seals it, and gives the root service the key of the tag.
+// - **Seal the machine key** (`MODE_SEAL_MACHINE_KEY`): with the TPM
+//   service and no record "machine", it makes the machine key and a
+//   recovery key, has the TPM service seal the key, writes the record, gives
+//   the root service the key of the tag, and shows the recovery key until
+//   Enter.
 // - **Unlock**: it reads the file "principal", and the record "machine"
-//   unless the mode is `MODE_UNLOCK_MACHINE_KEY_HELD`. With a record of the
-//   machine it asks for the machine passphrase first; Enter with nothing
-//   skips it. With neither it writes "unlock: no named principal: the
-//   machine runs as principal 0, with no unlock" and stops with the code 0.
+//   unless the mode is `MODE_UNLOCK_MACHINE_KEY_HELD`. With a record under
+//   a machine passphrase it asks for the machine passphrase first. With a
+//   record sealed by the TPM it asks the TPM service for the key, and asks
+//   for the recovery key only when the TPM refuses; after a recovery it
+//   seals the key again to the system that runs. Enter with nothing skips
+//   either. With no record to ask for and no file it writes "unlock: no
+//   named principal: the machine runs as principal 0, with no unlock" and
+//   stops with the code 0.
 //   A file that does not decode, or a record that the root service
 //   refuses, stops it with the code 1.
 //
@@ -639,7 +1063,35 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("unlock: no store: no named principal can be kept")
 		system.stop(1)
 	}
+	// The TPM service, when the system is measured into a TPM.
+	tpm_open(ctx)
 	switch ctx.values[principals.VALUE_MODE] {
+	case principals.MODE_SEAL_MACHINE_KEY:
+		// The root service refuses this mode with no TPM service, or with a
+		// record of the machine key; the store is read again here, as the
+		// store is the truth.
+		if !has_tpm {
+			system.log("unlock: no TPM service: no machine key is sealed by the TPM")
+			system.stop(1)
+		}
+		if !seal_allowed {
+			system.log("unlock: the firmware did not verify the boot program (Secure Boot is off): no machine key is sealed by the TPM")
+			system.stop(1)
+		}
+		switch machine_record_read() {
+		case .Absent:
+		case .Present:
+			system.log("unlock: the machine has a record of its machine key already: a change is not built")
+			system.stop(1)
+		case .Unreadable:
+			system.log("unlock: the record of the machine key cannot be read: no new machine key replaces it")
+			system.stop(1)
+		}
+		if !machine_seal_create() {
+			system.stop(1)
+		}
+		mode = .Recovery_Shown
+		message = "write it down: it opens the machine key when the TPM refuses"
 	case principals.MODE_CREATE_PRINCIPAL:
 		name, name_length = principals.name_unpack({ctx.values[principals.VALUE_NAME], ctx.values[principals.VALUE_NAME + 1], ctx.values[principals.VALUE_NAME + 2]})
 		if principals.name_problem(the_name()) != .None {
@@ -690,14 +1142,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			record_state = machine_record_read()
 		}
 		machine_asked := false
+		machine_recovery := false // The TPM did not release the machine key: the window asks for the recovery key.
 		switch record_state {
 		case .Absent:
 		case .Present:
-			machine_asked = true
-			completion, answered := root_command(.Machine_Key, {4 = system.MACHINE_KEY_AWAITED})
-			if !answered || system.Status(completion.kind) != .Ok {
+			sealed_by_the_tpm := machine_form == .Sealed_By_The_Tpm
+			form_value := sealed_by_the_tpm ? u64(system.MACHINE_KEY_SEALED_BY_THE_TPM) : u64(0)
+			completion, answered := root_command(.Machine_Key, {4 = system.MACHINE_KEY_AWAITED, 5 = form_value})
+			switch {
+			case !answered || system.Status(completion.kind) != .Ok:
 				system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
-				machine_asked = false
+			case !sealed_by_the_tpm:
+				machine_asked = true
+			case machine_tpm_unseal() == .Refused:
+				// No typing when the TPM releases the key: the window asks
+				// only when it does not.
+				machine_asked, machine_recovery = true, true
 			}
 		case .Unreadable:
 			// No key comes from a record that cannot be read. The root
@@ -711,6 +1171,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log("unlock: the record of the machine passphrase cannot be read: the disk grants of principal 0 stay absent, and nothing replaces the record")
 		}
 		switch {
+		case machine_recovery:
+			mode = .Machine_Recovery
+			message = "the TPM refuses: type the recovery key of the machine"
+			system.log("unlock: the machine key waits for its recovery key: the disk grants of principal 0 come when it is typed")
 		case machine_asked:
 			mode = .Machine_Unlock
 			message = "the disk grants of the machine wait for it"
@@ -759,7 +1223,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					typed[typed_count] = 0
 				}
 			case event.character >= ' ' && event.character <= '~':
-				if typed_count < len(typed) {
+				limit := mode == .Machine_Recovery ? RECOVERY_TYPED_LIMIT : len(typed)
+				if typed_count < limit {
 					typed[typed_count] = event.character
 					typed_count += 1
 				}

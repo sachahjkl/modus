@@ -22,6 +22,11 @@ BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
 // The boot image of a measure run: the usual one, with one resource more,
 // which the root service looks for (docs/TOOLS.md, "A check by count, a measure by time").
 BOOT_IMAGE_MEASURE :: BUILD_FOLDER + "/boot_measure.image"
+// The boot image of the test of the seal by the TPM: the usual one, with
+// the module root_seal_test in the place of root. Only the volumes of that
+// test hold it (boot_volumes.odin).
+BOOT_IMAGE_SEAL_TEST :: BUILD_FOLDER + "/boot_seal_test.image"
+SEAL_TEST_ROOT_MODULE :: "root_seal_test"
 MEASURE_RUN_RESOURCE_NAME :: "measure_run" // system.MEASURE_RUN_RESOURCE.
 MEASURE_RUN_RESOURCE_FILE :: BUILD_FOLDER + "/measure_run.resource"
 // The bytes of the resource: the root service reads its name only.
@@ -99,6 +104,11 @@ module_builds := [?]Module_Build {
 	// machine_test refuses the line of this kernel in every other machine.
 	{name = "kernel_without_return_check", source = SOURCE_FOLDER_KERNEL, kernel = true, defines = {"TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true"}},
 	{name = "root", source = PROGRAM_SOURCES + "root", image = true},
+	// The root service of the test of the seal by the TPM: the same sources
+	// with the setting that allows a seal with no Secure Boot
+	// (src/programs/root/tpm.odin). No boot image holds it but the one of
+	// that test, under the name root (BOOT_IMAGE_SEAL_TEST).
+	{name = SEAL_TEST_ROOT_MODULE, source = PROGRAM_SOURCES + "root", defines = {"SEAL_WITHOUT_SECURE_BOOT_FOR_A_TEST=true"}},
 	{name = "input", source = PROGRAM_SOURCES + "input", image = true},
 	// The drawing of a window, for each program below that imports it.
 	{name = DRAWING_MODULE, source = MODULE_SOURCES + "drawing", image = true, library = true},
@@ -151,6 +161,7 @@ module_builds := [?]Module_Build {
 	{name = "block", source = PROGRAM_SOURCES + "block", image = true},
 	{name = "frame", source = PROGRAM_SOURCES + "frame", image = true},
 	{name = "iommu_device", source = PROGRAM_SOURCES + "iommu_device", image = true},
+	{name = "tpm", source = PROGRAM_SOURCES + "tpm", image = true},
 	{name = "iommu", source = PROGRAM_SOURCES + "iommu", image = true},
 	{name = "network", source = PROGRAM_SOURCES + "network", image = true},
 	{name = "net", source = PROGRAM_SOURCES + "net", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
@@ -268,9 +279,11 @@ build_modules :: proc() -> bool {
 	// The second boot image has no compositor: with it, the start fails.
 	// The third has no input service: the root service starts only the
 	// program shortage (the test of the shortage of frames).
-	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:])
+	// The fourth is the image of the test of the seal by the TPM: the root
+	// service with the setting of that test in the place of root.
+	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:]) && build_boot_image(BOOT_IMAGE_SEAL_TEST, "", all_resources[:], root_module = SEAL_TEST_ROOT_MODULE)
 	if images_built {
-		// The fourth is the image of a measure run: the same modules and one
+		// The fifth is the image of a measure run: the same modules and one
 		// resource more, so a measure runs the code that a test checked.
 		resource_text: string = MEASURE_RUN_RESOURCE_TEXT
 		if err := os.write_entire_file(MEASURE_RUN_RESOURCE_FILE, transmute([]u8)resource_text); err != nil {
@@ -280,7 +293,7 @@ build_modules :: proc() -> bool {
 		append(&all_resources, Resource_File{name = MEASURE_RUN_RESOURCE_NAME, path = MEASURE_RUN_RESOURCE_FILE})
 		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", all_resources[:])
 	}
-	build_measure_step("the four boot images", step_started)
+	build_measure_step("the five boot images", step_started)
 	return images_built
 }
 
@@ -437,7 +450,10 @@ module_assembly_files :: proc(build: Module_Build) -> (files: []string, ok: bool
 	assembly := make([dynamic]string, context.temp_allocator)
 	append(&assembly, RUNTIME_MEMORY)
 	append(&assembly, ..(files_with_suffix(build.source, ".asm") or_return))
-	if build.image {
+	// The test copy of the root service is in no boot image of the main
+	// volume, but the boot image of the seal test holds it as `root`: it
+	// links what root links.
+	if build.image || build.name == SEAL_TEST_ROOT_MODULE {
 		append(&assembly, ..(files_with_suffix(SYSTEM_LIBRARY_FOLDER, ".asm") or_return))
 	}
 	return assembly[:], true
@@ -616,13 +632,19 @@ module_convert :: proc(build: Module_Build) -> bool {
 // module `without`. A resource has its name and the hash of its bytes, as a
 // module. This image has no system description: each boot
 // volume gets a copy with its own (system_description.odin).
-build_boot_image :: proc(path: string, without: string, resources: []Resource_File) -> bool {
+build_boot_image :: proc(path: string, without: string, resources: []Resource_File, root_module: string = "") -> bool {
 	files := make([dynamic]Image_File, context.temp_allocator)
 	for build in module_builds {
 		if !module_in_boot_image(build) || build.name == without {
 			continue
 		}
-		append(&files, Image_File{name = build.name, file = read_file(module_path(build.name)) or_return})
+		// The image of a test can hold another build of the root service
+		// under the name root: the kernel starts the module of that name.
+		source := build.name
+		if build.name == "root" && root_module != "" {
+			source = root_module
+		}
+		append(&files, Image_File{name = build.name, file = read_file(module_path(source)) or_return})
 	}
 	module_count := len(files)
 	for resource in resources {

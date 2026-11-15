@@ -262,8 +262,9 @@ A device service is the driver of one device class, as a normal program with the
 | Input | `input` | The PS/2 keyboard and mouse (the ports of the controller and its two interrupts), as input records to the compositor |
 | Display | `compositor` | The framebuffer of the firmware: the compositor owns it directly |
 | Real-time clock | `date` | Two ports of the clock, and the date page ("The date", below) |
+| TPM | `tpm` | The registers of the CRB interface of the TPM, after the start: Seal and Unseal of the machine key through the TPM ring, to `unlock` (`PRINCIPALS.md`, "The machine key sealed by the TPM"). Before the kernel starts, the boot program asks the firmware for the measure (`TRUSTED_BOOT.md`, "6. The measure") |
 
-- **Not built**: a TPM service (the boot program asks the firmware for the measure: `TRUSTED_BOOT.md`, "6. The measure"); a device queue granted to a program, so that the program talks to the device with no service in the path (P5).
+- **Not built**: a device queue granted to a program, so that the program talks to the device with no service in the path (P5).
 
 ### U5. Storage service
 

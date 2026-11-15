@@ -373,13 +373,13 @@ Status: Decided. The detail below is proposed.
   2. Hold the key that signs the name table of property 11, or the key that verifies it.
   3. Prove to a remote party which system list runs (attestation).
   4. Give a hardware source of random numbers at boot.
-- **Rule**: After boot, the TPM is a device like the others. A user-space service owns its queue. Programs reach it by handle (properties 2 and 7). Not built: no service of the TPM runs after boot.
+- **Rule**: After boot, the TPM is a device like the others. A user-space service owns its queue. Programs reach it by handle (properties 2 and 7). Built: the TPM service, a program with the registers of the TPM, whose one client is `unlock`; it seals and unseals, and sends no raw command for a client.
 - **Forbids**: an unsigned code path from firmware to kernel, a boot loader with a configuration language, kernel arguments as free text.
 - **Cost**: A key that is sealed to exact measurements becomes unreadable after each upgrade. The standard solution is to seal to a signed policy in place of exact values: the TPM releases the key to any system list that the key of the principal that signs the system signed. A rollback to an old signed list with a known defect must be prevented by a counter in the TPM.
 - **Cost**: The system needs a key management story for the principal that signs the system: creation, enrolment in the firmware, backup, loss.
 - **Reuse**: UEFI firmware services. OVMF and a software TPM under QEMU give Secure Boot and a TPM 2.0 on the first machine. The TCG TPM 2.0 specification. A small permissive TPM command library, to be selected.
 - **Open**: the exact meaning of "rich boot". This text reads it as "do as much boot work as possible with UEFI services in a UEFI program". How much the boot program does before it leaves firmware services. Which registers hold which measurements.
-- **State**: the signed system description, the measure and Secure Boot are built (`docs/TRUSTED_BOOT.md`). Before the kernel starts, the boot program verifies the description signature and the hash of the kernel and of each file of the boot image, then the firmware extends PCR 11 with the SHA-256 hash of the system description. With Secure Boot on, the firmware verifies the boot program with the certificate of the firmware signing key, an RSA key: UEFI cannot verify Ed25519. Not built: the counter against an older signed system, a sealed key, the read of PCR 4 and PCR 7.
+- **State**: the signed system description, the measure and Secure Boot are built (`docs/TRUSTED_BOOT.md`). Before the kernel starts, the boot program verifies the description signature and the hash of the kernel and of each file of the boot image, then the firmware extends PCR 11 with the SHA-256 hash of the system description. With Secure Boot on, the firmware verifies the boot program with the certificate of the firmware signing key, an RSA key: UEFI cannot verify Ed25519. After the start, the TPM service seals the machine key to PCR 7 and PCR 11, with a recovery key (`docs/PRINCIPALS.md`, "The machine key sealed by the TPM"); an update of the system asks for the recovery key one time. Not built: the counter against an older signed system, the seal to a signed policy, the seal of the keys of a named principal, the read of PCR 4.
 
 ## 18. One graphics interface: WebGPU with WGSL
 
@@ -474,7 +474,7 @@ The shared file system (property 8) is one case. This property lists the other c
 
 ## 21. Principals: who acts, without users
 
-Status: Decided for layers 1 and 2: they are the design. Layers 3 to 5 are a direction, not a design. Built: layer 1; layer 2 in part (the record of the machine and its measure, not its key in the TPM); layer 3 in part (one named principal, its unlock by a passphrase with no seal by the TPM, its session, its stores, the lock; not its encrypted stores and not its recovery). Layers 4 and 5: not built (`PRINCIPALS.md`).
+Status: Decided for layers 1 and 2: they are the design. Layers 3 to 5 are a direction, not a design. Built: layer 1; layer 2 in part (the record of the machine and its measure, the machine key sealed by the TPM with a recovery key, not its attestation key in the TPM); layer 3 in part (one named principal, its unlock by a passphrase with no seal by the TPM, its session, its stores, the lock; not its encrypted stores and not its recovery). Layers 4 and 5: not built (`PRINCIPALS.md`).
 
 **In short.** The system has no users. A program acts with the handles that it holds, and a principal, a key pair, is the one for whom it acts. Data belong to a principal, and an unlock of its key opens them.
 

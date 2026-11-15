@@ -47,7 +47,7 @@ debug_access_refused_by_a_grant_with_no_name :: proc(t: ^testing.T) {
 	writer := Writer{buffer = buffer[:]}
 	record := errors.error_make(.No_Grant, .Debug_Access, 1, 0, 0, 2 + i64(max(start_grant.Grant)))
 	error_text(&writer, &record, "debugger.attach", "program")
-	testing.expect_value(t, written(&writer), "debugger.attach: the caller has no grant for this: the debug access to this program: a grant of the program refuses it, the start grant number 26, which this program does not know")
+	testing.expect_value(t, written(&writer), "debugger.attach: the caller has no grant for this: the debug access to this program: a grant of the program refuses it, the start grant number 27, which this program does not know")
 
 	writer = Writer{buffer = buffer[:]}
 	record = errors.error_make(.No_Grant, .Debug_Access, 1, 0, 0, -5)

@@ -48,6 +48,9 @@ principal_records: [principals.PRINCIPAL_CAPACITY]Principal_Record
 unlock_mode: u64
 unlock_name: [principals.NAME_LIMIT]u8
 unlock_name_length: int
+// True only while unlock_start starts `unlock`: a start by name from a
+// ring or from the desktop is refused (start).
+unlock_start_asked: bool
 
 principal_name :: proc "contextless" (number: u64) -> string {
 	if number >= principals.PRINCIPAL_CAPACITY {
@@ -94,7 +97,9 @@ principals_start :: proc "contextless" () {
 unlock_start :: proc "contextless" (mode: u64, name: string) -> system.Status {
 	unlock_mode = mode
 	unlock_name_length = copy(unlock_name[:], name)
+	unlock_start_asked = true
 	status := start("unlock")
+	unlock_start_asked = false
 	unlock_mode = principals.MODE_UNLOCK
 	unlock_name_length = 0
 	unlock_name = {}

@@ -57,7 +57,7 @@ The second check, by the root service, finds a fault of the path from the boot p
 
 ### Layer 2: the measure
 
-It adds a record that the TPM keeps until the next reset of the machine. No code that runs after the boot program can set PCR 11 back to an earlier value. A sealed key or a remote party can depend on that value. The system does neither yet. The root service puts the value in the record of principal 0, the machine (`PRINCIPALS.md`, section 2).
+It adds a record that the TPM keeps until the next reset of the machine. No code that runs after the boot program can set PCR 11 back to an earlier value. A sealed key or a remote party can depend on that value. The TPM service seals the machine key to it, with PCR 7 (`PRINCIPALS.md`, "The machine key sealed by the TPM"); no remote party reads it yet. The root service puts the value in the record of principal 0, the machine (`PRINCIPALS.md`, section 2).
 
 It does not protect against:
 
@@ -65,6 +65,8 @@ It does not protect against:
 - **a machine with no TPM.** The boot continues. The trust record says `No_Tpm`, and the boot display says "no TPM".
 - **a TPM that the firmware stopped using.** The boot continues. The trust record says `Refused`, and the boot display says "TPM refused the measure" in red (section 6).
 - **a TPM that is software.** The test machine uses `swtpm` on the host. The host can read and change its state.
+- **a reader of the bus of a hardware TPM.** The machine key sealed by the TPM crosses the interface in clear at each seal and unseal: no session encrypts it (`ROADMAP.md`).
+- **another system on the same machine that replaces the record of the machine key.** The proof of the creation refuses an object that it made, so this system takes no table of its key; but the disk alone says which form the record has, so that system can make the disk grants of principal 0 absent (`PRINCIPALS.md`, "The machine key sealed by the TPM").
 
 ### Layer 3: Secure Boot
 
@@ -74,7 +76,7 @@ It does not protect against:
 
 - **an older boot program, or an older system, that the same keys signed.** No counter in the TPM refuses it: not built.
 - **the other certificates of `db`.** A machine whose `db` holds the certificates of a vendor starts each boot program that the vendor signed.
-- **a change of the variables of the firmware by anyone at the machine.** The setup of the firmware can turn Secure Boot off or enrol another certificate. PCR 7, where the firmware measures its Secure Boot state, is read by nothing.
+- **a change of the variables of the firmware by anyone at the machine.** The setup of the firmware can turn Secure Boot off or enrol another certificate. The machine still starts. PCR 7, where the firmware measures its Secure Boot state, is in the policy of the machine key sealed by the TPM: after such a change the TPM does not release that key, and the recovery key opens it.
 - **PCR 4.** The firmware measures the boot program there. The system does not read it.
 
 ## 3. The system description
@@ -180,7 +182,7 @@ Anyone who has the private key can sign a system that the boot program accepts. 
 
 ## 6. The measure
 
-The measure is a record in the TPM of which system started: the hash of the system description, extended into one register before the kernel starts. No later code can set the register back, so a key sealed to it, or a remote party that reads it, learns which system runs. Today nothing reads it but the record of principal 0 and the boot display.
+The measure is a record in the TPM of which system started: the hash of the system description, extended into one register before the kernel starts. No later code can set the register back, so a key sealed to it, or a remote party that reads it, learns which system runs. Today the record of principal 0, the boot display and the TPM service read it: the TPM service seals the machine key to it (`PRINCIPALS.md`, "The machine key sealed by the TPM").
 
 - **The register**: PCR 11. The TCG rules for PC firmware leave PCR 8 to 15 to the operating system. The conventions of Linux give PCR 11 to the whole system image that a boot stage measures before the kernel starts, which is what this measure is. The firmware of the test machine does not write PCR 11.
 - **The value**: the firmware hashes the system description with SHA-256 and extends PCR 11 with it, in each active bank. In the SHA-256 bank, after a reset, PCR 11 then holds `SHA-256(32 zero bytes || SHA-256(description))`. `modustool` computes the same value from the description of the boot volume and compares it with the value that the boot program read back.
@@ -188,7 +190,8 @@ The measure is a record in the TPM of which system started: the hash of the syst
 - **The path**: the boot program calls `HashLogExtendEvent` of `EFI_TCG2_PROTOCOL`, then `TPM2_PCR_Read` through `SubmitCommand`. The firmware talks to the TPM. The boot program has no TPM driver.
 - **The order**: the boot program measures after the checks of section 1 and before it leaves the firmware services.
 - **The tries**: when `HashLogExtendEvent` fails, the boot program tries again, 4 tries in all, 0.5 s apart through `Stall` of the firmware: at most 1.5 s more. A slow interface can finish a later try; the log then says "the measure succeeded at try N", and the trust record keeps the count.
-- **The rule when every try fails**: no key is sealed to the measure yet, so a stop protects nothing. The boot continues. The trust record says `Refused` with the status of the firmware; the boot display says "TPM refused the measure" in red; the root service writes a warning with the status and the count of tries. A party that reads PCR 11 sees that it does not hold the measure. When a key is sealed to the measure, that key stays sealed: the display says why.
+- **The rule when every try fails**: the boot continues, and a stop would protect nothing. The trust record says `Refused` with the status of the firmware; the boot display says "TPM refused the measure" in red; the root service writes a warning with the status and the count of tries. A party that reads PCR 11 sees that it does not hold the measure. The root service then starts no TPM service, so a machine key sealed to the measure stays sealed: the window of `unlock` asks for its recovery key.
+- **After the start**: the TPM service owns the TPM (`PRINCIPALS.md`, "The machine key sealed by the TPM"). It talks to the CRB interface of the TPM at `0xFED40000`, with no firmware. The boot program still has no TPM driver.
 - **What the log says of a refusal**: after the last try, the boot program reads PCR 11 through `SubmitCommand` of the same protocol and writes the result. When that read fails too, and no command reaches the TPM, the firmware has stopped using its TPM.
 
 ### A measure that does not depend on the event path of the firmware
@@ -216,7 +219,13 @@ What the test machines do:
 
 What the runs with that firmware showed: 10 runs of 11 passed, each machine of the TPM with "1 Startup, 0 commands abandoned" and its boot program started within seconds. In one run a machine of the firmware without system management mode abandoned two commands and did not reach the boot program in 10 minutes. So system management mode is not the cause. The trace of QEMU of that machine: the firmware starts a command, QEMU gives it to swtpm one millisecond later, swtpm writes its answer, and the firmware cancels 4 minutes 38 seconds later; QEMU does not give the next command to swtpm at all. In another machine that hung, the threads of QEMU were read while it hung: its main thread slept in `poll`, one processor of the machine ran at full time (the firmware in its wait loop), the three others were idle, and swtpm slept in `poll` with its answer written. So the answer is lost inside QEMU, between the thread that reads the answer of swtpm and the device that the firmware reads. Not known: why.
 
-So the two machines of the measure are not part of `modustool test` and of the full check: `modustool test trusted_boot tpm` runs them. A test that fails for a fault of its machine proves nothing about the system. The eight other machines (the five refusals of layer 1 and the three machines of Secure Boot) run in each full check. Before a key is sealed to the measure, the cause must be found or the measure must be tested on a machine with a hardware TPM.
+So the two machines of the measure are not part of `modustool test` and of the full check: `modustool test trusted_boot tpm` runs them. A test that fails for a fault of its machine proves nothing about the system. The eight other machines (the five refusals of layer 1 and the three machines of Secure Boot) run in each full check. The six machines of the machine key sealed by the TPM have a software TPM and the firmware `OVMF_TPM_CODE` too, so they are opt-in too.
+
+- **The firmware with Secure Boot and a software TPM fails at each run on the test host**, with system management mode (`OVMFFull`) and without it (a build of OVMF with Secure Boot, the TPM driver and no system management mode). The QEMU trace of a run without it: the firmware sends a `TPM2_PCR_Extend`, swtpm runs it and writes its answer, the firmware never sees the answer, cancels the command 152 s later (a write of the register at offset `0x48` of the CRB interface), and stops using its TPM. The firmware without Secure Boot (`OVMF_TPM_CODE`) passes on the same host. The cause is outside the code of the system.
+- **So the seal is proven on a test system without Secure Boot.** A seal needs the verifier `Firmware_And_Boot_Program` (`PRINCIPALS.md`, "The machine key sealed by the TPM"). The root service of the test boot image `boot_seal_test.image` is the module `root_seal_test`: the same sources, built with the setting `SEAL_WITHOUT_SECURE_BOOT_FOR_A_TEST`, which also takes the verifier `Boot_Program`. It writes at boot "root: this system seals with no Secure Boot: a test system, never a release". Only the volumes `seal_test` and `seal_test_other_system` hold that image; a host test checks it, and `machine_test` fails each machine of another volume that prints that line.
+- **Why it cannot reach a release.** A release publishes no boot volume. The volume that a principal installs is the main volume, whose boot image holds the module `root`, built with no setting: there the constant is false, and the `when` keeps the rule. The system description of the main volume names the hash of that module, so a boot image with the module of the test is another system, with another PCR 11.
+- **A real machine keeps the rule.** The sixth machine of the part starts the main volume on the same firmware: the TPM refuses (another PCR 11), the recovery key opens the key, `unlock` does not seal it again, and `machine_seal()` is refused, because the firmware did not verify the boot program.
+- **The run.** `modustool test principals tpm` runs them (`PRINCIPALS.md`, "8. The tests"). Until the cause is found or a machine with a hardware TPM runs them, the seal is tested on request only, and the recovery key is the way out of a TPM that does not answer.
 
 The steps of a machine of the TPM or of Secure Boot after `boot program: started` have a bound of 300 s each, and the wait for `boot program: PCR 11 = ` ends at once with the line of a refusal.
 
@@ -256,3 +265,4 @@ The machines with this firmware run with four processors, as every other machine
 | The ten machines of `test trusted_boot` | `tools/modustool/trusted_boot_scenario.odin` |
 | The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/modustool/secure_boot.odin` |
 | The Ed25519 code of the boot program | `src/library/support/cryptography/ed25519` (`docs/CRYPTOGRAPHY.md`) |
+| The TPM service, after the start | `src/programs/tpm`, `src/library/support/tpm2`, `src/library/contract/tpm_service` |

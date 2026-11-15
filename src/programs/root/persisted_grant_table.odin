@@ -160,6 +160,34 @@ machine_passphrase_ask :: proc "contextless" () -> system.Status {
 	return unlock_start(principals.MODE_SET_MACHINE_PASSPHRASE, "")
 }
 
+// machine_seal_ask runs the command Machine_Seal: it starts `unlock` to
+// make a machine key that the TPM service seals to the measure of the
+// system (src/md/features/tpm_sealed_machine_key.md). It is refused on a
+// machine with no TPM service, and on a machine with a record of its
+// machine key, readable or not: a new key would replace a key that can be
+// good, and the table that it signed.
+machine_seal_ask :: proc "contextless" () -> system.Status {
+	if tpm_ring == 0 {
+		system.log_in("programs", .Warning, "root: refused a machine key sealed by the TPM: no TPM service runs, as the system is not measured into a TPM")
+		return .Bad_Handle
+	}
+	if !tpm_seal_allowed() {
+		system.log_in("programs", .Warning, "root: refused a machine key sealed by the TPM: the firmware did not verify the boot program (Secure Boot is off), so a seal would trust a boot program that nothing verified")
+		return .No_Right
+	}
+	state := persisted_tables[principals.MACHINE].state
+	if state != .No_Passphrase {
+		system.log_in("programs", .Warning, "root: refused a machine key sealed by the TPM: the machine has a record of its machine key, and a change is not built")
+		return .Bad_State
+	}
+	if find("unlock") != nil {
+		system.log_in("programs", .Warning, "root: refused a machine key sealed by the TPM: unlock runs; it is made when unlock stopped")
+		return .No_Slot
+	}
+	system.log_in("programs", .Info, "root: the machine key is sealed by the TPM in the window of unlock")
+	return unlock_start(principals.MODE_SEAL_MACHINE_KEY, "")
+}
+
 // machine_key_take runs the command Machine_Key, which only `unlock`
 // sends: the machine has a passphrase that is not typed yet, its record
 // cannot be read, or the key of the tag came. The key is a copy in this
@@ -175,7 +203,11 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 			return .Bad_State
 		}
 		table.state = .Awaited
-		system.log_in("programs", .Info, "root: the machine has a passphrase: the disk grants of principal 0 wait for it, and the machine runs")
+		if values[5] == system.MACHINE_KEY_SEALED_BY_THE_TPM {
+			system.log_in("programs", .Info, "root: the machine key is sealed by the TPM: the disk grants of principal 0 wait for the unseal, and the machine runs")
+		} else {
+			system.log_in("programs", .Info, "root: the machine has a passphrase: the disk grants of principal 0 wait for it, and the machine runs")
+		}
 		return .Ok
 	case system.MACHINE_KEY_UNREADABLE:
 		if !waiting {

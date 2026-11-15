@@ -2211,11 +2211,11 @@ Do not use: admin password, root password, master password.
 
 The machine key is a key of 32 random bytes of principal 0 that signs its disk grant table.
 
-The record of the machine passphrase holds it sealed under the key that Argon2id derives from the passphrase. `unlock` opens it, and gives the root service only the key of the tag of the table, which keyed BLAKE2b derives from the machine key: the root service cannot open the seal with it. The seal of the machine key by the TPM is not built.
+The record of the machine key holds it in one of two forms: sealed under the key that Argon2id derives from the machine passphrase, or sealed by the TPM with a copy under a recovery key (`machine_seal()`). `unlock` opens it, and gives the root service only the key of the tag of the table, which keyed BLAKE2b derives from the machine key: the root service cannot open a seal with it.
 
 The machine key is not the attestation key of the TPM, which is another key of principal 0.
 
-The design: `docs/PRINCIPALS.md`, "Principal 0 and its machine passphrase".
+The design: `docs/PRINCIPALS.md`, "Principal 0 and its machine passphrase"; `docs/PRINCIPALS.md`, "The machine key sealed by the TPM".
 
 Do not use: master key, device key.
 
@@ -5940,7 +5940,7 @@ Do not use: attestation, security state.
 
 The measure is the extension of a register of the TPM with the SHA-256 hash of the system description, which the firmware does at the request of the boot program before the kernel starts.
 
-A TPM register can only be extended, never set: after a reset, PCR 11 then holds `SHA-256(32 zero bytes || SHA-256(description))`, and no code that runs later can set it back. So a key sealed to that value, or a remote party that reads it, can depend on which system started. The system seals no key to it and answers no remote party yet.
+A TPM register can only be extended, never set: after a reset, PCR 11 then holds `SHA-256(32 zero bytes || SHA-256(description))`, and no code that runs later can set it back. So a key sealed to that value, or a remote party that reads it, can depend on which system started. The TPM service seals the machine key to it, with PCR 7 (sealed by the TPM); the system answers no remote party yet.
 
 The path: after its checks, the boot program calls `HashLogExtendEvent` of the TCG2 protocol of the firmware, with an event `EV_IPL` whose data is the signed message, then reads PCR 11 back and writes the value in the trust record. The boot program has no TPM driver. It tries 4 times, 0.5 s apart. If every try fails, the boot continues: the trust record says `Refused`, and the boot display says "TPM refused the measure" in red.
 
@@ -5956,11 +5956,57 @@ The measure register is PCR 11 of the TPM: the register that holds the measure.
 
 The rules of the TCG for PC firmware leave PCR 8 to 15 to the operating system, and the conventions of Linux give PCR 11 to the whole system image that a boot stage measures before the kernel. The firmware of the test machine does not write it. `boot_info.MEASURE_REGISTER` is 11. The firmware extends it in each active bank; the trust record keeps the value of the SHA-256 bank, and `modustool` computes the same value from the description and compares.
 
-The system reads no other register: PCR 4 (where the firmware measures the boot program) and PCR 7 (the Secure Boot state) are read by nothing.
+The policy of a key sealed by the TPM names PCR 7 (the Secure Boot state) beside it. PCR 4, where the firmware measures the boot program, is read by nothing.
 
 The design: `docs/TRUSTED_BOOT.md`, "6. The measure".
 
 Do not use: slot, PCR (alone, for this register).
+
+### TPM service
+
+The TPM service is the program `tpm`: the device service of the TPM of the machine, which seals 32 secret bytes to the values of PCR 7 and PCR 11 and unseals them only while those registers hold the same values.
+
+The root service starts it at boot, before `unlock`, only when the trust record says `Measured`. It gives it the page of the registers of the CRB interface of the TPM (`0xFED40000`), a ring and a region of one page; `unlock` gets the same ring and region with the start grant `Tpm`. The ring has two commands, `Seal` and `Unseal` (`src/library/contract/tpm_service`). The service builds each command of TPM 2.0 itself, so no client extends a register or clears the TPM. Each request makes the storage key from the owner hierarchy and flushes it after: the TPM keeps no object of the system.
+
+It is not a driver in the kernel, and the boot program does not use it: the boot program talks to the TPM through the firmware, before the kernel starts.
+
+The design: `src/md/features/tpm_sealed_machine_key.md`.
+
+Do not use: TPM driver (for the program), TPM daemon, resource manager.
+
+### Sealed by the TPM
+
+A secret is sealed by the TPM when the TPM holds it in a sealed object whose policy is the values of PCR 7 and PCR 11 at the seal: the TPM gives it back only to the same system, measured by the boot program, with the same state of Secure Boot.
+
+The TPM service seals with `TPM2_Create` under the storage key and a policy of `TPM2_PolicyPCR`, and unseals in a policy session. The record keeps the two areas of the sealed object that the TPM gives, which are useless on another TPM, and its creation data and creation ticket. Before each unseal the TPM checks the ticket (`TPM2_CertifyCreation`), and the service checks that the policy of the object is the policy of the PCR values of its creation: so an object that another system on the same machine made with the policy of this system is refused. A seal needs Secure Boot on. An older system, a changed system, a machine whose Secure Boot was turned off, or a copy of the disk on another machine opens nothing: the TPM answers that the policy fails. The machine key is the one secret sealed so today (`machine_seal()`).
+
+It is not an encryption under a passphrase: no passphrase is typed, and the strength is the TPM, not a derivation.
+
+The design: `src/md/features/tpm_sealed_machine_key.md`; `docs/PRINCIPALS.md`, "The machine key sealed by the TPM".
+
+Do not use: bound to the TPM, TPM-encrypted, locked (for this).
+
+### Recovery key
+
+A recovery key is a key of 20 random bytes, shown one time as 32 characters of base32 in 8 groups of 4, that opens a copy of the machine key when the TPM does not release it.
+
+The window of `unlock` shows it after `machine_seal()`, and never again: it is not kept on the disk and never written on the log. The record of the machine key holds the machine key sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key. When the TPM refuses (an update of the system, another machine, no TPM), the window asks for it; it accepts upper or lower case, with or without the `-`. After a recovery, `unlock` seals the key again to the system that runs, so the next start needs no recovery key. Its 160 random bits need no slow derivation.
+
+Example: `MZXW-6YTB-MZXW-6YTB-MZXW-6YTB-MZXW-6YTB`.
+
+The design: `src/md/features/tpm_sealed_machine_key.md`.
+
+Do not use: backup key, reset key, PIN, recovery password.
+
+### Key check
+
+The key check is keyed BLAKE2b of the machine key over a fixed text, which the record sealed by the TPM keeps beside the seals.
+
+After an unseal or a recovery, `unlock` compares the check of the key that it received with the check of the record, and gives the root service nothing when they differ. A record whose areas come from another record, or a TPM service that gives another key, then has no effect but a request for the recovery key. Keyed BLAKE2b is a pseudorandom function: the check reveals nothing of the key.
+
+The design: `src/md/features/tpm_sealed_machine_key.md`.
+
+Do not use: fingerprint, hash of the key.
 
 ### Firmware signing key
 

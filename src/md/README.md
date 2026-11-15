@@ -25,7 +25,7 @@ modus is an operating system for x86-64, written in Odin, that runs on one fixed
 
 **The programs** (`src/programs/`) are each one module in its own address space, with only the handles that it was given:
 
-- Device services: `block`, `frame` (the network device), `input`. The code of a device is a program.
+- Device services: `block`, `frame` (the network device), `input`, `tpm` (the TPM after the start: it seals the machine key to the measure). The code of a device is a program.
 - Shared services: `storage` (one private store for each program, versions, no save action), `network` (the multiplexer of one network device), `settings`, `log`, `manual`, `debugger`, `remote` (calls from another machine over QUIC), `programs` (a module file from the network into the store `programs`).
 - The desktop: `compositor` (the surfaces, the input, the bar, the palette), `terminal` (the window of a program that writes text), `console` (the language: a command is a function, a result has a kind and a drawer).
 - About fifty programs that each show one property: `rights`, `origin`, `budget`, `scheduler`, `fault_ring`, `tally`.
@@ -104,6 +104,7 @@ The intent of the parts that were built before this folder is in the design sect
 - [features/site_gallery.md](features/site_gallery.md): the gallery and the carousel of the site from one table that is checked against the folder of the pictures, and why the carousel needs no script
 - [features/site_home.md](features/site_home.md): the home of the site: a line of time of the start on two stated scales, the rule "a chart or nothing" for a measure, a card that starts at its top, and a press on the heron
 - [features/site_subscribe.md](features/site_subscribe.md): the menu "Subscribe" of the pages of the releases and of the news: a `details` element with the Atom feed of the page and the releases of the repository, a panel as wide as its longest line, and why a script menu, an RSS feed and a link to X were refused
+- [features/tpm_sealed_machine_key.md](features/tpm_sealed_machine_key.md): the machine key that the TPM releases only to the system whose measure it holds: the TPM service as a device service with two commands, the seal to PCR 7 and PCR 11, the record `MACHINET` with the recovery key and the key check, the new seal after a recovery, and the refused forms: a raw command, the driver in `unlock`, a signed policy before a counter, a seal with no command, the recovery key on the log
 - [features/text_box.md](features/text_box.md): one rule for a text that is wider than its place in a window: more lines, a break after a separator of a path, a height that the caller owns, and why a cut and a larger buffer were refused
 - [infrastructure/assembler.md](infrastructure/assembler.md): why the build keeps `nasm` for the assembly files, and why the assembler of LLVM was refused
 - [infrastructure/debug_information_and_code.md](infrastructure/debug_information_and_code.md): why a module is the same bytes with and without debug information, the kind of debug information that a build asks the compiler for, and the forms that were refused

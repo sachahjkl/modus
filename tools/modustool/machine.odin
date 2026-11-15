@@ -115,6 +115,11 @@ Step_Kind :: enum {
 	Openssl_Quic, // `openssl s_client -quic` of the host sends the line text to quic_echo through the UDP relay of the peer, and must get it back, from the key that the step Quic_Key read (quic_real.odin, peer_relay.odin).
 	Remote_Key, // As Quic_Key, for the QUIC client of `remote` in the peer (peer_remote.odin): each Call after it goes over QUIC with this key.
 	Remote_Case, // The peer runs the case text of `remote` (peer_remote.odin, remote_case_run) and checks its outcome.
+	// Read the text of the element `element` of the window with the title
+	// text off a picture of the screen, in Spleen 8x16 (screen_text.odin).
+	// A later step of the part, in this machine or the next, names it with
+	// {screen text} in its text.
+	Screen_Text,
 }
 
 Step :: struct {
@@ -3367,12 +3372,13 @@ log_last_line :: proc(machine: ^Machine, text: string) -> string {
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status. With user_network, the
 // listener of the tool also serves served_files (web_host.odin).
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, served_files: []Listener_File = nil) -> bool {
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, served_files: []Listener_File = nil, tpm_state: string = "") -> bool {
 	machine_test_started := time.tick_now()
 	// The software TPM runs before QEMU and ends after it, with a folder of
-	// its own for each machine.
+	// its own for each machine, and a state of its own unless the machines
+	// of a part share one (tpm_start).
 	tpm: Tpm_Process
-	if firmware == .With_Tpm && !tpm_start(&tpm, output) {
+	if firmware == .With_Tpm && !tpm_start(&tpm, output, tpm_state) {
 		return false
 	}
 	defer tpm_stop(&tpm)
@@ -3488,6 +3494,15 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 			passed = false
 		}
 	}
+	// The root service that seals with no Secure Boot runs only from the
+	// volumes of the test of the seal, in the same way.
+	if passed && volume != BOOT_VOLUME_SEAL_TEST && volume != BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM {
+		log, _ := os.read_entire_file(output, context.temp_allocator)
+		if strings.contains(string(log), TEST_ROOT_SEAL_WITHOUT_SECURE_BOOT_LINE) {
+			fmt.eprintfln("modustool: test failed: the machine of %s ran the root service of the test of the seal: \"%s\"", volume, TEST_ROOT_SEAL_WITHOUT_SECURE_BOOT_LINE)
+			passed = false
+		}
+	}
 	if !passed {
 		log, _ := os.read_entire_file(output, context.temp_allocator)
 		lines := strings.split_lines(string(log), context.temp_allocator)
@@ -3573,6 +3588,13 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			step.text = generation_expand(step.text, generation_base)
 			step.expected = generation_expand(step.expected, generation_base)
+		}
+		if strings.contains(step.text, SCREEN_TEXT_MARK) {
+			if screen_text_kept == "" {
+				fmt.eprintfln("modustool: test failed: step %d names %s before a step Screen_Text", index + 1, SCREEN_TEXT_MARK)
+				return false
+			}
+			step.text = screen_text_expand(step.text, screen_text_kept)
 		}
 		switch step.kind {
 		case .Wait:
@@ -3715,6 +3737,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			window_front_bring(machine, step.text, index) or_return
 		case .Click_Element:
 			element_click(machine, step.text, step.element, index) or_return
+		case .Screen_Text:
+			read := screen_text_read(machine, step.text, step.element, index) or_return
+			delete(screen_text_kept)
+			screen_text_kept = strings.clone(read)
 		case .Click, .Drag, .Launch, .Move, .Close:
 			step := step
 			moved_title: string
