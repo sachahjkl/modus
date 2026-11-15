@@ -715,7 +715,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `principals` | The two machines of the principals |
 | `hierarchy` | The machines of the hierarchy of storage |
 | `ranges` | The machines of the ranges of storage |
-| `disk_programs` | The four machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over ("The disk of the disk programs") |
+| `disk_programs` | The four machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over ("The disk of the disk programs") |
 | `power` | The loss of power: of the storage, of the settings, of the ranges |
 | `trusted_boot` | The volumes of the trusted boot; `trusted_boot tpm` adds the two machines with a software TPM |
 
@@ -748,6 +748,8 @@ The module of the test is `visitor`: a row of the module table of the tool with 
 | `changed` | The module file with one byte changed | The line names the hash of the module file: the root service refuses the bytes, and the log holds their hash |
 | `notes` | The module file | The grant table of the root service gives the name `notes` a store: the root service refuses the name before any read |
 | `grant_table` | A disk grant table that gives `visitor` the grant store, with a tag under a key of zero bytes | What a reader of the disk with no passphrase can write: the root service refuses it when the machine passphrase is set, and writes over it; restored later, it is refused under the opened key and kept |
+| `store_library` | The library module `store_library`, a row of the module table that no boot image holds | The import scan finds it by the hash of its bytes, for `store_importer` |
+| `store_importer` | The program `store_importer`, which imports `store_library` | The root service starts it with the library of the store; the program calls `triple(14)` and writes 42 |
 
 The scenario also asks for a name with no entry. It starts the storage service before the first line that reads the store, so no step depends on the time of the open of the disk.
 
@@ -763,8 +765,14 @@ The first machine has QEMU user networking, and the listener of the tool serves 
 
 1. `programs.receive("received", "/visitor")` fetches the file through the network of the machine, stores it under the nickname `received`, and writes its size and the hash of its bytes: the hash that the tool computed.
 2. `programs.receive("grant_table", "/visitor")` is refused: the service writes no file over the disk grant table.
-3. `programs.list()` writes one line for each module file, with the hash of its bytes: the hash of `changed` is its own, and `received` and `visitor` have the same hash; then "listed 5 module files".
+3. `programs.list()` writes one line for each module file, with the hash of its bytes: the hash of `changed` is its own, and `received` and `visitor` have the same hash; then "listed 7 module files".
 4. `start_from_disk("received", <the hash>)` starts the file with no grant.
+
+Then the import scan (`MODULE_CONTRACT.md`, "A program from a disk"):
+
+1. `start_from_disk("store_importer", <its hash>)`: the root service says that the program imports 1 module that the boot image does not hold, then that the import is the file `store_library` of the store, checked on its bytes. The program writes "triple(14) of the module store_library of the store programs gives 42".
+2. `programs.receive("store_library", "/store_library_changed")` writes the library with one byte changed over its entry: the listener of the tool serves those bytes.
+3. The same start is refused with one line: the program imports the hash of the library, and no file of the boot image or of the store has bytes with this hash; the scan read 6 files, each entry but the program and the disk grant table.
 
 A second machine starts on the same disk. The table of principal 0 did not last: `start_from_disk("visitor", "")` is refused. After a start by the hash and a new `allow`, the program finds the visit 3 in the store of its nickname. Then `machine_passphrase()` opens the window of `unlock`, and the scenario types the passphrase two times there. The root service reads `grant_table`, refuses it with its line ("its tag does not verify under the key of the principal"), and writes its own table of 1 row (`PRINCIPALS.md`, "Principal 0 and its machine passphrase").
 

@@ -200,7 +200,7 @@ Do not use: GOT entry, import address, stub.
 
 The load source is what a loader can read: the files that its program was granted, each named by its hash, and the replacements that the starter of the program gives.
 
-The load source closes the hole of a global library directory. A loader finds an import only in its load source, and checks the hash and the tables of each file before it uses it. The root service and the console give the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports and the modules of the replacements. The first module of a disk program comes from the storage service, checked against the hash that the principal named; its imports come from the boot image.
+The load source closes the hole of a global library directory. A loader finds an import only in its load source, and checks the hash and the tables of each file before it uses it. The root service and the console give the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports and the modules of the replacements. The first module of a disk program comes from the storage service, checked against the hash that the principal named; an import that the boot image does not hold comes from the same store, by an import scan. The root service gives such a file beside the boot image, and the loader looks at the boot image first.
 
 A file that the load source does not hold gives the load error Find; a file whose bytes do not have their hash gives the load error Read.
 
@@ -214,7 +214,7 @@ A disk program is a program whose module file is an object of the store `program
 
 A disk program adds a program to a machine with no new boot image. The principal names it by its name and by the hash of its file: `start_from_disk("visitor", "5f0c…")`. The root service reads the object, computes the BLAKE3 hash of the bytes, and starts them only when that hash is the hash of the command: the storage service carries the bytes and does not choose them. The store is the store `programs` of the principal of the caller, and each entry of its root tree is one module file, named after its program.
 
-A disk program has no row in the tables by name of the root service. It receives the log and a window, the grants of its nickname in the disk grant table and no other grant, and the budget that its file asks for, up to the largest budget of a disk program, paid by the one budget of all disk programs. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image, by hash.
+A disk program has no row in the tables by name of the root service. It receives the log and a window, the grants of its nickname in the disk grant table and no other grant, and the budget that its file asks for, up to the largest budget of a disk program, paid by the one budget of all disk programs. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image by hash, and an import that the boot image does not hold from the same store, by an import scan.
 
 A disk program is not a package: it has no signer, no version number and no statement of the grants that it asks for. It is not installed: nothing of the machine changes when its file is written. Its file comes from a disk that the modus tool writes, or from the network through the module file service.
 
@@ -233,6 +233,18 @@ The module file service starts no program and proves nothing: the root service c
 The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
 
 Do not use: package manager, installer, downloader.
+
+### Import scan
+
+An import scan is the read of the store `programs` of a principal by the root service, to find each import of a disk program that the boot image does not hold by the BLAKE3 hash of the bytes of a file.
+
+A developer adds a program and its library modules to a machine that runs: both files go in the store `programs`, under any nicknames, and the import of the program still names the hash of the library. At the start, the root service lists the root tree of the store, reads each entry, computes the hash of its bytes, and keeps the bytes whose hash an import names; then it walks the imports of each kept file. It gives the kept files to the loader beside the boot image. A hash that no file has refuses the start with one line of the log. The scan is a part of the load of the disk program: it has its connection, its deadline of 30 seconds and its rules for each answer, and three bounds of its own: 64 entries, 8 modules on 4 levels, and a count of reads.
+
+An import scan trusts no name and no hash that the storage service gives: the name of an entry only says which object to read next. It is not an index, and it is not a search path: the import names one hash, and only bytes with that hash are kept. A module of the boot image wins over a file of the store with the same hash.
+
+The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
+
+Do not use: dependency resolution, library lookup, search of an import.
 
 ### Module space
 
@@ -4369,11 +4381,11 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each program that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_10` one time for a frame: it gives the damage rectangles from the draw table before and the draw table now. Then it calls `execute_draw_table_10` one time for each damage rectangle: it draws the records in that rectangle into the pixels of the surface. Each argument is memory of the program, passed by address: the two draw tables, the picture memory of the pictures, and the pixels, which the module writes in place. The 10 in the names is the version of the draw record.
+It is the first library module. A window calls `damage_of_draw_table_10` one time for a frame: it gives the damage rectangles from the draw table before and the draw table now. Then it calls `execute_draw_table_in_rectangles_10` one time for the frame, with a table of its damage rectangles, at most 8: it draws the records in each rectangle, in order, into the pixels of the surface. Each argument is memory of the program, passed by address: the two draw tables, the picture memory of the pictures, the rectangles, and the pixels, which the module writes in place. The 10 in the names is the version of the draw record.
 
 The module holds the fills, the gradients, the lines, the pictures, the text grids, the text of the cells and the text of the interface font, with their blends. It keeps the text settings of the program in its own data: the choice of the font, and the glyph caches of the program, validated at the first draw. It reads the choice of the settings page again at each draw.
 
-The drawing module reads the cells of a text grid in the text table, and one picture memory for each call. The terminal draws its grid through it. The compositor, with a picture memory for each surface, draws its screen table in parts: one call for each window and one for the bar.
+The drawing module reads the cells of a text grid in the text table, and one picture memory for each call. The terminal draws its grid through it. The compositor, with a picture memory for each surface, draws its screen table in parts: one call for each window and one for the bar, each with all the damage rectangles that the part meets.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each program, the drawing in a module".
 

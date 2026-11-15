@@ -197,6 +197,11 @@ module_builds := [?]Module_Build {
 	// `programs` of a data disk, and the root service starts it from there
 	// (disk_programs.odin).
 	{name = DISK_PROGRAM_MODULE, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE, image = true, disk = true},
+	// A library module and a program that imports it, both in the store
+	// `programs` only: the root service finds the import by the hash of
+	// its bytes (disk_programs.odin).
+	{name = STORE_LIBRARY_MODULE, source = MODULE_SOURCES + STORE_LIBRARY_MODULE, image = true, library = true, disk = true},
+	{name = STORE_IMPORTER_MODULE, source = PROGRAM_SOURCES + STORE_IMPORTER_MODULE, imports = {STORE_LIBRARY_MODULE}, image = true, disk = true},
 }
 
 // The folder of the modules of this build, and whether the compiler writes
