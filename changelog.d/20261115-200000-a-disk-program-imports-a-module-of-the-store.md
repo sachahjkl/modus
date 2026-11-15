@@ -1,0 +1,3 @@
+type: Added
+
+**A disk program imports a module of the store of the programs.** When a disk program imports a module that the boot image does not hold, the root service reads the files of the store `programs` of the principal, computes the BLAKE3 hash of the bytes of each, and gives the loader the file whose hash the import names, under any nickname. The imports of that file are found the same way, with bounds of 64 entries, 8 modules and 4 levels, inside the deadline of the load. The bytes are paid by the budget of the disk programs. A hash that no file has refuses the start with one line of the log that names the import.

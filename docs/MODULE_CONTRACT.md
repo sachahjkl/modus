@@ -209,7 +209,7 @@ The loader does five steps:
 
 Status of the loader in user space (`src/library/support/system/load.odin`):
 
-- **The load source**: the loader finds a module only in its load source: the files that the program was granted, each named by its hash, and the replacements that the starter of the program gives. The loader checks the hash and the tables of each file before it uses it. It has no search path and no ambient store (P20). The root service and the console give the boot image. The first module of a program can come from another place: the root service reads the file of a disk program from the storage service, and checks its hash against the hash of the command ("A program from a disk", below); its imports still come from the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports, and the modules of the replacements.
+- **The load source**: the loader finds a module only in its load source: the files that the program was granted, each named by its hash, and the replacements that the starter of the program gives. The loader checks the hash and the tables of each file before it uses it. It has no search path and no ambient store (P20). The root service and the console give the boot image. The first module of a program can come from another place: the root service reads the file of a disk program from the storage service, and checks its hash against the hash of the command ("A program from a disk", below). An import of a disk program that the boot image does not hold comes from the same store: the root service finds the file by the hash of its bytes, and gives it beside the boot image (`system.Source_File` in `Load_Source.files`). The loader looks at the boot image first, and checks the hash and the tables of a file beside it as of a file of the image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports, and the modules of the replacements.
 - **The module space**: the modules that a loader put in one program. Each module is in it one time: two modules that import a third one call the same copy. A module that another module of the space uses stays when the caller unloads it; a module with no use leaves, and its imports lose one use.
 - **Refusals**: a missing import, an import cycle, a bad file, a replacement that fails its check, a slot that cannot be bound, no room, a kernel operation that fails. On a failure, the space is as it was before the load, and the caller has a load error (below).
 - **Shared code**: a prepared module has two parts. The code is the segments with no Write: the loader never writes them (a rebase and a slot are in a segment with Write, and the loader checks it), so their pages are the same at each base and with each binding, and the table keys them by the hash of the module only. Two programs that import one module at two places map one copy of its code. The fixed part is the segments that are read-only after the load: the loader writes their rebases and their slots, so the table keys them by the hash, the base, and the hash and the base of the module of each import. A writable segment, with its slots, is bound in the copy of each program. The tool gives a segment of the range that the linker makes read-only after the load, and that holds no rebase and no slot, the flags of a constant segment: no loader writes it, so it is a part of the code, shared at each base (`segment_flags_after_the_relocations` in `tools/modustool/convert.odin`). The linker always makes that range, for a table of its own that the tool does not copy; in a module with no table of addresses and no import it is such a segment, of one page with no byte.
@@ -298,9 +298,35 @@ root: refused notes from the disk: the grant table of the root service names it,
 
 Without this rule a file named `notes` would start with the store of `notes`.
 
-**The imports.** A disk program imports by hash. Its load source is the boot image and the replacements of the machine: an import whose hash is not in the boot image fails the load at the stage Find. The modules of a disk program are copies that its own budget pays: it maps no prepared module of the root service.
+**The imports.** A disk program imports by hash. Its load source is the boot image, the replacements of the machine, and the files of the store `programs` of its principal that an import scan found for this load. The modules of a disk program are copies that its own budget pays: it maps no prepared module of the root service.
 
-**The refusals of the command**, as the kinds of its error record: `Not_Authentic` (the bytes have another hash; argument 2), `Absent` (no entry has the name; with the unit `Grants`, an empty hash and no row for the nickname), `Exists` (a module of the boot image has the name; with the unit `Grants`, the nickname names another file), `Reserved` (the grant table names it), `Busy` (another load runs), `Too_Long` (the file passes the limit, or the name has more than 23 bytes), `Malformed` (the loader refuses the file), `No_Answer` (the deadline), `Damaged` (a block of the object has a wrong check), `Refused` with the status for the rest.
+**The import scan.** When the program file imports a hash that no module of the boot image has, the root service looks for it in the same store, after the check of the program file and before the start (`GLOSSARY.md`, "Import scan"). It lists the root tree, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. A name finds nothing: the name of an entry only says which object to read next. The imports of a kept file are wanted too, and a replacement of the machine applies as in the loader. The scan runs inside the load, with its connection, its deadline and its rules for each answer, and has three bounds of its own:
+
+| Bound | Value |
+|---|---|
+| The entries that the scan notes | 64 (`disk_program.SCAN_ENTRY_CAPACITY`) |
+| The modules of the store for one program | 8 (`disk_program.SCAN_WANTED_CAPACITY`), on 4 levels of imports (`disk_program.SCAN_DEPTH_LIMIT`) |
+| The reads | Each entry one time, and two reads for each wanted hash (`disk_program.SCAN_READ_LIMIT`) |
+
+The bytes of a kept file are memory of the root service, paid by the one budget of all disk programs, until the end of the load. The log has a line for the start of the scan and one for each kept file:
+
+```
+> start_from_disk("store_importer", "8e21…")
+root: store_importer imports 1 modules that the boot image does not hold: the import scan reads the store programs to find them by the hash of their bytes
+root: store_importer: the import 3a9c… of store_importer is the file store_library of the store programs, checked on its bytes
+root: started store_importer from the disk, hash 8e21…, with no grant
+store_importer: triple(14) of the module store_library of the store programs gives 42: as it must
+```
+
+A hash that no file has refuses the start with one line, which names the importer and the import:
+
+```
+root: refused store_importer from the disk: store_importer imports 3a9c…, and no file of the boot image or of the store programs has bytes with this hash; the import scan read 6 files
+```
+
+A disk program whose imports are all in the boot image makes no scan.
+
+**The refusals of the command**, as the kinds of its error record: `Not_Authentic` (the bytes have another hash; argument 2), `Absent` (no entry has the name; with the unit `Grants`, an empty hash and no row for the nickname; with the unit `Modules`, an import that no file has), `Full` with the unit `Modules` (the imports pass the bounds of the import scan), `Exists` (a module of the boot image has the name; with the unit `Grants`, the nickname names another file), `Reserved` (the grant table names it), `Busy` (another load runs), `Too_Long` (the file passes the limit, or the name has more than 23 bytes), `Malformed` (the loader refuses the file), `No_Answer` (the deadline), `Damaged` (a block of the object has a wrong check), `Refused` with the status for the rest.
 
 **The file from the network.** The module file service, the program `programs`, puts a module file in the store on a machine that runs. Its private store is the store `programs` of its principal: the root service names a private store by the name of its program. Its other grants are a client grant of TCP to one web server, 10.0.2.100 port 80 (the address that QEMU gives to a server of the host), and its exports. The console calls them through a connection:
 
