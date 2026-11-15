@@ -57,11 +57,35 @@ text_cut_problems :: proc(text: string) -> [dynamic]int {
 		if comment := strings.index(code, "//"); comment >= 0 {
 			code = code[:comment]
 		}
-		if strings.contains(code, "writer.buffer[") || count_assigned(code) {
+		if name_place(code, "writer.buffer[", 0) >= 0 || count_assigned(code) {
 			append(&lines, number)
 		}
 	}
 	return lines
+}
+
+// name_place gives the place of the first `text` at or after `from` that
+// starts a name: the variable `writer`, not a longer name that ends with
+// it, such as `command_writer`. -1: none.
+@(private = "file")
+name_place :: proc(code: string, text: string, from: int) -> int {
+	at := from
+	for at <= len(code) {
+		index := strings.index(code[at:], text)
+		if index < 0 {
+			return -1
+		}
+		place := at + index
+		if place == 0 {
+			return place
+		}
+		before := code[place - 1]
+		if !(before == '_' || before >= 'a' && before <= 'z' || before >= 'A' && before <= 'Z' || before >= '0' && before <= '9') {
+			return place
+		}
+		at = place + len(text)
+	}
+	return -1
 }
 
 // count_assigned says if a line assigns to writer.count: "=", "+=", "-="
@@ -70,14 +94,14 @@ text_cut_problems :: proc(text: string) -> [dynamic]int {
 count_assigned :: proc(code: string) -> bool {
 	at := 0
 	for {
-		index := strings.index(code[at:], "writer.count")
-		if index < 0 {
+		place := name_place(code, "writer.count", at)
+		if place < 0 {
 			return false
 		}
-		after := strings.trim_left_space(code[at + index + len("writer.count"):])
+		after := strings.trim_left_space(code[place + len("writer.count"):])
 		if strings.has_prefix(after, "=") && !strings.has_prefix(after, "==") || strings.has_prefix(after, "+=") || strings.has_prefix(after, "-=") {
 			return true
 		}
-		at += index + len("writer.count")
+		at = place + len("writer.count")
 	}
 }
