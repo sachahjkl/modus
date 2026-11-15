@@ -128,9 +128,12 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	if table_bar >= pci.BAR_COUNT || bars[table_bar].size == 0 {
 		return nil, 0, .Bad_Operation
 	}
+	// The message interrupt of this device: the kernel names the device by
+	// the base of the register that holds the table, so with interrupt
+	// remapping no other device can send it.
 	interrupt: system.Handle
 	message: [7]u64
-	interrupt, message, status = device_handle(.Message, 0, 0)
+	interrupt, message, status = device_handle(.Message, bars[table_bar].address, 0)
 	if status != .Ok {
 		return nil, 0, status
 	}

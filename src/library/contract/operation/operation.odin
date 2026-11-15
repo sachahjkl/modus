@@ -538,15 +538,19 @@ Operation :: enum u32 {
 	//   - `Memory`: `a` the physical address, a multiple of 4096, and `b` the count of pages of the
 	//     registers of a device: a memory handle with **Give**, **Read** and **Write**, mapped with no cache.
 	//     The range meets no memory that the firmware gave as free or as loaded;
-	//   - `Message`: a message interrupt (MSI-X) of the first processor: an interrupt handle with **Give**
-	//     and **Read**.
+	//   - `Message`: `a` the physical address where a memory base address register of the device starts:
+	//     a message interrupt (MSI-X) of the first processor, for that device: an interrupt handle with
+	//     **Give** and **Read**. With interrupt remapping in use, the entry of the message names that device,
+	//     and the unit refuses the message to every other device; with none, `a` is not read.
 	//
 	// **Results**
 	//
 	// 1. the handle;
-	// 2. for `Message`: the address that the device writes; for `Memory`: the `Device_Memory_Facts` of
+	// 2. for `Message`: the address that the device writes: the remappable form of the entry with
+	//    interrupt remapping in use, else the compatible form; for `Memory`: the `Device_Memory_Facts` of
 	//    the device whose base address register starts at `a` (empty with no IOMMU in use);
-	// 3. for `Message` only: the value that the device writes there.
+	// 3. for `Message` only: the value that the device writes there: 0 in the remappable form, else the
+	//    vector.
 	//
 	// **Statuses**
 	//

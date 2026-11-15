@@ -8,18 +8,22 @@ import "base:intrinsics"
 // The IOMMU (src/md/infrastructure/iommu.md): the kernel owns the tables of
 // the remapping units, and a device reaches only the pages that its service
 // declared with Memory_Physical, and writes only those that the handle of
-// the declaration could write. The kernel holds no code of a device: it
-// reads the base address registers and the bridges of the bus only to know
-// which device the registers of a memory object belong to, and which unit
-// translates its accesses.
+// the declaration could write. With interrupt remapping, a device sends
+// only the message interrupts whose entry names it. The kernel holds no
+// code of a device: it reads the base address registers and the bridges of
+// the bus only to know which device the registers of a memory object, or a
+// message interrupt, belong to, and which unit translates its accesses.
 //
 // The slots of the devices, the bits `declared` and `declared_writable` of
-// each memory object and the tables of the domains change under the frame
-// lock: a declaration ends in region_release under that lock, before the
-// frames of its object return (docs/ARCHITECTURE.md, "K5. Device grant and
-// interrupts"). The fault handler reads `owner` and the counts of the
-// faults with atomic loads and no lock. The units, the context tables and
-// the standing domains are written once, at the start.
+// each memory object, the tables of the domains and the queue of
+// invalidations of each unit change under the frame lock: a declaration
+// ends in region_release under that lock, before the frames of its object
+// return (docs/ARCHITECTURE.md, "K5. Device grant and interrupts"). The
+// entries of the interrupt table change under the control lock, as the
+// message interrupts do, and their invalidation takes the frame lock for
+// the queue. The fault handler reads `owner` and the counts of the faults
+// with atomic loads and no lock. The units, the context tables and the
+// standing domains are written once, at the start.
 
 // The devices that have a domain at one time. A slot is free again when
 // its domain ends. The domain identifier of a slot is the slot + 1: the
@@ -51,6 +55,10 @@ Iommu_Unit :: struct {
 	fault_count:    u64,
 	root:           u64, // The root table: a root entry for each bus.
 	context_tables: [256]u64, // The context table of each bus that the walk at the start found. 0: none.
+	queue:          u64, // The queue of invalidations: one page of descriptors.
+	queue_tail:     u32, // The descriptor after the last that the kernel wrote.
+	wait_number:    u32, // The number of the last wait descriptor.
+	wait_status:    u64, // The physical address of the word where the unit writes the number of a wait descriptor that it reached.
 }
 
 // The domain of one device: its requester, its unit, the program that
@@ -86,11 +94,24 @@ iommu_scopes: [iommu.SCOPE_CAPACITY]iommu.Resolved_Scope // Each scope of iommu_
 iommu_reserved_mapped: [iommu.RESERVED_RANGE_CAPACITY]bool // The reserved ranges that the domains map.
 iommu_standing: [IOMMU_STANDING_CAPACITY]Iommu_Standing
 iommu_devices: [IOMMU_DEVICE_CAPACITY]Iommu_Device
-// The DMA faults of each function of bus 0, by the low byte of its
-// requester, and of all the functions of the other buses. Atomic: they
-// outlive the domain of a device.
-iommu_faults: [256]u64
-iommu_faults_of_other_buses: u64
+// Interrupt remapping is on in every unit. Written once at the start.
+iommu_interrupt_remapping: bool
+// The interrupt table that every unit reads: one entry for each message
+// interrupt, at its index. Memory of the kernel.
+iommu_interrupt_table: u64
+// The page of the words where each unit writes the number of its wait
+// descriptors, one line of 64 bytes for each unit.
+iommu_wait_page: u64
+// The faults of each function of bus 0, by the low byte of its requester,
+// and of all the functions of the other buses: the DMA faults, and apart
+// the refused interrupts, so a storm of one kind does not hide the first
+// line of the other. Atomic: they outlive the domain of a device.
+Fault_Counts :: struct {
+	of_bus_0:       [256]u64,
+	of_other_buses: u64,
+}
+iommu_dma_faults: Fault_Counts
+iommu_interrupt_faults: Fault_Counts
 // The passes of one call of iommu_faults_take over the fault records.
 IOMMU_FAULT_PASSES :: 2
 // A record was still pending at the end of the last call: the next tick of
@@ -181,16 +202,45 @@ translation_off :: proc "contextless" (unit: ^Iommu_Unit) {
 	}
 }
 
-// invalidate_unit makes a unit forget the context entries and the
-// translations that the two commands name, with the drain of the reads and
-// writes in flight, and waits until it did: after it, no device of the
-// unit uses an entry that the kernel cleared. The flush of the write
-// buffer comes first when the unit needs it. A context command of 0 is
-// none. A unit that does not end a command, or that ends it with no
-// invalidation made (the granularity 0), stops the machine: a page that a
-// device can still reach must not become free.
+// The descriptors of one invalidation of a unit, before the wait
+// descriptor that invalidate_unit adds at its end.
+Descriptor_Batch :: struct {
+	descriptors: [iommu.QUEUE_LARGEST_BATCH - 1][2]u64,
+	count:       u32,
+}
+
 @(private = "file")
-invalidate_unit :: proc "contextless" (unit: ^Iommu_Unit, context_command: u64, iotlb_command: u64) {
+batch_add :: proc "contextless" (batch: ^Descriptor_Batch, descriptor: [2]u64) {
+	batch.descriptors[batch.count] = descriptor
+	batch.count += 1
+}
+
+// domain_batch gives the descriptors that make a unit forget the
+// translations of one domain identifier, with the drain of the reads and
+// writes in flight, and with context_changed also the context entries that
+// carry the identifier context_domain.
+@(private = "file")
+domain_batch :: proc "contextless" (domain: u16, context_changed: bool, context_domain: u16) -> (batch: Descriptor_Batch) {
+	if context_changed {
+		batch_add(&batch, iommu.descriptor_context(context_domain))
+	}
+	batch_add(&batch, iommu.descriptor_iotlb(domain))
+	return batch
+}
+
+// invalidate_unit gives a batch of descriptors to the queue of a unit, then
+// a wait descriptor, and waits until the unit wrote the number of the wait:
+// the unit then did each descriptor before it, with the drains that they
+// ask, and no device of the unit uses an entry that the kernel cleared. The
+// flush of the write buffer comes first when the unit needs it: the queue
+// does not replace it. The caller holds the frame lock, or runs at the
+// start: one writer of the queue at a time. Each batch waits for its end,
+// so the queue holds one batch at most and never fills. A unit that does
+// not reach the wait, or that refuses a descriptor (the error of the
+// queue), stops the machine: a page that a device can still reach must not
+// become free.
+@(private = "file")
+invalidate_unit :: proc "contextless" (unit: ^Iommu_Unit, batch: Descriptor_Batch) {
 	done := true
 	if iommu.capability_write_buffer(unit.capability) {
 		register_write_32(unit, iommu.REGISTER_GLOBAL_COMMAND, iommu.global_command(register_read_32(unit, iommu.REGISTER_GLOBAL_STATUS), iommu.GLOBAL_WRITE_BUFFER))
@@ -199,32 +249,30 @@ invalidate_unit :: proc "contextless" (unit: ^Iommu_Unit, context_command: u64, 
 			done = wait_turn(bound)
 		}
 	}
-	if done && context_command != 0 {
-		register_write_64(unit, iommu.REGISTER_CONTEXT_COMMAND, context_command)
-		bound := wait_bound()
-		for {
-			finished, made := iommu.context_invalidation_done(register_read_64(unit, iommu.REGISTER_CONTEXT_COMMAND))
-			if finished {
-				done = made
-				break
-			}
-			if !wait_turn(bound) {
-				done = false
-				break
-			}
-		}
-	}
 	if done {
-		iotlb := iommu.extended_iotlb_offset(unit.extended) + 8
-		register_write_64(unit, iotlb, iotlb_command)
-		bound := wait_bound()
-		for {
-			finished, made := iommu.iotlb_invalidation_done(register_read_64(unit, iotlb))
-			if finished {
-				done = made
-				break
+		queue := direct(unit.queue, [iommu.QUEUE_DESCRIPTORS][2]u64)
+		unit.wait_number += 1
+		number := unit.wait_number
+		wait := iommu.descriptor_wait(unit.wait_status, number)
+		tail := unit.queue_tail
+		// The unit reads the descriptors only after the write of the tail
+		// register: each word is a volatile store before it.
+		for index in u32(0) ..= batch.count {
+			descriptor := wait
+			if index < batch.count {
+				descriptor = batch.descriptors[index]
 			}
-			if !wait_turn(bound) {
+			intrinsics.volatile_store(&queue[tail][0], descriptor[0])
+			intrinsics.volatile_store(&queue[tail][1], descriptor[1])
+			write_back(unit.queue + u64(tail) * iommu.DESCRIPTOR_SIZE, iommu.DESCRIPTOR_SIZE)
+			tail = (tail + 1) % iommu.QUEUE_DESCRIPTORS
+		}
+		unit.queue_tail = tail
+		register_write_64(unit, iommu.REGISTER_QUEUE_TAIL, iommu.queue_tail_register(tail))
+		status := direct(unit.wait_status, u32)
+		bound := wait_bound()
+		for intrinsics.volatile_load(status) != number {
+			if register_read_32(unit, iommu.REGISTER_FAULT_STATUS) & iommu.FAULT_STATUS_QUEUE_ERROR != 0 || !wait_turn(bound) {
 				done = false
 				break
 			}
@@ -232,7 +280,7 @@ invalidate_unit :: proc "contextless" (unit: ^Iommu_Unit, context_command: u64, 
 	}
 	if !done {
 		fault_report_begin()
-		log("kernel: the IOMMU did not finish an invalidation, or made none: the machine stops")
+		log("kernel: the IOMMU did not finish an invalidation, or refused one: the machine stops")
 		machine_stop(2)
 	}
 }
@@ -250,15 +298,16 @@ Context_Change :: enum {
 @(private = "file")
 invalidate_slot :: proc "contextless" (slot: u32, change: Context_Change) {
 	domain := u16(slot + 1)
-	context_command: u64
+	batch: Descriptor_Batch
 	switch change {
 	case .None:
+		batch = domain_batch(domain, false, 0)
 	case .Made:
-		context_command = iommu.context_command_domain(0)
+		batch = domain_batch(domain, true, 0)
 	case .Cleared:
-		context_command = iommu.context_command_domain(domain)
+		batch = domain_batch(domain, true, domain)
 	}
-	invalidate_unit(&iommu_units[iommu_devices[slot].unit], context_command, iommu.iotlb_command_domain(domain))
+	invalidate_unit(&iommu_units[iommu_devices[slot].unit], batch)
 }
 
 // invalidate_slots invalidates the domain of each device slot of a mask;
@@ -606,8 +655,14 @@ iommu_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		unit.fault_offset, unit.fault_count = iommu.capability_fault_records(unit.capability)
 		// The domain identifiers of the slots and of the standing domains,
 		// from 1: the identifier 0 stays unused, as the caching mode needs.
-		if unit.levels == 0 || unit.fault_offset + unit.fault_count * 16 > iommu.REGISTER_SPACE || iommu.extended_iotlb_offset(unit.extended) + 16 > iommu.REGISTER_SPACE || iommu.capability_domain_count(unit.capability) <= IOMMU_DEVICE_CAPACITY + IOMMU_STANDING_CAPACITY {
+		if unit.levels == 0 || unit.fault_offset + unit.fault_count * 16 > iommu.REGISTER_SPACE || iommu.capability_domain_count(unit.capability) <= IOMMU_DEVICE_CAPACITY + IOMMU_STANDING_CAPACITY {
 			log("kernel: no IOMMU in use: a unit has no table form of 39 or 48 bits, too few domains, or a register outside its space; each device reaches all memory")
+			return
+		}
+		// Every invalidation goes through the queue: the one path that
+		// interrupt remapping allows.
+		if !iommu.extended_queue(unit.extended) {
+			log("kernel: no IOMMU in use: a unit has no queue of invalidations; each device reaches all memory")
 			return
 		}
 		if !iommu.capability_drains(unit.capability) {
@@ -641,16 +696,45 @@ iommu_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	for index in 0 ..< int(dmar.scope_count) {
 		iommu_scopes[index] = iommu.scope_resolve(dmar.scopes[index], bridge_read)
 	}
-	// The root tables, the context tables of the buses and the standing
-	// domains are memory of the kernel, as the page table of the kernel: no
-	// budget pays for them.
-	for &unit in iommu_units[:iommu_unit_count] {
+	// The root tables, the queues, the words of the waits, the interrupt
+	// table, the context tables of the buses and the standing domains are
+	// memory of the kernel, as the page table of the kernel: no budget pays
+	// for them. The words of the waits start at 0, and the first wait
+	// number is 1.
+	iommu_wait_page = frames_allocate(1)
+	if iommu_wait_page == 0 {
+		log("kernel: no IOMMU in use: no memory for its queues")
+		return
+	}
+	#assert(iommu.UNIT_CAPACITY * 64 <= PAGE_SIZE)
+	for &unit, index in iommu_units[:iommu_unit_count] {
 		unit.root = frames_allocate(1)
-		if unit.root == 0 {
-			log("kernel: no IOMMU in use: no memory for its root tables")
+		unit.queue = frames_allocate(1)
+		if unit.root == 0 || unit.queue == 0 {
+			log("kernel: no IOMMU in use: no memory for its root tables or its queues")
 			return
 		}
 		write_back(unit.root, PAGE_SIZE)
+		write_back(unit.queue, PAGE_SIZE)
+		unit.wait_status = iommu_wait_page + u64(index) * 64
+	}
+	// Interrupt remapping on every unit or on none: a device of a unit with
+	// no remapping could send any vector, and the line would not name it.
+	// The flag of the table comes first: a firmware clears it on a platform
+	// whose remapping has a fault, even when each unit offers it.
+	remapping := dmar.interrupt_remapping
+	units_offer_remapping := true
+	for &unit in iommu_units[:iommu_unit_count] {
+		units_offer_remapping &&= iommu.extended_interrupt_remapping(unit.extended)
+	}
+	remapping &&= units_offer_remapping
+	if remapping {
+		iommu_interrupt_table = frames_allocate(1)
+		if iommu_interrupt_table == 0 {
+			log("kernel: no IOMMU in use: no memory for its interrupt table")
+			return
+		}
+		write_back(iommu_interrupt_table, PAGE_SIZE)
 	}
 	walk := Bus_Walk{make_tables = true}
 	buses_walk(&walk)
@@ -661,6 +745,10 @@ iommu_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	if !standing_domains_make() {
 		return
 	}
+	// The cycles of one round trip of the queue of the first unit: the time
+	// that a holder of the frame lock waits for at each invalidation. A
+	// measure on the log, not a check.
+	round_trip_cycles: u64
 	for index in 0 ..< iommu_unit_count {
 		unit := &iommu_units[index]
 		// Each record of a fault before the start is free again, and the
@@ -668,15 +756,28 @@ iommu_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		for record in 0 ..< unit.fault_count {
 			register_write_32(unit, unit.fault_offset + record * 16 + 12, iommu.FAULT_CLEAR)
 		}
-		register_write_32(unit, iommu.REGISTER_FAULT_STATUS, iommu.FAULT_STATUS_OVERFLOW)
+		register_write_32(unit, iommu.REGISTER_FAULT_STATUS, iommu.FAULT_STATUS_CLEARED_AT_START)
 		register_write_32(unit, iommu.REGISTER_FAULT_EVENT_DATA, VECTOR_IOMMU_FAULT)
 		register_write_32(unit, iommu.REGISTER_FAULT_EVENT_ADDRESS, 0xFEE0_0000 | (processors[0].apic_id & 0xFF) << 12)
 		register_write_32(unit, iommu.REGISTER_FAULT_EVENT_UPPER_ADDRESS, 0)
 		register_write_32(unit, iommu.REGISTER_FAULT_EVENT_CONTROL, 0)
-		register_write_64(unit, iommu.REGISTER_ROOT_TABLE, unit.root)
-		started := global_set(unit, iommu.GLOBAL_ROOT_TABLE)
+		// The queue first: the global invalidation below goes through it.
+		register_write_64(unit, iommu.REGISTER_QUEUE_TAIL, iommu.queue_tail_register(0))
+		register_write_64(unit, iommu.REGISTER_QUEUE_ADDRESS, iommu.queue_address_register(unit.queue))
+		started := global_set(unit, iommu.GLOBAL_QUEUED_INVALIDATION)
 		if started {
-			invalidate_unit(unit, iommu.CONTEXT_COMMAND_GLOBAL, iommu.IOTLB_COMMAND_GLOBAL)
+			register_write_64(unit, iommu.REGISTER_ROOT_TABLE, unit.root)
+			started = global_set(unit, iommu.GLOBAL_ROOT_TABLE)
+		}
+		if started {
+			global: Descriptor_Batch
+			batch_add(&global, iommu.descriptor_context(0, true))
+			batch_add(&global, iommu.descriptor_iotlb(0, true))
+			before := cycles_now()
+			invalidate_unit(unit, global)
+			if index == 0 {
+				round_trip_cycles = cycles_now() - before
+			}
 			started = global_set(unit, iommu.GLOBAL_TRANSLATION)
 		}
 		if !started {
@@ -685,7 +786,7 @@ iommu_start :: proc "contextless" (boot: ^info.Boot_Info) {
 			for &before in iommu_units[:index + 1] {
 				translation_off(&before)
 			}
-			log("kernel: no IOMMU in use: a unit did not take its root table or did not turn translation on; each device reaches all memory")
+			log("kernel: no IOMMU in use: a unit did not take its queue or its root table, or did not turn translation on; each device reaches all memory")
 			return
 		}
 	}
@@ -695,6 +796,66 @@ iommu_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	}
 	iommu_in_use = true
 	log("kernel: IOMMU: translation on, ", u64(iommu_unit_count), " units, ", u64(walk.bus_count), " buses, ", standing_count, " devices with a reserved memory range: a device reaches only the memory that its service declared")
+	per_microsecond := cycle_frequency / 1_000_000
+	round_trip_nanoseconds := per_microsecond == 0 ? 0 : round_trip_cycles * 1000 / per_microsecond
+	log("kernel: IOMMU: measure: one round trip of the queue of invalidations (the global invalidation of the first unit at the start), which a holder of the frame lock waits for at each invalidation: ", round_trip_cycles, " cycles, ", round_trip_nanoseconds, " ns")
+	if !dmar.interrupt_remapping {
+		log("kernel: IOMMU: no interrupt remapping: the DMA remapping table does not allow it; a device can send any interrupt")
+		return
+	}
+	if !remapping {
+		log("kernel: IOMMU: no interrupt remapping: a unit does not offer it; a device can send any interrupt")
+		return
+	}
+	interrupt_remapping_start()
+}
+
+// interrupt_remapping_start turns interrupt remapping on in each unit,
+// with the empty interrupt table: from then on, a device sends only the
+// message interrupts whose entry names it, and the units block each message
+// in the compatible form (the bit CFI stays 0). A unit that does not take
+// the table or does not turn remapping on turns it off again in each unit
+// before it: remapping is on in every unit or in none. Translation stays
+// on.
+@(private = "file")
+interrupt_remapping_start :: proc "contextless" () {
+	for index in 0 ..< iommu_unit_count {
+		unit := &iommu_units[index]
+		register_write_64(unit, iommu.REGISTER_INTERRUPT_TABLE, iommu.interrupt_table_register(iommu_interrupt_table))
+		started := global_set(unit, iommu.GLOBAL_INTERRUPT_TABLE)
+		if started {
+			global: Descriptor_Batch
+			batch_add(&global, iommu.descriptor_interrupt_entry(0, true))
+			invalidate_unit(unit, global)
+			started = global_set(unit, iommu.GLOBAL_INTERRUPT_REMAPPING)
+		}
+		if !started {
+			for &before in iommu_units[:index + 1] {
+				interrupt_remapping_off(&before)
+			}
+			log("kernel: IOMMU: no interrupt remapping: a unit did not take its interrupt table or did not turn remapping on; a device can send any interrupt")
+			return
+		}
+	}
+	iommu_interrupt_remapping = true
+	log("kernel: IOMMU: interrupt remapping on: a device sends only the message interrupts that its service was given")
+}
+
+// interrupt_remapping_off turns the interrupt remapping of a unit off, and
+// waits until the status shows it.
+@(private = "file")
+interrupt_remapping_off :: proc "contextless" (unit: ^Iommu_Unit) {
+	status := register_read_32(unit, iommu.REGISTER_GLOBAL_STATUS)
+	register_write_32(unit, iommu.REGISTER_GLOBAL_COMMAND, iommu.global_command(status, 0) &~ iommu.GLOBAL_INTERRUPT_REMAPPING)
+	bound := wait_bound()
+	for register_read_32(unit, iommu.REGISTER_GLOBAL_STATUS) & iommu.GLOBAL_INTERRUPT_REMAPPING != 0 {
+		if !wait_turn(bound) {
+			// The unit still remaps with the empty table: every message
+			// interrupt of its devices is refused.
+			log("kernel: IOMMU: a unit did not turn interrupt remapping off: the message interrupts of its devices are refused")
+			return
+		}
+	}
 }
 
 // iommu_owns_range says if a range of physical addresses meets the
@@ -777,6 +938,75 @@ iommu_device_facts :: proc "contextless" (requester: u32) -> (facts: op.Device_M
 		facts += {.Windows}
 	}
 	return facts
+}
+
+// Each message interrupt has its entry in the table: an index past the
+// table would be refused by the unit for every device.
+#assert(op.MESSAGE_CAPACITY <= iommu.INTERRUPT_TABLE_ENTRIES)
+
+// iommu_message_bind gives a message interrupt (its index from 0 among the
+// message interrupts) to the device whose memory base address register
+// starts at physical: Device_Create of the kind Message. It gives the
+// address and the value that the device writes. With remapping in use, the
+// interrupt entry of the index names that device, and the address is the
+// remappable form of the index. With no remapping in use, or for a device
+// that gets no requester (iommu_requester_of writes why), it gives the
+// compatible form of the first processor: a unit that covers such a device
+// refuses it, as it refuses its memory accesses, and a device that no unit
+// covers sends it past the units. The caller holds the control lock, which
+// orders the message interrupts and their entries.
+iommu_message_bind :: proc "contextless" (index: u32, physical: u64) -> (address: u64, value: u64) {
+	vector := u64(VECTOR_MESSAGE_BASE) + u64(index)
+	compatible := 0xFEE0_0000 | u64(processors[0].apic_id & 0xFF) << 12
+	if !iommu_interrupt_remapping {
+		return compatible, vector
+	}
+	requester := iommu_requester_of(physical)
+	if requester == 0 {
+		return compatible, vector
+	}
+	entry := direct(iommu_interrupt_table + u64(index) * iommu.INTERRUPT_ENTRY_SIZE, [2]u64)
+	words := iommu.interrupt_entry(u8(vector), u8(processors[0].apic_id & 0xFF), u16(requester - 1))
+	// The second word first: a unit reads an entry whose first word is
+	// present as whole.
+	intrinsics.volatile_store(&entry[1], words[1])
+	intrinsics.volatile_store(&entry[0], words[0])
+	write_back(physical_of(entry), iommu.INTERRUPT_ENTRY_SIZE)
+	interrupt_entry_invalidate(index)
+	return iommu.message_address(u16(index)), 0
+}
+
+// iommu_message_end clears the interrupt entry of a message interrupt
+// whose last handle closed, before the index can be given again: the old
+// device then sends nothing at that index. handle_close calls it with the
+// control lock.
+iommu_message_end :: proc "contextless" (index: u32) {
+	if !iommu_interrupt_remapping {
+		return
+	}
+	entry := direct(iommu_interrupt_table + u64(index) * iommu.INTERRUPT_ENTRY_SIZE, [2]u64)
+	if intrinsics.volatile_load(&entry[0]) == 0 {
+		return // The entry was never bound: a device with no requester.
+	}
+	intrinsics.volatile_store(&entry[0], 0)
+	intrinsics.volatile_store(&entry[1], 0)
+	write_back(physical_of(entry), iommu.INTERRUPT_ENTRY_SIZE)
+	interrupt_entry_invalidate(index)
+}
+
+// interrupt_entry_invalidate makes each unit forget the interrupt entry of
+// an index. Each unit, because one table serves all: a unit that kept the
+// old entry would let the old device send the vector of the next owner.
+// It takes the frame lock, which orders the queues.
+@(private = "file")
+interrupt_entry_invalidate :: proc "contextless" (index: u32) {
+	batch: Descriptor_Batch
+	batch_add(&batch, iommu.descriptor_interrupt_entry(u16(index)))
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
+	for &unit in iommu_units[:iommu_unit_count] {
+		invalidate_unit(&unit, batch)
+	}
 }
 
 // owned_devices gives a bit for each device slot whose domain this
@@ -1038,7 +1268,7 @@ declare_to_device :: proc "contextless" (program_index: u32, requester: u16, slo
 		// unit never reads an entry with half of each.
 		if standing, standing_domain := standing_of(requester); standing != nil {
 			context_entry_write(device.unit, requester, false)
-			invalidate_unit(&iommu_units[device.unit], iommu.context_command_domain(standing_domain), iommu.iotlb_command_domain(standing_domain))
+			invalidate_unit(&iommu_units[device.unit], domain_batch(standing_domain, true, standing_domain))
 		}
 		context_entry_write(device.unit, requester, true, device.top, u16(slot + 1))
 		device.present = true
@@ -1376,7 +1606,7 @@ domains_end :: proc "contextless" (program_index: u32, owned: u32) {
 		if standing, standing_domain := standing_of(device.requester); standing != nil {
 			context_entry_write(device.unit, device.requester, true, standing.top, standing_domain)
 			if iommu.capability_caching_mode(unit.capability) || iommu.capability_write_buffer(unit.capability) {
-				invalidate_unit(unit, iommu.context_command_domain(0), iommu.iotlb_command_domain(standing_domain))
+				invalidate_unit(unit, domain_batch(standing_domain, true, 0))
 			}
 		}
 		budgets[budget].amounts.pages += tables_free(device.top, unit.levels)
@@ -1385,10 +1615,12 @@ domains_end :: proc "contextless" (program_index: u32, owned: u32) {
 	}
 }
 
-// fault_count_of gives the place of the count of the faults of a requester.
+// fault_count_of gives the place of the count of the faults of a requester:
+// of its DMA faults, or of its refused interrupts.
 @(private = "file")
-fault_count_of :: proc "contextless" (requester: u16) -> ^u64 {
-	return iommu.requester_bus(requester) == 0 ? &iommu_faults[requester & 0xFF] : &iommu_faults_of_other_buses
+fault_count_of :: proc "contextless" (requester: u16, interrupt: bool) -> ^u64 {
+	counts := interrupt ? &iommu_interrupt_faults : &iommu_dma_faults
+	return iommu.requester_bus(requester) == 0 ? &counts.of_bus_0[requester & 0xFF] : &counts.of_other_buses
 }
 
 // iommu_faults_take reads each fault that the units recorded, frees its
@@ -1439,10 +1671,11 @@ iommu_faults_take :: proc "contextless" () {
 }
 
 // fault_line_write counts one fault for its device and writes its line of
-// the log, when iommu.fault_line gives one.
+// the log, when iommu.fault_line gives one: a DMA fault, or a refused
+// interrupt, each with its own count.
 @(private = "file")
 fault_line_write :: proc "contextless" (fault: iommu.Fault) {
-	faults := intrinsics.atomic_add(fault_count_of(fault.requester), 1) + 1
+	faults := intrinsics.atomic_add(fault_count_of(fault.requester, fault.interrupt), 1) + 1
 	line := iommu.fault_line(faults)
 	if line == .None {
 		return
@@ -1454,6 +1687,14 @@ fault_line_write :: proc "contextless" (fault: iommu.Fault) {
 		}
 	}
 	bus, device_number, function := u64(iommu.requester_bus(fault.requester)), u64(iommu.requester_device(fault.requester)), u64(iommu.requester_function(fault.requester))
+	if fault.interrupt {
+		if line == .Whole {
+			log("kernel: an interrupt of the device at bus ", bus, ", device ", device_number, ", function ", function, " (service ", service, ") is refused: entry ", u64(fault.index), "; reason ", Hex(u64(fault.reason)), "; refused interrupts of this device: ", faults)
+		} else {
+			log("kernel: refused interrupts of the device at bus ", bus, ", device ", device_number, ", function ", function, " (service ", service, "): ", faults, " in all; the log has the line of each of the first ", u64(iommu.FAULT_LINES), ", then this count at each power of two")
+		}
+		return
+	}
 	if line == .Whole {
 		log("kernel: a DMA fault of the device at bus ", bus, ", device ", device_number, ", function ", function, " (service ", service, "): a ", fault.read ? string("read") : string("write"), " of ", Hex(fault.address), "; reason ", Hex(u64(fault.reason)), "; faults of this device: ", faults)
 	} else {
