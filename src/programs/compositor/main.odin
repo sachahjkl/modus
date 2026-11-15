@@ -90,6 +90,7 @@ import "modus:support/palette"
 import "modus:contract/ring"
 import "modus:support/system"
 import "modus:contract/pointer_pictures"
+import program_page "modus:contract/disk_program_page"
 import "base:intrinsics"
 
 // Its loop, and the thread that makes the lists of the palette. The
@@ -144,6 +145,13 @@ Client :: struct {
 	presents_refused: u64, // The Present records whose picture number names no picture of the surface.
 	x, y:        int,
 	title:       system.Name,
+	// A disk program: the root service gave its nickname and the first
+	// bytes of the hash of its file in Client_Add. The window has the
+	// nickname as its title, and the menu of the windows shows the hash
+	// prefix beside it.
+	from_disk:   bool,
+	nickname:    system.Name,
+	hash_prefix: [program_page.HASH_PREFIX_DIGITS]u8,
 	pointer_shape: pointer_pictures.Pointer_Shape, // The shape that the program asked for over its surface (pointer_picture.odin).
 	pointer_over: bool, // The last pointer event of the program was over its surface, or with a button down: the program gets one event more when the pointer leaves.
 	presents:    u64, // The Present records that the program sent since it created its surface.
@@ -372,6 +380,13 @@ windows_log :: proc "contextless" () {
 		count += copy(buffer[count:], system.name_of(client.title[:]))
 	}
 	system.log_in("surfaces", .Info, "compositor: windows: ", string(buffer[:count]))
+	// The line of a disk program shows the hash prefix that the root
+	// service gave, faded beside its nickname.
+	for &client in clients {
+		if client.surface.pixels != nil && client.from_disk {
+			system.log_in("surfaces", .Info, "compositor: the menu of the windows shows the disk program ", system.name_of(client.title[:]), " with the hash prefix ", string(client.hash_prefix[:]), ", from the root service")
+		}
+	}
 }
 
 // The bar shows the date and the time of day in UTC (src/library/contract/date), or
@@ -542,7 +557,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for record in system.receive(&control.commands) {
 			#partial switch display.Control(record.kind) {
 			case .Client_Add:
-				client_add(system.Handle(record.values[0]))
+				client_add(record)
 			case .Client_Remove:
 				client_remove(system.Handle(record.values[0]))
 			case .Palette_Provider_Add:
@@ -688,7 +703,12 @@ send :: proc "contextless" (client: ^Client, record: ring.Record) {
 	window_event_send(client, record)
 }
 
-client_add :: proc "contextless" (memory: system.Handle) {
+// client_add takes the ring of a new program from the root service. For a
+// disk program the record also holds its nickname and the first bytes of
+// the hash of its file: the window takes that nickname, not the title that
+// the program sends.
+client_add :: proc "contextless" (record: ring.Record) {
+	memory := system.Handle(record.values[0])
 	for &client in clients {
 		if client.ring_memory != 0 {
 			continue
@@ -698,6 +718,12 @@ client_add :: proc "contextless" (memory: system.Handle) {
 			break
 		}
 		client = {ring_memory = memory, ring = opened}
+		nickname := program_page.nickname_of({record.values[1], record.values[2], record.values[3]})
+		if nickname.length > 0 {
+			client.from_disk = true
+			copy(client.nickname[:len(client.nickname) - 1], program_page.nickname_text(&nickname))
+			program_page.hash_prefix_write(&client.hash_prefix, record.values[4])
+		}
 		return
 	}
 	system.close(memory)
@@ -764,7 +790,9 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	}
 	client.pictures = ([^]graphics.Color)(address)
 	client.surface = {pixels = client.pictures, width = int(width), height = int(height), stride = int(width)}
-	client.title = system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
+	// A disk program could title its window as a program of the system: its
+	// window has the nickname that the root service gave.
+	client.title = client.from_disk ? client.nickname : system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
 	client.x = PLACE_X + placed % 8 * PLACE_STEP_X
 	client.y = PLACE_Y + placed % 8 * PLACE_STEP_Y
 	// A large window moves up and left until the screen shows all of it; a
@@ -1392,8 +1420,19 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 				// The window that has the focus: a square, and its title in white.
 				interface.draw_rectangle(table, line_x + 8, line_y + 8, 8, 8, line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TITLE)
 			}
-			title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(clients[index].title[:]), line_width - bar.WINDOWS_TITLE_X - bar.PADDING)
-			interface.draw_text(table, line_x + bar.WINDOWS_TITLE_X, line_y + 4, title, focus || line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
+			// A disk program keeps the room of its hash prefix at the end of
+			// the line: the nickname ends before it.
+			room := line_width - bar.WINDOWS_TITLE_X - bar.PADDING
+			if clients[index].from_disk {
+				room -= bar.WINDOWS_HASH_GAP + interface.text_measured_width(table, {}, string(clients[index].hash_prefix[:]))
+			}
+			title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(clients[index].title[:]), room)
+			title_end := interface.draw_text(table, line_x + bar.WINDOWS_TITLE_X, line_y + 4, title, focus || line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
+			if clients[index].from_disk {
+				// A value, in the font of the cells, faded: the name is the
+				// nickname, and the prefix only tells two files apart.
+				interface.draw_text(table, title_end + bar.WINDOWS_HASH_GAP, line_y + 4, string(clients[index].hash_prefix[:]), graphics.COLOR_DIM)
+			}
 		}
 	}
 	if menu_open == .Programs {

@@ -5,6 +5,7 @@
 // The palette (src/library/support/palette) lists the same names.
 package bar
 
+import program_page "modus:contract/disk_program_page"
 import "modus:contract/glyph_cache"
 import "modus:support/mark"
 import "modus:support/text_shaping"
@@ -137,11 +138,17 @@ center :: proc "contextless" (layout: Layout, program: string) -> (center_x, cen
 // on a line brings the window to the front.
 WINDOWS_LABEL :: "windows"
 WINDOWS_GAP :: 8 // Between the two buttons.
+// The line of a disk program in the menu of the windows: its nickname, this
+// gap, then its hash prefix in the font of the cells, faded
+// (modus:contract/disk_program_page).
+WINDOWS_HASH_GAP :: 8
+WINDOWS_HASH_WIDTH :: program_page.HASH_PREFIX_DIGITS * CHARACTER_WIDTH
 // The room of a title in the menu of the windows, in pixels: a title is
-// cut to it in the font that draws it. It is the room of the 32 cells of
-// the longest title of a window (system.Name) in the font of the cells, so
+// cut to it in the font that draws it. It is the room of the larger of two
+// lines in the font of the cells: the 32 cells of the longest title of a
+// window (system.Name), and the longest nickname with its hash prefix. So
 // the menu has one width in both fonts.
-WINDOWS_TITLE_ROOM :: 32 * CHARACTER_WIDTH
+WINDOWS_TITLE_ROOM :: max(32 * CHARACTER_WIDTH, program_page.NICKNAME_LIMIT * CHARACTER_WIDTH + WINDOWS_HASH_GAP + WINDOWS_HASH_WIDTH)
 // The place of a title in its line: after the square that marks the window
 // with the focus.
 WINDOWS_TITLE_X :: 24

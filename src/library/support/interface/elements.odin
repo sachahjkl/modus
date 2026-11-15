@@ -432,7 +432,7 @@ List_Row :: struct {
 	right_text:     string, // A dim text at the right of the row: what the entry is, in words.
 	name_in_cells:  bool, // The name is code: it is in the font of the cells.
 	name_color:     graphics.Color, // The color of the name on a row that is not chosen. 0: the text color.
-	detail:         string, // A quiet text right after the name, in the font of the cells: the parameters and the result of a command. It is cut to its room.
+	detail:         string, // A quiet text right after the name, in the font of the cells: the parameters and the result of a command, or the hash prefix of the file of a disk program. It is cut to its room.
 }
 
 // List_Rows_Options: what a list of rows shows beside its rows.

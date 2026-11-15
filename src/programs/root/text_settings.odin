@@ -100,7 +100,11 @@ text_settings_create :: proc "contextless" () {
 // included. The pages come from the boot image, whose one handle (of this
 // service) has no right Write.
 text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
-	if settings_page == nil || count^ + 1 + len(glyph_cache_mappings) > len(mappings) {
+	if settings_page == nil {
+		return
+	}
+	if count^ + 1 + len(glyph_cache_mappings) > len(mappings) {
+		mapping_dropped_log("the settings page and the glyph caches", len(mappings))
 		return
 	}
 	mappings[count^] = {memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}

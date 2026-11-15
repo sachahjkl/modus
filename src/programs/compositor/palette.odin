@@ -1,5 +1,6 @@
 package compositor
 
+import program_page "modus:contract/disk_program_page"
 import "modus:contract/errors"
 import "modus:contract/palette_table"
 import "modus:contract/ring"
@@ -63,6 +64,8 @@ Ranking_Window :: struct {
 	title:  system.Name,
 	number: u32,
 	focus:  bool,
+	from_disk:   bool, // A window of a disk program: hash_prefix holds the hash prefix of its file.
+	hash_prefix: [program_page.HASH_PREFIX_DIGITS]u8,
 }
 
 Ranking :: struct {
@@ -150,6 +153,7 @@ palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
 		// The request, copied under its lock: the list answers this one.
 		query: [palette.TYPED_CAPACITY]u8
 		titles: [CLIENT_CAPACITY]system.Name
+		prefixes: [CLIENT_CAPACITY][program_page.HASH_PREFIX_DIGITS]u8
 		windows: [CLIENT_CAPACITY]palette.Window
 		recents: [palette.RECENT_CAPACITY]palette.Recent
 		system.lock(&ranking.lock)
@@ -159,6 +163,10 @@ palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
 		for index in 0 ..< window_count {
 			titles[index] = ranking.windows[index].title
 			windows[index] = {title = system.name_of(titles[index][:]), number = ranking.windows[index].number, focus = ranking.windows[index].focus}
+			if ranking.windows[index].from_disk {
+				prefixes[index] = ranking.windows[index].hash_prefix
+				windows[index].hash_prefix = string(prefixes[index][:])
+			}
 		}
 		recent_count := copy(recents[:], ranking.recents[:clamp(ranking.recent_count, 0, len(ranking.recents))])
 		system.unlock(&ranking.lock)
@@ -215,7 +223,8 @@ palette_entries_refresh :: proc "contextless" () {
 	ranking.query_length = copy(ranking.query[:], palette.typed_text(&palette_panel))
 	ranking.window_count = 0
 	for position := order_count - 1; position >= 0; position -= 1 {
-		ranking.windows[ranking.window_count] = {title = clients[order[position]].title, number = u32(order[position]), focus = position == order_count - 1}
+		client := &clients[order[position]]
+		ranking.windows[ranking.window_count] = {title = client.title, number = u32(order[position]), focus = position == order_count - 1, from_disk = client.from_disk, hash_prefix = client.hash_prefix}
 		ranking.window_count += 1
 	}
 	ranking.recent_count = copy(ranking.recents[:], palette_panel.recents[:clamp(palette_panel.recent_count, 0, palette.RECENT_CAPACITY)])

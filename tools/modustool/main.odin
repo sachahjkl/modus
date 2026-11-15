@@ -63,6 +63,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_MODULES + "/cryptography",
 	SOURCE_FOLDER_SUPPORT + "/quic",
 	SOURCE_FOLDER_CONTRACT + "/date",
+	SOURCE_FOLDER_CONTRACT + "/disk_program_page",
 	SOURCE_FOLDER_CONTRACT + "/iommu",
 	SOURCE_FOLDER_SUPPORT + "/storage_mount",
 	SOURCE_FOLDER_SUPPORT + "/storage_object",

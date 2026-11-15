@@ -21,6 +21,7 @@
 // a list is never copied.
 package palette
 
+import program_page "modus:contract/disk_program_page"
 import "modus:contract/palette_table"
 import "modus:support/display"
 import "modus:support/interface"
@@ -103,6 +104,21 @@ Entry :: struct {
 	number:      u32, // For the owner of the source: the index of the thing in its own table. An entry of a provider: its index in the snapshot of the list; of a setting row, the index of its first value.
 	act:         u64, // An entry of a provider with an act name: display.act_name_hash of it. 0: none, and no window can offer go to.
 	name:        [NAME_CAPACITY]u8, // The name that the list shows and that the typed part matches.
+	// The window of a disk program and its close: the hash prefix of its
+	// file, which the root service gave, so that a nickname that looks like
+	// the name of another program is told apart. Zero bytes for another
+	// entry.
+	hash_prefix: [program_page.HASH_PREFIX_DIGITS]u8,
+}
+
+// entry_hash_prefix gives the hash prefix of an entry, or "" for an entry
+// that is no window of a disk program.
+entry_hash_prefix :: proc "contextless" (entry: ^Entry) -> string {
+	count := 0
+	for count < len(entry.hash_prefix) && entry.hash_prefix[count] != 0 {
+		count += 1
+	}
+	return string(entry.hash_prefix[:count])
 }
 
 // entry_is_setting_row says if an entry is a setting row: one row with a
@@ -132,6 +148,7 @@ Window :: struct {
 	title:  string, // The title of the window.
 	number: u32, // The index of the window in the table of its owner.
 	focus:  bool, // The window has the focus.
+	hash_prefix: string, // A window of a disk program: the hash prefix of its file, as the root service gave it. "" for another window.
 }
 
 // What a row of the list is.
@@ -270,7 +287,9 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 	list.entry_count = 0
 	list.provider = .Absent
 	for window in windows {
-		entry_add(list, recents, {kind = .Window, mark = window.focus ? Entry_Mark.Has_Focus : Entry_Mark.Window, number = window.number}, window.title, "")
+		added := Entry{kind = .Window, mark = window.focus ? Entry_Mark.Has_Focus : Entry_Mark.Window, number = window.number}
+		copy(added.hash_prefix[:], window.hash_prefix)
+		entry_add(list, recents, added, window.title, "")
 	}
 	for name, index in program_names {
 		count := 0
@@ -282,7 +301,9 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 		entry_add(list, recents, {kind = .Program, mark = count > 0 ? Entry_Mark.Has_Window : Entry_Mark.No_Window, windows = u8(min(count, 255)), number = u32(index)}, name, "")
 	}
 	for window in windows {
-		entry_add(list, recents, {kind = .Close_Window, mark = .Destroys, flags = {.Destroys}, number = window.number}, CLOSE_NAME_START, window.title)
+		added := Entry{kind = .Close_Window, mark = .Destroys, flags = {.Destroys}, number = window.number}
+		copy(added.hash_prefix[:], window.hash_prefix)
+		entry_add(list, recents, added, CLOSE_NAME_START, window.title)
 	}
 	if table == nil {
 		list.snapshot.entry_count = 0
