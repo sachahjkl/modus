@@ -731,12 +731,12 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `iommu` | The machine with the IOMMU of Intel with interrupt remapping (`intel-iommu,intremap=on`, `kernel-irqchip=split`), with the disk of the measures behind a root port of PCI Express: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, whose message interrupt arrives through its entry, whose messages to entries that it was not given are refused with a line, and whose device does not reach a page that it did not declare, then `net`, whose datagram region the network device reads through a device window (`ARCHITECTURE.md`, "K5. Device grant and interrupts") |
 | `iommu_amd` | The machine with the IOMMU of AMD with interrupt remapping (`amd-iommu,dma-remap=on,intremap=on`, `kernel-irqchip=split`), with the disk of the measures on bus 0 at the place 17: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, whose message interrupt arrives through the interrupt table of its device, and whose device does not reach a page that it did not declare, with the line of the DMA fault from the event log; QEMU records no event for a refused message, so no line of a refused interrupt is waited for; then `net` through a device window |
 | `shortage` | The machine of the shortage of frames |
-| `principals` | The two machines of the principals; `principals tpm`, opt-in, runs the six machines of the machine key sealed by the TPM, with a software TPM whose state they share and the firmware with no Secure Boot: five on the volumes of the test of the seal, one on the main volume, where the seal is refused (`PRINCIPALS.md`, "8. The tests") |
+| `principals` | The two machines of the principals, then the six machines of the machine key sealed by the TPM, with a software TPM whose state they share and the firmware with no Secure Boot: five on the volumes of the test of the seal, one on the main volume, where the seal is refused (`PRINCIPALS.md`, "8. The tests") |
 | `hierarchy` | The machines of the hierarchy of storage |
 | `ranges` | The machines of the ranges of storage |
 | `disk_programs` | The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant that a console of the session of the named principal alice gives survives the restart and her unlock ("The disk of the disk programs") |
 | `power` | The loss of power: of the storage, of the settings, of the ranges |
-| `trusted_boot` | The volumes of the trusted boot; `trusted_boot tpm` adds the two machines with a software TPM |
+| `trusted_boot` | The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot |
 
 A part builds only the boot volumes that its machines boot ("The incremental build", "The volumes of a command"). Each part boots the main boot volume, `build/boot_volume.img`, with these differences:
 
@@ -924,7 +924,7 @@ A damaged record is never an error. The tool decides for a module after its impo
 | `changed_kernel` | `boot.image` | One byte of the kernel changed after the description was made |
 | `other_system` | `boot.image` | One byte of a module changed before the description was made |
 | `secure_boot`, `secure_boot_changed` | `boot.image` | The boot program signed with the firmware signing key; the same with one byte changed |
-| `seal_test`, `seal_test_other_system` | `boot_seal_test.image`: the module `root_seal_test` under the name `root` | The root service seals the machine key by the TPM with no Secure Boot (`SEAL_WITHOUT_SECURE_BOOT_FOR_A_TEST`); the second one has one byte of a module changed before the description was made. Only `test principals tpm` boots them |
+| `seal_test`, `seal_test_other_system` | `boot_seal_test.image`: the module `root_seal_test` under the name `root` | The root service seals the machine key by the TPM with no Secure Boot (`SEAL_WITHOUT_SECURE_BOOT_FOR_A_TEST`); the second one has one byte of a module changed before the description was made. Only the machines of the TPM of `test principals` boot them |
 | `self_test_1` to `self_test_6` | `boot.image` | The flag `SELF_TEST` of the compiler of the boot program |
 
 Each volume has its own object folder, `build/boot/<name>/`, and its own build record, `build/boot/<name>.build_record`. The build key of a volume covers:
@@ -1039,7 +1039,7 @@ A step `Screen_Text` reads the text of a named element of a window from a pictur
 - **The place.** The tool reads the element line of the element, as a step `Click_Element` does, and the place of the window. It then takes a picture of a settled screen.
 - **The font.** The text must be drawn in Spleen 8x16, the bitmap font of the cells: the scenario sets the setting `font` to `spleen` before (`settings.set("font", "spleen")`). The vector font blends its glyphs, and a read of it would be a guess.
 - **The read.** Each cell of 8 by 16 pixels is compared, pixel by pixel, with each glyph of the font. A pixel that is not the color of the pixel just left of the first cell is ink. A cell that matches no glyph fails the step: the tool never guesses a character. `cells_text` is the read; a host test draws a text into a picture and reads it back.
-- **The use.** A later step of the same test part, in the same machine or in a later one, names the text with `{screen text}` in its text: the step `Type` of the recovery key in `test principals tpm`. A step that names it before a step `Screen_Text` fails.
+- **The use.** A later step of the same test part, in the same machine or in a later one, names the text with `{screen text}` in its text: the step `Type` of the recovery key in `test principals`. A step that names it before a step `Screen_Text` fails.
 
 ### When the tool takes a picture
 

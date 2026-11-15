@@ -299,13 +299,10 @@ scenario_secure_boot_refused := [?]Step {
 	{kind = .Quit},
 }
 
-// trusted_boot_tests_run runs the eight machines with no TPM, and with
-// with_tpm the two machines of the measure too. Those two are opt-in: on
-// some runs QEMU does not give the firmware the answer of one command of
-// the software TPM, and the firmware then waits for minutes and stops using
-// its TPM (docs/TRUSTED_BOOT.md, "The machines of the TPM"). A test that
-// fails for a fault of its machine proves nothing about the system.
-trusted_boot_tests_run :: proc(with_tpm := false) -> bool {
+// trusted_boot_tests_run runs the ten machines: the five refusals of the
+// boot program, the two machines of the measure, and the three machines of
+// Secure Boot.
+trusted_boot_tests_run :: proc() -> bool {
 	// The machines that reach the desktop write a store on the data disk of
 	// the tests. The machines after these expect a new disk.
 	defer disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true)
@@ -314,17 +311,13 @@ trusted_boot_tests_run :: proc(with_tpm := false) -> bool {
 	refused_machine_run(scenario_changed_kernel[:], BOOT_VOLUME_CHANGED_KERNEL, TEST_OUTPUT_CHANGED_KERNEL) or_return
 	refused_machine_run(scenario_without_description[:], BOOT_VOLUME_WITHOUT_DESCRIPTION, TEST_OUTPUT_WITHOUT_DESCRIPTION) or_return
 	refused_machine_run(scenario_stated_hash[:], BOOT_VOLUME_STATED_HASH, TEST_OUTPUT_STATED_HASH) or_return
-	if with_tpm {
-		measured := measure_machine_run(scenario_measured[:], BOOT_VOLUME, TEST_OUTPUT_MEASURED, .With_Tpm) or_return
-		other := measure_machine_run(scenario_other_system[:], BOOT_VOLUME_OTHER_SYSTEM, TEST_OUTPUT_OTHER_SYSTEM, .With_Tpm) or_return
-		if measured == other {
-			fmt.eprintln("modustool: test failed: a system with one byte of one module changed has the same measure")
-			return false
-		}
-		test_passed_print("%s", "a system with one byte of the module " + OTHER_SYSTEM_MODULE + " changed has another measure")
-	} else {
-		fmt.println("modustool: the two machines of the measure did not run: `modustool test trusted_boot tpm` runs them")
+	measured := measure_machine_run(scenario_measured[:], BOOT_VOLUME, TEST_OUTPUT_MEASURED, .With_Tpm) or_return
+	other := measure_machine_run(scenario_other_system[:], BOOT_VOLUME_OTHER_SYSTEM, TEST_OUTPUT_OTHER_SYSTEM, .With_Tpm) or_return
+	if measured == other {
+		fmt.eprintln("modustool: test failed: a system with one byte of one module changed has the same measure")
+		return false
 	}
+	test_passed_print("%s", "a system with one byte of the module " + OTHER_SYSTEM_MODULE + " changed has another measure")
 	// The tool ends QEMU: status 0.
 	machine_test(scenario_secure_boot[:], BOOT_VOLUME_SECURE_BOOT, TEST_OUTPUT_SECURE_BOOT, 0, firmware = .With_Secure_Boot) or_return
 	test_passed_print("the firmware with Secure Boot started the signed boot program of %s, which says so", BOOT_VOLUME_SECURE_BOOT)
