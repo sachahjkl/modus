@@ -32,7 +32,7 @@ How the build asks for this and how the check proves it is in [`docs/REPRODUCIBL
 - **A newer LLVM alone.** Measured: 87 of 88 modules are the same bytes. A newer LLVM removes one variance and has one of its own.
 - **The direction of the scheduler set inside the compiler.** The interface of LLVM 18 that the compiler uses has no option of the target machine for the scheduler. The other way is the command line options of the LLVM library, which are not stable: the name of this option changes in LLVM 20. It is also a choice of code generation that changes the build with no debug information, so it is not a part of the rule of the option.
 - **The mode only above the lowest optimization modes.** The rule would have an exception. The price of no exception is in the subtle points.
-- **A patch file in the flake.** The changes are commits of a fork that the flake pins by one commit. A reader sees their history and their reasons there.
+- **A patch file in the flake.** The changes are commits of a fork that the flake pins by one commit. A reader sees their history and their reasons there. The LLVM of the build has one upstream commit, fetched by its hash: see [llvm_of_the_build.md](llvm_of_the_build.md).
 
 ## The subtle points
 
