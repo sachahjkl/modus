@@ -1,0 +1,3 @@
+type: Changed
+
+**The terminal and the compositor import the drawing module.** A Text_Grid record now names its cells by values: `draw_text_grid` copies the cells into the text table of the frame, and the record holds their first byte, their bytes and the columns, in draw record version 9; the exports are `damage_of_draw_table_9` and `execute_draw_table_9`, with the same six parameters. The compositor draws its screen table in parts, one call for each window that a damage rectangle meets and one for the bar, each with the one picture memory of its surface. 34 programs draw through the module; the interface package has `difference_through_module` and `draw_part_through_module` for a program with no window layer.

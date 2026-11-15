@@ -11,7 +11,6 @@ import "core:strings"
 
 SITE_PROPERTIES_FILE :: "docs/PROPERTIES.md"
 SITE_README_FILE :: "README.md"
-SITE_REVIEWS_FILE :: "docs/REVIEWS.md"
 SITE_DESIGN_FILE :: "docs/DESIGN.md"
 
 // One part of a section of a property that has its own heading of level 3,
@@ -434,37 +433,6 @@ site_readme_parse :: proc(content: string) -> (readme: Site_Readme, problem: str
 		return {}, file + ": no section \"## Licences\" with a paragraph"
 	}
 	return readme, ""
-}
-
-// site_reviews_step_count reads the table of the steps at the start of
-// docs/REVIEWS.md, before its first "## " heading. The form it relies on:
-// one row "| <step> | <commit> | <capability> |" for each step, numbered
-// from 1 with no gap. It gives the number of the last step.
-site_reviews_step_count :: proc(content: string) -> (count: int, problem: string) {
-	for line in site_lines(content) {
-		if strings.has_prefix(line, "## ") {
-			break
-		}
-		if !strings.has_prefix(line, "| ") {
-			continue
-		}
-		cells := site_table_cells(line)
-		if len(cells) == 0 {
-			continue
-		}
-		number := site_digits_value(cells[0])
-		if number < 0 {
-			continue // The header, or the line of dashes.
-		}
-		if number != count + 1 {
-			return 0, fmt.tprintf("%s: the row of the step %d is expected, the step %d comes", SITE_REVIEWS_FILE, count + 1, number)
-		}
-		count = number
-	}
-	if count == 0 {
-		return 0, SITE_REVIEWS_FILE + ": no row \"| 1 | <commit> | <capability> |\" before the first \"## \" heading"
-	}
-	return count, ""
 }
 
 // site_mark_captions reads the table of the files of the mark in

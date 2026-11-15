@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A program runs inside a budget: pages of memory, programs, threads, processor time and log records. The starter of the program pays that budget from its own. This file records who states the amounts, and who decides them (`docs/DECISIONS.md`, D-254).
+A program runs inside a budget: pages of memory, programs, threads, processor time and log records. The starter of the program pays that budget from its own. This file records who states the amounts, and who decides them.
 
 The guide of the budgets is [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "K1. Handle table". The guide of the table is [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "The budget that a module asks for".
 
@@ -65,7 +65,7 @@ The root service keeps a table of budget exceptions (`budget_exceptions` in `src
 
 A part above the largest budget of a disk program starts the program with that part, and the log says so. The name of a disk program never selects a row: a name gives nothing.
 
-**The policy of the principal.** A disk program gets its store of its nickname, and the size of that store is a line of the budget that the module asks for; the principal sets the policy that accepts, limits or widens it (`docs/DECISIONS.md`, D-260). This form is the place of that policy: the request gains the part of the store at the end of its record, as the format allows; the one budget of the disk programs and their largest budget are the two amounts that the policy of the principal sets, in place of the constants of today; and the rule `system.budget_decide` stays the one rule. The principal then decides the share of the machine that the files of a principal take, and a file never decides it.
+**The policy of the principal.** A disk program gets its store of its nickname, and the size of that store is a line of the budget that the module asks for; the principal sets the policy that accepts, limits or widens it ([programs_from_a_disk.md](programs_from_a_disk.md)). This form is the place of that policy: the request gains the part of the store at the end of its record, as the format allows; the one budget of the disk programs and their largest budget are the two amounts that the policy of the principal sets, in place of the constants of today; and the rule `system.budget_decide` stays the one rule. The principal then decides the share of the machine that the files of a principal take, and a file never decides it.
 
 **A refusal names the amount.** When a start fails for the budget, the line of the log gives what the program was to get and what the budget that pays holds (the budget of the root service, or the one budget of the disk programs), and names the first part that is short. When the budget of the starter holds the request, the request itself was too small for the load, and the line says that.
 
@@ -100,4 +100,4 @@ A part above the largest budget of a disk program starts the program with that p
 
 Built: the table `Budget` and its reader; the stated budget of the source, read by the describe step; the three counted parts, added by the conversion, compared again by `modustool test descriptions` and shown with their parts there and on the site; one line of the measure of the build with the request of each module; the rule of the starter, the two exceptions, the least and the largest budget; the one budget of the disk programs and the largest budget of a disk program; the line of a limit and the line of a refusal. The working memory of each program is its old amount minus the counted parts of the build of that day, so no total changed.
 
-Left: the part of the store in the request, and the policy of the principal over the budget of the disk programs (`docs/DECISIONS.md`, D-260). The page tables of the address space are not counted. The starters other than the root service (`scheduler`, `rings`, the console for its sandboxes) still give their children fixed amounts.
+Left: the part of the store in the request, and the policy of the principal over the budget of the disk programs. The page tables of the address space are not counted. The starters other than the root service (`scheduler`, `rings`, the console for its sandboxes) still give their children fixed amounts.

@@ -53,7 +53,6 @@ Site_Search_Kind :: enum u8 {
 	Property,
 	News,
 	Release,
-	Gap,
 	License_Row,
 	Type,
 	Roadmap_Entry,
@@ -90,7 +89,6 @@ site_search_kinds := [Site_Search_Kind]Site_Search_Kind_Description {
 	.Property        = {name = "property", value_kind = .Status, folder = SITE_STATUS_FOLDER},
 	.News            = {name = "news entry", value_kind = .Time, folder = SITE_NEWS_FOLDER},
 	.Release         = {name = "release", value_kind = .Version, folder = SITE_RELEASES_FOLDER},
-	.Gap             = {name = "gap", value_kind = .No, folder = SITE_STATUS_FOLDER},
 	.License_Row     = {name = "license row", value_kind = .Grant, folder = SITE_LICENSES_FOLDER},
 	.Type            = {name = "type", value_kind = .Type, folder = SITE_TYPES_FOLDER},
 	.Roadmap_Entry   = {name = "roadmap entry", value_kind = .Status, folder = SITE_ROADMAP_FOLDER},
@@ -397,9 +395,6 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 		number := release_number_text(changelog_release.number)
 		first := len(changelog_release.entries) > 0 ? entry_joined(changelog_release.entries[0].lines) : ""
 		site_search_add(&entries, number, site_section_page(.Releases), site_release_id(number), .Release, fmt.tprintf("%s: %s", changelog_release.date, first))
-	}
-	for gap in site.gaps {
-		site_search_add(&entries, gap.text, status_page, fmt.tprintf("gap-%d", gap.number), .Gap, gap.group != "" ? gap.group : gap.text)
 	}
 	system_ids, build_ids := site_license_row_ids(site.licenses)
 	license_page := site_page_file(SITE_LICENSES_FOLDER)
