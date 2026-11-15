@@ -1257,7 +1257,10 @@ scenario := [?]Step {
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = ":strat"},
-	{kind = .Wait, text = " for \":strat\": strategy (setting)"},
+	// The row of the setting is drawn at the first list that holds it, which
+	// can be the list of a shorter text: the line of the list does not move
+	// the place of the log.
+	{kind = .Wait, text = " for \":strat\": strategy (setting)", any_order = true},
 	{kind = .Wait, text = "compositor: the palette shows the setting strategy as one row of 3 values"},
 	{kind = .Shot, text = "palette_strategy"},
 	{kind = .Key, text = "left"},
