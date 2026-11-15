@@ -2826,7 +2826,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] > \"été\""},
 	{kind = .Wait, text = "[console] été"},
 	// The dead key right of P: ^ then e gives ê; ^ then z gives ^ and z.
-	{kind = .Keys, text = "3[e[z3"},
+	// The text names the keys of a QWERTY keyboard: the key of w is the z
+	// of the layout of France.
+	{kind = .Keys, text = "3[e[w3"},
 	{kind = .Key, text = "esc"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] ê^z"},

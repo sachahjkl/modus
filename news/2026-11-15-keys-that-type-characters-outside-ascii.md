@@ -1,7 +1,7 @@
 title: The keyboard of France types é
 date: 2026-11-15
 release: next
-picture: none
+picture: docs/screenshots/keys_french.png
 kind: Shown
 guide: docs/FONTS.md
 
