@@ -52,7 +52,8 @@ RANGE_SPAN :: SLOT
 // member, is not a fixed range, and the check of the tool refuses it.
 //
 // A starter maps a range in its child before the child runs. For the
-// settings page, the glyph caches, the date page and the debug image, it
+// settings page, the glyph caches, the date page, the debug image and the
+// disk program page, it
 // also sets the bit of the range in the value 20 of the context of the
 // child (`range_mapped_add`). The child reads nothing at a range whose bit
 // is clear (`ranges_mapped`): an address that is not mapped faults at the
@@ -111,6 +112,11 @@ Fixed_Range :: enum u8 {
 	// The root service maps it in a program that prints stop reports, as
 	// the console, and gives its size at the value 21 of the context. The
 	// report then names the procedure and the line of each frame.
+	Disk_Program_Page, // The disk program page (modus:contract/disk_program_page).
+	// One page, read-only, that the root service writes: the nickname and
+	// the hash of each disk program that runs, by its program slot. The
+	// root service maps it in each program that it starts with the right
+	// Inspect of the machine, as the monitor.
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
 
@@ -149,6 +155,7 @@ MODULE_TABLES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Tables)
 INTERFACE_GLYPH_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_Glyph_Cache)
 INTERFACE_GLYPH_CACHE_BOLD_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_Glyph_Cache_Bold)
 DEBUG_IMAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Debug_Image)
+DISK_PROGRAM_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Disk_Program_Page)
 
 // The addresses of one range.
 Address_Range :: struct {

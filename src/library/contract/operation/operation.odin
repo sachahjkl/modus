@@ -441,9 +441,13 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
-	Program_State  = 9, // (program, report: Stop_Report) -> state: Program_State, code, entries.
-	// Gives the state of a program, its stop code and its count of kernel entries. With an address, the
-	// kernel also writes there where the program stopped on a fault.
+	Program_State  = 9, // (program, report: Stop_Report) -> state: Program_State, code, entries, slot, serial.
+	// Gives the state of a program, its stop code, its count of kernel entries, and its place in the reports of
+	// `Inspect`. With an address, the kernel also writes there where the program stopped on a fault.
+	//
+	// The root service states facts of a program that it started by that place: the disk program page names
+	// each disk program by its slot and its serial, which the reports of `Inspect` give too
+	// (`modus:contract/disk_program_page`).
 	//
 	// **Arguments**
 	//
@@ -457,7 +461,10 @@ Operation :: enum u32 {
 	// 1. the `Program_State` of the program: `Created`, `Ready` (one of its threads is ready), `Waiting` or
 	//    `Stopped`;
 	// 2. its stop code: 0 while it runs;
-	// 3. its kernel entries since its start.
+	// 3. its kernel entries since its start;
+	// 4. its program slot: the index that `Inspect` with the kind `Program` takes for it;
+	// 5. its program serial, as `Program_Report.program_serial` gives it: the slot and the serial name this
+	//    program and no later one. The kernel keeps both until the last handle of the program closes.
 	//
 	// **Statuses**
 	//

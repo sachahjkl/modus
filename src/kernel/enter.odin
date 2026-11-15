@@ -405,6 +405,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		results[0] = u64(program_state(slot.object))
 		results[1] = u64(programs[slot.object].code)
 		results[2] = programs[slot.object].entries
+		// The place of the program in the reports of Inspect: a starter that
+		// states facts of its child by its slot needs no search of the
+		// reports, which another program with the same name can confuse.
+		results[3] = u64(slot.object)
+		results[4] = u64(intrinsics.atomic_load(&programs[slot.object].serial))
 		if v[1] != 0 {
 			if !user_range(program, v[1], size_of(op.Stop_Report), true) {
 				return .Bad_Address

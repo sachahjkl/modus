@@ -229,6 +229,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 - A menu of the bar is a card under its button: a border of 1 pixel in the color of the kernel, a title in capital letters, the caption of its source and the count of its lines.
 - The menu of the programs has two columns of lines. Its caption is `bar.names`, the table of the names in `src/library/support/bar`.
 - The menu of the windows has one line for each window, in the order of the client table. The window that has the focus has a square of 8 pixels before its title, and its title is white.
+- The line of a disk program has its nickname in the interface font, then, 8 pixels after it, the hash prefix of its file in the font of the cells and in `COLOR_DIM`: a value, faded, beside the name. The menu is as wide as the longest nickname with its hash prefix in the font of the cells, so a nickname needs no cut in that font.
 - A line is 24 pixels high. The line under the pointer is a chosen row: `COLOR_CHOSEN`, with its text in white (section 10).
 
 ### Windows

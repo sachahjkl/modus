@@ -19,10 +19,22 @@ date_page_create :: proc "contextless" () {
 	}
 }
 
+// mapping_dropped_log writes the one line of a mapping that a start drops:
+// the list of the mappings of the start is full. The program starts
+// without it, and reads nothing at its fixed range, as its bit is clear; a
+// list that a new mapping fills says so at once, not by a missing picture.
+mapping_dropped_log :: proc "contextless" (what: string, capacity: int) {
+	system.log_in("programs", .Warning, "root: no room for ", what, " in the mappings of a start, which holds ", u64(capacity), ": the program starts without it")
+}
+
 // date_page_give adds the date page, read-only, to the mappings of a
 // program, and sets its bit in the values.
 date_page_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
-	if date_memory == 0 || count^ >= len(mappings) {
+	if date_memory == 0 {
+		return
+	}
+	if count^ >= len(mappings) {
+		mapping_dropped_log("the date page", len(mappings))
 		return
 	}
 	mappings[count^] = {memory = date_memory, address = date.PAGE_ADDRESS, first = 0, page_count = 1, flags = {}}

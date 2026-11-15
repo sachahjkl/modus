@@ -8,7 +8,11 @@
 // of the kernel and not from a program that counts for itself: the memory
 // in use and reserved, the kernel entries, the interrupts, the waits of the
 // locks of the kernel, and one row for each program with its pages and its
-// share of the processor in the last half second.
+// share of the processor in the last half second. A disk program shows its
+// nickname, with the hash prefix of its file faded under it, from the
+// [disk program page](term:disk-program-page) of the root service; the log
+// has one line for each one: "monitor: the disk program visitor, hash
+// prefix 5f0c…, the file 5f0c…, from the root service".
 //
 // **Start**: the bar of the desktop, or `start("monitor")` in the console.
 // The log has "monitor: ok" after the first picture. From the console,
@@ -23,11 +27,15 @@
 // - **Serve**: its exports, for the console and for the host through the
 //   remote service.
 //
+// With the right Inspect the root service also maps the disk program page,
+// read-only: no handle and no right to act.
+//
 // **What it does not prove**: the share of a program is its processor time
 // over the elapsed time of one processor, so a program with several
 // threads on several processors shows 100% at most.
 package monitor
 
+import program_page "modus:contract/disk_program_page"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -39,18 +47,46 @@ records_now, records_before: [512]interface.Draw_Record
 text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 
-WIDTH :: 440
-HEIGHT :: 350
+WIDTH :: 520
+// The rows of about 20 programs, and one last line that counts the programs
+// whose rows do not fit.
+HEIGHT :: 560
 INTERVAL :: 500
 LINE :: 20
-BAR_X :: 190
-PAGES_X :: 122
+// The column of the name holds a nickname of a disk program on one line; a
+// longer name of a program goes on more lines inside it.
+NAME_ROOM :: program_page.NICKNAME_LIMIT * graphics.CELL_WIDTH
+PAGES_X :: 10 + NAME_ROOM + 8
+BAR_X :: PAGES_X + 68
 BAR_WIDTH :: 190
 COLOR_BAR :: 0x48B0E0
+// The share at the right of its bar: "100%" in the font of the cells.
+#assert(BAR_X + BAR_WIDTH + 8 + 4 * graphics.CELL_WIDTH <= WIDTH)
 
 PROGRAM_SLOTS :: 64
 
 previous_run_time: [PROGRAM_SLOTS]u64
+// The program serial, plus one, of the disk program of each slot whose line
+// the log has: one line for each disk program, not one at each picture.
+logged_disk_program: [PROGRAM_SLOTS]u64
+disk_programs: ^program_page.Page
+
+// disk_program_log writes one line for each disk program that the monitor
+// shows: its nickname, its hash prefix and the whole hash of its file, as
+// the root service wrote them in the disk program page. A program that
+// stops and starts again in the same slot has another program serial, and
+// another line.
+disk_program_log :: proc "contextless" (slot: u64, program_serial: u64, nickname: string, row: program_page.Row) {
+	// The serial plus one: a slot with no line holds 0, also for a serial 0.
+	if slot >= PROGRAM_SLOTS || logged_disk_program[slot] == program_serial + 1 {
+		return
+	}
+	logged_disk_program[slot] = program_serial + 1
+	prefix: [program_page.HASH_PREFIX_DIGITS]u8
+	program_page.hash_prefix_write(&prefix, row.hash[0])
+	hash := transmute([program_page.HASH_SIZE]u8)row.hash
+	system.log("monitor: the disk program ", nickname, ", hash prefix ", string(prefix[:]), ", the file ", system.Hash{hash[:]}, ", from the root service")
+}
 
 // The entry of the monitor: it opens its window and its service, then draws
 // a picture of the machine every 500 ms and runs the calls between two
@@ -73,6 +109,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
+	disk_programs = program_page.page_of(ctx)
 	service, _ = system.service_open(ctx)
 	previous_time: u64
 	logged := false
@@ -136,10 +173,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_text(table, x, y, op.LOCK_KIND_NAMES[most_kind], graphics.COLOR_TEXT)
 			}
 			y += LINE + 6
-			interface.draw_text(table, 10, y, "program       pages", graphics.COLOR_DIM)
+			interface.draw_text(table, 10, y, "program", graphics.COLOR_DIM)
+			interface.draw_text(table, PAGES_X, y, "pages", graphics.COLOR_DIM)
 			interface.draw_text(table, BAR_X, y, "processor", graphics.COLOR_DIM)
 			y += LINE
 
+			text_line := interface.line_height({})
+			hidden: u64 // The programs whose rows do not fit in the window.
 			for slot in 1 ..< min(report.program_slots, PROGRAM_SLOTS) {
 				program: op.Program_Report
 				system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&program)), size_of(program))
@@ -149,13 +189,43 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 				share := min((program.run_time - min(previous_run_time[slot], program.run_time)) * 100 / elapsed, 100)
 				previous_run_time[slot] = program.run_time
-				interface.draw_text(table, 10, y, system.name_of(program.name[:]), graphics.COLOR_TEXT)
+				// A disk program: the nickname and the hash that the root
+				// service checked, from its page, by the slot and the serial
+				// that the kernel reports. Another program that took the
+				// name of a disk program has no row.
+				name := system.name_of(program.name[:])
+				row, from_disk := program_page.row_find(disk_programs, slot, program.program_serial)
+				nickname: program_page.Nickname
+				if from_disk {
+					nickname = program_page.nickname_of(row.nickname)
+					name = program_page.nickname_text(&nickname)
+				}
+				// One line of the grid of the rows for a row with one line of
+				// text; each more line of text adds its height. A row that
+				// does not fit above the last line is counted, not cut.
+				lines := max(interface.text_wrapped_line_count(table, {}, name, NAME_ROOM), 1) + (from_disk ? 1 : 0)
+				row_height := LINE + (lines - 1) * text_line
+				if y + row_height > HEIGHT - LINE {
+					hidden += 1
+					continue
+				}
+				name_lines := interface.draw_text_wrapped(table, 10, y, NAME_ROOM, name, graphics.COLOR_TEXT)
+				if from_disk {
+					prefix: [program_page.HASH_PREFIX_DIGITS]u8
+					program_page.hash_prefix_write(&prefix, row.hash[0])
+					interface.draw_text(table, 10, y + name_lines * text_line, string(prefix[:]), graphics.COLOR_DIM)
+					disk_program_log(slot, program.program_serial, name, row)
+				}
 				interface.draw_unsigned(table, PAGES_X, y, program.present_pages, graphics.COLOR_TEXT)
 				interface.draw_rectangle(table, BAR_X, y + 2, BAR_WIDTH, 10, graphics.COLOR_TRACK)
 				interface.draw_rectangle(table, BAR_X, y + 2, int(share) * BAR_WIDTH / 100, 10, COLOR_BAR)
 				x = interface.draw_unsigned(table, BAR_X + BAR_WIDTH + 8, y, share, graphics.COLOR_TEXT)
 				interface.draw_text(table, x, y, "%", graphics.COLOR_TEXT)
-				y += LINE
+				y += row_height
+			}
+			if hidden > 0 {
+				x = interface.draw_unsigned(table, 10, y, hidden, graphics.COLOR_TEXT)
+				interface.draw_text(table, x, y, " more programs: monitor.programs() gives them", graphics.COLOR_DIM)
 			}
 		}
 		interface.window_frame_end(&drawing, &frame, &window)
