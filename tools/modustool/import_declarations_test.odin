@@ -421,29 +421,31 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 
 // The rules of a program that draws its window through the drawing module
 // (src/library/support/interface, window_drawing.odin):
-//   - it imports the module, which is a library module of the table;
-//   - it draws no grid of text cells: a draw table names one by an
-//     address, and the module cannot read it. A picture is named by
-//     values in its one picture memory, so it can draw pictures;
+//   - it imports the module, which is a library module of the table, and
+//     the module is before it in the table;
 //   - it starts no child of its own file with no load source: the loader
 //     of the child would not find the import.
+// A picture and a grid of text cells are named by values, so such a
+// program can draw both.
 @(test)
 programs_that_draw_through_the_module_follow_its_rules :: proc(t: ^testing.T) {
 	library_found := false
-	for build in module_builds {
+	library_place := -1
+	for build, index in module_builds {
 		if build.name == DRAWING_MODULE {
 			library_found = build.library
+			library_place = index
 		}
 	}
 	testing.expect(t, library_found, "the drawing module is a library module of the table")
-	refused_calls := [?]string{"draw_text_grid(", ".grids ="}
 	programs := 0
-	for build in module_builds {
+	for build, index in module_builds {
 		if !slice.contains(build.defines, DRAWING_THROUGH_MODULE) {
 			continue
 		}
 		programs += 1
 		testing.expectf(t, slice.contains(build.imports, DRAWING_MODULE), "%s has the setting and does not import the drawing module", build.name)
+		testing.expectf(t, library_place >= 0 && library_place < index, "%s draws through the module, and the module is not before it in the table", build.name)
 		paths, listed := files_with_suffix(build.source, ".odin")
 		if !testing.expectf(t, listed, "the folder %s was not listed", build.source) {
 			return
@@ -453,9 +455,6 @@ programs_that_draw_through_the_module_follow_its_rules :: proc(t: ^testing.T) {
 			source, read := read_file(path)
 			if !testing.expectf(t, read, "%s was not read", path) {
 				return
-			}
-			for call in refused_calls {
-				testing.expectf(t, !strings.contains(string(source), call), "%s draws through the module, and %s has %s: the module draws no grid", build.name, path, call)
 			}
 			rest := string(source)
 			for line in strings.split_lines_iterator(&rest) {

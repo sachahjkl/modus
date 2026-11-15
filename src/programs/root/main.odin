@@ -762,8 +762,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		text_settings_give(mappings[:], &mapping_count, &values)
 		date_page_give(mappings[:], &mapping_count, &values)
-		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared)
+		// The compositor imports the drawing module: its load needs the
+		// boot image as the source of its imports.
+		compositor_load_error: module.Load_Error
+		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared, load_source(), &compositor_load_error)
 		if status != .Ok {
+			if compositor_load_error.stage != .None {
+				buffer: [512]u8
+				writer := system.Writer{buffer = buffer[:]}
+				system.load_error_text(&writer, &compositor_load_error)
+				system.log_in("programs", .Error, "root: cannot load the compositor: ", system.written(&writer))
+			}
 			fail("cannot start the compositor", status)
 		}
 		// Its place in the table of the programs that this service started: a
@@ -1899,8 +1908,17 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	mappings: [8]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
-	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared)
+	// The terminal imports the drawing module: its load needs the boot
+	// image as the source of its imports.
+	load_error: module.Load_Error
+	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
+		if load_error.stage != .None {
+			buffer: [512]u8
+			writer := system.Writer{buffer = buffer[:]}
+			system.load_error_text(&writer, &load_error)
+			system.log_in("programs", .Warning, "root: cannot load the terminal: ", system.written(&writer))
+		}
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return status
 	}

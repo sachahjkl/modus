@@ -4263,11 +4263,11 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each program that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_8` one time for a frame: it gives the damage rectangles from the draw table before and the draw table now. Then it calls `execute_draw_table_8` one time for each damage rectangle: it draws the records in that rectangle into the pixels of the surface. Each argument is memory of the program, passed by address: the two draw tables, the picture memory of the pictures, and the pixels, which the module writes in place. The 8 in the names is the version of the draw record.
+It is the first library module. A window calls `damage_of_draw_table_9` one time for a frame: it gives the damage rectangles from the draw table before and the draw table now. Then it calls `execute_draw_table_9` one time for each damage rectangle: it draws the records in that rectangle into the pixels of the surface. Each argument is memory of the program, passed by address: the two draw tables, the picture memory of the pictures, and the pixels, which the module writes in place. The 9 in the names is the version of the draw record.
 
-The module holds the fills, the gradients, the lines, the pictures, the text of the cells and the text of the interface font, with their blends. It keeps the text settings of the program in its own data: the choice of the font, and the glyph caches of the program, validated at the first draw. It reads the choice of the settings page again at each draw.
+The module holds the fills, the gradients, the lines, the pictures, the text grids, the text of the cells and the text of the interface font, with their blends. It keeps the text settings of the program in its own data: the choice of the font, and the glyph caches of the program, validated at the first draw. It reads the choice of the settings page again at each draw.
 
-The drawing module draws no Text_Grid record: a draw table names a grid by an address, which the description of an export cannot carry. It reads one picture memory for each call. The terminal, with its grid, and the compositor, with a picture memory for each surface, keep the interface package compiled in.
+The drawing module reads the cells of a text grid in the text table, and one picture memory for each call. The terminal draws its grid through it. The compositor, with a picture memory for each surface, draws its screen table in parts: one call for each window and one for the bar.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each program, the drawing in a module".
 
@@ -4277,23 +4277,23 @@ Do not use: renderer module, graphics library, render service.
 
 A draw record is one thing to draw, in 40 bytes: a rectangle, a gradient, a run of text, a clip, a picture, a text grid or a line, with its place and its colors.
 
-Records of one fixed size make the output of a frame plain data: a table that can be compared, measured, drawn again in a part, or tested. A record holds its kind, the rectangle in pixels of the surface, two colors, a range of bytes in the text table (or the place of a picture in its picture memory, or the index of a grid), and the low 32 bits of the element identity that wrote it. A `Clip` sets the rectangle that the next records are cut to, with no stack. The format has a version, `DRAW_RECORD_VERSION` (8 today); a new kind or field is a new version. The execution checks each record of a hostile caller: a range outside the text table, a picture past its picture memory, or a value past its limit, draws nothing.
+Records of one fixed size make the output of a frame plain data: a table that can be compared, measured, drawn again in a part, or tested. A record holds its kind, the rectangle in pixels of the surface, two colors, a range of bytes in the text table (the bytes of a text or the cells of a grid, or else the place of a picture in its picture memory), and the low 32 bits of the element identity that wrote it. A `Clip` sets the rectangle that the next records are cut to, with no stack. The format has a version, `DRAW_RECORD_VERSION` (9 today); a new kind or field is a new version. The execution checks each record of a hostile caller: a range outside the text table, a picture past its picture memory, or a value past its limit, draws nothing.
 
 A draw record is not a command to a graphics processor: the interface package executes it on the processor, in the memory of the program.
 
-The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 8)".
+The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 9)".
 
 Do not use: draw command, display list item, primitive.
 
 ### Draw table
 
-A draw table is the draw records of one frame of a window, the bytes of their texts, and the picture memories and text grids that they name, in the memory of the program.
+A draw table is the draw records of one frame of a window, the bytes of their texts and the cells of their text grids, and the picture memories that they name, in the memory of the program.
 
-The draw table is what a frame produces. The program owns it (`Draw_Table` of `src/library/support/interface`) and keeps the table of the frame before, one for each picture of its surface, so that the next frame can find the damage by difference. A table that is full stops taking records and sets `full`; a picture outside each picture memory of the table, or a grid that the table does not have, sets `refused`. Example: `interface_elements` draws a window of 68 records.
+The draw table is what a frame produces. The program owns it (`Draw_Table` of `src/library/support/interface`) and keeps the table of the frame before, so that the next frame can find the damage by difference. A table that is full stops taking records and sets `full`; a picture outside each picture memory of the table, or a grid whose cells are fewer than its rows, sets `refused`. Example: `interface_elements` draws a window of 68 records.
 
 A draw table is not a tree: its order is the order of the drawing, and two tables compare record by record at the same index.
 
-The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 8)".
+The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 9)".
 
 Do not use: display list, command buffer, render tree.
 
@@ -4301,11 +4301,11 @@ Do not use: display list, command buffer, render tree.
 
 A text grid is a grid of text cells of a program (a character, reverse, a color, or a fill), drawn by one draw record.
 
-A terminal changes many cells many times in one second. One record for each cell makes a large table; one text grid record names the whole grid, up to 104 by 32 cells for the terminal. Its 40 bytes do not change when its cells change, so the difference compares the cells: in each row, the span from the first changed cell to the last one is damaged. Each draw table keeps its own copy of the cells that its picture shows. The execution draws the cells of one color that follow each other as one text. The console draws no pixels: its records go into the terminal, so the text grid of the terminal is also the drawing of the console.
+A terminal changes many cells many times in one second. One record for each cell makes a large table; one text grid record names the whole grid, up to 104 by 32 cells for the terminal. Its 40 bytes do not change when its cells change, so the difference compares the cells: in each row, the span from the first changed cell to the last one is damaged. `draw_text_grid` copies the cells into the text table of the frame, so the record holds values only, the drawing module draws it, and the table before keeps the cells in its copy of the text. The execution draws the cells of one color that follow each other as one text. The console draws no pixels: its records go into the terminal, so the text grid of the terminal is also the drawing of the console.
 
 A text grid is not a screen buffer of a text mode: it is memory of the program, drawn into its surface.
 
-The design: `docs/INTERFACE.md`, "2.4 Text grid".
+The design: `docs/INTERFACE.md`, "2.4 Text grid", and `src/md/api/text_grid.md`.
 
 Do not use: character matrix, screen buffer.
 
@@ -4317,7 +4317,7 @@ A program that computes its own pixels, such as `life`, `paint`, `plasma` or `te
 
 A picture record is not a picture of a surface: it shows a canvas that the program holds, inside its surface. It holds no address: the same record means the same pixels in the drawing module.
 
-The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 8)", and `src/md/api/picture.md`.
+The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 9)", and `src/md/api/picture.md`.
 
 Do not use: image node, bitmap item.
 
@@ -4325,7 +4325,7 @@ Do not use: image node, bitmap item.
 
 A picture memory is one run of pixels of a program in which picture records name their pictures by the index of a first pixel and a stride.
 
-A description carries values only, so a picture record cannot name a canvas by its address. The draw table holds a list of picture memories (`Draw_Table.picture_memories`), and a picture record names one by its number. `draw_picture(table, x, y, canvas, generation)` finds the memory that holds each pixel of the canvas and writes the values. A program that draws through the drawing module has one picture memory, which the export reads as bytes, in place: `heron` gives its stage, whose tiles are views of it. The compositor has one for each surface, and keeps the interface package compiled in.
+A description carries values only, so a picture record cannot name a canvas by its address. The draw table holds a list of picture memories (`Draw_Table.picture_memories`), and a picture record names one by its number. `draw_picture(table, x, y, canvas, generation)` finds the memory that holds each pixel of the canvas and writes the values. A program that draws through the drawing module has one picture memory, which the export reads as bytes, in place: `heron` gives its stage, whose tiles are views of it. The compositor has one for each surface: each window is a part of its screen table, drawn with one call that reads the memory of that surface.
 
 A picture memory is not a surface and not a picture of a surface: it is memory of the program that its records show.
 

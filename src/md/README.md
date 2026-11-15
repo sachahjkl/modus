@@ -79,7 +79,8 @@ The intent of the parts that were built before this folder is in the design sect
 ## File Index
 
 - [api/library_modules.md](api/library_modules.md): which shared library becomes a module that programs import, where the border goes, and why there is no second kind of import
-- [api/picture.md](api/picture.md): how a Picture record names its pixels with values in a picture memory that the caller passes, why the draw export takes one rectangle for each call, and the forms that were refused: a table of places, lent memory objects, one span of addresses
+- [api/picture.md](api/picture.md): how a Picture record names its pixels with values in a picture memory that the caller passes, why the draw export takes one rectangle for each call, the compositor that draws one part of its screen for each call, and the forms that were refused: a table of places, lent memory objects, one span of addresses
+- [api/text_grid.md](api/text_grid.md): how the cells of a text grid cross the border of the drawing module in the text table of the frame, the count of the calls of a full terminal, and the forms that were refused: the compare compiled in, a second damage export, an export for one run of cells
 - [features/debugger_window.md](features/debugger_window.md): why the window of the debugger is a client of the service with no right over a program, how it reads the rows of the exports, the debug place that it types, its memory view, and a click on a row that does what a key does
 - [features/foreign_systems.md](features/foreign_systems.md): why a foreign system runs whole inside a guest, and the forms of a Linux and an NT layer that were refused
 - [features/gpu_access.md](features/gpu_access.md): the access to a GPU through a driver domain and one serialization of commands, and the forms that were refused
