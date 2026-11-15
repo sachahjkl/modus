@@ -311,14 +311,14 @@ damaged_build_record_is_no_record :: proc(t: ^testing.T) {
 // The list of the compiler, in the form that it writes.
 @(test)
 dependency_list_of_the_compiler_is_read :: proc(t: ^testing.T) {
-	text := "{\n\t\"source_files\": [\n\t\t\"/nix/store/odin/share/base/runtime/core.odin\",\n\t\t\"/repository/programs/temple/main.odin\"\n\t],\n\t\"load_files\": [\n\t\t\"/repository/programs/temple/portrait.pixels\"\n\t]\n}\n"
+	text := "{\n\t\"source_files\": [\n\t\t\"/nix/store/odin/share/base/runtime/core.odin\",\n\t\t\"/repository/programs/hall_of_fame/main.odin\"\n\t],\n\t\"load_files\": [\n\t\t\"/repository/programs/hall_of_fame/portraits/linus_torvalds.pixels\"\n\t]\n}\n"
 	sources, loads, listed := dependency_list_parse(text)
 	testing.expect(t, listed, "the list is read")
 	testing.expect_value(t, len(sources), 2)
 	testing.expect_value(t, sources[0], "/nix/store/odin/share/base/runtime/core.odin")
-	testing.expect_value(t, sources[1], "/repository/programs/temple/main.odin")
+	testing.expect_value(t, sources[1], "/repository/programs/hall_of_fame/main.odin")
 	testing.expect_value(t, len(loads), 1)
-	testing.expect_value(t, loads[0], "/repository/programs/temple/portrait.pixels")
+	testing.expect_value(t, loads[0], "/repository/programs/hall_of_fame/portraits/linus_torvalds.pixels")
 
 	without_loads := "{\n\t\"source_files\": [\n\t\t\"/repository/kernel/main.odin\"\n\t],\n\t\"load_files\": [\n\t]\n}\n"
 	sources, loads, listed = dependency_list_parse(without_loads)

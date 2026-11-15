@@ -321,7 +321,7 @@ store_importer: triple(14) of the module store_library of the store programs giv
 A hash that no file has refuses the start with one line, which names the importer and the import:
 
 ```
-root: refused store_importer from the disk: store_importer imports 3a9c…, and no file of the boot image or of the store programs has bytes with this hash; the import scan read 6 files
+root: refused store_importer from the disk: store_importer imports 3a9c…, and no file of the boot image or of the store programs has bytes with this hash; the import scan read 7 files
 ```
 
 A disk program whose imports are all in the boot image makes no scan.
@@ -394,6 +394,7 @@ Each other start grant is refused with `Unsupported`: a command gives `store` on
 
 - **Principal 0 with no machine passphrase.** No key signs its table: it lasts until the machine stops.
 - **Principal 0 with a machine passphrase** (`PRINCIPALS.md`, "Principal 0 and its machine passphrase"). The table is the object `grant_table` of the store `programs`. The root service reads it after the passphrase is typed at the start, and writes it after each change. Until the passphrase is typed, the disk programs of principal 0 start with no grant, and a change of the table is refused; the machine runs, and nothing waits.
+- **A named principal** (`PRINCIPALS.md`, "The disk grant table of a named principal"). The table is the object `grant_table` of its store `programs.principal.1`, under a key that `unlock` derives from its unlock key. The root service reads it at the first unlock of the run, and writes it after each change. A console that the desktop starts during the session acts for the principal, and changes its table.
 
 The persisted form is in `modus:support/disk_program` (`table_encode`, `table_decode`): 1008 bytes, the rows that persist, a global setting of persistence with an exception for each row (the default is to persist), and a tag of keyed BLAKE2b. The name `grant_table` is no name of a disk program, as `programs` is not. A table whose tag fails is refused with a line of the log, and gives no grant, so a reader of the disk with no passphrase adds no grant:
 
@@ -401,13 +402,13 @@ The persisted form is in `modus:support/disk_program` (`table_encode`, `table_de
 root: refused the disk grant table of principal 0 from the store programs: its tag does not verify under the key of the principal: another key wrote it, or a byte changed; it gives no grant, and it is kept: no change is written over it
 ```
 
-A refused table is kept when the key opened an existing record: it can be a good table of another key. Each change of the table of principal 0 is then refused until the machine starts again with a table that verifies; a caller that acts for principal 0 can restore such a version in the store `programs`. Only the key of a new machine passphrase, set on a machine with no record, writes over a refused table.
+A refused table is kept when the key opened an existing record: it can be a good table of another key. Each change of the table of the principal is then refused until the machine starts again with a table that verifies; a caller that acts for the principal can restore such a version in its store `programs`. Only the key of a new record writes over a refused table: a new machine passphrase, set on a machine with no record, or a new named principal.
 
 A write of the table that fails is tried again at once, 3 tries at most. After the third failure the log says that the disk keeps an older table, and each change is refused until the machine starts again.
 
 The tag does not refuse an older version of the table that the storage service kept and that a caller restored.
 
-Not built: the key of the TPM; the table of a named principal on the disk: the console acts for principal 0 only (`PRINCIPALS.md`, "5. The session"), so no caller changes the table of a named principal yet. The size of a store from the budget that the module asks for. The nickname with its hash in the monitor and in the menu.
+Not built: the key of the TPM. The size of a store from the budget that the module asks for. The nickname with its hash in the monitor and in the menu.
 
 ## 3. Static is dynamic
 

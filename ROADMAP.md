@@ -6,7 +6,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **The grants of a disk program of a named principal persist across a restart.** A named principal grants a disk program from its own session, and its signed disk grant table is read after the unlock, as the table of the machine is after the machine passphrase. The monitor and the menu show each nickname with its hash. [Design](src/md/features/programs_from_a_disk.md)
+- **The nickname of a disk program with its hash in the monitor and the menu.** The monitor and the menu of the windows show each nickname with the hash of its file faded beside it, a hash that the root service gives. A reader then sees which file runs under a name. [Design](src/md/features/programs_from_a_disk.md)
 - **A key sealed by the TPM, and a recovery key.** The TPM releases the key of a principal and the machine key only to the system whose measure it holds, so an older or a changed system opens no store and no grant; the grants of the machine then persist with no passphrase. A principal who loses the passphrase opens the stores again with a recovery key. [Design](src/md/features/programs_from_a_disk.md)
 - **A guest on a machine with an Intel processor.** A program runs a guest on a machine with an Intel processor too, with the same operation and the same exit records as on AMD. [Design](src/md/features/guest.md)
 - **The IOMMU of AMD, with its interrupt remapping.** A device on a machine with an AMD processor reaches only the memory that its service declared, and sends only the interrupts that its service was given, as on Intel. Today such a machine runs as a machine with no IOMMU. [Design](src/md/infrastructure/iommu.md)

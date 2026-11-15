@@ -167,7 +167,7 @@ What follows from the rule:
 
 | Program | The answer for the console |
 |---|---|
-| A program with no grant (`debug_target`, `plasma`, `fault`, `temple`, each program that the root service gives only the log and a window) | Given |
+| A program with no grant (`debug_target`, `plasma`, `fault`, `hall_of_fame`, each program that the root service gives only the log and a window) | Given |
 | A program with a right of the machine that the console holds, Inspect or Stop (`clock`, `processors`, `pages`, `flow`, `crowd`) | Given, until the grant `machine` of the console is revoked |
 | A program with the boot image, with or without Inspect (`pointers`, `rings`, `boot`, `rights`, `frames`, `locks`, `address_space`, `imports`, `return_fault`, `fault_ring`, `debugged`, `cryptography_vectors`, `interface_through_module`) | Given, until the grant `image` of the console is revoked |
 | A program with a private store (`notes`, `hierarchy`, `ranges`, `errors`, `unlock`) | Refused: the grant Store |
@@ -700,7 +700,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
 | `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
 | `key new <folder>`, `key show` | The key that signs the system description |
-| `font`, `vector_fonts`, `pointers`, `logo`, `portrait` | Convert a source (a font, a pointer theme, the mark, a picture) into the files of the repository. A build reads the result, never the source |
+| `font`, `vector_fonts`, `pointers`, `logo`, `portraits` | Convert a source (a font, a pointer theme, the mark, the pictures of the hall of fame) into the files of the repository. A build reads the result, never the source |
 | `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `library-imports` | Checks that each import of each source file of the kernel and of the contract packages names a package of the compiler or a contract package ("The imports of the kernel and of the contract packages") |
 | `rule-checks` | Checks the count of the kernel operations against the properties, and that no source of the system calls an allocator ("The rules that a check holds") |
@@ -733,7 +733,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `principals` | The two machines of the principals |
 | `hierarchy` | The machines of the hierarchy of storage |
 | `ranges` | The machines of the ranges of storage |
-| `disk_programs` | The four machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over ("The disk of the disk programs") |
+| `disk_programs` | The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant that a console of the session of the named principal alice gives survives the restart and her unlock ("The disk of the disk programs") |
 | `power` | The loss of power: of the storage, of the settings, of the ranges |
 | `trusted_boot` | The volumes of the trusted boot; `trusted_boot tpm` adds the two machines with a software TPM |
 
@@ -750,7 +750,7 @@ The persistence and the self tests of the kernel have no part of their own: only
 
 ### The disk of the disk programs
 
-The part `disk_programs` needs a data disk that holds a module file before any machine runs. The tool writes that disk itself (`tools/modustool/disk_programs.odin`): a file `build/test_disk_programs_disk.img` in the format of the storage service (`STORAGE.md`, "3. The format on the disk"), with one store, `programs`, whose root tree holds the module files and, for the test, a disk grant table. The writer makes one commit of a new disk: the blocks of data and the object nodes of each file, one leaf with the entries in the order of their names, the store block, then the root. A block of zero bytes is a hole, as in the storage service. The writer changes no disk that exists, and takes at most the 24 entries of one leaf.
+The part `disk_programs` needs a data disk that holds a module file before any machine runs. The tool writes that disk itself (`tools/modustool/disk_programs.odin`): a file `build/test_disk_programs_disk.img` in the format of the storage service (`STORAGE.md`, "3. The format on the disk"), with the store `programs`, whose root tree holds the module files and, for the test, a disk grant table, and the store `programs.principal.1` of the named principal 1, with a module file and a disk grant table. The writer makes one commit of a new disk: the blocks of data and the object nodes of each file, one leaf with the entries in the order of their names, the store block, then the root. A block of zero bytes is a hole, as in the storage service. The writer changes no disk that exists, and takes at most the 24 entries of one leaf.
 
 The tool prints one line for each file, with the hash that the command `start_from_disk` names:
 
@@ -786,20 +786,26 @@ The first machine has QEMU user networking, and the listener of the tool serves 
 
 1. `programs.receive("received", "/visitor")` fetches the file through the network of the machine, stores it under the nickname `received`, and writes its size and the hash of its bytes: the hash that the tool computed.
 2. `programs.receive("grant_table", "/visitor")` is refused: the service writes no file over the disk grant table.
-3. `programs.list()` writes one line for each module file, with the hash of its bytes: the hash of `changed` is its own, and `received` and `visitor` have the same hash; then "listed 7 module files".
+3. `programs.list()` writes one line for each module file, with the hash of its bytes: the hash of `changed` is its own, and `received` and `visitor` have the same hash; then "listed 8 module files".
 4. `start_from_disk("received", <the hash>)` starts the file with no grant.
 
 Then the import scan (`MODULE_CONTRACT.md`, "A program from a disk"):
 
 1. `start_from_disk("store_importer", <its hash>)`: the root service says that the program imports 1 module that the boot image does not hold, then that the import is the file `store_library` of the store, checked on its bytes. The program writes "triple(14) of the module store_library of the store programs gives 42".
 2. `programs.receive("store_library", "/store_library_changed")` writes the library with one byte changed over its entry: the listener of the tool serves those bytes.
-3. The same start is refused with one line: the program imports the hash of the library, and no file of the boot image or of the store has bytes with this hash; the scan read 6 files, each entry but the program and the disk grant table.
+3. The same start is refused with one line: the program imports the hash of the library, and no file of the boot image or of the store has bytes with this hash; the scan read 7 files, each entry but the program and the disk grant table.
 
 A second machine starts on the same disk. The table of principal 0 did not last: `start_from_disk("visitor", "")` is refused. After a start by the hash and a new `allow`, the program finds the visit 3 in the store of its nickname. Then `machine_passphrase()` opens the window of `unlock`, and the scenario types the passphrase two times there. The root service reads `grant_table`, refuses it with its line ("its tag does not verify under the key of the principal"), and writes its own table of 1 row (`PRINCIPALS.md`, "Principal 0 and its machine passphrase").
 
 A third machine starts on the same disk, and the window of `unlock` asks for the machine passphrase. Before it is typed, `start_from_disk("visitor", "")` is refused, as the table has no row, and `allow` is refused. A wrong passphrase opens nothing. The right one gives the row back: the program has the store of its nickname, and finds the visit 4 there. `disk_persistence("visitor", "forget")` then writes a table of 0 rows. The console then restores the first version of `grant_table`, which the tool signed with the key of zero bytes (`storage.restore`).
 
 A fourth machine starts on the same disk. The machine passphrase opens the record, and the table on the disk does not verify under its key: the root service refuses it and keeps it, with no write. `start_from_disk("visitor", "")`, `allow` and `machine_passphrase()` are refused.
+
+The disk has a second store, `programs.principal.1`: the store of the module files of the named principal 1, written before that principal exists. It holds `visitor` and the same forged `grant_table` (`PRINCIPALS.md`, "The disk grant table of a named principal").
+
+A fifth machine starts on the same disk. The scenario skips the machine passphrase with Enter, and `principal_create("alice")` opens the window of `unlock`, where the scenario types her passphrase two times. The root service reads the table of principal 1, refuses it, as the principal is new, and writes a table of 0 rows. A console started from the menu of the desktop runs in the session of alice. In it, `start_from_disk("visitor", <the hash>)` reads the store of alice, and `allow("visitor", "store")` writes a table of 1 row. The next `start_from_disk("visitor", "")` has the store `disk-visitor.principal.1`, and the visit 1 there.
+
+A sixth machine starts on the same disk. The scenario skips the machine passphrase and types the passphrase of alice. The root service reads her table, 1 row, and writes nothing. In a console of her session, `start_from_disk("visitor", "")` has the grant store again, and the visit 2.
 
 Host tests check the writer with the code of the open of the storage service (`src/library/support/storage_mount`): no block of the image is wrong, the counts of the store are the counts of what it names, each object gives its bytes, each entry has the hash that its block tree gives, and a file with no hole has the BLAKE3 hash of its bytes.
 
@@ -1044,7 +1050,7 @@ Why this is the two facts. A program that waits, then runs, then waits again ent
 
 **What the condition by calls leaves out.**
 
-- A window that draws with no end has no last picture: `life`, `plasma`, `temple`, `threads`, `workers`, `rings`, `processors`, `limits`, `flood` (`programs_that_draw_without_end`). Its part of the picture is the frame that is there. No check compares the pixels of such a window. A program that draws with no end and is not in the list never settles: the picture fails at the hang bound, and the message names its window.
+- A window that draws with no end has no last picture: `life`, `plasma`, `threads`, `workers`, `rings`, `processors`, `limits`, `flood` (`programs_that_draw_without_end`). Its part of the picture is the frame that is there. No check compares the pixels of such a window. A program that draws with no end and is not in the list never settles: the picture fails at the hang bound, and the message names its window.
 - The windows of `remote` and `monitor`: these two programs run because of the reads themselves, and their windows count the calls.
 - A window whose program stopped: it gets no picture more.
 

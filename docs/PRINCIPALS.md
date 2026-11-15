@@ -120,7 +120,7 @@ The root service starts `unlock` at boot, after the boot pass of `settings`.
 - With a file, `unlock` gives the public part of the record to the root service (`Principal_Record`), opens its window, and asks for the passphrase.
 - When the seal opens, `unlock` checks that the two secret keys give the two public keys of the file, erases them, tells the root service (`Principal_Unlock`), and stops. The root service starts the session.
 
-**The keys are not kept after the unlock.** No part of the system uses the secret keys yet: no store is encrypted, and no grant is signed. A key that is held with no use is only a target. When storage encrypts the stores of a principal, the unlock gives the unlock key to the storage service, and the lock erases it there.
+**The keys are not kept after the unlock.** `unlock` gives the root service one key, derived from the unlock key: the key of the tag of the disk grant table of the principal (section 5, "The disk grant table of a named principal"). Then it erases the secret keys: no store is encrypted, and no grant is signed. A key that is held with no use is only a target. When storage encrypts the stores of a principal, the unlock gives the unlock key to the storage service, and the lock erases it there.
 
 **The lock** (`lock()` in the console): the root service stops each program of the session and its terminals, marks the principal locked, and starts `unlock` again. The programs stop; they are not frozen: a frozen program needs a kernel operation that does not exist. A program that keeps its state in its store at each change (`notes`) loses nothing.
 
@@ -153,7 +153,7 @@ So a program that the console starts belongs to principal 0, and a program that 
 | 48 to 62 (`CALLER_PRINCIPAL_MASK`) | The number of the principal of the session of the caller |
 | 63 (`CALLER_ACTS_FOR_PRINCIPAL`) | The caller acts for that principal |
 
-A caller acts for the principal when its role has the grant `acts_for_principal` (the console, `remote`) and the grant was not revoked. It acts for the principal of its own session only. So the console, started at boot, acts for principal 0, never for principal 1: "root: connected console to the service storage, acting for principal 0".
+A caller acts for the principal when its role has the grant `acts_for_principal` (the console, `remote`) and the grant was not revoked. It acts for the principal of its own session only. So the console, started at boot, acts for principal 0, never for principal 1: "root: connected console to the service storage, acting for principal 0". A console that the desktop starts during the session of alice belongs to that session: it acts for principal 1, never for principal 0.
 
 **The grant records name the principal.** `grants("notes")` in the console gives the grants of a program, then "notes runs for principal 1 "alice"". `revoke` works on a program of a session as on any other program.
 
@@ -189,6 +189,26 @@ root: refused a machine passphrase: the record of the machine passphrase cannot 
 
 The log says each step: "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", "root: read the disk grant table of principal 0 from the store programs: 1 rows, with the tag of the machine key".
 
+### The disk grant table of a named principal
+
+A named principal grants a disk program from its own session, and its grants last across a restart of the machine (`MODULE_CONTRACT.md`, "The grants of a disk program").
+
+**Who changes it.** A program of the session that acts for the principal: a console that the desktop starts during the session, from the menu of the programs. Its `allow`, `disallow`, `nickname_move` and `disk_persistence` change the table of principal 1. The console that the machine starts at boot changes the table of principal 0 only.
+
+**Where it is.** The object `grant_table` of the store `programs.principal.1`: the store of the module files of the principal, which the disk programs of its session start from.
+
+**Its key.** When the passphrase opens the seal, `unlock` derives the key of the tag from the secret unlock key: keyed BLAKE2b over the text `modus disk grant table of a named principal`. It gives this key with `Principal_Unlock`, and erases the secret keys. The root service keeps the key until the machine stops; after a lock, the next unlock must give the same key.
+
+**The read and the write.** The first unlock of a run reads the table, before any program of the session can change it. Then each change writes it. The rules are the rules of the table of principal 0:
+
+- A table whose tag verifies gives its rows.
+- A table that does not verify gives no grant. At the creation of the principal it is written over: no key of this principal signed it. The root service takes a key "of a new principal" only for a record that a creation made since the machine started. At any other unlock the table is kept, and each change is refused until the machine starts again.
+- A read that failed starts again at the next unlock.
+- A write that fails is tried again at once, 3 tries at most.
+- While the read runs, or while the session is locked, a change is refused.
+
+The log says each step: "root: read the disk grant table of principal 1 from the store programs: 1 rows, with the tag of the key of the principal", "root: the disk grant table of principal 1 is written in the store programs: 1 rows, with the tag of the key of the principal".
+
 ## 6. The store of a principal
 
 One program run for two principals has two stores, so the data of each principal stay apart. The name of a store carries its principal, and one procedure of the storage service decides from it which stores a caller is allowed to name.
@@ -203,6 +223,7 @@ The storage service names a store by the name that the root service gives to the
 | 1 | `console`, its line history | `console.history.principal.1` |
 | 0 | The disk program of the nickname `visitor`, with the grant `store` | `disk-visitor` |
 | 1 | The disk program of the nickname `visitor`, with the grant `store` | `disk-visitor.principal.1` |
+| 1 | The module files of its disk programs, and its disk grant table | `programs.principal.1` |
 
 So two principals that run one program have two stores, and the stores of the system keep their names. The inverse, `principals.store_name_principal`, gives the principal of a store from its name.
 
@@ -222,7 +243,7 @@ So two principals that run one program have two stores, and the stores of the sy
 | `Principal_Lock` | A program with the grant `Root_Ring` | Ends the session that runs; values[0] of the completion is the count of the programs stopped |
 | `Principals` | A program with the grant `Root_Ring` | Reads the record of the principal values[4]: its state, its name, the first 8 bytes of its public key; for principal 0 the first 8 bytes of the measure |
 | `Principal_Record` | `unlock` only | Gives the public key (values[0..3]) and the name (values[4..6]) of the named principal; the completion has its number |
-| `Principal_Unlock` | `unlock` only | Starts the session of the principal values[4] |
+| `Principal_Unlock` | `unlock` only | Starts the session of the principal values[4]; values[0..3] is the key of the tag of its disk grant table, values[5] its origin: 1 from the open of the file, 2 from the creation |
 | `Grants` | A program with the grant `Root_Ring` | Also gives the number (values[2]) and the name (values[3..6]) of the principal of the program |
 | `Machine_Passphrase` | A program with the grant `Root_Ring` | Starts `unlock` to set the machine passphrase |
 | `Machine_Key` | `unlock` only | values[4] 1: the machine has a passphrase, not typed yet; 4: its record cannot be read; 2 or 3: values[0..3] is the key of the tag of the disk grant table of principal 0, from the open of the record (2) or from a new passphrase (3) |
@@ -234,7 +255,7 @@ A refusal is an error record with the unit `Principals`: a second named principa
 ## 8. The tests
 
 - `odin test src/library/support/principals`: the names of the stores, a name that does not fit, the names and the passphrases, a round trip of the file, and ten hostile files; a round trip of the record of the machine, and its hostile forms.
-- `modustool test disk_programs`: the machine passphrase is set in the window of `unlock`, a table that another key signed is refused, and at the next start the passphrase gives back the grants of principal 0; a table that does not verify under the opened key is refused and kept, with no write (`TOOLS.md`, "The disk of the disk programs").
+- `modustool test disk_programs`: the machine passphrase is set in the window of `unlock`, a table that another key signed is refused, and at the next start the passphrase gives back the grants of principal 0; a table that does not verify under the opened key is refused and kept, with no write. Then the principal alice is created: the table in her store that another key signed is refused and written over; a console of her session grants the store to the nickname `visitor`; at the next start her passphrase gives the grant back, and `visitor` finds its visit in the store of its nickname (`TOOLS.md`, "The disk of the disk programs").
 - `odin test src/library/support/cryptography/vectors`: BLAKE2b of RFC 7693 and Argon2id of RFC 9106, section 5.3; the blocks are erased after the derivation, and a supply of blocks that is too small gives `Out_Of_Memory`.
 - `modustool test principals`: two machines on one data disk. The first one: no named principal; a note of `notes` started by the console belongs to principal 0; the creation of `alice` in the window of `unlock`; `notes` from the menu has a new store, `notes.principal.1`; the grants name the principal; the console connects acting for principal 0: `storage.open_store("notes.principal.1")` is refused with `No_Grant`, and `storage.stores()` does not list that store; the lock stops `notes`; a wrong passphrase opens nothing; the right one starts the session again and `notes` finds the note and the count of alice; a revocation of the store of `notes`. The second machine, on the same disk: the passphrase starts the session, and the note of alice is there. Picture: `principals_unlock`.
 

@@ -24,7 +24,7 @@ import "core:time"
 // program is never in a wait for long, and its window never stays the
 // same, so the condition of a picture leaves its window out.
 @(rodata)
-programs_that_draw_without_end := [?]string{"life", "plasma", "temple", "threads", "workers", "rings", "processors", "limits", "flood"}
+programs_that_draw_without_end := [?]string{"life", "plasma", "threads", "workers", "rings", "processors", "limits", "flood"}
 
 // draws_without_end says if a window with this title is left out of the
 // condition of a picture.

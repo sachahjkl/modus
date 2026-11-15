@@ -251,21 +251,43 @@ table_persisted_rows :: proc "contextless" (table: ^Grant_Table) -> int {
 // key of the tag reveals nothing of the machine key or of that other key.
 TABLE_KEY_TEXT :: "modus disk grant table"
 
+// The text over which the unlock key of a named principal gives the key of
+// the tag of its table. It differs from TABLE_KEY_TEXT, so no key of a
+// named principal is the key of the table of the machine, even from equal
+// secret bytes.
+PRINCIPAL_TABLE_KEY_TEXT :: "modus disk grant table of a named principal"
+
+// table_key_derive gives keyed BLAKE2b of a secret key over a text.
+@(private)
+table_key_derive :: proc "contextless" (secret: ^[KEY_SIZE]u8, text: string) -> (key: [KEY_SIZE]u8) {
+	context_of_the_hash: blake2.Blake2b_Context
+	configuration := blake2.Blake2_Config {
+		size = KEY_SIZE,
+		key  = secret^[:],
+	}
+	blake2.init(&context_of_the_hash, &configuration)
+	blake2.update(&context_of_the_hash, transmute([]u8)text)
+	blake2.final(&context_of_the_hash, key[:])
+	return key
+}
+
 // table_key_of_machine_key gives the key of the tag of the disk grant table
 // of principal 0: keyed BLAKE2b of the machine key over TABLE_KEY_TEXT. The
 // program `unlock` computes it, and gives only this key to the root service
 // (docs/PRINCIPALS.md, "Principal 0 and its machine passphrase").
 table_key_of_machine_key :: proc "contextless" (machine_key: ^[KEY_SIZE]u8) -> (key: [KEY_SIZE]u8) {
-	context_of_the_hash: blake2.Blake2b_Context
-	configuration := blake2.Blake2_Config {
-		size = KEY_SIZE,
-		key  = machine_key^[:],
-	}
-	text := TABLE_KEY_TEXT
-	blake2.init(&context_of_the_hash, &configuration)
-	blake2.update(&context_of_the_hash, transmute([]u8)text)
-	blake2.final(&context_of_the_hash, key[:])
-	return key
+	return table_key_derive(machine_key, TABLE_KEY_TEXT)
+}
+
+// table_key_of_principal_key gives the key of the tag of the disk grant
+// table of a named principal: keyed BLAKE2b of its secret unlock key
+// (X25519) over PRINCIPAL_TABLE_KEY_TEXT. The program `unlock` computes it
+// when the passphrase opens the seal, and gives only this key to the root
+// service (docs/PRINCIPALS.md, "The disk grant table of a named
+// principal"). Each principal has its own unlock key, so a table of one
+// principal does not verify in the store of another.
+table_key_of_principal_key :: proc "contextless" (unlock_key: ^[KEY_SIZE]u8) -> (key: [KEY_SIZE]u8) {
+	return table_key_derive(unlock_key, PRINCIPAL_TABLE_KEY_TEXT)
 }
 
 // What the root service does with the answer of the read of a persisted

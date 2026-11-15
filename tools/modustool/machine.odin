@@ -1566,11 +1566,19 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   memory    left the console"},
 	{kind = .Type, text = "release(b)"},
 
-	// The temple of Jon, then back to the console.
-	{kind = .Launch, text = "temple"},
-	{kind = .Wait, text = "temple: ok", any_order = true},
-	{kind = .Wait, text = "compositor: surface temple"},
-	{kind = .Shot, text = "temple"},
+	// The hall of fame. The program writes its line after it presented its
+	// first frame, with the count of the cards that the frame drew; the
+	// window draws only after an event, so the picture shows that frame. A key moves the choice to
+	// the next card, and a press of the pointer chooses a card of the
+	// second row by its element name: the program writes each choice.
+	{kind = .Launch, text = "hall_of_fame"},
+	{kind = .Wait, text = "hall_of_fame: ok, the first frame drew ", any_order = true},
+	{kind = .Wait, text = "compositor: surface hall_of_fame"},
+	{kind = .Shot, text = "hall_of_fame"},
+	{kind = .Key, text = "right"},
+	{kind = .Wait, text = "hall_of_fame: chose Jonathan Blow"},
+	{kind = .Click_Element, text = "hall_of_fame", element = "Dax Raad"},
+	{kind = .Wait, text = "hall_of_fame: chose Dax Raad"},
 
 	// The heron of the mark plays its animations. The key 8 asks for the
 	// dash: the program writes its line when the animation ended, and the

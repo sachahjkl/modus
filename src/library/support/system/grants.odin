@@ -133,6 +133,16 @@ Root_Command :: enum u32 {
 	Principal_Record = 12,
 	// Principal_Unlock starts the session of the principal with the number
 	// values[4]: `unlock` opened its sealed keys with the passphrase.
+	// values[0..3] is the key of the tag of the disk grant table of that
+	// principal (modus:support/disk_program, table_key_of_principal_key),
+	// and values[5] its origin: PRINCIPAL_KEY_OPENED from the open of an
+	// existing file, PRINCIPAL_KEY_NEW from the creation of the principal.
+	// At the first unlock of a run the root service takes the key and reads
+	// the table; a later unlock must give the same key, else it is refused
+	// with Bad_State, and starts the read again when the first one failed.
+	// PRINCIPAL_KEY_NEW for a principal whose record no creation made since
+	// the machine started is refused with Bad_State. A key of 32 zero bytes,
+	// or another origin, is refused with Bad_Operation.
 	Principal_Unlock = 13,
 	// Debug gives the debugger service the handle of the program with this
 	// name, with the right Debug only, on behalf of one of its callers:
@@ -287,6 +297,10 @@ MACHINE_KEY_AWAITED :: 1
 MACHINE_KEY_OPENED :: 2
 MACHINE_KEY_NEW :: 3
 MACHINE_KEY_UNREADABLE :: 4
+
+// The origin of the key of a Principal_Unlock command, in values[5].
+PRINCIPAL_KEY_OPENED :: 1
+PRINCIPAL_KEY_NEW :: 2
 
 // The state of a principal in the root service.
 Principal_State :: enum u64 {
