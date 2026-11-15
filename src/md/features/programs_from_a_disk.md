@@ -76,7 +76,37 @@ Nothing in the file gives a grant. The root service reads no table of the file t
 
 ### The imports
 
-A disk program imports by hash, as each module does. The load source is the boot image and the replacement table of the machine. An import whose hash is not in the boot image fails the load at the stage Find, with the load error of every load.
+A disk program imports by hash, as each module does. Its load source is the boot image, the replacement table of the machine, and the module files of the store `programs` of its principal that the root service found and checked for this load. A developer then adds a program and its library modules to a machine that runs, with no new boot image.
+
+**The import scan.** The root service finds an import that the boot image does not hold by an import scan ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Import scan"): it lists the root tree of the store `programs`, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. The scan is a stage of the load of the program, after the check of the hash of the program file and before the start:
+
+| State | The root service waits for | Then |
+|---|---|---|
+| List | a page of the entries of the root tree | It notes each object of 1 byte to 4 MiB but the entry of the program, and asks for the next page; an empty page ends the list |
+| Import size | the size of the next entry to read | It makes the memory, and asks for the first bytes |
+| Import bytes | the next bytes of that entry | It asks again, or computes the hash: bytes whose hash an import names are kept, the others are freed |
+
+The order of the reads: each entry one time, in the order of the list; then an entry that was read before its hash was wanted, one time more. The scan ends when each wanted hash has its bytes, or when no entry is left to read. A hash with no bytes refuses the start with one line of the log, which names the import and its importer:
+
+```
+root: refused store_importer from the disk: store_importer imports 3a9c…, and no file of the boot image or of the store programs has bytes with this hash; the import scan read 7 files
+```
+
+**The bounds.** The scan runs inside the load, so each rule of the load holds: one connection, the deadline of 30 seconds for the whole load, a progress at each answer, 4 MiB at most for each file. Three bounds are its own (`src/library/support/disk_program/import_scan.odin`):
+
+- **64 entries.** The scan notes the first 64 objects of the list. The line of a refusal says when the store has more.
+- **8 modules of the store, 4 levels.** The imports of the program are level 1, their imports level 2. A ninth hash, or a fifth level, refuses the start. A program has 16 modules at most anyway.
+- **The reads.** 64 entries and two reads for each wanted hash at most: a storage service that changes the bytes at each read cannot make the scan last past this count.
+
+The store `programs` holds 4096 blocks, 16 MiB: the first pass of a scan never reads more than that, and each wanted hash adds two reads of 4 MiB at most.
+
+**The walk.** The root service reads the import table of the program file, then of each file that it keeps. A hash that a module of the boot image has is not wanted. A replacement of the machine applies as in the loader: the root service wants the hash of the replacement too, and walks the imports of the module that the loader gives. The imports of a module of the boot image are not walked: the boot image holds them, or the loader refuses them at the stage Find.
+
+**The memory.** The bytes of each file that the scan keeps are memory of the root service, paid by the one budget of all disk programs, as the program that imports them is. They stay mapped in the root service until the end of the load: the loader copies each module into the program, and the root service then frees them. A store that does not fit in that budget refuses the start with the status of the budget.
+
+**The loader checks again.** The root service gives the loader each kept file with the hash of its bytes (`system.Source_File`). The loader checks the hash and the tables of each file, as it checks a file of the boot image. A file of the boot image wins over a file of the store with the same hash: the loader looks at the boot image first. The two have the same bytes anyway, as they have the same hash.
+
+**What the log says.** One line when the scan starts, with the count of the hashes that it wants, and one line for each file that it keeps: the hash, the importer and the name of the entry. The name of the entry is a help for the reader only: it names no module, and a load error gives it as the name of the hash.
 
 ### The debug object
 
@@ -95,7 +125,7 @@ Two ways: the network, on a machine that runs, or a disk that the tool writes.
 The console calls its two exports through a connection, as for each service (`connect("programs")`):
 
 - `programs.receive(nickname, path)` sends `GET path` to the web server, takes a body of 1 to 4 MiB with a `Content-Length`, writes it as the object `nickname` of the root tree of the store, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that it received. The log says the same. The principal then types `start_from_disk(nickname, hash)`.
-- `programs.list()` gives one row for each object of the root tree but `grant_table`: its name, its bytes, and the BLAKE3 hash of its bytes, which the service reads again and computes. The service writes one line of the log for each row.
+- `programs.list()` gives one row for each object of the root tree but `grant_table` and the debug objects: its name, its bytes, and the BLAKE3 hash of its bytes, which the service reads again and computes. The service writes one line of the log for each row.
 
 The hash that `receive` gives is a help for the principal, not a proof: the root service still reads the bytes and checks them against the hash of the command. A service that another party changed, or a web server that gave other bytes, can make the store hold any bytes under the nickname. It cannot make them run under a hash that they do not have.
 
@@ -220,6 +250,14 @@ The table of a named principal is not persisted yet. The console, the only progr
 - **A record that cannot be read is taken as no record.** A read error or one changed byte would then let a new passphrase replace a good machine key.
 - **The completion of a change held until its write ends.** It needs a queue of completions for each write, as a change during a write joins the next write; a bounded retry gives the same result in the loop.
 - **The console acts for the named principal of the session.** The console acts for its own session only; a console that acts for another principal is a confused deputy.
+- **An import by name.** The import table names a hash; a name of an entry is chosen by whoever writes the store. An import found by the name `store_library` would run the bytes that the store holds under that name, with no check against the identity that the importer was built with.
+- **The name of the entry as a guess, then the check of the hash.** It finds a file only when the developer kept the name of the module as the nickname, and a refusal then says nothing of the other files. The scan finds the file under any nickname, and costs at most the 16 MiB of the store.
+- **The storage service resolves a hash.** The storage service is a transport that the root service does not trust. An index of hashes in it would choose which bytes the root service reads; the hash of its entry is not even the BLAKE3 hash of the bytes when the object has a hole. The root service would still read and check the bytes, so the index gains nothing but speed, and adds an export that each store pays.
+- **The root service trusts the hash of an entry, or a list of `programs.list`.** Both come from programs that the root service does not trust, and the hash of an entry differs from the hash of the bytes after a hole. A hint that is false only costs a read, but a hint that is true is never needed: the scan reads the bytes anyway.
+- **An index of the hashes in the root service, kept across loads.** It saves the reads of a second load, by the generation of each entry. It is a cache with its own rules of change, for a cost that the store bounds at 16 MiB. Left for when a measure asks for it.
+- **The module file service gives the imports to the root service.** It would be a second path of bytes into the root service, beside the one load.
+- **The bytes of an import in the budget of the root service.** The budget of the root service pays for the programs of the boot image; a store that a principal fills must not take from it. The budget of all disk programs pays for the program and its imports.
+- **A loader that reads the store itself.** The loader is a library with no connection and no state of a loop: it would wait for the storage service inside the loop of the root service.
 
 ## Subtle points
 
@@ -236,11 +274,15 @@ The table of a named principal is not persisted yet. The console, the only progr
 - **The store `programs` has three writers.** The module file service writes the module files, the root service writes `grant_table`, and a caller that acts for the principal restores a version. The storage service keeps the pending changes of each connection apart, and each commit is one commit of the store. The limit of the store is one constant for each of them (`disk_program.STORE_BLOCKS_LIMIT`).
 - **A block of zero bytes in a module file is a hole.** The service writes the file in ranges; the storage service keeps a block of zero bytes as a hole, and the hash of the entry then differs from the BLAKE3 hash of the file. The list and the root service compute the hash on the bytes, so a file with a page of zero bytes still has its own hash.
 - **The service is no row of the disk grant table, and the store is no grant of a disk program.** A disk program never reaches the store `programs`: the store of a nickname has the prefix `disk-`.
+- **A file is checked two times.** The root service computes the hash when it reads the bytes, and the loader computes it again when it takes the file. The second check costs one hash of each file; it keeps one rule in the loader for each file of each load source.
+- **An entry read two times can give other bytes.** A file of the module file service can change the entry between two reads. The second read then gives another hash, which is noted, and the entry is not kept. The bound of the reads ends the scan.
+- **The name of an entry is not the name of a module.** A load error and a line of the log give the name of the entry beside a hash of the store, so that a reader finds the file. A replacement and a grant never read it.
+- **A disk program with no import outside the boot image makes no scan.** Its load is as before: the size, the bytes, the check.
 - **A grant made between the start and the report of `unlock`.** The root service learns that the machine has a passphrase only when `unlock` read its store. A change made before is in the table in memory, and the read replaces it; the line of the read counts the rows that it replaced.
 
 ## Built and left
 
-Built: the command `Start_From_Disk` of the root ring and the command `start_from_disk` of the console; the load as a state of the loop of the root service, with its four bounds; the check of the hash; the least right, with the rule of the names; the disk of the tool with the store `programs`; the test part `disk_programs`. The disk grant table: the nickname rule, `allow`, `disallow` and `nickname_move` (the commands `Disk_Grant` and `Nickname_Move` of the root ring), the grant `store` with the store of the nickname, and the format of the persisted table with its tag. The machine passphrase: its record in the store of `unlock`, `machine_passphrase()`, the ask at the start, the key of the tag in the root service, the read and the write of the table of principal 0, and the setting of persistence (`disk_persistence`). The module file service: `programs.receive`, a file from a web server into the store, and `programs.list`, the files with the hash of their bytes.
+Built: the command `Start_From_Disk` of the root ring and the command `start_from_disk` of the console; the load as a state of the loop of the root service, with its four bounds; the check of the hash; the least right, with the rule of the names; the disk of the tool with the store `programs`; the test part `disk_programs`. The disk grant table: the nickname rule, `allow`, `disallow` and `nickname_move` (the commands `Disk_Grant` and `Nickname_Move` of the root ring), the grant `store` with the store of the nickname, and the format of the persisted table with its tag. The machine passphrase: its record in the store of `unlock`, `machine_passphrase()`, the ask at the start, the key of the tag in the root service, the read and the write of the table of principal 0, and the setting of persistence (`disk_persistence`). The module file service: `programs.receive`, a file from a web server into the store, and `programs.list`, the files with the hash of their bytes. The imports from the store: the import scan as three states of the load, its bounds, the files beside the boot image in the load source, and the test of a program that calls a library module of the store, then is refused when the file of the library has other bytes.
 
 Left:
 
@@ -253,7 +295,7 @@ Left:
 - **The principal in the tag.** The table of a named principal needs its number in the tagged bytes or in the text of its key, so that a table of one principal cannot move to the store of another.
 - **A store size from the module.** The size of the store of a nickname from the budget that the module asks for, by a policy that the principal sets.
 - **The nickname in the windows.** The monitor and the menu show the nickname with the hash faded beside it. The kernel report of a program has its name and no hash, so the monitor needs the hash from the root service.
-- **Imports from the same store.** The load source of a disk program is the boot image. The root service must find an import by its hash in the store `programs`, read it with the bounds of a load, and check its hash. The storage service has no index from a hash to an object ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "5. Not built: the next steps"): without it, the root service reads each object of the store to find one hash. The loader also needs a load source with files beside the boot image.
+- **A cache of the import scan.** The hash of each entry, kept in the root service by the generation of the entry, so that a second load reads only the entries that changed. It needs a measure that shows the cost of the scan first.
 - **Another web server.** The grant of the module file service names one remote. A remote that the principal chooses is a grant that the principal gives, as the grant of a client of `remote` is.
 - **The module file service for a named principal.** The service runs for principal 0, which the console acts for. A named principal needs a caller that acts for it, as for its disk grant table.
 - **A file from another store.** A copy of an object of another store of the principal into the store `programs`, with no network.
