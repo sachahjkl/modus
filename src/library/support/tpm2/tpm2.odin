@@ -22,6 +22,12 @@
 // with the policy of this system, is refused: its creation data names the
 // PCRs of that other system.
 //
+// A sealed object can also have an authorization value: the keys of a
+// named principal (src/md/features/tpm_sealed_principal_keys.md). Its
+// policy is then TPM2_PolicyPCR followed by TPM2_PolicyPassword, and its
+// attribute noDA is clear: the TPM counts each wrong value, and refuses
+// each try for a time after too many.
+//
 // See [TPM service](term:tpm-service) and
 // [sealed by the TPM](term:sealed-by-the-tpm).
 package tpm2
@@ -46,6 +52,16 @@ COMMAND_FLUSH_CONTEXT :: u32(0x0000_0165)
 COMMAND_START_AUTH_SESSION :: u32(0x0000_0176)
 COMMAND_POLICY_PCR :: u32(0x0000_017F)
 COMMAND_POLICY_GET_DIGEST :: u32(0x0000_0189)
+COMMAND_POLICY_PASSWORD :: u32(0x0000_018C)
+COMMAND_SHUTDOWN :: u32(0x0000_0145)
+// TPM2_PolicyPassword extends the policy with the code of
+// TPM2_PolicyAuthValue, not with its own code: either command then
+// satisfies the same policy (TPM 2.0 part 3, TPM2_PolicyPassword).
+COMMAND_POLICY_AUTH_VALUE :: u32(0x0000_016B)
+
+// The kind of TPM2_Shutdown: the next TPM2_Startup is a reset, as the
+// firmware starts the TPM with TPM2_Startup(CLEAR) at each start.
+SHUTDOWN_CLEAR :: u16(0x0000)
 
 // The handles that the TPM defines.
 HANDLE_OWNER :: u32(0x4000_0001) // The owner hierarchy: the parent of the storage key.
@@ -85,6 +101,21 @@ STORAGE_KEY_ATTRIBUTES :: ATTRIBUTE_FIXED_TPM | ATTRIBUTE_FIXED_PARENT | ATTRIBU
 // too; a failed policy is no try of a password, so the object does not
 // count for the lockout of the TPM.
 SEALED_OBJECT_ATTRIBUTES :: ATTRIBUTE_FIXED_TPM | ATTRIBUTE_FIXED_PARENT | ATTRIBUTE_ADMIN_WITH_POLICY | ATTRIBUTE_NO_DICTIONARY_ATTACK
+// The sealed object with an authorization value: noDA is clear, so each
+// wrong value is a failure that the TPM counts, and after too many the TPM
+// refuses each try for a time (TPM_RC_LOCKOUT). A copy of the disk then
+// allows no tries without limit.
+AUTHORIZED_SEALED_OBJECT_ATTRIBUTES :: ATTRIBUTE_FIXED_TPM | ATTRIBUTE_FIXED_PARENT | ATTRIBUTE_ADMIN_WITH_POLICY
+
+// The bytes of an authorization value: at most the digest of the hash of
+// the name of the object, SHA-256.
+AUTHORIZATION_VALUE_SIZE :: 32
+
+// sealed_object_attributes gives the attributes of a sealed object with an
+// authorization value, or with none.
+sealed_object_attributes :: proc "contextless" (authorized: bool) -> u32 {
+	return authorized ? AUTHORIZED_SEALED_OBJECT_ATTRIBUTES : SEALED_OBJECT_ATTRIBUTES
+}
 
 // The session attribute continueSession: the session stays after the
 // command, and the service flushes it itself, after a success as after a
@@ -125,18 +156,48 @@ RESPONSE_FORMAT_ONE :: u32(0x080)
 RESPONSE_POLICY_FAIL :: u32(0x01D) // The error of a format 1 code: the policy does not hold.
 
 RESPONSE_TICKET :: u32(0x020) // The error of a format 1 code: the ticket is not the HMAC of this TPM.
+// The error of a format 1 code: a wrong authorization value of an object
+// that the TPM protects from a dictionary attack. The TPM counted it.
+RESPONSE_AUTHORIZATION_FAIL :: u32(0x00E)
+// The codes of format 0 that the service names: the TPM refuses each try of
+// an authorization value for a time, as it counted too many failures; and
+// the TPM asks for the same command again.
+RESPONSE_LOCKOUT :: u32(0x921)
+RESPONSE_RETRY :: u32(0x922)
+RESPONSE_ERROR_MASK :: u32(0x3F) // The bits of the error of a format 1 code.
 
 // policy_fails says if a response code says that the policy of the object
 // does not hold: the values of the PCRs differ from the values of the seal.
 policy_fails :: proc "contextless" (code: u32) -> bool {
-	return code & RESPONSE_FORMAT_ONE != 0 && code & 0x3F == RESPONSE_POLICY_FAIL
+	return code & RESPONSE_FORMAT_ONE != 0 && code & RESPONSE_ERROR_MASK == RESPONSE_POLICY_FAIL
+}
+
+// authorization_fails says if a response code says that the authorization
+// value is wrong, and that the TPM counted the failure (TPM_RC_AUTH_FAIL).
+// A failure that the TPM does not count is TPM_RC_BAD_AUTH: another code.
+authorization_fails :: proc "contextless" (code: u32) -> bool {
+	return code & RESPONSE_FORMAT_ONE != 0 && code & RESPONSE_ERROR_MASK == RESPONSE_AUTHORIZATION_FAIL
+}
+
+// locked_out says if a response code says that the TPM refuses each try of
+// an authorization value for now (TPM_RC_LOCKOUT).
+locked_out :: proc "contextless" (code: u32) -> bool {
+	return code == RESPONSE_LOCKOUT
+}
+
+// retry_asked says if the TPM asks for the same command again
+// (TPM_RC_RETRY). The reference code of the TPM answers it at the first use
+// of an object that it protects from a dictionary attack after a start,
+// once it wrote that use to its memory.
+retry_asked :: proc "contextless" (code: u32) -> bool {
+	return code == RESPONSE_RETRY
 }
 
 // ticket_fails says if a response code says that a ticket is not the HMAC
 // of this TPM over what it names (TPM_RC_TICKET): another code, as a lack
 // of memory of the TPM, says nothing of the record.
 ticket_fails :: proc "contextless" (code: u32) -> bool {
-	return code & RESPONSE_FORMAT_ONE != 0 && code & 0x3F == RESPONSE_TICKET
+	return code & RESPONSE_FORMAT_ONE != 0 && code & RESPONSE_ERROR_MASK == RESPONSE_TICKET
 }
 
 // The bytes of one command, in a buffer of the caller. A write past its end
@@ -306,22 +367,44 @@ policy_get_digest_command :: proc "contextless" (buffer: []u8, session: u32) -> 
 	return end(&writer)
 }
 
+// policy_password_command builds TPM2_PolicyPassword: the use of the
+// object then needs its authorization value, sent in the session as a
+// password.
+policy_password_command :: proc "contextless" (buffer: []u8, session: u32) -> int {
+	writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_POLICY_PASSWORD)
+	put_u32(&writer, session)
+	return end(&writer)
+}
+
+// shutdown_command builds TPM2_Shutdown(CLEAR): the TPM writes its state,
+// and the next start is orderly. The TPM goes on to take commands after it.
+shutdown_command :: proc "contextless" (buffer: []u8) -> int {
+	writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_SHUTDOWN)
+	put_u16(&writer, SHUTDOWN_CLEAR)
+	return end(&writer)
+}
+
 // create_sealed_command builds TPM2_Create of a keyed-hash object under the
-// storage key that holds the secret, with the policy as its policy.
-create_sealed_command :: proc "contextless" (buffer: []u8, parent: u32, secret: ^[SECRET_SIZE]u8, policy: ^[DIGEST_SIZE]u8) -> int {
+// storage key that holds the secret, with the policy as its policy. With an
+// authorization value (not empty), the object has it, with the attributes
+// AUTHORIZED_SEALED_OBJECT_ATTRIBUTES; with none, SEALED_OBJECT_ATTRIBUTES.
+create_sealed_command :: proc "contextless" (buffer: []u8, parent: u32, secret: ^[SECRET_SIZE]u8, policy: ^[DIGEST_SIZE]u8, authorization: []u8) -> int {
 	writer := begin(buffer, TAG_SESSIONS, COMMAND_CREATE)
+	if len(authorization) > AUTHORIZATION_VALUE_SIZE {
+		return 0
+	}
 	put_u32(&writer, parent)
 	put_password_session(&writer)
-	// The sensitive part: no authorization value, and the secret as data.
-	put_u16(&writer, 2 + 2 + SECRET_SIZE)
-	put_u16(&writer, 0)
+	// The sensitive part: the authorization value, and the secret as data.
+	put_u16(&writer, u16(2 + len(authorization) + 2 + SECRET_SIZE))
+	put_sized(&writer, authorization)
 	put_sized(&writer, secret^[:])
 	// The public part.
 	size_place := writer.count
 	put_u16(&writer, 0)
 	put_u16(&writer, ALGORITHM_KEYED_HASH)
 	put_u16(&writer, ALGORITHM_SHA256)
-	put_u32(&writer, SEALED_OBJECT_ATTRIBUTES)
+	put_u32(&writer, sealed_object_attributes(len(authorization) > 0))
 	put_sized(&writer, policy^[:])
 	put_u16(&writer, ALGORITHM_NULL) // No scheme: a sealed object signs nothing.
 	put_u16(&writer, 0) // No unique bytes: the TPM computes them.
@@ -374,15 +457,21 @@ load_command :: proc "contextless" (buffer: []u8, parent: u32, public_area: []u8
 }
 
 // unseal_command builds TPM2_Unseal of a loaded object with a policy
-// session: no nonce and an empty HMAC, as the session has an empty key.
-unseal_command :: proc "contextless" (buffer: []u8, item: u32, session: u32) -> int {
+// session and no nonce. With no authorization value the HMAC is empty, as
+// the session has an empty key. With one, the session ran
+// TPM2_PolicyPassword: the field of the HMAC holds the value itself, which
+// the TPM compares with the value of the object.
+unseal_command :: proc "contextless" (buffer: []u8, item: u32, session: u32, authorization: []u8) -> int {
 	writer := begin(buffer, TAG_SESSIONS, COMMAND_UNSEAL)
+	if len(authorization) > AUTHORIZATION_VALUE_SIZE {
+		return 0
+	}
 	put_u32(&writer, item)
-	put_u32(&writer, 9)
+	put_u32(&writer, u32(4 + 2 + 1 + 2 + len(authorization)))
 	put_u32(&writer, session)
 	put_u16(&writer, 0)
 	put_u8(&writer, SESSION_CONTINUE)
-	put_u16(&writer, 0)
+	put_sized(&writer, authorization)
 	return end(&writer)
 }
 
@@ -596,6 +685,25 @@ policy_pcr_digest :: proc "contextless" (pcr_digest: ^[DIGEST_SIZE]u8) -> [DIGES
 	return sha256_of(empty[:], code[:], selection_bytes[:writer.count], pcr_digest^[:])
 }
 
+// policy_with_password_digest gives the policy that follows a policy with
+// TPM2_PolicyPassword: SHA-256 of the policy and the code of
+// TPM2_PolicyAuthValue (TPM 2.0 part 3, TPM2_PolicyPassword).
+policy_with_password_digest :: proc "contextless" (policy: ^[DIGEST_SIZE]u8) -> [DIGEST_SIZE]u8 {
+	code := [4]u8{u8(COMMAND_POLICY_AUTH_VALUE >> 24), u8(COMMAND_POLICY_AUTH_VALUE >> 16 & 0xFF), u8(COMMAND_POLICY_AUTH_VALUE >> 8 & 0xFF), u8(COMMAND_POLICY_AUTH_VALUE & 0xFF)}
+	return sha256_of(policy^[:], code[:])
+}
+
+// sealed_object_policy gives the policy of a sealed object whose PCR 7 and
+// PCR 11 had the digest pcr_digest at its creation: TPM2_PolicyPCR, then
+// TPM2_PolicyPassword when the object has an authorization value.
+sealed_object_policy :: proc "contextless" (pcr_digest: ^[DIGEST_SIZE]u8, authorized: bool) -> [DIGEST_SIZE]u8 {
+	policy := policy_pcr_digest(pcr_digest)
+	if authorized {
+		policy = policy_with_password_digest(&policy)
+	}
+	return policy
+}
+
 // creation_data_pcr_digest reads a creation data with its size field: its
 // selection must be PCR 7 and PCR 11 of SHA-256, and its fields must end at
 // its end. It gives the digest of those PCRs at the creation.
@@ -640,12 +748,15 @@ ticket_fits :: proc "contextless" (ticket: []u8) -> bool {
 }
 
 // sealed_public_check checks the public area of a sealed object, with its
-// size field: a keyed-hash object of SHA-256 with exactly the attributes of
-// SEALED_OBJECT_ATTRIBUTES (no userWithAuth, adminWithPolicy), the policy
-// given, no scheme, and no byte after its fields. Its policy must be the
-// policy of the PCR values of its creation data: then the object opens
-// only while the PCRs hold the values that they held when the TPM made it.
-sealed_public_check :: proc "contextless" (public_area: []u8, policy: ^[DIGEST_SIZE]u8) -> bool {
+// size field: a keyed-hash object of SHA-256 with exactly the attributes
+// given (SEALED_OBJECT_ATTRIBUTES or AUTHORIZED_SEALED_OBJECT_ATTRIBUTES:
+// no userWithAuth, adminWithPolicy), the policy given, no scheme, and no
+// byte after its fields. Its policy must be the policy of the PCR values of
+// its creation data: then the object opens only while the PCRs hold the
+// values that they held when the TPM made it. The exact attributes also
+// keep an object with noDA set from passing as an object whose wrong
+// authorization values the TPM counts.
+sealed_public_check :: proc "contextless" (public_area: []u8, policy: ^[DIGEST_SIZE]u8, wanted_attributes: u32) -> bool {
 	if !area_fits(public_area, PUBLIC_AREA_LIMIT) {
 		return false
 	}
@@ -659,7 +770,7 @@ sealed_public_check :: proc "contextless" (public_area: []u8, policy: ^[DIGEST_S
 	if reader.failed || reader.place != len(public_area) {
 		return false
 	}
-	return kind == ALGORITHM_KEYED_HASH && name_hash == ALGORITHM_SHA256 && attributes == SEALED_OBJECT_ATTRIBUTES && scheme == ALGORITHM_NULL && len(unique) == DIGEST_SIZE && string(object_policy) == string(policy^[:])
+	return kind == ALGORITHM_KEYED_HASH && name_hash == ALGORITHM_SHA256 && attributes == wanted_attributes && scheme == ALGORITHM_NULL && len(unique) == DIGEST_SIZE && string(object_policy) == string(policy^[:])
 }
 
 // unseal_answer reads the answer of TPM2_Unseal: the secret, which must
@@ -679,7 +790,8 @@ unseal_answer :: proc "contextless" (answer: []u8) -> (secret: []u8, code: u32, 
 }
 
 // status_answer reads an answer with no field that the service needs:
-// TPM2_PolicyPCR and TPM2_FlushContext.
+// TPM2_PolicyPCR, TPM2_PolicyPassword, TPM2_FlushContext and
+// TPM2_Shutdown.
 status_answer :: proc "contextless" (answer: []u8) -> (code: u32, problem: Answer_Problem) {
 	_, code, problem = answer_begin(answer)
 	return

@@ -2191,7 +2191,7 @@ Do not use: log out, sign out.
 
 A passphrase is the text that derives the key of the seal of a named principal: 8 to 128 printable bytes.
 
-It is typed in the window of `unlock` only, shown as dots, and kept nowhere. It is never a text of the console, which keeps each line in its history.
+It is typed in the window of `unlock` only, shown as dots, and kept nowhere. It is never a text of the console, which keeps each line in its history. When the TPM seals the keys of the principal, the passphrase also gives the authorization value of the sealed object, so the TPM counts each wrong one.
 
 The design: `docs/PRINCIPALS.md`, "The passphrase".
 
@@ -5978,25 +5978,49 @@ Do not use: TPM driver (for the program), TPM daemon, resource manager.
 
 A secret is sealed by the TPM when the TPM holds it in a sealed object whose policy is the values of PCR 7 and PCR 11 at the seal: the TPM gives it back only to the same system, measured by the boot program, with the same state of Secure Boot.
 
-The TPM service seals with `TPM2_Create` under the storage key and a policy of `TPM2_PolicyPCR`, and unseals in a policy session. The record keeps the two areas of the sealed object that the TPM gives, which are useless on another TPM, and its creation data and creation ticket. Before each unseal the TPM checks the ticket (`TPM2_CertifyCreation`), and the service checks that the policy of the object is the policy of the PCR values of its creation: so an object that another system on the same machine made with the policy of this system is refused. A seal needs Secure Boot on. An older system, a changed system, a machine whose Secure Boot was turned off, or a copy of the disk on another machine opens nothing: the TPM answers that the policy fails. The machine key is the one secret sealed so today (`machine_seal()`).
+The TPM service seals with `TPM2_Create` under the storage key and a policy of `TPM2_PolicyPCR`, and unseals in a policy session. The record keeps the two areas of the sealed object that the TPM gives, which are useless on another TPM, and its creation data and creation ticket. Before each unseal the TPM checks the ticket (`TPM2_CertifyCreation`), and the service checks that the policy of the object is the policy of the PCR values of its creation: so an object that another system on the same machine made with the policy of this system is refused. A seal needs Secure Boot on. An older system, a changed system, a machine whose Secure Boot was turned off, or a copy of the disk on another machine opens nothing: the TPM answers that the policy fails. Two secrets are sealed so: the machine key (`machine_seal()`), and the TPM secret of a named principal, whose sealed object also has an authorization value.
 
-It is not an encryption under a passphrase: no passphrase is typed, and the strength is the TPM, not a derivation.
+For the machine key it is not an encryption under a passphrase: no passphrase is typed, and the strength is the TPM, not a derivation. For a named principal, the TPM and the passphrase are needed together.
 
-The design: `src/md/features/tpm_sealed_machine_key.md`; `docs/PRINCIPALS.md`, "The machine key sealed by the TPM".
+The design: `src/md/features/tpm_sealed_machine_key.md`, `src/md/features/tpm_sealed_principal_keys.md`; `docs/PRINCIPALS.md`, "The machine key sealed by the TPM" and "The keys sealed by the TPM".
 
 Do not use: bound to the TPM, TPM-encrypted, locked (for this).
 
 ### Recovery key
 
-A recovery key is a key of 20 random bytes, shown one time as 32 characters of base32 in 8 groups of 4, that opens a copy of the machine key when the TPM does not release it.
+A recovery key is a key of 20 random bytes, shown one time as 32 characters of base32 in 8 groups of 4, that opens a copy of the machine key, or of the keys of a named principal, when the TPM does not release them.
 
-The window of `unlock` shows it after `machine_seal()`, and never again: it is not kept on the disk and never written on the log. The record of the machine key holds the machine key sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key. When the TPM refuses (an update of the system, another machine, no TPM), the window asks for it; it accepts upper or lower case, with or without the `-`. After a recovery, `unlock` seals the key again to the system that runs, so the next start needs no recovery key. Its 160 random bits need no slow derivation.
+The window of `unlock` shows it after `machine_seal()`, or after the creation of a named principal whose keys the TPM seals, and never again: it is not kept on the disk and never written on the log. The record holds the key, or the keys, sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key, with a text for each use. When the TPM refuses (an update of the system, another machine, no TPM, a lockout), the window asks for it; it accepts upper or lower case, with or without the `-`. After a recovery, `unlock` seals the key again to the system that runs, so the next start needs no recovery key; for a named principal it first asks for a new passphrase, so the recovery key also replaces a lost passphrase. Its 160 random bits need no slow derivation.
 
 Example: `MZXW-6YTB-MZXW-6YTB-MZXW-6YTB-MZXW-6YTB`.
 
-The design: `src/md/features/tpm_sealed_machine_key.md`.
+The design: `src/md/features/tpm_sealed_machine_key.md`, `src/md/features/tpm_sealed_principal_keys.md`.
 
 Do not use: backup key, reset key, PIN, recovery password.
+
+### Authorization value
+
+An authorization value is the secret that a sealed object needs beside its policy: the TPM compares it at each unseal, counts each wrong one, and refuses each try for a time after too many.
+
+The keys of a named principal use it. The value is keyed BLAKE2b of the key that Argon2id derives from the passphrase, so a reader of the bus of the TPM still runs Argon2id for each guess. The policy of the object is `TPM2_PolicyPCR` then `TPM2_PolicyPassword`, and its attribute `noDA` is clear. A wrong value answers `TPM_RC_AUTH_FAIL`, which the TPM counted; after too many (three on the test machines), each try answers `TPM_RC_LOCKOUT`, and the window of `unlock` asks for the recovery key. The TPM service sends `TPM2_Shutdown` after each use that is not a counted failure, so a stop of the machine after a right passphrase counts no failure. The count limits the rate of the tries only while the lockout hierarchy of the TPM has an authorization value that the attacker does not know; modus sets none yet. The machine key has none.
+
+It is not the passphrase itself, and not a hash of it that is kept: nothing of it is on the disk.
+
+The design: `src/md/features/tpm_sealed_principal_keys.md`; `docs/PRINCIPALS.md`, "The keys sealed by the TPM".
+
+Do not use: PIN, password (for this), TPM password.
+
+### TPM secret
+
+The TPM secret is the 32 random bytes that the TPM seals for a named principal: with the key of the passphrase it gives the seal key of the secret keys of the principal.
+
+The seal key is keyed BLAKE2b of the TPM secret over the key of the passphrase. So the keys need the TPM, the measure of the system and the passphrase together, and a reader of the TPM secret still runs Argon2id for each guess. A new passphrase after a recovery gives a new TPM secret.
+
+It is not the machine key, and not a key of the principal: it signs and opens nothing alone.
+
+The design: `src/md/features/tpm_sealed_principal_keys.md`.
+
+Do not use: TPM key, sealed key (for this).
 
 ### Key check
 

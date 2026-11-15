@@ -37,7 +37,7 @@ The design grows in five layers, from a machine with no principal to one princip
 |---|---|---|
 | 1 | No principal: the root service is the only source of grants. A caller acts for the principal or not (`acts_for_principal`) | Built |
 | 2 | Principal 0 is the machine: its record holds the measure of the system | Built in part: the record, the measure, and the machine key sealed by the TPM with its recovery key. Its attestation key in the TPM is not built |
-| 3 | One named principal: a passphrase unlocks its session, and the lock ends it | Built in part: the record, the unlock, the session, the stores, the lock. Not built: the seal of its keys by the TPM, the encryption of its stores, its recovery |
+| 3 | One named principal: a passphrase unlocks its session, and the lock ends it | Built in part: the record, the unlock, the session, the stores, the lock, and the seal of its keys by the TPM with its passphrase, with a recovery key. Not built: the encryption of its stores, a recovery key on a machine with no TPM |
 | 4 | Several named principals on one machine | Not built: design in section 9 |
 | 5 | One principal on several machines; signed grants between principals | Not built: design in section 9 |
 
@@ -63,7 +63,7 @@ The key that signs the system description is the key of a principal like any oth
 
 ## 3. A named principal
 
-A named principal is a principal with a name and keys of its own: two key pairs, kept on the disk sealed under a key that only its passphrase gives. Nothing of the passphrase is stored: a wrong passphrase simply fails to open the seal.
+A named principal is a principal with a name and keys of its own: two key pairs, kept on the disk sealed under a key that only its passphrase gives, and, on a machine with a TPM and Secure Boot on, that the TPM of this machine releases only to this system ("The keys sealed by the TPM"). Nothing of the passphrase is stored: a wrong passphrase simply fails to open the seal.
 
 A named principal has the number 1. The root service holds two records: principal 0 and one named principal.
 
@@ -78,7 +78,7 @@ The program `unlock` makes the two secret keys from its random generator, which 
 
 ### The file of the principal
 
-The program `unlock` keeps the record in its private store (a store of principal 0), as the object `principal`. Its format is in `src/library/support/principals`. Each number is little-endian.
+The program `unlock` keeps the record in its private store (a store of principal 0), as the object `principal`. Its format is in `src/library/support/principals`. Each number is little-endian. The object has one of two forms, by its first 8 bytes: `PRINCIPL`, under the passphrase alone, below, or `PRINCIPT`, sealed by the TPM ("The keys sealed by the TPM").
 
 | Offset | Bytes | Field |
 |---|---|---|
@@ -104,11 +104,72 @@ The key of the seal is Argon2id (RFC 9106) of the passphrase and the salt: 19456
 
 A wrong passphrase gives another key, and the open of the seal fails with `Not_Authentic`. No passphrase and no hash of a passphrase is kept or compared.
 
-**The strength.** With no seal by the TPM, the strength of the record is the strength of the passphrase against Argon2id with 19 MiB and 2 passes, for an attacker with a copy of the disk. A passphrase of 8 bytes is the least that `unlock` accepts; it is not a strong passphrase. The seal by the TPM, behind a PIN, limits the tries; it is not built.
+**The strength.** In the form `PRINCIPL`, the strength of the record is the strength of the passphrase against Argon2id with 19 MiB and 2 passes, for an attacker with a copy of the disk. A passphrase of 8 bytes is the least that `unlock` accepts; it is not a strong passphrase. In the form `PRINCIPT`, a copy of the disk allows no try away from the TPM of the machine, and the TPM counts each wrong passphrase; the count limits the rate of the tries only while the lockout hierarchy of the TPM has an authorization value that the attacker does not know ("The keys sealed by the TPM").
 
 ### The passphrase
 
 A passphrase has 8 to 128 bytes of the printable characters (32 to 126). It is typed in the window of `unlock` only, and shows as dots. It is never a text of the console: the console keeps each line in its history and in its store.
+
+### The keys sealed by the TPM
+
+On a machine with the TPM service and Secure Boot on, the TPM seals the keys of a new named principal to the measure of the system and to its passphrase together. A copy of the disk allows no try away from the TPM of the machine. The TPM counts each wrong passphrase and then limits the rate of the tries, but only while its lockout hierarchy has an authorization value that the attacker does not know; modus does not set one yet ("What it protects, and what it does not"). A recovery key, shown one time at the creation, opens a copy of the keys when the TPM refuses or when the passphrase is lost. The design is `src/md/features/tpm_sealed_principal_keys.md`.
+
+**How the keys are sealed.** The TPM seals a TPM secret, 32 random bytes, to PCR 7 and PCR 11 ("The machine key sealed by the TPM"), with an authorization value: keyed BLAKE2b of the key that Argon2id derives from the passphrase. The two secret keys are sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the TPM secret over the key of the passphrase. So the keys need the TPM of this machine, this system and the passphrase. A reader of the bus of a hardware TPM, which sees the TPM secret and the value in clear, still runs Argon2id for each guess.
+
+**The count of the TPM.** The sealed object has the attribute `noDA` clear: each wrong passphrase is a failure that the TPM counts. After too many (three on the software TPM of the test machines), the TPM refuses each try for a time (1000 seconds of the time of the TPM there), even the right passphrase; the recovery key still opens the keys. After the lockout the TPM forgives one failure for each 1000 seconds there: about 86 tries a day while the machine runs. The TPM service sends `TPM2_Shutdown` after each use of the passphrase that is not a counted failure: the system has no orderly stop, and with no `TPM2_Shutdown` the TPM counts one failure at each start that follows an unlock. After a counted failure it sends none, so a cut of the power cannot lose a failure that the TPM kept in its RAM; a stop of the machine after a wrong passphrase then counts one more failure at the next start.
+
+**The creation.** `principal_create("alice")` asks for the passphrase two times. With the TPM service and Secure Boot on, the window then shows the recovery key until Enter, and the session starts:
+
+```
+tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ... bytes and a private area of ... bytes, with its creation data and its ticket
+unlock: principal 1 "alice" is created: its keys are sealed by the TPM with its passphrase, with a copy under a recovery key; the window shows the recovery key one time
+```
+
+With no TPM service, or with Secure Boot off, the file has the form `PRINCIPL`, under the passphrase alone, and no recovery key: "unlock: no TPM service: the keys of the new principal are sealed under its passphrase alone, with no recovery key".
+
+**The unlock.** The passphrase opens the keys with no other step. A wrong one is refused and counted:
+
+```
+tpm: the TPM refuses the unseal: the authorization value is wrong, and the TPM counted the failure (response code 0x98E)
+unlock: the passphrase of principal 1 "alice" is wrong: the TPM refuses it and counts it, nothing is unlocked (1 in all)
+unlock: the TPM releases the keys of principal 1 "alice" to its passphrase: the system is the system of the seal; the root service receives the key of its disk grant table only, and the secret keys are erased
+```
+
+**When the TPM refuses.** On another system, on another machine, with no TPM service, after a lockout, or with a sealed object that this TPM did not make, the window asks for the recovery key of the principal. On another system the TPM checks the PCRs before the passphrase: it counts nothing, and does not say whether the passphrase was right. Enter with nothing goes back to the passphrase while the TPM service runs. The recovery key opens the copy; with Secure Boot on, the window then asks for a passphrase two times, new or the same, and the TPM seals the keys again to it and to the system that runs. So the recovery key also replaces a lost passphrase:
+
+```
+unlock: the keys of principal 1 "alice" wait for their recovery key: the TPM does not release them
+unlock: the recovery key of principal 1 "alice" opens its keys
+unlock: the keys of principal 1 "alice" are sealed again to PCR 7 and PCR 11 of the system that runs and to the new passphrase: its next unlock needs no recovery key
+```
+
+**The file `PRINCIPT`.** Each number is little-endian.
+
+| Offset | Bytes | Field |
+|---|---|---|
+| 0 | 124 | As the form `PRINCIPL`, to the salt, with `PRINCIPT` and the format 1 |
+| 124 | 4 | The PCRs of the policy: `0x880`, PCR 7 and PCR 11 |
+| 128 | 8 | The bytes of the public area, of the private area, of the creation data and of the creation ticket, 2 bytes each |
+| 136 | 128 | The public area of the sealed object |
+| 264 | 256 | The private area |
+| 520 | 256 | The creation data |
+| 776 | 72 | The creation ticket |
+| 848 | 12 | The nonce of the seal under the seal key |
+| 860 | 80 | The two secret keys sealed under the seal key, and the tag |
+| 940 | 12 | The nonce of the recovery seal |
+| 952 | 80 | The two secret keys sealed under keyed BLAKE2b of the recovery key, and the tag |
+
+Each part of the sealed object has zero bytes after it. The additional data of the seal under the seal key is the first 124 bytes. The additional data of the recovery seal is the first 108 bytes, before the salt, so a new passphrase keeps the copy valid. `principal_tpm_file_decode` refuses other parameters of Argon2id, other PCRs, a name that is not a name, and a part of the sealed object that is not whole.
+
+**What it protects, and what it does not.**
+
+- A copy of the disk opens nothing on another machine or another system without the recovery key.
+- The TPM counts the tries on this machine, and limits their rate, only while its lockout hierarchy has an authorization value that the attacker does not know. A new or cleared TPM has an empty one, and modus sets none yet. With an empty one, an attacker with the machine starts another system, changes the count limits of the TPM or resets the count (`TPM2_DictionaryAttackParameters`, `TPM2_DictionaryAttackLockReset`, which do not depend on the PCRs), and starts this system again: each guess in the window of `unlock` then costs one derivation of Argon2id only, as for the form `PRINCIPL`. On the test TPM the rate is three tries, then one for each 1000 seconds of the time of the TPM.
+- A new passphrase after a recovery does not revoke the old one: a writer of the disk who kept the old file puts it back, and the old passphrase opens the keys again. Nothing pins the current file.
+- Who holds the recovery key holds the principal, on any copy of the disk, old or new, with no TPM: the recovery key never changes, and a new one is not built.
+- The TPM secret and the authorization value cross the bus of the TPM in clear: no session encrypts them. A reader of the bus still runs Argon2id for each guess of the passphrase.
+- The machine passphrase is not sealed by the TPM: its record keeps the form under Argon2id alone.
+- With no TPM, the file `PRINCIPL` has no recovery key.
 
 ## 4. The unlock and the lock
 
@@ -124,7 +185,7 @@ The root service starts `unlock` at boot, after the boot pass of `settings`.
 
 **The lock** (`lock()` in the console): the root service stops each program of the session and its terminals, marks the principal locked, and starts `unlock` again. The programs stop; they are not frozen: a frozen program needs a kernel operation that does not exist. A program that keeps its state in its store at each change (`notes`) loses nothing.
 
-**The creation** (`principal_create("name")` in the console): the root service checks the name, and starts `unlock` with it. The passphrase is typed two times. `unlock` makes the keys, derives the key of the seal, seals the secret keys, writes the file, gives the record to the root service, and starts the session.
+**The creation** (`principal_create("name")` in the console): the root service checks the name, and starts `unlock` with it. The passphrase is typed two times. `unlock` makes the keys, derives the key of the seal, seals the secret keys, writes the file, gives the record to the root service, and starts the session. With the TPM service and Secure Boot on, the TPM seals the keys with the passphrase, and the window shows the recovery key ("The keys sealed by the TPM").
 
 The root service trusts `unlock` for the record and for the unlock, as the one program with the grant `Principals`, as it trusts `settings` as the one writer of the settings page. No other program can send these two commands.
 
@@ -322,16 +383,19 @@ A refusal is an error record with the unit `Principals`: a second named principa
 
 ## 8. The tests
 
-- `odin test src/library/support/principals`: the names of the stores, a name that does not fit, the names and the passphrases, a round trip of the file, and ten hostile files; a round trip of the record of the machine, and its hostile forms; a round trip of the record sealed by the TPM, its offsets and its hostile forms; the recovery key in base32 (the vector "fooba" of RFC 4648) and its parse; the key of the recovery seal and the key check.
-- `odin test src/library/support/tpm2`: each command of TPM 2.0 that the TPM service sends, byte for byte, and the read of the answers with their checks; the policy of PCR 7 and PCR 11 and the creation hash against digests of SHA-256 computed outside; a forged sealed object (the policy of this system, the creation data of another one), other attributes, a creation data and a ticket of another form, each refused.
-- `modustool test principals tpm`, opt-in, as `test trusted_boot tpm` (`TRUSTED_BOOT.md`, "The machines of the TPM"): six machines with one software TPM and the firmware with no Secure Boot, as the firmware with Secure Boot loses an answer of the software TPM on the test host. The first five start the test system whose root service seals with no Secure Boot, a setting of a build of the test only ("root: this system seals with no Secure Boot: a test system, never a release"; `TRUSTED_BOOT.md`, "The machines of the TPM"). The first one: `machine_seal()` seals the machine key, and the tool reads the recovery key off the screen; a second `machine_seal()` is refused. The second one, the same system: the TPM proves the creation and releases the key with no typing, and the table that the first one wrote verifies. The third one, another system (another PCR 11): the TPM refuses, a wrong recovery key opens nothing, the recovery key opens the key, and `unlock` seals it again. The fourth one, that other system again: the TPM releases the key with no typing. The fifth one, that other system on a disk that the tool writes with the record of the fourth one and one byte of its creation ticket changed: the TPM refuses the ticket (`TPM_RC_TICKET`), nothing is unsealed, and the window asks for the recovery key. The sixth one, on the disk of the first four, starts the main volume, whose root service has the rule (another PCR 11): the recovery key opens the key, `unlock` does not seal it again, and `machine_seal()` is refused. No machine test makes a forged object with the policy of this system: it needs a second system that makes objects on the same TPM; the host tests of `tpm2` refuse one.
+- `odin test src/library/support/principals`: the names of the stores, a name that does not fit, the names and the passphrases, a round trip of the file, and ten hostile files; a round trip of the record of the machine, and its hostile forms; a round trip of the record sealed by the TPM, its offsets and its hostile forms; a round trip of the file `PRINCIPT`, its offsets, its two additional data and its hostile forms; the recovery key in base32 (the vector "fooba" of RFC 4648) and its parse; the key of the recovery seal and the key check; the authorization value, the seal key and the recovery seal key of a named principal, each with its own text.
+- `odin test src/library/support/tpm2`: each command of TPM 2.0 that the TPM service sends, byte for byte, with and without an authorization value, `TPM2_PolicyPassword` and `TPM2_Shutdown`, and the read of the answers with their checks; the policy of PCR 7 and PCR 11, the same policy followed by `TPM2_PolicyPassword`, and the creation hash against digests of SHA-256 computed outside; a forged sealed object (the policy of this system, the creation data of another one), other attributes, a creation data and a ticket of another form, each refused; an object of a named principal with `noDA` set, or with the policy of the PCRs alone, refused; the codes of a counted failure, of a failure that is not counted, of the lockout and of a retry.
+- `modustool test principals tpm`, opt-in, as `test trusted_boot tpm` (`TRUSTED_BOOT.md`, "The machines of the TPM"): six machines with one software TPM and the firmware with no Secure Boot, as the firmware with Secure Boot loses an answer of the software TPM on the test host. The first five start the test system whose root service seals with no Secure Boot, a setting of a build of the test only ("root: this system seals with no Secure Boot: a test system, never a release"; `TRUSTED_BOOT.md`, "The machines of the TPM"). The first one: `machine_seal()` seals the machine key, and the tool reads the recovery key off the screen; a second `machine_seal()` is refused. The second one, the same system: the TPM proves the creation and releases the key with no typing, and the table that the first one wrote verifies. The third one, another system (another PCR 11): the TPM refuses, a wrong recovery key opens nothing, the recovery key opens the key, and `unlock` seals it again. The fourth one, that other system again: the TPM releases the key with no typing. The fifth one, that other system on a disk that the tool writes with the record of the fourth one and one byte of its creation ticket changed: the TPM refuses the ticket (`TPM_RC_TICKET`), nothing is unsealed, and the window asks for the recovery key. The sixth one, on the disk of the first four, starts the main volume, whose root service has the rule (another PCR 11): the recovery key opens the key, `unlock` does not seal it again, and `machine_seal()` is refused. No machine test makes a forged object with the policy of this system: it needs a second system that makes objects on the same TPM; the host tests of `tpm2` refuse one. Then four machines on a disk of their own and the same TPM, for the keys of a named principal: the seventh, on the test system, creates alice, the TPM seals her keys with her passphrase, and the tool reads her recovery key off the screen; the eighth, the same system: a wrong passphrase, refused and counted by the TPM (`TPM_RC_AUTH_FAIL`), then the right one opens the session; the ninth, the other system: the TPM refuses the passphrase, a wrong recovery key opens nothing, the recovery key opens the keys, and a new passphrase seals them again; the tenth, the other system again: two wrong passphrases, each counted, make three with the one of the eighth machine, the TPM refuses the right passphrase (`TPM_RC_LOCKOUT`), and the recovery key opens the keys.
 - `modustool test disk_programs`: the machine passphrase is set in the window of `unlock`, a table that another key signed is refused, and at the next start the passphrase gives back the grants of principal 0; a table that does not verify under the opened key is refused and kept, with no write. Then the principal alice is created: the table in her store that another key signed is refused and written over; a console of her session grants the store to the nickname `visitor`; at the next start her passphrase gives the grant back, and `visitor` finds its visit in the store of its nickname (`TOOLS.md`, "The disk of the disk programs").
 - `odin test src/library/support/cryptography/vectors`: BLAKE2b of RFC 7693 and Argon2id of RFC 9106, section 5.3; the blocks are erased after the derivation, and a supply of blocks that is too small gives `Out_Of_Memory`.
 - `modustool test principals`: two machines on one data disk. The first one: no named principal; a note of `notes` started by the console belongs to principal 0; the creation of `alice` in the window of `unlock`; `notes` from the menu has a new store, `notes.principal.1`; the grants name the principal; the console connects acting for principal 0: `storage.open_store("notes.principal.1")` is refused with `No_Grant`, and `storage.stores()` does not list that store; the lock stops `notes`; a wrong passphrase opens nothing; the right one starts the session again and `notes` finds the note and the count of alice; a revocation of the store of `notes`. The second machine, on the same disk: the passphrase starts the session, and the note of alice is there. Picture: `principals_unlock`.
 
 ## 9. Not built
 
-- **The keys of a named principal sealed by the TPM, and its recovery key.** The TPM seals the keys of the principal to the measure of the system, with the passphrase as the authorization value of the sealed object, so a copy of the disk does not allow tries without limit; a recovery key opens a copy of the keys. Today a lost passphrase is a lost principal: no administrator can reset it. Property 21 asks for recovery from the first version of layer 3.
+- **A recovery key for a named principal on a machine with no TPM.** The file `PRINCIPL` has no copy under a recovery key: there a lost passphrase is a lost principal. Property 21 asks for recovery from the first version of layer 3.
+- **A change of the passphrase of a named principal** while the TPM still opens its keys, and a new recovery key. Today a new passphrase comes only after a recovery.
+- **A lockout authorization value that the TPM service sets.** The service sets a random one when it finds an empty one, and reads the count limits of the TPM, so another system cannot change or reset the count of the wrong passphrases.
+- **The file of a named principal pinned in the TPM**, so a kept old file, with its old passphrase, is refused.
 - **The key of principal 0**: the attestation key of the TPM.
 - **The TPM and the machine passphrase together.** The machine passphrase as the authorization value of the sealed machine key, so that the TPM counts the wrong tries.
 - **A seal to the measure of the next system.** A signed policy of the publisher of the system, with a counter of the TPM that refuses an older system: an update then needs no recovery key.

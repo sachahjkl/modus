@@ -8,7 +8,9 @@
 // on the same system, with the same state of Secure Boot: an older system,
 // a changed system, or a copy of the disk on another machine opens nothing.
 // The program `unlock` seals the machine key with it (docs/PRINCIPALS.md,
-// "The machine key sealed by the TPM").
+// "The machine key sealed by the TPM"), and the keys of a named principal,
+// with an authorization value from its passphrase whose wrong tries the
+// TPM counts (docs/PRINCIPALS.md, "The keys sealed by the TPM").
 //
 // **Start**: the root service starts it at boot, before `unlock`, only when
 // the boot program measured the system into the TPM. No line of the console
@@ -76,6 +78,11 @@ REQUEST_BOUND_MILLISECONDS :: 300_000
 // answer: a flush frees a slot and does no work of a key. The flushes of
 // one request (three at most) stay far below the bound of the client.
 FLUSH_BOUND_MILLISECONDS :: 10_000
+
+// The sends of one TPM2_Unseal when the TPM asks for it again
+// (TPM_RC_RETRY): the TPM asks it at most once after its start, so a third
+// answer of that kind is a fault of the TPM.
+UNSEAL_TRIES :: 3
 
 // The bytes of a command and of an answer that this service handles: the
 // largest is the answer of TPM2_Create with its creation data and ticket.
@@ -185,6 +192,12 @@ outcome_of_problem :: proc "contextless" (problem: tpm2.Answer_Problem, code: u3
 		if tpm2.policy_fails(code) {
 			return {status = .Policy_Fails, values = {0 = u64(code)}}
 		}
+		if tpm2.authorization_fails(code) {
+			return {status = .Authorization_Fails, values = {0 = u64(code)}}
+		}
+		if tpm2.locked_out(code) {
+			return {status = .Locked_Out, values = {0 = u64(code)}}
+		}
 		return {status = .Refused, values = {0 = u64(code), 1 = u64(command)}}
 	}
 	return {status = .Device_Error, values = {0 = tpm_service.DEVICE_STEP_ANSWER}}
@@ -225,8 +238,8 @@ storage_key :: proc "contextless" () -> (handle: u32, failed: Outcome, ok: bool)
 }
 
 // policy_session starts a session of the kind given and runs TPM2_PolicyPCR
-// in it.
-policy_session :: proc "contextless" (kind: u8) -> (session: u32, failed: Outcome, ok: bool) {
+// in it, then TPM2_PolicyPassword for an object with an authorization value.
+policy_session :: proc "contextless" (kind: u8, authorized: bool) -> (session: u32, failed: Outcome, ok: bool) {
 	count := tpm2.start_session_command(command_bytes[:], kind)
 	answer, step := transact(count)
 	if step != 0 {
@@ -247,15 +260,82 @@ policy_session :: proc "contextless" (kind: u8) -> (session: u32, failed: Outcom
 	if problem != .None {
 		return session, outcome_of_problem(problem, code, tpm2.COMMAND_POLICY_PCR), false
 	}
+	if authorized {
+		count = tpm2.policy_password_command(command_bytes[:], session)
+		answer, step = transact(count)
+		if step != 0 {
+			return session, {status = .Device_Error, values = {0 = step}}, false
+		}
+		code, problem = tpm2.status_answer(answer)
+		if problem != .None {
+			return session, outcome_of_problem(problem, code, tpm2.COMMAND_POLICY_PASSWORD), false
+		}
+	}
 	return session, {}, true
 }
 
-// seal seals the secret of the region to the values of PCR 7 and PCR 11 now.
-seal :: proc "contextless" () -> Outcome {
+// authorization_take reads the authorization of a request: with
+// AUTHORIZATION_VALUE, it copies the value of the region and erases it
+// there. ok is false for another value of the client.
+authorization_take :: proc "contextless" (kind: u64, value: ^[tpm2.AUTHORIZATION_VALUE_SIZE]u8) -> (authorized: bool, ok: bool) {
+	switch kind {
+	case tpm_service.AUTHORIZATION_NONE:
+		return false, true
+	case tpm_service.AUTHORIZATION_VALUE:
+		copy(value^[:], region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
+		erase(region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
+		return true, true
+	}
+	return false, false
+}
+
+// The TPM was asked to check an authorization value in the request that
+// runs: the TPM then marks that it used an object that it protects from a
+// dictionary attack, and counts one failure at its next start unless it
+// receives TPM2_Shutdown before.
+authorization_used: bool
+
+// orderly_state_restore sends TPM2_Shutdown(CLEAR) after a use of an
+// authorization value that the TPM did not count as a failure. The system
+// has no orderly stop: with no shutdown, each start that follows an unlock
+// of a named principal would count one failure, and three starts would
+// lock the TPM. After a counted failure it is not sent (see unseal). The
+// TPM goes on to take commands after it.
+orderly_state_restore :: proc "contextless" () {
+	// A bound of its own, as a flush has: a request that reached its
+	// deadline still ends with it.
+	request_deadline = system.time() + FLUSH_BOUND_MILLISECONDS
+	count := tpm2.shutdown_command(command_bytes[:])
+	answer, step := transact(count)
+	if step != 0 {
+		system.log("tpm: the interface failed at TPM2_Shutdown after a use of an authorization value: step ", step, "; the next start of the TPM can count one failure")
+		return
+	}
+	code, problem := tpm2.status_answer(answer)
+	if problem != .None {
+		system.log("tpm: the TPM refused TPM2_Shutdown after a use of an authorization value (response code ", system.Hex(u64(code)), "); the next start of the TPM can count one failure")
+		return
+	}
+	system.log("tpm: TPM2_Shutdown after the use of an authorization value: a stop of the machine now makes the TPM count no failure")
+}
+
+// seal seals the secret of the region to the values of PCR 7 and PCR 11 now,
+// with the authorization value of the region when the request has one.
+seal :: proc "contextless" (authorization_kind: u64) -> Outcome {
 	secret: [tpm2.SECRET_SIZE]u8
+	authorization: [tpm2.AUTHORIZATION_VALUE_SIZE]u8
 	defer erase(secret[:])
+	defer erase(authorization[:])
 	copy(secret[:], region[tpm_service.REGION_SECRET:][:tpm2.SECRET_SIZE])
 	erase(region[tpm_service.REGION_SECRET:][:tpm2.SECRET_SIZE])
+	authorized, known := authorization_take(authorization_kind, &authorization)
+	if !known {
+		return {status = .Bad_Command}
+	}
+	authorization_bytes: []u8
+	if authorized {
+		authorization_bytes = authorization[:]
+	}
 	defer erase(command_bytes[:])
 	primary, primary_failed, primary_ok := storage_key()
 	if !primary_ok {
@@ -263,7 +343,7 @@ seal :: proc "contextless" () -> Outcome {
 	}
 	defer flush(primary)
 	// A trial session: the TPM computes the policy from the PCRs now.
-	session, session_failed, session_ok := policy_session(tpm2.SESSION_TRIAL)
+	session, session_failed, session_ok := policy_session(tpm2.SESSION_TRIAL, authorized)
 	defer flush(session)
 	if !session_ok {
 		return session_failed
@@ -277,7 +357,7 @@ seal :: proc "contextless" () -> Outcome {
 	if problem != .None {
 		return outcome_of_problem(problem, code, tpm2.COMMAND_POLICY_GET_DIGEST)
 	}
-	count = tpm2.create_sealed_command(command_bytes[:], primary, &secret, &policy)
+	count = tpm2.create_sealed_command(command_bytes[:], primary, &secret, &policy, authorization_bytes)
 	answer, step = transact(count)
 	if step != 0 {
 		return {status = .Device_Error, values = {0 = step}}
@@ -291,17 +371,31 @@ seal :: proc "contextless" () -> Outcome {
 	copy(region[tpm_service.REGION_PRIVATE_AREA:][:len(created.private_area)], created.private_area)
 	copy(region[tpm_service.REGION_CREATION_DATA:][:len(created.creation_data)], created.creation_data)
 	copy(region[tpm_service.REGION_CREATION_TICKET:][:len(created.creation_ticket)], created.creation_ticket)
-	system.log("tpm: sealed 32 bytes to PCR 7 and PCR 11: a public area of ", u64(len(created.public_area)), " bytes and a private area of ", u64(len(created.private_area)), " bytes, with its creation data and its ticket")
+	if authorized {
+		system.log("tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", u64(len(created.public_area)), " bytes and a private area of ", u64(len(created.private_area)), " bytes, with its creation data and its ticket")
+	} else {
+		system.log("tpm: sealed 32 bytes to PCR 7 and PCR 11: a public area of ", u64(len(created.public_area)), " bytes and a private area of ", u64(len(created.private_area)), " bytes, with its creation data and its ticket")
+	}
 	return {status = .Ok, values = {0 = u64(len(created.public_area)), 1 = u64(len(created.private_area)), 2 = u64(tpm2.PCR_SET), 3 = u64(len(created.creation_data)), 4 = u64(len(created.creation_ticket))}}
 }
 
 // unseal gives the secret of a sealed object in the region, when this TPM
 // made the object under the PCR values of its policy, and when PCR 7 and
 // PCR 11 hold those values now.
-unseal :: proc "contextless" (public_count, private_count, creation_count, ticket_count: u64) -> Outcome {
+unseal :: proc "contextless" (public_count, private_count, creation_count, ticket_count: u64, authorization_kind: u64) -> Outcome {
+	authorization: [tpm2.AUTHORIZATION_VALUE_SIZE]u8
+	defer erase(authorization[:])
+	// The command of the unseal holds the authorization value: the buffer is
+	// erased after the last command of the request, on each path.
+	defer erase(command_bytes[:])
+	authorized, known := authorization_take(authorization_kind, &authorization)
 	// The counts come from the client: they are checked before any copy.
-	if public_count > tpm2.PUBLIC_AREA_LIMIT || private_count > tpm2.PRIVATE_AREA_LIMIT || creation_count > tpm2.CREATION_DATA_LIMIT || ticket_count > tpm2.CREATION_TICKET_LIMIT {
+	if !known || public_count > tpm2.PUBLIC_AREA_LIMIT || private_count > tpm2.PRIVATE_AREA_LIMIT || creation_count > tpm2.CREATION_DATA_LIMIT || ticket_count > tpm2.CREATION_TICKET_LIMIT {
 		return {status = .Bad_Command}
+	}
+	authorization_bytes: []u8
+	if authorized {
+		authorization_bytes = authorization[:]
 	}
 	public_bytes, private_bytes, creation_bytes, ticket_bytes := int(public_count), int(private_count), int(creation_count), int(ticket_count)
 	public_area: [tpm2.PUBLIC_AREA_LIMIT]u8
@@ -318,7 +412,10 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 		return {status = .Bad_Command}
 	}
 	// The policy of the object must be the policy of the PCR values that
-	// its creation data names, with the attributes of a sealed object. With
+	// its creation data names, with the attributes of a sealed object of
+	// its authorization: an object of a named principal with noDA set would
+	// let a wrong passphrase go uncounted, and one with the policy of the
+	// PCRs alone would open with no passphrase. With
 	// the ticket below, the object then opens only while the PCRs hold the
 	// values that they held when this TPM made it: an object that another
 	// system made with the policy of this system names the PCRs of that
@@ -328,8 +425,8 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 		system.log("tpm: refused the unseal: the creation data does not name PCR 7 and PCR 11 with a digest")
 		return {status = .Not_Authentic}
 	}
-	policy := tpm2.policy_pcr_digest(&pcr_digest)
-	if !tpm2.sealed_public_check(public_area[:public_bytes], &policy) {
+	policy := tpm2.sealed_object_policy(&pcr_digest, authorized)
+	if !tpm2.sealed_public_check(public_area[:public_bytes], &policy, tpm2.sealed_object_attributes(authorized)) {
 		system.log("tpm: refused the unseal: the policy of the object is not the policy of the PCR values of its creation, or its attributes are not the attributes of a sealed object")
 		return {status = .Not_Authentic}
 	}
@@ -365,26 +462,51 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	if problem != .None {
 		return outcome_of_problem(problem, code, tpm2.COMMAND_CERTIFY_CREATION)
 	}
-	session, session_failed, session_ok := policy_session(tpm2.SESSION_POLICY)
+	session, session_failed, session_ok := policy_session(tpm2.SESSION_POLICY, authorized)
 	defer flush(session)
 	if !session_ok {
 		return session_failed
 	}
-	count = tpm2.unseal_command(command_bytes[:], item, session)
-	answer, step = transact(count)
-	if step != 0 {
-		return {status = .Device_Error, values = {0 = step}}
-	}
 	secret: []u8
-	secret, code, problem = tpm2.unseal_answer(answer)
+	for attempt in 1 ..= UNSEAL_TRIES {
+		count = tpm2.unseal_command(command_bytes[:], item, session, authorization_bytes)
+		authorization_used = authorization_used || authorized
+		answer, step = transact(count)
+		if step != 0 {
+			return {status = .Device_Error, values = {0 = step}}
+		}
+		secret, code, problem = tpm2.unseal_answer(answer)
+		// A TPM can ask for the command again at the first use of an object
+		// that it protects from a dictionary attack after its start: the
+		// check of the session did not run, and the session stays.
+		if problem != .Refused || !tpm2.retry_asked(code) || attempt == UNSEAL_TRIES {
+			break
+		}
+	}
 	if problem != .None {
 		if problem == .Refused && tpm2.policy_fails(code) {
 			system.log("tpm: the TPM refuses the unseal: PCR 7 and PCR 11 do not hold the values of the seal (response code ", system.Hex(u64(code)), ")")
 		}
+		if problem == .Refused && tpm2.authorization_fails(code) {
+			// No TPM2_Shutdown after a counted failure: a TPM can keep the
+			// failure in its RAM and write it later, and a shutdown would
+			// make its state orderly, so a stop of the power would lose the
+			// failure. With no shutdown, the next start counts one failure
+			// at most, and a right passphrase later in this run sends it.
+			authorization_used = false
+			system.log("tpm: the TPM refuses the unseal: the authorization value is wrong, and the TPM counted the failure (response code ", system.Hex(u64(code)), ")")
+		}
+		if problem == .Refused && tpm2.locked_out(code) {
+			system.log("tpm: the TPM refuses the unseal: it counted too many wrong authorization values, and refuses each try for now (response code ", system.Hex(u64(code)), ")")
+		}
 		return outcome_of_problem(problem, code, tpm2.COMMAND_UNSEAL)
 	}
 	copy(region[tpm_service.REGION_SECRET:][:tpm2.SECRET_SIZE], secret)
-	system.log("tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal")
+	if authorized {
+		system.log("tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal, and the authorization value is right")
+	} else {
+		system.log("tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal")
+	}
 	return {status = .Ok, values = {0 = tpm2.SECRET_SIZE}}
 }
 
@@ -428,13 +550,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for command in system.receive(&clients.commands) {
 			outcome: Outcome
 			request_deadline = system.time() + REQUEST_BOUND_MILLISECONDS
+			authorization_used = false
 			#partial switch tpm_service.Command(command.kind) {
 			case .Seal:
-				outcome = seal()
+				outcome = seal(command.values[0])
 			case .Unseal:
-				outcome = unseal(command.values[0], command.values[1], command.values[2], command.values[3])
+				outcome = unseal(command.values[0], command.values[1], command.values[2], command.values[3], command.values[4])
 			case:
 				outcome = {status = .Bad_Command}
+			}
+			// After the flushes of the request, before its completion: the
+			// client learns the outcome only once the TPM is orderly again.
+			if authorization_used {
+				orderly_state_restore()
 			}
 			if !system.send(&clients.completions, ring.Record{kind = u32(outcome.status), tag = command.tag, values = outcome.values}) {
 				system.log_in("devices", .Warning, "tpm: the completion queue of the TPM ring is full: a completion is lost")
