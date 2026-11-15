@@ -1,6 +1,7 @@
 package line_editor
 
 import "modus:contract/blake3"
+import "modus:contract/text_encoding"
 
 // The line history as bytes, to keep it in a store across a stop of the
 // program (docs/CONSOLE.md, section 6). The bytes come back from a disk:
@@ -15,7 +16,9 @@ import "modus:contract/blake3"
 //   8   u32       the count of lines
 //   12  u32       the count of bytes of the lines
 //   16  the lines, the oldest first: for each one a byte with its length
-//       (1 to LINE_CAPACITY), then its bytes (32 to 126 each)
+//       (1 to LINE_CAPACITY), then its bytes, valid UTF-8
+//       (text_encoding.text_valid). A file of lines of ASCII is a file of
+//       this form.
 //   the end: the BLAKE3 hash of each byte before it (32 bytes)
 
 HISTORY_FILE_MAGIC :: "LHST" // The first 4 bytes of the file.
@@ -37,7 +40,7 @@ History_File_Problem :: enum u8 {
 	Too_Many_Lines = 5, // More lines than the history holds.
 	Wrong_Size     = 6, // The count of bytes of the lines is not the bytes between the header and the hash.
 	Wrong_Line     = 7, // A line of 0 bytes, longer than a line, or past the end of the lines.
-	Not_Printable  = 8, // A byte of a line under 32 or over 126.
+	Not_Text       = 8, // A line that is not valid UTF-8, or that holds a control character.
 	Wrong_Count    = 9, // The lines end before or after the count of lines.
 }
 
@@ -52,7 +55,7 @@ history_file_problem_texts := [History_File_Problem]string {
 	.Too_Many_Lines = "it has more lines than the history holds",
 	.Wrong_Size     = "its count of bytes is wrong",
 	.Wrong_Line     = "a line has a wrong length",
-	.Not_Printable  = "a line has a byte that is not a character",
+	.Not_Text       = "a line is not a text of UTF-8",
 	.Wrong_Count    = "its count of lines is wrong",
 }
 
@@ -138,10 +141,8 @@ history_file_read :: proc "contextless" (bytes: []u8, history: ^History) -> (pro
 		if length == 0 || length > LINE_CAPACITY || length > end - place - 1 {
 			return .Wrong_Line
 		}
-		for character in bytes[place + 1:][:length] {
-			if !printable(character) {
-				return .Not_Printable
-			}
+		if !text_encoding.text_valid(bytes[place + 1:][:length]) {
+			return .Not_Text
 		}
 		place += 1 + length
 	}

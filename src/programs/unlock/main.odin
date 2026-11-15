@@ -100,6 +100,7 @@ package unlock
 import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/ring"
+import "modus:contract/text_encoding"
 import "modus:contract/tpm_service"
 import "modus:support/disk_program"
 import "modus:support/display"
@@ -1280,11 +1281,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 		end := interface.draw_text(table, x, 48, string(typed[:typed_count]), graphics.COLOR_TEXT)
 		interface.draw_rectangle(table, end + 2, 48, 2, 16, graphics.COLOR_TEXT)
 	case:
-		// One dot for each byte typed: the passphrase itself is never drawn.
-		for index in 0 ..< typed_count {
+		// One dot for each character typed: the passphrase itself is never
+		// drawn.
+		dots := text_encoding.character_count(typed[:typed_count])
+		for index in 0 ..< dots {
 			interface.draw_rectangle(table, x + 2 + index * 10, 54, 6, 6, graphics.COLOR_TEXT)
 		}
-		interface.draw_rectangle(table, x + 2 + typed_count * 10, 48, 2, 16, graphics.COLOR_TEXT)
+		interface.draw_rectangle(table, x + 2 + dots * 10, 48, 2, 16, graphics.COLOR_TEXT)
 	}
 	if message != "" {
 		interface.draw_text(table, 12, 84, message, message_failed ? graphics.COLOR_FAILED : graphics.COLOR_PROGRAM)
@@ -1625,16 +1628,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case event.character == '\n':
 				enter(&window)
 			case event.character == 8:
+				// The passphrase is UTF-8: Backspace removes its last
+				// whole character, and erases its bytes.
 				if typed_count > 0 {
-					typed_count -= 1
-					typed[typed_count] = 0
+					kept := text_encoding.complete_characters(typed[:typed_count - 1])
+					erase(typed[kept:typed_count])
+					typed_count = kept
 				}
-			case event.character >= ' ' && event.character <= '~':
+			case text_encoding.character_in_text(event.character):
+				// A character whose bytes do not fit is not typed.
 				recovery := mode == .Machine_Recovery || mode == .Principal_Recovery
 				limit := recovery ? RECOVERY_TYPED_LIMIT : len(typed)
 				if typed_count < limit {
-					typed[typed_count] = event.character
-					typed_count += 1
+					typed_count += text_encoding.character_encode(event.character, typed[typed_count:limit])
 				}
 			}
 			if mode == .Done {

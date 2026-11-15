@@ -372,7 +372,7 @@ key :: proc "contextless" (event: display.Event) {
 		choose(0)
 	case event.character >= 'a' && event.character <= 'z' || event.character == '_' || event.character >= '0' && event.character <= '9':
 		if filter_count < FILTER_CAPACITY {
-			filter[filter_count] = event.character
+			filter[filter_count] = u8(event.character) // A letter, a digit or "_": one byte.
 			filter_count += 1
 		}
 		list_read()

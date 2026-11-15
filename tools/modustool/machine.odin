@@ -2817,6 +2817,33 @@ scenario := [?]Step {
 	{kind = .Key, text = "esc"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] > a"},
+	// The keys of the layout of France give characters of the Latin-1
+	// Supplement: the keys 3, 2, t, 2, 3 type "été", the line editor keeps
+	// its UTF-8, and the log line holds the bytes C3 A9.
+	{kind = .Keys, text = "32t23"},
+	{kind = .Key, text = "esc"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] > \"été\""},
+	{kind = .Wait, text = "[console] été"},
+	// The dead key right of P: ^ then e gives ê; ^ then z gives ^ and z.
+	// The text names the keys of a QWERTY keyboard: the key of w is the z
+	// of the layout of France.
+	{kind = .Keys, text = "3[e[w3"},
+	{kind = .Key, text = "esc"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] ê^z"},
+	// Backspace removes a whole character: "étéx", Backspace two times,
+	// gives "ét".
+	{kind = .Keys, text = "32t2x"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Keys, text = "3"},
+	{kind = .Key, text = "esc"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] > \"ét\""},
+	// The vector font draws é, ê and ^ from the glyph cache: no
+	// replacement box in the console.
+	{kind = .Shot, text = "keys_french"},
 	{kind = .Call, text = "settings.set(\"keyboard_layout\", \"us\")", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; "},
 	{kind = .Keys, text = "q"},

@@ -119,7 +119,7 @@ placed_glyphs_across_calls :: proc(t: ^testing.T) {
 	testing.expect_value(t, shape_text(&font.advances, &font.pairs, &two, &placed, &error), 2)
 	testing.expect_value(t, shape_text(&font.advances, &font.pairs, &two, &placed, &error), 4) // 1 of 2 fits.
 	testing.expect_value(t, memory[2].x, i32(0)) // The "T" of the second text, at its origin.
-	testing.expect_value(t, memory[2].glyph, u32('T' - 32))
+	testing.expect_value(t, memory[2].glyph, u32('T' - glyph_cache.ASCII_FIRST))
 	empty := bytes_to_read(nil)
 	testing.expect_value(t, shape_text(&font.advances, &font.pairs, &empty, &placed, &error), 4)
 	testing.expect_value(t, shape_text(&font.advances, &font.pairs, &two, &placed, &error), 6)
@@ -141,12 +141,12 @@ hostile_callers_are_refused :: proc(t: ^testing.T) {
 		testing.expect_value(t, errors.Kind(error.kind), kind, loc = loc)
 		testing.expect_value(t, error.argument, argument, loc = loc)
 	}
-	// 94 and 96 advances.
+	// One advance fewer and one more than the characters of a cache.
 	short := font.advances
-	short.count = 94
+	short.count = shaping.CHARACTER_COUNT - 1
 	expect_error(t, shape_text(&short, &font.pairs, &text, &placed, &error), error, .Too_Small, 1)
 	long := font.advances
-	long.count = 96
+	long.count = shaping.CHARACTER_COUNT + 1
 	expect_error(t, shape_text(&long, &font.pairs, &text, &placed, &error), error, .Too_Long, 1)
 	// More pairs than a cache holds: the records are not read.
 	many := font.pairs
@@ -174,12 +174,13 @@ hostile_callers_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, error.found, i64(1))
 	// Advances and pairs at the ends of their numbers, and pairs out of
 	// order: other numbers, each in its limits, and no fault.
-	wild_advances: [95]shaping.Character_Advance
+	wild_advances: [shaping.CHARACTER_COUNT]shaping.Character_Advance
 	for &advance, index in wild_advances {
 		advance.advance = index % 2 == 0 ? max(i32) : min(i32)
 	}
-	wild_pairs := [3]glyph_cache.Pair_Entry{{left = 'T', right = 'o', adjustment = max(i32)}, {left = 'A', right = 'V', adjustment = min(i32)}, {left = 200, right = 1, adjustment = max(i32)}}
-	advances := system.Table_To_Read(shaping.Character_Advance){records = &wild_advances[0], count = 95, capacity = 95}
+	// Pairs out of order, and one past the last character index.
+	wild_pairs := [3]glyph_cache.Pair_Entry{{left = 'T' - glyph_cache.ASCII_FIRST, right = 'o' - glyph_cache.ASCII_FIRST, adjustment = max(i32)}, {left = 'A' - glyph_cache.ASCII_FIRST, right = 'V' - glyph_cache.ASCII_FIRST, adjustment = min(i32)}, {left = 250, right = 1, adjustment = max(i32)}}
+	advances := system.Table_To_Read(shaping.Character_Advance){records = &wild_advances[0], count = shaping.CHARACTER_COUNT, capacity = shaping.CHARACTER_COUNT}
 	pairs := system.Table_To_Read(glyph_cache.Pair_Entry){records = &wild_pairs[0], count = 3, capacity = 3}
 	all := make([]u8, shaping.TEXT_LIMIT)
 	defer delete(all)
@@ -194,10 +195,10 @@ hostile_callers_are_refused :: proc(t: ^testing.T) {
 	// A control byte and each byte of 127 and above is an invalid sequence:
 	// the replacement glyph, with the advance of "0" (its wild advance,
 	// clamped) and no pair.
-	zero_advance := clamp(wild_advances['0' - 32].advance, 0, glyph_cache.ADVANCE_LIMIT)
+	zero_advance := clamp(wild_advances['0' - glyph_cache.ASCII_FIRST].advance, 0, glyph_cache.ADVANCE_LIMIT)
 	for glyph in output {
 		replacement := glyph.glyph == shaping.REPLACEMENT_GLYPH
-		testing.expect(t, glyph.advance >= -glyph_cache.ADVANCE_LIMIT && glyph.advance <= 2 * glyph_cache.ADVANCE_LIMIT && (glyph.glyph < 95 || replacement))
+		testing.expect(t, glyph.advance >= -glyph_cache.ADVANCE_LIMIT && glyph.advance <= 2 * glyph_cache.ADVANCE_LIMIT && (glyph.glyph < shaping.CHARACTER_COUNT || replacement))
 		if replacement {
 			testing.expect_value(t, glyph.advance, zero_advance)
 		}

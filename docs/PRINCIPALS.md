@@ -108,7 +108,7 @@ A wrong passphrase gives another key, and the open of the seal fails with `Not_A
 
 ### The passphrase
 
-A passphrase has 8 to 128 bytes of the printable characters (32 to 126). It is typed in the window of `unlock` only, and shows as dots. It is never a text of the console: the console keeps each line in its history and in its store.
+A passphrase has 8 to 128 bytes of UTF-8 with no control character: é of the layout of France is two bytes. Its bytes are not normalized: the keys give one form of each character, so the same keys give the same passphrase (`src/md/data/text_encoding.md`). The same keys under another layout give another passphrase. It is typed in the window of `unlock` only, and shows as dots. It is never a text of the console: the console keeps each line in its history and in its store.
 
 ### The keys sealed by the TPM
 

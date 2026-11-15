@@ -18,6 +18,7 @@ package console
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/text_encoding"
 import "modus:support/display"
 import "modus:support/line_editor"
 import "modus:support/system"
@@ -141,15 +142,18 @@ completion_key :: proc "contextless" (pressed: Key) -> (taken: bool) {
 			// The line that the input typed stays as it was.
 			completion_close()
 		case pressed.code == display.KEY_BACKSPACE:
+			// The search is UTF-8: Backspace removes its last whole
+			// character.
 			if completion.search_count > 0 {
-				completion.search_count -= 1
+				completion.search_count = text_encoding.complete_characters(completion.search[:completion.search_count - 1])
 				history_rank()
 			}
 		case control:
 		case line_editor.printable(pressed.character):
-			if completion.search_count < SEARCH_CAPACITY {
-				completion.search[completion.search_count] = pressed.character
-				completion.search_count += 1
+			length := line_editor.character_length(pressed.character)
+			if completion.search_count + length <= SEARCH_CAPACITY {
+				text_encoding.character_encode(pressed.character, completion.search[completion.search_count:])
+				completion.search_count += length
 				history_rank()
 			}
 		}

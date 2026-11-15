@@ -1,23 +1,29 @@
 package line_editor
 
+import "modus:contract/text_encoding"
+
 // The fuzzy match: the characters of the query appear in the name in their
 // order, not always side by side ("mcnt" matches "monitor.count"). A score
-// orders the names that match. Lower and upper case are equal.
+// orders the names that match. Lower and upper case of ASCII are equal; a
+// character outside ASCII matches itself only (é matches é, not e nor É),
+// and the match compares whole characters of UTF-8, never a part of one
+// (src/md/data/text_encoding.md, "The chosen form").
 //
 // The work for one name is bounded, whatever another program wrote in its
 // descriptions:
-//   the match     the first NAME_SCAN_LIMIT bytes of the name, two times
-//                 (a pass forward and a pass back), then at most
-//                 QUERY_LIMIT places: at most 2 * 128 + 64 = 320 steps.
+//   the match     the first NAME_SCAN_LIMIT bytes of the name and the
+//                 query decoded once (128 + 64), then the characters two
+//                 times (a pass forward and a pass back), then at most
+//                 QUERY_LIMIT places: at most 192 + 2 * 128 + 64 = 512 steps.
 //   the place     a binary search in the kept names: at most 7 orders of
 //                 two names, each one at most NAME_COMPARE_LIMIT bytes, so
 //                 1792 bytes; then a move of at most 64 kept records.
 //   equal names   only for a search that skips them (a history): at most
 //                 64 kept names of NAME_COMPARE_LIMIT bytes, 16 384 bytes.
 // The ranking reads at most CANDIDATE_SCAN_LIMIT names. So one key costs
-// at most 4096 * (320 + 1792 + 64), about 8.9 million steps; a search that
+// at most 4096 * (512 + 1792 + 64), about 9.7 million steps; a search that
 // skips equal names reads at most 256 lines of a history, so at most
-// 256 * (320 + 1792 + 64 + 16 384), about 4.8 million.
+// 256 * (512 + 1792 + 64 + 16 384), about 4.8 million.
 
 NAME_SCAN_LIMIT :: 128 // The bytes of a name that the match reads. A longer name matches only in its start.
 QUERY_LIMIT :: 64 // A longer query matches no name.
@@ -31,7 +37,7 @@ NAME_COMPARE_LIMIT :: 256
 #assert(NAME_COMPARE_LIMIT >= LINE_CAPACITY)
 
 // The places of the characters of a name that the query matched: bit n is
-// the byte n of the name.
+// the byte n of the name, the first byte of a matched character.
 Match_Places :: bit_set[0 ..< NAME_SCAN_LIMIT; u128]
 
 // The scoring rules. Each one has its reason:
@@ -40,22 +46,50 @@ SCORE_START :: 32 // A match at the first byte of the name: the input types name
 SCORE_SEGMENT :: 24 // A match right after '.' or '_': the start of a part of the name ("mc" for monitor.count).
 SCORE_SIDE_BY_SIDE :: 16 // A match right after the match before: a typed run that the name holds as one run.
 SCORE_GAP_OPEN :: 3 // Taken for each gap between two matches: a spread match is less likely what the input means.
-SCORE_GAP_BYTE :: 1 // Taken for each byte of a gap after its first: a long gap more than a short one.
+SCORE_GAP_CHARACTER :: 1 // Taken for each character of a gap after its first: a long gap more than a short one.
 // After the score, a tie goes to the smaller tie order (the caller's
 // order: 0 is the newest line of a history), then to the shorter name
 // (fewer bytes to read past the query), then to the name first in the
 // order of the bytes (a stable order).
 
-// lower gives the lower case of an ASCII letter, and each other byte as it
-// is: the match does not tell the cases apart.
-lower :: proc "contextless" (character: u8) -> u8 {
+// lower gives the lower case of an ASCII letter, and each other character
+// as it is: the match does not tell the cases of ASCII apart.
+lower :: proc "contextless" (character: rune) -> rune {
 	return character >= 'A' && character <= 'Z' ? character + ('a' - 'A') : character
+}
+
+// The characters of a text that the match reads, decoded once: the
+// character, lowered, and the place of its first byte.
+@(private)
+Decoded_Text :: struct($Capacity: int) {
+	characters: [Capacity]rune,
+	starts:     [Capacity]int,
+	count:      int,
+}
+
+// decode_lowered decodes the whole characters of bytes, at most Capacity
+// of them. An invalid sequence is one character, the replacement
+// character, as the drawing shows it.
+@(private)
+decode_lowered :: proc "contextless" (bytes: string, decoded: ^Decoded_Text($Capacity)) {
+	text := transmute([]u8)bytes
+	place := 0
+	for decoded.count < Capacity {
+		character, length, _ := text_encoding.character_decode(text, place)
+		if length == 0 {
+			break
+		}
+		decoded.characters[decoded.count] = lower(character)
+		decoded.starts[decoded.count] = place
+		decoded.count += 1
+		place += length
+	}
 }
 
 // fuzzy_match matches a query against a name. matched is false when a
 // character of the query is missing, or the query is longer than
-// QUERY_LIMIT. places gets the places that gave the score. An empty query
-// matches each name with the score 0 and no place.
+// QUERY_LIMIT bytes. places gets the places that gave the score. An empty
+// query matches each name with the score 0 and no place.
 fuzzy_match :: proc "contextless" (query: string, name: string) -> (score: int, places: Match_Places, matched: bool) {
 	if len(query) > QUERY_LIMIT {
 		return 0, {}, false
@@ -63,14 +97,22 @@ fuzzy_match :: proc "contextless" (query: string, name: string) -> (score: int, 
 	if len(query) == 0 {
 		return 0, {}, true
 	}
-	scanned := name[:min(len(name), NAME_SCAN_LIMIT)]
-	// Forward: the first place where the whole query has matched.
+	// The name is read in its first NAME_SCAN_LIMIT bytes, cut after a
+	// whole character.
+	scanned_bytes := name[:min(len(name), NAME_SCAN_LIMIT)]
+	scanned_bytes = scanned_bytes[:text_encoding.complete_characters(transmute([]u8)scanned_bytes)]
+	scanned: Decoded_Text(NAME_SCAN_LIMIT)
+	wanted_characters: Decoded_Text(QUERY_LIMIT)
+	decode_lowered(scanned_bytes, &scanned)
+	decode_lowered(query, &wanted_characters)
+	query_count := wanted_characters.count
+	// Forward: the first character where the whole query has matched.
 	next := 0
 	end := -1
-	for index in 0 ..< len(scanned) {
-		if lower(scanned[index]) == lower(query[next]) {
+	for index in 0 ..< scanned.count {
+		if scanned.characters[index] == wanted_characters.characters[next] {
 			next += 1
-			if next == len(query) {
+			if next == query_count {
 				end = index
 				break
 			}
@@ -79,31 +121,32 @@ fuzzy_match :: proc "contextless" (query: string, name: string) -> (score: int, 
 	if end < 0 {
 		return 0, {}, false
 	}
-	// Back from that place: the latest start, so the shortest window that
-	// holds the query, and its places.
+	// Back from that character: the latest start, so the shortest window
+	// that holds the query, and its places. A position is a number of a
+	// character of the name.
 	positions: [QUERY_LIMIT]int
-	wanted := len(query) - 1
+	wanted := query_count - 1
 	for index := end; index >= 0 && wanted >= 0; index -= 1 {
-		if lower(scanned[index]) == lower(query[wanted]) {
+		if scanned.characters[index] == wanted_characters.characters[wanted] {
 			positions[wanted] = index
 			wanted -= 1
 		}
 	}
-	for number in 0 ..< len(query) {
-		place := positions[number]
-		places += {place}
+	for number in 0 ..< query_count {
+		position := positions[number]
+		places += {scanned.starts[position]}
 		score += SCORE_MATCH
-		if place == 0 {
+		if position == 0 {
 			score += SCORE_START
-		} else if scanned[place - 1] == '.' || scanned[place - 1] == '_' {
+		} else if before := scanned.characters[position - 1]; before == '.' || before == '_' {
 			score += SCORE_SEGMENT
 		}
 		if number > 0 {
-			gap := place - positions[number - 1] - 1
+			gap := position - positions[number - 1] - 1
 			if gap == 0 {
 				score += SCORE_SIDE_BY_SIDE
 			} else {
-				score -= SCORE_GAP_OPEN + (gap - 1) * SCORE_GAP_BYTE
+				score -= SCORE_GAP_OPEN + (gap - 1) * SCORE_GAP_CHARACTER
 			}
 		}
 	}

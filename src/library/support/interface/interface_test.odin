@@ -416,7 +416,7 @@ full_table_says_so :: proc(t: ^testing.T) {
 }
 
 @(private = "file")
-key :: proc(input: ^Input, code: u32, character: u8 = 0, modifiers: u32 = 0) {
+key :: proc(input: ^Input, code: u32, character: rune = 0, modifiers: u32 = 0) {
 	input_add(input, {kind = .Key, code = code, character = character, pressed = true, modifiers = modifiers})
 }
 
@@ -526,6 +526,34 @@ text_input_keys_in_their_order :: proc(t: ^testing.T) {
 	testing.expect(t, result.activated)
 	testing.expect_value(t, string(text[:count]), "ls")
 	testing.expect(t, !input.keys[3].taken, "the key after Enter stays for the next element")
+}
+
+// A key of the layout of France types its character in UTF-8, Backspace
+// removes it whole, and a character whose bytes do not fit is not typed.
+@(test)
+text_input_of_characters_outside_ascii :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	state: Interface_State
+	input: Input
+	text: [4]u8
+	count := 0
+	state.focus = identity("input")
+	type_keys :: proc(table: ^Draw_Table, state: ^Interface_State, input: ^Input, text: []u8, count: ^int) {
+		frame := frame_begin(table, state, input)
+		text_input(&frame, {0, 0, 200, 24}, identity("input"), text, count)
+		frame_end(&frame)
+		input_clear(input)
+	}
+	key(&input, 0x03, 'é')
+	key(&input, 0x14, 't')
+	key(&input, 0x03, 'é') // Two bytes in one free byte: not typed.
+	type_keys(&table, &state, &input, text[:], &count)
+	testing.expect_value(t, string(text[:count]), "ét")
+	key(&input, display.KEY_BACKSPACE)
+	key(&input, display.KEY_BACKSPACE)
+	type_keys(&table, &state, &input, text[:], &count)
+	testing.expect_value(t, count, 0)
 }
 
 // The input of a frame takes 16 keys; then it has no room, and the reader

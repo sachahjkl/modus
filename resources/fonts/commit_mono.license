@@ -1,7 +1,8 @@
 Copyright 2023 Commit Mono authors (https://github.com/eigilnikolajsen/commit-mono)
 
 This file is a subset of commit_mono, made by "modustool vector_fonts" (docs/FONTS.md):
-the characters 32 to 126 and the glyph .notdef, each glyph a simple glyph
+the characters 32 to 126, the characters U+00A0 to U+00FF and the glyph
+.notdef, each glyph a simple glyph
 (0 glyphs made of glyphs were made simple), no hinting instructions, no
 OpenType layout tables. The subset carries the name "CommitMono ASCII".
 License of the source: SIL OFL 1.1 in the font file; MIT in its repository.
