@@ -251,6 +251,21 @@ Root_Command :: enum u32 {
 	// must act for its principal. A nickname with no row is refused with
 	// `Absent` (unit `Grants`).
 	Disk_Grant_Persistence = 21,
+	// Debug_Store gives the debugger service a connection to the storage
+	// service that reads only, to the store `programs` of the principal of
+	// the disk program with this name: the service reads there the debug
+	// object of the module of the program
+	// (docs/MODULE_CONTRACT.md, "The debug object of a disk program").
+	// values[4] is the call ring of the caller, as for Debug. The root
+	// service gives it only for a program that it gave this service the
+	// debug access to, for that caller, and only for a disk program
+	// (`Absent`, unit `Debug_Objects`). The completion: values[0] the
+	// storage service (right Read: its state), values[1] the call ring,
+	// values[2] the call region. With values[5] not 0, the service says
+	// that it read the object: the root service ends the connection. The
+	// connection ends in any case when the debug access ends. Only the
+	// program with the grant Debugger sends this command.
+	Debug_Store = 22,
 }
 
 // The action of a Disk_Grant command, in values[4].
@@ -368,6 +383,7 @@ root_command_names := [Root_Command]string {
 	.Machine_Passphrase = "Machine_Passphrase",
 	.Machine_Key = "Machine_Key",
 	.Disk_Grant_Persistence = "Disk_Grant_Persistence",
+	.Debug_Store = "Debug_Store",
 }
 
 // root_command_name gives the name of a command of the root ring, or "an

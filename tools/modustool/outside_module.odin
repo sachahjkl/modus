@@ -552,28 +552,33 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 OUTSIDE_DISK_PROGRAM :: "outsider"
 
 // outside_program_for_a_disk builds that module as a developer does, and
-// gives its file.
-outside_program_for_a_disk :: proc() -> (file: []u8, ok: bool) {
+// gives its file and its debug object.
+outside_program_for_a_disk :: proc() -> (file: []u8, debug_file: []u8, ok: bool) {
 	tool_path, path_error := os.get_executable_path(context.temp_allocator)
 	if path_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot find the file of the tool: %v", path_error)
-		return nil, false
+		return nil, nil, false
 	}
 	system_folder, folder_error := os.get_working_directory(context.temp_allocator)
 	if folder_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot read the folder of the system: %v", folder_error)
-		return nil, false
+		return nil, nil, false
 	}
 	example := Outside_Module_Example{name = OUTSIDE_DISK_PROGRAM, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE, build_file = "name: " + OUTSIDE_DISK_PROGRAM + "\n"}
 	folder := outside_module_example_build(tool_path, system_folder, example) or_return
-	return read_file(join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER, "/", OUTSIDE_DISK_PROGRAM, ".module"))
+	out := join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER, "/", OUTSIDE_DISK_PROGRAM)
+	file = read_file(join(out, ".module")) or_return
+	debug_file = read_file(join(out, ".debug")) or_return
+	return file, debug_file, true
 }
 
 // The command program-disk: it writes a data disk whose store `programs`
-// holds module files, each under the name of its file. A machine with that
-// disk starts each one with `start_from_disk` and its hash, which the
-// command prints. It writes no disk over a file that exists: a data disk
-// holds the stores of a principal.
+// holds module files, each under the name of its file, and the debug
+// object of each one that has the file `<name>.debug` beside it, under the
+// hash of the module. A machine with that disk starts each one with
+// `start_from_disk` and its hash, which the command prints; the debugger
+// names its procedures and its lines. It writes no disk over a file that
+// exists: a data disk holds the stores of a principal.
 run_program_disk :: proc(args: []string) -> int {
 	if len(args) < 2 {
 		fmt.eprintln("modustool: program-disk <disk file to write> <module file> [<module file> ...]")
@@ -600,11 +605,30 @@ run_program_disk :: proc(args: []string) -> int {
 		}
 		name = strings.trim_suffix(name, ".module")
 		append(&files, Program_File{name = name, bytes = bytes})
+		// The debug object that module-build wrote beside the module file
+		// goes beside it in the store, named by the hash of the module.
+		debug_path := join(strings.trim_suffix(path, ".module"), ".debug")
+		if !os.exists(debug_path) {
+			fmt.printfln("modustool: program-disk: %s has no debug object beside it: the debugger names no procedure of %s", path, name)
+			continue
+		}
+		object, object_read := read_file(debug_path)
+		if !object_read {
+			return EXIT_FAILURE
+		}
+		debug_file, accepted := program_debug_object_file(name, bytes, object)
+		if !accepted {
+			return EXIT_FAILURE
+		}
+		append(&files, debug_file)
 	}
 	if !program_disk_write(disk, files[:]) {
 		return EXIT_FAILURE
 	}
 	for file in files {
+		if disk_program.debug_object_name_is(file.name) {
+			continue
+		}
 		digits: [disk_program.HASH_DIGITS]u8
 		disk_program.hash_write(&digits, blake3.hash(file.bytes))
 		fmt.printfln("modustool: in the console of a machine with this disk: start_from_disk(\"%s\", \"%s\")", file.name, string(digits[:]))

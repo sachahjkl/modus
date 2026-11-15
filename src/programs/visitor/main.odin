@@ -70,9 +70,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if has_store {
 		visits_count(&client)
 	}
+	sleep_for_ever()
+}
+
+// sleep_for_ever sleeps until the program is stopped. It and sleep_once are
+// never inlined: a debugger that holds the thread finds a frame of this
+// procedure at the line of its call of sleep_once, in the source of this
+// program, and not inside the system library. The test of the debug object
+// of a disk program waits for that frame.
+sleep_for_ever :: #force_no_inline proc "contextless" () -> ! {
 	for {
-		system.sleep(system.WAIT_FOREVER)
+		sleep_once()
 	}
+}
+
+sleep_once :: #force_no_inline proc "contextless" () {
+	system.sleep(system.WAIT_FOREVER)
 }
 
 // visits_count reads the count of the starts from the store, writes one

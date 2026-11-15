@@ -56,6 +56,9 @@
 // - `Debug`: the handle of a program with the right Debug, for the
 //   debugger service, on behalf of a caller of that service that acts for
 //   the principal whose session runs that program (`debug`).
+// - `Debug_Store`: for that debugger service, a connection that reads only
+//   to the store `programs` of a disk program that it debugs, where the
+//   debug object of the program is (debug_store.odin).
 //
 // A refused command has an error record in its completion (`refusal`): the
 // console prints it, for example after `revoke("notes", "store")` on a
@@ -147,7 +150,9 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// The debugger service (docs/TOOLS.md, "The debugger"):
 		// - **Serve**: its exports are the commands of the debugger.
 		// - **Debugger**: it asks this service for the handle of a program
-		//   with the right Debug, on behalf of one of its callers.
+		//   with the right Debug, on behalf of one of its callers, and, for
+		//   a disk program that it debugs, for a connection that reads only
+		//   to the store of its debug object (Debug_Store).
 		// - **Inspect**: the threads and the module records of the program
 		//   that it debugs.
 		// - **Debug_Image**: the debug objects, which name the procedures,
@@ -373,6 +378,11 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	// 0, an object of the same store (machine_grant_table.odin).
 	if caller == &machine_table_keeper {
 		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false)
+	}
+	// The connection of the debugger service to the same store, for the
+	// debug object of a disk program: it reads only (debug_store.odin).
+	if caller == &debug_store_reader {
+		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false) | isolated.CALLER_READS_ONLY
 	}
 	// A disk program: the grants of its start, never the grants of a name,
 	// and never the grant to act for a principal.
@@ -839,7 +849,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The command Debug: the debugger service only. It names
 				// one of its own callers, and this service applies the
 				// rule to that caller (debug).
-				allowed := .Root_Ring in role && !of_principals && command != .Debug || command == .Disconnect || command == .Connect && may_connect(system.name_of(item.name[:]), system.name_of(name[:])) || .Principals in role && of_principals || .Debugger in item.role && command == .Debug
+				of_the_debugger := command == .Debug || command == .Debug_Store
+				allowed := .Root_Ring in role && !of_principals && !of_the_debugger || command == .Disconnect || command == .Connect && may_connect(system.name_of(item.name[:]), system.name_of(name[:])) || .Principals in role && of_principals || .Debugger in item.role && of_the_debugger
 				if !allowed {
 					command = .None
 					result = .No_Right
@@ -906,6 +917,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					result = revoke(system.name_of(name[:]), record.values[4], &completion.values)
 				case .Debug:
 					result = debug(&item, system.name_of(name[:]), record.values[4], record.values[5] != 0, &completion.values)
+				case .Debug_Store:
+					result = debug_store_open(&item, system.name_of(name[:]), record.values[4], record.values[5] != 0, &completion.values)
 				case .Replace:
 					result = replace(&item, system.name_of(name[:]), record.values[4], &completion.values)
 				case .Stop:
@@ -930,8 +943,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// nickname of three values. Machine_Key carries a key where
 				// a name would be: no refusal reads it as a name. A refused
 				// Replace wrote its own: a refused signature is a cause that
-				// only replace knows.
-				if result != .Ok && command != .Debug && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key && command != .Replace {
+				// only replace knows. A refused Debug_Store wrote its own, as
+				// Debug does.
+				if result != .Ok && command != .Debug && command != .Debug_Store && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key && command != .Replace {
 					completion.values = refusal(system.Root_Command(record.kind), system.name_of(name[:]), record.values[4], result)
 				}
 				completion.kind = u32(result)
@@ -1589,6 +1603,9 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 debug_end :: proc "contextless" (target: ^Started) -> (count: u64) {
 	holder, caller := target.debugger, target.debug_for
 	target.debugger, target.debug_for = nil, nil
+	// The connection to the store of the debug object is a part of the
+	// debug access, and ends with it.
+	debug_store_end(target)
 	if holder != nil && holder.program != 0 && target.program != 0 {
 		count, _ = system.handle_revoke(target.program, holder.program)
 	}
@@ -2050,6 +2067,9 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 	}
 	if machine_table.connection == connection {
 		machine_table.connection = nil
+	}
+	if debug_store.connection == connection {
+		debug_store = {}
 	}
 	connection^ = {}
 }

@@ -78,6 +78,10 @@ Nothing in the file gives a grant. The root service reads no table of the file t
 
 A disk program imports by hash, as each module does. The load source is the boot image and the replacement table of the machine. An import whose hash is not in the boot image fails the load at the stage Find, with the load error of every load.
 
+### The debug object
+
+The debug object of a module file is an object of the same store, named by the 64 hexadecimal digits of the hash of the module. The debugger service reads it at an attach, through a connection that reads only and that the root service ties to the debug access. The design is [debug_object_of_a_disk_program.md](debug_object_of_a_disk_program.md).
+
 ### The order of the start
 
 The storage service starts on demand, after the root service, as before. The root service starts no disk program during the start of the machine: the first one starts when a principal asks. So there is no cycle, and a machine with no data disk starts as before.

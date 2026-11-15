@@ -133,9 +133,13 @@ REGION_PAGES :: 16
 //               root service starts again has the same name.
 //   values[6]   Connect and Grant: what the root service grants to the
 //               caller in this service. The caller cannot change it.
-//               Bits 0 to 47 (CALLER_AMOUNT_MASK): an amount; the service
+//               Bits 0 to 46 (CALLER_AMOUNT_MASK): an amount; the service
 //               gives it a meaning, for example a limit of blocks. 0: no
 //               amount.
+//               Bit 47 (CALLER_READS_ONLY): the connection reads only; the
+//               service refuses each call that changes what it keeps. The
+//               root service sets it on the connection through which the
+//               debugger service reads the debug object of a disk program.
 //               Bits 48 to 62 (CALLER_PRINCIPAL_MASK): the number of the
 //               principal whose session the caller belongs to
 //               (docs/PRINCIPALS.md): 0 is the machine, 1 and more a named
@@ -145,7 +149,8 @@ REGION_PAGES :: 16
 //               principal, and can see what the service holds for all
 //               callers. A caller without it sees what is its own only.
 SERVICE_CONNECTION_CAPACITY :: 8 // The callers of one service.
-CALLER_AMOUNT_MASK :: u64(1) << 48 - 1 // The bits of the amount in values[6]: bits 0 to 47.
+CALLER_AMOUNT_MASK :: u64(1) << 47 - 1 // The bits of the amount in values[6]: bits 0 to 46.
+CALLER_READS_ONLY :: u64(1) << 47 // The bit of values[6] set when the connection reads only.
 CALLER_PRINCIPAL_SHIFT :: 48 // The first bit of the number of the principal in values[6].
 CALLER_PRINCIPAL_LIMIT :: u64(1) << 15 // The numbers of principals that the field holds: 0 to 32767.
 CALLER_PRINCIPAL_MASK :: (CALLER_PRINCIPAL_LIMIT - 1) << CALLER_PRINCIPAL_SHIFT // The bits of the number of the principal in values[6]: bits 48 to 62.

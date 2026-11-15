@@ -22,8 +22,12 @@
 // and the module records of the program with `Inspect`, the registers and
 // the memory with `Thread_Control`, and the names, the lines, the types
 // and the variables in the debug object of each module, which it takes
-// from the debug image by the hash of the module. It writes no byte in the
-// program: a breakpoint is a debug register of a thread.
+// from the debug image by the hash of the module. The module of a disk
+// program is not in the boot image: at the attach, the service reads its
+// debug object from the store `programs`, through a connection that reads
+// only and that the root service gives with the debug access
+// (disk_debug_object.odin). It writes no byte in the program: a breakpoint
+// is a debug register of a thread.
 //
 // **One program at a time.** The service debugs one program, for one
 // caller. A second `attach` while it does is refused with `Full`
@@ -39,7 +43,8 @@
 // **Grants**, as the root service gives them:
 //
 // - **Serve**: its exports.
-// - **Debugger**: the command `Debug` of the root ring, and no other.
+// - **Debugger**: the commands `Debug` and `Debug_Store` of the root ring,
+//   and no other.
 // - **Inspect**: the thread report and the module report of a program.
 // - **Debug_Image**: the debug objects.
 // - **Image**: the name of each module, from its hash.
@@ -77,6 +82,12 @@ ERROR_ADDRESS :: -12 // Bad_Address or Bad_Value: the program does not map the a
 ERROR_ENDED :: -13 // Absent, Programs: the program stopped, or the debug access ended.
 ERROR_AMBIGUOUS :: -14 // Bad_Value, Programs: two programs have the name and the module; the service cannot tell which one the handle names.
 ERROR_TEXT :: -15 // Too_Long, Bytes: a text argument is longer than the service takes.
+
+// The debug object of the module of a disk program, read from the store
+// into memory of this service: at most DEBUG_OBJECT_BYTES_LIMIT, 2048
+// pages. The rest: the page tables of its mapping, and the call ring and
+// the call region of the connection that reads it.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2080, programs = 1, threads = 1}
 
 PROGRAM_SLOTS_SEARCHED :: 256 // The program slots that an attach searches for the name.
 THREAD_CAPACITY :: op.THREAD_REPORT_CAPACITY // The threads of one program.
@@ -184,6 +195,7 @@ Root_Request :: struct {
 	name_count: int,
 	ring:       system.Handle, // The call ring of the caller.
 	end:        bool, // The command ends a debug access; else it asks for one.
+	store:      bool, // The command Debug_Store: the connection to the store of the debug object of a disk program.
 	abandoned:  bool, // No export waits for the completion.
 	unsent:     bool, // The root ring was full: the loop of the entry sends it again.
 }
@@ -224,9 +236,11 @@ refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Statu
 // it until its completion comes. With `end`, the command tells the root
 // service that the debugging of the program ended for the caller: no
 // export waits for its completion, and a command that the ring has no room
-// for is sent again later. tag is 0 when the table of the requests is
-// full, or when a command that asks for an access was not sent.
-root_request_send :: proc "contextless" (name: string, connection_ring: system.Handle, end: bool) -> (tag: u32) {
+// for is sent again later. With `store`, the command is Debug_Store: the
+// connection to the store of the debug object of a disk program. tag is 0
+// when the table of the requests is full, or when a command that asks for
+// an access or a connection was not sent.
+root_request_send :: proc "contextless" (name: string, connection_ring: system.Handle, end: bool, store := false) -> (tag: u32) {
 	if requests.head == nil {
 		return 0
 	}
@@ -242,7 +256,7 @@ root_request_send :: proc "contextless" (name: string, connection_ring: system.H
 		return 0
 	}
 	request_count += 1
-	free^ = {tag = request_count, ring = connection_ring, end = end, abandoned = end}
+	free^ = {tag = request_count, ring = connection_ring, end = end, store = store, abandoned = end}
 	free.name_count = copy(free.name[:], name)
 	if !root_request_put(free) {
 		if !end {
@@ -257,7 +271,8 @@ root_request_send :: proc "contextless" (name: string, connection_ring: system.H
 // root_request_put writes the command of a request in the root ring.
 root_request_put :: proc "contextless" (request: ^Root_Request) -> bool {
 	packed := system.name_pack(string(request.name[:request.name_count]))
-	return system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Debug), tag = request.tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(request.ring), 5 = u64(request.end)}})
+	command := request.store ? system.Root_Command.Debug_Store : system.Root_Command.Debug
+	return system.send(&requests.commands, ring.Record{kind = u32(command), tag = request.tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(request.ring), 5 = u64(request.end)}})
 }
 
 // root_completion_take takes a completion that no export waits for. The
@@ -273,6 +288,21 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 		}
 		request := item
 		item = {}
+		// A connection to the store that came after the attach stopped
+		// waiting: its handles are closed, and the root service ends the
+		// connection with the debug access.
+		if request.store {
+			if system.Status(record.kind) == .Ok {
+				answered := record.values
+				for word in answered[:3] {
+					handle := system.Handle(word)
+					if kind, _, through := system.handle_state(handle, requests_memory); (kind == .Program || kind == .Memory) && through {
+						system.close(handle)
+					}
+				}
+			}
+			return
+		}
 		if request.end || system.Status(record.kind) != .Ok {
 			return
 		}
@@ -290,7 +320,7 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 		// session holds another one.
 		in_use := session.attached && session.caller_ring == request.ring && session_name() == name
 		for &other in root_requests {
-			if other.tag != 0 && !other.end && other.ring == request.ring && string(other.name[:other.name_count]) == name {
+			if other.tag != 0 && !other.end && !other.store && other.ring == request.ring && string(other.name[:other.name_count]) == name {
 				in_use = true
 			}
 		}
@@ -346,7 +376,14 @@ root_debug :: proc "contextless" (name: string, connection_ring: system.Handle) 
 	if tag == 0 {
 		return {}, false
 	}
-	limit := system.time() + ROOT_ANSWER_MILLISECONDS
+	return root_answer_wait(tag, system.time() + ROOT_ANSWER_MILLISECONDS)
+}
+
+// root_answer_wait waits for the completion of the command with a tag,
+// until the time `limit`. answered is false when no completion came in
+// that time: the request stays, and its completion is taken when it comes
+// (root_completion_take).
+root_answer_wait :: proc "contextless" (tag: u32, limit: u64) -> (completion: ring.Record, answered: bool) {
 	for {
 		if record, found := root_completions_take(tag); found {
 			return record, true
@@ -411,6 +448,7 @@ session_end :: proc "contextless" (why: string) {
 	// The root service forgets the debug access: another caller can then
 	// ask for this program.
 	root_debug_end(session_name(), session.caller_ring)
+	disk_debug_object_forget()
 	session = {}
 	for {
 		if _, more := record_next_ready(); !more {
@@ -653,7 +691,7 @@ breaks_apply :: proc "contextless" () -> (status: system.Status) {
 // debug object of that module says of it.
 Address_Place :: struct {
 	has_module: bool, // A module record holds the address.
-	module:     string, // The name of the module in the boot image, or "".
+	module:     string, // The name of the module in the boot image, the name of a disk program for its module, or "".
 	base:       u64, // Where the module is mapped.
 	offset:     u64, // The address less the base.
 	object:     []u8, // The debug object of the module, or nil.
@@ -670,9 +708,15 @@ module_of_address :: proc "contextless" (address: u64) -> ^op.Module_Record {
 	return nil
 }
 
+// module_name gives the name of a module of the program: its name in the
+// boot image, or, for the module of a disk program, which the boot image
+// does not hold, the name of the program.
 module_name :: proc "contextless" (hash: [32]u8) -> string {
 	if entry := system.image_entry_of(image, hash); entry != nil {
 		return system.name_of(entry.name[:])
+	}
+	if session.attached && disk_debug_object.module_hash == hash {
+		return session_name()
 	}
 	return ""
 }
@@ -689,7 +733,7 @@ place_of_address :: proc "contextless" (looked: u64) -> (found: Address_Place) {
 	found.module = module_name(record.hash)
 	found.base = record.base
 	found.offset = looked - record.base
-	found.object = system.debug_object_of(&debug_names, record.hash)
+	found.object = debug_object_for(record.hash)
 	if found.object != nil {
 		found.place = debug_object.place_of(found.object, found.offset)
 	}

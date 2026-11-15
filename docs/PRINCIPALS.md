@@ -148,7 +148,8 @@ So a program that the console starts belongs to principal 0, and a program that 
 
 | Bits | Field |
 |---|---|
-| 0 to 47 (`CALLER_AMOUNT_MASK`) | An amount: the limit of blocks of a store |
+| 0 to 46 (`CALLER_AMOUNT_MASK`) | An amount: the limit of blocks of a store |
+| 47 (`CALLER_READS_ONLY`) | The connection reads only: the storage service refuses each change on it (`MODULE_CONTRACT.md`, "The debug object of a disk program") |
 | 48 to 62 (`CALLER_PRINCIPAL_MASK`) | The number of the principal of the session of the caller |
 | 63 (`CALLER_ACTS_FOR_PRINCIPAL`) | The caller acts for that principal |
 
