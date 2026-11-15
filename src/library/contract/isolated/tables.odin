@@ -250,7 +250,7 @@ table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 	if direction == .Append {
 		call.count_offsets[index] = field_offset + u64(offset_of(Table_Field, count))
 	}
-	call.registers[index] = u64(uintptr(place))
+	call.arguments[index] = u64(uintptr(place))
 	return true
 }
 

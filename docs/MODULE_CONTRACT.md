@@ -1,6 +1,6 @@
 # Module contract
 
-`src/library/contract/module/format.odin` is version 1 of the format at the level of bytes.
+`src/library/contract/module/format.odin` is version 2 of the format at the level of bytes.
 
 This document gives the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `GLOSSARY.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -96,7 +96,7 @@ The loader reads none of these tables: they are for a caller that must know the 
 
 | Table | One record describes |
 |---|---|
-| Functions | One export (`module.Function`, 104 bytes): its name, one line of help, its documentation text, the name, the type, the detail and the direction of each of its parameters (6 at most), the type and the detail of its result, and the description of its error record (0: it gives none) |
+| Functions | One export (`module.Function`, 168 bytes): its name, one line of help, its documentation text, the name, the type, the detail and the direction of each of its parameters (12 at most), the type and the detail of its result, and the description of its error record (0: it gives none) |
 | Records | One record that an export receives or gives: its name, its size (256 bytes at most) and the range of its fields |
 | Fields | One field of a record: its name, its offset, its type (Integer, Handle or Text), signed or unsigned, and its detail (the size of an integer or a text, the rights of a handle) |
 | Strings | The bytes of all names, help lines and documentation texts |
@@ -397,7 +397,7 @@ A program can link a library into its own file (static) or find it at load (dyna
 
 Status: Chosen: registers, with a subset of the C convention, not the whole convention.
 
-A call to an export is an ordinary function call: its values go in the registers that the C convention of the machine uses, limited to a small subset that every compiler can produce. Because each parameter is one register, the same description lets a caller in another program send the same values as a record through a ring: the isolated call.
+A call to an export is an ordinary function call: its values go in the registers that the C convention of the machine uses, and past the sixth on the stack, limited to a small subset that every compiler can produce. Because each parameter is one word of 8 bytes, the same description lets a caller in another program send the same values as a record through a ring: the isolated call.
 
 ### The choice
 
@@ -407,11 +407,11 @@ On x86-64 this is the System V AMD64 assignment:
 | Item | Rule |
 |---|---|
 | Parameters | Scalars only: an integer of 64 bits or less, a `f32` or `f64`, an address, a handle |
-| Integer parameters | Up to 6, in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, in order |
+| Integer parameters | Up to 12 (`module.PARAMETER_CAPACITY`). The first 6 in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, in order. The 7th to the 12th on the stack, one word of 8 bytes each: the 7th at the stack pointer of the call, the 8th 8 bytes above it, and so on |
 | Float parameters | Up to 8, in `xmm0` to `xmm7`, in order |
 | Results | Up to 2 integers in `rax`, `rdx`, and up to 2 floats in `xmm0`, `xmm1` |
 | A record, a slice, a string, a variant | Passed as the address of memory that the caller owns. Never by value |
-| More parameters than registers | Not permitted. Use a record |
+| More integer parameters than registers | On the stack, by the rule of System V for a value of the integer class. The count includes the buffer of a Text or Table result, the place of a Record result and the address of an error record |
 | Variable parameter lists | Not permitted |
 | Errors | A function that can fail gives a negative integer result, and writes an error record at an address that the caller gives (section 8) |
 
@@ -426,7 +426,7 @@ The C conventions have real defects. The subset avoids each one:
 | The rules for a record passed by value are complex, differ between System V and Windows, and differ between compilers in edge cases [Types §7] | No record by value |
 | Variable parameter lists need special rules | Not permitted |
 | Types with a size that depends on the system (`long`, bare `enum`, `long double`) | Only the base types of section 5 |
-| Parameters on the stack have alignment and order rules | No parameter on the stack |
+| Parameters on the stack have alignment and order rules | Only integer words of 8 bytes on the stack, in order, with the stack on a multiple of 16 bytes at the call: the one rule of System V for them |
 | Windows x64 has 4 register parameters and a reserved stack area | Not used. One assignment per machine architecture |
 
 - **Why not a new convention**: A new convention needs a change in each compiler. Every language can already produce this subset: `proc "c"` in Odin, `extern "C"` in C, Rust and Zig. This satisfies the rule that no contract depends on one language (P19).
@@ -438,7 +438,13 @@ The description of a function is its list of parameters and results, each with a
 
 - **Direct call**: the values go in registers, as above.
 - **Isolated call**: the argument record is derived by rule: one field per parameter, in order. The results travel in a completion record. The derivation is mechanical; nobody writes a second encoding.
-- **One generic entry routine**: Because every parameter is a scalar, one small routine loads up to 6 integer registers and 8 float registers from two arrays and calls the export. The receiving side of a ring and the console both use it. A library for foreign calls is not needed. It is `export_call` in `src/library/support/system/enter.asm`: 30 instructions.
+- **One generic entry routine**: Because every parameter is a scalar, one small routine loads 6 integer registers and 8 float registers from two arrays, writes the integers 7 to 12 in six words of stack, and calls the export. It always writes the six words: a callee reads the words that it has, so the routine needs no count and no description. The receiving side of a ring and the console both use it. A library for foreign calls is not needed. It is `export_call` in `src/library/support/system/enter.asm`: 44 instructions.
+
+### Why an export takes more than six arguments
+
+The bound was six arguments: the integer registers of the convention, with no parameter on the stack. It bent borders of modules that were right: the drawing module takes one damage rectangle for each call, because its table of rectangles had no place, and the cells of a text grid are copied into the text table of the frame, because the damage of a grid needs two more tables and no parameter was left for them. The description describes each export completely at each count, so the count of the parameters is no sign that a border is wrong. The bound is now 12: twice the registers, and four more than the largest export that is planned. A bound stays because a `Function` record and the private copy of a receiver have a fixed size. The design: `src/md/api/call_form_arguments.md`.
+
+The export `weigh` of `src/modules/sample` takes nine parameters and an error record: ten arguments, four on the stack. Each of its numbers has its own weight, so a value in the place of another gives another sum: `weigh(1, 2, 3, 4, 5, 6, 7, 8, "A")` is 269. The machine test of the console calls it in a direct call and in an isolated call.
 
 ### The isolated call, as implemented
 
@@ -446,7 +452,7 @@ The code is `src/library/contract/isolated/` and `src/programs/host`.
 
 - **Call host**: The caller starts one program per module: the call host. The call host receives two memory objects: the call ring and the call region. Like each program, it also has its budget and, if the caller gives it, the log. It receives no other handle. The caller maps the file of the module in the call host, read-only, with no handle. The call host checks the file and loads the module.
 - **Argument record**: One field per parameter, in order. A scalar is 8 bytes. A parameter that the direct call passes by address is the record itself: a Text is a slice of 16 bytes, `{offset, count}`. The offset is in the call region.
-- **Where it travels**: The argument record is in the call region. The command record names it: `kind` is the export index, `values[0]` is the offset of the argument record, `values[1]` is its size. Reason: 6 integers and 8 floats are 112 bytes, and a record of a ring has 56 bytes of values. One place for all argument records needs no second path.
+- **Where it travels**: The argument record is in the call region. The command record names it: `kind` is the export index, `values[0]` is the offset of the argument record, `values[1]` is its size. Reason: 12 integers and 8 floats are 160 bytes, and a record of a ring has 56 bytes of values. One place for all argument records needs no second path.
 - **Completion record**: `kind` is a status (`isolated.Status`): 0 `Ok`; 1 `Bad_Export`, the module has no export with this index, or the export has no description; 2 `Bad_Arguments`, the argument record or one of its slices is not in the call region; 3 `Bad_Handle`, a handle of the argument record did not come through the call ring or lacks a right of the description ("Records and handles, as implemented"); 4 `Load_Failed`, only in the first completion of a call host, with the tag 0 (section 2, "The error of a load"). `values[0]` and `values[1]` are the integer results; `values[2]` and `values[3]` are the float results.
 - **The receiver checks**: The call host reads the types from the description in the module, not from the caller. It copies the argument record to private memory once. It checks the offset and the count of each slice against the size of the call region, with no overflow. Then it calls `export_call`.
 - **The caller checks**: The caller reads a bounded number of completion records, and ignores each record whose tag is not the tag of the call.
@@ -470,7 +476,7 @@ The code is `src/library/contract/isolated/` and `src/programs/host`.
 - **A handle is lent**: The description has the rights that the export needs. The caller gives a copy of its handle to the receiver, with these rights only, through the call ring: the kernel operation `Handle_Give`, with the memory object of the call ring as the target. The receiver closes the copy when the export returns. The caller keeps its handle.
 - **The receiver proves each handle**: The number of the handle is in memory that the caller writes. The receiver asks the kernel if this handle came through the call ring (`Handle_State`), and if it has each right of the description. If not, the status of the call is 3, "bad handle", and the export does not run. Without this proof a caller names a handle that the receiver holds for itself.
 - **The caller takes back what it lent**: the caller gives a handle that comes from a copy of its own handle, and revokes the copy after the call (`system.lend`, `system.lend_end`, the kernel operation `Handle_Revoke`). The handle of the receiver ends, and each mapping that the export made with it. An export that keeps a mapping for a later call stops its program on a page fault at the first use. If the caller cannot give each handle, it revokes those that it gave and sends no record.
-- **Limits**: 16 handles for one call. A result record has no handle. An export with a Record result has 5 parameters at most.
+- **Limits**: 16 handles for one call. A result record has no handle. An export with a Record result has 11 parameters at most: the place of the result is the 12th argument.
 - **A Table result** (property 12; `GLOSSARY.md`, "Table"): records of one description that follow each other, in memory of the caller. The callee writes the records that fit and gives the count of the full table, as a Text result gives its count of bytes; a count larger than the capacity means "the table did not fit", and a negative count is an error that the documentation of the export names. A record of a Table has no Handle. The caller reads `min(count, capacity)` records: it trusts neither number (`isolated.result_table`). It gives many records in one call, in memory of the caller, never a list of pointers. For a table as a parameter, see section "Tables and bytes as parameters".
 - **In Odin**: `^Name` is a Record, `result: ^Name` as the last parameter is a Record result, `result: ^[]Name` as the last parameter is a Table result, `^system.Table_To_Read(Name)` (and `_Change`, `_Append`) is a Table parameter, `^system.Bytes_To_Read` (and `_Change`, `_Append`) is Bytes, a field `[N]u8` is a Text of N bytes, a field `u8`, `i32`, `u32`, ... or an `enum u8` is an Integer of its size, and `system.Lent({.Read, .Write})` is a Handle. `Name` can be a struct of the package or of a package of the source library that the file imports (`^information.Module`). The tool reads them in the source (`modustool`, `describe.odin`). A module in another language writes the same tables.
 - **Tests**: `odin test` of `src/library/contract/isolated` has a round trip with a record, a handle and a record result, and the refused cases. The machine test calls `src/modules/sample` in a call host and in the console.
@@ -565,7 +571,7 @@ The description is the same in the three ways (P10, P19). The source of the expo
 
 #### The format
 
-- `Function.parameter_directions` (6 bytes, one for each parameter) is at the end of the Functions record: 104 bytes (96 without it), by the growth rule of the table directory. A reader of a file with 96-byte records reads each direction as 0, Read. No version and no feature bit change: each module is built again with the system (the system keeps no backward compatibility), and the growth rule keeps a smaller record readable.
+- `Function.parameter_directions` (12 bytes, one for each parameter) is beside the other arrays of one byte of the Functions record (168 bytes). The format version 2 gave the record this layout.
 - `Type.Bytes = 6`.
 - **Integer fields of 1, 2, 4 or 8 bytes** (the draw record has `u8`, `i32` and `u32` fields): `Field.detail` of an Integer is its size in bytes, 0 for 8; `Field.unsigned` (one byte of the field) is 1 for an unsigned integer. An Integer field is at an offset that is a multiple of its size. `module.field_integer` reads one as an i64. Odin `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, and an `enum` with such a backing type, are Integer fields.
 - **The checks**: the loader does not read descriptions (section 2); each reader checks what it uses. `module.record_type` checks the size and the alignment of each Integer field. `isolated.record_size` refuses a direction out of the enumeration, a direction on a parameter that is not a Table or Bytes, a Table whose record is not valid or has a Handle field, Bytes with a detail. `information.check` gives a `Problem` with the byte of the file for each of them (`manual.check`).
@@ -653,14 +659,14 @@ A module names each import by its hash. The party that starts a program can give
 - **Who decides**: the party that starts the program, with a grant. The root service holds the table of the machine. A program cannot refuse a replacement and cannot ask for one: the table is not ambient (P20).
 - **The loader checks, it does not trust**: for each slot of A in B, the loader finds in B2 the export with the same name. The description of that export must be equal in B and in B2: the same parameters, the same result, the same records and the same rights of each handle. If one differs, the load fails. A replacement cannot change a signature.
 - **Bind by name, one time**: the slot of A holds an export index of B. The loader translates it to the index in B2 at load. The call stays one indirect call through a slot.
-- **What the check cannot prove**: that B2 behaves as B. The party that writes the table asserts it. Later, a signature of the table by a principal carries this assertion (P9).
+- **What the check cannot prove**: that B2 behaves as B. A replacement row signed by the key of a principal carries this assertion (P9): the root service writes a replacement in the table of the machine only for such a row (section "Who may replace a module").
 - **Visible**: the identity of a program that runs is the hash of its module and the replacements that the loader applied. `programs()` and the manual show them. A report of a fault names B2, not B.
 - **Cost**: "the exact versions that were built together" is then true only for a program with no replacement. This is the purpose: the principal that signs the system, not the author of A, has the last word on the code that runs.
 
 #### As implemented
 
 - **The table**: one page that the root service writes (`system.Replacement_Table`, 32 records of 64 bytes, `module.Replacement`). A count of versions lets a reader copy the records while the root service writes. The root service gives the records to the loader of each program that it starts. The console and the manual receive the page with the right Read (`GRANT_REPLACEMENTS`): the console reads it before each `load` and each `isolate`, and gives the records to a call host with its files.
-- **Who changes it**: a program with the role Replace (the console) asks the root service with `Root_Command.Replace`: the name of B, and the number of the entry of B2 in the boot image (two names of 32 bytes do not fit in the 56 bytes of values of a ring record). The console has `replace("calendar", "calendar_fixed")`, `replace("calendar", "")` to remove it, and `replacements()` to list the table.
+- **Who changes it**: a program with the role Replace (the console) asks the root service with `Root_Command.Replace`: the name of B, and the number of the entry of B2 in the boot image (two names of 32 bytes do not fit in the 56 bytes of values of a ring record). The console has `replace("calendar", "calendar_fixed")`, `replace("calendar", "")` to remove it, and `replacements()` to list the table. The root service adds a record only for a pair that a signed replacement row names (section "Who may replace a module"); a removal needs no row.
 - **One step**: the loader applies one record to one import. The root service refuses a chain: a module that replaces is not replaced, and a replaced module does not replace.
 - **The check** (`module.bind`, `module.functions_compare`): for each slot whose import was replaced, the loader reads the name of the export in the file of B, finds the export with that name in B2, and compares the two descriptions: the count and the type of each parameter, the rights of each Handle, the description of each Record (`module.records_equal`), the result. The names of the parameters and the help are for a reader: they can differ. The loader checks only the exports that a slot of A uses. A missing name or another description refuses the load: the load error has the export, the two modules and the first difference (section "The error of a load"). The slot receives the address of the export of B2: the call is the same indirect call.
 - **The replacement is in place of an import only**: `load("calendar")` loads calendar. The table applies to each import of a load, at each level.
@@ -672,6 +678,27 @@ A module names each import by its hash. The party that starts a program can give
 - **Where the identity is kept**: the kernel keeps it, as it keeps the name of a program: the fault report and `Inspect` are in the kernel, and the loader of a program is in the program that started it, or in the program itself. A cycle of imports is possible with a replacement, and the loader refuses it.
 - **Measured** (program `imports`, QEMU with KVM, in the machine test, the least of 5 runs): a call through an import slot, 1 000 000 calls: 3.5 ns to calendar, 2.7 ns to calendar_fixed in its place (the two are the same instruction; the bodies of the two exports differ). The bind of agenda: 372 ns with a direct import, 891 ns with the check of the replacement (one slot). The load of agenda and its import: 117 us and 154 us, with the hash of each file. Over five runs, the bind took 216 to 377 ns and 857 to 904 ns.
 
+#### Who may replace a module
+
+A replacement puts the code of B2 into each program that imports B, with all the memory and all the handles of each. The check of the loader proves the descriptions, not the behaviour. So the root service writes a replacement in the table of the machine only when a principal signed it, and the program with the role Replace only chooses among the signed pairs. The design: `src/md/api/module_replacement.md`.
+
+- **The replacement list** (`GLOSSARY.md`, "Replacement list"): the resource `replacement_list` of the boot image (`src/library/contract/replacement_list`). A header of 16 bytes (`REPLLIST`, the version 1, the count of rows, at most 64), then the rows, and no other byte.
+- **A replacement row** (`GLOSSARY.md`, "Replacement row"), 136 bytes: the hash of B, the hash of B2, the importer scope (`System` 1, `Principal` 2), the number of the principal (0 for `System`), and an Ed25519 signature. The key signs 104 bytes: the label `module replacement signature 1` on 32 bytes, the hash of B, the hash of B2, the scope and the principal, each 4 bytes, little-endian. A signature of one row verifies for no other pair, no other direction and no other scope.
+- **The rules of the reader** (`replacement_list.rows`): the exact size, the magic, the version, a scope that is `System` with the principal 0 or `Principal` with a principal of 1 or more, two hashes that are not zero and not equal, and one row for each pair and scope.
+- **The check of the root service**, at each `Replace` that adds a record, after the names, a module that replaces itself and a chain: the row of the pair in the scope `System`, and its signature under the signing key of the system, the public key that verified the system description (the field `public_key` of the trust record). The code is `src/library/support/replacement_signature` (`system_decision`), compiled into the root service.
+- **A refusal** changes nothing in the table, so each importer loads the module that its import names. The root service writes one line, and the completion has an error record (`Absent` with the unit `Records` for no row, `Not_Authentic` for a signature that does not verify):
+
+```
+root: refused the replacement of calendar by math: no signed row of the replacement list names it
+root: refused the replacement of calendar by lonely: the signature of its row does not verify under the signing key of the system
+```
+
+- **What the console says**: "error: the root service refused the replacement of calendar by math: no signed row names it", and for the second line "...: its signature does not verify". A list that breaks its format gives the sentence of its fault, and the error record `Refused`.
+- **The scope Principal** is the programs of the session of one principal, for a module that only they import, and the signing key of that principal signs it. A module that a service of the system imports (the compositor, the terminal, a program of principal 0) needs the signing key of the system in each scope. Not built: `unlock` erases the secret signing key of a principal after the unlock, so no row of this scope can be signed; the root service looks for rows of the scope `System` only.
+- **Who signs**: the tool, when it writes the boot image of a volume, with the key that signs its system description (`TRUSTED_BOOT.md`, "5. The signing key"). The rows of the build are a table of the tool by the names of the modules (`tools/modustool/replacement_rows.odin`); a row whose modules a volume does not hold is left out. A test volume is signed with the test signing key, so its rows prove nothing on a real machine.
+- **The rows of the build**: calendar by calendar_fixed, by calendar_changed and by agenda, signed by the signing key of the system; the last two let the loader refuse a description and a cycle, because the signature is consent and the check of the loader is compatibility. Calendar by lonely is signed by a key that no machine trusts (RFC 8032, section 7.1, TEST 2), for the refusal of the machine test.
+- **A program with its own loader** (the program `imports`, the program `errors`) gives its own replacements to its own loads. They reach only its own memory and handles, so they need no row.
+
 ### A library as a module
 
 A library module (`GLOSSARY.md`) is a module that holds code that many programs import, in place of a package that each program compiles into its own file. It is a module as each other: its exports have descriptions, the loader binds it as each import, and the check of a replacement compares its exports. There is no second kind of import. The first one is the drawing module, `src/modules/drawing` (`INTERFACE.md`, section 7).
@@ -680,8 +707,9 @@ A library module (`GLOSSARY.md`) is a module that holds code that many programs 
 
 - An export does a whole piece of work on tables of the caller: "find the damage of this frame", "draw this draw table into these pixels". A direct call passes the address of each table place, and copies nothing (section "Tables and bytes as parameters", form (i)).
 - An export is not one small step that a caller repeats many times for one result. Such a step needs an adapter on each side of the border, and the adapter costs more than the call: one element of the interface through the adapter of `interface_module` costs about 100 ns more than the element compiled in, and a call through an import slot costs 2.4 ns (`INTERFACE.md`, section 7).
-- A parameter that the description cannot carry (a record that holds an address, a slice by value, a procedure value, a seventh parameter) is a sign that the border is in the wrong place, not a reason for a second call form. The description stays the one form: the same export serves a direct call, a call host and a service (P12, P19).
-- The version of a record whose values have a meaning that the description does not hold (a kind of draw record) is in the name of each export that reads it: `execute_draw_table_8`. Another version is another name, so a replacement with another version fails the check by name.
+- A parameter that the description cannot carry by its kind (a record that holds an address, a slice by value, a procedure value) is a sign that the border is in the wrong place, not a reason for a second call form. The description stays the one form: the same export serves a direct call, a call host and a service (P12, P19).
+- The count of the parameters is not such a sign. The description describes each export completely at each count, up to 12 arguments (section 4, "Why an export takes more than six arguments"). An export takes each table of its work as its own parameter: no record and no second call carries a table that has no place.
+- The version of a record whose values have a meaning that the description does not hold (a kind of draw record) is in the name of each export that reads it: `execute_draw_table_10`. Another version is another name, so a replacement with another version fails the check by name.
 
 **What stays compiled into each program, and why.**
 
@@ -699,7 +727,7 @@ A library module (`GLOSSARY.md`) is a module that holds code that many programs 
 - The module can keep a cache of a fixed size in its own writable data. The loader gives each program its own copy of each writable segment (rule 3 of "Closed rules"), so the cache is data of one program with no new mechanism. The drawing module keeps the text settings of the program and the blend tables there: 29 KiB.
 - A module has no code that runs at its load. It fills its cache at its first call, from the context of the program at `CONTEXT_ADDRESS`.
 - **No segment that the loader writes and that is read-only after the load.** A library module has no table of addresses (a table of texts, a table of procedures) and no import: no rebase and no slot outside its writable data. Reason: the segments with no Write are shared code at each address; a segment that is read-only after the load holds addresses that the loader wrote for one base, so a starter keeps one prepared module of it for each address (`GLOSSARY.md`, "Prepared module"). A library module is at another address in each importer, after the module of the program. With such a segment, 40 importers take 40 places of the table of prepared modules of the root service, which has 64, and the next program does not start. The modus tool refuses the conversion of a library module with such a segment (the field `library` of the module table). The range that the linker makes read-only after the load is not such a segment when the loader writes nowhere in it: the tool gives it the flags of a constant segment (section 2, "Shared code"), and it is a part of the shared code.
-- **A cache with no lock has a rule for its callers.** A module that writes its cache with no guard states how many threads of a program can call it at a time. The drawing module: one thread of a program at a time calls `execute_draw_table_8`; a program that breaks the rule can draw a wrong text or fault, inside its own address space only (`INTERFACE.md`, section 7).
+- **A cache with no lock has a rule for its callers.** A module that writes its cache with no guard states how many threads of a program can call it at a time. The drawing module: one thread of a program at a time calls `execute_draw_table_10`; a program that breaks the rule can draw a wrong text or fault, inside its own address space only (`INTERFACE.md`, section 7).
 
 **What changes for a program that imports it.**
 
@@ -708,7 +736,7 @@ A library module (`GLOSSARY.md`) is a module that holds code that many programs 
 - **Its faults.** The library runs in the address space of the importer: a fault in it stops the importer, as a fault in a package did. The debug object of the library names the procedure and the line (section "Debug information"): the kernel names the module of the instruction by its module record, and each module of the boot image has its debug object in the debug image.
 - **The module graph.** Each importer has an edge to the library: `manual.edges()`, and the module graph of the site, say which programs run which drawing code.
 
-**A replacement of a library module.** The mechanism is the one of section "Replacement of an import": the root service holds the table, and a program with the role Replace asks for a record. Nothing of it changes for a library. One fact does change: a replacement of a module that 33 programs import puts the code of the replacement into each of them at its next start, with all the memory and all the handles of each. The check of the loader proves the description of each export, and nothing of the behaviour of the code. So the role Replace reaches almost every program with a window. A replacement of a library module is for a test until the replacement table carries a signature of a principal (section "Replacement of an import", "What the check cannot prove").
+**A replacement of a library module.** The mechanism is the one of section "Replacement of an import": the root service holds the table, and a program with the role Replace asks for a record. Nothing of it changes for a library. One fact does change: a replacement of a module that 35 programs import, the compositor and the terminal among them, puts the code of the replacement into each of them at its next start, with all the memory and all the handles of each. The check of the loader proves the description of each export, and nothing of the behaviour of the code. So the root service writes a replacement of a library module, as of each module, only for a replacement row that the signing key of the system signed (section "Who may replace a module"): the role Replace alone no longer reaches the programs with a window.
 
 ### The declaration of an import is checked
 
@@ -721,7 +749,7 @@ A source names an export of an import in a `foreign` block. The compiler trusts 
 - **What it leaves**: a `foreign` procedure that no import exports is a procedure of an assembly file of the module.
 - **Each call has one compared declaration.** The converter gives the check the symbol of each slot of the importer: each import that the code calls. Each such symbol must have a declaration that the check compared. A symbol with none stops the build and is named: "the import seal is called, and the tool found no declaration of it to compare". This covers each declaration that the tool does not find: a `foreign` block in the body of a procedure, and a `link_name` or a `link_prefix` that is a constant and not a text. Two declarations of one symbol pass, because each is compared with the same description: a program and a package that it compiles can both declare an export. So a declaration of an import is in a `foreign` block at the level of the file, or of a `when` there, with its name or its `link_name` as a text.
 - **A type alias is not read.** A parameter whose type is a name for a type of the contract (`^Drawn` for `^system.Table_To_Append(Record)`) is refused, and the sentence says what to write: "The tool does not read a type alias: write the type itself in the declaration". To follow an alias the tool needs the constants of each package, which is the work of the compiler; the declaration is also where a reader finds the call form.
-- **A failure** stops the build with the file, the line and the first difference: "the declaration of execute_draw_table_8 does not agree with the export of drawing: it has 4 parameters, the export has 5".
+- **A failure** stops the build with the file, the line and the first difference: "the declaration of execute_draw_table_10 does not agree with the export of drawing: it has 4 parameters, the export has 5".
 - **A second reader**: the host test `each_declaration_of_the_repository_agrees_with_its_export` makes the same comparison against the descriptions that the tool reads from the source of each import, with no build.
 - **What it does not prove**: the meaning of a value. A declaration and an export that agree on each type can still disagree on what a field means; the version in the name of an export is the answer for a record with versions, and the unit of an Integer parameter is the answer for a number that counts a size or a time.
 
@@ -799,7 +827,7 @@ The description of an export names each parameter and the result with one member
 
 | Limit | Value |
 |---|---|
-| Parameters of one export | 6 (`PARAMETER_CAPACITY`): the integer registers of the call form |
+| Arguments of one export | 12 (`PARAMETER_CAPACITY`): its parameters, the buffer or the place of a result, and the address of an error record (`call_argument_count`). 6 in registers, the others on the stack |
 | Size of a record that a call carries | 256 bytes (`RECORD_SIZE_LIMIT`) |
 | Handles that one call lends | 16 (`HANDLE_CAPACITY`): its Handle parameters and the Handle fields of its Record parameters |
 | A result record, and a record of a table | no Handle field |
@@ -836,7 +864,7 @@ fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64) -> i64
 
 An Integer parameter can state what it counts: a size or a time, in one unit. It is the integer unit of the parameter (`GLOSSARY.md`, "Integer unit"). The palette shows the unit after the number of the field, and the checks treat a different unit as a different meaning.
 
-- **In the file**: the detail of the Integer parameter, `Function.parameter_details[n]`. Byte 1 is the value kind (`Size` or `Time`), byte 2 the unit (`Size_Unit` or `Duration_Unit`), bytes 0 and 3 are 0 (`value_kinds.integer_unit_detail`). The detail 0 is a plain number. The record keeps its 104 bytes, and the format version stays 1.
+- **In the file**: the detail of the Integer parameter, `Function.parameter_details[n]`. Byte 1 is the value kind (`Size` or `Time`), byte 2 the unit (`Size_Unit` or `Duration_Unit`), bytes 0 and 3 are 0 (`value_kinds.integer_unit_detail`). The detail 0 is a plain number. The unit takes no field of its own in the record.
 - **In the source**: the type of the parameter is one of the distinct types of `src/library/contract/value_kinds`, in place of `i64`:
 
   | Type | Unit |
@@ -1357,4 +1385,4 @@ These rules close the open questions of the contract:
 ## Open questions
 
 1. **Initial data of a merged module.** Rule 3 gives each program one copy of the data of each module. The merge tool must keep this true when it merges two modules that both have data.
-2. **Description tables.** Version 1 of the format has one function record per export: name, help text, up to 6 parameter types, result type. The types are `Integer`, `Text`, `Record`, `Handle`, `Table` and `Bytes` (`src/library/contract/module/format.odin`; section 5). The type, field and parameter tables are not yet specified at the level of bytes.
+2. **Description tables.** Version 2 of the format has one function record per export: name, help text, up to 12 parameter types, result type. The types are `Integer`, `Text`, `Record`, `Handle`, `Table` and `Bytes` (`src/library/contract/module/format.odin`; section 5). The type, field and parameter tables are not yet specified at the level of bytes.

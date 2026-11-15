@@ -247,9 +247,10 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 	entry_export: u32
 	for description, index in exports {
 		export_name := description.name
-		// The buffer of a Text result takes one register.
-		if len(description.parameters) + int(description.result == .Text || description.result == .Record) > module.PARAMETER_CAPACITY {
-			return fail(name, "export %s has more than %d parameters", export_name, module.PARAMETER_CAPACITY)
+		// The buffer of a result and the error record take arguments of the
+		// call form too.
+		if arguments := module.call_argument_count(len(description.parameters), description.result, description.error_record != 0); arguments > module.PARAMETER_CAPACITY {
+			return fail(name, "export %s takes %d arguments in the call form; an export takes at most %d", export_name, arguments, module.PARAMETER_CAPACITY)
 		}
 		found := false
 		for i in 0 ..< symbol_count {

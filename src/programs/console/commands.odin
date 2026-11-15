@@ -310,7 +310,7 @@ commands_start :: proc "contextless" () {
 	// > load("sample")
 	// Loaded
 	//   module     sample
-	//   commands   11
+	//   commands   12
 	//   call       direct
 	//   hash_head  <the first 8 bytes of its hash>
 	// ```
@@ -355,7 +355,7 @@ commands_start :: proc "contextless" () {
 	// > unload("sample")
 	// Unloaded
 	//   module    sample
-	//   commands  11
+	//   commands  12
 	//   memory    left the console
 	// ```
 	//
@@ -593,11 +593,16 @@ commands_start :: proc "contextless" () {
 	//
 	// The replacement table belongs to the machine: the root service writes
 	// it, and each loader reads it at each load. A program that runs keeps
-	// the modules that it loaded. `replacements()` gives the table.
+	// the modules that it loaded. `replacements()` gives the table. The
+	// root service adds a replacement only for a pair that a replacement
+	// row of the boot image names, signed by the signing key of the system
+	// (docs/MODULE_CONTRACT.md, "Who may replace a module"); a removal
+	// needs no row.
 	//
 	// Errors: no module has the name; the console has no grant to change
-	// the table; a chain of replacements is refused; the table is full; a
-	// module does not replace itself.
+	// the table; a chain of replacements is refused; no signed row names
+	// the pair; the signature of its row does not verify; the table is
+	// full; a module does not replace itself.
 	command("replace", {.Text, .Text}, .None, "give the second module where a module imports the first", replace)
 	// Gives the replacement table of the machine: one row for each module
 	// that a load replaces, with the module that it gets in its place and
@@ -1368,11 +1373,11 @@ services_check :: proc "contextless" () {
 // for the result of an export.
 callable_by_console :: proc "contextless" (file: []u8, function: module.Function) -> bool {
 	function := function
-	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || function.result > .Table || function.result == .Handle {
+	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || module.call_argument_count(int(function.parameter_count), function.result, function.error_record != 0) > system.CALL_INTEGERS || function.result > .Table || function.result == .Handle {
 		return false
 	}
 	if function.result == .Record || function.result == .Table {
-		if _, ok := module.record_type(file, function.result_detail); !ok || function.parameter_count == ARGUMENT_CAPACITY {
+		if _, ok := module.record_type(file, function.result_detail); !ok {
 			return false
 		}
 	}
@@ -1439,7 +1444,8 @@ record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value
 }
 
 // call_export calls an export of a loaded module with the call form: each
-// argument in one integer register, in order. An Integer is the value; a Text
+// argument in one integer word, in order: 6 in registers, the others on the
+// stack. An Integer is the value; a Text
 // is the address of its slice record; a Record is the address of its bytes;
 // a Handle is the handle. The module is in this program: it has each handle
 // of the console, and the rights of a description limit nothing here.
@@ -2228,6 +2234,17 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 	case .Ok:
 		return {}
 	case .No_Right:
+		// The root service writes a replacement only for a row that the
+		// signing key of the system signed (docs/MODULE_CONTRACT.md, "Who may
+		// replace a module"); its log line gives the whole reason.
+		#partial switch errors.Kind(errors.completion_record(completion.values).kind) {
+		case .Absent:
+			return fail("the root service refused the replacement of ", name, " by ", by, ": no signed row names it")
+		case .Not_Authentic:
+			return fail("the root service refused the replacement of ", name, " by ", by, ": its signature does not verify")
+		case .Refused:
+			return fail("the root service refused the replacement of ", name, " by ", by, ": the replacement list breaks its format")
+		}
 		return fail("the console has no grant to change the replacement table")
 	case .Bad_State:
 		return fail("a chain of replacements is refused: ", name, ", ", by)

@@ -199,6 +199,9 @@ draw_list :: proc "contextless" (frame: ^interface.Frame) {
 		y := 24 + shown_row[position] * LINE
 		height := (shown_row[position + 1] - shown_row[position]) * LINE
 		chosen := item.slot == selected_slot && item.program_serial == selected_program_serial
+		// The row takes a press where list_place finds it; the name of its
+		// program is its element name.
+		interface.element_name(frame, {LIST_X, LIST_ROWS_Y + shown_row[position] * LINE, LIST_WIDTH, height}, system.name_of(item.name[:]))
 		if chosen {
 			fill(inside, -8, y, inside.width + 8, height, graphics.COLOR_TRACK)
 			fill(inside, -8, y, 4, height, graphics.COLOR_PROGRAM)

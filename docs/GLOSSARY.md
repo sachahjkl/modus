@@ -108,9 +108,33 @@ The loader does not trust a replacement. For each slot that the importing module
 
 A replacement is visible: the module record of B2 holds the hash that it replaces, and a fault report says "which replaces ...". A program cannot ask for a replacement and cannot refuse one.
 
-The design: `docs/MODULE_CONTRACT.md`, "Replacement of an import".
+The root service writes a replacement in the table of the machine only for a replacement row that the signing key of the system signed: the check of the loader proves the descriptions, not what B2 does with the memory and the handles of each importer.
+
+The design: `docs/MODULE_CONTRACT.md`, "Replacement of an import" and "Who may replace a module".
 
 Do not use: override, shim, LD_PRELOAD, DLL redirection.
+
+### Replacement row
+
+A replacement row is a record of the replacement list: the hash of a module, the hash of the module that a loader gives in its place, the importer scope, and an Ed25519 signature over those three by the key of a principal.
+
+A replacement row is the consent of a principal to one replacement. The root service writes a replacement in the replacement table only for a row whose signature verifies under a key that it trusts for the scope of the row: for the scope System, each importer of the machine, the signing key of the system. A program with the role Replace names the two modules and gives no row: `replace("calendar", "calendar_fixed")` succeeds because the boot image holds a signed row for that pair, and `replace("calendar", "math")` is refused with the line "root: refused the replacement of calendar by math: no signed row of the replacement list names it".
+
+The signature covers the old hash, the new hash and the scope: a row of one pair never serves for another pair, the reverse direction or a wider scope. The row is not a proof that the module is correct: the check of the loader still compares the descriptions after it. The scope of one principal, signed by the key of that principal, is designed and not built.
+
+The design: `docs/MODULE_CONTRACT.md`, "Who may replace a module".
+
+Do not use: replacement certificate, allow list entry.
+
+### Replacement list
+
+The replacement list is the resource `replacement_list` of the boot image: the replacement rows that the tool signed when it wrote the boot image.
+
+The tool signs each row with the key that signs the system description of the volume, so the system description lists the list and a test volume signs it with the test signing key. The format is `src/library/contract/replacement_list`: a header of 16 bytes, then rows of 136 bytes, at most 64. The root service reads it at each `replace` that adds a record, and verifies the row of the pair; it is not the replacement table, which holds the replacements that apply now.
+
+The design: `docs/MODULE_CONTRACT.md`, "Who may replace a module".
+
+Do not use: allow list, whitelist, replacement manifest.
 
 ### Replacement table
 
@@ -118,7 +142,7 @@ The replacement table is the list of the replacements of the machine, which the 
 
 The table is one page of 32 records of 64 bytes (`system.Replacement_Table`). A count of versions lets a reader copy the records while the root service writes them. A program that loads modules, such as the console or the manual, receives the page with the right Read and reads it before each load.
 
-A program cannot change the table. A program with the role Replace (the console) asks the root service: `replace("calendar", "calendar_fixed")` adds a record, `replace("calendar", "")` removes it, and `replacements()` lists the table. A change applies to the loads that follow; a program that runs keeps its modules.
+A program cannot change the table. A program with the role Replace (the console) asks the root service: `replace("calendar", "calendar_fixed")` adds a record, `replace("calendar", "")` removes it, and `replacements()` lists the table. The root service adds a record only for a pair that a signed replacement row of the replacement list names. A change applies to the loads that follow; a program that runs keeps its modules.
 
 The design: `docs/MODULE_CONTRACT.md`, "Replacement of an import".
 
@@ -2455,11 +2479,21 @@ The terminal shows it apart from the lines: no line is drawn again. A program sh
 
 Do not use: progress bar hack, carriage return.
 
+### Call form
+
+The call form is where a call of an export puts each of its arguments and finds each result: the C convention of the machine, in a subset that every compiler gives.
+
+On x86-64 an export takes up to 12 integer arguments (`module.PARAMETER_CAPACITY`): the first 6 in `rdi`, `rsi`, `rdx`, `rcx`, `r8` and `r9`, the others on the stack, one word of 8 bytes each. The count includes the buffer of a Text or Table result, the place of a Record result and the address of an error record. The results are in `rax` and `rdx`. A record, a slice and a table are never passed by value: the argument is an address. The one routine `export_call` calls each export from an array of values. It is not the calling convention of a language: an Odin procedure of the convention `"odin"` passes one more argument, its context.
+
+The design: `docs/MODULE_CONTRACT.md`, "4. The call form"; `src/md/api/call_form_arguments.md`.
+
+Do not use: ABI (for this), calling sequence.
+
 ### Direct call
 
 A direct call is a call of an export of a module that is in the address space of the caller.
 
-The arguments are in registers, by the call form: up to 6 integers and 8 floats; a record, a text or a table goes as the address of memory of the caller. A direct call costs what a call of a function costs: a call through a slot of an import took 3.5 ns. The callee runs with all the access of the caller, so a direct call is for a module that the caller trusts.
+The arguments are where the call form puts them: up to 12 integers, 6 in registers and the others on the stack, and 8 floats; a record, a text or a table goes as the address of memory of the caller. A direct call costs what a call of a function costs: a call through a slot of an import took 3.5 ns. The callee runs with all the access of the caller, so a direct call is for a module that the caller trusts.
 
 The design: `docs/MODULE_CONTRACT.md`, "The call form".
 
@@ -4263,11 +4297,11 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each program that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_8` one time for a frame: it gives the damage rectangles from the draw table before and the draw table now. Then it calls `execute_draw_table_8` one time for each damage rectangle: it draws the records in that rectangle into the pixels of the surface. Each argument is memory of the program, passed by address: the two draw tables, the picture memory of the pictures, and the pixels, which the module writes in place. The 8 in the names is the version of the draw record.
+It is the first library module. A window calls `damage_of_draw_table_10` one time for a frame: it gives the damage rectangles from the draw table before and the draw table now. Then it calls `execute_draw_table_10` one time for each damage rectangle: it draws the records in that rectangle into the pixels of the surface. Each argument is memory of the program, passed by address: the two draw tables, the picture memory of the pictures, and the pixels, which the module writes in place. The 10 in the names is the version of the draw record.
 
-The module holds the fills, the gradients, the lines, the pictures, the text of the cells and the text of the interface font, with their blends. It keeps the text settings of the program in its own data: the choice of the font, and the glyph caches of the program, validated at the first draw. It reads the choice of the settings page again at each draw.
+The module holds the fills, the gradients, the lines, the pictures, the text grids, the text of the cells and the text of the interface font, with their blends. It keeps the text settings of the program in its own data: the choice of the font, and the glyph caches of the program, validated at the first draw. It reads the choice of the settings page again at each draw.
 
-The drawing module draws no Text_Grid record: a draw table names a grid by an address, which the description of an export cannot carry. It reads one picture memory for each call. The terminal, with its grid, and the compositor, with a picture memory for each surface, keep the interface package compiled in.
+The drawing module reads the cells of a text grid in the text table, and one picture memory for each call. The terminal draws its grid through it. The compositor, with a picture memory for each surface, draws its screen table in parts: one call for each window and one for the bar.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each program, the drawing in a module".
 
@@ -4277,23 +4311,23 @@ Do not use: renderer module, graphics library, render service.
 
 A draw record is one thing to draw, in 40 bytes: a rectangle, a gradient, a run of text, a clip, a picture, a text grid or a line, with its place and its colors.
 
-Records of one fixed size make the output of a frame plain data: a table that can be compared, measured, drawn again in a part, or tested. A record holds its kind, the rectangle in pixels of the surface, two colors, a range of bytes in the text table (or the place of a picture in its picture memory, or the index of a grid), and the low 32 bits of the element identity that wrote it. A `Clip` sets the rectangle that the next records are cut to, with no stack. The format has a version, `DRAW_RECORD_VERSION` (8 today); a new kind or field is a new version. The execution checks each record of a hostile caller: a range outside the text table, a picture past its picture memory, or a value past its limit, draws nothing.
+Records of one fixed size make the output of a frame plain data: a table that can be compared, measured, drawn again in a part, or tested. A record holds its kind, the rectangle in pixels of the surface, two colors, a range of bytes in the text table (the bytes of a text or the cells of a grid, or else the place of a picture in its picture memory), and the low 32 bits of the element identity that wrote it. A `Clip` sets the rectangle that the next records are cut to, with no stack. The format has a version, `DRAW_RECORD_VERSION` (9 today); a new kind or field is a new version. The execution checks each record of a hostile caller: a range outside the text table, a picture past its picture memory, or a value past its limit, draws nothing.
 
 A draw record is not a command to a graphics processor: the interface package executes it on the processor, in the memory of the program.
 
-The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 8)".
+The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 10)".
 
 Do not use: draw command, display list item, primitive.
 
 ### Draw table
 
-A draw table is the draw records of one frame of a window, the bytes of their texts, and the picture memories and text grids that they name, in the memory of the program.
+A draw table is the draw records of one frame of a window, the bytes of their texts and the cells of their text grids, and the picture memories that they name, in the memory of the program.
 
-The draw table is what a frame produces. The program owns it (`Draw_Table` of `src/library/support/interface`) and keeps the table of the frame before, one for each picture of its surface, so that the next frame can find the damage by difference. A table that is full stops taking records and sets `full`; a picture outside each picture memory of the table, or a grid that the table does not have, sets `refused`. Example: `interface_elements` draws a window of 68 records.
+The draw table is what a frame produces. The program owns it (`Draw_Table` of `src/library/support/interface`) and keeps the table of the frame before, so that the next frame can find the damage by difference. A table that is full stops taking records and sets `full`; a picture outside each picture memory of the table, or a grid whose cells are fewer than its rows, sets `refused`. Example: `interface_elements` draws a window of 68 records.
 
 A draw table is not a tree: its order is the order of the drawing, and two tables compare record by record at the same index.
 
-The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 8)".
+The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 10)".
 
 Do not use: display list, command buffer, render tree.
 
@@ -4301,11 +4335,11 @@ Do not use: display list, command buffer, render tree.
 
 A text grid is a grid of text cells of a program (a character, reverse, a color, or a fill), drawn by one draw record.
 
-A cell holds one code point, so one cell is one character: the program that fills the grid decodes its UTF-8 text once, and the grid draws a code point that the font lacks as the replacement glyph. A terminal changes many cells many times in one second. One record for each cell makes a large table; one text grid record names the whole grid, up to 104 by 32 cells for the terminal. Its 40 bytes do not change when its cells change, so the difference compares the cells: in each row, the span from the first changed cell to the last one is damaged. Each draw table keeps its own copy of the cells that its picture shows. The execution draws the cells of one color that follow each other as one text. The console draws no pixels: its records go into the terminal, so the text grid of the terminal is also the drawing of the console.
+A cell holds one code point, so one cell is one character: the program that fills the grid decodes its UTF-8 text once, and the grid draws a code point that the font lacks as the replacement glyph. A terminal changes many cells many times in one second. One record for each cell makes a large table; one text grid record names the whole grid, up to 104 by 32 cells for the terminal. Its 40 bytes do not change when its cells change, so the difference compares the cells: in each row, the span from the first changed cell to the last one is damaged. `draw_text_grid` copies the cells into the text table of the frame, so the record holds values only, the drawing module draws it, and the table before keeps the cells in its copy of the text. The execution draws the cells of one color that follow each other as one text. The console draws no pixels: its records go into the terminal, so the text grid of the terminal is also the drawing of the console.
 
 A text grid is not a screen buffer of a text mode: it is memory of the program, drawn into its surface.
 
-The design: `docs/INTERFACE.md`, "2.4 Text grid".
+The design: `docs/INTERFACE.md`, "2.4 Text grid", and `src/md/api/text_grid.md`.
 
 Do not use: character matrix, screen buffer.
 
@@ -4317,7 +4351,7 @@ A program that computes its own pixels, such as `life`, `paint`, `plasma` or `te
 
 A picture record is not a picture of a surface: it shows a canvas that the program holds, inside its surface. It holds no address: the same record means the same pixels in the drawing module.
 
-The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 8)", and `src/md/api/picture.md`.
+The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 10)", and `src/md/api/picture.md`.
 
 Do not use: image node, bitmap item.
 
@@ -4325,7 +4359,7 @@ Do not use: image node, bitmap item.
 
 A picture memory is one run of pixels of a program in which picture records name their pictures by the index of a first pixel and a stride.
 
-A description carries values only, so a picture record cannot name a canvas by its address. The draw table holds a list of picture memories (`Draw_Table.picture_memories`), and a picture record names one by its number. `draw_picture(table, x, y, canvas, generation)` finds the memory that holds each pixel of the canvas and writes the values. A program that draws through the drawing module has one picture memory, which the export reads as bytes, in place: `heron` gives its stage, whose tiles are views of it. The compositor has one for each surface, and keeps the interface package compiled in.
+A description carries values only, so a picture record cannot name a canvas by its address. The draw table holds a list of picture memories (`Draw_Table.picture_memories`), and a picture record names one by its number. `draw_picture(table, x, y, canvas, generation)` finds the memory that holds each pixel of the canvas and writes the values. A program that draws through the drawing module has one picture memory, which the export reads as bytes, in place: `heron` gives its stage, whose tiles are views of it. The compositor has one for each surface: each window is a part of its screen table, drawn with one call that reads the memory of that surface.
 
 A picture memory is not a surface and not a picture of a surface: it is memory of the program that its records show.
 
@@ -4380,6 +4414,30 @@ An act name is not an element identity: many frames and many programs can use on
 The design: `docs/INTERFACE.md`, "4.2 Act names".
 
 Do not use: action, anchor, target.
+
+### Element name
+
+An element name is a text of at most 32 bytes that names an element of a frame for a machine test, such as `watch` or `frame 0`, with the rectangle where it takes a press.
+
+A machine test presses an element by its element name, so a change of the layout of a window moves the press with the element. A button is named by its label, a text input by its placeholder, an arrow button of a scroll bar by the name of the bar and its direction; a program names another element with `element_name(frame, area, "frame 0")` when it builds it. The first element of a frame with a name keeps it. The window layer writes an element line when the rectangle of a name changes. Example: the step `{kind = .Click_Element, text = "debugger_window", element = "watch"}` presses the button `watch` of the window of the debugger.
+
+An element name is not an element identity: it is a text for a reader of the log, and the interface state does not follow it. It is not an act name: the palette does not read it, and it names one rectangle of one window.
+
+The design: `src/md/infrastructure/test_pointer.md`; `docs/TOOLS.md`, "How a step presses an element".
+
+Do not use: test id, locator.
+
+### Element line
+
+An element line is the line of the log that says where an element with an element name is, or that it is gone: `interface: debugger_window: the element watch at x,y,width,height`.
+
+A window writes it after a drawn frame in which the rectangle of the name is new or changed, and writes `the element <name> is gone` when its frame no longer has the name. A frame with no change writes no line. The compositor writes the element lines of the palette, in pixels of the screen, as `compositor: the palette: the element <name> at ...`. The modus tool reads the last element line of an element before a press.
+
+An element line is not a contract between two programs: no program reads it, and its form changes with the tool.
+
+The design: `src/md/infrastructure/test_pointer.md`.
+
+Do not use: layout dump, element report.
 
 ### Interface state
 
@@ -5752,7 +5810,7 @@ The words of this group name how the project is run and published: the documents
 
 A property is one of the 21 fundamental concepts of the system, each with its rule, its reasons and its costs, in `docs/PROPERTIES.md`.
 
-The properties are the reference against which every proposal is measured: a proposal that contradicts one is named as such before any work on it, and only the owner of the project can change a property. Each property has a number and a title ("10. One code module", "17. Trusted boot: UEFI program, Secure Boot, TPM"), and a status in the summary table of the document. The status page of the site shows each property with its status, the evidence items and the gaps that name it.
+The properties are the reference against which every proposal is measured: a proposal that contradicts one is named as such before any work on it, and only the owner of the project can change a property. Each property has a number and a title ("10. One code module", "17. Trusted boot: UEFI program, Secure Boot, TPM"), and a status in the summary table of the document. The status page of the site shows each property with its status, and what the machine test shows of it.
 
 A comment in a source never names a property by its number: it states the reason in words, or points to the heading of a guide. `modustool check` refuses "(property 14)" and "(P20)" as a comment breach.
 
@@ -5760,77 +5818,33 @@ The design: `docs/PROPERTIES.md`.
 
 Do not use: principle (for this), requirement, axiom.
 
-### Decision
-
-A decision is one entry of `docs/DECISIONS.md`: who decided what, when, and in which words, under an identifier `D-nnn` that never changes.
-
-The file is the record of the project, and the first document to read. Each entry gives the date, who decided (the owner of the project, the coordinator, or an agent), the decision, the exact words of the owner in their language, its state (in force, done, not done yet, replaced by another, open) and where it is carried out. A decision of the coordinator or of an agent holds until the owner reverses it. A new decision takes the next free identifier, at the end of its group, and the guide of its subject states the rule with no name, no role and no date.
-
-A guide and a comment never name a decision: they state the rule. The record of who chose it stays in `docs/DECISIONS.md`.
-
-The design: `docs/DECISIONS.md`, "How to read and write this file".
-
-Do not use: ADR, ruling, resolution.
-
 ### Step
 
 A step is one tested commit on `master` that adds one capability to a system that works.
 
-The project grows in steps: each step leaves the system whole, built and tested, with its documents up to date in the same commit. `docs/REVIEWS.md` lists each step with its commit and its capability ("1, `7305ad2`, Isolated call"). The home of the site shows the count of steps. Several features can be written at once on branches; each merge still needs its build and the test of its own part.
+The project grows in steps: each step leaves the system whole, built and tested, with its documents up to date in the same commit. Several features can be written at once on branches; each merge still needs its build and the test of its own part.
 
 A step is not a stage of the start of the machine (the "Step of the start" of the group "Running code"), and not a step of a machine test, which waits for one line of the log.
 
-The design: `docs/REVIEWS.md`.
+The design: `AGENTS.md`.
 
 Do not use: iteration, sprint, milestone (for this).
-
-### Choice
-
-A choice is a decision made during the implementation that the owner has not reviewed, numbered in the section "Choices made during the implementation" of `docs/FIRST_MILESTONE.md`.
-
-Writing code needs many small decisions that no property or decision settles: a format, an order, a limit. Each one is recorded as a numbered choice with its reason ("1. **Export numbers.** The modus tool holds an ordered export list per module..."), so that the owner can read it and reverse it. A choice can change at any time.
-
-A comment never names a choice by its number; the site writes a pointer `choice <n>` of a guide as a link to its item.
-
-The design: `docs/FIRST_MILESTONE.md`, "Choices made during the implementation".
-
-Do not use: decision (for this: a decision is an entry of `docs/DECISIONS.md`), design note.
 
 ### Review
 
 A review is a read of the work against the properties and the rule "no bad compromise", which lists each concession and what removes it.
 
-The project asks for one after each five steps; the record of each is in `docs/REVIEWS.md`. Kernel code also has an independent review before each merge: a fresh read of the change, often by a new agent session. A finding of a review has a label, and its correction refers to the finding in the record, never in a comment of the code.
+The project asks for one after each five steps. Each concession that it finds, and that is planned work, becomes an entry of `ROADMAP.md`. Kernel code also has an independent review before each merge: a fresh read of the change, often by a new agent session. A finding of a review has a label, and its correction never names that label in a comment of the code.
 
-The design: `docs/REVIEWS.md`.
+The design: `AGENTS.md`.
 
 Do not use: audit, code review (for the whole), retrospective.
 
-### Evidence item
-
-An evidence item is one numbered item of the section "Evidence" of `docs/FIRST_MILESTONE.md`: an action of the machine test that shows that a part of the system works.
-
-The machine test starts the machine under QEMU, acts as the input through the QEMU monitor (keys, pointer moves, clicks) and waits for a text of the log at each step. Each evidence item says what that scenario does and what it proves ("Start `fault`. The kernel stops it on a page fault. The other programs continue."). The status page shows, for each property, the evidence items that name it.
-
-The design: `docs/FIRST_MILESTONE.md`, "Evidence".
-
-Do not use: proof, test case (for this), demo.
-
-### Gap
-
-A gap is one item of the section "Gaps" of `docs/FIRST_MILESTONE.md`: a difference between the code and the documents, or a part that is not built, not run or not measured.
-
-The project states what is not done as plainly as what is done. A gap names the part, what is missing, and often who must act ("The coordinator fills the three numbers of the measure..."). The status page lists each gap with its number and its group, and shows under each property the gaps that name it. A document that says what the code no longer does is itself a fault, as a failing test is: it is corrected, not listed as a gap.
-
-The design: `docs/FIRST_MILESTONE.md`, "Gaps".
-
-Do not use: issue, bug (for this), todo, known limitation.
-
 ### Working record
 
-A working record is a document of `docs/` that records the work, not the system: `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md`.
+A working record is a document that records the work on the site, not the system: `docs/SITE.md`, and each intent file of `src/md`.
 
-A guide explains how a part of the system is designed and why; a working record holds steps, choices, gaps, reviews and the state of the work. So the site publishes the guides and not the working records (`SITE_WORKING_RECORDS`): a link of a page to a working record names the file in the repository, and says so. `docs/DECISIONS.md` is the record of the decisions. An intent file is a working record for the site too, by its path under `src/md`.
+A guide says what the system does and how to use it; a working record holds the design of a part and the state of its work. So the site publishes the guides and not the working records (`SITE_WORKING_RECORDS`): a link of a page to a working record names the file in the repository, and says so. An intent file is a working record for the site by its path under `src/md`.
 
 The design: `docs/SITE.md`, "The pages".
 
@@ -5842,7 +5856,7 @@ An intent file is a Markdown file of the folder `src/md` that records why a part
 
 It holds the purpose of the part, its constraints, the chosen form with its reasons, each form that was refused with its reason, the subtle points, and what is built and what is left. A design is written there before its code, and a change of a design changes its intent file in the same commit as the code. `src/md/README.md` is the entry point of the folder: an overview of the system, and a file index that lists each other file once; `modustool check` refuses an index and a folder that are not the same set. The folder follows the standard of [srcmd.org](https://srcmd.org).
 
-An intent file is not a guide: a guide says what the system does and how to use it, and the site publishes it. It is not the record of a decision (`docs/DECISIONS.md`), a review, a log or a plan. It is a working record for the site: a pointer to one links to the file in the repository. Example: `src/md/features/palette.md` says why the palette is a panel of the compositor with the console as its provider, and which forms were refused.
+An intent file is not a guide: a guide says what the system does and how to use it, and the site publishes it. It is not a record of who decided, a review, a log or a plan. It is a working record for the site: a pointer to one links to the file in the repository. Example: `src/md/features/palette.md` says why the palette is a panel of the compositor with the console as its provider, and which forms were refused.
 
 The design: `src/md/README.md`, "The rules of this folder"; `docs/TOOLS.md`, "The intent folder".
 
@@ -5908,7 +5922,7 @@ It is the one place of the plans, and the other half of the changelog: the chang
 
 The file is written by hand. A work that is planned gets an entry; a work that is done loses its entry in the commit of its changelog fragment. `modustool roadmap check` checks the form of the file, and `modustool check` runs it. The site shows the file at `roadmap/`, as three columns of cards.
 
-It is not the status page, which gives the state of each property and the gaps of what is built. It is not a list of gaps: a gap is a difference between the code and the documents, and a gap becomes planned work only when an entry names it. It is not a promise of an order: only the sections order the entries.
+It is not the status page, which gives the state of each property and what is not done of it. It is not a list of the limits of the code: a limit becomes planned work only when an entry names it. It is not a promise of an order: only the sections order the entries.
 
 The design: `docs/TOOLS.md`, "The roadmap", and `docs/SITE.md`, "The roadmap".
 
@@ -6265,7 +6279,7 @@ Do not use: miniature, low-resolution copy.
 
 A guide is a page of the site made from a document of `docs/`: how a part of the system is designed, and why.
 
-Examples: `docs/ARCHITECTURE.md`, `docs/QUIC.md`, `docs/FONTS.md`. A guide states each rule with no name of a person or a role, no step, no choice and no date: that record is `docs/DECISIONS.md`. The working records are not guides and are not published. On the site a guide has the documentation layout, and its code spans link to the declarations and documents that they name.
+Examples: `docs/ARCHITECTURE.md`, `docs/QUIC.md`, `docs/FONTS.md`. A guide states each rule with no name of a person or a role, no step, no choice and no date: git keeps who decided and when. The working records are not guides and are not published. On the site a guide has the documentation layout, and its code spans link to the declarations and documents that they name.
 
 The design: `docs/SITE.md`, "The pages".
 
@@ -6293,9 +6307,9 @@ Do not use: API page, package page.
 
 ### Status page
 
-The status page is the page of the site that gives the state of each property, with its evidence items and its gaps, then all the gaps.
+The status page is the page of the site that gives the state of each property: its status, what it promises, what the machine test shows of it, and what is not done.
 
-It writes no sentence of its own: each cell is a part of `docs/PROPERTIES.md` or of `docs/FIRST_MILESTONE.md`. An evidence item or a gap belongs to a property when its text names it. What is not done is on it as plainly as what is done. It is a section of its own, outside the docs, and a line of the project menu of the bar. It is not the roadmap: the status page says what is built and what is missing, the roadmap says what work is planned, and one line of the status page leads to it.
+It writes no sentence of its own: each cell is a part of `docs/PROPERTIES.md` or of `docs/DEMONSTRATIONS.md`. What is not done is on it as plainly as what is done. It is a section of its own, outside the docs, and a line of the project menu of the bar. It is not the roadmap: the status page says what is built and what is missing, the roadmap says what work is planned, and one line of the status page leads to it.
 
 The design: `docs/SITE.md`, "The status page".
 
@@ -6372,6 +6386,16 @@ Under 720 pixels it is not a menu: its three sections are lines of the site menu
 The design: `docs/SITE.md`, "The buttons and the menu of the bar".
 
 Do not use: dropdown, more menu, submenu, overflow menu.
+
+### Subscribe menu
+
+The subscribe menu is the menu under the heading of the page of the releases and of the page of the news that holds the ways to follow the changes of the system.
+
+Its button has the word "Subscribe" and a chevron that turns when the menu opens. Its panel has two links: "Atom feed", the feed of the page (`releases.xml` or `news.xml`), and "Watch releases on GitHub", the releases of the repository. It is a `details` element, as the project menu: it opens and closes with no script, and the panel is as wide as its longest line. It is not the project menu, which is in the bar.
+
+The design: `docs/SITE.md`, "The subscribe menu".
+
+Do not use: RSS menu, follow button.
 
 ### Documentation layout
 
@@ -6495,7 +6519,7 @@ Do not use: doc link, citation (for this).
 
 A comment breach is a comment of a source that names a property, a choice, a step, a review, a finding or a decision by its number, its label or its date, in place of the reason.
 
-A number means nothing to a reader of the code, and it goes stale when the record changes. So a comment states the reason in plain words, or points to a heading of a guide. `modustool check` reads every comment of the sources and fails on each breach, with its file, its line and its form: "(property 14)", "(P20)", "choice 186", "D-047", "HANDOFF item 53".
+A number means nothing to a reader of the code, and it goes stale when the record changes. So a comment states the reason in plain words, or points to a heading of a guide. `modustool check` reads every comment of the sources and fails on each breach, with its file, its line and its form: "(property 14)", "(P20)", "choice 186", "D-047".
 
 The design: `docs/TOOLS.md`, "The comments of the sources".
 
@@ -6515,7 +6539,7 @@ Do not use: tag, badge, cross-reference (for this).
 
 A wire form is one of the types of the call form of the module contract, a member of `Type` of `src/library/contract/module`: Integer, Text, Record, Handle, Table or Bytes.
 
-It says how a call carries a parameter or a result: in one register, and what that register holds or points to. An Integer is the value; a Text, a Record, a Table and Bytes are an address of memory of the caller with a header; a Handle is a handle number. Because each parameter has a wire form in the description of an export, one export serves a direct call, an isolated call and the console with no glue code.
+It says how a call carries a parameter or a result: in one word of the call form (a register, or a word of the stack past the sixth argument), and what that word holds or points to. An Integer is the value; a Text, a Record, a Table and Bytes are an address of memory of the caller with a header; a Handle is a handle number. Because each parameter has a wire form in the description of an export, one export serves a direct call, an isolated call and the console with no glue code.
 
 The design: `docs/MODULE_CONTRACT.md`, "5. The types".
 

@@ -1,5 +1,6 @@
 package compositor
 
+import "modus:contract/errors"
 import "modus:contract/palette_table"
 import "modus:contract/ring"
 import "modus:contract/settings"
@@ -41,6 +42,11 @@ palette_interface_state: interface.Interface_State
 // press and the release that it read.
 palette_input: interface.Input
 palette_scroll_dragged: bool // The thumb that is held now moved the view: its release writes one line of the log.
+// The named elements of the last frame of the panel, and the set that the
+// log has: "compositor: the palette: the element field 1 at x,y,w,h", in
+// pixels of the screen.
+PALETTE_ELEMENT_OWNER :: "the palette"
+palette_element_places_drawn, palette_element_places_written: interface.Element_Places
 
 // The ranking thread. The loop of the compositor never makes a list: it
 // writes a request (the typed part, the windows, the remembered choices)
@@ -787,6 +793,12 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 				system.log_in("surfaces", .Info, "compositor: the palette refuses the key: ", message)
 			}
 			palette_refresh()
+			// The panel is built with the key: a machine test takes its
+			// picture after this line, not before the key is drawn.
+			if !leave {
+				form := &panel.form
+				system.log_in("surfaces", .Info, "compositor: the field ", u64(form.current), " of ", palette.entry_name(&form.entry), " shows \"", palette.field_text(form, form.current), "\"")
+			}
 		}
 	case .Field_Next:
 		switch palette.form_tab(&panel.form) {
@@ -1158,6 +1170,7 @@ palette_refresh :: proc "contextless" () {
 		built := interface.frame_begin(&palette_now, &palette_interface_state, &palette_input, system.time())
 		palette.panel_draw(&built, &palette_panel, left, top)
 		interface.frame_end(&built)
+		palette_element_places_drawn = built.element_places
 		interface.input_clear(&palette_input)
 		scrolled := palette_panel.scrolled
 		moved := palette.view_scrolled(&palette_panel)
@@ -1180,8 +1193,18 @@ palette_refresh :: proc "contextless" () {
 	if palette_now.full {
 		system.log_in("surfaces", .Warning, "compositor: the draw table of the palette is full: records are missing")
 	}
+	// The panel is no window: the compositor writes the places of its
+	// named elements itself, in pixels of the screen, so that a machine
+	// test presses a field or a button by its name.
+	interface.element_places_publish(&palette_element_places_written, &palette_element_places_drawn, "surfaces", "compositor: ", PALETTE_ELEMENT_OWNER)
+	// The difference through the drawing module. It refuses only a table
+	// of more than 2^40 records or bytes; with no difference, the whole
+	// screen is drawn again.
 	changed: interface.Damage
-	interface.damage_by_difference(&palette_before, &palette_now, &changed)
+	refused: errors.Error_Record
+	if !interface.difference_through_module(&palette_before, &palette_now, &changed, &refused) {
+		damage_add(0, 0, screen.width, screen.height)
+	}
 	for rectangle in changed.rectangles[:changed.count] {
 		damage_add(rectangle.left, rectangle.top, rectangle.right - rectangle.left, rectangle.bottom - rectangle.top)
 	}
@@ -1286,6 +1309,9 @@ palette_close :: proc "contextless" (cause: string) {
 	palette_row_logged_length = 0
 	damage_palette()
 	interface.draw_table_clear(&palette_before)
+	// A closed panel has no element: each one that the log has is gone.
+	palette_element_places_drawn = {}
+	interface.element_places_publish(&palette_element_places_written, &palette_element_places_drawn, "surfaces", "compositor: ", PALETTE_ELEMENT_OWNER)
 	per_frame := palette_time / max(palette_frames, 1)
 	system.lock(&palette_ranking.lock)
 	longest := palette_ranking.longest

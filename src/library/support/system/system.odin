@@ -64,12 +64,16 @@ foreign _ {
 	port_read_32 :: proc "c" (port: u16) -> u32 ---
 	// export_call calls an export with the call form (docs/MODULE_CONTRACT.md,
 	// section 4). It loads the 6 integer registers and the 8 float registers
-	// from the two arrays, calls address, and writes the results: the two
-	// integer results, then the two float results.
+	// from the two arrays, writes the integers 7 to 12 on the stack, calls
+	// address, and writes the results: the two integer results, then the two
+	// float results.
 	export_call :: proc "c" (address: uintptr, integers: ^[CALL_INTEGERS]u64, floats: ^[CALL_FLOATS]u64, results: ^[CALL_RESULTS]u64) ---
 }
 
-CALL_INTEGERS :: 6 // The integer registers of the call form: `module.PARAMETER_CAPACITY`.
+// The integer arguments of the call form: `module.PARAMETER_CAPACITY`. The
+// first 6 are in registers, the others on the stack; enter.asm writes 6
+// words of stack, so a change of this number changes export_call too.
+CALL_INTEGERS :: 12
 CALL_FLOATS :: 8 // The float registers of the call form.
 CALL_RESULTS :: 4 // The results of the call form: two integers, then two floats.
 

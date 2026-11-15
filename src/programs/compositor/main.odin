@@ -65,11 +65,20 @@
 // WebGPU with WGSL and is not built. A full frame of the screen takes a few
 // milliseconds of one processor; the log gives the measure.
 //
+// **How it draws.** The windows, the bar and the palette are draw tables,
+// drawn by the [drawing module](term:drawing-module), which the compositor
+// imports as each program with a window does. A call of the module takes
+// one picture memory, and each surface is a memory of its own, so the
+// screen table is in parts: one for each window, with its surface, and one
+// for the bar, with its heron. A damage rectangle is one call for each
+// part that it meets (src/md/api/picture.md).
+//
 // The design of the desktop is in docs/DESIGN.md, "9. The desktop"; the
 // pointer is in docs/POINTERS.md.
 package compositor
 
 import "modus:support/display"
+import "modus:contract/errors"
 import "modus:contract/settings"
 import "modus:contract/date"
 import "modus:support/calendar"
@@ -292,11 +301,11 @@ bar_measure :: proc "contextless" () {
 		}
 		bar_layout = bar.layout_of(measured_font != nil ? &measured_font.regular : nil)
 		_, menu_top, _, menu_height := bar.menu(bar_layout)
-		area := interface.Rectangle{0, 0, frame.width, max(BAR_HEIGHT, menu_top + menu_height)}
+		area := Rectangle{0, 0, frame.width, max(BAR_HEIGHT, menu_top + menu_height)}
 		for _ in 0 ..< ROUNDS {
 			start := system.nanoseconds()
 			screen_build(0, measured_font)
-			interface.execute_in_rectangle(&screen_table, frame, area)
+			screen_draw(area)
 			least[measured] = min(least[measured], system.nanoseconds() - start)
 		}
 		measured += 1
@@ -978,11 +987,13 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 	graphics.copy(canvas, origin_x, origin_y, background)
 
 	// The windows, the bar and the menus: one draw table for the frame
-	// (screen_build), each record cut to this area.
-	interface.execute_in_rectangle(&screen_table, canvas, {area.left, area.top, area.right, area.bottom}, origin_x, origin_y)
+	// (screen_build), each record cut to this area. The drawing module
+	// draws in the coordinates of its canvas: the canvas is the whole
+	// frame, so the records stay in the coordinates of the screen.
+	screen_draw(area)
 
 	if palette_is_open() {
-		interface.execute_in_rectangle(&palette_now, canvas, {area.left, area.top, area.right, area.bottom}, origin_x, origin_y)
+		screen_draw_part(&palette_now, 0, palette_now.record_count, nil, frame, {area.left, area.top, area.right, area.bottom})
 	}
 
 	pointer_draw(canvas, origin_x, origin_y) // pointer_picture.odin
@@ -1159,75 +1170,146 @@ loop_copy :: proc "contextless" (to, from: [^]u8, count: int) {
 // area. The palette has its own table; the pointer is drawn after both.
 screen_records: [512]interface.Draw_Record
 screen_text: [8192]u8
-// The picture memories of the screen: the picture of each surface that a
-// window shows, then the heron of the bar. Each surface is a memory object
-// of another program, mapped at its own address, so each picture has a
-// picture memory of its own.
-screen_picture_memories: [CLIENT_CAPACITY + 1][]graphics.Color
 screen_table := interface.Draw_Table{}
+
+// A part of the screen table: the records of one window, or of the bar and
+// its menus, and the one picture memory that their Picture record names as
+// number 0. Each surface is a memory object of another program, mapped at
+// its own address, and a call of the drawing module takes one picture
+// memory: so the compositor draws each part with a call of its own.
+Screen_Part :: struct {
+	first, count:   int, // The records of the part in screen_table.
+	picture_memory: []graphics.Color, // The surface of the window, the heron of the bar, or none.
+	// The rectangle of the screen that holds each pixel of the part: the
+	// outer rectangle of a window. A damage rectangle that it does not meet
+	// needs no call. The part of the bar holds the menus, and has no bound.
+	bounds:         Rectangle,
+	bounded:        bool,
+}
+
+// The parts of the screen: one for each window, then one for the bar.
+screen_parts: [CLIENT_CAPACITY + 1]Screen_Part
+screen_part_count: int
+// The list of one picture memory that the table has while it appends the
+// Picture record of one part: the record then names memory 0.
+screen_picture_memory: [1][]graphics.Color
+// The drawing module refused a call of the compositor: the line of the log
+// is written one time, as the cause is in the compositor and each frame has it.
+screen_refusal_logged: bool
 
 // The heron of the bar (docs/DESIGN.md, "The mark"). Its gradients are
 // computed once, at the start, into this picture; each frame shows it with
 // a Picture record, a copy of 24 rows. Its generation never changes, so the
 // difference of two frames never finds it changed.
-BAR_MARK_PICTURE :: CLIENT_CAPACITY // Its index in screen_picture_memories.
 BAR_MARK_GENERATION :: 1
 bar_mark_pixels: [bar.MARK_SIZE * bar.MARK_SIZE]graphics.Color
 bar_mark_picture: graphics.Canvas
 
-// bar_background_records appends the surface of the bar: its gradient and
-// the line under it.
-bar_background_records :: proc "contextless" (table: ^interface.Draw_Table, width: int) {
-	interface.draw_vertical_gradient(table, 0, 0, width, BAR_HEIGHT - 1, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
-	interface.draw_rectangle(table, 0, BAR_HEIGHT - 1, width, 1, graphics.COLOR_TRACK)
+// bar_background_records appends the surface of the bar, with its corner
+// at (x, y): its gradient and the line under it.
+bar_background_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width: int) {
+	interface.draw_vertical_gradient(table, x, y, width, BAR_HEIGHT - 1, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
+	interface.draw_rectangle(table, x, y + BAR_HEIGHT - 1, width, 1, graphics.COLOR_TRACK)
 }
 
 // bar_mark_build draws the heron of the bar into its picture. A picture has
 // no transparency, so the picture first gets the pixels of the bar under the
 // heron, from the same records and the same code that draw the bar: an empty
-// cell of the heron then shows exactly the bar around it.
+// cell of the heron then shows exactly the bar around it. The drawing module
+// draws in the coordinates of the canvas, so the records of the bar start at
+// the corner of the screen as the picture sees it.
 bar_mark_build :: proc "contextless" () {
 	bar_mark_picture = {pixels = raw_data(bar_mark_pixels[:]), width = bar.MARK_SIZE, height = bar.MARK_SIZE, stride = bar.MARK_SIZE}
 	records: [4]interface.Draw_Record
 	table := interface.Draw_Table{records = records[:]}
-	bar_background_records(&table, bar.MARK_X + bar.MARK_SIZE)
-	interface.execute(&table, bar_mark_picture, -bar.MARK_X, -bar.MARK_Y)
+	bar_background_records(&table, -bar.MARK_X, -bar.MARK_Y, bar.MARK_X + bar.MARK_SIZE)
+	screen_draw_part(&table, 0, table.record_count, nil, bar_mark_picture, {0, 0, bar.MARK_SIZE, bar.MARK_SIZE})
 	// The mark of the bar is a small icon, one pixel for a cell: the cells
 	// variant.
 	mark.mark_draw(bar_mark_picture, 0, 0, bar.MARK_CELL_SIZE, .Cells, false)
 }
 
-// screen_build builds the draw table of the screen. interface_font: the
-// interface font of the names, or nil for the font of the cells (the
-// measure of bar_measure compares the two).
+// screen_draw_part draws the records first ..< first + count of a table
+// that touch one rectangle of a canvas, over the pixels that the canvas
+// has, with one call of the drawing module. A refusal draws nothing, and
+// writes one line on the log for the life of the compositor.
+screen_draw_part :: proc "contextless" (table: ^interface.Draw_Table, first, count: int, picture_memory: []graphics.Color, canvas: graphics.Canvas, rectangle: interface.Rectangle) {
+	refused: errors.Error_Record
+	if interface.draw_part_through_module(table, first, count, picture_memory, canvas, rectangle, false, 0, &refused) || screen_refusal_logged {
+		return
+	}
+	screen_refusal_logged = true
+	system.log_in("surfaces", .Warning, "compositor: the drawing module refused execute_draw_table_10 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
+}
+
+// screen_draw draws the parts of the screen table that meet one rectangle
+// of the screen, from the back to the front, into the frame: one call of
+// the drawing module for each part. The order of the calls is the order
+// of the records, so the pixels are those of one draw of the whole table.
+screen_draw :: proc "contextless" (area: Rectangle) {
+	rectangle := interface.Rectangle{area.left, area.top, area.right, area.bottom}
+	for part in screen_parts[:screen_part_count] {
+		if part.bounded && (part.bounds.right <= area.left || area.right <= part.bounds.left || part.bounds.bottom <= area.top || area.bottom <= part.bounds.top) {
+			continue
+		}
+		screen_draw_part(&screen_table, part.first, part.count, part.picture_memory, frame, rectangle)
+	}
+}
+
+// screen_part_end ends the part that started at the record first.
+@(private = "file")
+screen_part_end :: proc "contextless" (first: int, picture_memory: []graphics.Color, bounds: Rectangle, bounded: bool) {
+	screen_parts[screen_part_count] = {first = first, count = screen_table.record_count - first, picture_memory = picture_memory, bounds = bounds, bounded = bounded}
+	screen_part_count += 1
+}
+
+// screen_picture_append appends the Picture record of one part: the table
+// has, for this record only, the list of its one picture memory.
+@(private = "file")
+screen_picture_append :: proc "contextless" (x, y: int, picture: graphics.Canvas, memory: []graphics.Color, generation: u32) {
+	screen_picture_memory[0] = memory
+	screen_table.picture_memories = screen_picture_memory[:]
+	interface.draw_picture(&screen_table, x, y, picture, generation)
+	screen_table.picture_memories = nil
+	screen_picture_memory[0] = nil
+}
+
+// screen_build builds the draw table of the screen, in its parts.
+// interface_font: the interface font of the names, or nil for the font of
+// the cells (the measure of bar_measure compares the two).
 screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface_Font) {
 	// A memory of a window that closed is never named again: a new
 	// mapping can have its address.
-	screen_picture_memories = {}
-	screen_table = {records = screen_records[:], text = screen_text[:], picture_memories = screen_picture_memories[:], interface_font = interface_font}
+	screen_parts = {}
+	screen_part_count = 0
+	screen_table = {records = screen_records[:], text = screen_text[:], interface_font = interface_font}
 	table := &screen_table
 	pointer_close := close_button_under_pointer()
 	for position in 0 ..< order_count {
 		client := &clients[order[position]]
 		focus := position == order_count - 1
+		first := table.record_count
 		frame_records(table, client, client.x, client.y, focus, client == pointer_close)
 		// A window shows a picture that its program presented, or none:
 		// before the first Present, the program draws in the memory of
 		// the surface, and the window has the background color.
+		memory: []graphics.Color
 		if client.presents > 0 {
-			screen_picture_memories[position] = client.surface.pixels[:client.surface.stride * client.surface.height]
-			interface.draw_picture(table, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface, 0)
+			memory = client.surface.pixels[:client.surface.stride * client.surface.height]
+			screen_picture_append(client.x + BORDER, client.y + TITLE_HEIGHT, client.surface, memory, 0)
 		} else {
 			interface.draw_rectangle(table, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height, graphics.COLOR_BACKGROUND)
 		}
+		outer := Rectangle{client.x, client.y, client.x + client.surface.width + 2 * BORDER, client.y + client.surface.height + TITLE_HEIGHT + BORDER}
+		screen_part_end(first, memory, outer, true)
 	}
 
 	// The bar: the mark of the system, the two buttons, the date and the time
 	// of day (the time since boot when the system has no date).
+	bar_first := table.record_count
 	width := frame.width
-	bar_background_records(table, width)
-	screen_picture_memories[BAR_MARK_PICTURE] = bar_mark_pixels[:]
-	interface.draw_picture(table, bar.MARK_X, bar.MARK_Y, bar_mark_picture, BAR_MARK_GENERATION)
+	bar_background_records(table, 0, 0, width)
+	screen_picture_append(bar.MARK_X, bar.MARK_Y, bar_mark_picture, bar_mark_pixels[:], BAR_MARK_GENERATION)
 	bar_button_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, label: string, open: bool) {
 		interface.draw_rectangle(table, x, y, width, height, open ? graphics.COLOR_CHOSEN : graphics.COLOR_TRACK)
 		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
@@ -1290,6 +1372,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			interface.draw_text(table, line_x + bar.PADDING, line_y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
 		}
 	}
+	screen_part_end(bar_first, bar_mark_pixels[:], {}, false)
 	if table.full {
 		system.log_in("surfaces", .Warning, "compositor: the draw table of the screen is full: records are missing")
 	}

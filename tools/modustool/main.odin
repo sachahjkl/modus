@@ -105,6 +105,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_RUNTIME + "/without_vector_registers",
 	SOURCE_FOLDER_SUPPORT + "/instruction_sets",
 	SOURCE_FOLDER_CONTRACT + "/system_description",
+	SOURCE_FOLDER_CONTRACT + "/replacement_list",
+	SOURCE_FOLDER_SUPPORT + "/replacement_signature",
 	SOURCE_FOLDER_CONTRACT + "/operation",
 	SOURCE_FOLDER_CONTRACT + "/debug_object",
 	SOURCE_FOLDER_CONTRACT + "/value_kinds",

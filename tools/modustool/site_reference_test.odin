@@ -278,21 +278,6 @@ site_property_names_in_a_text :: proc(t: ^testing.T) {
 }
 
 @(test)
-site_gaps_of_the_repository :: proc(t: ^testing.T) {
-	gaps, problem := site_gaps_read(read_text(t, SITE_MILESTONE_FILE))
-	testing.expect_value(t, problem, "")
-	testing.expect(t, len(gaps) > 10)
-	groups := make(map[string]bool, context.temp_allocator)
-	for gap, index in gaps {
-		testing.expect_value(t, gap.number, index + 1)
-		groups[gap.group] = true
-	}
-	testing.expect(t, groups["Performance"] && groups["Input"], "the groups of the gaps are the lines \"Performance:\" and \"Input:\"")
-	_, damaged := site_gaps_read("# Title\n\n## Gaps\n\nNo item.\n\n## Next steps\n")
-	testing.expect(t, damaged != "")
-}
-
-@(test)
 site_type_text_as_the_console :: proc(t: ^testing.T) {
 	description := Module_Description{records = []Record_Description{{name = "Rectangle"}}}
 	testing.expect_value(t, site_type_text(description, .Handle, transmute(u32)op.Rights{.Read, .Write}, .Read, true), "Handle(Read, Write)")

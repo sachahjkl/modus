@@ -53,26 +53,10 @@ KEYS_HELD_LINE :: "1000 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 
 // terminal_of: 96 columns and 26 rows). The surface is 8 + 96 * 8 + 7 + 17
 // = 800 pixels wide; the bar is its last 17 pixels, from y = 0 to the line
 // over the status at 8 + 26 * 16 + 8 - 4 = 428, with an arrow button of 17
-// pixels at each end.
-// Places in the palette, on the screen of 1024 pixels of the machine test:
-// the panel is 640 pixels wide from x = 192, and its top is at y = 96
-// (src/library/support/palette, panel_place and the constants of panel.odin).
-PALETTE_INPUT_BAND_Y :: 96 + 24 // The middle line of the input band.
-// In the band of the form "revoke(name: plasma, grant: )": the text starts
-// 16 pixels from the left of the panel, in cells of 16 pixels, and the
-// character 25 is in the name of the second parameter.
-PALETTE_REVOKE_SECOND_FIELD_X :: 192 + 16 + 25 * 16
-// In the band of the form "strategy(name: )", 16 characters: the buttons
-// of the field start 4 + 16 pixels after the caret at the end of the call,
-// on the next column of the grid of 8 (form_buttons_layout): 192 + 16 + 16
-// * 16 + 20 = 484, then 488. The press is 8 pixels inside the first button,
-// at the start of its name.
-PALETTE_STRATEGY_FIRST_BUTTON_X :: 488 + 8
-PALETTE_SCROLL_BAR_X :: 192 + 640 - 1 - 9 // The middle column of the scroll bar of the list: 17 pixels wide, inside the border of the panel.
-PALETTE_SCROLL_BAR_ARROW_DOWN_Y :: 96 + 48 + 288 - 9 // The middle of its arrow button at the bottom: the list is 288 pixels high under the input band of 48.
-
+// pixels at each end. A press on a button of the bar names it
+// (Click_Element); the shape of the pointer over it and a drag of the
+// thumb take a place, which these constants give.
 CONSOLE_SCROLL_BAR_X :: 800 - 9 // The middle column of the bar.
-CONSOLE_SCROLL_BAR_ARROW_UP_Y :: 8 // The middle of the arrow button at the top.
 CONSOLE_SCROLL_BAR_ARROW_DOWN_Y :: 428 - 9 // The middle of the arrow button at the bottom.
 CONSOLE_SCROLL_BAR_THUMB_END_Y :: 428 - 17 - 4 // In the last pixels of the track: the thumb of a view that follows the last lines ends there, and is 8 pixels long at least.
 CONSOLE_SCROLL_BAR_TRACK_START_Y :: 17 + 4 // Near the start of the track: a thumb dragged there is at its first place.
@@ -89,7 +73,13 @@ Step_Kind :: enum {
 	Shot, // Save the screen as text.png.
 	Move, // Drag the window with the title text to the place (to_x, to_y). The tool reads the place of the window in the log, before and after.
 	Front, // Open the menu of the windows, and press the line of the last window with the title text: the window comes to the front. The tool reads the lines of the menu in the log.
-	Close, // Press the close button of the window with the title text. The tool reads the place and the size of the window in the log.
+	Close, // Press the close button of the window with the title text. The tool reads the place and the size of the window in the log, and brings the window to the front first when another window covers the button (machine_elements.odin).
+	// Press the middle of the element with the name `element` of the window
+	// with the title text, or of the palette when text is PALETTE_ELEMENTS.
+	// The tool waits for the element line that places it, and brings the
+	// window to the front first when another window covers the element
+	// (machine_elements.odin).
+	Click_Element,
 	// The four steps of a film (film.odin; docs/TOOLS.md, "The film"). Only
 	// the scenario of a film has them: Film_Type and Film_Hold are the only
 	// steps with a fixed time, because a film shows time.
@@ -156,6 +146,7 @@ Step :: struct {
 	inside_window: string, // For Click and Drag: (x, y), and the end of a Drag, are inside the surface of the window with this title, as the log of the compositor places it. For Point: from the corner of the window.
 	date_after: string, // For Call: the number after this text in what the tool prints is a date of the machine in milliseconds since 1970, which date_check checks by order against the clock of the host.
 	milliseconds: int, // For Film_Hold: how long the state stays on the screen.
+	element:    string, // For Click_Element: the element name ("watch", "frame 0", "round_robin").
 }
 
 // The two clocks agree to whole seconds: the machine reads its real-time
@@ -948,9 +939,9 @@ scenario := [?]Step {
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
 	{kind = .Move, text = "paint", to_x = 520, to_y = 408},
-	{kind = .Click, x = 60, y = 10, inside_window = "paint"}, // The red color.
+	{kind = .Click_Element, text = "paint", element = "red"},
 	{kind = .Drag, x = 560, y = 520, to_x = 760, to_y = 700},
-	{kind = .Click, x = 140, y = 10, inside_window = "paint"}, // The blue color.
+	{kind = .Click_Element, text = "paint", element = "blue"},
 	{kind = .Drag, x = 760, y = 520, to_x = 560, to_y = 700},
 	{kind = .Drag, x = 800, y = 600, to_x = 960, to_y = 600},
 	// The palette: the key super opens it. With no letter it lists the
@@ -1109,11 +1100,11 @@ scenario := [?]Step {
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "compositor: the palette takes the candidate plasma"},
 	// A press in the second field puts the caret there: the band shows
-	// "revoke(name: plasma, grant: )" in cells of 16 pixels from x = 208,
-	// and the press is on the name of the second parameter. The text typed
-	// after it is the value of that field: the line that the console runs
-	// has it as its second argument.
-	{kind = .Click, x = PALETTE_REVOKE_SECOND_FIELD_X, y = PALETTE_INPUT_BAND_Y},
+	// "revoke(name: plasma, grant: )", and the press is in the middle of
+	// "grant: ", on the name of the second parameter. The text typed after
+	// it is the value of that field: the line that the console runs has it
+	// as its second argument.
+	{kind = .Click_Element, text = PALETTE_ELEMENTS, element = "field 1"},
 	// The press asks the console for the candidates of the field. The
 	// compositor writes its line of the press and the console its line of
 	// the candidates in no fixed order: neither wait moves the place of
@@ -1122,6 +1113,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " candidates for the parameter 1 of revoke", any_order = true},
 	{kind = .Wait, text = " candidates for the field 1"},
 	{kind = .Keys, text = "log"},
+	{kind = .Wait, text = "compositor: the field 1 of revoke shows \"log\""},
 	{kind = .Shot, text = "palette_arguments_two"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette asks to confirm: revoke"},
@@ -1147,7 +1139,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = ">"},
 	{kind = .Wait, text = " for \">\": "},
-	{kind = .Click, x = PALETTE_SCROLL_BAR_X, y = PALETTE_SCROLL_BAR_ARROW_DOWN_Y},
+	{kind = .Click_Element, text = PALETTE_ELEMENTS, element = "scroll bar arrow down"},
 	{kind = .Wait, text = "compositor: the scroll bar of the palette: a press on the arrow down, the rows from 1"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
@@ -1191,10 +1183,10 @@ scenario := [?]Step {
 	{kind = .Type, text = "unload(\"cryptography\")"},
 	{kind = .Wait, text = "[console]   module    cryptography"},
 	// The buttons of a field take the pointer. The field of strategy is a
-	// row of three buttons in the band, from the first column of the grid
-	// after the call "strategy(name: )". Right chooses fair; a press and a
-	// release on the first button take round_robin, as Tab takes the value
-	// that the keys chose. Escape leaves with no change of the strategy.
+	// row of three buttons in the band, at the right of the call
+	// "strategy(name: )". Right chooses fair; a press and a release on the
+	// button round_robin take it, as Tab takes the value that the keys
+	// chose. Escape leaves with no change of the strategy.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = ">strategy"},
@@ -1202,7 +1194,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = " candidates for the field 0, as a row of buttons"},
 	{kind = .Key, text = "right"},
-	{kind = .Click, x = PALETTE_STRATEGY_FIRST_BUTTON_X, y = PALETTE_INPUT_BAND_Y},
+	{kind = .Click_Element, text = PALETTE_ELEMENTS, element = "round_robin"},
 	{kind = .Wait, text = "compositor: a press takes the button round_robin of the field 0"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette goes back to the search"},
@@ -1267,8 +1259,8 @@ scenario := [?]Step {
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
 	// The console came in front for the load of a module, and its window
-	// can cover the close box of plasma.
-	{kind = .Front, text = "plasma"},
+	// can cover the close box of plasma: the step Close brings plasma to
+	// the front first.
 	{kind = .Close, text = "plasma"},
 	{kind = .Wait, text = "root: plasma stopped"},
 	// The scheduling strategy: the program scheduler holds the right to
@@ -1434,6 +1426,9 @@ scenario := [?]Step {
 	// stops the call. Then the line that waited runs.
 	{kind = .Type, text = "spin()"},
 	{kind = .Type, text = "count() + gcd(84, 36)"},
+	// The picture shows spin() that runs: the console entered it. The keys
+	// of the next line wait unseen until the line ends.
+	{kind = .Wait, text = "[console] > spin()"},
 	{kind = .Shot, text = "running"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "console: Escape stops the line after "},
@@ -1468,7 +1463,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "isolate(\"sample\")"},
 	{kind = .Wait, text = "[console]   module     sample"},
-	{kind = .Wait, text = "[console]   commands   11"},
+	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	// The exports that are wrong on purpose are in a module of their own,
 	// which no service holds.
@@ -1537,7 +1532,7 @@ scenario := [?]Step {
 	// console: it has the handles of the console, and kept gives 0.
 	{kind = .Type, text = "unload(\"sample\")"},
 	{kind = .Wait, text = "[console]   module    sample"},
-	{kind = .Wait, text = "[console]   commands  11"},
+	{kind = .Wait, text = "[console]   commands  12"},
 	{kind = .Wait, text = "[console]   memory    its sandboxed program stopped"},
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module    hostile_exports"},
@@ -1545,7 +1540,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "load(\"sample\")"},
 	{kind = .Wait, text = "[console]   module     sample"},
-	{kind = .Wait, text = "[console]   commands   11"},
+	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       direct"},
 	{kind = .Type, text = "load(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module     hostile_exports"},
@@ -1554,9 +1549,16 @@ scenario := [?]Step {
 	{kind = .Type, text = "g = grow(r, 5)"},
 	{kind = .Type, text = "g.width * g.height + keep(b) + kept()"},
 	{kind = .Wait, text = "[console] 12848"},
+	// An export with nine parameters in a direct call: the numbers 7 and 8,
+	// the label and the error record are on the stack. Each number has its
+	// own weight, so a word in the wrong place gives another sum.
+	{kind = .Type, text = "weigh(1, 2, 3, 4, 5, 6, 7, 8, \"A\")"},
+	{kind = .Wait, text = "[console] 269"},
+	{kind = .Type, text = "weigh(1, 2, 3, 4, 5, 6, 7, 8, \"a label of twenty bytes\")"},
+	{kind = .Wait, text = "[console] error: weigh: the argument label has 23 bytes"},
 	{kind = .Type, text = "unload(\"sample\")"},
 	{kind = .Wait, text = "[console]   module    sample"},
-	{kind = .Wait, text = "[console]   commands  11"},
+	{kind = .Wait, text = "[console]   commands  12"},
 	{kind = .Wait, text = "[console]   memory    left the console"},
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console]   module    hostile_exports"},
@@ -1614,6 +1616,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "rings: ok, 6 programs, 6 rings, 5 records"},
 	{kind = .Move, text = "rings", to_x = 176, to_y = 32},
 	{kind = .Type, text = "aaa"},
+	// The picture has the three records of the keys: one line for each.
+	{kind = .Wait, text = "rings: the key a adds a record: "},
+	{kind = .Wait, text = "rings: the key a adds a record: "},
+	{kind = .Wait, text = "rings: the key a adds a record: "},
 	{kind = .Shot, text = "rings"},
 	{kind = .Type, text = "4"},
 	{kind = .Wait, text = "rings: node 4 stopped"},
@@ -2062,6 +2068,24 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   module    agenda"},
 	{kind = .Wait, text = "[console]   commands  3"},
 	{kind = .Wait, text = "[console]   memory    left the console"},
+	// Who may replace a module: the root service writes a replacement only
+	// for a row of the replacement list that the signing key of the system
+	// signed. No row names calendar by math; the row of calendar by lonely
+	// is signed by another key. The table does not change, so agenda still
+	// runs calendar, with its fault.
+	{kind = .Type, text = "replace(\"calendar\", \"math\")"},
+	{kind = .Wait, text = "root: refused the replacement of calendar by math: no signed row of the replacement list names it"},
+	{kind = .Wait, text = "[console] error: the root service refused the replacement of calendar by math: no signed row names it"},
+	{kind = .Type, text = "replace(\"calendar\", \"lonely\")"},
+	{kind = .Wait, text = "root: refused the replacement of calendar by lonely: the signature of its row does not verify under the signing key of the system"},
+	{kind = .Wait, text = "[console] error: the root service refused the replacement of calendar by lonely: its signature does not verify"},
+	{kind = .Type, text = "load(\"agenda\")"},
+	{kind = .Wait, text = "[console]   module     agenda"},
+	{kind = .Wait, text = "[console]   commands   3"},
+	{kind = .Type, text = "year_days(2000) + month_days(2, 2000)"},
+	{kind = .Wait, text = "[console] 393"},
+	{kind = .Type, text = "unload(\"agenda\")"},
+	{kind = .Wait, text = "[console]   memory    left the console"},
 	// The replacement of an import. The root service holds the table of the
 	// machine; the loader checks each export that agenda uses.
 	{kind = .Type, text = "replace(\"calendar\", \"calendar_changed\")"},
@@ -2264,7 +2288,7 @@ scenario := [?]Step {
 	// records out of the log.)
 	{kind = .Type, text = "load(\"sample\")"},
 	{kind = .Wait, text = "[console]   module     sample"},
-	{kind = .Wait, text = "[console]   commands   11"},
+	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       direct"},
 	// A table goes into a direct call: the export reads and changes the
 	// memory of the variable, with no copy. A table from where() goes in;
@@ -2283,13 +2307,13 @@ scenario := [?]Step {
 	{kind = .Shot, text = "table_argument"},
 	{kind = .Type, text = "unload(\"sample\")"},
 	{kind = .Wait, text = "[console]   module    sample"},
-	{kind = .Wait, text = "[console]   commands  11"},
+	{kind = .Wait, text = "[console]   commands  12"},
 	{kind = .Wait, text = "[console]   memory    left the console"},
 	// A table goes into an isolated call: the rows go into the call
 	// region, and the rows of a Change table come back.
 	{kind = .Type, text = "isolate(\"sample\")"},
 	{kind = .Wait, text = "[console]   module     sample"},
-	{kind = .Wait, text = "[console]   commands   11"},
+	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	{kind = .Type, text = "t = readings(4)"},
 	{kind = .Type, text = "scale_values(t, 3)"},
@@ -2304,9 +2328,15 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: scale_values_up_to: the argument factor has the value 3, which the call refuses; it takes at most 2 (-1)"},
 	{kind = .Type, text = "sum_values(t)"},
 	{kind = .Wait, text = "[console] 300"},
+	// An export with nine parameters in an isolated call: the receiver
+	// decodes ten arguments and puts four of them on the stack.
+	{kind = .Type, text = "weigh(1, 2, 3, 4, 5, 6, 7, 8, \"A\")"},
+	{kind = .Wait, text = "[console] 269"},
+	{kind = .Type, text = "weigh(1, 2, 3, 4, 5, 6, 7, 8, \"a label of twenty bytes\")"},
+	{kind = .Wait, text = "[console] error: weigh: the argument label has 23 bytes"},
 	{kind = .Type, text = "unload(\"sample\")"},
 	{kind = .Wait, text = "[console]   module    sample"},
-	{kind = .Wait, text = "[console]   commands  11"},
+	{kind = .Wait, text = "[console]   commands  12"},
 	{kind = .Wait, text = "[console]   memory    its sandboxed program stopped"},
 	// The signature of an export with a table and bytes: one form in the
 	// manual, the console and the errors.
@@ -2332,9 +2362,9 @@ scenario := [?]Step {
 	// that button: the bar is lit, the button hot. Then the thumb, which
 	// ends over the bottom button, is dragged to the top of the track: the
 	// view starts at the oldest line.
-	{kind = .Click, inside_window = "console", x = CONSOLE_SCROLL_BAR_X, y = CONSOLE_SCROLL_BAR_ARROW_UP_Y},
+	{kind = .Click_Element, text = "console", element = "scroll bar arrow up"},
 	{kind = .Wait, text = "terminal: a press on the arrow up of the scroll bar of console: the view starts at line "},
-	{kind = .Click, inside_window = "console", x = CONSOLE_SCROLL_BAR_X, y = CONSOLE_SCROLL_BAR_ARROW_DOWN_Y},
+	{kind = .Click_Element, text = "console", element = "scroll bar arrow down"},
 	{kind = .Wait, text = "terminal: a press on the arrow down of the scroll bar of console: the view follows the last lines"},
 	// Over the scroll bar the pointer is the arrow, and over the text of
 	// the terminal the text shape: the terminal asks for each one when the
@@ -2580,10 +2610,13 @@ scenario := [?]Step {
 	{kind = .Key, text = "spc"},
 	{kind = .Wait, text = "inspect: the sample is live"},
 	// A click on the list: "rk" keeps workers and network; the click on the
-	// second line chooses network.
+	// row of network chooses it. The window writes the line of the choice
+	// before it draws the shorter list: the press waits for the new place
+	// of the row.
 	{kind = .Type, text = "rk"},
 	{kind = .Wait, text = "inspect: workers: "},
-	{kind = .Click, inside_window = "inspect", x = 48, y = 96}, // The second line of the list: src/programs/inspect, LIST_ROWS_Y + 16 + 8.
+	{kind = .Wait, text = "interface: inspect: the element network at "},
+	{kind = .Click_Element, text = "inspect", element = "network"},
 	{kind = .Wait, text = "inspect: network: "},
 	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
 	{kind = .Type, text = "fault"},
@@ -2829,11 +2862,17 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 17"},
 	{kind = .Type, text = "length(\"second\")"},
 	{kind = .Wait, text = "[console] 6"},
+	// The console writes the choice after each key of the search: the
+	// picture waits for the last one.
 	{kind = .Key, text = "ctrl-r"},
 	{kind = .Keys, text = "leng"},
+	{kind = .Wait, text = "console: the history search \"leng\" chooses the row 1 of "},
 	{kind = .Key, text = "ctrl-r"},
+	{kind = .Wait, text = "console: the history search \"leng\" chooses the row 2 of "},
 	{kind = .Key, text = "ctrl-s"},
+	{kind = .Wait, text = "console: the history search \"leng\" chooses the row 1 of "},
 	{kind = .Key, text = "ctrl-r"},
+	{kind = .Wait, text = "console: the history search \"leng\" chooses the row 2 of "},
 	{kind = .Shot, text = "console_history_search"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "console: the history search gave the line length(\"first search line\")"},
@@ -3664,7 +3703,11 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			test_passed_print("the pointer at %d,%d has the shape %s", x, y, step.text)
-		case .Click, .Drag, .Launch, .Move, .Close, .Front:
+		case .Front:
+			window_front_bring(machine, step.text, index) or_return
+		case .Click_Element:
+			element_click(machine, step.text, step.element, index) or_return
+		case .Click, .Drag, .Launch, .Move, .Close:
 			step := step
 			moved_title: string
 			moved_x, moved_y: int
@@ -3691,6 +3734,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 				step.kind = .Click
 				step.x, step.y = x + width + 2 * WINDOW_BORDER - WINDOW_CLOSE_RIGHT, y + WINDOW_CLOSE_Y
+				// A window over the close button would take the press.
+				window_front_where_covered(machine, step.text, step.x, step.y, index) or_return
 			}
 			if step.kind == .Move {
 				// The compositor wrote where it put the window. The pointer
@@ -3715,7 +3760,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			// layout that the compositor wrote in its log, measured here
 			// from the same cache of the build.
 			layout: bar.Layout
-			if step.kind == .Launch || step.kind == .Front || step.kind == .Click && (step.text == BAR_PROGRAMS_BUTTON || step.text == BAR_WINDOWS_BUTTON) {
+			if step.kind == .Launch || step.kind == .Click && (step.text == BAR_PROGRAMS_BUTTON || step.text == BAR_WINDOWS_BUTTON) {
 				known: bool
 				if layout, known = machine_bar_layout(machine); !known {
 					return false
@@ -3735,14 +3780,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					return false
 				}
 			}
-			if !machine.pointer_known {
-				// The pointer starts at an unknown place: push it to the corner.
-				machine.pointer_known = true
-				if !pointer_corner_push(machine) {
-					fmt.eprintfln("modustool: test failed: step %d: the pointer did not go to the corner of the screen", index + 1)
-					return false
-				}
-			}
+			pointer_known_make(machine, index) or_return
 			if step.kind == .Launch {
 				menu_x, menu_y := bar.button_center(layout)
 				if !pointer_move(machine, menu_x, menu_y) {
@@ -3766,21 +3804,6 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					return false
 				}
 			}
-			if step.kind == .Front {
-				menu_x, menu_y := bar.windows_button_center(layout)
-				if !pointer_move(machine, menu_x, menu_y) {
-					fmt.eprintfln("modustool: test failed: step %d: the pointer did not reach its place", index + 1)
-					return false
-				}
-				pointer_button(machine, true) or_return
-				pointer_button(machine, false) or_return
-				line, found := windows_line(machine, step.text, before)
-				if !found {
-					fmt.eprintfln("modustool: test failed: step %d: the menu of the windows does not have %s", index + 1, step.text)
-					return false
-				}
-				step.x, step.y = bar.windows_line_center(layout, line)
-			}
 			if !pointer_move(machine, step.x, step.y) {
 				fmt.eprintfln("modustool: test failed: step %d: the pointer did not reach its place", index + 1)
 				return false
@@ -3793,22 +3816,6 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 			}
 			pointer_button(machine, false) or_return
-			if step.kind == .Front {
-				// The compositor writes that the window is in front.
-				mark := strings.concatenate({"compositor: window ", step.text, " in front"}, context.temp_allocator)
-				arrived := false
-				for start := time.now(); !arrived && time.since(start) < HANG_BOUND; {
-					text := log_read(machine)
-					if arrived = len(text) > before && strings.contains(text[before:], mark); !arrived {
-						log_change_wait(machine)
-					}
-				}
-				if !arrived {
-					fmt.eprintfln("modustool: test failed: step %d: the window %s did not come to the front", index + 1, step.text)
-					return false
-				}
-				test_passed_print("the window %s came to the front", step.text)
-			}
 			if moved_title != "" {
 				// The compositor writes the new place: the window did move.
 				arrived := false

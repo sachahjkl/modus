@@ -98,11 +98,10 @@ roadmap_of_a_damaged_file :: proc(t: ^testing.T) {
 		{first_entry, "- **A window for the debugger.**The debugger gets a window.", "one or two sentences are expected"},
 		{first_entry, "- **A window for the debugger.** The debugger gets a window", "does not end with the end of a sentence"},
 		{first_entry, "- **A window for the debugger.** One. Two. Three.", "3 sentences"},
-		// No date, no HTML, no decision, no person.
+		// No date, no HTML, no person.
 		{first_entry, "- **A window for the debugger.** The debugger gets a window on 2026-12-01.", "the date \"2026-12-01\""},
 		{first_entry, "- **A window for the debugger.** The debugger gets a window in December 2026.", "the date \"December 2026\""},
 		{first_entry, "- **A window for the debugger.** The debugger gets a <b>window</b>.", "a tag of HTML"},
-		{first_entry, "- **A window for the debugger.** The debugger gets a window, as D-234 says.", "the decision D-234"},
 		{first_entry, "- **A window for the debugger.** The owner asked for a window.", "the word \"owner\""},
 		{"A preamble of one line", "A preamble of November 2026", "the date \"November 2026\""},
 		// The links.
@@ -196,8 +195,6 @@ roadmap_other_refused_texts_are_found :: proc(t: ^testing.T) {
 	testing.expect(t, roadmap_html_in_text("a <b>word</b>"))
 	testing.expect(t, roadmap_html_in_text("a <!-- comment -->"))
 	testing.expect(t, !roadmap_html_in_text("a < b, and `<b>` in code"))
-	testing.expect_value(t, roadmap_decision_in_text("as D-047 says"), "D-047")
-	testing.expect_value(t, roadmap_decision_in_text("the card D-shaped, and ID-12"), "")
 	testing.expect(t, roadmap_word_in_text("The Owner asked", "owner"))
 	testing.expect(t, !roadmap_word_in_text("the owners of a store", "owner"))
 }

@@ -1,6 +1,6 @@
 # Shared libraries as modules: where the border goes
 
-A package that many programs compile in is a bundle with no record of what it holds. The libraries that each program compiled into its own file become modules, loaded one time and imported (`docs/DECISIONS.md`, D-237). This file records how the border of such a module is chosen.
+A package that many programs compile in is a bundle with no record of what it holds. The libraries that each program compiled into its own file become modules, loaded one time and imported. The cost of a call across the border of a module is measured before and after each conversion, above all for the drawing of text. This file records how the border of such a module is chosen.
 
 The rules that a writer of a library module follows are in [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "A library as a module". The first library module, the drawing of a window, is in [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), section 7.
 
@@ -21,7 +21,7 @@ The cut is not "one package, one module". The part that is large and called a fe
 
 ## The refused form: a second kind of import
 
-A "library import" with no description and the calling convention of the language removes the limits of a description: a slice by value, a procedure value, a record that holds an address, a seventh parameter.
+A "library import" with no description and the calling convention of the language removes the limits of a description: a slice by value, a procedure value, a record that holds an address.
 
 It was refused for three reasons.
 
@@ -29,7 +29,7 @@ It was refused for three reasons.
 - No contract depends on a feature of one programming language. The calling convention of the language is such a feature.
 - The check of a replacement compares descriptions. An import with no description cannot be checked, so a replacement of a library has no check at all.
 
-A parameter that the description cannot carry is a sign that the border is in the wrong place.
+A parameter that the description cannot carry, by its kind, is a sign that the border is in the wrong place. The count of the parameters is not: the description describes each export completely at each count, up to 12 arguments. The bound of six came from the integer registers of the calling convention, and it bent borders that were right: the drawing module took one damage rectangle for each call. See [call_form_arguments.md](call_form_arguments.md).
 
 ## What stays compiled in, and why
 
@@ -49,11 +49,11 @@ The last row is a bundle with no table of what it holds yet. A fault in the text
 - **The build had to change first.** The build key of an importer held the file of each import, so a change of a library built each importer again, whole. The build of a module now has two steps with two keys: the compile step reads no import, and only the conversion does. A change inside a library compiles one module and converts its importers. See [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The incremental build".
 - **A description proves the types, not the meaning.** A new version of a record with the same fields passes the check of a replacement and draws wrong pixels. So the version of a record whose values have a meaning is in the name of each export that reads it. Another version is another name, and fails the check by name.
 - **The declaration of an import is written by hand, so the tool compares it.** The compiler trusts the types of the declaration, and the linked file holds a name and no type. See [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "The declaration of an import is checked".
-- **The state of a library is data of the module.** The loader gives each program its own copy of each writable segment, so a module variable is data of one program with no new mechanism. The text state of the drawing is a cache of a fixed size, not a result: the caller still supplies each table and the pixels. A work parameter at each call was refused: it costs one of the six parameters for no gain.
+- **The state of a library is data of the module.** The loader gives each program its own copy of each writable segment, so a module variable is data of one program with no new mechanism. The text state of the drawing is a cache of a fixed size, not a result: the caller still supplies each table and the pixels. A work parameter at each call was refused: it gives nothing that the module data does not give.
 - **A cache with no lock has a rule for its callers**: one thread of a program at a time calls the execution of a draw table.
 - **A library module has no segment that the loader writes and that is read-only after the load.** Such a segment holds addresses for one base, and a library is at another address in each importer. Each importer would take one place of the table of prepared modules of the root service.
 - **A whole-screen picture cannot prove "the same pixels".** Moving a library changes the hash of each program, and the screen shows hashes. The proof is the bytes of a canvas: a fixed set of draw tables, executed by the package and through the module, compared.
-- **A replacement of a library reaches almost every program with a window.** It puts code of another origin into each importer, with all the memory and all the handles of each. The check proves the description of each export and nothing of the behaviour. So a replacement of a library module is for a test until the replacement table carries a signature of a principal.
+- **A replacement of a library reaches almost every program with a window.** It puts code of another origin into each importer, with all the memory and all the handles of each. The check proves the description of each export and nothing of the behaviour. So the root service writes a replacement in the table of the machine only for a replacement row that the signing key of the system signed, over the two hashes and the importer scope. See [module_replacement.md](module_replacement.md).
 - **A program that starts a child of its own file** gives the child a load source that holds the library, else the load of the child fails.
 
 ## The gains, in their true size
@@ -61,13 +61,14 @@ The last row is a bundle with no table of what it holds yet. A fault in the text
 - The bytes: about 20 KB for each converted program, less than a tenth of the module files. It is not the reason to do the work.
 - The build: a change of the drawing code builds one module, where it built about fifty.
 - The module graph says which programs run which drawing code. Before, each program held a copy that no table named.
-- A renderer can be replaced with no build of a program.
+- A renderer can be replaced with no build of a program, by a row that the signing key of the system signed.
 
 ## What is left, and what blocks it
 
 - **The Picture: done.** A Picture record names its pixels by values in a picture memory that the caller passes as bytes, so the programs that show a picture draw through the module. See [picture.md](picture.md).
-- **The terminal and the compositor.** A Text_Grid record names its cells by an address, and the damage of a grid needs the cells of two frames: two more parameters than an export has. The pictures of the compositor are the surfaces of other programs, one picture memory for each, and an export takes one. See [picture.md](picture.md), "What is built and what is left".
-- **The cell text** of the programs that draw text themselves: one more export of the drawing module, for one run of cells, not for one glyph. Count the calls of a full terminal first.
+- **The terminal and the compositor: done.** The terminal copies the cells of its grid into the text table of the frame, so the two exports read them with no new parameter: see [text_grid.md](text_grid.md). The compositor draws its screen table in parts, one call for each part, and each part has the one picture memory of its surface: see [picture.md](picture.md), "The compositor: one call for each part".
+- **The cell text** of the programs that draw text themselves with no draw table: one more export of the drawing module, for one run of cells, not for one glyph. A full terminal is 3,328 cells and up to 3,328 runs in one frame, so the terminal does not use such an export: its grid crosses the border in the text table ([text_grid.md](text_grid.md), "The count of a full terminal").
+- **The forms that the bound of six forced.** The cells of a grid copied into the text table, and one draw call for each damage rectangle, were chosen when an export had six arguments at most. An export now has 12 ([call_form_arguments.md](call_form_arguments.md)), so a table of rectangles, or the cells as a table of their own, can be a parameter. The drawing exports that take the rectangles of a frame in one call are planned work in `ROADMAP.md`.
 - **The error sentences**: a record in, a text out, a cold path.
 - **The network libraries**: two users each. The gain is the graph and the replacement of a protocol stack, not the bytes.
 
