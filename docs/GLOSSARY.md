@@ -4073,6 +4073,18 @@ The design: `docs/STORAGE.md`, "3.3 The commit and the open".
 
 Do not use: corrupt file, bad sector.
 
+### Dropped write
+
+A dropped write is a write that the disk answers with Ok and does not keep.
+
+The device reports no error, so the storage service learns of a dropped write only at the next read of the block: its bytes do not have their check. At the start, the open then refuses the newest commit and uses the root before it, when that root names no wrong block: the objects read as they were at the commit before, and the log has the line "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used". A commit after the dropped one names the same wrong block, so both roots are then damaged and the object reads `Damaged`. The test device of the modus tool drops the write of a block that starts with a marker text (`modustool test power`).
+
+A dropped write is not a loss of power: the machine runs on, and the write before and after it reach the disk. It is not a torn write either: no part of the block reaches the disk.
+
+The design: `src/md/features/dropped_write.md`.
+
+Do not use: lost write (for this), silent write failure, phantom write.
+
 ### Check
 
 A check is 8 bytes of a hash of a block, kept in the pointer that names the block: a block that does not have its check is not used.
