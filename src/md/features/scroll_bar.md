@@ -8,7 +8,7 @@ The form before was a flat rectangle on a track, drawn again in each program, wi
 
 ## Constraints
 
-- **One standard.** The form is the scroll bar of the desktop shell that the design of the system comes from (the project `shojiwm-desktop`: `crates/shell/src/ui/scroll.rs`, and the same colors in `gtk-theme/_scroll-bar-colours.scss`). Its geometry, its colors and its states are taken as they are. The site had a form of its own before (`docs/DECISIONS.md`, D-222).
+- **One standard.** The form is the scroll bar of the desktop shell that the design of the system comes from (the project `shojiwm-desktop`: `crates/shell/src/ui/scroll.rs`, and the same colors in `gtk-theme/_scroll-bar-colours.scss`). Its geometry, its colors and its states are taken as they are. The site had a form of its own before.
 - **One description for two drawers.** The system draws rectangles and gradients into a draw table. The site writes a style sheet. Both must show the same numbers, and a change of one number must change both.
 - **No blend.** A draw of the system is opaque ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "2. Forms"). The standard has one translucent line.
 - **No state in a program.** A program must get the pointer on its scroll bar with one call, and keep nothing between two frames.

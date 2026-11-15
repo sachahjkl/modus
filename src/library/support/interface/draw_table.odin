@@ -36,7 +36,7 @@ import "modus:contract/glyph_cache"
 import "modus:support/display"
 import "modus:support/graphics"
 
-DRAW_RECORD_VERSION :: 8 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: the fields filled and background of a cell of a text grid. 6: the byte line_thickness is kind_detail, the weight of a text too. 7: Interface_Text, and the byte text_subpixel_x is text_origin_thirds. 8: a Picture names its pixels by its picture memory, its first pixel and its stride, not by an index in a list of canvases.
+DRAW_RECORD_VERSION :: 10 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: the fields filled and background of a cell of a text grid. 6: the byte line_thickness is kind_detail, the weight of a text too. 7: Interface_Text, and the byte text_subpixel_x is text_origin_thirds. 8: a Picture names its pixels by its picture memory, its first pixel and its stride, not by an index in a list of canvases. 9: a Text_Grid names its cells in the text table, by their first byte, their bytes and the columns, not by an index in a list of grids. 10: a cell of a text grid holds a code point, 16 bytes.
 
 // What one draw record draws. The fields of `Draw_Record` that each kind
 // reads are in the comment of the member.
@@ -60,10 +60,13 @@ Draw_Kind :: enum u8 {
 	// change). Each is a value, so the record means the same in each
 	// address space (docs/INTERFACE.md, section 2.1).
 	Picture             = 8,
-	// A grid of text cells of the caller: text_start is its index in
-	// Draw_Table.grids. The cells are drawn on the background that the frame
-	// paints. The difference compares the cells one by one: a changed cell
-	// damages only its row span (docs/INTERFACE.md, section 2.4).
+	// A grid of text cells: the cells are a copy in the text table, row
+	// after row, from the byte text_start, text_count bytes; second_color is
+	// the columns. Each is a value, so the drawing module reads the cells
+	// in the text table that it already has. The cells are drawn on the
+	// background that the frame paints. The difference compares the cells
+	// one by one: a changed cell damages only its row span
+	// (docs/INTERFACE.md, section 2.4).
 	Text_Grid           = 9,
 	// A straight line in first_color: from (x, y) to (x + width, y + height),
 	// so width and height can be negative here; kind_detail (the thickness) is the side
@@ -98,18 +101,28 @@ LINE_COORDINATE_LIMIT :: 1 << 15
 // color; or, reverse, in the color of the background on a cell of its
 // color; or, filled, in its color on a cell of the color background (a
 // list drawn over the text, a row that is chosen). A filled cell costs 4
-// bytes more than a cell with no background: 12 bytes for each cell.
+// bytes more than a cell with no background: 16 bytes for each cell.
+//
+// The cell holds a code point, not the bytes of UTF-8: one cell is one
+// character, so a reader that fills a grid decodes the text once, and the
+// grid compares and draws cells with no decode. A code point that the font
+// lacks draws the replacement glyph (src/md/data/text_encoding.md).
 Text_Grid_Cell :: struct {
-	character:  u8, // 0 to 32: no character.
+	character:  rune, // A code point. 0 to 32: no character.
 	reverse:    bool, // The character in the color of the background, on a cell of `color`.
 	filled:     bool, // The character in `color`, on a cell of `background`.
+	reserved:   [2]u8, // 0: the cell crosses the border of the drawing module, so it has no hidden byte.
 	color:      graphics.Color, // The color of the character.
 	background: graphics.Color, // For a filled cell.
 }
 
+#assert(size_of(Text_Grid_Cell) == 16)
+#assert(align_of(Text_Grid_Cell) == 4)
+
 // A grid of text cells: rows lines of columns cells, a line each stride
-// cells. In the table of the frame now, the cells of the caller; in a table
-// before, the copy of the cells that the surface shows (draw_table_copy).
+// cells. The cells of a caller that draw_text_grid copies into the text
+// table; and the cells that grid_of finds there, with a stride of the
+// columns.
 Text_Grid :: struct {
 	cells:                  []Text_Grid_Cell, // At least `rows * stride` cells.
 	columns, rows, stride: int, // The cells of a line, the lines, and the cells from one line to the next.
@@ -130,34 +143,36 @@ Draw_Record :: struct {
 	x, y:            i32, // The top left corner, in pixels of the surface.
 	width, height:   i32, // The size, in pixels; a Line: the vector to its end.
 	first_color:     u32, // The main color: see `Draw_Kind`.
-	second_color:    u32, // A gradient: its end color. Interface_Text: the ink margin. Picture: its stride, in pixels.
-	text_start:      u32, // A text: its first byte in the text table. A picture: its first pixel in its picture memory. A grid: its index.
-	text_count:      u32, // A text: its bytes. A picture: its generation.
+	second_color:    u32, // A gradient: its end color. Interface_Text: the ink margin. Picture: its stride, in pixels. Text_Grid: its columns.
+	text_start:      u32, // A text, a grid: its first byte in the text table. A picture: its first pixel in its picture memory.
+	text_count:      u32, // A text, a grid: its bytes. A picture: its generation.
 	element:         u32, // The low 32 bits of the identity of the element that wrote the record.
 }
 
 #assert(size_of(Draw_Record) == 40)
 
 // The draw records of one frame and the bytes of their texts, in the memory
-// of the program. full: a record or a text did not fit, and is not drawn:
-// the table is not the frame, so the next frame is drawn whole. refused: a
-// record that the caller asked for could not be made (a picture outside
-// each picture memory of the table, a grid that the table does not have, a
-// grid whose cells are fewer than its size). That record is missing, and
-// each other record is in the table, so the difference with the next frame
-// stays exact.
+// of the program. full: a record, a text or the cells of a grid did not
+// fit, and is not drawn: the table is not the frame, so the next frame is
+// drawn whole. refused: a record that the caller asked for could not be
+// made (a picture outside each picture memory of the table, a grid whose
+// cells are fewer than its size). That record is missing, and each other
+// record is in the table, so the difference with the next frame stays
+// exact.
 Draw_Table :: struct {
 	records:      []Draw_Record, // The memory of the records, from the caller.
 	record_count: int, // The records of the frame so far.
-	text:         []u8, // The memory of the text table, from the caller.
+	// The memory of the text table, from the caller: the bytes of the texts
+	// and the cells of the grids. A table with a grid starts at an address
+	// that is a multiple of 4, as the colors of a cell.
+	text:         []u8,
 	text_count:   int, // The bytes of the text table in use.
-	full:         bool, // A record or a text did not fit.
+	full:         bool, // A record, a text or the cells of a grid did not fit.
 	refused:      bool, // A record that the caller asked for was not made.
 	// The picture memories of the caller: each Picture record names its
-	// pixels in one of them. A program that draws through the drawing
-	// module has at most one; the compositor has one for each surface.
+	// pixels in one of them. A call of the drawing module takes one: the
+	// compositor gives each part of its screen its own list of one.
 	picture_memories: [][]graphics.Color,
-	grids:        []Text_Grid, // The grids that Text_Grid records show.
 	// The interface font that measures and draws the Interface_Text records
 	// of the table: the caches that the program validated (display). nil:
 	// the program has none, and a text in the interface font is a text in
@@ -180,7 +195,9 @@ draw_table_clear :: proc "contextless" (table: ^Draw_Table) {
 }
 
 // draw_table_copy makes target a copy of source: the table of the frame
-// before, for the next comparison. It gives false if target is too small.
+// before, for the next comparison. The cells of the grids are in the text
+// table, so the copy of the text is the copy of the cells. It gives false
+// if target is too small.
 draw_table_copy :: proc "contextless" (target, source: ^Draw_Table) -> bool {
 	if len(target.records) < source.record_count || len(target.text) < source.text_count {
 		return false
@@ -193,18 +210,6 @@ draw_table_copy :: proc "contextless" (target, source: ^Draw_Table) -> bool {
 	target.refused = source.refused
 	target.picture_memories = source.picture_memories
 	target.interface_font = source.interface_font
-	// The cells of each grid: the target keeps its own copy, in its memory.
-	if len(target.grids) < len(source.grids) {
-		return false
-	}
-	for grid, index in source.grids {
-		size := grid_size(grid)
-		if len(target.grids[index].cells) < size {
-			return false
-		}
-		copy(target.grids[index].cells[:size], grid.cells[:size])
-		target.grids[index].columns, target.grids[index].rows, target.grids[index].stride = grid.columns, grid.rows, grid.stride
-	}
 	return true
 }
 
@@ -345,19 +350,60 @@ picture_of :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -> (p
 	return {pixels = raw_data(pixels[first:]), width = int(width), height = int(height), stride = int(stride)}, true
 }
 
-// draw_text_grid appends the grid number index of the table at (x, y): one
-// cell of the font of the system for each cell of the grid.
-draw_text_grid :: proc "contextless" (table: ^Draw_Table, x, y: int, index: int, element: u32 = 0) {
-	if index < 0 || index >= len(table.grids) {
+// The most cells of one grid: the bytes of its cells fit the u32 of a
+// record, and a record of a grid fits the i32 of its size.
+GRID_CELL_LIMIT :: 1 << 24
+
+// draw_text_grid appends a grid of cells of the caller at (x, y): one cell
+// of the font of the system for each cell of the grid. The cells are
+// copied into the text table, row after row with no gap, at a place that
+// is a multiple of 4 bytes: the record holds values only, and the drawing
+// module reads the cells in the text table (src/md/api/text_grid.md). A
+// grid whose cells are fewer than its rows, of more than GRID_CELL_LIMIT
+// cells, or in a table whose text does not start at a multiple of 4, is
+// refused. A grid that does not fit the text table makes the table full.
+draw_text_grid :: proc "contextless" (table: ^Draw_Table, x, y: int, grid: Text_Grid, element: u32 = 0) {
+	if !grid_valid(grid) || grid.columns > GRID_CELL_LIMIT || grid.rows > GRID_CELL_LIMIT / max(grid.columns, 1) || uintptr(raw_data(table.text)) % align_of(Text_Grid_Cell) != 0 {
 		table.refused = true
 		return
 	}
-	grid := table.grids[index]
-	if !grid_valid(grid) {
-		table.refused = true
+	cell_count := grid.columns * grid.rows
+	start := (table.text_count + align_of(Text_Grid_Cell) - 1) / align_of(Text_Grid_Cell) * align_of(Text_Grid_Cell)
+	size := cell_count * size_of(Text_Grid_Cell)
+	if start + size > len(table.text) || table.record_count >= len(table.records) {
+		table.full = true
 		return
 	}
-	record_append(table, with_place({kind = .Text_Grid, text_start = u32(index), element = element}, x, y, grid.columns * graphics.CELL_WIDTH, grid.rows * graphics.CELL_HEIGHT))
+	if cell_count > 0 {
+		cells := ([^]Text_Grid_Cell)(&table.text[start])[:cell_count]
+		for row in 0 ..< grid.rows {
+			copy(cells[row * grid.columns:][:grid.columns], grid.cells[row * grid.stride:][:grid.columns])
+		}
+	}
+	table.text_count = start + size
+	record_append(table, with_place({kind = .Text_Grid, second_color = u32(grid.columns), text_start = u32(start), text_count = u32(size), element = element}, x, y, grid.columns * graphics.CELL_WIDTH, grid.rows * graphics.CELL_HEIGHT))
+}
+
+// grid_of gives the cells that a Text_Grid record names in the text table
+// of its table, or false when the record names no column, bytes that are
+// not a whole count of rows, a range past the text table, or a place whose
+// address is not a multiple of 4. A record that a caller wrote by hand can
+// have any bytes: the sums are in 64 bits from values below 2^32, so no
+// range wraps. A grid of no row is valid, and draws nothing.
+grid_of :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -> (grid: Text_Grid, ok: bool) {
+	start, count, columns := u64(record.text_start), u64(record.text_count), u64(record.second_color)
+	row_bytes := columns * size_of(Text_Grid_Cell)
+	if columns == 0 || count % row_bytes != 0 || start + count > u64(table.text_count) || start + count > u64(len(table.text)) {
+		return {}, false
+	}
+	if count == 0 {
+		return {columns = int(columns), stride = int(columns)}, true
+	}
+	if (uintptr(raw_data(table.text)) + uintptr(start)) % align_of(Text_Grid_Cell) != 0 {
+		return {}, false
+	}
+	cells := ([^]Text_Grid_Cell)(&table.text[start])[:count / size_of(Text_Grid_Cell)]
+	return {cells = cells, columns = int(columns), rows = int(count / row_bytes), stride = int(columns)}, true
 }
 
 // draw_line appends a straight line from one point to another, with a

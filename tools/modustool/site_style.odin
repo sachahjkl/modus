@@ -995,6 +995,8 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	strings.write_string(&builder, SITE_ROADMAP_RULES)
 	// The menu of the bar that holds the sections that are not buttons.
 	strings.write_string(&builder, site_project_menu_rules())
+	// The subscribe menu of the pages of the releases and of the news.
+	strings.write_string(&builder, SITE_SUBSCRIBE_MENU_RULES)
 	// The sections of the home: the line of time of the start, the charts
 	// of the measures, the band of the newest release.
 	strings.write_string(&builder, site_home_rules())

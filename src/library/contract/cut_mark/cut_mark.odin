@@ -6,6 +6,8 @@
 // mark reads the same in each log line and each record.
 package cut_mark
 
+import "modus:contract/text_encoding"
+
 MARK_START :: "... and " // The text before the count of the mark.
 MARK_END :: " bytes more" // The text after the count.
 
@@ -25,35 +27,6 @@ mark_size :: proc "contextless" (missing: u64) -> int {
 	return len(MARK_START) + decimal_digits(missing) + len(MARK_END)
 }
 
-// complete_characters gives the length of the longest start of bytes that
-// ends after a whole UTF-8 character: a character whose first byte is in
-// bytes and whose last byte is not is left out. A byte that starts no
-// character of UTF-8 counts as one character: the text is kept as it is.
-complete_characters :: proc "contextless" (bytes: []u8) -> int {
-	count := len(bytes)
-	if count == 0 {
-		return 0
-	}
-	start := count - 1
-	for start > 0 && count - start < 4 && bytes[start] & 0xC0 == 0x80 {
-		start -= 1
-	}
-	lead := bytes[start]
-	length := 1
-	switch {
-	case lead & 0xE0 == 0xC0:
-		length = 2
-	case lead & 0xF0 == 0xE0:
-		length = 3
-	case lead & 0xF8 == 0xF0:
-		length = 4
-	}
-	if start + length > count {
-		return start
-	}
-	return count
-}
-
 // apply ends the text of buffer[:count] with the mark, when dropped bytes
 // after it did not fit (dropped 0: no change). It takes back the bytes of
 // the end of the text that the mark needs, never half of a character, and
@@ -69,7 +42,7 @@ apply :: proc "contextless" (buffer: []u8, count_given: int, dropped: int) -> (c
 	}
 	keep := count
 	for {
-		keep = complete_characters(buffer[:keep])
+		keep = text_encoding.complete_characters(buffer[:keep])
 		missing = u64(dropped) + u64(count - keep)
 		if keep + mark_size(missing) <= len(buffer) || keep == 0 {
 			break

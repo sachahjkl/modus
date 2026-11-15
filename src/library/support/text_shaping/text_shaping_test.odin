@@ -43,9 +43,9 @@ the_width_is_the_sum_of_the_placed_glyphs :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 	testing.expect_value(t, count, len(text))
 	sum: i64
-	for glyph in placed[:count] {
+	for glyph, index in placed[:count] {
 		testing.expect_value(t, i64(glyph.x), sum)
-		testing.expect_value(t, glyph.cluster, u32(0))
+		testing.expect_value(t, glyph.cluster, u32(index)) // One byte for each character of ASCII.
 		sum += i64(glyph.advance)
 	}
 	testing.expect_value(t, width, sum)
@@ -78,8 +78,9 @@ a_pair_changes_the_advance_by_the_value_of_the_file :: proc(t: ^testing.T) {
 	testing.expect_value(t, placed[0].advance, 512)
 }
 
-// An empty text has no glyph and no width. A character outside the cache
-// is placed as "?", with the advance of "?".
+// An empty text has no glyph and no width. A control, an invalid sequence
+// and a character outside the cache are each one replacement glyph, with
+// the advance of "0" and no pair.
 @(test)
 an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	spacing, memory := test_spacing(t)
@@ -87,16 +88,24 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	count, width, ok := shape(&spacing, nil, nil)
 	testing.expect(t, ok && count == 0 && width == 0)
 	outside := [3]u8{'\n', 200, 127}
-	placed: [3]Placed_Glyph
+	placed: [4]Placed_Glyph
 	count, width, ok = shape(&spacing, outside[:], placed[:])
 	testing.expect(t, ok && count == 3)
-	question := spacing.advances['?' - 32]
-	for glyph in placed {
-		testing.expect_value(t, glyph.glyph, u32('?' - 32))
+	zero := spacing.advances['0' - 32]
+	for glyph, index in placed[:3] {
+		testing.expect_value(t, glyph.glyph, REPLACEMENT_GLYPH)
+		testing.expect_value(t, glyph.advance, zero)
+		testing.expect_value(t, glyph.cluster, u32(index))
 	}
-	// The width is the sum, with the pairs of "?" and "?" if the font has one.
-	testing.expect_value(t, width, i64(placed[0].advance) + i64(placed[1].advance) + i64(placed[2].advance))
-	testing.expect_value(t, placed[2].advance, question)
+	testing.expect_value(t, width, 3 * i64(zero))
+	// "é" is two bytes and one glyph: the glyph after it starts at byte 3.
+	count, width, ok = shape(&spacing, transmute([]u8)string("TéT"), placed[:])
+	testing.expect(t, ok && count == 3)
+	testing.expect_value(t, placed[1].glyph, REPLACEMENT_GLYPH)
+	testing.expect_value(t, placed[2].glyph, u32('T' - 32))
+	testing.expect_value(t, placed[2].cluster, u32(3))
+	testing.expect_value(t, placed[0].advance, spacing.advances['T' - 32]) // No pair with the replacement glyph.
+	testing.expect_value(t, width, 2 * i64(spacing.advances['T' - 32]) + i64(zero))
 	// A text over the limit writes nothing.
 	long := make([]u8, TEXT_LIMIT + 1)
 	defer delete(long)

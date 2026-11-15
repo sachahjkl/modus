@@ -269,31 +269,21 @@ site_documentation_versions_of_files :: proc(t: ^testing.T) {
 	testing.expect(t, len(site_check_pages(pages[:], written, files, false)) > 0)
 }
 
-// docs/FIRST_MILESTONE.md is a working record: not a page of the site. The
-// status page links its items to their lines in the repository, and a
-// guide links to the file in the repository: no link to a page that does
-// not exist.
+// docs/SITE.md is a working record: not a page of the site. A guide links
+// to the file in the repository: no link to a page that does not exist.
 @(test)
 site_documentation_working_record_links :: proc(t: ^testing.T) {
 	records := SITE_WORKING_RECORDS
 	found := false
 	for record in records {
-		found ||= record == "FIRST_MILESTONE.md"
+		found ||= record == "SITE.md"
 	}
 	testing.expect(t, found)
 
 	site := test_site()
-	items := []Site_List_Item{{section = "evidence", label = "3", id = "evidence-3", line = 42}}
-	b := strings.builder_make(context.temp_allocator)
-	site_item_links(&site, &b, "status/index.html", SITE_MILESTONE_FILE, items)
-	testing.expect_value(t, strings.to_string(b), "<a href=\"" + SITE_REPOSITORY_ADDRESS + "/blob/master/docs/FIRST_MILESTONE.md#L42\">3</a>")
-	guide := strings.builder_make(context.temp_allocator)
-	site_item_links(&site, &guide, "status/index.html", "docs/NETWORK.md", items)
-	testing.expect_value(t, strings.to_string(guide), "<a href=\"../docs/guides/NETWORK/index.html#evidence-3\">3</a>")
-
 	renderer := site_renderer_make(&site, "docs/guides/TEST/index.html", "docs/TEST.md")
-	site_render_markdown(&renderer, "See `docs/FIRST_MILESTONE.md` and [the record](FIRST_MILESTONE.md).\n")
+	site_render_markdown(&renderer, "See `docs/SITE.md` and [the record](SITE.md).\n")
 	html := strings.to_string(renderer.builder)
-	testing.expect_value(t, strings.count(html, "href=\"" + SITE_REPOSITORY_ADDRESS + "/blob/master/docs/FIRST_MILESTONE.md\""), 2)
-	testing.expect(t, !strings.contains(html, "guides/FIRST_MILESTONE"))
+	testing.expect_value(t, strings.count(html, "href=\"" + SITE_REPOSITORY_ADDRESS + "/blob/master/docs/SITE.md\""), 2)
+	testing.expect(t, !strings.contains(html, "guides/SITE"))
 }

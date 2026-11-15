@@ -1,6 +1,7 @@
 package interface
 
 import "modus:contract/glyph_cache"
+import "modus:contract/text_encoding"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/text_shaping"
@@ -92,9 +93,10 @@ interface_width_subpixels :: proc "contextless" (caches: ^display.Interface_Font
 	return width
 }
 
-// text_width gives the width of a text in pixels, in the font of the cells.
+// text_width gives the width of a text in pixels, in the font of the cells:
+// one cell for each character of the UTF-8 text, and one for each invalid sequence.
 text_width :: proc "contextless" (font: Font, text: string) -> int {
-	return len(text) * graphics.CELL_WIDTH * font_scale(font)
+	return text_encoding.character_count(transmute([]u8)text) * graphics.CELL_WIDTH * font_scale(font)
 }
 
 // text_measured_width gives the width of a text in pixels, in the font that the
@@ -157,7 +159,9 @@ text_fit :: proc "contextless" (table: ^Draw_Table, font: Font, text: string, ro
 			high = middle
 		}
 	}
-	return text[:low]
+	// The start ends after a whole character: a cut inside one would draw
+	// an invalid sequence.
+	return text[:text_encoding.complete_characters(transmute([]u8)text[:low])]
 }
 
 // The rule of a text that is longer than its box (docs/INTERFACE.md, "The
@@ -223,7 +227,9 @@ text_wrap_line :: proc "contextless" (table: ^Draw_Table, font: Font, text: stri
 		}
 	}
 	if end == 0 {
-		end = in_word != 0 ? in_word : max(count, 1)
+		// At least the first character, whole.
+		_, first_length, _ := text_encoding.character_decode(transmute([]u8)text, 0)
+		end = in_word != 0 ? in_word : max(count, first_length)
 	}
 	line, rest = text[:end], text[end:]
 	for len(line) > 1 && line[len(line) - 1] == ' ' {
@@ -282,10 +288,13 @@ Text_Builder :: struct {
 	count: int, // The bytes in use.
 }
 
-// text_put adds a text to a builder. The bytes that do not fit in its 128
-// bytes are dropped.
+// text_put adds a text to a builder. The characters that do not fit in its
+// 128 bytes are dropped, never a part of one.
 text_put :: proc "contextless" (builder: ^Text_Builder, part: string) {
 	count := min(len(part), len(builder.bytes) - builder.count)
+	if count < len(part) {
+		count = text_encoding.complete_characters(transmute([]u8)part[:count])
+	}
 	copy(builder.bytes[builder.count:], part[:count])
 	builder.count += count
 }

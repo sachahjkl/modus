@@ -8,12 +8,12 @@ The program `heron` plays the animations of the mark in a window of the system. 
 - A reader sees how an animation is made: a few cells change, and a move is another drawing in the same cells.
 - The program is a load for the window layer that no other program gives: a form of up to 32 by 26 cells changes its place 60 times a second.
 
-The animations play in a program that a reader starts. They never play on a mark beside a text or a control: a picture that moves takes the eye from the text (`docs/DECISIONS.md`, D-180).
+The animations play in a program that a reader starts. They never play on a mark beside a text or a control: a picture that moves takes the eye from the text.
 
 ## The constraints
 
 - One source of each rule. The site and the program must not hold two copies of a rule that can drift.
-- A cell of the heron is a square of one size at a place of the grid, also while the heron moves (`docs/DECISIONS.md`, D-240).
+- A cell of the heron is a square of one size at a place of the grid, also while the heron moves. A squashed or a stretched heron is another drawing in whole cells, and the heron travels by whole cells: no transform changes the size of a cell, and nothing rounds a smooth move.
 - A test of the program checks a condition, never a time. The play must give the same lines on a slow host.
 - The log of the system is shared and bounded. A program that runs for hours must not fill it.
 

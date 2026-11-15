@@ -1,6 +1,6 @@
 # The access to a GPU for acceleration
 
-Programs of the system see one graphics interface, and the system writes its implementation from nothing: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One graphics interface: WebGPU with WGSL". This file records how that interface reaches a real GPU, and which forms were refused. The access to a GPU is the aim of the work on guests (`docs/DECISIONS.md`, D-214). Nothing of it is built.
+Programs of the system see one graphics interface, and the system writes its implementation from nothing: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One graphics interface: WebGPU with WGSL". This file records how that interface reaches a real GPU, and which forms were refused. The access to a GPU for acceleration is the aim of the work on guests; compatibility with another system is not ([foreign_systems.md](foreign_systems.md)). Among the forms, the most performant and the most modular one is chosen. Nothing of it is built.
 
 The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Driver domain".
 
@@ -34,7 +34,7 @@ What the kernel must provide is already in the order of the work: the IOMMU with
 | A Windows driver loaded outside Windows | It needs an NT kernel around it. See [foreign_systems.md](foreign_systems.md) |
 | The whole GPU given to one guest | The guest gets native speed, and native programs never use the GPU. It does not reach the aim. It stays as a test of the IOMMU, with the display of the guest inside a surface |
 | A device service for the GPU, written for the system | It removes the guest, but it is one device service for each vendor. The open kernel modules of one vendor are about 2.2 million lines; the smallest known form is a multiplexer for one family of integrated GPUs. Only for a fixed machine that must run with no guest |
-| The kernel interface of one vendor's driver carried to the client ("native context") | Faster: within a few percent of native. But each client then holds the user-space driver of that vendor, of 100 000 lines and more. Only after a measure, for one vendor |
+| The kernel interface of one vendor's driver carried to the client ("native context") | Faster: within a few percent of native. But each client then holds the user-space driver of that vendor, of 100 000 lines and more. Not the first form: it comes after the measure, for one vendor |
 | The older protocol of the virtual GPU, which carries OpenGL state | The wrong shape for the one graphics interface |
 | A stream of the graphics interface itself sent to an implementation in the guest | It removes the Vulkan back end from the system, but it puts in the guest an implementation that the project did not write, and the virtual GPU of QEMU does not carry it. One mechanism on both transports is preferred |
 | An existing implementation of the graphics interface, ported | The property forbids it |
@@ -45,15 +45,18 @@ What the kernel must provide is already in the order of the work: the IOMMU with
 - The chosen serialization: 45 to 77 % of native on one discrete GPU in the published measures, and "close to native" in other reports. The limit is the synchronization between the two sides.
 - The native context: within a few percent.
 
-The chosen form is the most modular one: any GPU with a Linux Vulkan driver works with no change of the system. The measured cost is the price of that. The fraction of native speed that is enough is fixed before the measure; a native context for one vendor is added only when the measure is below it.
+The chosen form is the most modular one: any GPU with a Linux Vulkan driver works with no change of the system. The measured cost is the price of that. The fraction of native speed that is enough is fixed before the measure: 80 %. The native context for one vendor is wanted too, as a second form after the measure, and not only when the measure is below that fraction.
 
 ## The order
 
 1. The graphics interface in software. It fixes the interface that each later step keeps.
 2. The service of the virtual GPU under QEMU, in 2D, then with the serialization. It needs one new thing of the kernel: a device mapping with the cache type that the device gives. It brings the encoder and the back end, which the next steps reuse with no change.
 3. The IOMMU, then guest support.
-4. The driver domain over a ring, on one GPU, as an opt-in test.
+4. The driver domain over a ring, on one GPU, as an opt-in test. The machine is a laptop with an integrated GPU of Intel.
 5. The measure against the same GPU under Linux with the same program.
+6. The native context, then a native driver later.
+
+The test of the serialization under QEMU on the development host is an opt-in test.
 
 ## The subtle points
 

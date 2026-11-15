@@ -284,3 +284,85 @@ an_integer_unit_is_checked :: proc(t: ^testing.T) {
 	testing.expect_value(t, value_kinds.integer_unit_text(value_kinds.time_in(.Milliseconds)), " ms")
 	testing.expect_value(t, value_kinds.integer_unit_text({}), "")
 }
+
+// Each text of an entry for a reader is UTF-8: a help sentence, a
+// signature and a parameter name with "é" pass, and with a broken
+// sequence, an overlong form or a control character are refused. A name,
+// an act name, a setting name and a value name are identifiers: ASCII, so
+// "café" is refused there. A result run and a Text argument are UTF-8.
+@(test)
+the_texts_of_an_entry_are_utf_8 :: proc(t: ^testing.T) {
+	entry: Entry
+	entry.kind = .Command
+	entry.name_length = u8(copy(entry.name[:], "time"))
+	entry.signature_length = u8(copy(entry.signature[:], "time(durée: Integer) -> Integer"))
+	entry.about_length = u8(copy(entry.about[:], "the été of the year"))
+	entry.parameter_name_lengths[0] = u8(copy(entry.parameter_names[0][:], "durée"))
+	testing.expect_value(t, entry_problem(&entry), Problem.None)
+	// The identifiers: "café" is refused in each of them.
+	named := entry
+	named.name_length = u8(copy(named.name[:], "café"))
+	named.signature_length = u8(copy(named.signature[:], "café()"))
+	testing.expect_value(t, entry_problem(&named), Problem.Bad_Byte)
+	act := entry
+	act.act_name_length = u8(copy(act.act_name[:], "café"))
+	testing.expect_value(t, entry_problem(&act), Problem.Bad_Byte)
+	act.act_name_length = u8(copy(act.act_name[:], "settings.set:font"))
+	testing.expect_value(t, entry_problem(&act), Problem.None)
+	act.act_name_length = u8(copy(act.act_name[:], "a b")) // An identifier has no space.
+	testing.expect_value(t, entry_problem(&act), Problem.Bad_Byte)
+	row := entry
+	row.kind = .Provider_Setting
+	row.setting_name_length = u8(copy(row.setting_name[:], "subpixel order"))
+	row.value_name_length = u8(copy(row.value_name[:], "rgb"))
+	testing.expect_value(t, entry_problem(&row), Problem.None)
+	row.value_name_length = u8(copy(row.value_name[:], "café"))
+	testing.expect_value(t, entry_problem(&row), Problem.Bad_Byte)
+	row.value_name_length = u8(copy(row.value_name[:], "rgb"))
+	row.setting_name_length = u8(copy(row.setting_name[:], "café"))
+	testing.expect_value(t, entry_problem(&row), Problem.Bad_Byte)
+	broken := [?]string{"caf\xc3", "caf\xc3(", "\xc0\xaf", "\xed\xa0\x80", "a\xc2\x85", "a\x1b[2J"}
+	for name in broken {
+		bad := entry
+		bad.name_length = u8(copy(bad.name[:], name))
+		bad.signature_length = u8(copy(bad.signature[:], name))
+		testing.expectf(t, entry_problem(&bad) == .Bad_Byte, "the name %q must be refused", name)
+		about := entry
+		about.about_length = u8(copy(about.about[:], name))
+		testing.expectf(t, entry_problem(&about) == .Bad_Byte, "the help sentence %q must be refused", name)
+		parameter := entry
+		parameter.parameter_name_lengths[0] = u8(copy(parameter.parameter_names[0][:], name))
+		testing.expectf(t, entry_problem(&parameter) == .Bad_Byte, "the parameter name %q must be refused", name)
+	}
+	// A run of a result: the writer replaces an invalid sequence, the check refuses one.
+	area: [RESULT_CAPACITY]u8
+	writer := Result_Writer{buffer = area[:], fits = true}
+	result_run(&writer, .Plain, "café \xc3")
+	result_line_end(&writer)
+	testing.expect(t, writer.fits && result_valid(area[:writer.count]))
+	testing.expect_value(t, string(area[2:][:int(area[1])]), "café ?")
+	testing.expect_value(t, writer.column, 0)
+	area[2 + 3] = 0xC0 // The first byte of "é" becomes the start of an overlong form.
+	testing.expect(t, !result_valid(area[:writer.count]))
+	// A column of the panel is one character: 76 times "é" fit, 77 do not.
+	wide := Result_Writer{buffer = area[:], fits = true}
+	for _ in 0 ..< RESULT_COLUMN_CAPACITY {
+		result_run(&wide, .Plain, "é")
+	}
+	testing.expect(t, wide.fits)
+	result_run(&wide, .Plain, "é")
+	testing.expect(t, !wide.fits)
+	// A Text argument: "é" passes, a broken sequence does not.
+	_, argument, ok := argument_unpack(argument_pack(0, .Text, 0, "été"))
+	testing.expect(t, ok && string(argument.text[:argument.length]) == "été")
+	_, _, ok = argument_unpack(argument_pack(0, .Text, 0, "\xe9t\xe9"))
+	testing.expect(t, !ok)
+	// A text cut by the pack ends after a whole character: 47 bytes, not 48.
+	long: [ARGUMENT_TEXT_CAPACITY + 1]u8
+	long[0] = 'a'
+	for index := 1; index + 1 < len(long); index += 2 {
+		long[index], long[index + 1] = 0xC3, 0xA9
+	}
+	_, argument, ok = argument_unpack(argument_pack(0, .Text, 0, string(long[:])))
+	testing.expect(t, ok && argument.length == ARGUMENT_TEXT_CAPACITY - 1)
+}

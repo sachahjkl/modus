@@ -121,7 +121,7 @@ field_value :: proc "contextless" (value: Value, name: string) -> (result: Value
 VARIABLE_CAPACITY :: 16
 VARIABLE_NAME_SIZE :: 16
 VARIABLE_TEXT_SIZE :: 96
-ARGUMENT_CAPACITY :: 6 // The parameters of an export: module.PARAMETER_CAPACITY.
+ARGUMENT_CAPACITY :: module.PARAMETER_CAPACITY // The arguments of a call: those of an export at most.
 
 Variable :: struct {
 	name:        [VARIABLE_NAME_SIZE]u8,

@@ -15,7 +15,7 @@ How the build asks for this and how the check proves it is in [`docs/REPRODUCIBL
 
 ## The chosen form
 
-**A kind of debug information that a build asks for**, as an option of a fork of the compiler: `-debug-info:<none|full|same-code>` (`docs/DECISIONS.md`, D-246). It replaces the first form, which changed what `-debug` does (`docs/DECISIONS.md`, D-239).
+**A kind of debug information that a build asks for**, as an option of a fork of the compiler: `-debug-info:<none|full|same-code>`. It replaces the first form, which changed what `-debug` does.
 
 - **The rule.** For any other flags, the code that the compiler gives to LLVM with `same-code` is the code with `none`. The rule has no exception for an optimization mode. One predicate in the compiler says "debug information keeps the code", and each of the eight places asks it.
 - **The default is untouched.** With no such option, the fork builds what the release builds: `full` with `-debug`, `none` without. So the change can go to the project of the compiler as an addition, and a user of the compiler who does not ask loses nothing.

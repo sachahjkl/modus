@@ -190,6 +190,8 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Map_Flags", type_info_of(op.Map_Flags)},
 		{"operation", "Program_State", type_info_of(op.Program_State)},
 		{"operation", "Device_Kind", type_info_of(op.Device_Kind)},
+		{"operation", "Device_Memory_Fact", type_info_of(op.Device_Memory_Fact)},
+		{"operation", "Device_Memory_Facts", type_info_of(op.Device_Memory_Facts)},
 		{"operation", "Inspect_Kind", type_info_of(op.Inspect_Kind)},
 		{"operation", "Program_Mapping_Flag", type_info_of(op.Program_Mapping_Flag)},
 		{"operation", "Program_Mapping", type_info_of(op.Program_Mapping)},
@@ -937,7 +939,7 @@ site_type_summary :: proc(site: ^Site, type: Site_Type) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	switch type.kind {
 	case .Wire_Form:
-		strings.write_string(&b, "A wire form of the module contract: one register of a call.")
+		strings.write_string(&b, "A wire form of the module contract: one word of a call.")
 	case .Module_Record:
 		fmt.sbprintf(&b, "A record of the module %s: %d bytes, aligned on %d bytes, %d bytes of padding.", type.package_name, type.size, type.alignment, type.padding)
 	case .Struct:
@@ -1113,7 +1115,7 @@ site_type_symbol_write :: proc(site: ^Site, b: ^strings.Builder, type: Site_Type
 		}
 	}
 	if type.kind == .Wire_Form {
-		append(&facts, Site_Symbol_Fact{label = "In a call", html = strings.concatenate({site_text_html(fmt.tprintf("one integer register of a parameter: an export has at most %d (", module.PARAMETER_CAPACITY)), "<code>module.PARAMETER_CAPACITY</code>)"}, context.temp_allocator)})
+		append(&facts, Site_Symbol_Fact{label = "In a call", html = strings.concatenate({site_text_html(fmt.tprintf("one word of the call form for a parameter, a register or a word of the stack: an export has at most %d arguments (", module.PARAMETER_CAPACITY)), "<code>module.PARAMETER_CAPACITY</code>)"}, context.temp_allocator)})
 		if len(type.names) > 0 {
 			names := make([dynamic]string, context.temp_allocator)
 			for key in type.names {

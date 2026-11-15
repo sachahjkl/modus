@@ -101,9 +101,12 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/mark",
 	SOURCE_FOLDER_SUPPORT + "/terminal",
 	SOURCE_FOLDER_CONTRACT + "/cut_mark",
+	SOURCE_FOLDER_CONTRACT + "/text_encoding",
 	SOURCE_FOLDER_RUNTIME + "/without_vector_registers",
 	SOURCE_FOLDER_SUPPORT + "/instruction_sets",
 	SOURCE_FOLDER_CONTRACT + "/system_description",
+	SOURCE_FOLDER_CONTRACT + "/replacement_list",
+	SOURCE_FOLDER_SUPPORT + "/replacement_signature",
 	SOURCE_FOLDER_CONTRACT + "/operation",
 	SOURCE_FOLDER_CONTRACT + "/debug_object",
 	SOURCE_FOLDER_CONTRACT + "/value_kinds",
@@ -1202,9 +1205,22 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x%s", pci.DATA_DISK_DEVICE, virtio_iommu),
 		"-drive",
 		"if=none,id=scratch,format=raw,file=" + SCRATCH_DISK,
-		"-device",
-		fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x%s", pci.SCRATCH_DISK_DEVICE, virtio_iommu),
 	)
+	if iommu {
+		// The disk of the measures behind a root port of PCI Express, on the
+		// bus that the firmware gives the port: the kernel must give it a
+		// context table of that bus (src/md/infrastructure/iommu.md,
+		// "Bridges").
+		append(
+			&list,
+			"-device",
+			fmt.tprintf("pcie-root-port,id=scratch_port,bus=pcie.0,chassis=1,addr=0x%x", pci.SCRATCH_BRIDGE_DEVICE),
+			"-device",
+			fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,bus=scratch_port,addr=0x0%s", virtio_iommu),
+		)
+	} else {
+		append(&list, "-device", fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x", pci.SCRATCH_DISK_DEVICE))
+	}
 	if firmware != .Usual {
 		if test_output == "" {
 			fmt.eprintln("modustool: a machine with a TPM or with Secure Boot runs only as a test machine, with its own files")

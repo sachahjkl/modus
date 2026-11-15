@@ -86,7 +86,7 @@ The one copy on receive cannot leave with this device. The device chooses the pl
 
 The device reads the data of a datagram or a segment where the program wrote it. The rules:
 
-- The root service makes the datagram region of each endpoint contiguous. The network service gives it to the frame service with the right Read only, as a read region at the place of the endpoint (`Read_Region_Add` of the frame contract). The frame service refuses a read region with the right Write.
+- When the remapping unit of the network device gives device windows (`Device_Create` of its registers says so: `Device_Memory_Facts`), the datagram region of each endpoint is not contiguous: the kernel gives it a device window where its pages follow each other, so the start of a program does not need 512 KiB of contiguous memory. Else (no IOMMU, a device that no unit covers, a unit of fewer than 39 bits of address), the root service makes the region contiguous: the device needs one address for it. The network service gives the region to the frame service with the right Read only, as a read region at the place of the endpoint (`Read_Region_Add` of the frame contract). The frame service refuses a read region with the right Write.
 - On a machine with the IOMMU, the frame service declares the read region with `Memory_Physical` through a handle with Read only: the network device reads the region and cannot write it.
 - The `Send` of a program completes when the device read the frame, not before. A program writes a place again only after the completion of its `Send`. A program that writes it before changes what goes on the wire, and harms only its own packet.
 - The program writes the checksum, as before. The device computes none.

@@ -3,6 +3,7 @@ package kernel
 import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
 // The kernel entry (docs/ARCHITECTURE.md, "Rings and wait"). It executes the
@@ -169,6 +170,12 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		name := transmute([]u8)program_name(program)
 		log_text := &processor_self().log_text
 		user_copy(log_text, rawptr(uintptr(v[1])), v[2])
+		// The text of a log record is UTF-8 with no control character: the
+		// serial port goes to a terminal of the host, which acts on a
+		// carriage return or an escape sequence, so a program could forge or
+		// hide a line. Each byte of an invalid sequence becomes "?" in the copy, which
+		// keeps each offset of the value runs.
+		text_encoding.invalid_sequences_replace(log_text[:v[2]])
 		// The value runs: checked once, in the copy of this processor. Runs
 		// that do not fit the text leave the record plain; the text is whole.
 		log_runs := processor_self().log_runs[:v[6]]
@@ -235,6 +242,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
 		}
+		// The registers of a device with a domain drive the device only from
+		// the program that holds them: a mapping in another program would
+		// outlive the domain of the owner, and could make the device write
+		// what the next service of the device declares
+		// (src/md/infrastructure/iommu.md, "Mechanism in the kernel, policy outside").
+		if to != program && regions[slot.object].requester != 0 {
+			return .Bad_Operation
+		}
 		address, status := map_region(to, slot.object, v[2], flags, v[4], v[5], holding_of_handle(program, slot))
 		results[0] = address
 		return status
@@ -271,6 +286,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		name: [32]u8
 		user_copy(&name, rawptr(uintptr(v[1])), v[2])
+		// The name starts each line of the log of the program on the serial
+		// port: it is a name of the system, printable characters of ASCII
+		// and the space ("node 1"), so that no name acts on a terminal of
+		// the host. The check is on the copy. An empty name stays allowed.
+		if v[2] > 0 && !text_encoding.identifier_words_valid(name[:v[2]]) {
+			return .Bad_Operation
+		}
 		created := program_create(budget.object, name[:v[2]]) or_return
 		handle := handle_insert(program, {kind = .Program, rights = RIGHTS_PROGRAM, object = created})
 		if handle == 0 {
@@ -603,6 +625,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .No_Slot
 			}
 			results[0] = u64(handle)
+			results[1] = transmute(u64)iommu_device_facts(regions[region].requester)
 			return .Ok
 		case .Message:
 			message := u32(INTERRUPT_CAPACITY)
@@ -844,13 +867,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Memory_Physical:
 		_ = handle_find(program, v[0], .Machine, {.Physical}) or_return
 		slot := handle_find(program, v[1], .Memory, {.Read}) or_return
-		if !regions[slot.object].contiguous {
-			return .Bad_Operation // Its frames come at first use, from anywhere: no one address names them.
-		}
 		// The call of a device service declares the object to its devices,
-		// which write it only when this handle can.
-		iommu_declare(program_index, slot.object, .Write in slot.rights) or_return
-		results[0] = regions[slot.object].physical
+		// which write it only when this handle can, and gives the address
+		// that they use for it.
+		results[0] = iommu_declare(program_index, slot.object, .Write in slot.rights) or_return
 		return .Ok
 
 	case .Memory_Commit:

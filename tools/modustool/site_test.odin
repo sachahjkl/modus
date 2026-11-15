@@ -147,11 +147,6 @@ site_readme_of_the_repository :: proc(t: ^testing.T) {
 	testing.expect(t, readme.mark_description != "")
 	testing.expect(t, readme.use_paragraph != "")
 	testing.expect(t, len(readme.licence_paragraphs) > 0)
-	reviews, reviews_error := os.read_entire_file(SITE_REVIEWS_FILE, context.temp_allocator)
-	testing.expect(t, reviews_error == nil, "cannot read docs/REVIEWS.md")
-	step_count, reviews_problem := site_reviews_step_count(string(reviews))
-	testing.expect_value(t, reviews_problem, "")
-	testing.expect(t, step_count > 0)
 }
 
 @(test)
@@ -181,19 +176,6 @@ site_readme_of_a_small_file :: proc(t: ^testing.T) {
 		_, damaged_problem := site_readme_parse(damaged)
 		testing.expectf(t, damaged_problem != "", "no problem found after %q became %q", damage.before, damage.after)
 	}
-}
-
-@(test)
-site_steps_of_the_reviews :: proc(t: ^testing.T) {
-	good := "# Reviews\n\n| Step | Commit | Capability |\n|---|---|---|\n| 1 | `a` | One |\n| 2 | `b` | Two |\n\n## Review 1\n\n| 9 | after the table |\n"
-	count, problem := site_reviews_step_count(good)
-	testing.expect_value(t, problem, "")
-	testing.expect_value(t, count, 2)
-	with_gap, _ := strings.replace_all(good, "| 2 |", "| 3 |", context.temp_allocator)
-	_, gap_problem := site_reviews_step_count(with_gap)
-	testing.expect(t, gap_problem != "")
-	_, empty_problem := site_reviews_step_count("# Reviews\n")
-	testing.expect(t, empty_problem != "")
 }
 
 @(test)

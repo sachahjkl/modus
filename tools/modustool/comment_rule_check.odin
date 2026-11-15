@@ -32,7 +32,6 @@ Comment_Rule_Form :: enum {
 	Review_Number, // "review", or "reviews", then a number.
 	Review_Note, // "note", or "notes", one or two digits, then " of the".
 	Decision_Identifier, // A capital D, a hyphen, then a number.
-	Handoff_Item, // "HANDOFF", then " item " and a number.
 	Decision_Maker, // The word "decision" with the owner or the coordinator, in the three phrases that comment_rule_match lists.
 	Decision_Date, // A date "20yy-mm-dd" with "owner", "decision", "decided", "added on" or "coordinator" in the 48 bytes before it.
 }
@@ -56,7 +55,6 @@ comment_rules := [Comment_Rule_Form]Comment_Rule {
 	.Review_Number               = {"the table of Review 10.", "a review by its number"},
 	.Review_Note                 = {"closes them (note 1 of the second read).", "a note of a review by its number"},
 	.Decision_Identifier         = {"the limit of a boot (D-047).", "a decision by its identifier"},
-	.Handoff_Item                = {"the work-around of HANDOFF item 53.", "an item of the handoff by its number"},
 	.Decision_Maker              = {"the Append rule across calls (decision of the coordinator).", "who made a decision"},
 	.Decision_Date               = {"a boot timed out (owner, 2026-11-11).", "the date of a decision"},
 }
@@ -260,22 +258,6 @@ comment_rule_match :: proc(form: Comment_Rule_Form, text: string, at: int) -> (e
 		}
 		end = comment_rule_digits_end(text, at + 2)
 		return end, end > at + 2 && end - (at + 2) <= 4 && comment_rule_word_ends(text, end)
-	case .Handoff_Item:
-		if !starts || !strings.has_prefix(text[at:], "HANDOFF") {
-			return 0, false
-		}
-		end = at + len("HANDOFF")
-		if strings.has_prefix(text[end:], ".md") {
-			end += len(".md")
-		}
-		if strings.has_prefix(text[end:], ",") {
-			end += 1
-		}
-		if !strings.has_prefix(text[end:], " item ") {
-			return 0, false
-		}
-		end += len(" item ")
-		return comment_rule_digits_end(text, end), comment_rule_number_follows(text, end)
 	case .Decision_Maker:
 		if !starts {
 			return 0, false

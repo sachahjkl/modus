@@ -58,7 +58,7 @@ Three rules apply to every decision:
 ## Assumptions
 
 - **64 bits only.** An address is 64 bits on every machine of the system. The system has no 32-bit target and runs no 32-bit program. The targets are x86-64 first, and ARM64 at best.
-- **Result**: an address, a count, a handle and a register value have one size: 8 bytes. A record has one layout on all machines. The call form passes each scalar in one register. No contract has a second form for a smaller machine.
+- **Result**: an address, a count, a handle and a register value have one size: 8 bytes. A record has one layout on all machines. The call form passes each scalar in one word of 8 bytes: a register, or a word of the stack past the sixth integer argument. No contract has a second form for a smaller machine.
 - **Forbids**: a type whose size depends on the machine, a 32-bit variant of a record, a compatibility mode for 32-bit code.
 
 ## Summary
@@ -153,7 +153,7 @@ Status: Decided.
 - **Rule**: The kernel is the control plane. It checks the right one time and maps the device queue or the shared ring into the program. After that, data moves without a kernel entry. [Blow §5]
 - **Rule**: The network stack is a library in the program that uses the network. [Blow §5]
 - **As built**: the network device of the first machine has one pair of queues, so the network service is the user-space multiplexer of the cost line below. It reads the headers of each frame that arrives, checks them against the grant of an endpoint, and copies the datagram or the segment one time into the region of the program. For a datagram or a segment that leaves, it copies the first 8 bytes of the transport header, checks them in its own copy, and writes the headers of IPv4 and Ethernet; the device reads the data from the region of the program, which the frame service holds with the right Read only. It computes no checksum of data, writes no transport header and keeps no state of a connection: TCP, QUIC, and the header and the checksum of UDP are libraries in the program. The kernel carries no data. With a device that gives each endpoint its own receive queue and steers by port, the copy on receive leaves too (`docs/NETWORK.md`, "Property 5 as it is built").
-- **As built, the devices**: when the firmware lists an IOMMU of Intel, the kernel maps in the tables of each device only the memory that its service declared with `Memory_Physical`, and a refused access is a line of the log (`docs/ARCHITECTURE.md`, "K5. Device grant and interrupts"). The machine of the part `iommu` of the test has one. The other machines of the test, and a machine with no IOMMU or with an AMD processor, do not hold this isolation: a device there reaches all memory.
+- **As built, the devices**: when the firmware lists an IOMMU of Intel, with up to 4 remapping units, the kernel maps in the tables of each device only the memory that its service declared with `Memory_Physical`, and a refused access is a line of the log (`docs/ARCHITECTURE.md`, "K5. Device grant and interrupts"). A device behind a bridge of PCI Express has its own domain; a device behind a conventional bridge gets none, and its accesses are refused. The machine of the part `iommu` of the test has one unit, with a disk behind a bridge. The other machines of the test, and a machine with no IOMMU or with an AMD processor, do not hold this isolation: a device there reaches all memory.
 - **Forbids**: a kernel network stack, a kernel block layer, a kernel entry per packet or per block.
 - **Cost**: Two programs that use one device need the device to give separate queues, or they need a user-space multiplexer. Direct device access is safe only with an IOMMU, or with a device that the hypervisor isolates. A program can no longer rely on the kernel to keep a connection alive when the program stops.
 - **Reuse**: Arrakis and IX prove the model. DPDK and SPDK are production examples of user-space network and NVMe access. A small permissive TCP library such as lwIP or smoltcp can be the first stack. [Notes `existing_kernels_good_ideas.md` §3] [Notes `bcachefs_storage.md` §5]
@@ -551,7 +551,7 @@ Licences in this table come from memory. Verify each one before the code is impo
 
 1. **Module contract**: the open questions of `MODULE_CONTRACT.md`.
 
-Fixed choices: implementation language (Odin), storage licence (new engine under MIT), properties 4, 7, 14, 15 and 16 (decided), kernel entry (kernel ring only), threads (several threads per program), call form (registers, `MODULE_CONTRACT.md` section 4), graphics implementation (written from nothing, no port of wgpu or Dawn), kernel operation limit (the modus tool counts the kinds of kernel operation; no fixed limit yet).
+Fixed choices: implementation language (Odin), storage licence (new engine under MIT), properties 4, 7, 14, 15 and 16 (decided), kernel entry (kernel ring only), threads (several threads per program), call form (registers, then the stack past the sixth integer, `MODULE_CONTRACT.md` section 4), graphics implementation (written from nothing, no port of wgpu or Dawn), kernel operation limit (the modus tool counts the kinds of kernel operation; no fixed limit yet).
 
 ## First milestone
 
@@ -566,4 +566,4 @@ This milestone uses properties 1, 2, 4, 6, 10, 13 and 17 in their smallest form.
 Secure Boot and the TPM measurement come after it, because they need only the boot program.
 Each later step adds one capability to a system that already works.
 
-**State**: reached. The system has since grown past it; the order of the next steps is in `FIRST_MILESTONE.md`, section "Next steps".
+**State**: reached. The system has since grown past it; the planned work is in `ROADMAP.md`.

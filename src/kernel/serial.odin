@@ -3,6 +3,7 @@ package kernel
 import "base:intrinsics"
 import "modus:contract/cut_mark"
 import op "modus:contract/operation"
+import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
 // The serial port is the log of the kernel. It is the only device that the
@@ -284,6 +285,13 @@ log_record :: proc "contextless" (program: u32, thread: u32, name: []u8, channel
 	offset := 0
 	for {
 		part := rest[:min(len(rest), op.LOG_TEXT_CAPACITY)]
+		// A record ends after a whole character, so that the text of each
+		// record is UTF-8 on its own.
+		if len(part) < len(rest) {
+			if whole := text_encoding.complete_characters(part); whole > 0 {
+				part = part[:whole]
+			}
+		}
 		rest = rest[len(part):]
 		written := log_head.written
 		record := &log_records[written % op.LOG_RECORD_CAPACITY]

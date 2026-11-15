@@ -14,7 +14,7 @@ Problem_Kind :: enum u32 {
 	Entry     = 5, // The entry of the header names no export.
 	Export    = 6, // An export names a description that the table does not have, or code outside the memory of the module.
 	Text      = 7, // A name or a text is not inside the string table.
-	Function  = 8, // A description of an export has more than 6 parameters, or a type that does not exist, or names no record.
+	Function  = 8, // A description of an export has more than module.PARAMETER_CAPACITY arguments, or a type that does not exist, or names no record.
 	Record    = 9, // A record description has a field outside the record, a field of no type, or more than 256 bytes.
 	Slot      = 10, // A slot names no import.
 	Refused   = 11, // The kernel refused a report: `value` is the status. The machine handle needs the right Inspect.
@@ -236,6 +236,11 @@ function_check :: proc "contextless" (file: []u8, index: u32, function: module.F
 	}
 	if function.parameter_count > module.PARAMETER_CAPACITY {
 		return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_count)), value = u64(function.parameter_count), limit = module.PARAMETER_CAPACITY + 1}
+	}
+	// The buffer of a result and the error record are arguments of the call
+	// form too: the parameters alone can fit and the call not.
+	if arguments := module.call_argument_count(int(function.parameter_count), function.result, function.error_record != 0); arguments > module.PARAMETER_CAPACITY {
+		return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_count)), value = u64(arguments), limit = module.PARAMETER_CAPACITY + 1}
 	}
 	for type, number in function.parameters[:function.parameter_count] {
 		field := at + u64(offset_of(module.Function, parameters)) + u64(number)

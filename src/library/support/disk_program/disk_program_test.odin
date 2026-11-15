@@ -19,6 +19,8 @@ names_that_are_refused :: proc(t: ^testing.T) {
 		{"twenty_four_bytes_long__", .Too_Long, 0},
 		{"a/b", .Bad_Byte, 1},
 		{"a\x00b", .Bad_Byte, 1},
+		{"a b", .Bad_Byte, 1}, // A name of a program has no space.
+		{"café", .Bad_Byte, 3}, // A name of a program is ASCII.
 		{".", .Bad_Byte, 0},
 		{"..", .Bad_Byte, 0},
 		{"programs", .Store_Name, 0},

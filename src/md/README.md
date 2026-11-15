@@ -7,15 +7,15 @@ Read this file first. Then read the file of the part that you change. Change tha
 ## What this folder is not
 
 - It is not the documentation. A guide of `docs/` says what the system does and how to use it, and the site publishes it. An intent file links to a guide; it does not repeat it.
-- It is not the record of the decisions. `docs/DECISIONS.md` says who decided what, when, and in which words.
-- It is not a log of the work. `docs/FIRST_MILESTONE.md` holds the numbered choices of each step, and `docs/REVIEWS.md` the reviews.
-- It is not a plan. A plan in progress goes in a folder `tmp/` that git ignores.
+- It is not a record of who decided what, and when. Git keeps that.
+- It is not a log of the work. A review, a log and a measure of one run do not go in the repository.
+- It is not a plan. The planned work is in `ROADMAP.md`; a plan in progress goes in a folder `tmp/` that git ignores.
 
 ## The system on one page
 
 modus is an operating system for x86-64, written in Odin, that runs on one fixed machine: QEMU with virtio devices, UEFI firmware and a TPM. The 21 properties of [`docs/PROPERTIES.md`](../../docs/PROPERTIES.md) are its rules. Each proposal is compared with them before any work.
 
-**The kernel** (`src/kernel/`) is small and counted: 33 kernel operations. A program asks for an operation with a command record in a ring of shared memory, one ring for each thread. The one kernel entry runs the records of the ring, then waits. The kernel holds the handle tables, the memory objects, the page tables, the threads, the scheduler with a closed set of strategies, the budgets, the fault ring and the control of a thread. It holds no driver, no file system, no network code, no loader for imports and no text parser. It imports the contract packages only.
+**The kernel** (`src/kernel/`) is small and counted: 33 kernel operations. A program asks for an operation with a command record in a ring of shared memory, one ring for each thread. The one kernel entry runs the records of the ring, then waits. The kernel holds the handle tables, the memory objects, the page tables, the threads, the scheduler with a closed set of strategies, the budgets, the fault ring and the control of a thread. It holds no driver, no file system, no network code, no loader for imports and no text parser. Its check of a line of the log is a filter of bytes, not a text parser: it writes `?` for each byte of an invalid sequence of UTF-8, keeps no state and builds no structure, as the check of the channel and of a program name does ([data/text_encoding.md](data/text_encoding.md)). It imports the contract packages only.
 
 **The contracts** (`src/library/contract/`) are the records and the constants that two parties agree on: the kernel operations, the module format, the ring, the draw and block and frame records, the system description. A contract package holds no kernel operation call. **The support packages** (`src/library/support/`) are what a program compiles in to use the contracts: `system` (the kernel entry, the rings, the loader), `interface` and `graphics`, `tcp`, `quic`, `storage`, `sentence`.
 
@@ -38,8 +38,8 @@ modus is an operating system for x86-64, written in Odin, that runs on one fixed
 
 These are the points that an agent gets wrong most often.
 
-1. **Compare first, then build.** A proposal that contradicts a property or a decision is named as such before any work. Propose the nearest form that keeps the property. A property changes in the documents first, then in the code.
-2. **The described export is the only border between two modules.** There is no second kind of import. A parameter that a description cannot carry (a slice by value, a record that holds an address, a seventh parameter) means that the border is in the wrong place. See [api/library_modules.md](api/library_modules.md).
+1. **Compare first, then build.** A proposal that contradicts a property or the design of an intent file is named as such before any work. Propose the nearest form that keeps the property. A property changes in the documents first, then in the code.
+2. **The described export is the only border between two modules.** There is no second kind of import. A parameter that a description cannot carry (a slice by value, a record that holds an address, a procedure value) means that the border is in the wrong place. The count of the parameters is not such a sign: an export takes up to 12 arguments, past the six registers on the stack. See [api/library_modules.md](api/library_modules.md) and [api/call_form_arguments.md](api/call_form_arguments.md).
 3. **A new right for a program is the last answer.** First look for the program that already holds the grant, and give it a new face. The palette gives no program a new authority: see [features/palette.md](features/palette.md).
 4. **The policy is outside the kernel, the mechanism inside.** No code of a program runs on the path of the scheduler. A write that a program chooses the moment and the direction of must change no history that a strategy keeps. See [features/scheduling_policy.md](features/scheduling_policy.md).
 5. **A count, an offset or a length from another party is copied, then checked.** A value is never checked once and read again from memory that the other party can change. This holds for a table of another program, a file and a packet.
@@ -48,8 +48,8 @@ These are the points that an agent gets wrong most often.
 8. **The hash of a module is its identity, and many things change it.** A change of an import changes the hash of each importer. A path of a source file is in a debug object, not in a module. Debug information must not change the code. See [infrastructure/debug_information_and_code.md](infrastructure/debug_information_and_code.md).
 9. **The kernel never imports a support package.** The compiler accepts such an import, because the system has one source library; the tool refuses it before each build. The kernel is freestanding: `"contextless"`, no allocator, no `fmt`. The build uses `-vet`: no shadowed local, no unused import. See [infrastructure/repository_layout.md](infrastructure/repository_layout.md).
 10. **One term for one concept.** Define a term in `docs/GLOSSARY.md` before its first use, and never use a word of its "Do not use" list. A name in the code is long and of complete words.
-11. **A document that says what the code no longer does is a fault.** A change of the code changes, in the same commit, the guide, the glossary, the README, the intent file and the working record that describe it.
-12. **A comment in a source gives the reason in words.** It names no number of a property, a choice, a step, a review finding or a decision, and no date. A pointer to a guide names a heading that exists.
+11. **A document that says what the code no longer does is a fault.** A change of the code changes, in the same commit, the guide, the glossary, the README and the intent file that describe it.
+12. **A comment in a source gives the reason in words.** It names no number of a property, a choice, a step or a review finding, no identifier of a decision, and no date. A pointer to a guide names a heading that exists.
 13. **No text over another text, and no cut text, in any picture or page.** A text has a box. Compute its width from the font before you place it.
 14. **No backward compatibility.** Change a format in place and remove the old path.
 
@@ -60,8 +60,8 @@ These are the points that an agent gets wrong most often.
 - **Each file has a title of level 1**, then its purpose, its constraints, the chosen form with its reasons, the refused forms, the subtle points and the hazards, and a short state: what is built and what is left.
 - **High signal.** Omit what the code shows. Keep a measured number only when it decided a choice. Do not keep a plan of work, a list of files to change, or the steps of an agent.
 - **The form of today.** When a design changes, the file states the new form, with one line on what changed. It is not a history.
-- **No name of a person and no role of the project.** No date, except in a pointer to a decision.
-- **A pointer to a decision is allowed**, in this form: (`docs/DECISIONS.md`, D-236). A number of a choice, of a step or of a review finding is not allowed: those numbers belong to the log of the work, and an intent file states the reason itself.
+- **No name of a person, no role of the project and no date.** Git keeps who decided and when.
+- **No number of a decision, a choice, a step or a review finding.** An intent file states the reason itself.
 - **A pointer to a guide** is a link with the path of the guide from the root as its text, then the heading in quotes: [`docs/CONSOLE.md`](../../docs/CONSOLE.md), "8. The palette provider". The tool checks that the heading exists.
 - **A link between two intent files** is a relative link. The tool checks that the file exists.
 - **The name of a file** has lower case letters, digits and `_`, and ends with `.md`.
@@ -70,22 +70,25 @@ These are the points that an agent gets wrong most often.
 
 ## Where older intent lives
 
-The intent of the parts that were built before this folder is in other documents. They stay where they are: the site links them, and the numbered choices point at them.
+The intent of the parts that were built before this folder is in the design sections of the guides. They stay where they are, because the site links them.
 
 - [`docs/PROPERTIES.md`](../../docs/PROPERTIES.md): the 21 properties, each with what it forbids, what it costs and what is open.
-- [`docs/FIRST_MILESTONE.md`](../../docs/FIRST_MILESTONE.md): the choices of each step, each with its reasons and its refused forms. It is intent in the form of a log.
-- [`docs/DECISIONS.md`](../../docs/DECISIONS.md): the decisions, with their words.
 - The design sections of the guides: [`docs/MODULE_CONTRACT.md`](../../docs/MODULE_CONTRACT.md), "Closed rules"; [`docs/SCHEDULING.md`](../../docs/SCHEDULING.md), "5. What this system refuses, and why"; [`docs/TOOLS.md`](../../docs/TOOLS.md), "The debugger: the design"; [`docs/INTERFACE.md`](../../docs/INTERFACE.md), "10. The decisions of this design"; [`docs/DESIGN.md`](../../docs/DESIGN.md), the design rules of the interface.
 - `docs/research/`: the studies of prior art that came before a design.
 
 ## File Index
 
+- [api/call_form_arguments.md](api/call_form_arguments.md): why an export takes up to 12 arguments, the six past the registers on the stack, why the bound of six was refused, and why a bound stays
 - [api/library_modules.md](api/library_modules.md): which shared library becomes a module that programs import, where the border goes, and why there is no second kind of import
-- [api/picture.md](api/picture.md): how a Picture record names its pixels with values in a picture memory that the caller passes, why the draw export takes one rectangle for each call, and the forms that were refused: a table of places, lent memory objects, one span of addresses
+- [api/module_replacement.md](api/module_replacement.md): who may replace a module: a replacement row signed by the key of a principal over the two hashes and the importer scope, the check of the root service at each `replace`, and the refused forms: a flag for tests, a signature over the new hash only, the description check alone
+- [api/picture.md](api/picture.md): how a Picture record names its pixels with values in a picture memory that the caller passes, why the draw export takes one rectangle for each call, the compositor that draws one part of its screen for each call, and the forms that were refused: a table of places, lent memory objects, one span of addresses
+- [api/text_grid.md](api/text_grid.md): how the cells of a text grid cross the border of the drawing module in the text table of the frame, the count of the calls of a full terminal, and the forms that were refused: the compare compiled in, a second damage export, an export for one run of cells
+- [data/text_encoding.md](data/text_encoding.md): one rule for text in every contract: UTF-8 with no control character, checked at each border with one contract package, a length in bytes, a cut after a whole character, the cell of a grid as a code point, one replacement glyph for a character that the font lacks, and the names that stay ASCII because they are identifiers of the system
 - [features/debugger_window.md](features/debugger_window.md): why the window of the debugger is a client of the service with no right over a program, how it reads the rows of the exports, the debug place that it types, its memory view, and a click on a row that does what a key does
 - [features/foreign_systems.md](features/foreign_systems.md): why a foreign system runs whole inside a guest, and the forms of a Linux and an NT layer that were refused
 - [features/gpu_access.md](features/gpu_access.md): the access to a GPU through a driver domain and one serialization of commands, and the forms that were refused
 - [features/heron_program.md](features/heron_program.md): the program that plays the animations of the mark: one source of each rule in `src/library/support/mark`, a move on the grid against the free way, and the fault of its window that made the rule of the whole frame
+- [features/keyboard_layout.md](features/keyboard_layout.md): why the layout of the keyboard is a setting that the input service reads at each key, and why the compositor and a message at each change were refused
 - [features/key_path.md](features/key_path.md): why no queue between the keyboard and a program drops a key in silence, and the two forms of a full queue
 - [features/mark_pictures.md](features/mark_pictures.md): one generator for every picture of the mark, the two variants that a request names, the one table of the uses with the icons of the site, the formats that all start from the pixels of one picture, and why the browser computes no color
 - [features/module_budget_request.md](features/module_budget_request.md): why a module states the budget that it asks for in its file, why its source states only its working memory, its threads and its window, the three parts that the tool counts from the files, and why the starter alone decides
@@ -97,11 +100,14 @@ The intent of the parts that were built before this folder is in other documents
 - [features/site_bar.md](features/site_bar.md): why the bar of the site has three buttons and one menu on one line, and the forms that were refused
 - [features/site_gallery.md](features/site_gallery.md): the gallery and the carousel of the site from one table that is checked against the folder of the pictures, and why the carousel needs no script
 - [features/site_home.md](features/site_home.md): the home of the site: a line of time of the start on two stated scales, the rule "a chart or nothing" for a measure, a card that starts at its top, and a press on the heron
+- [features/site_subscribe.md](features/site_subscribe.md): the menu "Subscribe" of the pages of the releases and of the news: a `details` element with the Atom feed of the page and the releases of the repository, a panel as wide as its longest line, and why a script menu, an RSS feed and a link to X were refused
 - [features/text_box.md](features/text_box.md): one rule for a text that is wider than its place in a window: more lines, a break after a separator of a path, a height that the caller owns, and why a cut and a larger buffer were refused
+- [infrastructure/assembler.md](infrastructure/assembler.md): why the build keeps `nasm` for the assembly files, and why the assembler of LLVM was refused
 - [infrastructure/debug_information_and_code.md](infrastructure/debug_information_and_code.md): why a module is the same bytes with and without debug information, the kind of debug information that a build asks the compiler for, and the forms that were refused
-- [infrastructure/iommu.md](infrastructure/iommu.md): why a device reaches only the memory that its service declared with `Memory_Physical`, the tables that the kernel owns, the end of a grant before the frames are free, a DMA fault as a line of the log, and what is left (AMD-Vi, interrupt remapping)
+- [infrastructure/iommu.md](infrastructure/iommu.md): why a device reaches only the memory that its service declared with `Memory_Physical`, the tables that the kernel owns on several remapping units, the devices behind bridges, the reserved memory ranges, the device window of an object that is not contiguous, the end of a grant before the frames are free, the invalidation of one domain, a DMA fault as a line of the log, and what is left (AMD-Vi, interrupt remapping)
 - [infrastructure/llvm_of_the_build.md](infrastructure/llvm_of_the_build.md): why the build uses LLVM 18 with one upstream commit that makes dead store elimination work in a fixed order, the fault of the order of debug records that it removes, and the forms that were refused
 - [infrastructure/network_data_path.md](infrastructure/network_data_path.md): what the network service does to the bytes of a packet, the constraint of one pair of queues, the layers that take the service off the data path, and the send with no copy: the read region of the frame service, the completion when the device read the data, who holds the memory until then
 - [infrastructure/repository_layout.md](infrastructure/repository_layout.md): one `src` folder for what becomes the system, one source library `modus` for a program of a third party, and the order of the move
 - [infrastructure/whole_frame.md](infrastructure/whole_frame.md): why every surface has two pictures, the debt of each picture in the window layer, the wait for the compositor with its bound, and the two counts that prove the rule
+- [infrastructure/test_pointer.md](infrastructure/test_pointer.md): how a machine test presses an element by its element name: the line that a window writes when the rectangle of a named element changes, the palette whose lines the compositor writes, the window brought to the front before a press, and why a test build, a request to the window and a new contract were refused
 - [infrastructure/third_party_module.md](infrastructure/third_party_module.md): the build of a module whose source is outside the repository: the module build file, where the tool finds the system, the rule of the three places of a source, and why the proof does not compare bytes

@@ -2,6 +2,7 @@
 package cut_mark
 
 import "core:testing"
+import "modus:contract/text_encoding"
 
 // fill writes a text in a buffer as a writer does: the bytes that fit, and
 // the count of the others.
@@ -68,7 +69,7 @@ no_half_character_before_the_mark :: proc(t: ^testing.T) {
 	marked, _, _ := apply(buffer[:], count, dropped)
 	// 9 bytes and a mark of 21: a and four characters of 2 bytes; 51 missing.
 	testing.expect_value(t, string(buffer[:marked]), "a\u00e9\u00e9\u00e9\u00e9... and 51 bytes more")
-	testing.expect_value(t, complete_characters(buffer[:9]), 9)
+	testing.expect_value(t, text_encoding.complete_characters(buffer[:9]), 9)
 }
 
 @(test)
@@ -77,14 +78,4 @@ a_buffer_smaller_than_the_mark :: proc(t: ^testing.T) {
 	count, dropped := fill(buffer[:], "a text longer than the buffer")
 	marked, _, _ := apply(buffer[:], count, dropped)
 	testing.expect_value(t, string(buffer[:marked]), "... an")
-}
-
-@(test)
-characters_at_the_end :: proc(t: ^testing.T) {
-	testing.expect_value(t, complete_characters(transmute([]u8)string("abc")), 3)
-	testing.expect_value(t, complete_characters(transmute([]u8)string("ab\xc3")), 2) // The first byte of é only.
-	testing.expect_value(t, complete_characters(transmute([]u8)string("ab\xe2\x82")), 2) // Two bytes of €.
-	testing.expect_value(t, complete_characters(transmute([]u8)string("ab\xe2\x82\xac")), 5)
-	testing.expect_value(t, complete_characters(transmute([]u8)string("\x80\x80\x80\x80")), 4) // Not UTF-8: kept as it is.
-	testing.expect_value(t, complete_characters(nil), 0)
 }

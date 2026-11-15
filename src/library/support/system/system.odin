@@ -64,12 +64,16 @@ foreign _ {
 	port_read_32 :: proc "c" (port: u16) -> u32 ---
 	// export_call calls an export with the call form (docs/MODULE_CONTRACT.md,
 	// section 4). It loads the 6 integer registers and the 8 float registers
-	// from the two arrays, calls address, and writes the results: the two
-	// integer results, then the two float results.
+	// from the two arrays, writes the integers 7 to 12 on the stack, calls
+	// address, and writes the results: the two integer results, then the two
+	// float results.
 	export_call :: proc "c" (address: uintptr, integers: ^[CALL_INTEGERS]u64, floats: ^[CALL_FLOATS]u64, results: ^[CALL_RESULTS]u64) ---
 }
 
-CALL_INTEGERS :: 6 // The integer registers of the call form: `module.PARAMETER_CAPACITY`.
+// The integer arguments of the call form: `module.PARAMETER_CAPACITY`. The
+// first 6 are in registers, the others on the stack; enter.asm writes 6
+// words of stack, so a change of this number changes export_call too.
+CALL_INTEGERS :: 12
 CALL_FLOATS :: 8 // The float registers of the call form.
 CALL_RESULTS :: 4 // The results of the call form: two integers, then two floats.
 
@@ -519,8 +523,10 @@ thread_memory_read :: proc "contextless" (thread: Handle, number: u64, source: u
 	return results[0], status
 }
 
-// memory_physical gives the physical address of the first page of a memory
-// object: its pages follow each other. The machine handle needs the right
+// memory_physical gives the device address of the first page of a memory
+// object: the devices of the caller see its pages follow each other from
+// there. It is the physical address of a contiguous object, or with the
+// IOMMU the window of another object. The machine handle needs the right
 // Physical.
 memory_physical :: proc "contextless" (machine: Handle, memory: Handle, error: ^errors.Error_Record = nil) -> (address: u64, status: Status) {
 	results: [7]u64
