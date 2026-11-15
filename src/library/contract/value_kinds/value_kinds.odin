@@ -147,6 +147,59 @@ Duration :: struct {
 	unit:  Duration_Unit, // The unit.
 }
 
+// What an Integer counts, as a command states it for one parameter: a size
+// or a time, and the unit of that kind. See
+// [integer unit](term:integer-unit). The palette shows the unit after the
+// number of the field, and the principal types the number in that unit.
+//
+// Example: the parameter of `buffer` is `{.Size, u8(Size_Unit.Pages)}`.
+Integer_Unit :: struct {
+	kind: Value_Kind, // None: a plain number. Size or Time.
+	unit: u8, // A Size_Unit for a Size, a Duration_Unit for a Time; 0 for None.
+}
+#assert(size_of(Integer_Unit) == 2)
+
+// size_in gives the integer unit of a size in a unit.
+size_in :: proc "contextless" (unit: Size_Unit) -> Integer_Unit {
+	return {kind = .Size, unit = u8(unit)}
+}
+
+// time_in gives the integer unit of a time in a unit.
+time_in :: proc "contextless" (unit: Duration_Unit) -> Integer_Unit {
+	return {kind = .Time, unit = u8(unit)}
+}
+
+// integer_unit_valid says if an integer unit that another party wrote is
+// one of the contract: None with the unit 0, a Size with a Size_Unit, a
+// Time with a Duration_Unit.
+integer_unit_valid :: proc "contextless" (integer_unit: Integer_Unit) -> bool {
+	#partial switch integer_unit.kind {
+	case .None:
+		return integer_unit.unit == 0
+	case .Size:
+		return integer_unit.unit <= u8(max(Size_Unit))
+	case .Time:
+		return integer_unit.unit <= u8(max(Duration_Unit))
+	}
+	return false
+}
+
+// integer_unit_text gives the text of the unit of an integer unit, with
+// the space before it, as a log writes it: " pages", " ms". A plain number
+// and a unit out of the contract give an empty text.
+integer_unit_text :: proc "contextless" (integer_unit: Integer_Unit) -> string {
+	if !integer_unit_valid(integer_unit) {
+		return ""
+	}
+	#partial switch integer_unit.kind {
+	case .Size:
+		return SIZE_UNIT_TEXTS[Size_Unit(integer_unit.unit)]
+	case .Time:
+		return DURATION_UNIT_TEXTS[Duration_Unit(integer_unit.unit)]
+	}
+	return ""
+}
+
 // A hash, or the head of one: two hexadecimal digits for each byte, the
 // first byte first. The kind is Version.
 Hash :: struct {

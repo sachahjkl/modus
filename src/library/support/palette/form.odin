@@ -1,6 +1,7 @@
 package palette
 
 import "modus:contract/palette_table"
+import "modus:contract/value_kinds"
 import "modus:support/line_editor"
 
 // The form of an entry with parameters (docs/DESIGN.md, "Palette"): the
@@ -217,6 +218,25 @@ Field_Control :: enum u8 {
 	Integer        = 1, // An Integer: the input types its digits.
 	Candidate_List = 2, // The list of the candidates under the band, with the icon of their kind: suggestions, or more than BUTTON_CAPACITY closed values.
 	Buttons        = 3, // A row of buttons: at most BUTTON_CAPACITY closed values.
+	Number_With_Unit = 4, // An Integer that counts a size or a time: the input types its digits, and the band shows the unit after them.
+}
+
+// field_unit gives what the Integer of a field counts, as the provider
+// wrote it in the entry: {} for a plain number and for each other field.
+// The copy of the entry passed the checks of the contract, so the unit is
+// one of the contract.
+field_unit :: proc "contextless" (form: ^Form, field: int) -> value_kinds.Integer_Unit {
+	if field < 0 || field >= form.field_count || form.given.parameters[field] != .Integer {
+		return {}
+	}
+	return form.given.parameter_units[field]
+}
+
+// field_unit_text gives the text of the unit of a field, with the space
+// before it, " pages", or "" for a field with no unit. The text is the one
+// of the contract, never a text of the provider.
+field_unit_text :: proc "contextless" (form: ^Form, field: int) -> string {
+	return value_kinds.integer_unit_text(field_unit(form, field))
 }
 
 // field_control gives the control of a field. Only the field that has the
@@ -231,7 +251,10 @@ field_control :: proc "contextless" (form: ^Form, field: int) -> Field_Control {
 		}
 		return .Candidate_List
 	}
-	return form.given.parameters[field] == .Integer ? Field_Control.Integer : Field_Control.Text
+	if form.given.parameters[field] != .Integer {
+		return .Text
+	}
+	return field_unit(form, field).kind != .None ? Field_Control.Number_With_Unit : Field_Control.Integer
 }
 
 // candidates_first gives the first shown candidate that the list area

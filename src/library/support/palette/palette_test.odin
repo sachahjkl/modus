@@ -4,6 +4,7 @@ package palette
 import "core:strings"
 import "core:testing"
 import "modus:contract/palette_table"
+import "modus:contract/value_kinds"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -928,6 +929,7 @@ Given :: struct {
 	destroys:   bool,
 	kinds:      [2]palette_table.Value_Kind,
 	names:      [2]string,
+	units:      [2]value_kinds.Integer_Unit,
 	setting:    bool,
 	value:      u8,
 }
@@ -959,6 +961,7 @@ table_make :: proc(given: []Given) -> []u8 {
 		for kind, number in item.kinds {
 			entry.parameters[number] = kind
 			entry.parameter_name_lengths[number] = u8(copy(entry.parameter_names[number][:], item.names[number]))
+			entry.parameter_units[number] = item.units[number]
 		}
 		if item.setting {
 			entry.kind = .Setting
@@ -2110,6 +2113,119 @@ the_control_of_a_field :: proc(t: ^testing.T) {
 	form_open(panel, chosen_entry(panel))
 	testing.expect_value(t, field_control(&panel.form, 1), Field_Control.Integer)
 	testing.expect_value(t, field_control(&panel.form, 0), Field_Control.Text)
+}
+
+// An Integer that counts a size or a time shows the unit of the entry
+// after its number: in the band, also while the field is empty, and in the
+// prompt under it. A press on the unit puts the caret after the number, and
+// the panel sends the number as it was typed.
+@(test)
+a_number_with_its_unit :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	given := [?]Given {
+		{name = "buffer", signature = "buffer(count: Integer) -> Handle", about = "a new memory object, in pages", parameters = 1, result = .Handle, kinds = {.Integer, .None}, names = {"count", ""}, units = {value_kinds.size_in(.Pages), {}}},
+		{name = "wait_stop", signature = "wait_stop(milliseconds: Integer) -> Table", about = "wait for a stop", parameters = 1, result = .Table, kinds = {.Integer, .None}, names = {"milliseconds", ""}, units = {value_kinds.time_in(.Milliseconds), {}}},
+	}
+	table := table_make(given[:])
+	defer delete(table)
+	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
+	panel.state = .Search
+	type_text(panel, "buffer")
+	form_open(panel, chosen_entry(panel))
+	testing.expect_value(t, panel.state, State.Arguments)
+	form := &panel.form
+	testing.expect_value(t, field_control(form, 0), Field_Control.Number_With_Unit)
+	testing.expect_value(t, field_unit_text(form, 0), " pages")
+	band: Band_Layout
+	form_band_layout(form, &band)
+	testing.expect_value(t, string(band.characters[:band.count]), "buffer(count:  pages)")
+	form_field_edit(panel, .Character, '4')
+	form_band_layout(form, &band)
+	testing.expect_value(t, string(band.characters[:band.count]), "buffer(count: 4 pages)")
+	testing.expect_value(t, band.classes[14], Band_Class.Value)
+	testing.expect_value(t, band.classes[16], Band_Class.Size_Unit)
+	// A unit is no digit: the field holds the number alone.
+	testing.expect_value(t, field_text(form, 0), "4")
+	x, _ := panel_place(SCREEN_WIDTH)
+	text_x := x + interface.TEXT_INPUT_LINE_MARGIN
+	field, caret, in_a_field := form_place_at(form, x, text_x + 18 * BAND_CELL_WIDTH + 4)
+	testing.expect(t, in_a_field)
+	testing.expect_value(t, field, 0)
+	testing.expect_value(t, caret, 1)
+	argument := form_argument(form, 0)
+	_, value, ok := palette_table.argument_unpack(argument)
+	testing.expect(t, ok)
+	testing.expect_value(t, value.integer, 4)
+	// The panel draws the unit as one text, and the prompt says it.
+	screen := screen_make()
+	defer screen_free(screen)
+	form_field_edit(panel, .Backspace, 0)
+	panel_build(screen, panel)
+	unit_found, prompt_found := false, false
+	for record in screen.table.records[:screen.table.record_count] {
+		if !interface.is_text_kind(record.kind) {
+			continue
+		}
+		text := string(screen.table.text[record.text_start:][:record.text_count])
+		unit_found ||= text == " pages"
+		prompt_found ||= strings.contains(text, "an Integer, in pages")
+	}
+	testing.expect(t, unit_found)
+	testing.expect(t, prompt_found)
+	// A time has the unit of a time.
+	form_close(panel)
+	panel.state = .Search
+	line_editor.line_clear(&panel.line)
+	type_text(panel, "wait_stop")
+	form_open(panel, chosen_entry(panel))
+	form_band_layout(&panel.form, &band)
+	testing.expect_value(t, string(band.characters[:band.count]), "wait_stop(milliseconds:  ms)")
+	testing.expect_value(t, band.classes[band.count - 2], Band_Class.Time_Unit)
+}
+
+// A press on a button of a field finds the button that the drawing placed,
+// and only in a form whose field shows its buttons.
+@(test)
+a_press_on_a_button_of_a_field :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	given := [?]Given{{name = "strategy", signature = "strategy(name: Text) -> Integer", about = "set the scheduling strategy", parameters = 1, result = .Integer, kinds = {.Text, .None}, names = {"name", ""}}}
+	table := table_make(given[:])
+	defer delete(table)
+	collect_with_table(panel, table)
+	panel.state = .Search
+	type_text(panel, "strategy")
+	form_open(panel, chosen_entry(panel))
+	form := &panel.form
+	names := [?]string{"round_robin", "fair", "eevdf"}
+	for name, index in names {
+		candidate := (^palette_table.Candidate)(&table[palette_table.CANDIDATES_OFFSET + index * size_of(palette_table.Candidate)])
+		candidate.length = u8(copy(candidate.name[:], name))
+	}
+	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED)
+	screen := screen_make()
+	defer screen_free(screen)
+	panel_build(screen, panel)
+	x, y := panel_place(SCREEN_WIDTH)
+	buttons := form_buttons_layout(&screen.table, form, x, y)
+	testing.expect_value(t, buttons.count, 3)
+	for area, index in buttons.areas[:buttons.count] {
+		testing.expect_value(t, form_button_at(panel, &screen.table, x, y, area.x + area.width / 2, area.y + area.height / 2), index)
+		// The gap after a button is on no button.
+		testing.expect_value(t, form_button_at(panel, &screen.table, x, y, area.x + area.width + VALUE_BUTTON_GAP / 2, area.y + area.height / 2), NO_ROW)
+	}
+	first := buttons.areas[0]
+	testing.expect_value(t, form_button_at(panel, &screen.table, x, y, first.x - 1, first.y + first.height / 2), NO_ROW)
+	// The press takes the value as Tab does after Left and Right.
+	testing.expect(t, form_candidate_move(form, 1))
+	testing.expect(t, form_candidate_set(form, 0))
+	testing.expect(t, form_candidate_take(form))
+	testing.expect_value(t, field_text(form, 0), "round_robin")
+	// The search has no field: no button.
+	form_close(panel)
+	panel.state = .Search
+	testing.expect_value(t, form_button_at(panel, &screen.table, x, y, first.x + 2, first.y + 2), NO_ROW)
 }
 
 // The act names of a window are checked as values of another program, and
