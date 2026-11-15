@@ -75,16 +75,28 @@
       '';
     });
 
+    # QEMU with no io_uring: its main loop then waits on epoll. With io_uring,
+    # QEMU 10.2 sometimes misses the wake-up of a finished request, so the
+    # firmware waits 135 s for the answer of the software TPM and cancels it
+    # (https://gitlab.com/qemu-project/qemu/-/work_items/4581;
+    # docs/TRUSTED_BOOT.md, "The machines of the TPM"). One target: the
+    # system emulates x86-64 only, and each other target only adds build time.
+    qemu = pkgs.qemu.override {
+      uringSupport = false;
+      hostCpuTargets = ["x86_64-softmmu"];
+    };
+
     # What tools/modustool needs on the path.
     # llc comes from the LLVM of the Odin compiler (18): Odin writes LLVM IR, and
     # llc makes each object with frame pointers.
     # openssl: its QUIC client is the peer of the test "quic-real" of modustool.
-    # swtpm: the software TPM of the machines of "test trusted_boot".
+    # swtpm: the software TPM of the machines of "test trusted_boot" and
+    # "test principals".
     # sbsigntool (sbsign): signs the boot program for Secure Boot.
     # virt-firmware (virt-fw-vars): enrols the certificate of the firmware
     # signing key in a variable store of the firmware, with Secure Boot on.
     # openssl also makes the firmware signing key ("modustool key new").
-    buildTools = [odin llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware];
+    buildTools = [odin llvm pkgs.llvmPackages.lld pkgs.nasm qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware];
 
     # The pointer theme of the owner (docs/POINTERS.md): "Posy's Cursor", the
     # package of nixpkgs, pinned by flake.lock. Its license is CC-BY-NC-4.0,
@@ -97,11 +109,10 @@
         config.allowUnfreePredicate = package: inputs.nixpkgs.lib.getName package == "posy-cursors";
       }).posy-cursors;
 
-    # The firmware of the machines of the measure: the TPM driver without
-    # Secure Boot, so without system management mode. With it, the firmware
-    # sometimes abandons one command of the software TPM and stops using the
-    # TPM for the rest of the boot (docs/TRUSTED_BOOT.md, "The machines of
-    # the TPM").
+    # The firmware of the machines of the measure and of the machine key
+    # sealed by the TPM: the TPM driver without Secure Boot, so without
+    # system management mode. The machines of Secure Boot have no TPM device
+    # (docs/TRUSTED_BOOT.md, "The machines of the TPM").
     ovmfWithTpm = pkgs.OVMF.override {tpmSupport = true;};
 
     # The UEFI firmware of the first machine. modustool reads these names.

@@ -107,7 +107,7 @@ This work gives the TPM and the passphrase together to a named principal. The ma
 
 ## Built and left
 
-Built: the authorization value of a sealed object in the TPM service, with `TPM2_PolicyPassword`, `noDA` clear, the check of the attributes, the codes of a counted failure and of the lockout, the retry, and `TPM2_Shutdown` after each use that is not a counted failure; the form `PRINCIPT` with host tests; the creation, the unlock, the recovery and the new passphrase in `unlock`; four machines of `modustool test principals tpm`: the creation with the recovery key read off the screen, a counted wrong passphrase and the unlock, another system with the recovery and a new passphrase, and the lockout after three counted failures.
+Built: the authorization value of a sealed object in the TPM service, with `TPM2_PolicyPassword`, `noDA` clear, the check of the attributes, the codes of a counted failure and of the lockout, the retry, and `TPM2_Shutdown` after each use that is not a counted failure; the form `PRINCIPT` with host tests; the creation, the unlock, the recovery and the new passphrase in `unlock`; four machines of `modustool test principals`: the creation with the recovery key read off the screen, a counted wrong passphrase and the unlock, another system with the recovery and a new passphrase, and the lockout after three counted failures.
 
 Left:
 

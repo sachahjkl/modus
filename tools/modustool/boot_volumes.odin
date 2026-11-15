@@ -756,15 +756,15 @@ test_part_volumes := [?]Volumes_Of_Part {
 	{part = "iommu", procedures = {"iommu_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "iommu_amd", procedures = {"iommu_amd_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "guest", procedures = {"guest_tests_run"}, volumes = {BOOT_VOLUME}},
-	// With `principals tpm`, the machines of the machine key sealed by the
-	// TPM too: the two volumes of the test of the seal, and the main volume,
-	// on which the seal is refused.
+	// The machines of the machine key sealed by the TPM too: the two volumes
+	// of the test of the seal, and the main volume, on which the seal is
+	// refused.
 	{part = "principals", procedures = {"principals_tests_run", "principals_tpm_tests_run", "principals_tpm_principal_tests_run", "tpm_key_machine_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_SEAL_TEST, BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM}},
 	// No machine starts: the part needs the built modules, which the build
 	// of a volume gives.
 	{part = "outside_module", procedures = {"outside_module_examples_check"}, volumes = {BOOT_VOLUME}},
-	// With `trusted_boot tpm`, the two machines of the measure too: the
-	// main volume and the other system.
+	// The two machines of the measure boot the main volume and the other
+	// system.
 	{
 		part = "trusted_boot",
 		procedures = {"trusted_boot_tests_run"},

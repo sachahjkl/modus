@@ -8,15 +8,14 @@ import "modus:support/storage_mount"
 
 // The machines of the machine key sealed by the TPM
 // (docs/PRINCIPALS.md, "The machine key sealed by the TPM"),
-// `modustool test principals tpm`:
+// part of `modustool test principals`:
 // six machines with one software TPM, whose state they share as one TPM
 // across restarts, on the firmware with the TPM driver and no Secure Boot
-// (OVMF_TPM_CODE). The firmware with Secure Boot loses an answer of the
-// software TPM at each start on the test host, with or without system
-// management mode (docs/TRUSTED_BOOT.md, "The machines of the TPM"). So the
-// first five start the volumes of the test of the seal, whose root service
-// seals with no Secure Boot (SEAL_WITHOUT_SECURE_BOOT_FOR_A_TEST); the sixth
-// starts the main volume, where the rule of Secure Boot holds.
+// (OVMF_TPM_CODE). The machines of Secure Boot have no TPM device
+// (docs/TRUSTED_BOOT.md, "The machines of the TPM"). So the first five
+// start the volumes of the test of the seal, whose root service seals with
+// no Secure Boot (SEAL_WITHOUT_SECURE_BOOT_FOR_A_TEST); the sixth starts
+// the main volume, where the rule of Secure Boot holds.
 //
 //   1. The system of the test of the seal: `machine_seal()` makes the
 //      machine key; the TPM service seals it to PCR 7 and PCR 11; the window
@@ -41,11 +40,6 @@ import "modus:support/storage_mount"
 //
 // Machines 7 to 10, after them, seal the keys of a named principal on a
 // disk of their own (see scenario_tpm_principal_create below).
-//
-// The machines of the TPM are opt-in, as the machines of the measure of
-// `test trusted_boot tpm` are: on some runs QEMU does not give the firmware
-// the answer of one command of the software TPM
-// (docs/TRUSTED_BOOT.md, "The machines of the TPM").
 
 TEST_TPM_KEY_DISK :: BUILD_FOLDER + "/test_tpm_key_disk.img"
 // The disk of machine 5: the store of `unlock` with the record of machine 4,
