@@ -1,6 +1,6 @@
 # The Picture record in a description
 
-A Picture record shows pixels that a program holds in its own memory. The drawing module draws a frame through described exports, and a description carries values only. This file records how a Picture names its pixels with values, so that a program that shows a picture draws through the drawing module (`docs/DECISIONS.md`, D-237).
+A Picture record shows pixels that a program holds in its own memory. The drawing module draws a frame through described exports, and a description carries values only. This file records how a Picture names its pixels with values, so that a program that shows a picture draws through the drawing module ([library_modules.md](library_modules.md)).
 
 The border of the drawing module is in [library_modules.md](library_modules.md). The guide is [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "7. Where it lives: the elements in each program, the drawing in a module".
 

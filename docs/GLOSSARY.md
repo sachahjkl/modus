@@ -5712,7 +5712,7 @@ The words of this group name how the project is run and published: the documents
 
 A property is one of the 21 fundamental concepts of the system, each with its rule, its reasons and its costs, in `docs/PROPERTIES.md`.
 
-The properties are the reference against which every proposal is measured: a proposal that contradicts one is named as such before any work on it, and only the owner of the project can change a property. Each property has a number and a title ("10. One code module", "17. Trusted boot: UEFI program, Secure Boot, TPM"), and a status in the summary table of the document. The status page of the site shows each property with its status, the evidence items and the gaps that name it.
+The properties are the reference against which every proposal is measured: a proposal that contradicts one is named as such before any work on it, and only the owner of the project can change a property. Each property has a number and a title ("10. One code module", "17. Trusted boot: UEFI program, Secure Boot, TPM"), and a status in the summary table of the document. The status page of the site shows each property with its status, and what the machine test shows of it.
 
 A comment in a source never names a property by its number: it states the reason in words, or points to the heading of a guide. `modustool check` refuses "(property 14)" and "(P20)" as a comment breach.
 
@@ -5720,77 +5720,33 @@ The design: `docs/PROPERTIES.md`.
 
 Do not use: principle (for this), requirement, axiom.
 
-### Decision
-
-A decision is one entry of `docs/DECISIONS.md`: who decided what, when, and in which words, under an identifier `D-nnn` that never changes.
-
-The file is the record of the project, and the first document to read. Each entry gives the date, who decided (the owner of the project, the coordinator, or an agent), the decision, the exact words of the owner in their language, its state (in force, done, not done yet, replaced by another, open) and where it is carried out. A decision of the coordinator or of an agent holds until the owner reverses it. A new decision takes the next free identifier, at the end of its group, and the guide of its subject states the rule with no name, no role and no date.
-
-A guide and a comment never name a decision: they state the rule. The record of who chose it stays in `docs/DECISIONS.md`.
-
-The design: `docs/DECISIONS.md`, "How to read and write this file".
-
-Do not use: ADR, ruling, resolution.
-
 ### Step
 
 A step is one tested commit on `master` that adds one capability to a system that works.
 
-The project grows in steps: each step leaves the system whole, built and tested, with its documents up to date in the same commit. `docs/REVIEWS.md` lists each step with its commit and its capability ("1, `7305ad2`, Isolated call"). The home of the site shows the count of steps. Several features can be written at once on branches; each merge still needs its build and the test of its own part.
+The project grows in steps: each step leaves the system whole, built and tested, with its documents up to date in the same commit. Several features can be written at once on branches; each merge still needs its build and the test of its own part.
 
 A step is not a stage of the start of the machine (the "Step of the start" of the group "Running code"), and not a step of a machine test, which waits for one line of the log.
 
-The design: `docs/REVIEWS.md`.
+The design: `AGENTS.md`.
 
 Do not use: iteration, sprint, milestone (for this).
-
-### Choice
-
-A choice is a decision made during the implementation that the owner has not reviewed, numbered in the section "Choices made during the implementation" of `docs/FIRST_MILESTONE.md`.
-
-Writing code needs many small decisions that no property or decision settles: a format, an order, a limit. Each one is recorded as a numbered choice with its reason ("1. **Export numbers.** The modus tool holds an ordered export list per module..."), so that the owner can read it and reverse it. A choice can change at any time.
-
-A comment never names a choice by its number; the site writes a pointer `choice <n>` of a guide as a link to its item.
-
-The design: `docs/FIRST_MILESTONE.md`, "Choices made during the implementation".
-
-Do not use: decision (for this: a decision is an entry of `docs/DECISIONS.md`), design note.
 
 ### Review
 
 A review is a read of the work against the properties and the rule "no bad compromise", which lists each concession and what removes it.
 
-The project asks for one after each five steps; the record of each is in `docs/REVIEWS.md`. Kernel code also has an independent review before each merge: a fresh read of the change, often by a new agent session. A finding of a review has a label, and its correction refers to the finding in the record, never in a comment of the code.
+The project asks for one after each five steps. Each concession that it finds, and that is planned work, becomes an entry of `ROADMAP.md`. Kernel code also has an independent review before each merge: a fresh read of the change, often by a new agent session. A finding of a review has a label, and its correction never names that label in a comment of the code.
 
-The design: `docs/REVIEWS.md`.
+The design: `AGENTS.md`.
 
 Do not use: audit, code review (for the whole), retrospective.
 
-### Evidence item
-
-An evidence item is one numbered item of the section "Evidence" of `docs/FIRST_MILESTONE.md`: an action of the machine test that shows that a part of the system works.
-
-The machine test starts the machine under QEMU, acts as the input through the QEMU monitor (keys, pointer moves, clicks) and waits for a text of the log at each step. Each evidence item says what that scenario does and what it proves ("Start `fault`. The kernel stops it on a page fault. The other programs continue."). The status page shows, for each property, the evidence items that name it.
-
-The design: `docs/FIRST_MILESTONE.md`, "Evidence".
-
-Do not use: proof, test case (for this), demo.
-
-### Gap
-
-A gap is one item of the section "Gaps" of `docs/FIRST_MILESTONE.md`: a difference between the code and the documents, or a part that is not built, not run or not measured.
-
-The project states what is not done as plainly as what is done. A gap names the part, what is missing, and often who must act ("The coordinator fills the three numbers of the measure..."). The status page lists each gap with its number and its group, and shows under each property the gaps that name it. A document that says what the code no longer does is itself a fault, as a failing test is: it is corrected, not listed as a gap.
-
-The design: `docs/FIRST_MILESTONE.md`, "Gaps".
-
-Do not use: issue, bug (for this), todo, known limitation.
-
 ### Working record
 
-A working record is a document of `docs/` that records the work, not the system: `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md`.
+A working record is a document that records the work on the site, not the system: `docs/SITE.md`, and each intent file of `src/md`.
 
-A guide explains how a part of the system is designed and why; a working record holds steps, choices, gaps, reviews and the state of the work. So the site publishes the guides and not the working records (`SITE_WORKING_RECORDS`): a link of a page to a working record names the file in the repository, and says so. `docs/DECISIONS.md` is the record of the decisions. An intent file is a working record for the site too, by its path under `src/md`.
+A guide says what the system does and how to use it; a working record holds the design of a part and the state of its work. So the site publishes the guides and not the working records (`SITE_WORKING_RECORDS`): a link of a page to a working record names the file in the repository, and says so. An intent file is a working record for the site by its path under `src/md`.
 
 The design: `docs/SITE.md`, "The pages".
 
@@ -5802,7 +5758,7 @@ An intent file is a Markdown file of the folder `src/md` that records why a part
 
 It holds the purpose of the part, its constraints, the chosen form with its reasons, each form that was refused with its reason, the subtle points, and what is built and what is left. A design is written there before its code, and a change of a design changes its intent file in the same commit as the code. `src/md/README.md` is the entry point of the folder: an overview of the system, and a file index that lists each other file once; `modustool check` refuses an index and a folder that are not the same set. The folder follows the standard of [srcmd.org](https://srcmd.org).
 
-An intent file is not a guide: a guide says what the system does and how to use it, and the site publishes it. It is not the record of a decision (`docs/DECISIONS.md`), a review, a log or a plan. It is a working record for the site: a pointer to one links to the file in the repository. Example: `src/md/features/palette.md` says why the palette is a panel of the compositor with the console as its provider, and which forms were refused.
+An intent file is not a guide: a guide says what the system does and how to use it, and the site publishes it. It is not a record of who decided, a review, a log or a plan. It is a working record for the site: a pointer to one links to the file in the repository. Example: `src/md/features/palette.md` says why the palette is a panel of the compositor with the console as its provider, and which forms were refused.
 
 The design: `src/md/README.md`, "The rules of this folder"; `docs/TOOLS.md`, "The intent folder".
 
@@ -5868,7 +5824,7 @@ It is the one place of the plans, and the other half of the changelog: the chang
 
 The file is written by hand. A work that is planned gets an entry; a work that is done loses its entry in the commit of its changelog fragment. `modustool roadmap check` checks the form of the file, and `modustool check` runs it. The site shows the file at `roadmap/`, as three columns of cards.
 
-It is not the status page, which gives the state of each property and the gaps of what is built. It is not a list of gaps: a gap is a difference between the code and the documents, and a gap becomes planned work only when an entry names it. It is not a promise of an order: only the sections order the entries.
+It is not the status page, which gives the state of each property and what is not done of it. It is not a list of the limits of the code: a limit becomes planned work only when an entry names it. It is not a promise of an order: only the sections order the entries.
 
 The design: `docs/TOOLS.md`, "The roadmap", and `docs/SITE.md`, "The roadmap".
 
@@ -6225,7 +6181,7 @@ Do not use: miniature, low-resolution copy.
 
 A guide is a page of the site made from a document of `docs/`: how a part of the system is designed, and why.
 
-Examples: `docs/ARCHITECTURE.md`, `docs/QUIC.md`, `docs/FONTS.md`. A guide states each rule with no name of a person or a role, no step, no choice and no date: that record is `docs/DECISIONS.md`. The working records are not guides and are not published. On the site a guide has the documentation layout, and its code spans link to the declarations and documents that they name.
+Examples: `docs/ARCHITECTURE.md`, `docs/QUIC.md`, `docs/FONTS.md`. A guide states each rule with no name of a person or a role, no step, no choice and no date: git keeps who decided and when. The working records are not guides and are not published. On the site a guide has the documentation layout, and its code spans link to the declarations and documents that they name.
 
 The design: `docs/SITE.md`, "The pages".
 
@@ -6253,9 +6209,9 @@ Do not use: API page, package page.
 
 ### Status page
 
-The status page is the page of the site that gives the state of each property, with its evidence items and its gaps, then all the gaps.
+The status page is the page of the site that gives the state of each property: its status, what it promises, what the machine test shows of it, and what is not done.
 
-It writes no sentence of its own: each cell is a part of `docs/PROPERTIES.md` or of `docs/FIRST_MILESTONE.md`. An evidence item or a gap belongs to a property when its text names it. What is not done is on it as plainly as what is done. It is a section of its own, outside the docs, and a line of the project menu of the bar. It is not the roadmap: the status page says what is built and what is missing, the roadmap says what work is planned, and one line of the status page leads to it.
+It writes no sentence of its own: each cell is a part of `docs/PROPERTIES.md` or of `docs/DEMONSTRATIONS.md`. What is not done is on it as plainly as what is done. It is a section of its own, outside the docs, and a line of the project menu of the bar. It is not the roadmap: the status page says what is built and what is missing, the roadmap says what work is planned, and one line of the status page leads to it.
 
 The design: `docs/SITE.md`, "The status page".
 
@@ -6455,7 +6411,7 @@ Do not use: doc link, citation (for this).
 
 A comment breach is a comment of a source that names a property, a choice, a step, a review, a finding or a decision by its number, its label or its date, in place of the reason.
 
-A number means nothing to a reader of the code, and it goes stale when the record changes. So a comment states the reason in plain words, or points to a heading of a guide. `modustool check` reads every comment of the sources and fails on each breach, with its file, its line and its form: "(property 14)", "(P20)", "choice 186", "D-047", "HANDOFF item 53".
+A number means nothing to a reader of the code, and it goes stale when the record changes. So a comment states the reason in plain words, or points to a heading of a guide. `modustool check` reads every comment of the sources and fails on each breach, with its file, its line and its form: "(property 14)", "(P20)", "choice 186", "D-047".
 
 The design: `docs/TOOLS.md`, "The comments of the sources".
 
