@@ -64,5 +64,59 @@ scenario_iommu := [?]Step {
 }
 
 iommu_tests_run :: proc() -> bool {
-	return machine_test(scenario_iommu[:], BOOT_VOLUME, TEST_OUTPUT_IOMMU, MACHINE_STOP_OK, TEST_DATA_DISK, iommu = true)
+	return machine_test(scenario_iommu[:], BOOT_VOLUME, TEST_OUTPUT_IOMMU, MACHINE_STOP_OK, TEST_DATA_DISK, iommu = .Intel)
+}
+
+// The IOMMU of AMD (src/md/infrastructure/iommu.md, "Two vendors behind
+// one kernel side"): the same system on the machine with the unit of AMD
+// (machine_command, the argument iommu), with translation and interrupt
+// remapping on. The test device service iommu_device runs on the disk of
+// the measures, which is on bus 0 at the place 17: QEMU 10 records the
+// device of a page fault of AMD by its device and its function only, so
+// the line names the device only on bus 0. Its write and its read through
+// declared pages arrive, with its message interrupt through the interrupt
+// table of the device; its read into the interrupt addresses ends, and
+// QEMU 10 records no event for a message that it refuses, so no line of a
+// refused interrupt is waited for; its read into a page that it no longer
+// declares does not arrive, and the kernel writes the line of the DMA
+// fault with the device from the event log. Then `net` sends its datagrams
+// through the window of its datagram region.
+
+TEST_OUTPUT_IOMMU_AMD :: BUILD_FOLDER + "/test_output_iommu_amd.txt"
+
+@(rodata)
+scenario_iommu_amd := [?]Step {
+	// One unit; the walk found bus 0 only.
+	{kind = .Wait, text = "kernel: IOMMU: an I/O virtualization table of AMD, 1 units, ", fails_on = "kernel: no IOMMU"},
+	{kind = .Wait, text = "kernel: IOMMU: translation on, 1 units, 1 buses, ", fails_on = "kernel: no IOMMU"},
+	{kind = .Wait, text = "kernel: IOMMU: interrupt remapping on: a device sends only the message interrupts that its service was given", fails_on = "kernel: IOMMU: no interrupt remapping"},
+	{kind = .Wait, text = "kernel: ok"},
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "start(\"iommu\")"},
+	{kind = .Wait, text = "root: started iommu_device for the device at the place 17 of the bus"},
+	{kind = .Wait, text = "iommu_device: a block written from a declared page and read into another declared page: the 4096 bytes arrived: as it must"},
+	{kind = .Wait, text = "iommu_device: the message interrupt of the device arrived through its entry: as it must"},
+	{kind = .Wait, text = "iommu_device: a read into the interrupt addresses, to entries that the kernel did not give this device: the device gave the request back: as it must"},
+	// The line of the kernel and the line of the service come from two
+	// parties: either can be first. QEMU 10 gives the access of a page
+	// fault in other flags than the specification, so the line names it a
+	// read: the test does not wait for the word.
+	{kind = .Wait, text = "kernel: a DMA fault of the device at bus 0, device 17, function 0 (service iommu_device): a ", any_order = true},
+	{kind = .Wait, text = ", and the page keeps its 4096 bytes: as it must", fails_on = "iommu_device: a read into a page that was not declared: the device wrote the page", any_order = true},
+	{kind = .Wait, text = "iommu: the test device service answered after its read into a page that was not declared: the machine goes on: as it must"},
+	{kind = .Launch, text = "net"},
+	{kind = .Wait, text = "frame: a read region of 128 pages at the place 0, held with the right Read only: the device reads the data of the frames to send there", any_order = true},
+	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 7, 41 bytes: the same 41 bytes came back from 10.0.2.2 port 7 in ", fails_on = "kernel: a DMA fault of the device at bus 0, device 18, "},
+	{kind = .Wait, text = "net: the measures are done", fails_on = "kernel: a DMA fault of the device at bus 0, device 18, "},
+	{kind = .Front, text = "net"},
+	{kind = .Close, text = "net"},
+	{kind = .Wait, text = "root: net stopped with code 0"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "shutdown()"},
+	{kind = .Wait, text = "kernel: the machine stops with code 0"},
+}
+
+iommu_amd_tests_run :: proc() -> bool {
+	return machine_test(scenario_iommu_amd[:], BOOT_VOLUME, TEST_OUTPUT_IOMMU_AMD, MACHINE_STOP_OK, TEST_DATA_DISK, iommu = .Amd)
 }

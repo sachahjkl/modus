@@ -2755,9 +2755,9 @@ Do not use: MSI, vector.
 
 The IOMMU is the unit of the machine that translates each address that a device gives before the access reaches memory, through tables that the kernel writes.
 
-A device reads and writes memory by itself. Without an IOMMU, a device service with a fault can make its device write any page of the machine. With it, the kernel maps in the tables of a device only the pages that its service declared, so a device reaches no other memory. The kernel programs the remapping units of Intel (VT-d) when the firmware lists them in the ACPI table DMAR; the test machine has one in the part `iommu` of the test only. A service declares a memory object with `Memory_Physical`, the call that already gives it the address for its device: the kernel maps the pages in the domain of each device whose registers the service holds by a handle (see "Device domain"). A machine with no IOMMU writes one line at its start and runs as before, with no such isolation; its `Boot_Report.iommu_unit_count` is 0.
+A device reads and writes memory by itself. Without an IOMMU, a device service with a fault can make its device write any page of the machine. With it, the kernel maps in the tables of a device only the pages that its service declared, so a device reaches no other memory. The kernel programs the remapping units of Intel (VT-d) when the firmware lists them in the ACPI table DMAR, else those of AMD (AMD-Vi) when it lists them in the ACPI table IVRS; one boot image runs on both, and one side of the kernel serves both, with a switch on the vendor where their formats differ. The test machine has a unit of Intel in the part `iommu` of the test, and a unit of AMD in the part `iommu_amd`, and none in the other parts. A service declares a memory object with `Memory_Physical`, the call that already gives it the address for its device: the kernel maps the pages in the domain of each device whose registers the service holds by a handle (see "Device domain"). A machine with no IOMMU writes one line at its start and runs as before, with no such isolation; its `Boot_Report.iommu_unit_count` is 0.
 
-The IOMMU is not the page table of a program: a program never sees it, and it translates the addresses of devices and checks their message interrupts only. The kernel programs no IOMMU of AMD yet.
+The IOMMU is not the page table of a program: a program never sees it, and it translates the addresses of devices and checks their message interrupts only.
 
 The design: `src/md/infrastructure/iommu.md`; the guide: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
 
@@ -2765,9 +2765,9 @@ Do not use: DMA remapper, SMMU.
 
 ### Remapping unit
 
-A remapping unit is one part of the IOMMU, with its own registers and tables, that translates the accesses of the devices that the table DMAR gives it.
+A remapping unit is one part of the IOMMU, with its own registers and tables, that translates the accesses of the devices that the table DMAR or IVRS gives it.
 
-A machine of Intel has several: one for its graphics device, and one that covers every other device (the flag `INCLUDE_PCI_ALL`). The table DMAR names the devices of a unit by device scopes: an endpoint, or a bridge and each bus behind it. The kernel programs at most 4 units, and gives each device the unit that names it, else the unit that covers every device. A device has its domain, its invalidations and its DMA faults on its unit. A device that no unit covers reaches all memory, and `Device_Create` of its registers writes one line that says so.
+A machine of Intel has several: one for its graphics device, and one that covers every other device (the flag `INCLUDE_PCI_ALL`). The table DMAR names the devices of a unit by device scopes: an endpoint, or a bridge and each bus behind it. A unit of AMD is itself a function of the bus, and the table IVRS names its devices by ranges of requesters; a device whose range is an alias sends its accesses with another requester, and gets no domain. The kernel programs at most 4 units, and gives each device the unit that names it, else the unit that covers every device. A device has its domain, its invalidations and its DMA faults on its unit. A device that no unit covers reaches all memory, and `Device_Create` of its registers writes one line that says so.
 
 A remapping unit is not a device domain: a unit holds the domains of many devices.
 
@@ -2779,7 +2779,7 @@ Do not use: DRHD, IOMMU unit.
 
 A device domain is the memory that one device can reach through the IOMMU: the pages that its service declared, at their device addresses.
 
-The kernel keeps one domain for each device that has a service: a context entry for the requester of the device on its remapping unit, and second-level tables that map each declared page at its device address. A page is writable for the device only while the service holds a handle with **Write** to its object. The first program that declares memory to a device owns its domain; its budget pays for the tables. A declared object leaves the domain when the service closes or loses its last handle to it, or when the object ends, before its frames are free; the whole domain ends when its service stops, or when it holds neither a handle nor a mapping of the registers of the device. A device with no service has no context entry: an empty domain, in which each access is refused. A device that a reserved memory range names has a standing domain with its ranges instead. A device behind a conventional bridge of PCI gets no domain: every device behind that bridge gives the same requester. Example: the block service of the data disk declares its queue and the data region of the storage service, and its device reaches those pages and no other.
+The kernel keeps one domain for each device that has a service: an entry for the requester of the device on its remapping unit (a context entry of Intel, or an entry of the device table of AMD), and page tables that map each declared page at its device address. A page is writable for the device only while the service holds a handle with **Write** to its object. The first program that declares memory to a device owns its domain; its budget pays for the tables. A declared object leaves the domain when the service closes or loses its last handle to it, or when the object ends, before its frames are free; the whole domain ends when its service stops, or when it holds neither a handle nor a mapping of the registers of the device. A device with no service has no context entry on Intel, and on AMD an entry that names an empty table with neither read nor write: an empty domain, in which each access is refused. A device that a reserved memory range names has a standing domain with its ranges instead. A device behind a conventional bridge of PCI gets no domain: every device behind that bridge gives the same requester. Example: the block service of the data disk declares its queue and the data region of the storage service, and its device reaches those pages and no other.
 
 A device domain is not an address space of a program, and it gives no right to a program.
 
@@ -2813,7 +2813,7 @@ Do not use: aperture.
 
 ### Reserved memory range
 
-A reserved memory range is memory that the firmware keeps for a device, listed in the table DMAR, which the device keeps reading and writing after the start.
+A reserved memory range is memory that the firmware keeps for a device, listed in the table DMAR or IVRS, which the device keeps reading and writing after the start.
 
 The firmware uses one, for example, to emulate a USB keyboard, or as the memory of an integrated graphics device. The kernel maps each range at its own address in a standing domain of each device that the range names, before translation is on, so the device keeps working; a service that takes the device has the ranges in its domain too. `Device_Create` refuses a range that meets it, and no declaration maps it: no program gets it. A range that meets memory that the firmware gave as free or loaded is not mapped, with one line.
 
@@ -2827,7 +2827,7 @@ Do not use: RMRR.
 
 A DMA fault is an access of a device to an address that its device domain does not map, which the IOMMU refuses.
 
-The unit records the requester of the device, the page, and whether it was a read or a write, and sends its fault event to the first processor. The kernel then writes one line on the log with the device, its service, the address and the count of faults of that device, and frees the record. After the first 4 faults of a device, it writes only one line of the count at each power of two, so a device that faults in a loop does not flood the log. A DMA fault stops no program and not the machine: the bytes of the page do not change. A virtio device of QEMU that the unit refuses stops its own requests until a reset, which its service sees in the status of the device.
+The unit records the requester of the device, the page, and whether it was a read or a write, and sends its fault event to the first processor: a unit of Intel in its fault recording registers, a unit of AMD as a record of its event log. The kernel then writes one line on the log with the device, its service, the address and the count of faults of that device, and frees the record. After the first 4 faults of a device, it writes only one line of the count at each power of two, so a device that faults in a loop does not flood the log. A DMA fault stops no program and not the machine: the bytes of the page do not change. A virtio device of QEMU that the unit refuses stops its own requests until a reset, which its service sees in the status of the device.
 
 A DMA fault is not a page fault: no thread caused it, and no fault ring receives it. It is not a refused interrupt either, which has its own line and its own count (see "Interrupt remapping").
 
@@ -2839,7 +2839,7 @@ Do not use: IOMMU fault, DMAR fault.
 
 The queue of invalidations is a ring of descriptors in memory of the kernel through which the kernel tells a remapping unit to forget the entries that it keeps.
 
-A unit keeps the context entries, the translations and the interrupt entries that it read. When the kernel clears or changes one, it writes descriptors that name the domain or the interrupt entry, then a wait descriptor, moves the tail of the queue, and waits until the unit writes the number of the wait in a word of the kernel. The unit then forgot each entry, and drained the accesses in flight. Each unit has one queue of one page; each invalidation waits for its end, so the queue never fills. A unit with no queue leaves the IOMMU off, with one line. A unit that does not reach the wait in one second, or that refuses a descriptor, stops the machine.
+A unit keeps the context entries, the translations and the interrupt entries that it read. When the kernel clears or changes one, it writes descriptors that name the domain or the interrupt entry, then a wait descriptor, moves the tail of the queue, and waits until the unit writes the number of the wait in a word of the kernel. The unit then forgot each entry, and drained the accesses in flight. Each unit has one queue of one page; each invalidation waits for its end, so the queue never fills. A unit with no queue leaves the IOMMU off, with one line. A unit that does not reach the wait in one second, or that refuses a descriptor, stops the machine. On a unit of AMD, the queue of invalidations is a ring of commands of the same size, with a completion wait as the wait descriptor.
 
 A queue of invalidations is not a ring between programs: no program sees it, and only the kernel and the unit read it.
 
@@ -2847,11 +2847,35 @@ The design: `src/md/infrastructure/iommu.md`, "The end of a grant".
 
 Do not use: QI, invalidation queue, IQ.
 
+### Device table
+
+The device table is the table of a remapping unit of AMD that holds one entry of 32 bytes for each requester: the tables of its device domain, its domain identifier, and its interrupt table.
+
+One device table of 2 MiB serves every unit of AMD, with an entry for each of the 65536 requesters: the kernel writes it at the start, before translation is on. An entry of zeros passes every access with no translation, so the kernel writes each entry as valid, with translation through one empty table and neither read nor write: the empty domain refuses every access. A device domain writes the entry of its device, and its end writes the empty entry again. The kernel tells the unit to forget an entry through its queue of invalidations after each change.
+
+A device table is not the context table of Intel, which holds the entries of one bus: it holds those of every bus.
+
+The design: `src/md/infrastructure/iommu.md`, "Two vendors behind one kernel side".
+
+Do not use: DTE, dev table.
+
+### Event log
+
+The event log is a ring of records of 16 bytes in memory of the kernel where a remapping unit of AMD writes each access that it refused, and each fault of its own.
+
+The unit writes a record, then sends the message interrupt of its function to the first processor. The kernel reads each record from its head to the tail that the unit wrote: a page fault is a DMA fault or a refused interrupt, with its line and its count; another record is a line with a count of its own. A full log stops the records: the kernel counts it, empties the log and starts it again. The kernel also reads the log at each tick of the first processor while a record came during its last read.
+
+An event log is not the log of the system: only the kernel and the unit read it, and the kernel writes the lines of the log from it.
+
+The design: `src/md/infrastructure/iommu.md`, "Two vendors behind one kernel side".
+
+Do not use: PPR log, event buffer.
+
 ### Interrupt remapping
 
 Interrupt remapping is the check by the IOMMU of each message interrupt of a device against an interrupt table that the kernel writes, so a device sends only the message interrupts that its service was given.
 
-A message interrupt is a write of 4 bytes to the interrupt addresses, and a device can make that write as any other: without remapping, a device service can make its device send any vector of any processor. With remapping, the kernel writes one interrupt entry for each message interrupt that `Device_Create` makes: the vector, the first processor, and the requester of its device. The device writes the index of its entry, and the unit refuses the message to every other device, the compatible form, and an entry that is not present. A refused interrupt is a line of the log with its device, the entry and the reason, and a count of its own, by the rule of the lines of a DMA fault; nothing stops. The kernel turns remapping on in every unit or in none, and only when the table DMAR allows it. Example: a test device service that reads a block into the interrupt addresses makes its device send messages to entries that it was not given, and the kernel writes `kernel: an interrupt of the device at bus 255, device 31, function 7 (service no service) is refused: entry 30720; ...`.
+A message interrupt is a write of 4 bytes to the interrupt addresses, and a device can make that write as any other: without remapping, a device service can make its device send any vector of any processor. With remapping, the kernel writes one interrupt entry for each message interrupt that `Device_Create` makes: the vector, the first processor, and the requester of its device. The device writes the index of its entry, and the unit refuses the message to every other device, the compatible form, and an entry that is not present. A refused interrupt is a line of the log with its device, the entry and the reason, and a count of its own, by the rule of the lines of a DMA fault; nothing stops. The kernel turns remapping on in every unit or in none, and only when the table DMAR allows it, or when the table IVRS names an IOAPIC. On a unit of AMD each device has an interrupt table of its own, which its entry of the device table names, and the device writes the index of the entry as the value of the message: a device can name only the entries of its own table, so the table is the check of the requester. Example: a test device service that reads a block into the interrupt addresses makes its device send messages to entries that it was not given, and the kernel writes `kernel: an interrupt of the device at bus 255, device 31, function 7 (service no service) is refused: entry 30720; ...`.
 
 Interrupt remapping is not a route of the lines of the 8259: those lines do not go through the IOMMU.
 
@@ -2865,7 +2889,7 @@ The bus is the PCI bus of the machine: each device has a place on it (bus, devic
 
 The configuration of a device says what it is (its vendor and its device numbers), where its registers are (its base address registers), and how it interrupts. A program that can write the configuration of any device can make any device read or write any memory. For that reason only the root service holds the two ports of the configuration (`0xCF8` and `0xCFC`), as a ports handle that it makes with `Device_Create`.
 
-The root service reads the configuration at a fixed place, checks that the device there is the expected virtio device, enables it, gives it the right to use memory (bus master), sets its message interrupt, and starts its device service. The service gets a copy of the first 256 bytes of the configuration, read only (`GRANT_CONFIGURATION`), the device memory of its registers and one message interrupt. On the first machine the places are fixed: the data disk at device 16 (`0x10`), the disk of the measures at 17, the network device at 18. On the machine with the IOMMU, the disk of the measures is at the place 0 of the bus behind a root port at the place 28 (`0x1C`). If no device of the right kind is at the place, the root service logs "root: no virtio device for block at the place 16 of the bus" and starts no service.
+The root service reads the configuration at a fixed place, checks that the device there is the expected virtio device, enables it, gives it the right to use memory (bus master), sets its message interrupt, and starts its device service. The service gets a copy of the first 256 bytes of the configuration, read only (`GRANT_CONFIGURATION`), the device memory of its registers and one message interrupt. On the first machine the places are fixed: the data disk at device 16 (`0x10`), the disk of the measures at 17, the network device at 18. On the machine with the IOMMU of Intel, the disk of the measures is at the place 0 of the bus behind a root port at the place 28 (`0x1C`). If no device of the right kind is at the place, the root service logs "root: no virtio device for block at the place 16 of the bus" and starts no service.
 
 The kernel finds no device on the bus and starts none. With an IOMMU, it reads the bus, and writes nothing to it: it walks bus 0 and the buses behind each bridge to know which function the registers of a memory object belong to, and which remapping unit translates its accesses. The code of the bus is `src/library/support/pci`.
 
