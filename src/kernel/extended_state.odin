@@ -60,6 +60,10 @@ MXCSR_START :: 0x1F80 // Every exception masked, round to nearest.
 Extended_State_Form :: enum u8 {
 	Fxsave   = 0, // fxsave64 and fxrstor64: the processor has no xsave or no xsaveopt.
 	Xsaveopt = 1, // xsaveopt64 and xrstor64.
+	// xsave64 and xrstor64: the save of the state of a guest only. A guest can
+	// run xrstor at any address, and xsaveopt trusts the address of the last
+	// xrstor to skip a component (src/kernel/guest.odin).
+	Xsave    = 2,
 }
 
 foreign _ {

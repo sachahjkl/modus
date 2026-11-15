@@ -718,6 +718,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `fault_ring` | The machine of the fault ring |
 | `debugger` | The two machines of the debugger: the contract of the kernel, then the commands of the service `debugger` |
 | `kernel_events` | The machine of the kernel events |
+| `guest` | The machine of a guest: `guest_demo` runs seven bytes of 16-bit code in a guest, receives its port write of 42 to the port 0x80 as an exit record, sees its `hlt`, and gets its `int1` as an exit `Other` with the exit code 0x88 (icebp). The tool reads the host first: on a host that gives the test machine no SVM, the machine checks only that `Guest_Run` gives `Unsupported`, and the tool writes that no guest ran, and why (`ARCHITECTURE.md`, "A guest") |
 | `iommu` | The machine with the IOMMU of Intel with interrupt remapping (`intel-iommu,intremap=on`, `kernel-irqchip=split`), with the disk of the measures behind a root port of PCI Express: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, whose message interrupt arrives through its entry, whose messages to entries that it was not given are refused with a line, and whose device does not reach a page that it did not declare, then `net`, whose datagram region the network device reads through a device window (`ARCHITECTURE.md`, "K5. Device grant and interrupts") |
 | `shortage` | The machine of the shortage of frames |
 | `principals` | The two machines of the principals |

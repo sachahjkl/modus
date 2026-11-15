@@ -134,6 +134,7 @@ module_builds := [?]Module_Build {
 	{name = "debugger", source = PROGRAM_SOURCES + "debugger", image = true},
 	{name = "debug_target", source = PROGRAM_SOURCES + "debug_target", image = true},
 	{name = "kernel_events", source = PROGRAM_SOURCES + "kernel_events", image = true},
+	{name = "guest_demo", source = PROGRAM_SOURCES + "guest_demo", image = true},
 	{name = "terminal", source = PROGRAM_SOURCES + "terminal", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "flood", source = PROGRAM_SOURCES + "flood", image = true},
 	{name = "processors", source = PROGRAM_SOURCES + "processors", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},

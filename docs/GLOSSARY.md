@@ -1432,7 +1432,7 @@ Do not use: core, supervisor.
 
 A kernel operation is one request that a program makes to the kernel: a command record in the kernel ring of its thread.
 
-The kernel has 33 operations (`op.Operation`), a counted limit that only a change of `docs/PROPERTIES.md` changes. A thread writes up to 32 commands in its kernel ring, then enters the kernel once with `syscall`; the kernel runs them in order and writes one completion record for each: a status, and the results or an error record. The entry can also wait until a wake or a time.
+The kernel has 34 operations (`op.Operation`), a counted limit that only a change of `docs/PROPERTIES.md` changes. A thread writes up to 32 commands in its kernel ring, then enters the kernel once with `syscall`; the kernel runs them in order and writes one completion record for each: a status, and the results or an error record. The entry can also wait until a wake or a time.
 
 A kernel operation needs a handle for each object that it acts on: no operation works without one.
 
@@ -1989,13 +1989,43 @@ Do not use: permission table, access list, manifest.
 
 ### Guest
 
-A guest is a machine that a program of the system runs on the processor, with its own kernel and its own programs; it is not built yet.
+A guest is a machine that a program of the system runs on the processor, with the virtualization support of the processor, and with its own kernel and its own programs.
 
-A guest holds only what its program was granted. A foreign system (Linux) runs in a guest, and its concepts stay inside it. Thread control gives the registers and the extended state that such a program needs.
+A guest holds only what its program was granted. It is a program that `Program_Create` made and that no thread ran: its addresses are the guest physical addresses, and `Memory_Map` with its handle gives it memory. The program that holds it runs its guest processor with `Guest_Run`, and answers each guest exit. A foreign system (Linux) runs in a guest, and its concepts stay inside it. Built: the AMD form, one guest processor for each guest; the program `guest_demo` runs a guest of seven bytes.
 
-The direction: `docs/PROPERTIES.md`, "Objective".
+The design: `docs/ARCHITECTURE.md`, "A guest", and `docs/PROPERTIES.md`, "Objective".
 
 Do not use: virtual machine, VM, container.
+
+### Guest processor
+
+A guest processor is the processor of a guest, as the kernel keeps it between two runs: its registers, its segments, its control registers and its extended state.
+
+A thread runs it with `Guest_Run`: during the operation, the thread is the guest processor, and its budget pays the time. The general registers, `rip` and `rflags` go in and out in a `Guest_Registers` record of the caller; the kernel keeps the rest in the control block of the processor. One thread runs a guest processor at a time.
+
+The design: `docs/ARCHITECTURE.md`, "A guest".
+
+Do not use: vCPU, virtual processor.
+
+### Guest exit
+
+A guest exit is the moment when a guest processor stops and the kernel gets the processor back: an instruction that the guest may not run alone, an access to memory that no mapping allows, or an interrupt of the machine.
+
+The kernel handles one exit itself: a page on first use. Each other exit ends `Guest_Run`, and its completion record says what it was (`Guest_Exit_Kind`): a port write with its port and its value, a port read, `hlt`, `cpuid`, an access to memory, an interrupt. The program answers it with a change of the registers record, then runs the guest again.
+
+The design: `docs/ARCHITECTURE.md`, "A guest", section 3.
+
+Do not use: VM exit, world switch.
+
+### Nested page table
+
+A nested page table is the page table that translates the guest physical addresses of a guest to the memory of the machine.
+
+The processor walks it for each access of a guest, after the page table of the guest itself. The nested page table of a guest is the page table of its program: a mapping of a memory object in that program is guest memory, and an unmap or a revocation takes it away.
+
+The design: `docs/ARCHITECTURE.md`, "A guest", section 1.
+
+Do not use: extended page table, EPT, second-level table.
 
 ### Driver domain
 

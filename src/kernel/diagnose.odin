@@ -451,7 +451,7 @@ kind_explains :: proc "contextless" (kind: errors.Kind, status: op.Status) -> bo
 	case .Bad_State:
 		return kind == .State || kind == .Object_Shared || kind == .Object_Marked
 	case .Bad_Operation:
-		return kind == .Bad_Flags || kind == .Bad_Value || kind == .Too_Small || kind == .Too_Long || kind == .Unknown_Operation || kind == .Not_Multiple
+		return kind == .Bad_Flags || kind == .Bad_Value || kind == .Too_Small || kind == .Too_Long || kind == .Unknown_Operation || kind == .Not_Multiple || kind == .Unsupported
 	}
 	return false
 }
@@ -877,6 +877,12 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 			return false
 		}
 		record_set(record, .Absent, .Bytes, 2, v[1], 0, 0) // No mapping starts at this address.
+	case .Guest_Run:
+		// The registers record, which the kernel reads and writes.
+		if read_range(program, v[1], size_of(op.Guest_Registers), true) {
+			return false
+		}
+		record_set(record, .Bad_Address, .Bytes, 2, v[1], size_of(op.Guest_Registers), 1)
 	case:
 		return false
 	}
@@ -996,7 +1002,7 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			return true
 		}
 		argument = operation == .Memory_Map ? 2 : 1
-	case .Memory_Unmap, .Program_Start, .Program_Module:
+	case .Memory_Unmap, .Program_Start, .Program_Module, .Guest_Run:
 		argument = 1
 	case .Memory_Commit:
 		// A decommit needs an object that only this program names.
@@ -1140,6 +1146,18 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			record_set(record, .Bad_Flags, .None, 3, v[2], op.FAULT_KINDS_DELIVERED, 0)
 		}
 		return true
+	case .Guest_Run:
+		// The machine has no virtualization support that the kernel uses;
+		// else the flags of the registers record.
+		if !intrinsics.atomic_load(&guest_support.ready) {
+			record_set(record, .Unsupported, .None, 0, u64(op.Operation.Guest_Run), 0, 0)
+			return true
+		}
+		flags: u64
+		if read_user(program, v[1] + u64(offset_of(op.Guest_Registers, rflags)), &flags, size_of(flags)) && flags &~ op.GUEST_FLAGS_DEFINED != 0 {
+			record_set(record, .Bad_Value, .None, 2, flags, 0, 0)
+			return true
+		}
 	case .Fault_Answer:
 		// The debugger of a program answers Resume only: the largest
 		// answer that it gives.

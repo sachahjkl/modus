@@ -1221,11 +1221,13 @@ all_other_processors :: proc "contextless" () -> (set: u64) {
 	return set
 }
 
-// processors_with_table gives the other processors that use a page table.
+// processors_with_table gives the other processors that use a page table:
+// as their cr3, or as the nested page table of the guest that they run
+// (guest.odin).
 processors_with_table :: proc "contextless" (table: u64) -> (set: u64) {
 	self := processor_self()
 	for cpu in processors[:processor_count] {
-		if cpu != self && intrinsics.atomic_load(&cpu.table) == table {
+		if cpu != self && table != 0 && (intrinsics.atomic_load(&cpu.table) == table || intrinsics.atomic_load(&guest_tables_running[cpu.index]) == table) {
 			set |= 1 << cpu.index
 		}
 	}
@@ -1688,6 +1690,16 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 		}
 		run_unlock(home)
 	}
+	// A guest of this program runs on a processor with no thread of the
+	// program: that processor gets the interrupt too, which ends the run at
+	// once, and the stop waits for the hold of the run (guest.odin).
+	if program.table != 0 {
+		for cpu in processors[:processor_count] {
+			if intrinsics.atomic_load(&guest_tables_running[cpu.index]) == program.table {
+				running |= 1 << cpu.index
+			}
+		}
+	}
 	for slot in 1 ..< u32(THREAD_TABLE_CAPACITY) {
 		if ended[slot] {
 			thread_finish(slot, threads[slot].serial)
@@ -1743,6 +1755,9 @@ program_cleanup :: proc "contextless" (index: u32) {
 			handle_close(program, &slot)
 		}
 	}
+	// The control block and the extended state of a guest: no run holds
+	// the program now.
+	guest_end(index)
 	address_space_free(program.table, &program.budget)
 	program.table = 0
 	program.cleaned = true

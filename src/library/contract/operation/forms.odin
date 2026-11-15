@@ -85,6 +85,7 @@ OPERATIONS := [Operation]Operation_Form {
 	// and a command of the schedule also takes the machine handle
 	// (thread_control_machine_rights).
 	.Thread_Control = {"Thread_Control", {{"thread", .Handle_Or_Zero, .Thread, {}, 0}, {"number", .Value, .None, {}, 0}, {"command", .Choice, .None, {}, u64(max(Thread_Control_Command))}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {"source", .Address, .None, {}, 0}, {}}},
+	.Guest_Run = {"Guest_Run", {{"program", .Handle, .Program, {.Control}, 0}, {"registers", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
 }
 
 // The name of each object kind, for the sentence of an error record

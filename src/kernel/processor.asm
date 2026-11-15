@@ -368,14 +368,21 @@ stack_switch:                    ; (top: u64, entry: rawptr) -> !: continue on a
 ; a procedure only up to that label, and refuses a kernel where the label
 ; does not follow the procedure.
 ; form: Extended_State_Form, 0 for fxsave64 and fxrstor64, 1 for
-; xsaveopt64 and xrstor64, with edx:eax all ones: every component of XCR0.
+; xsaveopt64 and xrstor64, 2 for xsave64 and xrstor64, with edx:eax all
+; ones: every component of XCR0. The save of a guest takes 2: a guest can
+; run xrstor at any address, and xsaveopt trusts the address of the last
+; xrstor.
 global extended_state_save
 extended_state_save:             ; (area: ^Extended_State_Area, form: u8)
-	test sil, sil
-	jz .with_fxsave
-	mov eax, -1
+	cmp sil, 1
+	jb .with_fxsave
+	mov eax, -1                  ; mov keeps the flags of the cmp.
 	mov edx, -1
+	ja .with_xsave
 	xsaveopt64 [rdi]
+	ret
+.with_xsave:
+	xsave64 [rdi]
 	ret
 .with_fxsave:
 	fxsave64 [rdi]
@@ -426,6 +433,96 @@ extended_state_restore_and_read: ; (area: ^Extended_State_Area, read: ^[4]u64, w
 	ret
 extended_state_restore_and_read_end:                         ; The end of the procedure for the check of the build: never executed.
 	int3
+
+; The entry of a guest processor (src/kernel/guest.odin;
+; docs/ARCHITECTURE.md, "A guest"). It owns the general registers: before
+; vmrun they hold the registers of the guest, after the exit too, but rax
+; and rsp, which the control block keeps. So it is not a template.
+;
+; clgi holds every interrupt, then sti: during the guest, an interrupt of
+; the machine ends the run (the control block intercepts it), and none
+; reaches the kernel before stgi, after cli. vmsave and vmload keep what the
+; exit does not restore: fs, gs, the task register, the local table and the
+; system call registers of the kernel. Between the vmload of the guest and
+; the vmload of the kernel, the gs base is not the kernel's: no code there
+; reads gs.
+;
+; The record of the general registers: Guest_General_Registers in
+; src/kernel/guest.odin, 8 bytes each, in this order.
+GUEST_RBX equ 0
+GUEST_RCX equ 8
+GUEST_RDX equ 16
+GUEST_RSI equ 24
+GUEST_RDI equ 32
+GUEST_RBP equ 40
+GUEST_R8  equ 48
+GUEST_R9  equ 56
+GUEST_R10 equ 64
+GUEST_R11 equ 72
+GUEST_R12 equ 80
+GUEST_R13 equ 88
+GUEST_R14 equ 96
+GUEST_R15 equ 104
+
+global guest_enter
+guest_enter:                     ; (control_block: u64, general: ^Guest_General_Registers, host_area: u64)
+	push rbx
+	push rbp
+	push r12
+	push r13
+	push r14
+	push r15
+	push rsi                     ; [rsp + 8]: the general registers of the guest.
+	push rdx                     ; [rsp]: the host area.
+	mov rax, rdx
+	vmsave                       ; The fs, gs, task and system call state of the kernel.
+	mov rax, rdi                 ; The control block, for vmload and vmrun.
+	mov rbx, [rsi + GUEST_RBX]
+	mov rcx, [rsi + GUEST_RCX]
+	mov rdx, [rsi + GUEST_RDX]
+	mov rdi, [rsi + GUEST_RDI]
+	mov rbp, [rsi + GUEST_RBP]
+	mov r8, [rsi + GUEST_R8]
+	mov r9, [rsi + GUEST_R9]
+	mov r10, [rsi + GUEST_R10]
+	mov r11, [rsi + GUEST_R11]
+	mov r12, [rsi + GUEST_R12]
+	mov r13, [rsi + GUEST_R13]
+	mov r14, [rsi + GUEST_R14]
+	mov r15, [rsi + GUEST_R15]
+	mov rsi, [rsi + GUEST_RSI]   ; Last: it held the address of the record.
+	clgi
+	sti
+	vmload
+	vmrun
+	vmsave                       ; rax is the control block again: the exit restores it.
+	mov rax, [rsp + 8]
+	mov [rax + GUEST_RBX], rbx
+	mov [rax + GUEST_RCX], rcx
+	mov [rax + GUEST_RDX], rdx
+	mov [rax + GUEST_RSI], rsi
+	mov [rax + GUEST_RDI], rdi
+	mov [rax + GUEST_RBP], rbp
+	mov [rax + GUEST_R8], r8
+	mov [rax + GUEST_R9], r9
+	mov [rax + GUEST_R10], r10
+	mov [rax + GUEST_R11], r11
+	mov [rax + GUEST_R12], r12
+	mov [rax + GUEST_R13], r13
+	mov [rax + GUEST_R14], r14
+	mov [rax + GUEST_R15], r15
+	mov rax, [rsp]
+	vmload                       ; The kernel's gs base again.
+	cli
+	stgi
+	add rsp, 16
+	pop r15
+	pop r14
+	pop r13
+	pop r12
+	pop rbp
+	pop rbx
+	ret
 
 %assign vector 0
 %rep STUB_COUNT

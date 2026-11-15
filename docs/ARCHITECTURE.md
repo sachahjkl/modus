@@ -110,7 +110,7 @@ The same picture in text:
 
 ## Kernel systems
 
-The kernel is small on purpose: it does only what a program cannot do safely for itself (P1, P4). It has five systems, and 33 kernel operations reach them (`src/library/contract/operation`, `Operation`). Each system owns a small set of flat tables of fixed size (P13), so the kernel allocates nothing while it runs.
+The kernel is small on purpose: it does only what a program cannot do safely for itself (P1, P4). It has five systems, and 34 kernel operations reach them (`src/library/contract/operation`, `Operation`). Each system owns a small set of flat tables of fixed size (P13), so the kernel allocates nothing while it runs.
 
 The fixed sizes of the tables, from `src/kernel/program.odin`, `src/kernel/processor.odin` and `src/library/contract/operation`:
 
@@ -746,7 +746,7 @@ A program names one of its threads as its fault handler (`Fault_Handler_Set`, op
 
 **The answer `Stop`** writes the stop report of the fault (`program_fault_report`, the same code as a fault with no handler: the stop code `STOP_CODE_FAULT` plus the vector, the vector, the instruction, the address of a page fault), with the stack trace of the waiting thread: the answering thread is of the same program, so the page table of its processor is the one of the program. The instruction address and the frame pointer of the report are those of the fault, which `fault_deliver` keeps in the thread: a write of `Thread_Control` while the thread waits changes its frame, and the report still names the instruction that faulted.
 
-**The kernel operations**: 30 `Fault_Handler_Set` and 31 `Fault_Answer`. With `Events_Set` (32, "Kernel events") and `Thread_Control` (33, "The control of a thread"), the kernel has 33 operations.
+**The kernel operations**: 30 `Fault_Handler_Set` and 31 `Fault_Answer`. With `Events_Set` (32, "Kernel events"), `Thread_Control` (33, "The control of a thread") and `Guest_Run` (34, "A guest"), the kernel has 34 operations.
 
 **The address of a fault** is read from `cr2` once, at the start of `kernel_interrupt`, and each path of the page fault (`page_fault`, `fault_deliver`, `program_fault`) takes that value. For another kind the address is 0.
 
@@ -1187,6 +1187,7 @@ A template is an expression: it takes values and gives values, and the compiler 
 - `stack_switch`: it replaces `rsp` and jumps.
 - `gdt_load`: it reloads `cs` with a far return that uses its own return address.
 - `extended_state_save`, `extended_state_restore`, `extended_state_restore_and_read`: the only code of the kernel that names a vector register. The check of the build allows vector instructions only between the start of each and its end label (`<name>_end`); a template inlined into compiled code has no such label.
+- `guest_enter`: it owns every general register. Before `vmrun` they hold the registers of the guest, and after the exit too ("A guest").
 - `idle_wait` (`sti`, `hlt`, `cli`) and `processor_stop` (`cli`, then `hlt` in a loop): the checker of the compiler takes `hlt` as an instruction after which the flow ends, so it refuses a template that continues after `hlt`. A template marked as one that never returns (`-> !`) is accepted, but a `hlt` continues after an interrupt or an NMI, and the compiled code after such a template is code that the compiler took as unreachable. Both procedures wait: the cost of a call does not matter there.
 - The start code of the other processors (`ap_start_begin` to `ap_start_end`): 16-bit and 32-bit code that the kernel copies to a fixed page.
 
@@ -1370,6 +1371,82 @@ To test the program of a rule before its kind in the loop would save nothing: th
 - A table for each observer: the machine has one table.
 - An event of the interrupts of devices, of the tick, of a wake: four kinds only.
 - A wake of the reader: the program reads its rings by itself; no word of a ring is woken (a wake at each record would make each event point a call of the scheduler path). A reader waits with a deadline.
+
+## A guest
+
+A program runs another system on the processor, in a guest, with the virtualization support of the processor. The program `guest_demo` shows it: a guest of seven bytes of 16-bit code writes 42 to the port 0x80, and the write arrives in the program as an exit record (`modustool test guest`). The terms are in `GLOSSARY.md`: guest, guest processor, guest exit, nested page table. The design and the refused forms are in `src/md/features/guest.md`; the code is `src/kernel/guest.odin` and `guest_enter` in `src/kernel/processor.asm`.
+
+### 1. A guest is a program
+
+A guest is a program that `Program_Create` made and that no thread ran. Its page table is the nested page table of its guest processor: a guest physical address is an address of that program.
+
+- `Memory_Map` with the program handle puts a memory object at a guest physical address. The rules of a mapping hold: no page is writable and executable, and the address 0 is refused.
+- `Memory_Unmap` and `Handle_Revoke` of the memory handle take the memory from the guest, as from any program.
+- A page on first use gets its frame when the guest touches it.
+- The guest is a line of each report of the programs: its name, its mapped pages, its stop.
+
+The first `Guest_Run` makes the program a guest. The budget of the program pays two pages: the control block of the guest processor and its extended state. The time page leaves the program, and the kernel half leaves its top table: the guest reaches only what its program mapped. After that, `Program_Start` of the program gives `Bad_State`.
+
+### 2. The operation
+
+`Guest_Run(program, registers)` is the kernel operation 34. It runs the guest processor on the calling thread until an exit, and gives the exit in its completion record. The reason for one more operation: the instructions that enter a guest are privileged, and no other operation runs the code of another address space on the calling thread.
+
+- `program`: a program handle with **Control**.
+- `registers`: a `Guest_Registers` record in the memory of the caller: the general registers, `rip` and `rflags`. The kernel reads it before the entry and writes it after the exit. The program answers an exit with a change of the record: for a port read, the value in `rax` and the next instruction in `rip`.
+- The segments, the control registers and the extended state of the guest processor stay in the kernel between two runs. The first run starts in 16-bit real mode, each segment at base 0.
+- One thread runs a guest processor at a time: a second one gets `Bad_State`.
+
+The thread is the guest processor while the operation runs. The budget of its program pays the processor time, as for each instruction of the thread. The scheduler sees one thread.
+
+### 3. The exits
+
+The kernel handles one exit itself: a nested page fault on a page on first use of a mapping that allows the access. Each other exit ends the operation with a `Guest_Exit_Kind`:
+
+| Exit | The results |
+|---|---|
+| `Port_Write` | the port, the size, the value, the next instruction |
+| `Port_Read` | the port, the size, the next instruction |
+| `Halt` | the next instruction |
+| `Cpuid` | the next instruction; the leaf is in the record |
+| `Memory` | the guest physical address and the access |
+| `Interrupted` | nothing: an interrupt of the machine ended the run; run again |
+| `Shutdown` | nothing: the guest processor stopped on a triple fault |
+| `Refused_State` | nothing: the processor refused the state of the guest |
+| `Other` | the exit code and the first exit information of the processor |
+
+The guest exits at each port, each model-specific register, `rdpmc`, `cpuid`, `hlt`, each instruction of virtualization, `xsetbv`, `invd`, `wbinvd`, `monitor`, `mwait`, and each access to a debug register. Each of these touches a state that the guest shares with the kernel, or a device of the machine. A string instruction of a port is an exit `Other`: the program decodes it. The debug exception and the alignment check of the guest exit too, as `Other` with the exit codes 0x41 and 0x51, and the instruction `int1` exits by its own intercept (0x88): a guest could make the delivery of one of them raise it again for ever, and hold the processor.
+
+### 4. The run
+
+1. Under the lock of the caller: the handle, and a copy of the record.
+2. Under the lock of the guest program: its state, the first-run setup, one runner, and one hold of the program, as a thread on a processor holds its program.
+3. With no lock: the save of the extended state of the thread and the restore of the guest's, the entry with interrupts on (`clgi`, then `sti`), the exit, and the reverse. An interrupt of the machine ends the run at once: a tick, a wake, a shoot-down.
+4. A page on first use: under the lock of the guest, then step 3 again.
+5. The end of the hold. A stop of the guest program during the run cleans the program up here, as the last processor of a stopped program does.
+6. Under the lock of the caller: the copy of the record back.
+
+The exit does not restore `fs`, `gs`, the task register, the system call registers and the debug registers of the kernel. `vmsave` and `vmload` keep the first four. The guest cannot reach a debug register, and the kernel writes the debug control register again after the exit, with the breakpoints of the thread when it has some.
+
+A processor that runs a guest uses the nested page table, not its `cr3`. A word of the processor names that table during the run, and `processors_with_table` reads it: an unmap in the guest program sends its interrupt there, and the run ends. Each entry flushes the translations of the guest.
+
+`Program_Stop` of a guest program reads the same word: the processor that runs the guest gets the wake interrupt, and the stop returns after the run ended, as for a thread on a processor. No instruction of the guest runs after `Program_Stop` returns.
+
+An exit can interrupt the delivery of an event to the guest (a page on first use of its interrupt table, an interrupt of the machine). The kernel gives that event to the next entry, so the guest loses none.
+
+### 5. A machine with no support
+
+The kernel uses the AMD form: SVM with nested paging. At its start it writes one line: `kernel: guest: AMD SVM with nested paging, <n> address space identifiers, ...`, or `kernel: guest: no guest runs: <why>`. With no support, each `Guest_Run` gives `Bad_Operation` with the error kind `Unsupported`.
+
+The test machine gets SVM from KVM on an AMD host whose module `kvm_amd` has nested virtualization on, or from the emulation of QEMU when the host has no KVM. On a host that gives no SVM, `modustool test guest` runs the machine of the other outcome: it checks that `Guest_Run` gives `Unsupported`, and the tool writes that no guest ran, and why.
+
+### 6. Not built
+
+- The Intel form (VMX).
+- Several guest processors for one guest, and an interrupt injected into a guest.
+- Memory at the guest physical address 0, and memory that a guest writes and executes: a system such as Linux needs both.
+- Long mode in a guest: the program cannot answer a write of `EFER` or of a control register, so a guest stays in real mode or protected mode.
+- An exception or an interrupt that the program injects into the guest.
+- A translation cache kept across runs: each entry flushes it.
 
 ## How the systems depend on each other
 

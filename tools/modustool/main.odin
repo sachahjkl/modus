@@ -682,7 +682,7 @@ run_machine :: proc(args: []string) -> int {
 }
 
 // The parts of the machine test that `test <part>` runs alone.
-test_parts := [?]string{"main", "network", "power", "hierarchy", "ranges", "disk_programs", "tcp", "quic", "quic-real", "crypto", "random", "shortage", "extended_state", "return_fault", "fault_ring", "debugger", "kernel_events", "iommu", "principals", "outside_module", "trusted_boot"}
+test_parts := [?]string{"main", "network", "power", "hierarchy", "ranges", "disk_programs", "tcp", "quic", "quic-real", "crypto", "random", "shortage", "extended_state", "return_fault", "fault_ring", "debugger", "kernel_events", "iommu", "guest", "principals", "outside_module", "trusted_boot"}
 
 // test_arguments_problem gives the refusal of the arguments of `test`, or
 // "" when they name the whole test, one part, or `trusted_boot tpm`. A word
@@ -804,6 +804,10 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "iommu" {
 		return iommu_tests_run() ? 0 : EXIT_FAILURE
 	}
+	// `test guest`: the machine of the guest only.
+	if len(args) == 1 && args[0] == "guest" {
+		return guest_tests_run() ? 0 : EXIT_FAILURE
+	}
 	// `test return_fault`: the machine of the return to a program only.
 	if len(args) == 1 && args[0] == "return_fault" {
 		return return_fault_tests_run() ? 0 : EXIT_FAILURE
@@ -829,7 +833,7 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "quic-real" {
 		return quic_real_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !debugger_tests_run() || !kernel_events_tests_run() || !iommu_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !hierarchy_tests_run() || !ranges_tests_run() || !disk_programs_tests_run() || !power_loss_run() || !power_loss_settings_run() || !power_loss_ranges_run() || !test_modules() || !test_descriptions() || !test_debug_objects() || !outside_module_examples_check() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !debugger_tests_run() || !kernel_events_tests_run() || !iommu_tests_run() || !guest_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !hierarchy_tests_run() || !ranges_tests_run() || !disk_programs_tests_run() || !power_loss_run() || !power_loss_settings_run() || !power_loss_ranges_run() || !test_modules() || !test_descriptions() || !test_debug_objects() || !outside_module_examples_check() {
 		return EXIT_FAILURE
 	}
 	fmt.println("modustool: all tests passed")

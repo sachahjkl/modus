@@ -471,6 +471,7 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	debug_register_7_write(DR7_NO_BREAKPOINT)
 	debug_register_6_write(DR6_CLEAR)
 	apic_setup(cpu)
+	guest_processor_setup(cpu)
 }
 
 // processor_start prepares the first processor.

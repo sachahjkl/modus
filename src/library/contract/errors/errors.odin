@@ -141,7 +141,8 @@ Kind :: enum i64 {
 	// The network service gives it, with the unit `Milliseconds`.
 	Unsupported       = 27, // The receiver does not do this command. value: the command, or the field that it does not do.
 	// Given by the block and frame services for a command that the device does not have, by the network
-	// service, the root service and QUIC.
+	// service, the root service and QUIC. The kernel gives it with `Bad_Operation` for `Guest_Run` on a machine
+	// whose processors have no virtualization support that it uses: value is the operation.
 	Link_Down         = 28, // The link of the network device is down.
 	// The network service gives it for a send while the device reports no link.
 	Busy              = 29, // Too many requests are in flight. value: the requests in flight, or 0 when the receiver does not count them; limit: the most.

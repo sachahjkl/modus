@@ -1,6 +1,6 @@
 # Foreign systems: programs of Linux and of NT
 
-The system implements no foreign interface. A foreign system runs whole inside a guest that holds only its grants ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Objective"). This file records the comparison that led to that rule, and the forms that were refused. Nothing of it is built.
+The system implements no foreign interface. A foreign system runs whole inside a guest that holds only its grants ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Objective"). This file records the comparison that led to that rule, and the forms that were refused. The guest support that it asks for is in [guest.md](guest.md).
 
 The rule is in [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Objective". The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Guest".
 
@@ -66,4 +66,4 @@ The primitives, then the IOMMU (a device reaches only the memory that its servic
 
 ## State
 
-Decided, with no code. The three primitives are built. The IOMMU is the next step.
+The three primitives are built, and the IOMMU of Intel. Guest support is built in its AMD form, with one new kernel operation: a guest is a program whose page table is the nested page table, and the exits arrive as completion records ([guest.md](guest.md)). Linux in a guest is the next step of this order.

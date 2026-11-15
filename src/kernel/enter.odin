@@ -61,6 +61,14 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 	cpu := processor_self()
 	cpu.retry = false
 	cpu.operation = true
+	// A guest runs with no lock held: the operation takes its own locks
+	// (guest.odin).
+	if op.Operation(command.kind) == .Guest_Run {
+		guest_status := guest_run(index, command.values, results)
+		cpu.operation = false
+		stop_wait(cpu)
+		return guest_status
+	}
 	status := execute_locked(index, command, results)
 	if cpu.retry || status == STATUS_RETRY {
 		cpu.retry = false
@@ -144,6 +152,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	switch op.Operation(command.kind) {
 	case .None:
 		return .Ok
+
+	case .Guest_Run:
+		// command_run takes Guest_Run before it comes here: it runs
+		// outside the program lock.
+		return .Bad_Operation
 
 	case .Log:
 		_ = handle_find(program, v[0], .Log, {.Write}) or_return
@@ -310,7 +323,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		to := &programs[slot.object]
 		taken := program_lock(slot.object)
 		defer program_unlock(slot.object, taken)
-		if to.state != .Created {
+		// A guest has no kernel half in its page table: no thread runs on it.
+		if to.state != .Created || program_is_guest(slot.object) {
 			return .Bad_State
 		}
 		// The first thread of the program gets the weight limit of the

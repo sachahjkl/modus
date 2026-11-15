@@ -749,6 +749,7 @@ test_part_volumes := [?]Volumes_Of_Part {
 	{part = "debugger", procedures = {"debugger_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "kernel_events", procedures = {"kernel_events_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "iommu", procedures = {"iommu_tests_run"}, volumes = {BOOT_VOLUME}},
+	{part = "guest", procedures = {"guest_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "principals", procedures = {"principals_tests_run"}, volumes = {BOOT_VOLUME}},
 	// No machine starts: the part needs the built modules, which the build
 	// of a volume gives.

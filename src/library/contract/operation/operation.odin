@@ -35,6 +35,7 @@
 // - `Fault_Record`, `Fault_Kind`, `Thread_Registers`: the fault ring and the
 //   control of a thread.
 // - `Event_Rule`, `Event_Record`, `Event_Ring`: the kernel events.
+// - `Guest_Registers`, `Guest_Exit_Kind`: a guest (`Guest_Run`).
 // - `Log_Head`, `Log_Record`, `Log_Level`: the log of the kernel.
 // - The reports of `Inspect`: `System_Report`, `Program_Report`,
 //   `Processor_Report`, `Boot_Report`, `Mapping_Report`, `Module_Report`,
@@ -1133,6 +1134,49 @@ Operation :: enum u32 {
 	//   `Resume` of a thread that the debugger did not stop.
 	// - `Bad_Address`: `size` is too small, or the program cannot read or write the memory; a `Read_Memory`
 	//   whose first byte the program of the thread cannot read, or whose range is not below `USER_END`.
+	Guest_Run = 34, // (program, registers: Guest_Registers) -> kind: Guest_Exit_Kind, a, b, c, next, exit code, exit information.
+	// Runs the guest processor of a program on the calling thread, until an exit that the kernel does not
+	// handle itself, and gives that exit ([a guest](docs/ARCHITECTURE.md#a-guest)). The program is a guest:
+	// a program that `Program_Create` made and that no thread ran. Its addresses are the guest physical
+	// addresses: `Memory_Map` with its handle gives the guest memory. The first run makes the program a
+	// guest: its budget pays two pages, the time page leaves it, and `Program_Start` of it gives `Bad_State`
+	// after. The guest processor starts in 16-bit real mode, with each segment at base 0.
+	//
+	// The kernel gives a page on first use of a mapping of the guest its frame when the guest touches it,
+	// and enters the guest again: that exit does not end the operation. The operation ends at each other
+	// exit, with the exit in its results.
+	//
+	// **Arguments**
+	//
+	// - `program`: a program handle with **Control**, of a program in the state `Created`, with no thread,
+	//   which is not the caller.
+	// - `registers`: the address of a `Guest_Registers` record that the program can read and write. The
+	//   kernel reads it before the entry, and writes the registers of the guest processor there after the
+	//   exit. The program answers an exit by a change of the record before the next run.
+	//
+	// **Results**
+	//
+	// 1. the `Guest_Exit_Kind` of the exit;
+	// 2. to 4. the values of the exit kind: `a`, `b` and `c` (`Guest_Exit_Kind` says what each one holds);
+	// 5. the address of the instruction after the one that exited, for `Port_Write`, `Port_Read`, `Halt`
+	//    and `Cpuid`; else 0;
+	// 6. the exit code of the processor (the AMD manual, volume 2, appendix C): what an exit `Other` was;
+	// 7. the first exit information of the processor.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Operation`: the processors of the machine have no virtualization support that the kernel uses
+	//   (AMD SVM with nested paging), and the error kind is `Unsupported`; or `rflags` of the record has a
+	//   bit that no flags register has (`guest_registers_refusal`).
+	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
+	// - `Bad_State`: the program is the caller, was started, stopped, or another thread runs its guest
+	//   processor now.
+	// - `Bad_Address`: the program cannot read and write the record.
+	// - `No_Budget`: at the first run, the budget of the program cannot pay its two pages.
+	//
+	// ```odin
+	// exit, status := system.guest_run(guest, &registers)
+	// ```
 }
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
@@ -1326,6 +1370,63 @@ thread_placement_after_write :: proc "contextless" (written, held: Thread_Placem
 		}
 	}
 	return {processors = processors, processors_limit = limit}, .None, 0
+}
+
+// The registers of a guest processor that `Guest_Run` takes and gives: the
+// general registers, the instruction address and the flags. The kernel keeps
+// the rest of the state of the guest processor (its segments, its control
+// registers, its extended state) between two runs. See [guest](term:guest)
+// and (docs/ARCHITECTURE.md, "A guest").
+//
+// A program answers an exit by a change of the record before the next run:
+// for `Port_Read`, the value in the low bytes of `rax` and the next
+// instruction in `rip`; for `Port_Write` and `Halt`, the next instruction in
+// `rip`. A record of zeros is a guest processor at the address 0 with no flag
+// set. 144 bytes.
+//
+// Example: a guest at 0x1000 in real mode is `{rip = 0x1000}`; after the exit
+// `Port_Write` of `out dx, al` with dx 0x80 and al 42, `rax & 0xFF` is 42.
+Guest_Registers :: struct {
+	rax, rbx, rcx, rdx: u64,
+	rsi, rdi, rbp, rsp: u64,
+	r8, r9, r10, r11:   u64,
+	r12, r13, r14, r15: u64,
+	rip:    u64, // In real mode, the offset in the code segment.
+	rflags: u64, // Only the bits of `GUEST_FLAGS_DEFINED`; the kernel sets bit 1, which is always 1.
+}
+#assert(size_of(Guest_Registers) == 144)
+
+// The bits of the flags register that a processor has: carry, parity,
+// adjust, zero, sign, trap, interrupt, direction, overflow, the I/O
+// privilege level, nested task, resume, virtual 8086, alignment check, the
+// two virtual interrupt flags and identification. The others are reserved:
+// bit 1 is always 1, and the processor faults on a reserved bit set.
+GUEST_FLAGS_DEFINED :: u64(0x003F_7FD7)
+
+// guest_registers_refusal says if `Guest_Run` refuses a registers record:
+// its flags have a bit outside `GUEST_FLAGS_DEFINED`.
+guest_registers_refusal :: proc "contextless" (registers: Guest_Registers) -> bool {
+	return registers.rflags &~ GUEST_FLAGS_DEFINED != 0
+}
+
+// What ended a run of a guest processor: the first result of `Guest_Run`.
+// The comment of each member says what the results `a`, `b` and `c` hold.
+// The fifth result is the address of the instruction after the one that
+// exited, for the four kinds that name an instruction.
+//
+// Example: `out dx, al` with dx 0x80 and al 42 gives `Port_Write`, a 0x80,
+// b 1, c 42.
+Guest_Exit_Kind :: enum u64 {
+	None          = 0, // Not an exit: a completion with a status that is not Ok.
+	Port_Write    = 1, // `out`: a the port, b the size in bytes (1, 2 or 4), c the value.
+	Port_Read     = 2, // `in`: a the port, b the size in bytes. The program writes the value in `rax` and the next instruction in `rip`.
+	Halt          = 3, // `hlt`: the guest waits for an interrupt.
+	Cpuid         = 4, // `cpuid`: the leaf is in `rax` and `rcx` of the record. The program writes the four answers and the next instruction.
+	Memory        = 5, // An access to a guest physical address that no mapping allows: a the address, b the access (`Fault_Access`).
+	Interrupted   = 6, // An interrupt of the machine ended the run, or its program stopped: nothing to answer. Run again.
+	Shutdown      = 7, // The guest processor shut down: a fault while it delivered a double fault. Its state means nothing now.
+	Refused_State = 8, // The processor refused the state of the guest processor: no instruction of the guest ran.
+	Other         = 9, // Another instruction that the guest may not run alone: the exit code of the processor is the sixth result.
 }
 
 // A module record: one module that a loader put in a program (Program_Module).
