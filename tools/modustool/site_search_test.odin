@@ -112,7 +112,6 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	append(&site.guides, Site_Guide{source = "docs/NETWORK.md", path = SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE, title = "Network", headings = headings})
 	entry, _ := news_parse("2026-11-11-a-thing.md", "title: A \"thing\" </script>\ndate: 2026-11-11\nrelease: next\npicture: none\nkind: Shown\nguide: none\n\nIt runs. More.\n")
 	site.news = []Site_News{{entry = entry, anchor = site_news_anchor(entry)}}
-	site.gaps = []Site_Gap{}
 
 	written := make(map[string]string, context.temp_allocator)
 	written["index.html"] = "<h1>modus</h1>"

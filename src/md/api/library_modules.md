@@ -1,6 +1,6 @@
 # Shared libraries as modules: where the border goes
 
-A package that many programs compile in is a bundle with no record of what it holds. The libraries that each program compiled into its own file become modules, loaded one time and imported (`docs/DECISIONS.md`, D-237). This file records how the border of such a module is chosen.
+A package that many programs compile in is a bundle with no record of what it holds. The libraries that each program compiled into its own file become modules, loaded one time and imported. The cost of a call across the border of a module is measured before and after each conversion, above all for the drawing of text. This file records how the border of such a module is chosen.
 
 The rules that a writer of a library module follows are in [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "A library as a module". The first library module, the drawing of a window, is in [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), section 7.
 

@@ -17,9 +17,9 @@ import "core:strings"
 SITE_GLOSSARY_FILE :: "docs/GLOSSARY.md"
 
 // The words that start a label of a place in a document: "section 8",
-// "sections 4 and 5", "property <n>". The last three name a numbered item
+// "sections 4 and 5", "property <n>". The last one names a numbered item
 // of a list, not a heading (site_item_find).
-SITE_POINTER_LABEL_WORDS :: [?]string{"sections ", "section ", "property ", "decision ", "choice ", "item "}
+SITE_POINTER_LABEL_WORDS :: [?]string{"sections ", "section ", "property ", "item "}
 
 // The start of the markup of a reference to a document: the check of a
 // test and the style sheet know it by its class.
@@ -244,9 +244,7 @@ site_parts_outside_quotes :: proc(text: string) -> []string {
 }
 
 // site_label_token_end reads a label of a section at an index: "8", "12.4",
-// "5a", "U2b", "K1", and the identifier of a decision (a capital D, a
-// hyphen and a number). With
-// capital_required, the label starts with a capital
+// "5a", "U2b", "K1". With capital_required, the label starts with a capital
 // letter: a bare number after a comma is a word of the sentence.
 site_label_token_end :: proc(text: string, at: int, capital_required: bool) -> (end: int, found: bool) {
 	decimal_digit :: proc(character: u8) -> bool {
@@ -255,9 +253,6 @@ site_label_token_end :: proc(text: string, at: int, capital_required: bool) -> (
 	index := at
 	if index < len(text) && text[index] >= 'A' && text[index] <= 'Z' {
 		index += 1
-		if index + 1 < len(text) && text[index] == '-' && decimal_digit(text[index + 1]) {
-			index += 1
-		}
 	} else if capital_required {
 		return 0, false
 	}
@@ -808,7 +803,7 @@ site_document_targets :: proc(site: ^Site, path: string, labels: []string) -> []
 		}
 		chosen := make([dynamic]Site_Document_Target, context.temp_allocator)
 		for alternative in alternatives {
-			// A numbered item ("choice <n>", "item <n>") is the last label.
+			// A numbered item ("item <n>") is the last label.
 			if item_index, is_item := site_item_find(outline, low, high, alternative); is_item {
 				if !last || item_index < 0 {
 					append(&targets, unresolved)
@@ -906,36 +901,15 @@ site_bold_title_find :: proc(outline: Site_Document_Outline, low, high: int, lab
 	return max(found, -1)
 }
 
-// site_item_find tells whether a label names a numbered item ("choice <n>",
-// "item <n>"), and gives the index of the one item of that number inside the
-// part from low to high, or -1 when none or several have it. "choice" and
-// "decision" look first inside the part of the heading that starts with
-// "Choices" or "Decisions".
+// site_item_find tells whether a label names a numbered item ("item <n>"),
+// and gives the index of the one item of that number inside the part from
+// low to high, or -1 when none or several have it.
 site_item_find :: proc(outline: Site_Document_Outline, low, high: int, label: string) -> (index: int, is_item: bool) {
-	// The words of a label that names a numbered item, and the slug of the
-	// heading whose part holds the items of that word ("" for any part).
-	words := [3][2]string{{"choice ", "choices"}, {"decision ", "decisions"}, {"item ", ""}}
-	number := ""
-	part_heading := ""
-	for word in words {
-		if strings.has_prefix(label, word[0]) {
-			number = label[len(word[0]):]
-			part_heading = word[1]
-		}
-	}
-	if number == "" {
+	if !strings.has_prefix(label, "item ") {
 		return -1, false
 	}
+	number := label[len("item "):]
 	part_low, part_high := low, high
-	if part_heading != "" {
-		for heading_index in low ..< high {
-			slug := site_slug(site_heading_without_label(site_heading_plain(outline.headings[heading_index].text)))
-			if slug == part_heading || strings.has_prefix(slug, strings.concatenate({part_heading, "-"}, context.temp_allocator)) {
-				part_low, part_high = heading_index + 1, site_heading_part_end(outline.headings, heading_index, high)
-				break
-			}
-		}
-	}
 	index = -1
 	for item, item_index in outline.items {
 		// An item belongs to the part when the heading above it is the
@@ -1196,7 +1170,7 @@ site_comment_cell :: proc(site: ^Site, b: ^strings.Builder, from_page, text: str
 }
 
 // site_document_of_code_span gives the document that a code span of a guide
-// names: "ARCHITECTURE.md", "docs/FONTS.md", "FIRST_MILESTONE.md".
+// names: "ARCHITECTURE.md", "docs/FONTS.md", "SITE.md".
 site_document_of_code_span :: proc(site: ^Site, code: string) -> (path: string, found: bool) {
 	base := code[strings.last_index_byte(code, '/') + 1:]
 	if site == nil || !strings.has_suffix(base, ".md") {
@@ -1342,7 +1316,7 @@ site_document_pointer_problems :: proc(site: ^Site) -> []string {
 	for guide in site.guides {
 		append(&documents, guide.source)
 	}
-	append(&documents, SITE_GLOSSARY_FILE, SITE_MILESTONE_FILE)
+	append(&documents, SITE_GLOSSARY_FILE)
 	if news_files, news_ok := files_with_suffix("news", ".md"); news_ok {
 		append(&documents, ..news_files)
 	}

@@ -566,4 +566,4 @@ This milestone uses properties 1, 2, 4, 6, 10, 13 and 17 in their smallest form.
 Secure Boot and the TPM measurement come after it, because they need only the boot program.
 Each later step adds one capability to a system that already works.
 
-**State**: reached. The system has since grown past it; the order of the next steps is in `FIRST_MILESTONE.md`, section "Next steps".
+**State**: reached. The system has since grown past it; the planned work is in `ROADMAP.md`.
