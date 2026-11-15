@@ -25,13 +25,21 @@ import "modus:support/web"
 //             program `fetch` connects to it (Listener).
 //
 // The listener answers as `server` does: GET /hello, GET /large, and POST
-// /sink, which gives the length and the hash of the body.
+// /sink, which gives the length and the hash of the body. A scenario can
+// give it files too: GET of the path of a file answers its bytes (the
+// module file that the module file service of the machine fetches).
 
 GUEST_ADDRESS :: "10.0.2.100" // The address of the listener on the network of the machine.
 
 Forward :: struct {
 	host_port: int, // hostfwd: this port of the loopback of the host is the port 80 of the machine.
 	listener:  ^Listener,
+}
+
+// A file that the listener serves: GET of its path answers its bytes.
+Listener_File :: struct {
+	path:  string,
+	bytes: []u8,
 }
 
 Listener :: struct {
@@ -43,6 +51,7 @@ Listener :: struct {
 	requests:   int,
 	sink_bytes: int,
 	failure:    string,
+	files:      []Listener_File, // Set before the thread starts, and never changed: the thread reads it with no lock.
 }
 
 // free_port gives a port of the loopback that no socket holds now. Another
@@ -57,7 +66,7 @@ free_port :: proc() -> (port: int, ok: bool) {
 	return bound.port, bound_err == nil
 }
 
-listener_start :: proc(listener: ^Listener) -> bool {
+listener_start :: proc(listener: ^Listener, files: []Listener_File = nil) -> bool {
 	socket, err := net.listen_tcp({net.IP4_Loopback, 0})
 	if err != nil {
 		fmt.eprintfln("modustool: the listener has no TCP socket: %v", err)
@@ -68,7 +77,7 @@ listener_start :: proc(listener: ^Listener) -> bool {
 		net.close(socket)
 		return false
 	}
-	listener^ = {socket = socket, port = bound.port}
+	listener^ = {socket = socket, port = bound.port, files = files}
 	listener.thread = thread.create_and_start_with_poly_data(listener, listener_run)
 	return true
 }
@@ -102,6 +111,16 @@ listener_run :: proc(listener: ^Listener) {
 		sync.atomic_store((^int)(&listener.client), 0)
 		net.close(client)
 	}
+}
+
+// listener_file_find gives the place of the file of a path, or -1.
+listener_file_find :: proc(files: []Listener_File, path: string) -> int {
+	for item, index in files {
+		if item.path == path {
+			return index
+		}
+	}
+	return -1
 }
 
 // send_all sends each byte, or says that it could not.
@@ -172,6 +191,15 @@ listener_serve :: proc(listener: ^Listener, client: net.TCP_Socket) {
 			listener.sink_bytes = received
 			answer = fmt.tprintf("received %d bytes, fnv1a64 %016x\n", received, hash)
 			rest = nil
+		case head.method == .Get && listener_file_find(listener.files, path) >= 0:
+			served := listener.files[listener_file_find(listener.files, path)]
+			head_text := fmt.tprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", len(served.bytes))
+			if !send_all(client, transmute([]u8)head_text) || !send_all(client, served.bytes) {
+				return
+			}
+			sync.atomic_add(&listener.requests, 1)
+			length = copy(buffer[:], rest)
+			continue
 		case:
 			answer = "no such page\n"
 		}
