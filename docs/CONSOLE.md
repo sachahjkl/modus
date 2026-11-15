@@ -267,7 +267,7 @@ When the export has a table of error details and wrote more than one detail, one
 |---|---|---|
 | `help()` | Table of `Command` | One row for each command: `name`, `signature`, `about` |
 | `describe(name)` | Text | The signature and the whole help of one command |
-| `programs()` | Table of `Program` | The export `monitor.programs()` ("The built-in commands and the services") |
+| `programs()` | Table of `Program` | The export `monitor.programs()` ("The built-in commands and the services"). A disk program has its nickname as its `name` and the hash of its file in `hash`: `columns(where(programs(), "name", "visitor"), "name hash")` |
 | `debug(program)`, `detach()` | Table | One row: the exports `debugger.attach()` and `debugger.detach()` ("The commands of the debugger") |
 | `threads()`, `hold(thread)`, `resume(thread)`, `continue_all()`, `step(thread)`, `step_line(thread)`, `step_over(thread)` | Table of `Thread_Row` | The threads of the debugged program: `thread`, `state`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
 | `registers(thread)` | Table of `Register_Row` | `name`, `value`, `about` |
