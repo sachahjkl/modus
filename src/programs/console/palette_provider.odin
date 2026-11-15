@@ -661,11 +661,14 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 	switch kind {
 	case .None:
 	case .Strategy:
+		// One buffer outside the loop: LLVM gave the debug records of a
+		// buffer declared in the loop in another order at each build, so the
+		// module was not the same bytes twice (docs/REPRODUCIBLE_BUILD.md).
+		value_buffer: [PALETTE_STRATEGY_VALUE_CAPACITY]u8
 		for strategy in op.Strategy {
 			if strategy == .None {
 				continue
 			}
-			value_buffer: [PALETTE_STRATEGY_VALUE_CAPACITY]u8
 			add(&candidates, &count, palette_strategy_value(&value_buffer, strategy))
 		}
 	case .Setting:
