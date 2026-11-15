@@ -240,7 +240,10 @@ Function :: struct {
 	reserved:              [2]u8, // 0.
 	text_offset:           u32, // The documentation text of the export, in the string table.
 	text_count:            u32, // The bytes of the documentation text.
-	parameter_details:     [PARAMETER_CAPACITY]u32, // What the type of each parameter needs: Type says what it is.
+	// What the type of each parameter needs: Type says what it is. An
+	// Integer: what it counts, 0 for a plain number
+	// (value_kinds.integer_unit_detail).
+	parameter_details:     [PARAMETER_CAPACITY]u32,
 	result_detail:         u32, // A Record or Table result: the index of the description of the record.
 	// Not 0: the export gives an error record (src/library/contract/errors), and this is
 	// the index of its description in the record table. The caller gives one

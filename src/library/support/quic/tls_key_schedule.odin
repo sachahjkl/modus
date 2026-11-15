@@ -6,6 +6,7 @@ package quic
 // caller, erased when the handshake ends.
 
 import "modus:contract/errors"
+import "modus:contract/value_kinds"
 
 // The bytes of a SHA-256 hash: 32.
 //
@@ -99,7 +100,7 @@ hkdf_expand_label_with_context :: proc "contextless" (cryptography: ^Cryptograph
 	key := string(secret)
 	info := string(hkdf_label)
 	result := output
-	return cryptography.hkdf_sha256_expand(&key, &info, i64(len(output)), &result, error) == i64(len(output))
+	return cryptography.hkdf_sha256_expand(&key, &info, value_kinds.Size_In_Bytes(len(output)), &result, error) == i64(len(output))
 }
 
 // hkdf_extract gives HKDF-Extract(salt, input) with SHA-256: 32 bytes (RFC 5869, section 2.2).

@@ -874,11 +874,11 @@ Do not use: span (for this), token, highlight range.
 
 ### Integer unit
 
-An integer unit is what an Integer parameter of a command counts: a value kind, Size or Time, and one unit of that kind, such as pages or milliseconds.
+An integer unit is what an Integer parameter of a command or of an export counts: a value kind, Size or Time, and one unit of that kind, such as pages or milliseconds.
 
-A command states it beside the kind of its parameter, and the palette provider writes it in the palette table (`value_kinds.Integer_Unit`). The palette shows the unit after the number of the field, `buffer(count: 4 pages)`, so the principal types the number in the unit that the command reads. The units are those of a value run of the log: bytes, KiB, MiB, pages, blocks, ns, us, ms and s. The text of a unit comes from the contract, never from the provider. It converts nothing: `4` stays the number 4. A plain count, such as the number of a thread, has no integer unit. The built-in commands of the console state theirs; the description of an export has no place for one yet.
+A command states it beside the kind of its parameter, and the palette provider writes it in the palette table (`value_kinds.Integer_Unit`). The palette shows the unit after the number of the field, `buffer(count: 4 pages)`, so the principal types the number in the unit that the command reads. The units are those of a value run of the log: bytes, KiB, MiB, pages, blocks, ns, us, ms and s. The text of a unit comes from the contract, never from the provider. It converts nothing: `4` stays the number 4. A plain count, such as the number of a thread, has no integer unit. The built-in commands of the console state theirs in the console. An export states its own in its description: the source gives the parameter a type of the contract such as `value_kinds.Size_In_Bytes` in place of `i64`, and the file holds the unit in the detail of the parameter. The unit is part of the meaning of the export: the check of a replacement and the check of an import declaration refuse another unit.
 
-The design: `src/md/features/palette.md`, "The form of an entry, from its descriptions".
+The design: `src/md/features/palette.md`, "The form of an entry, from its descriptions". The format: `docs/MODULE_CONTRACT.md`, "The unit of an Integer parameter".
 
 Do not use: dimension, measure (for this).
 

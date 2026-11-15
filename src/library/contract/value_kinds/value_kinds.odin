@@ -200,6 +200,95 @@ integer_unit_text :: proc "contextless" (integer_unit: Integer_Unit) -> string {
 	return ""
 }
 
+// integer_unit_detail gives the detail of an Integer parameter of an
+// export that counts in an integer unit (module.Function.parameter_details):
+// the value kind in byte 1, the unit in byte 2. Byte 0 stays 0, because the
+// console puts the size of an Integer field (1, 2 or 4) in the same word,
+// and a size 2 must not read as a size in bytes. A plain number is 0.
+integer_unit_detail :: proc "contextless" (integer_unit: Integer_Unit) -> u32 {
+	if integer_unit.kind == .None {
+		return 0
+	}
+	return u32(integer_unit.kind) << 8 | u32(integer_unit.unit) << 16
+}
+
+// integer_unit_of_detail gives the integer unit of the detail of an Integer
+// parameter. A detail that another party wrote can be anything: ok is
+// false for a detail that is not one of the contract, with a byte 0 or a
+// byte 3 that is not 0, or a unit that does not exist. The detail 0 is a
+// plain number, and ok.
+integer_unit_of_detail :: proc "contextless" (detail: u32) -> (integer_unit: Integer_Unit, ok: bool) {
+	if detail & 0xFF00_00FF != 0 {
+		return {}, false
+	}
+	integer_unit = {kind = value_kind_of(u8(detail >> 8)), unit = u8(detail >> 16)}
+	if u8(detail >> 8) > u8(max(Value_Kind)) || !integer_unit_valid(integer_unit) {
+		return {}, false
+	}
+	return integer_unit, true
+}
+
+// The types that an export gives to an Integer parameter that counts a
+// size or a time, in place of i64. Each is distinct, so the compiler
+// refuses a number of another unit, or a plain i64, at a call in the
+// build; the call form is the one of an i64. The tool that describes a
+// module finds the unit of each name in INTEGER_UNIT_TYPES
+// (docs/MODULE_CONTRACT.md, "The unit of an Integer parameter").
+//
+// Example: `hkdf_sha256_expand :: proc "c" (key, info: ^string, length:
+// value_kinds.Size_In_Bytes, ...) -> i64`.
+
+// An Integer parameter that counts a size in bytes.
+Size_In_Bytes :: distinct i64
+// An Integer parameter that counts a size in KiB.
+Size_In_Kibibytes :: distinct i64
+// An Integer parameter that counts a size in MiB.
+Size_In_Mebibytes :: distinct i64
+// An Integer parameter that counts a size in pages of 4096 bytes.
+Size_In_Pages :: distinct i64
+// An Integer parameter that counts a size in blocks of a disk or a store.
+Size_In_Blocks :: distinct i64
+// An Integer parameter that counts a time in nanoseconds.
+Time_In_Nanoseconds :: distinct i64
+// An Integer parameter that counts a time in microseconds.
+Time_In_Microseconds :: distinct i64
+// An Integer parameter that counts a time in milliseconds.
+Time_In_Milliseconds :: distinct i64
+// An Integer parameter that counts a time in seconds.
+Time_In_Seconds :: distinct i64
+
+// The name of a type of an Integer parameter with a unit, and its unit.
+Integer_Unit_Type :: struct {
+	name:         string, // The name of the type in this package.
+	integer_unit: Integer_Unit, // What the Integer counts.
+}
+
+// Each type of an Integer parameter with a unit: the one table that names
+// them for the tool. A test checks that it has one row for each unit.
+@(rodata)
+INTEGER_UNIT_TYPES := [?]Integer_Unit_Type {
+	{"Size_In_Bytes", {kind = .Size, unit = u8(Size_Unit.Bytes)}},
+	{"Size_In_Kibibytes", {kind = .Size, unit = u8(Size_Unit.Kibibytes)}},
+	{"Size_In_Mebibytes", {kind = .Size, unit = u8(Size_Unit.Mebibytes)}},
+	{"Size_In_Pages", {kind = .Size, unit = u8(Size_Unit.Pages)}},
+	{"Size_In_Blocks", {kind = .Size, unit = u8(Size_Unit.Blocks)}},
+	{"Time_In_Nanoseconds", {kind = .Time, unit = u8(Duration_Unit.Nanoseconds)}},
+	{"Time_In_Microseconds", {kind = .Time, unit = u8(Duration_Unit.Microseconds)}},
+	{"Time_In_Milliseconds", {kind = .Time, unit = u8(Duration_Unit.Milliseconds)}},
+	{"Time_In_Seconds", {kind = .Time, unit = u8(Duration_Unit.Seconds)}},
+}
+
+// integer_unit_of_type_name gives the integer unit of the name of a type of
+// INTEGER_UNIT_TYPES. ok is false for another name.
+integer_unit_of_type_name :: proc "contextless" (name: string) -> (integer_unit: Integer_Unit, ok: bool) {
+	for item in INTEGER_UNIT_TYPES {
+		if item.name == name {
+			return item.integer_unit, true
+		}
+	}
+	return {}, false
+}
+
 // A hash, or the head of one: two hexadecimal digits for each byte, the
 // first byte first. The kind is Version.
 Hash :: struct {

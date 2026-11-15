@@ -30,6 +30,7 @@ package cryptography
 
 import "base:runtime"
 import "modus:contract/errors"
+import "modus:contract/value_kinds"
 import "modus:support/cryptography/aes"
 import "modus:support/cryptography/argon2id"
 import "modus:support/cryptography/chacha20"
@@ -377,8 +378,8 @@ hkdf_sha256_expand_run :: #force_no_inline proc "contextless" (key_text, info_te
 //
 // **Result**: the count of bytes, or a negative number with an error record.
 @(export, link_name = "hkdf_sha256_expand")
-hkdf_sha256_expand :: proc "c" (key, info: ^string, length: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	count := hkdf_sha256_expand_run(key^, info^, length, result^, error)
+hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+	count := hkdf_sha256_expand_run(key^, info^, i64(length), result^, error)
 	crypto.erase_stack_below_the_caller()
 	return count
 }

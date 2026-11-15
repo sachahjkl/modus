@@ -597,7 +597,7 @@ The console is the palette provider of the desktop: each of its commands is an e
 | `setting`, `setting_value` | A `Setting` entry: the number of the setting and of its value |
 | `flags` | `Destroys` for `shutdown`, `stop`, `revoke`, `lock`, `history_clear`, `unload` and `replace`; `In_Use` for the `Provider_Setting` entry of the strategy that the machine uses now |
 | `parameter_count`, `parameters` | The count of the parameters, and the kind of each one |
-| `parameter_units` | The integer unit of each Integer parameter that counts a size or a time: a value kind, `Size` or `Time`, and a unit of that kind. The built-in commands state it: `buffer` in pages, the count of `bytes` and of `debug_memory` in bytes, `wait_stop` in milliseconds. The table refuses a unit out of the contract, and a unit on a parameter that is no Integer. An export states none |
+| `parameter_units` | The integer unit of each Integer parameter that counts a size or a time: a value kind, `Size` or `Time`, and a unit of that kind. The built-in commands state it: `buffer` in pages, the count of `bytes` and of `debug_memory` in bytes, `wait_stop` in milliseconds. The table refuses a unit out of the contract, and a unit on a parameter that is no Integer. An export states it in its description, and the console copies it: `hkdf_sha256_expand` takes a length in bytes, `debugger.wait_stop` milliseconds (`MODULE_CONTRACT.md`, "The unit of an Integer parameter") |
 | `result` | The kind of the result |
 | `name` | At most 64 bytes |
 | `signature` | The name, the parameters and the result, as `describe` gives them: `revoke(Text, Text) -> Integer`. One that passes 128 bytes shows `(...)` |
