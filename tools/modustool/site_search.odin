@@ -995,6 +995,25 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by modustool si
     });
   }
 
+  // The subscribe menu of the pages of the releases and of the news: a
+  // menu at every width. Escape, a click outside or a focus that leaves it
+  // closes it. With no script the button still opens and closes it.
+  const subscribeMenu = document.querySelector("details.subscribe-menu");
+  if (subscribeMenu) {
+    const subscribeButton = subscribeMenu.querySelector("summary");
+    document.addEventListener("click", event => {
+      if (subscribeMenu.open && !subscribeMenu.contains(event.target)) subscribeMenu.open = false;
+    });
+    subscribeMenu.addEventListener("keydown", event => {
+      if (event.key !== "Escape" || event.defaultPrevented || !subscribeMenu.open) return;
+      subscribeMenu.open = false;
+      subscribeButton.focus();
+    });
+    subscribeMenu.addEventListener("focusout", event => {
+      if (subscribeMenu.open && event.relatedTarget && !subscribeMenu.contains(event.relatedTarget)) subscribeMenu.open = false;
+    });
+  }
+
   // "On this page" of a documentation page: open beside the text on a wide
   // screen, closed above the text on a narrower one. The link of the part
   // of the page in view is marked as the page scrolls: an observer of the

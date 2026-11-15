@@ -6347,6 +6347,16 @@ The design: `docs/SITE.md`, "The buttons and the menu of the bar".
 
 Do not use: dropdown, more menu, submenu, overflow menu.
 
+### Subscribe menu
+
+The subscribe menu is the menu under the heading of the page of the releases and of the page of the news that holds the ways to follow the changes of the system.
+
+Its button has the word "Subscribe" and a chevron that turns when the menu opens. Its panel has two links: "Atom feed", the feed of the page (`releases.xml` or `news.xml`), and "Watch releases on GitHub", the releases of the repository. It is a `details` element, as the project menu: it opens and closes with no script, and the panel is as wide as its longest line. It is not the project menu, which is in the bar.
+
+The design: `docs/SITE.md`, "The subscribe menu".
+
+Do not use: RSS menu, follow button.
+
 ### Documentation layout
 
 The documentation layout is the layout of a page of the docs: the documentation tree at the left, the text in the middle, "On this page" at the right.

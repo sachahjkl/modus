@@ -745,7 +745,9 @@ site_releases_add :: proc(site: ^Site) {
 	types := CHANGE_TYPES
 	releases := site.changelog.releases
 	oldest := release_number_text(releases[len(releases) - 1].number)
-	fmt.sbprintf(&b, "<h1>Releases</h1>\n<p>Every release of the system, newest first: %d releases, from %s to %s. The merge of step N on <code>master</code> is the release 0.N.0.</p>\n<p>A release lists its changes by type, in the form of Keep a Changelog: Added, Changed, Deprecated, Removed, Fixed, Security. Each change is written once, in the commit that made it, as one fragment; <code>modustool changelog release</code> gathers the fragments into the release. Under a release, a line links to each news entry that names it: the news tell in prose what a reader can now see, and this page lists each change.</p>\n", len(releases), oldest, site.release)
+	strings.write_string(&b, "<h1>Releases</h1>\n")
+	site_subscribe_menu_html(&b, path, SITE_RELEASES_FEED)
+	fmt.sbprintf(&b, "<p>Every release of the system, newest first: %d releases, from %s to %s. The merge of step N on <code>master</code> is the release 0.N.0.</p>\n<p>A release lists its changes by type, in the form of Keep a Changelog: Added, Changed, Deprecated, Removed, Fixed, Security. Each change is written once, in the commit that made it, as one fragment; <code>modustool changelog release</code> gathers the fragments into the release. Under a release, a line links to each news entry that names it: the news tell in prose what a reader can now see, and this page lists each change.</p>\n", len(releases), oldest, site.release)
 	site_source_line(site, &b, CHANGELOG_FILE)
 	// This page lists the work that is done; the planned work has its page.
 	site_roadmap_link_line(site, &b, path)

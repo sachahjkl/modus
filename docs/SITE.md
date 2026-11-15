@@ -47,7 +47,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/reference/commands/` | `COMMANDS` in `tools/modustool/main.odin`: the comment above `COMMANDS ::` (what the tool is and how to run a command) at the top; for each command its name, the comment lines just above its entry as its documentation (the first sentence is the cell "What it does"), and its help, the line that `modustool help` prints |
 | `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it |
 | `docs/reference/licenses/` | See "The licenses" |
-| `releases/` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, each of its changes the anchor `release-<number>-change-<its place in the release, from 1>`, and a line with a link to each news entry that names it |
+| `releases/` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, each of its changes the anchor `release-<number>-change-<its place in the release, from 1>`, and a line with a link to each news entry that names it; the subscribe menu under the heading (see "The subscribe menu") |
 | `roadmap/` | All of `ROADMAP.md`: the planned work, in the sections Now, Next and Later; see "The roadmap" |
 | `news/`, `news.xml` | The files of `news/`; see "The news" |
 | `search.json`, `search.js` | The index of the search and its script; see "The search" |
@@ -199,7 +199,7 @@ A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject
 | Fixed | A thing that a reader saw fail now works | The color of the machine |
 
 - `modustool news new <subject>` writes an entry with the date of the host, `release: next`, and no title and no text, so that the check fails until a person writes them. `modustool news check` checks each entry: the head, each key known and present once, the date a date of the calendar and the date of the file name, the picture a PNG file of `docs/screenshots/` or `resources/logo/`, the release a release of `CHANGELOG.md` or `next`, the guide a document of `docs/` that is a page of the site, the film a WebM file of `docs/films/` under its size bound in an entry that has a picture ("The film of a news entry"), the text not empty, at most 1200 bytes, with no heading and no line of HTML, and no two titles the same. `modustool check` runs it, and `modustool site` stops on the same faults.
-- `news/`: each entry, newest first, as a card with the color of its kind, its date, a link to its release and to its guide, its picture or its film, and a link to its file. Its anchor is `news-<the name of its file>`. One renderer renders all the entries of the page, so the ids stay unique and each term of the glossary links once.
+- `news/`: the subscribe menu under the heading ("The subscribe menu"), then each entry, newest first, as a card with the color of its kind, its date, a link to its release and to its guide, its picture or its film, and a link to its file. Its anchor is `news-<the name of its file>`. One renderer renders all the entries of the page, so the ids stay unique and each term of the glossary links once.
 - The home shows the three newest entries: the title, the kind, the date, the picture and the first sentence. The picture of an entry with a film has the mark "film" and links to the entry.
 - `releases/`: under each release, a link to each entry that names it. An entry with `release: next` is in no release yet.
 - `news.xml`: the feed, Atom (RFC 4287), newest first; each entry has its title, its date (`published` and `updated`, at 00:00 UTC), its kind as a `category`, its first sentence as its `summary`, and its text and picture as HTML in its `content`. An entry with a film has one more link, `<link rel="enclosure" type="video/webm" href="..." length="<bytes>"/>`, the element of Atom for a file that goes with an entry, and a link to the film at the end of its `content`. The id of the feed and of each entry is the address of its file in the repository on `master` (`<repository>/blob/master/news/<file>`): a file of `news/` is never moved, so the id stays the same when the site gets an address. Each page names the feed in its head (`<link rel="alternate" type="application/atom+xml">`), so that a browser and a feed reader find it.
@@ -634,7 +634,7 @@ Not verified against a validator of schema.org or the documents of a search engi
 
 - `sitemap.xml` lists the canonical address of each page that the command writes, once, by path. A page has a `lastmod` only when the tool knows the date of its last change: `news/` (the date of its newest entry) and `releases/` (the date of its newest release). The other pages have none: each build changes their foot, and the tool does not read the history of their sources. A wrong `lastmod` teaches a search engine to ignore the field.
 - `robots.txt` allows each page and gives the address of the sitemap. A crawler reads `robots.txt` only at the root of a host: when the site address has a path, the command says that the `robots.txt` of the root must have the line `Sitemap:`.
-- `releases.xml` is the feed of the releases (Atom): one entry for each release of `CHANGELOG.md`, newest first, with its date (`published` and `updated`, at 00:00 UTC), its first change as its summary, and its changes in HTML. The id of an entry is `<repository>/blob/master/CHANGELOG.md#release-<number>`: a release is never renamed, so the id does not change when the site gets an address.
+- `releases.xml` is the feed of the releases (Atom): one entry for each release of `CHANGELOG.md`, newest first, with its date (`published` and `updated`, at 00:00 UTC), its first change as its summary, and its changes in HTML. The id of an entry is `<repository>/blob/master/CHANGELOG.md#release-<number>`: a release is never renamed, so the id does not change when the site gets an address. The subscribe menu of the page of the releases links it ("The subscribe menu").
 - `llms.txt` follows the form of llmstxt.org, as the site of the owner has one: the name, the lead of `README.md` as a quote, then a list of the pages for each section, each with its title and its description; the module pages are in the part `## Optional`.
 - `site.webmanifest`: the name, the description (the whole first paragraph of `README.md`, cut at 160 bytes), `lang`, `start_url` and `scope` `./` (the root of the site, where the manifest is), the dark background as the background and theme color, and three icons: 192 and 512 with `"purpose": "any"`, and 512 with `"purpose": "maskable"`. Its addresses are relative to it.
 
@@ -865,6 +865,28 @@ What `search.js` adds, on a window of 720 pixels or more: Escape closes the menu
 
 Refused: a second line of the bar; smaller text; icons with no word; one menu button at every width; a menu that opens when the pointer passes. The reasons are in the intent file.
 
+### The subscribe menu
+
+The code is `tools/modustool/site_subscribe.odin`; its host tests are `site_subscribe_test.odin`; the intent is `src/md/features/site_subscribe.md`.
+
+The subscribe menu (`GLOSSARY.md`) is on the two pages that show the changes: `releases/` and `news/`. It stands under the heading of the page, at the left edge of the text column.
+
+| Line of the panel | Target |
+|---|---|
+| Atom feed ↗ | The feed of the page: `releases.xml` on the page of the releases, `news.xml` on the page of the news |
+| Watch releases on GitHub ↗ | `https://github.com/sachahjkl/modus/releases`: the releases of the repository, and its button "Watch", whose choice "Custom", then "Releases", sends a notification at each release |
+
+- It is one `<details class="subscribe-menu">`, closed in the file. Its `<summary class="subscribe-button">` is its button: a rectangle of the track with the word "Subscribe" and a chevron of two lines of 2 pixels. The chevron points down when the menu is closed and up when it is open. A click, Enter or Space opens and closes it.
+- Its panel (`.subscribe-panel`) is a card under the button: a border of 1 pixel in the line color, one row for each link. It lies over the page and moves nothing, under the bar.
+- "↗" after each label says that the link leaves the page, for a file or for another site. A screen reader does not read it (`aria-hidden`).
+- **The width.** The panel is as wide as its longest line in the font of the reader (`width: max-content`). It is at most the width of the window less 56 pixels (the margins of the page and its scroll bar): on a narrower window a line breaks onto a second line, and no line is cut. The host test counts the longest line at 9 pixels a character: the panel holds it on one line in a window of 360 pixels with a scroll bar.
+- The button and each line are site controls ("The states of a control"). The button of an open menu has the colors of a pressed button.
+- **The keyboard.** Tab reaches the button, then each link of the open panel, in the order of the page.
+
+What `search.js` adds, at every width: Escape closes the menu and puts the focus on its button; a click outside closes it; a focus that leaves it closes it. The script adds no element and no style.
+
+The label of the feed is "Atom feed": the two feeds are Atom, and the site writes no RSS feed. The menu has no link to an account of a social network. Each page also names the feeds in its head ("The sitemap, robots.txt and the feeds").
+
 ### The states of a control
 
 The owner asked for it on 2026-11-14: "les boutons [...] manquent d'un état visuel au survolage et actif." The code is `tools/modustool/site_controls.odin`; the intent is `src/md/features/site_bar.md`.
@@ -875,8 +897,8 @@ One table, `site_controls`, names every control with its selector and its form. 
 
 | Form | Controls | Pointer over it, or focus | Pressed | Current, open or chosen |
 |---|---|---|---|---|
-| Button | A button of a section of the bar, the button of the project menu, the button of the site menu, a door of the home, a link to a group of the gallery, a numbered link of the carousel, a letter of the index of the glossary, the button of the line of an older build | The blue of the title bar at 60 %, `0x254A75` | The blue of a chosen row, `0x3C76BB`, with a white label | The line of 2 pixels in the line color that the control has at rest in a clear color; the button of the open project menu has the colors of a pressed button |
-| Menu line | A line of the panel of the project menu | A chosen row: `0x3C76BB`, white label | The same | The line at its left |
+| Button | A button of a section of the bar, the button of the project menu, the button of the subscribe menu, the button of the site menu, a door of the home, a link to a group of the gallery, a numbered link of the carousel, a letter of the index of the glossary, the button of the line of an older build | The blue of the title bar at 60 %, `0x254A75` | The blue of a chosen row, `0x3C76BB`, with a white label | The line of 2 pixels in the line color that the control has at rest in a clear color; the button of the open project menu has the colors of a pressed button |
+| Menu line | A line of the panel of the project menu, a line of the panel of the subscribe menu | A chosen row: `0x3C76BB`, white label | The same | The line at its left |
 | Row | A row of the list of the search, a chip of the chart of the search, a line of the documentation tree and of "On this page", a row of a stage of the line of time of the start | The band of the track | The band, and the line at its left in the line color | The band and the line |
 
 The colors are those of a button and of a line of a menu of the desktop (`DESIGN.md`, section 10, the row "Button"; `DESIGN.md`, "Menus"): the site and the desktop are one design. The focus also keeps the outline of 2 pixels of the site: a state never removes it.
