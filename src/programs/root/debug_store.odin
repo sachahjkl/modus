@@ -50,19 +50,21 @@ kept_stop_reports: disk_program.Kept_Stop_Reports
 
 // stop_report_keep keeps the stop report of a disk program that stopped,
 // before the reap closes its handle. A stop with no fault has no report:
-// nothing is kept. The values that can be words of the memory of the
-// program are taken out first: a reader of the kept report holds no debug
-// access.
+// it removes the report of an older fault of that nickname, so that a
+// kept report always tells how the last run of the nickname ended. The
+// values that can be words of the memory of the program are taken out
+// first: a reader of the kept report holds no debug access.
 stop_report_keep :: proc "contextless" (item: ^Started) {
 	if !item.from_disk || item.program == 0 {
 		return
 	}
 	report := system.program_stop_report(item.program)
+	name := system.name_of(item.name[:])
 	if report.code == 0 {
+		disk_program.kept_stop_report_forget(&kept_stop_reports, item.principal, name)
 		return
 	}
 	disk_program.stop_report_hide(&report)
-	name := system.name_of(item.name[:])
 	if disk_program.kept_stop_report_keep(&kept_stop_reports, item.principal, name, item.hash, &report) {
 		system.log_in("programs", .Info, "root: kept the stop report of ", system.Module_Name{name}, ", a disk program of principal ", item.principal, ": stop_report(\"", system.Module_Name{name}, "\") names its frames")
 	}
@@ -225,14 +227,23 @@ debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: 
 	// service; this service keeps none of the memory.
 	defer system.close(ring_memory)
 	defer system.close(region_memory)
-	given[0], status = system.give(holder.requests_memory, service.program, {.Read})
-	if status == .Ok {
-		given[1], status = system.give(holder.requests_memory, ring_memory, {.Read, .Write})
-	}
-	if status == .Ok {
-		given[2], status = system.give(holder.requests_memory, region_memory, {.Read, .Write})
+	sources := [3]system.Handle{service.program, ring_memory, region_memory}
+	given_rights := [3]system.Rights{{.Read}, {.Read, .Write}, {.Read, .Write}}
+	given_count := 0
+	for source, index in sources {
+		given[index], status = system.give(holder.requests_memory, source, given_rights[index])
+		if status != .Ok {
+			break
+		}
+		given_count += 1
 	}
 	if status != .Ok {
+		// A refusal names no handle, so the service closes none: the
+		// handles given before the failure are revoked here, as the page
+		// of a report is.
+		for source in sources[:given_count] {
+			system.handle_revoke(source, holder.program)
+		}
 		disconnect(connection)
 		return status
 	}

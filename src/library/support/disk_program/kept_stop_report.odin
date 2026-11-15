@@ -10,9 +10,15 @@ import op "modus:contract/operation"
 // with the debug object of the store `programs`.
 
 // The reports that the root service keeps. A new fault of a nickname
-// replaces the report of that nickname; else a new report takes a free
-// place, or the place of the oldest.
+// replaces the report of that nickname. Else a principal that holds
+// KEPT_STOP_REPORTS_OF_ONE_PRINCIPAL places gives its own oldest place;
+// else a new report takes a free place, or the place of the oldest.
 KEPT_STOP_REPORT_CAPACITY :: 8
+// The places that one principal holds at most: the faults of the programs
+// of one principal never take the reports of another principal past the
+// other half of the table.
+KEPT_STOP_REPORTS_OF_ONE_PRINCIPAL :: 4
+#assert(KEPT_STOP_REPORTS_OF_ONE_PRINCIPAL <= KEPT_STOP_REPORT_CAPACITY)
 
 // What the root service gives the debugger service, in one page that the
 // service can read only.
@@ -88,6 +94,22 @@ kept_stop_report_keep :: proc "contextless" (table: ^Kept_Stop_Reports, principa
 	}
 	place := kept_stop_report_place(table, principal, name)
 	if place == nil {
+		// The oldest place of this principal, and how many it holds.
+		held := 0
+		oldest_held: ^Kept_Stop_Report_Place
+		for &candidate in table.places {
+			if candidate.sequence != 0 && candidate.principal == principal {
+				held += 1
+				if oldest_held == nil || candidate.sequence < oldest_held.sequence {
+					oldest_held = &candidate
+				}
+			}
+		}
+		if held >= KEPT_STOP_REPORTS_OF_ONE_PRINCIPAL {
+			place = oldest_held
+		}
+	}
+	if place == nil {
 		for &candidate in table.places {
 			if place == nil || candidate.sequence < place.sequence {
 				place = &candidate
@@ -108,6 +130,15 @@ kept_stop_report_find :: proc "contextless" (table: ^Kept_Stop_Reports, principa
 		return &place.kept
 	}
 	return nil
+}
+
+// kept_stop_report_forget frees the place of the program of a principal
+// with a name: the last run of that nickname ended with no fault, and an
+// older fault no longer tells how it ended.
+kept_stop_report_forget :: proc "contextless" (table: ^Kept_Stop_Reports, principal: u64, name: string) {
+	if place := kept_stop_report_place(table, principal, name); place != nil {
+		place^ = {}
+	}
 }
 
 @(private = "file")

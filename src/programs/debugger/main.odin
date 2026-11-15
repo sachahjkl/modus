@@ -311,7 +311,16 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 						system.close(handle)
 					}
 				}
-				if request.kept {
+				// A newer open of the same caller that waits replaces this
+				// connection in the root service: an end now would end that
+				// newer connection while it reads.
+				newer_open := false
+				for &other in root_requests {
+					if other.tag != 0 && other.store && !other.end && other.ring == request.ring {
+						newer_open = true
+					}
+				}
+				if request.kept && !newer_open {
 					root_request_send(string(request.name[:request.name_count]), request.ring, true, store = true, kept = true)
 				}
 			}

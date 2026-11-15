@@ -85,11 +85,37 @@ the_kept_reports_by_principal_and_nickname :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect_value(t, used, 1)
+	// The reports of another principal, before eight faults of principal 0.
+	testing.expect(t, kept_stop_report_keep(&table, 1, "x", hash, &report))
+	testing.expect(t, kept_stop_report_keep(&table, 1, "y", hash, &report))
 	names := [?]string{"a", "b", "c", "d", "e", "f", "g", "h"}
 	for name in names {
 		testing.expect(t, kept_stop_report_keep(&table, 0, name, hash, &report))
 	}
-	testing.expect(t, kept_stop_report_find(&table, 0, "outsider") == nil, "the oldest report gave its place")
-	testing.expect(t, kept_stop_report_find(&table, 0, "a") != nil)
-	testing.expect(t, kept_stop_report_find(&table, 0, "h") != nil)
+	// Principal 0 holds 4 places at most, and gives its own oldest one.
+	testing.expect(t, kept_stop_report_find(&table, 0, "outsider") == nil, "the oldest report of the principal gave its place")
+	testing.expect(t, kept_stop_report_find(&table, 0, "a") == nil)
+	testing.expect(t, kept_stop_report_find(&table, 0, "d") == nil)
+	for name in ([]string{"e", "f", "g", "h"}) {
+		testing.expectf(t, kept_stop_report_find(&table, 0, name) != nil, "the report %s stays", name)
+	}
+	testing.expect(t, kept_stop_report_find(&table, 1, "x") != nil, "another principal keeps its reports")
+	testing.expect(t, kept_stop_report_find(&table, 1, "y") != nil)
+}
+
+// A run with no fault removes the older fault of its nickname, and of no
+// other nickname or principal.
+@(test)
+a_clean_run_forgets_the_older_fault :: proc(t: ^testing.T) {
+	table: Kept_Stop_Reports
+	report := test_report()
+	hash: [HASH_SIZE]u8
+	testing.expect(t, kept_stop_report_keep(&table, 0, "outsider", hash, &report))
+	testing.expect(t, kept_stop_report_keep(&table, 0, "other", hash, &report))
+	testing.expect(t, kept_stop_report_keep(&table, 1, "outsider", hash, &report))
+	kept_stop_report_forget(&table, 0, "outsider")
+	testing.expect(t, kept_stop_report_find(&table, 0, "outsider") == nil)
+	testing.expect(t, kept_stop_report_find(&table, 0, "other") != nil)
+	testing.expect(t, kept_stop_report_find(&table, 1, "outsider") != nil)
+	kept_stop_report_forget(&table, 0, "nobody")
 }

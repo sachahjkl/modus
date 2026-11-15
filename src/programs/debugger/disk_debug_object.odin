@@ -39,6 +39,11 @@ DISK_DEBUG_OBJECT_MILLISECONDS :: 1500
 // The debug object of the module of a disk program.
 Disk_Debug_Object :: struct {
 	module_hash: [32]u8, // The module of the disk program. Zero: the program is no disk program.
+	// The principal whose store `programs` gave the object. The check of
+	// the object proves its hash only: the names and the paths are those
+	// that this store holds, so the object serves a caller of this
+	// principal only.
+	principal:   u64,
 	memory:      system.Handle, // The memory of the object. 0: none.
 	object:      []u8, // The object, mapped, after its whole check. nil: none.
 }
@@ -97,6 +102,7 @@ disk_module_of :: proc "contextless" () -> (module_hash: [32]u8, found: bool) {
 disk_debug_object_read :: proc "contextless" (name: string, connection_ring: system.Handle, module_hash: [32]u8, principal: u64) {
 	disk_debug_object_forget()
 	disk_debug_object.module_hash = module_hash
+	disk_debug_object.principal = principal
 	store_debug_object_read(name, connection_ring, &disk_debug_object, principal, nil)
 }
 
@@ -158,7 +164,11 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		}
 		store_principal = completion.values[4]
 		into.module_hash = kept.module_hash
-		held_by_the_session = disk_debug_object.object != nil && disk_debug_object.module_hash == kept.module_hash
+		into.principal = store_principal
+		// The object of the session serves only when the store of the same
+		// principal gave it: another store can hold other names under the
+		// same hash.
+		held_by_the_session = disk_debug_object.object != nil && disk_debug_object.module_hash == kept.module_hash && disk_debug_object.principal == store_principal
 	}
 	storage_file := system.image_find(image, "storage")
 	client: storage.Client

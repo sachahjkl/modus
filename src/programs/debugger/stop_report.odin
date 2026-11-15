@@ -32,7 +32,8 @@ Stop_Frame_Row :: struct {
 // stop_report gives one row for each frame of the stop report of a disk program that stopped on a fault: the module, the procedure and its offset, the file and the line. It needs no attach.
 //
 // The root service keeps the stop report of each disk program that stops
-// on a fault, the last 8 of them: a program that stopped can be attached
+// on a fault, 8 of them and 4 for one principal, until a run of the
+// nickname ends with no fault: a program that stopped can be attached
 // to by no debugger. This export asks the root service for the report, and
 // reads the debug object of the module from the store `programs`, as
 // `attach` does. The report holds only the frames that a module record
@@ -87,9 +88,10 @@ stop_report :: proc "c" (program: ^string, result: ^[]Stop_Frame_Row, error: ^er
 		return refused(error, .Bad_Handle)
 	}
 	// The object of the module: the one read here, or the one of the
-	// session when the service debugs the same module.
+	// session when the service debugs the same module from the store of
+	// the same principal (store_debug_object_read did not read then).
 	module_object := read_object.object
-	if module_object == nil && disk_debug_object.object != nil && disk_debug_object.module_hash == kept.module_hash {
+	if module_object == nil && disk_debug_object.object != nil && disk_debug_object.module_hash == kept.module_hash && disk_debug_object.principal == completion.values[4] {
 		module_object = disk_debug_object.object
 	}
 	report := &kept.report
