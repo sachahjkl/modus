@@ -123,7 +123,10 @@ board_generation: u32
 board_drawn_generation: u32 = max(u32) // The generation that the board pixels show.
 records_now, records_before: [4]interface.Draw_Record
 text_now, text_before: [16]u8
-pictures: [1]graphics.Canvas
+board: graphics.Canvas
+// The one picture memory of the draw tables: the drawing module reads the
+// board there.
+picture_memories: [1][]graphics.Color
 drawing: interface.Window_Drawing
 
 // board_draw draws the cells into the board picture, when they changed.
@@ -131,7 +134,6 @@ board_draw :: proc "contextless" () {
 	if board_drawn_generation == board_generation {
 		return
 	}
-	board := pictures[0]
 	graphics.clear(board, 0x0C1210)
 	for y in 0 ..< ROWS {
 		for x in 0 ..< COLUMNS {
@@ -158,10 +160,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	pictures[0] = {pixels = raw_data(board_pixels[:]), width = COLUMNS * CELL, height = ROWS * CELL, stride = COLUMNS * CELL}
+	board = {pixels = raw_data(board_pixels[:]), width = COLUMNS * CELL, height = ROWS * CELL, stride = COLUMNS * CELL}
+	picture_memories[0] = board_pixels[:]
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	drawing.now.pictures = pictures[:]
-	drawing.before.pictures = pictures[:]
+	drawing.now.picture_memories = picture_memories[:]
+	drawing.before.picture_memories = picture_memories[:]
 	random_state = system.time() * 0x9E3779B97F4A7C15 + 0x1234567
 	fill_random()
 	paused := false
@@ -198,7 +201,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		board_draw()
 		frame := interface.window_frame_begin(&drawing, &window)
-		interface.draw_picture(frame.table, 0, 0, 0, board_generation)
+		interface.draw_picture(frame.table, 0, 0, board, board_generation)
 		interface.window_frame_end(&drawing, &frame, &window)
 		if !logged {
 			system.log("life: ok")

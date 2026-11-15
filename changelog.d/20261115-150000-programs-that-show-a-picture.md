@@ -1,0 +1,3 @@
+type: Changed
+
+**The programs that show a picture import the drawing module.** A Picture record now names its pixels by values: the number of its picture memory, the index of its first pixel there and its stride, in draw record version 8. The drawing module reads one picture memory of the program in place, and its exports are `damage_of_draw_table_8` and `execute_draw_table_8`, which draws one damage rectangle for each call. `heron`, `life`, `paint`, `plasma`, `processors`, `temple`, `threads` and `workers` draw their windows through it: 32 programs in all. The terminal and the compositor keep the interface package compiled in.

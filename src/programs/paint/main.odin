@@ -47,7 +47,9 @@ drawn: i64 // The lines that calls drew.
 PAPER_HEIGHT :: HEIGHT - PALETTE_HEIGHT
 paper_pixels: [WIDTH * PAPER_HEIGHT]graphics.Color
 paper_generation: u32
-pictures: [1]graphics.Canvas
+// The one picture memory of the draw tables: the drawing module reads the
+// paper there.
+picture_memories: [1][]graphics.Color
 records_now, records_before: [32]interface.Draw_Record
 text_now, text_before: [128]u8
 window_drawing: interface.Window_Drawing
@@ -142,11 +144,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	pictures[0] = paper()
-	graphics.clear(pictures[0], COLOR_PAPER)
+	paper_picture := paper()
+	graphics.clear(paper_picture, COLOR_PAPER)
+	picture_memories[0] = paper_pixels[:]
 	window_drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	window_drawing.now.pictures = pictures[:]
-	window_drawing.before.pictures = pictures[:]
+	window_drawing.now.picture_memories = picture_memories[:]
+	window_drawing.before.picture_memories = picture_memories[:]
 	color := colors[0]
 	last_x, last_y := 0, 0
 	drawing := false
@@ -175,7 +178,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			x = interface.draw_text(table, x + 8, 4, "calls ", 0x606468)
 			interface.draw_unsigned(table, x, 4, service.calls, 0x2F6FD0)
 		}
-		interface.draw_picture(table, 0, PALETTE_HEIGHT, 0, paper_generation)
+		interface.draw_picture(table, 0, PALETTE_HEIGHT, paper_picture, paper_generation)
 		interface.window_frame_end(&window_drawing, &frame, &window)
 
 		wait: system.Wait

@@ -98,7 +98,9 @@ job: Job
 workers: [WORKER_COUNT]Worker
 picture: graphics.Canvas // The picture that the threads compute, in the memory that they share.
 picture_pixels: [PICTURE_WIDTH * PICTURE_HEIGHT]graphics.Color
-pictures: [1]graphics.Canvas
+// The one picture memory of the draw tables: the drawing module reads the
+// picture there.
+picture_memories: [1][]graphics.Color
 records_now, records_before: [128]interface.Draw_Record
 text_now, text_before: [1024]u8
 drawing: interface.Window_Drawing
@@ -236,10 +238,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// rows, the picture is the background.
 	picture = {pixels = raw_data(picture_pixels[:]), width = PICTURE_WIDTH, height = PICTURE_HEIGHT, stride = PICTURE_WIDTH}
 	graphics.clear(picture, graphics.COLOR_BACKGROUND)
-	pictures[0] = picture
+	picture_memories[0] = picture_pixels[:]
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	drawing.now.pictures = pictures[:]
-	drawing.before.pictures = pictures[:]
+	drawing.now.picture_memories = picture_memories[:]
+	drawing.before.picture_memories = picture_memories[:]
 	{
 		frame := interface.window_frame_begin(&drawing, &window)
 		interface.draw_text(frame.table, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.COLOR_TEXT)
@@ -323,7 +325,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The pixels change when a row is complete, and when a new picture
 		// clears them: the number of the picture and its complete rows are
 		// the generation.
-		interface.draw_picture(table, MARGIN, HEADER + MARGIN, 0, job.number * 1024 + done)
+		interface.draw_picture(table, MARGIN, HEADER + MARGIN, picture, job.number * 1024 + done)
 		x := 2 * MARGIN + PICTURE_WIDTH
 		y := HEADER + MARGIN
 		interface.draw_rectangle(table, x, y, PANEL, PICTURE_HEIGHT, graphics.COLOR_CARD_TOP)

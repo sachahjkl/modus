@@ -326,8 +326,9 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 // The rules of a program that draws its window through the drawing module
 // (src/library/support/interface, window_drawing.odin):
 //   - it imports the module, which is a library module of the table;
-//   - it draws no picture and no grid of text cells: a draw table names
-//     them by an address, and the module cannot read them;
+//   - it draws no grid of text cells: a draw table names one by an
+//     address, and the module cannot read it. A picture is named by
+//     values in its one picture memory, so it can draw pictures;
 //   - it starts no child of its own file with no load source: the loader
 //     of the child would not find the import.
 @(test)
@@ -339,7 +340,7 @@ programs_that_draw_through_the_module_follow_its_rules :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect(t, library_found, "the drawing module is a library module of the table")
-	refused_calls := [?]string{"draw_picture(", "draw_text_grid(", "show_picture(", "window_drawing_of_picture(", ".pictures =", ".grids ="}
+	refused_calls := [?]string{"draw_text_grid(", ".grids ="}
 	programs := 0
 	for build in module_builds {
 		if !slice.contains(build.defines, DRAWING_THROUGH_MODULE) {
@@ -358,7 +359,7 @@ programs_that_draw_through_the_module_follow_its_rules :: proc(t: ^testing.T) {
 				return
 			}
 			for call in refused_calls {
-				testing.expectf(t, !strings.contains(string(source), call), "%s draws through the module, and %s has %s: the module draws no picture and no grid", build.name, path, call)
+				testing.expectf(t, !strings.contains(string(source), call), "%s draws through the module, and %s has %s: the module draws no grid", build.name, path, call)
 			}
 			rest := string(source)
 			for line in strings.split_lines_iterator(&rest) {

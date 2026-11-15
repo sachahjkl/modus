@@ -767,21 +767,64 @@ picture_and_folded_gap :: proc(t: ^testing.T) {
 	for &cell, index in cells {
 		cell = graphics.Color(index * 0x010203)
 	}
-	pictures := []graphics.Canvas{{pixels = raw_data(cells[:]), width = 16, height = 8, stride = 16}}
-	before.pictures, now.pictures = pictures, pictures
+	picture := graphics.Canvas{pixels = raw_data(cells[:]), width = 16, height = 8, stride = 16}
+	memories := [][]graphics.Color{cells[:]}
+	before.picture_memories, now.picture_memories = memories, memories
 	draw_rectangle(&before, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
-	draw_picture(&before, 40, 40, 0, 1)
+	draw_picture(&before, 40, 40, picture, 1)
 	draw_folded_gap(&before, 100, 100, 40, 24)
 	draw_rectangle(&now, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
-	draw_picture(&now, 40, 40, 0, 2)
+	draw_picture(&now, 40, 40, picture, 2)
 	draw_folded_gap(&now, 100, 100, 40, 24)
 	damage: Damage
 	damage_by_difference(&before, &now, &damage)
 	testing.expect_value(t, damage.count, 1)
 	testing.expect_value(t, damage.rectangles[0], Rectangle{40, 40, 56, 48})
 	partial_equals_whole(t, &before, &now, "a picture")
-	draw_picture(&now, 0, 0, 3, 1)
-	testing.expect(t, now.refused && !now.full, "a picture that the table does not have is refused, and the table is not full")
+	outside: [4]graphics.Color
+	draw_picture(&now, 0, 0, {pixels = raw_data(outside[:]), width = 2, height = 2, stride = 2}, 1)
+	testing.expect(t, now.refused && !now.full, "a picture outside each picture memory is refused, and the table is not full")
+}
+
+// A picture is a part of its picture memory: its record names the place
+// of its first pixel and its stride, and draws those pixels. A picture
+// whose last line passes the end of its memory is refused, and a record
+// written by hand with a pixel past the memory draws nothing.
+@(test)
+picture_inside_its_picture_memory :: proc(t: ^testing.T) {
+	memory: [8 * 6]graphics.Color
+	for &pixel, index in memory {
+		pixel = graphics.Color(index + 1)
+	}
+	memories := [][]graphics.Color{memory[:]}
+	records: [4]Draw_Record
+	table := Draw_Table{records = records[:], picture_memories = memories}
+	whole := graphics.Canvas{pixels = raw_data(memory[:]), width = 8, height = 6, stride = 8}
+	part := graphics.view(whole, 2, 3, 4, 2)
+	draw_picture(&table, 0, 0, part, 7)
+	testing.expect(t, !table.refused && table.record_count == 1, "a part of the memory is a picture")
+	record := table.records[0]
+	testing.expect_value(t, record.kind_detail, 0)
+	testing.expect_value(t, record.text_start, 3 * 8 + 2)
+	testing.expect_value(t, record.second_color, 8)
+	testing.expect_value(t, record.text_count, 7)
+	canvas_pixels: [4 * 2]graphics.Color
+	canvas := graphics.Canvas{pixels = raw_data(canvas_pixels[:]), width = 4, height = 2, stride = 4}
+	execute(&table, canvas)
+	testing.expect_value(t, canvas_pixels[0], graphics.Color(3 * 8 + 2 + 1))
+	testing.expect_value(t, canvas_pixels[7], graphics.Color(4 * 8 + 5 + 1))
+	// One line more than the memory has.
+	draw_picture(&table, 0, 0, graphics.Canvas{pixels = part.pixels, width = 4, height = 4, stride = 8}, 1)
+	testing.expect(t, table.refused && table.record_count == 1, "a picture past the end of its memory is refused")
+	// A record by hand: its last pixel is one past the memory.
+	table.records[0] = {kind = .Picture, width = 4, height = 2, text_start = 8 * 6 - 4 - 8 + 1, second_color = 8}
+	canvas_pixels = {}
+	execute(&table, canvas)
+	testing.expect(t, canvas_pixels == [4 * 2]graphics.Color{}, "a record past its picture memory draws nothing")
+	// A record of a picture memory that the table does not have.
+	table.records[0] = {kind = .Picture, kind_detail = 1, width = 4, height = 2, second_color = 8}
+	execute(&table, canvas)
+	testing.expect(t, canvas_pixels == [4 * 2]graphics.Color{}, "a record of a missing picture memory draws nothing")
 }
 
 // A text record whose range is past its text table (a table from another
