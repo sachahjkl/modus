@@ -81,6 +81,7 @@ The intent of the parts that were built before this folder is in other documents
 ## File Index
 
 - [api/library_modules.md](api/library_modules.md): which shared library becomes a module that programs import, where the border goes, and why there is no second kind of import
+- [api/module_replacement.md](api/module_replacement.md): who may replace a module: a replacement row signed by the key of a principal over the two hashes and the importer scope, the check of the root service at each `replace`, and the refused forms: a flag for tests, a signature over the new hash only, the description check alone
 - [api/picture.md](api/picture.md): how a Picture record names its pixels with values in a picture memory that the caller passes, why the draw export takes one rectangle for each call, and the forms that were refused: a table of places, lent memory objects, one span of addresses
 - [features/debugger_window.md](features/debugger_window.md): why the window of the debugger is a client of the service with no right over a program, how it reads the rows of the exports, the debug place that it types, its memory view, and a click on a row that does what a key does
 - [features/foreign_systems.md](features/foreign_systems.md): why a foreign system runs whole inside a guest, and the forms of a Linux and an NT layer that were refused

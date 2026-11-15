@@ -898,7 +898,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case .Debug:
 					result = debug(&item, system.name_of(name[:]), record.values[4], record.values[5] != 0, &completion.values)
 				case .Replace:
-					result = replace(&item, system.name_of(name[:]), record.values[4])
+					result = replace(&item, system.name_of(name[:]), record.values[4], &completion.values)
 				case .Stop:
 					result = .Bad_Handle
 					for &other in started {
@@ -919,8 +919,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// and a name of another form. So do Disk_Grant and
 				// Nickname_Move and Disk_Grant_Persistence, whose name is a
 				// nickname of three values. Machine_Key carries a key where
-				// a name would be: no refusal reads it as a name.
-				if result != .Ok && command != .Debug && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key {
+				// a name would be: no refusal reads it as a name. A refused
+				// Replace wrote its own: a refused signature is a cause that
+				// only replace knows.
+				if result != .Ok && command != .Debug && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key && command != .Replace {
 					completion.values = refusal(system.Root_Command(record.kind), system.name_of(name[:]), record.values[4], result)
 				}
 				completion.kind = u32(result)
@@ -1750,47 +1752,6 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 	item.revoked += {which}
 	values[0] = count
 	system.log_in("programs", .Info, "root: revoked the grant ", system.root_grant_names[which], " of ", system.Module_Name{name}, ", holdings ended: ", count)
-	return .Ok
-}
-
-// replace changes the replacement table of the machine, for a program with
-// the role Replace: where a module imports the module `name`, the loaders
-// give the module of entry `by` of the boot image (from 1). 0 removes the
-// record. It refuses a chain: one replacement for one import, so a loader
-// never follows two records.
-replace :: proc "contextless" (asker: ^Started, name: string, by: u64) -> system.Status {
-	if .Replace not_in grants_of(system.name_of(asker.name[:])) {
-		return .No_Right
-	}
-	entries := system.image_entries(image)
-	from, to: [32]u8
-	from_name := ""
-	for &entry in entries {
-		if system.name_of(entry.name[:]) == name {
-			from = entry.hash
-			from_name = system.name_of(entry.name[:])
-		}
-	}
-	if from == {} || by > u64(len(entries)) {
-		return .Bad_Handle
-	}
-	if by != 0 {
-		to = entries[by - 1].hash
-		if to == from {
-			return .Bad_Operation
-		}
-		for item in system.replacements_read(replacement_table, &replacement_records) {
-			if item.from == to || item.to == from {
-				return .Bad_State
-			}
-		}
-	}
-	system.replacements_write(replacement_table, from, to) or_return
-	if by == 0 {
-		system.log_in("programs", .Info, "root: no replacement of ", system.Module_Name{from_name})
-	} else {
-		system.log_in("programs", .Info, "root: ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, " replaces ", system.Module_Name{from_name}, " in each load that follows")
-	}
 	return .Ok
 }
 

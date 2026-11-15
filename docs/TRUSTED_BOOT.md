@@ -49,7 +49,7 @@ It does not protect against:
 - **a replaced boot program.** The firmware does not verify the boot program. Anyone who can write the boot volume can replace the boot program, its public key and its checks. So the checks find a damaged or swapped file. They do not stop an attacker who can write the boot volume.
 - **a system that the test signing key signed.** Its private key is published: anyone can sign a system with it. The boot display shows "the TEST key: its private key is public" in red, and the root service writes a warning on the log.
 - **an older system that the same key signed.** The boot program accepts each description that the key signed. No counter refuses an older one.
-- **a stolen private key.** Anyone who has it can sign a system that the boot program accepts.
+- **a stolen private key.** Anyone who has it can sign a system that the boot program accepts, and a replacement row that the root service accepts.
 - **the firmware, and the kernel after the start.** The checks run once, at the start. A fault of the kernel or a device that writes memory directly (DMA) is not in their scope.
 - **a changed debug image.** The debug image (`DEBUG/OBJECTS.IMG`, beside the boot program) is not in the boot image, the system description does not list it, and the boot program reads it with no check. Anyone who can write the boot volume can make a stop report show false names of procedures and lines. No code comes from it, and each reader checks the form of each debug object before it reads it (`MODULE_CONTRACT.md`, "Debug information").
 
@@ -161,7 +161,7 @@ The signing key is an Ed25519 key pair of the principal that signs the system. I
 
 1. Set `SYSTEM_SIGNING_KEY=<folder>/signing_key` before each build.
 2. Run `modustool key show` to print the public key that the build uses.
-3. The build puts the public key in the boot program and signs the description of each boot volume.
+3. The build puts the public key in the boot program and signs the description of each boot volume. With the same key it signs each replacement row of the replacement list of the boot image: the root service writes a replacement of a module only for a row that verifies under this key (`MODULE_CONTRACT.md`, "Who may replace a module").
 
 ### Backup
 

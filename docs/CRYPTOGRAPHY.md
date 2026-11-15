@@ -8,7 +8,7 @@ The cryptography of the system serves QUIC and TLS 1.3 (`docs/NETWORK.md`), the 
 
 **Read before.** `QUIC.md`, sections 3 and 4, for the use of each primitive.
 
-**The map of this guide.** "1. The rule" and "2. The origin, and its license" give where the code comes from. "3. The layout" and "4. The proof of what changed" give how it is kept. "5. The primitives, and their tests" lists them. "6. The module `cryptography`" gives its exports, "6a. Ed25519 in the boot program" the one copy outside it, and "7. What is not done" closes.
+**The map of this guide.** "1. The rule" and "2. The origin, and its license" give where the code comes from. "3. The layout" and "4. The proof of what changed" give how it is kept. "5. The primitives, and their tests" lists them. "6. The module `cryptography`" gives its exports, "6a. Ed25519 in the boot program" and "6b. Ed25519 in the root service" the two copies outside it, and "7. What is not done" closes.
 
 ![The program cryptography_vectors: each primitive against its published test vectors](screenshots/cryptography_vectors.png)
 
@@ -181,6 +181,10 @@ The boot program verifies the description signature (`docs/TRUSTED_BOOT.md`) wit
 - **The calling convention**: the boot program is built for the Microsoft x64 convention, and the compatibility layer calls `erase_secret_bytes` and `erase_stack_below_the_caller` of `src/runtime/memory.asm` as `"c"` procedures, which is that convention on this target. The form `WIN64` of `src/runtime/memory.asm` has a wrapper for each of the two: it keeps `rdi` and `rsi`, which belong to the caller in that convention, and passes `rcx` and `rdx` to the body of the System V form. With no wrapper, the erase writes at the address of a stale `rdi`.
 - **Vector registers**: the boot program is not the kernel. It runs before the kernel, with the state of the firmware, and its copies use `xmm0` to `xmm4` (`docs/ARCHITECTURE.md`, "The kernel has no vector code"). The portable code of the origin needs no vector instruction.
 - **No secret**: a verification uses a public key, a message and a signature. The boot program does not call `erase_stack_below_the_caller`.
+
+## 6b. Ed25519 in the root service
+
+The root service verifies the signature of a replacement row (`docs/MODULE_CONTRACT.md`, "Who may replace a module") with the same `src/library/support/cryptography/ed25519`, compiled in through `src/library/support/replacement_signature`. The root service imports no module, so it cannot call the module `cryptography`. It links the same packages as the boot program, runs the code with a zero `context`, and verifies only: it holds no private key. The tool signs the rows on the host, with the same package.
 
 ## 7. What is not done
 

@@ -108,9 +108,33 @@ The loader does not trust a replacement. For each slot that the importing module
 
 A replacement is visible: the module record of B2 holds the hash that it replaces, and a fault report says "which replaces ...". A program cannot ask for a replacement and cannot refuse one.
 
-The design: `docs/MODULE_CONTRACT.md`, "Replacement of an import".
+The root service writes a replacement in the table of the machine only for a replacement row that the signing key of the system signed: the check of the loader proves the descriptions, not what B2 does with the memory and the handles of each importer.
+
+The design: `docs/MODULE_CONTRACT.md`, "Replacement of an import" and "Who may replace a module".
 
 Do not use: override, shim, LD_PRELOAD, DLL redirection.
+
+### Replacement row
+
+A replacement row is a record of the replacement list: the hash of a module, the hash of the module that a loader gives in its place, the importer scope, and an Ed25519 signature over those three by the key of a principal.
+
+A replacement row is the consent of a principal to one replacement. The root service writes a replacement in the replacement table only for a row whose signature verifies under a key that it trusts for the scope of the row: for the scope System, each importer of the machine, the signing key of the system. A program with the role Replace names the two modules and gives no row: `replace("calendar", "calendar_fixed")` succeeds because the boot image holds a signed row for that pair, and `replace("calendar", "math")` is refused with the line "root: refused the replacement of calendar by math: no signed row of the replacement list names it".
+
+The signature covers the old hash, the new hash and the scope: a row of one pair never serves for another pair, the reverse direction or a wider scope. The row is not a proof that the module is correct: the check of the loader still compares the descriptions after it. The scope of one principal, signed by the key of that principal, is designed and not built.
+
+The design: `docs/MODULE_CONTRACT.md`, "Who may replace a module".
+
+Do not use: replacement certificate, allow list entry.
+
+### Replacement list
+
+The replacement list is the resource `replacement_list` of the boot image: the replacement rows that the tool signed when it wrote the boot image.
+
+The tool signs each row with the key that signs the system description of the volume, so the system description lists the list and a test volume signs it with the test signing key. The format is `src/library/contract/replacement_list`: a header of 16 bytes, then rows of 136 bytes, at most 64. The root service reads it at each `replace` that adds a record, and verifies the row of the pair; it is not the replacement table, which holds the replacements that apply now.
+
+The design: `docs/MODULE_CONTRACT.md`, "Who may replace a module".
+
+Do not use: allow list, whitelist, replacement manifest.
 
 ### Replacement table
 
@@ -118,7 +142,7 @@ The replacement table is the list of the replacements of the machine, which the 
 
 The table is one page of 32 records of 64 bytes (`system.Replacement_Table`). A count of versions lets a reader copy the records while the root service writes them. A program that loads modules, such as the console or the manual, receives the page with the right Read and reads it before each load.
 
-A program cannot change the table. A program with the role Replace (the console) asks the root service: `replace("calendar", "calendar_fixed")` adds a record, `replace("calendar", "")` removes it, and `replacements()` lists the table. A change applies to the loads that follow; a program that runs keeps its modules.
+A program cannot change the table. A program with the role Replace (the console) asks the root service: `replace("calendar", "calendar_fixed")` adds a record, `replace("calendar", "")` removes it, and `replacements()` lists the table. The root service adds a record only for a pair that a signed replacement row of the replacement list names. A change applies to the loads that follow; a program that runs keeps its modules.
 
 The design: `docs/MODULE_CONTRACT.md`, "Replacement of an import".
 

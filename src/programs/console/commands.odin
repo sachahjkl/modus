@@ -592,11 +592,16 @@ commands_start :: proc "contextless" () {
 	//
 	// The replacement table belongs to the machine: the root service writes
 	// it, and each loader reads it at each load. A program that runs keeps
-	// the modules that it loaded. `replacements()` gives the table.
+	// the modules that it loaded. `replacements()` gives the table. The
+	// root service adds a replacement only for a pair that a replacement
+	// row of the boot image names, signed by the signing key of the system
+	// (docs/MODULE_CONTRACT.md, "Who may replace a module"); a removal
+	// needs no row.
 	//
 	// Errors: no module has the name; the console has no grant to change
-	// the table; a chain of replacements is refused; the table is full; a
-	// module does not replace itself.
+	// the table; a chain of replacements is refused; no signed row names
+	// the pair; the signature of its row does not verify; the table is
+	// full; a module does not replace itself.
 	command("replace", {.Text, .Text}, .None, "give the second module where a module imports the first", replace)
 	// Gives the replacement table of the machine: one row for each module
 	// that a load replaces, with the module that it gets in its place and
@@ -2216,6 +2221,17 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 	case .Ok:
 		return {}
 	case .No_Right:
+		// The root service writes a replacement only for a row that the
+		// signing key of the system signed (docs/MODULE_CONTRACT.md, "Who may
+		// replace a module"); its log line gives the whole reason.
+		#partial switch errors.Kind(errors.completion_record(completion.values).kind) {
+		case .Absent:
+			return fail("the root service refused the replacement of ", name, " by ", by, ": no signed row names it")
+		case .Not_Authentic:
+			return fail("the root service refused the replacement of ", name, " by ", by, ": its signature does not verify")
+		case .Refused:
+			return fail("the root service refused the replacement of ", name, " by ", by, ": the replacement list breaks its format")
+		}
 		return fail("the console has no grant to change the replacement table")
 	case .Bad_State:
 		return fail("a chain of replacements is refused: ", name, ", ", by)

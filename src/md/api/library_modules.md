@@ -53,7 +53,7 @@ The last row is a bundle with no table of what it holds yet. A fault in the text
 - **A cache with no lock has a rule for its callers**: one thread of a program at a time calls the execution of a draw table.
 - **A library module has no segment that the loader writes and that is read-only after the load.** Such a segment holds addresses for one base, and a library is at another address in each importer. Each importer would take one place of the table of prepared modules of the root service.
 - **A whole-screen picture cannot prove "the same pixels".** Moving a library changes the hash of each program, and the screen shows hashes. The proof is the bytes of a canvas: a fixed set of draw tables, executed by the package and through the module, compared.
-- **A replacement of a library reaches almost every program with a window.** It puts code of another origin into each importer, with all the memory and all the handles of each. The check proves the description of each export and nothing of the behaviour. So a replacement of a library module is for a test until the replacement table carries a signature of a principal.
+- **A replacement of a library reaches almost every program with a window.** It puts code of another origin into each importer, with all the memory and all the handles of each. The check proves the description of each export and nothing of the behaviour. So the root service writes a replacement in the table of the machine only for a replacement row that the signing key of the system signed, over the two hashes and the importer scope. See [module_replacement.md](module_replacement.md).
 - **A program that starts a child of its own file** gives the child a load source that holds the library, else the load of the child fails.
 
 ## The gains, in their true size
@@ -61,7 +61,7 @@ The last row is a bundle with no table of what it holds yet. A fault in the text
 - The bytes: about 20 KB for each converted program, less than a tenth of the module files. It is not the reason to do the work.
 - The build: a change of the drawing code builds one module, where it built about fifty.
 - The module graph says which programs run which drawing code. Before, each program held a copy that no table named.
-- A renderer can be replaced with no build of a program.
+- A renderer can be replaced with no build of a program, by a row that the signing key of the system signed.
 
 ## What is left, and what blocks it
 
