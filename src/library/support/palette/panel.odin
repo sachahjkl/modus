@@ -598,6 +598,16 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 				in_use := entry.kind == .Setting && setting_in_use(panel, entry)
 				icon, icon_color := entry_icon(entry, in_use)
 				rows[index] = {kind = .Entry, name = entry_name(entry), matched_places = transmute(u128)row.places, icon = icon, icon_color = icon_color, right_text = entry_words(entry)}
+				if prefix := entry_hash_prefix(entry); prefix != "" {
+					// A window of a disk program: the hash prefix of its
+					// file, faded after its nickname, one cell apart, as the
+					// menu of the windows shows it. A nickname that looks
+					// like the name of another program is told apart.
+					detail := signatures[index][:]
+					detail[0] = ' '
+					count := 1 + copy(detail[1:], prefix)
+					rows[index].detail = string(detail[:count])
+				}
 				if entry_is_setting_row(entry) {
 					// Its buttons are drawn over the row after the list:
 					// the line under a value says which one is in use.

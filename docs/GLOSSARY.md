@@ -667,6 +667,16 @@ The design: `docs/ARCHITECTURE.md`, "Handle table", and `docs/PROPERTIES.md`, "S
 
 Do not use: process, task, application, app.
 
+### Program slot
+
+A program slot is the place of a program in the table of the programs of the kernel: the index that `Inspect` with the kind `Program` takes, and that `Program_State` gives for a program handle.
+
+A program slot serves a new program after the last handle of the program before it closes. So the slot alone does not name one program: with its program serial (`Program_Report.program_serial`), a number that changes for each new program in the slot, it does. The monitor and the inspect tool name a program by the two numbers; the disk program page names each disk program so.
+
+A program slot is not a process number: no program names another program by it, and no operation acts on a program by its slot.
+
+Do not use: process ID, PID, program number.
+
 ### Thread
 
 A thread is one flow of execution inside a program: a register state, a thread record and a kernel ring.
@@ -1464,7 +1474,7 @@ Do not use: boot loader, bootloader.
 
 ### Fixed range
 
-A fixed range is an address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the files of a module.
+A fixed range is an address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the disk program page, the files of a module.
 
 Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. A mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
 
@@ -1977,7 +1987,7 @@ Do not use: permission, access right, token.
 
 A nickname is the name that the principal gives a disk program: the name of the entry of its module file in the store `programs`.
 
-The principal chooses the nickname, and the file never does. The root service names a disk program by its nickname in the log, in `grants` and in `stop`, and the log writes the hash of the file beside it. In the disk grant table a nickname names one file: two hashes never share a nickname. A nickname with a grant has letters, digits, `-` and `_` only. The store of a disk program is attached to its nickname, not to its hash, so a new version of the program under the same nickname keeps its data.
+The principal chooses the nickname, and the file never does. The root service names a disk program by its nickname in the log, in `grants` and in `stop`, and the log writes the hash of the file beside it. The monitor, the menu of the windows and the palette show the nickname with the hash prefix of the file faded beside it, and the window of a disk program has its nickname as its title, whatever title the program asks for. In the disk grant table a nickname names one file: two hashes never share a nickname. A nickname with a grant has letters, digits, `-` and `_` only. The store of a disk program is attached to its nickname, not to its hash, so a new version of the program under the same nickname keeps its data.
 
 A nickname is not the name of a module of the boot image, and it gives no grant by itself: the root service refuses a nickname that its tables by name know.
 
@@ -1986,6 +1996,26 @@ Example: `allow("visitor", "store")`, then `start_from_disk("visitor", "")`.
 The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk program".
 
 Do not use: alias, pet name, display name.
+
+### Hash prefix
+
+The hash prefix is the first 16 hexadecimal digits of the hash of a module file: the first 8 bytes of the hash, the first byte first.
+
+The menu of the windows and the palette show it faded beside the nickname of a disk program, and the monitor under it, so that a reader tells two files under one nickname apart, and a nickname that only looks like the name of a program of the system from that program: `store_importer 5f0c1a2b9e3d4f60`. The hash prefix is a help, not an identity: the root service checks the whole hash of the command before a start, and its line on the log writes all 64 digits.
+
+Do not use: short hash, abbreviated hash, fingerprint.
+
+### Disk program page
+
+The disk program page is one page that the root service writes and maps read-only, at its fixed range, into each program that it starts with the right Inspect of the machine: one row for each disk program that runs, with its program slot, its program serial, its nickname and the whole hash of its file.
+
+The monitor reads the program slot and the program serial of each program from the kernel, and finds there which programs the root service started from a disk, and the hash that it checked. The row names the program by its slot and its serial, not by its name: a program that another program named as a disk program has no row. The root service learns the two numbers from `Program_State` on the handle of the program. The page gives no handle and no right to act. Its form is `modus:contract/disk_program_page`.
+
+The disk program page is not a grant of a connection to the root service, and not a list of the programs: the reports of `Inspect` list them.
+
+The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk program".
+
+Do not use: program table, origin page.
 
 ### Disk grant table
 
@@ -4287,7 +4317,7 @@ Do not use: start menu, application menu.
 
 The menu of the windows is the menu of the bar with one line for each window: a press on a line brings the window to the front and gives it the focus.
 
-The menu lists the windows in the order of the client table of the compositor. The window that has the focus has a square of 8 pixels before its title, and its title is white. The menu lets the input reach a window that other windows cover. It does not move a window: a window that a drag put far away comes back by a drag of its title bar, which the compositor always keeps on the screen.
+The menu lists the windows in the order of the client table of the compositor. The window that has the focus has a square of 8 pixels before its title, and its title is white. The line of a disk program has its nickname, which the root service gives, and the hash prefix of its file faded beside it. The menu lets the input reach a window that other windows cover. It does not move a window: a window that a drag put far away comes back by a drag of its title bar, which the compositor always keeps on the screen.
 
 The menu of the windows is not a task switcher with pictures of the windows, and not a task bar.
 

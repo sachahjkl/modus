@@ -673,6 +673,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The settings page and the glyph cache, before the first boot display.
 	text_settings_create()
 	date_page_create()
+	disk_program_page_create()
 	show("the root service starts input", .Running, .Input)
 	{
 		table: rawptr
@@ -1173,7 +1174,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	slot.principal = principal // The name of its store carries the principal.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	// The storage file, the date page, the settings page, five glyph caches, the file of a service, the debug image.
+	// The storage file, the date page, the settings page, five glyph caches, the file of a service, the debug image, the disk program page.
 	mappings: [12]system.Mapping
 	mapping_count := 0
 	// This service closes its handles of the connection after the start.
@@ -1306,6 +1307,11 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	}
 	if .Debug_Image in role {
 		debug_image_give(mappings[:], &mapping_count, &values)
+	}
+	// A program that sees each program: which of them run from a disk, by
+	// their nicknames and the hashes that this service checked.
+	if .Inspect in role {
+		disk_program_page_give(mappings[:], &mapping_count, &values)
 	}
 	// A program with a surface: the settings page and the glyph cache, read-only.
 	if .Terminal not_in role {
@@ -2079,6 +2085,9 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 
 // release frees what this service holds for a program, and tells the compositor.
 release :: proc "contextless" (item: ^Started) {
+	// The row goes before the handle closes: the kernel can then give the
+	// slot to another program, which the row must not name.
+	disk_program_page_remove(item)
 	// The connections of the program end: those that it made, and those
 	// that it served.
 	served := item.service.head != nil
