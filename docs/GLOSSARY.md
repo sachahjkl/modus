@@ -2393,7 +2393,7 @@ Do not use: escape sequence, control character, stream.
 
 A key record is a record from a terminal to its program: the code of one key that was pressed, its character, and the modifiers that were held (Shift, Control).
 
-The program decides what a key does. The terminal keeps Page Up and Page Down for its own view.
+The character is a code point, or 0 for a key with no character: é of the layout of France is 233. A program that keeps the character writes its UTF-8. The program decides what a key does. The terminal keeps Page Up and Page Down for its own view.
 
 Do not use: standard input, character device, raw mode, cooked mode.
 
@@ -2409,7 +2409,7 @@ Do not use: line discipline, readline, cursor addressing, prompt.
 
 The line editor is the procedures of `src/library/support/line_editor` that change an edit line with keys: the caret, a character at the caret, Backspace, Delete.
 
-They have no state of their own: the line is a record of the program.
+They have no state of their own: the line is a record of the program. The line is UTF-8, and each key moves the caret over a whole character, or inserts or removes a whole character. The caret is a place in bytes, always before a whole character.
 
 Do not use: readline, line discipline.
 
@@ -4860,7 +4860,7 @@ Do not use: file dialog, powerbox.
 
 The text encoding is the one form of a text in every contract of the system: UTF-8 with no control character, and a length in bytes.
 
-Each record that two parties share holds its text in this form: an entry of the palette, a run of a result, a record of the terminal ring, a line of the log, the name of an object of a store, a `Text` of the module contract. A party that takes a text from another party checks it at its border with `text_encoding.text_valid` (`src/library/contract/text_encoding`), and a party that cuts a text cuts it after a whole character (`complete_characters`). A capacity of a field is a count of bytes, so it holds fewer characters than bytes when a text has characters outside ASCII. A name that is an identifier of the system (a module, an export, a field, a channel of the log, a setting, a program) stays in the visible characters of ASCII, so that each layout types it and it has one form only.
+Each record that two parties share holds its text in this form: an entry of the palette, a run of a result, a record of the terminal ring, a line of the log, the name of an object of a store, a `Text` of the module contract. A party that takes a text from another party checks it at its border with `text_encoding.text_valid` (`src/library/contract/text_encoding`), and a party that cuts a text cuts it after a whole character (`complete_characters`). A capacity of a field is a count of bytes, so it holds fewer characters than bytes when a text has characters outside ASCII. A typed text is UTF-8 too: the line of the console, its history and a passphrase. A name that is an identifier of the system (a module, an export, a field, a channel of the log, a setting, a program) stays in the visible characters of ASCII, so that each layout types it and it has one form only.
 
 The design: `src/md/data/text_encoding.md`.
 
@@ -4900,7 +4900,7 @@ Do not use: tofu, missing glyph, question mark (for this).
 
 A font is a set of glyphs of one design, with the measures that place them side by side.
 
-The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs once on the host and never in a program.
+The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126 and the Latin-1 Supplement, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs once on the host and never in a program.
 
 The system has three fonts:
 
@@ -4920,7 +4920,7 @@ A glyph is the form of one character in one font.
 
 The character is the number (the byte 0x30 is the character `0`); the glyph is the drawing of it. One character can have several glyphs in one font: Paper Mono has a plain zero (glyph 294) and a slashed zero (glyph 304), and a font feature chooses between them. A glyph has an outline and an advance; in a glyph cache it is a box of words of coverage.
 
-The system has glyphs for the characters 32 to 126 only. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
+The system has glyphs for the characters 32 to 126 and the Latin-1 Supplement (U+00A0 to U+00FF) only. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
 
 The design: `docs/FONTS.md`, "5. The glyph cache".
 
@@ -4976,17 +4976,27 @@ Do not use: hinting (alone), autohint.
 
 ### Glyph cache
 
-A glyph cache is a file that holds the glyphs of one font already drawn, as words of coverage, for each character 32 to 126 at each scale of the grid.
+A glyph cache is a file that holds the glyphs of one font already drawn, as words of coverage, for each character 32 to 126 and U+00A0 to U+00FF at each scale of the grid.
 
 A glyph cache moves all the work of a font out of the programs. The modus tool builds it at the build (`vector_font.glyph_cache_build`) and puts it in the boot image as a resource. The root service checks its hash once at the start, and maps it read-only at a fixed range in each program with a surface, each terminal and the compositor. A program validates it once (`glyph_cache.validate`: about 7 µs), then each draw reads the words of a glyph with no other check. A glyph from the cache costs about 109 ns at scale 1 over a flat color on the host.
 
-The format is `src/library/contract/glyph_cache`, version 2: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
+The format is `src/library/contract/glyph_cache`, version 3: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. Each table keys a character by its character index. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
 
 The cache has a fixed capacity and holds every glyph that the grid can draw, so it never fills on demand and never evicts. It is not an atlas of a GPU and not a cache that a program fills: no program writes it, and its address and its size never come from another program.
 
 The design: `docs/FONTS.md`, "5. The glyph cache", and "Who can write a cache".
 
 Do not use: atlas, texture cache, glyph bitmap.
+
+### Character index
+
+A character index is the number of a character in each table of a font of the system: 0 to 94 for the characters 32 to 126, then 95 to 190 for U+00A0 to U+00FF.
+
+The fonts hold these two ranges and no other character, so 191 numbers name each character that a font draws, with no hole: the control characters 127 to 159 between the ranges have no number. A glyph cache keys its glyphs, its advances and its pairs by it, the Spleen data of `src/library/support/graphics` keys its glyphs by it, and a placed glyph of text shaping is one. `glyph_cache.character_index` gives the number of a code point, and `glyph_cache.character_of_index` the code point of a number. A code point outside both ranges has no character index: it draws the replacement glyph.
+
+The design: `src/md/data/text_encoding.md`.
+
+Do not use: glyph id (for this), glyph number, character offset.
 
 ### Proportional cache
 
@@ -5026,6 +5036,16 @@ A setting is not a configuration file of one program: one value applies to every
 The design: `docs/FONTS.md`, "7. The setting".
 
 Do not use: preference, option, configuration.
+
+### Dead key
+
+A dead key is a key of a layout of the keyboard that gives no character itself, and puts its accent on the character of the next key.
+
+The layout of France has two: the key right of P gives the circumflex, and with Shift the diaeresis. `^` then `e` gives ê, and `¨` then `i` gives ï, because the words of French need â, ê, î, ô, û, ë, ï and ü and the keyboard has no other key for them. A space after a dead key gives the accent alone; a key with no accented form gives the accent, then its own character, as two key records; Shift and Control keep the accent waiting. The input service keeps the accent that waits, and the tables are in `src/library/support/keyboard_layout`.
+
+The design: `src/md/features/keyboard_layout.md`.
+
+Do not use: compose key (for this), accent key, modifier (for this).
 
 ### Settings page
 
@@ -5205,9 +5225,9 @@ Do not use: subpixel offset, bucket.
 
 ### Spacing
 
-The spacing is the two tables that text shaping reads for one font at one scale: the advances of the characters 32 to 126 and the pair adjustments, in 1/64 of a pixel.
+The spacing is the two tables that text shaping reads for one font at one scale: the advances of the characters of a glyph cache and the pair adjustments, in 1/64 of a pixel.
 
-`text_shaping.spacing_of` takes them from a validated glyph cache: 95 advances and the sorted pairs (`glyph_cache.Pair_Entry`). The caller then passes them to `shape_text` or `measure_texts` as tables. So the module of text shaping holds no font, and an isolated call receives the spacing in its call region like the text.
+`text_shaping.spacing_of` takes them from a validated glyph cache: 191 advances by character index and the sorted pairs (`glyph_cache.Pair_Entry`). The caller then passes them to `shape_text` or `measure_texts` as tables. So the module of text shaping holds no font, and an isolated call receives the spacing in its call region like the text.
 
 The design: `docs/FONTS.md`, "12.3 The text shaping module".
 

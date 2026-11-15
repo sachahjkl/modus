@@ -29,6 +29,7 @@
 // [passphrase](term:passphrase) and [recovery key](term:recovery-key).
 package principals
 
+import "modus:contract/text_encoding"
 import blake2 "modus:support/cryptography/_blake2"
 import "modus:support/tpm2"
 
@@ -189,7 +190,7 @@ Passphrase_Problem :: enum u8 {
 	None, // The passphrase is valid.
 	Too_Short, // Fewer than PASSPHRASE_LEAST bytes.
 	Too_Long, // More than PASSPHRASE_LIMIT bytes.
-	Bad_Byte, // A byte that is not printable.
+	Not_Text, // Not valid UTF-8, or a control character.
 }
 
 // The sentence of each problem of a passphrase.
@@ -198,11 +199,13 @@ passphrase_problem_sentences := [Passphrase_Problem]string {
 	.None      = "",
 	.Too_Short = "the passphrase has fewer than 8 bytes",
 	.Too_Long  = "the passphrase has more than 128 bytes",
-	.Bad_Byte  = "the passphrase has a byte that is not a printable character",
+	.Not_Text  = "the passphrase has a control character or a broken character",
 }
 
-// passphrase_problem checks a passphrase: 8 to 128 printable bytes (32 to
-// 126), the bytes that the input service gives for the keys of the US layout.
+// passphrase_problem checks a passphrase: 8 to 128 bytes of UTF-8 with no
+// control character, the characters that the keys of a layout give. The
+// bytes are not normalized: the keys give one form of each character, the
+// precomposed one (src/md/data/text_encoding.md, "The chosen form").
 passphrase_problem :: proc "contextless" (passphrase: []u8) -> Passphrase_Problem {
 	if len(passphrase) < PASSPHRASE_LEAST {
 		return .Too_Short
@@ -210,10 +213,8 @@ passphrase_problem :: proc "contextless" (passphrase: []u8) -> Passphrase_Proble
 	if len(passphrase) > PASSPHRASE_LIMIT {
 		return .Too_Long
 	}
-	for character in passphrase {
-		if character < 32 || character > 126 {
-			return .Bad_Byte
-		}
+	if !text_encoding.text_valid(passphrase) {
+		return .Not_Text
 	}
 	return .None
 }

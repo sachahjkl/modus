@@ -44,7 +44,7 @@ the_glyph_cache_of_b612 :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(cache.sizes), 3)
 	testing.expect_value(t, cache.sizes[0].position_count, u16(3))
 	testing.expect_value(t, cache.sizes[1].position_count, u16(1))
-	testing.expect_value(t, cache.header.pair_count, u32(232))
+	testing.expect_value(t, ascii_pair_count(glyph_cache.pairs_of(&cache, 1)), 232)
 	testing.expect_value(t, cache.sizes[0].baseline, u16(12))
 	Known :: struct {
 		character: u8,
@@ -53,31 +53,43 @@ the_glyph_cache_of_b612 :: proc(t: ^testing.T) {
 	}
 	knowns := [?]Known{{'A', 1, 555}, {'i', 1, 256}, {'M', 1, 768}, {' ', 1, 299}, {'W', 1, 811}, {'A', 2, 1109}, {'i', 3, 768}}
 	for known in knowns {
-		advance := glyph_cache.advances_of(&cache, known.scale)[known.character - 32]
+		advance := glyph_cache.advances_of(&cache, known.scale)[known.character - glyph_cache.ASCII_FIRST]
 		testing.expectf(t, advance == known.advance, "the advance of %c at scale %v: %v, expected %v", known.character, known.scale, advance, known.advance)
 	}
 	// "To": -100 units, -42.67 in 1/64, rounded to -43; "LV": -150 units, -64.
 	pairs := glyph_cache.pairs_of(&cache, 1)
 	found_to, found_lv := false, false
+	index_of :: proc(character: rune) -> u8 {
+		index, _ := glyph_cache.character_index(character)
+		return u8(index)
+	}
 	for pair in pairs {
-		if pair.left == 'T' && pair.right == 'o' {
+		if pair.left == index_of('T') && pair.right == index_of('o') {
 			found_to = pair.adjustment == -43
 		}
-		if pair.left == 'L' && pair.right == 'V' {
+		if pair.left == index_of('L') && pair.right == index_of('V') {
 			found_lv = pair.adjustment == -64
 		}
-		testing.expect(t, !(pair.left == 'A' && pair.right == 'V')) // B612 has no pair "AV".
+		testing.expect(t, !(pair.left == index_of('A') && pair.right == index_of('V'))) // B612 has no pair "AV".
 	}
 	testing.expect(t, found_to && found_lv)
 	// Each position of a glyph with ink is a glyph with ink, and starts at
-	// the column of position 0 or the next one; a space has no ink.
-	for character in u8(33) ..= 126 {
+	// the column of position 0 or the next one; a space has no ink. The
+	// letters of the Latin-1 Supplement too: é and the capital with a
+	// diaeresis, whose accent is above the cap height.
+	latin_letters := [?]rune{'é', 'è', 'ç', 'à', 'ù', 'Ë', 'ÿ'}
+	for character in rune(33) ..= 126 {
 		_, first, _ := glyph_cache.glyph_at_position(&cache, character, 1, 0)
 		for position in 1 ..< 3 {
 			_, entry, found := glyph_cache.glyph_at_position(&cache, character, 1, position)
 			testing.expect(t, found && entry.row_count > 0 && first.row_count > 0)
 			testing.expectf(t, entry.left == first.left || entry.left == first.left + 1, "%c at position %v starts at %v, position 0 at %v", character, position, entry.left, first.left)
 		}
+	}
+	for character in latin_letters {
+		_, entry, found := glyph_cache.glyph_at_position(&cache, character, 1, 0)
+		testing.expectf(t, found && entry.row_count > 0, "%c has no ink in the cache", character)
+		testing.expectf(t, glyph_cache.advances_of(&cache, 1)[index_of(character)] > 0, "%c has no advance", character)
 	}
 	_, space, _ := glyph_cache.glyph_at_position(&cache, ' ', 1, 2)
 	testing.expect_value(t, space.row_count, u16(0))
@@ -99,8 +111,21 @@ the_glyph_cache_of_b612 :: proc(t: ^testing.T) {
 	bold_cache, bold_refused := glyph_cache.validate(bold[:bold_size])
 	testing.expect_value(t, bold_refused.kind, glyph_cache.Problem_Kind.None)
 	testing.expect_value(t, len(bold_cache.sizes), 1)
-	testing.expect_value(t, bold_cache.header.pair_count, u32(239))
+	testing.expect_value(t, ascii_pair_count(glyph_cache.pairs_of(&bold_cache, 1)), 239)
 	fmt.printfln("vector_font: the glyph cache of b612_bold at scale 1 with 3 positions: %v bytes", bold_size)
+}
+
+// ascii_pair_count counts the pairs between two characters of ASCII: the
+// counts of the kern tables of B612 that were read by hand. The pairs of
+// the Latin-1 Supplement add to them.
+@(private = "file")
+ascii_pair_count :: proc(pairs: []glyph_cache.Pair_Entry) -> (count: int) {
+	for pair in pairs {
+		if int(pair.left) < glyph_cache.ASCII_COUNT && int(pair.right) < glyph_cache.ASCII_COUNT {
+			count += 1
+		}
+	}
+	return count
 }
 
 // The size of B612 on the grid comes from the cap height that the font
@@ -127,7 +152,7 @@ a_flat_capital_sits_on_ten_rows :: proc(t: ^testing.T) {
 	file, size := proportional_cache_of(t, b612_regular, "b612", regular_positions[:])
 	defer free(raw_data(file))
 	cache, _ := glyph_cache.validate(file[:size])
-	for character in ([?]u8{'E', 'T', 'Z'}) {
+	for character in ([?]rune{'E', 'T', 'Z'}) {
 		size_entry, entry, _ := glyph_cache.glyph_at_position(&cache, character, 1, 0)
 		testing.expect_value(t, size_entry.baseline, u16(12))
 		testing.expectf(t, entry.first_row == 2 && entry.row_count == 10, "%c: rows %v to %v, expected 2 to 11", character, entry.first_row, int(entry.first_row) + int(entry.row_count) - 1)
@@ -178,7 +203,7 @@ a_damaged_proportional_glyph_cache :: proc(t: ^testing.T) {
 	copy(good, file[:size])
 	pair_count := int((^glyph_cache.Header)(raw_data(good)).pair_count)
 	layout := cache_layout_of(regular_positions[:], pair_count)
-	glyph_a := layout.glyphs + ('A' - 32) * glyph_cache.GLYPH_ENTRY_SIZE
+	glyph_a := layout.glyphs + ('A' - glyph_cache.ASCII_FIRST) * glyph_cache.GLYPH_ENTRY_SIZE
 	Damage :: struct {
 		offset: int,
 		bytes:  [4]u8,

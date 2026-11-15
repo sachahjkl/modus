@@ -2,6 +2,7 @@
 package vector_font
 
 import "core:testing"
+import "modus:contract/glyph_cache"
 
 // The subsets of B612 that "modustool vector_fonts" writes. The values
 // below were read by hand in the files of B612 1.008 (the commit of
@@ -50,7 +51,18 @@ the_advances_and_the_pairs_of_b612 :: proc(t: ^testing.T) {
 		}
 		table, pair_problem := pair_table_open(&font)
 		testing.expect_value(t, pair_problem, Font_Problem.None)
-		testing.expect_value(t, table.count, weight.pair_count)
+		// The pairs between two characters of ASCII: the glyphs 1 to
+		// ASCII_COUNT of a subset (the glyph 0 is .notdef). The pairs of
+		// the Latin-1 Supplement come after them in the subset.
+		ascii_pairs := 0
+		for index in 0 ..< table.count {
+			left := read_u16(table.pairs, index * KERN_PAIR_SIZE) or_else -1
+			right := read_u16(table.pairs, index * KERN_PAIR_SIZE + 2) or_else -1
+			if left >= 1 && left <= glyph_cache.ASCII_COUNT && right >= 1 && right <= glyph_cache.ASCII_COUNT {
+				ascii_pairs += 1
+			}
+		}
+		testing.expect_value(t, ascii_pairs, weight.pair_count)
 		for known in weight.pairs {
 			adjustment := character_pair_adjustment(&font, &table, known.left, known.right)
 			testing.expectf(t, adjustment == known.adjustment, "the pair %c%c: %v, expected %v", known.left, known.right, adjustment, known.adjustment)

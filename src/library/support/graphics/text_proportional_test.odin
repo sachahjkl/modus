@@ -76,7 +76,7 @@ the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 		characters: [40]u8
 		count := 1 + int(next(&state) % 40)
 		for index in 0 ..< count {
-			characters[index] = u8(32 + next(&state) % 95)
+			characters[index] = u8(glyph_cache.ASCII_FIRST + next(&state) % glyph_cache.ASCII_COUNT)
 		}
 		placed: [40]text_shaping.Placed_Glyph
 		_, width, ok := text_shaping.shape(&spacing, characters[:count], placed[:count])
@@ -116,7 +116,7 @@ a_proportional_text_outside_its_limits :: proc(t: ^testing.T) {
 	defer free(tables)
 	pixels: [64 * 32]Color
 	canvas := Canvas{pixels = raw_data(pixels[:]), width = 64, height = 32, stride = 64}
-	placed := [3]text_shaping.Placed_Glyph{{glyph = 'A' - 32, x = 0}, {glyph = 200, x = 640}, {glyph = 'W' - 32, x = max(i32)}}
+	placed := [3]text_shaping.Placed_Glyph{{glyph = 'A' - glyph_cache.ASCII_FIRST, x = 0}, {glyph = glyph_cache.CHARACTER_COUNT, x = 640}, {glyph = 'W' - glyph_cache.ASCII_FIRST, x = max(i32)}}
 	places := [?]i64{-(1 << 40), 1 << 40, -64 * 70, 64 * 70}
 	for place in places {
 		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, 0, placed[:], 1, COLOR_TEXT)

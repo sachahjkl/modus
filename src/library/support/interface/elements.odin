@@ -1,5 +1,6 @@
 package interface
 
+import "modus:contract/text_encoding"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/kind_icons"
@@ -358,16 +359,18 @@ text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 				result.activated = true
 				break keys
 			case key.code == display.KEY_BACKSPACE:
+				// The text is UTF-8: Backspace removes its last whole
+				// character.
 				key.taken = true
 				if count^ > 0 {
-					count^ -= 1
+					count^ = text_encoding.complete_characters(text[:count^ - 1])
 					result.changed = true
 				}
-			case key.character >= ' ' && key.character <= '~':
+			case text_encoding.character_in_text(key.character):
 				key.taken = true
-				if count^ < len(text) {
-					text[count^] = key.character
-					count^ += 1
+				// A character whose bytes do not fit is not typed.
+				if length := text_encoding.character_encode(key.character, text[count^:]); length > 0 {
+					count^ += length
 					result.changed = true
 				}
 			}
@@ -381,8 +384,10 @@ text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 	// with room for the caret, so it never passes the field.
 	visible := string(text[:count^])
 	keep := max(area.width - 16 - 3, 0) / graphics.CELL_WIDTH
-	if len(visible) > keep {
-		visible = visible[len(visible) - keep:]
+	// The last keep characters: skip whole characters from the start.
+	for text_encoding.character_count(transmute([]u8)visible) > keep {
+		_, length, _ := text_encoding.character_decode(transmute([]u8)visible, 0)
+		visible = visible[max(length, 1):]
 	}
 	after := draw_text(table, area.x + 8, y, visible, graphics.COLOR_WHITE)
 	if result.focused {
@@ -600,9 +605,25 @@ text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, 
 	text_x := area.x + TEXT_INPUT_LINE_MARGIN
 	text_y := area.y + (area.height - text_height) / 2
 	fit := max((area.width - 2 * TEXT_INPUT_LINE_MARGIN - caret_width) / cell_width, 1)
-	caret_place := clamp(caret, 0, len(text))
-	first := len(text) > fit ? max(caret_place - fit, 0) : 0
-	shown := text[first:min(first + fit, len(text))]
+	// The text is UTF-8: one cell for each character, so the caret and the
+	// part that shows are counted in characters, and a part starts and
+	// ends after a whole character.
+	bytes := transmute([]u8)text
+	caret_place := text_encoding.character_count(bytes[:clamp(caret, 0, len(text))])
+	character_total := text_encoding.character_count(bytes)
+	first := character_total > fit ? max(caret_place - fit, 0) : 0
+	byte_of_character :: proc "contextless" (text_bytes: []u8, number: int) -> int {
+		place := 0
+		for _ in 0 ..< number {
+			_, length, _ := text_encoding.character_decode(text_bytes, place)
+			if length == 0 {
+				break
+			}
+			place += length
+		}
+		return place
+	}
+	shown := text[byte_of_character(bytes, first):byte_of_character(bytes, min(first + fit, character_total))]
 	// The caret first: a glyph beside it draws over its edge, not under it.
 	draw_rectangle(table, text_x + (caret_place - first) * cell_width, text_y, caret_width, text_height, graphics.COLOR_TITLE)
 	draw_text(table, text_x, text_y, shown, graphics.COLOR_WHITE, font)

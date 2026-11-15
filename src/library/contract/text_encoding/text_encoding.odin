@@ -38,12 +38,15 @@ REPLACEMENT_CHARACTER :: rune(0xFFFD)
 // The most bytes of one character.
 CHARACTER_BYTES_LIMIT :: 4
 
+// The last code point of Unicode.
+CODE_POINT_LAST :: 0x10FFFF
+
 // character_in_text says if a code point is a character of a text: no
 // control character, no surrogate, nothing above U+10FFFF.
 character_in_text :: proc "contextless" (character: rune) -> bool {
 	control := character < 0x20 || character >= 0x7F && character <= 0x9F
 	surrogate := character >= 0xD800 && character <= 0xDFFF
-	return !control && !surrogate && character <= 0x10FFFF
+	return !control && !surrogate && character <= CODE_POINT_LAST
 }
 
 // character_decode reads the character that starts at place. A

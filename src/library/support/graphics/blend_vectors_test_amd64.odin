@@ -329,7 +329,7 @@ premultiplied_forms_meet_each_channel_value :: proc(t: ^testing.T) {
 // glyph_in_form draws one glyph as character_vector_with does, with the
 // rows blended in one form: the choice of the program does not decide here.
 @(private = "file")
-glyph_in_form :: proc(form: Blend_Form, cache: ^glyph_cache.Cache, table: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: u8, color: Color, scale: int, position := 0) {
+glyph_in_form :: proc(form: Blend_Form, cache: ^glyph_cache.Cache, table: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: rune, color: Color, scale: int, position := 0) {
 	_, entry, found := glyph_cache.glyph_at_position(cache, value, scale, position)
 	if !found || entry.row_count == 0 {
 		return
@@ -404,7 +404,7 @@ glyph_draw_cost_of_each_form :: proc(t: ^testing.T) {
 	for form in all_forms {
 		start := time.tick_now()
 		for index in 0 ..< REPEAT {
-			glyph_in_form(form, &cache, &table, .Red_Green_Blue, canvas, 8, 8, sample[index % len(sample)], COLOR_TEXT, 1)
+			glyph_in_form(form, &cache, &table, .Red_Green_Blue, canvas, 8, 8, rune(sample[index % len(sample)]), COLOR_TEXT, 1)
 		}
 		fmt.printfln("graphics: one glyph from the glyph cache on the host, the %v form: %v ns", form, time.duration_nanoseconds(time.tick_since(start)) / REPEAT)
 	}
@@ -505,7 +505,7 @@ three_blends_give_the_same_bytes_for_each_cache :: proc(t: ^testing.T) {
 							for _ in 0 ..< 2 {
 								for character in 32 ..< 127 {
 									x := 8 + (character - 32) * 6 * scale
-									value := u8(character)
+									value := rune(character)
 									glyph_in_form(.Scalar, &item.cache, &table, order, canvases[0], x, 0, value, color, scale, position)
 									glyph_in_form(.Sse2, &item.cache, &table, order, canvases[1], x, 0, value, color, scale, position)
 									if position == 0 {
@@ -566,9 +566,9 @@ text_speed_of_each_blend :: proc(t: ^testing.T) {
 			start := time.tick_now()
 			for index in 0 ..< SPEED_GLYPHS {
 				if tables {
-					character_vector_with(data.cache, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * index, 8, text[index], COLOR_TEXT, 1)
+					character_vector_with(data.cache, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * index, 8, rune(text[index]), COLOR_TEXT, 1)
 				} else {
-					glyph_in_form(data.form, data.cache, &data.table, .Red_Green_Blue, canvas, 8 * index, 8, text[index], COLOR_TEXT, 1)
+					glyph_in_form(data.form, data.cache, &data.table, .Red_Green_Blue, canvas, 8 * index, 8, rune(text[index]), COLOR_TEXT, 1)
 				}
 			}
 			least = min(least, time.duration_nanoseconds(time.tick_since(start)))
@@ -634,7 +634,7 @@ proportional_text_gives_the_same_bytes_in_each_blend :: proc(t: ^testing.T) {
 					}
 					for glyph in placed[:count] {
 						pixel, position := glyph_cache.position_of(place + i64(glyph.x), int(cache.sizes[0].position_count))
-						value := u8(32 + glyph.glyph)
+						value, _ := glyph_cache.character_of_index(int(glyph.glyph))
 						glyph_in_form(.Scalar, cache, &table, order, canvases[0], int(pixel), 8, value, COLOR_TEXT, 1, position)
 						glyph_in_form(.Sse2, cache, &table, order, canvases[1], int(pixel), 8, value, COLOR_TEXT, 1, position)
 					}

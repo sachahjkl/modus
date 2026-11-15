@@ -66,12 +66,12 @@ a_pair_changes_the_advance_by_the_value_of_the_file :: proc(t: ^testing.T) {
 	defer delete(memory)
 	placed: [2]Placed_Glyph
 	shape(&spacing, transmute([]u8)string("To"), placed[:])
-	testing.expect_value(t, placed[0].advance, spacing.advances['T' - 32] - 43)
-	testing.expect_value(t, spacing.advances['T' - 32], 512) // 1200 units.
+	testing.expect_value(t, placed[0].advance, spacing.advances['T' - glyph_cache.ASCII_FIRST] - 43)
+	testing.expect_value(t, spacing.advances['T' - glyph_cache.ASCII_FIRST], 512) // 1200 units.
 	testing.expect_value(t, placed[0].advance, 469)
 	testing.expect_value(t, placed[1].x, placed[0].advance)
 	shape(&spacing, transmute([]u8)string("AV"), placed[:])
-	testing.expect_value(t, placed[0].advance, spacing.advances['A' - 32])
+	testing.expect_value(t, placed[0].advance, spacing.advances['A' - glyph_cache.ASCII_FIRST])
 	testing.expect_value(t, placed[0].advance, 555) // 1300 units.
 	// The last glyph of a text has no pair after it.
 	shape(&spacing, transmute([]u8)string("T"), placed[:1])
@@ -91,7 +91,7 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	placed: [4]Placed_Glyph
 	count, width, ok = shape(&spacing, outside[:], placed[:])
 	testing.expect(t, ok && count == 3)
-	zero := spacing.advances['0' - 32]
+	zero := spacing.advances['0' - glyph_cache.ASCII_FIRST]
 	for glyph, index in placed[:3] {
 		testing.expect_value(t, glyph.glyph, REPLACEMENT_GLYPH)
 		testing.expect_value(t, glyph.advance, zero)
@@ -102,10 +102,10 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	count, width, ok = shape(&spacing, transmute([]u8)string("TéT"), placed[:])
 	testing.expect(t, ok && count == 3)
 	testing.expect_value(t, placed[1].glyph, REPLACEMENT_GLYPH)
-	testing.expect_value(t, placed[2].glyph, u32('T' - 32))
+	testing.expect_value(t, placed[2].glyph, u32('T' - glyph_cache.ASCII_FIRST))
 	testing.expect_value(t, placed[2].cluster, u32(3))
-	testing.expect_value(t, placed[0].advance, spacing.advances['T' - 32]) // No pair with the replacement glyph.
-	testing.expect_value(t, width, 2 * i64(spacing.advances['T' - 32]) + i64(zero))
+	testing.expect_value(t, placed[0].advance, spacing.advances['T' - glyph_cache.ASCII_FIRST]) // No pair with the replacement glyph.
+	testing.expect_value(t, width, 2 * i64(spacing.advances['T' - glyph_cache.ASCII_FIRST]) + i64(zero))
 	// A text over the limit writes nothing.
 	long := make([]u8, TEXT_LIMIT + 1)
 	defer delete(long)

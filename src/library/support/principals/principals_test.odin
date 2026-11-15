@@ -64,7 +64,12 @@ names_and_passphrases :: proc(t: ^testing.T) {
 	testing.expect_value(t, name_problem("quote\""), Name_Problem.Bad_Byte)
 	testing.expect_value(t, passphrase_problem(transmute([]u8)string("correct horse")), Passphrase_Problem.None)
 	testing.expect_value(t, passphrase_problem(transmute([]u8)string("short")), Passphrase_Problem.Too_Short)
-	testing.expect_value(t, passphrase_problem(transmute([]u8)string("tab\tinside it")), Passphrase_Problem.Bad_Byte)
+	testing.expect_value(t, passphrase_problem(transmute([]u8)string("tab\tinside it")), Passphrase_Problem.Not_Text)
+	// A passphrase of the layout of France: UTF-8, and its bytes count.
+	testing.expect_value(t, passphrase_problem(transmute([]u8)string("été à Noël")), Passphrase_Problem.None)
+	testing.expect_value(t, passphrase_problem(transmute([]u8)string("éééé")), Passphrase_Problem.None) // 8 bytes.
+	testing.expect_value(t, passphrase_problem(transmute([]u8)string("ééé")), Passphrase_Problem.Too_Short)
+	testing.expect_value(t, passphrase_problem(transmute([]u8)string("a sequence \xC3 cut short")), Passphrase_Problem.Not_Text)
 	long: [PASSPHRASE_LIMIT + 1]u8
 	for &character in long {
 		character = 'a'

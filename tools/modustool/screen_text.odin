@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "core:time"
 
+import "modus:contract/glyph_cache"
 import "modus:support/graphics"
 
 // The read of a text off the screen (docs/TOOLS.md, "How a step reads a text off the screen"):
@@ -57,10 +58,14 @@ cells_text :: proc(pixels: []u8, width, height: int, x, y: int, count: int) -> (
 				}
 			}
 		}
+		// The glyphs of ASCII come first, so a glyph that a character of
+		// the Latin-1 Supplement shares (the space with no break draws as
+		// the space) reads as its character of ASCII.
 		found := false
 		for glyph, index in graphics.font {
 			if glyph == rows {
-				strings.write_byte(&builder, u8(graphics.FONT_FIRST + index))
+				character, _ := glyph_cache.character_of_index(index)
+				strings.write_rune(&builder, character)
 				found = true
 				break
 			}

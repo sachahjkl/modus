@@ -77,8 +77,9 @@ Pointer_Backlog :: struct {
 
 // input_byte_can_be_read is the back pressure rule of the input service:
 // it says if the service takes the next byte of the keyboard controller.
-// One byte makes at most one record, so the service takes a byte only when
-// that record has a place.
+// One byte makes one record, or two after a dead key: the service takes a
+// byte only when each record of that byte has a place, and says so in
+// ring_has_room.
 //
 // - A byte of the keyboard: only when the input ring has room and no packet
 //   of the mouse waits before it. If not, the byte stays in the controller,

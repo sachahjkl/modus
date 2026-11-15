@@ -19,7 +19,8 @@ package console
 //
 // A line of the file is data that this run did not write: the read checks
 // each field and each byte, a line keeps the bounds of a typed line (200
-// bytes, the bytes 32 to 126), and nothing of the file runs. A file that a
+// bytes of valid UTF-8 with no control character), and nothing of the
+// file runs. A file that a
 // check refuses gives an empty history and one log line.
 
 import "modus:contract/blake3"

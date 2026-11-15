@@ -7,8 +7,8 @@ import "core:testing"
 // ---- The keys of a line.
 
 type_text :: proc(line: ^Line, text: string) {
-	for index in 0 ..< len(text) {
-		line_key(line, .Character, text[index])
+	for character in text {
+		line_key(line, .Character, character)
 	}
 }
 
@@ -39,9 +39,66 @@ each_key_at_the_caret :: proc(t: ^testing.T) {
 	testing.expect(t, !line_key(&line, .Right), "Right at the end changes nothing")
 	testing.expect(t, !line_key(&line, .Delete), "Delete at the end changes nothing")
 	testing.expect(t, !line_key(&line, .End))
-	testing.expect(t, !line_key(&line, .Character, 10), "a byte under 32 is not printable")
-	testing.expect(t, !line_key(&line, .Character, 200), "a byte over 126 is not printable")
+	testing.expect(t, !line_key(&line, .Character, 10), "a control character is not printable")
+	testing.expect(t, !line_key(&line, .Character, 0x7F), "delete is not printable")
+	testing.expect(t, !line_key(&line, .Character, 0x85), "a control character of the Latin-1 range is not printable")
+	testing.expect(t, !line_key(&line, .Character, 0xD800), "a surrogate is not printable")
 	testing.expect_value(t, line_text(&line), "lXl")
+}
+
+// A character of two bytes is one character for each key: Left and Right
+// pass it whole, Backspace and Delete remove it whole, and the caret is
+// always before a whole character.
+@(test)
+each_key_over_a_character_of_two_bytes :: proc(t: ^testing.T) {
+	line: Line
+	type_text(&line, "été")
+	testing.expect_value(t, line_text(&line), "été")
+	testing.expect_value(t, line.count, 5)
+	testing.expect_value(t, line.caret, 5)
+	testing.expect_value(t, line_caret_column(&line), 3)
+	testing.expect(t, line_key(&line, .Left))
+	testing.expect_value(t, line.caret, 3)
+	testing.expect_value(t, line_caret_column(&line), 2)
+	testing.expect(t, line_key(&line, .Left))
+	testing.expect_value(t, line.caret, 2)
+	testing.expect(t, line_key(&line, .Backspace))
+	testing.expect_value(t, line_text(&line), "té")
+	testing.expect_value(t, line.caret, 0)
+	testing.expect(t, line_key(&line, .Right))
+	testing.expect_value(t, line.caret, 1)
+	testing.expect(t, line_key(&line, .Delete))
+	testing.expect_value(t, line_text(&line), "t")
+	testing.expect(t, line_key(&line, .Character, 'ù'))
+	testing.expect_value(t, line_text(&line), "tù")
+	// A caret that the caller put inside a character goes to its start.
+	line.caret = 2
+	testing.expect(t, line_key(&line, .Character, 'a'))
+	testing.expect_value(t, line_text(&line), "taù")
+	testing.expect_value(t, character_length('é'), 2)
+	testing.expect_value(t, character_length('a'), 1)
+	testing.expect_value(t, character_length(0x85), 0)
+}
+
+// A full line takes no character whose bytes do not fit, even when one
+// byte is free.
+@(test)
+a_character_that_does_not_fit :: proc(t: ^testing.T) {
+	line: Line
+	for _ in 0 ..< LINE_CAPACITY - 1 {
+		line_key(&line, .Character, 'a')
+	}
+	testing.expect(t, !line_key(&line, .Character, 'é'), "two bytes in one free byte")
+	testing.expect(t, line_key(&line, .Character, 'b'))
+	testing.expect_value(t, line.count, LINE_CAPACITY)
+	// A text longer than the line is cut after a whole character.
+	long: [LINE_CAPACITY + 1]u8
+	for &byte in long {
+		byte = 'q'
+	}
+	long[LINE_CAPACITY - 1], long[LINE_CAPACITY] = 0xC3, 0xA9 // é across the end of the line.
+	line_set(&line, string(long[:]))
+	testing.expect_value(t, line.count, LINE_CAPACITY - 1)
 }
 
 @(test)
@@ -95,6 +152,7 @@ replace_a_part_of_a_line :: proc(t: ^testing.T) {
 	testing.expect_value(t, line_text(&line), "x = monitor.count( + 1")
 	testing.expect_value(t, line.caret, 18)
 	testing.expect(t, !line_replace(&line, 0, 0, "a\x01b"), "a byte that is not printable is refused")
+	testing.expect(t, !line_replace(&line, 0, 0, "a\xC3"), "a sequence cut short is refused")
 	long: [LINE_CAPACITY]u8
 	for &b in long {
 		b = 'q'
@@ -247,6 +305,26 @@ places_of_a_match :: proc(t: ^testing.T) {
 	testing.expect(t, matched && score == 0 && card(places) == 0, "an empty query matches with no place")
 	_, _, matched = fuzzy_match("mx", "monitor.count")
 	testing.expect(t, !matched)
+}
+
+// The match compares whole characters: é matches é only, with no fold to
+// e and no fold of its case; a place is the first byte of a character, and
+// a gap counts characters, so "été" scores as "ete" scores in "ete".
+@(test)
+a_match_of_characters_outside_ascii :: proc(t: ^testing.T) {
+	score, places, matched := fuzzy_match("été", "print(\"été\")")
+	testing.expect(t, matched)
+	testing.expect_value(t, places, Match_Places{7, 9, 10})
+	ascii_score, _, _ := fuzzy_match("ete", "print(\"ete\")")
+	testing.expect_value(t, score, ascii_score)
+	_, _, matched = fuzzy_match("e", "été")
+	testing.expect(t, !matched, "é is not e")
+	_, _, matched = fuzzy_match("É", "été")
+	testing.expect(t, !matched, "the case of a character outside ASCII is not folded")
+	// é is C3 A9 and © is C2 A9: the byte A9 of the query never matches a
+	// part of another character.
+	_, _, matched = fuzzy_match("é", "\xC3\xA3\xC2\xA9")
+	testing.expect(t, !matched, "ã then © hold the bytes of é, not é")
 }
 
 @(test)
@@ -546,18 +624,48 @@ history_file_hostile :: proc(t: ^testing.T) {
 		testing.expectf(t, history_count(read_back) == 0, "%s: the history is empty", name)
 	}
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Magic, proc(bytes: []u8) {bytes[0] = 'X'}, false, "magic")
-	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Version, proc(bytes: []u8) {bytes[4] = 2}, false, "version")
+	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Version, proc(bytes: []u8) {bytes[4] = HISTORY_FILE_VERSION + 1}, false, "version")
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Hash, proc(bytes: []u8) {bytes[17] ~= 1}, false, "a changed byte")
 	expect_problem(t, good, copy_of_good[:], read_back, .Too_Many_Lines, proc(bytes: []u8) {bytes[9] = 0xFF}, true, "the count of lines")
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Size, proc(bytes: []u8) {bytes[12] += 1}, true, "the count of bytes")
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Line, proc(bytes: []u8) {bytes[16] = 0}, true, "a line of 0 bytes")
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Line, proc(bytes: []u8) {bytes[16] = 250}, true, "a line longer than the lines")
-	expect_problem(t, good, copy_of_good[:], read_back, .Not_Printable, proc(bytes: []u8) {bytes[17] = 7}, true, "a control byte")
+	expect_problem(t, good, copy_of_good[:], read_back, .Not_Text, proc(bytes: []u8) {bytes[17] = 7}, true, "a control byte")
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Count, proc(bytes: []u8) {bytes[8] = 1}, true, "fewer lines than the bytes")
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Count, proc(bytes: []u8) {bytes[8] = 3}, true, "more lines than the bytes")
 	short := [10]u8{}
 	testing.expect_value(t, history_file_read(short[:], read_back), History_File_Problem.Too_Short)
 	testing.expect_value(t, history_file_read(nil, read_back), History_File_Problem.Too_Short)
+	// A byte that starts a sequence of two, then a byte of ASCII: a
+	// sequence cut short.
+	expect_problem(t, good, copy_of_good[:], read_back, .Not_Text, proc(bytes: []u8) {bytes[17] = 0xC3}, true, "a sequence cut short")
+}
+
+// A line of UTF-8 goes into the file and comes back the same, and a line
+// longer than a line of the editor is cut after a whole character.
+@(test)
+history_file_of_lines_of_utf8 :: proc(t: ^testing.T) {
+	history := new(History)
+	defer free(history)
+	read_back := new(History)
+	defer free(read_back)
+	history_add(history, "print(\"été\")")
+	history_add(history, "\"ça va, Noël\"")
+	buffer: [HISTORY_FILE_SIZE_LIMIT]u8
+	bytes := history_file_write(history, buffer[:])
+	testing.expect_value(t, history_file_read(bytes, read_back), History_File_Problem.None)
+	newest, _ := history_line(read_back, 0)
+	oldest, _ := history_line(read_back, 1)
+	testing.expect_value(t, newest, "\"ça va, Noël\"")
+	testing.expect_value(t, oldest, "print(\"été\")")
+	long: [LINE_CAPACITY + 1]u8
+	for &byte in long {
+		byte = 'q'
+	}
+	long[LINE_CAPACITY - 1], long[LINE_CAPACITY] = 0xC3, 0xA9 // é across the end of a line.
+	history_add(history, string(long[:]))
+	cut, _ := history_line(history, 0)
+	testing.expect_value(t, len(cut), LINE_CAPACITY - 1)
 }
 
 // ---- The keys that come while a line runs.

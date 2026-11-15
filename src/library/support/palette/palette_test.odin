@@ -44,8 +44,8 @@ panel_of_test :: proc(panel: ^Panel) {
 
 @(private = "file")
 type_text :: proc(panel: ^Panel, text: string) {
-	for index in 0 ..< len(text) {
-		if _, text_changed := typed_edit(panel, .Character, text[index]); text_changed {
+	for character in text {
+		if _, text_changed := typed_edit(panel, .Character, character); text_changed {
 			list_build(panel)
 		}
 	}
@@ -890,7 +890,7 @@ the_damage_of_a_key_is_never_too_small :: proc(t: ^testing.T) {
 	interface.execute(&before.table, before.canvas)
 	Step :: struct {
 		key:       Key,
-		character: u8,
+		character: rune,
 	}
 	steps := [?]Step{{.Down, 0}, {.Character, 'p'}, {.Character, 'l'}, {.Down, 0}, {.Backspace, 0}, {.Page_Down, 0}, {.Character, 'x'}, {.Character, 'y'}, {.Backspace, 0}, {.Backspace, 0}, {.Backspace, 0}, {.Up, 0}}
 	for step, number in steps {
@@ -1234,7 +1234,7 @@ the_form_of_an_entry :: proc(t: ^testing.T) {
 	testing.expect_value(t, form.field_count, 2)
 	testing.expect_value(t, chosen_of(panel), Chosen.Form_Sends)
 	// A Text field takes each character but a quote.
-	for character in transmute([]u8)string("ab") {
+	for character in "ab" {
 		form_field_edit(panel, .Character, character)
 	}
 	drawn, leave := form_field_edit(panel, .Character, '"')
@@ -1318,7 +1318,7 @@ the_form_of_an_entry :: proc(t: ^testing.T) {
 	// caret in the current field.
 	screen := screen_make()
 	defer screen_free(screen)
-	for character in transmute([]u8)string("net") {
+	for character in "net" {
 		form_field_edit(panel, .Character, character)
 	}
 	panel_build(screen, panel)
@@ -1640,7 +1640,7 @@ tab_waits_for_the_candidates :: proc(t: ^testing.T) {
 		candidate := (^palette_table.Candidate)(&table[palette_table.CANDIDATES_OFFSET + index * size_of(palette_table.Candidate)])
 		candidate.length = u8(copy(candidate.name[:], name))
 	}
-	for character in transmute([]u8)string("pa") {
+	for character in "pa" {
 		form_field_edit(panel, .Character, character)
 	}
 	// The answer: the wait ends, and Tab takes the candidate that the
@@ -1679,7 +1679,7 @@ a_press_in_a_field_puts_the_caret_there :: proc(t: ^testing.T) {
 	type_text(panel, "revoke")
 	form_open(panel, chosen_entry(panel))
 	form := &panel.form
-	for character in transmute([]u8)string("plasma") {
+	for character in "plasma" {
 		form_field_edit(panel, .Character, character)
 	}
 	x, _ := panel_place(1024)

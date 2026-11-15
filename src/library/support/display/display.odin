@@ -45,6 +45,7 @@ import "modus:contract/fixed_addresses"
 import "modus:contract/glyph_cache"
 import "modus:contract/pointer_pictures"
 import "modus:contract/settings"
+import "modus:contract/text_encoding"
 import "modus:support/system"
 
 // A command of a program to the compositor, on the ring of its window.
@@ -128,7 +129,7 @@ Control :: enum u32 {
 // The ring from the input service to the compositor.
 Input :: enum u32 {
 	None    = 0, // Not a command.
-	Key     = 1, // values: code, character, 1 when pressed, modifiers
+	Key     = 1, // values: code, character (a code point, or 0), 1 when pressed, modifiers
 	Pointer = 2, // values: x motion, y motion (signed), buttons
 }
 
@@ -164,7 +165,7 @@ SURFACE_LIMIT :: 2048 // The largest width and height.
 Event :: struct {
 	kind:      Event_Kind, // What happened.
 	code:      u32, // A key: its code (`KEY_` constants).
-	character: u8, // A key: its character in ASCII, or 0.
+	character: rune, // A key: its character as a code point, or 0. A program that keeps it writes its UTF-8.
 	pressed:   bool, // A key: true when it went down, false when it went up.
 	modifiers: u32, // A key: the `MODIFIER_` bits.
 	x, y:      int, // The pointer: its place in the surface, in pixels; it can be outside the surface.
@@ -450,6 +451,13 @@ wait_events :: proc "contextless" (list: ^system.Wait, window: ^Window) {
 	}
 }
 
+// key_character_of gives the character of a key record: its code point, or
+// 0 for a value past the last code point. A key with a control character
+// (Enter, Tab, Backspace) keeps it.
+key_character_of :: proc "contextless" (value: u64) -> rune {
+	return value <= text_encoding.CODE_POINT_LAST ? rune(value) : 0
+}
+
 // next_event gives the next input event of the window, if there is one.
 next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 	record := system.receive(&window.ring.completions) or_return
@@ -457,7 +465,7 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 	#partial switch event.kind {
 	case .Key:
 		event.code = u32(record.values[0])
-		event.character = u8(record.values[1])
+		event.character = key_character_of(record.values[1])
 		event.pressed = record.values[2] != 0
 		event.modifiers = u32(record.values[3])
 	case .Pointer:

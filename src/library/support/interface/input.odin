@@ -45,7 +45,7 @@ identity_with :: proc "contextless" (base: Element_Identity, index: int) -> Elem
 // One key that went down in a frame, from a display event.
 Key_Press :: struct {
 	code:      u32, // The code of the key, as the input service gives it.
-	character: u8, // The character of the key, or 0.
+	character: rune, // The character of the key as a code point, or 0.
 	modifiers: u32, // The keys Shift, Control and Alt that were down.
 	taken:     bool, // An element took the key: no other element takes it.
 }

@@ -18,10 +18,16 @@
 // One file, read in place after one validation. All numbers are
 // little-endian; each record has a fixed size.
 //
+// The characters of a cache are fixed: the printable characters of ASCII,
+// 32 to 126, and the Latin-1 Supplement, U+00A0 to U+00FF. Each table keys
+// a character by its character index (character_index): 0 to 94, then 95
+// to 190. A character of a text outside both ranges has no glyph, and the
+// reader draws the replacement glyph (docs/FONTS.md, "The glyph cache").
+//
 //   Header         128 bytes  at 0
 //   Size_Entry     16 bytes   x size_count, at 128
-//   Glyph_Entry    12 bytes   x the sum of position_count x character_count of each size
-//   advance        i32        x size_count x character_count, in 1/64 of a pixel
+//   Glyph_Entry    12 bytes   x the sum of position_count x CHARACTER_COUNT of each size
+//   advance        i32        x size_count x CHARACTER_COUNT, in 1/64 of a pixel
 //   Pair_Entry     8 bytes    x size_count x pair_count
 //   (zero bytes to a multiple of 64)
 //   words          u32 each   at word_offset, word_count of them
@@ -34,14 +40,21 @@
 package glyph_cache
 
 MAGIC :: u64(0x5345485048594C47) // The bytes "GLYPHSES" ("GLYPH" and "SES").
-VERSION :: 2 // The version of the format. A reader refuses another.
+VERSION :: 3 // The version of the format. A reader refuses another.
 HEADER_SIZE :: 128 // The bytes of `Header`.
 SIZE_ENTRY_SIZE :: 16 // The bytes of `Size_Entry`.
 GLYPH_ENTRY_SIZE :: 12 // The bytes of `Glyph_Entry`.
 ADVANCE_SIZE :: 4 // The bytes of one advance: an i32.
 PAIR_ENTRY_SIZE :: 8 // The bytes of `Pair_Entry`.
 SIZE_LIMIT :: 3 // The scales 1, 2 and 3 of the grid (docs/DESIGN.md, section 5).
-CHARACTER_LIMIT :: 95 // ASCII 32 to 126.
+// The two ranges of the characters of a cache.
+ASCII_FIRST :: 32 // The space.
+ASCII_LAST :: 126 // The tilde.
+LATIN_FIRST :: 0xA0 // The first character of the Latin-1 Supplement: the space with no break.
+LATIN_LAST :: 0xFF // The last one: y with a diaeresis.
+ASCII_COUNT :: ASCII_LAST - ASCII_FIRST + 1 // 95: the character index of LATIN_FIRST.
+CHARACTER_COUNT :: ASCII_COUNT + LATIN_LAST - LATIN_FIRST + 1 // 191: the characters of each cache.
+#assert(CHARACTER_COUNT <= 256) // A pair names a character index in one byte.
 CELL_WIDTH_LIMIT :: 24 // The widest cell: 8 pixels at scale 3.
 CELL_HEIGHT_LIMIT :: 48 // The tallest cell: 16 pixels at scale 3.
 // The positions of a glyph inside one pixel: 0, 1/3 and 2/3 of a pixel at
@@ -55,7 +68,7 @@ LEFT_LIMIT :: 16 // Pixels.
 // The largest advance and the largest adjustment of a pair, in 1/64 of a
 // pixel: 64 pixels.
 ADVANCE_LIMIT :: 64 * 64
-PAIR_LIMIT :: CHARACTER_LIMIT * CHARACTER_LIMIT // Each pair of two characters at most once.
+PAIR_LIMIT :: CHARACTER_COUNT * CHARACTER_COUNT // Each pair of two characters at most once.
 SUBPIXEL :: 64 // An advance, a pair adjustment and a place of text are in 1/64 of a pixel.
 
 // The first 128 bytes of a glyph cache file.
@@ -64,8 +77,8 @@ Header :: struct #packed {
 	version:          u32, // VERSION.
 	renderer_version: u32, // The version of the renderer of src/library/support/vector_font that drew the words.
 	file_size:        u64, // The bytes of the file.
-	first_character:  u32, // 32.
-	character_count:  u32, // 95.
+	reserved_first:   u32, // 0. The characters are fixed: see character_index.
+	character_count:  u32, // CHARACTER_COUNT.
 	size_count:       u32, // One entry for each scale, in the order 1, 2, 3.
 	flags:            u32, // FLAG_GRID_FIT, FLAG_PROPORTIONAL, and the filter in bits 8 to 15 (FILTER_COUNT values).
 	word_offset:      u64, // From the start of the file; a multiple of 64.
@@ -111,8 +124,8 @@ Glyph_Entry :: struct #packed {
 // layout of the C language, with no gap: the module text_shaping takes a
 // table of these records as a parameter.
 Pair_Entry :: struct {
-	left:       u8, // A character, from first_character.
-	right:      u8, // The character that follows, from first_character.
+	left:       u8, // The character index of a character.
+	right:      u8, // The character index of the character that follows.
 	reserved:   u16, // 0.
 	adjustment: i32, // In 1/64 of a pixel.
 }
@@ -125,7 +138,7 @@ Problem_Kind :: enum u8 {
 	Bad_Magic, // The file does not start with MAGIC.
 	Bad_Version, // Another version.
 	Bad_Size, // file_size is not the size of the file.
-	Bad_Count, // A count is 0 or above its limit, or a size does not start where the sizes before it end.
+	Bad_Count, // A count is 0 or above its limit, the count of the characters is not CHARACTER_COUNT, or a size does not start where the sizes before it end.
 	Bad_Cell, // A cell size or a baseline is out of its limits.
 	Bad_Words, // The words are not where the header says.
 	Bad_Glyph, // A glyph has rows outside its line, a width or a left side out of the limits, or words outside the words.
@@ -191,8 +204,11 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 	if header.file_size != u64(len(bytes)) {
 		return {}, {kind = .Bad_Size, value = header.file_size, limit = u64(len(bytes))}
 	}
-	if header.character_count == 0 || header.character_count > CHARACTER_LIMIT || header.first_character < 32 || u64(header.first_character) + u64(header.character_count) > 127 {
-		return {}, {kind = .Bad_Count, value = u64(header.character_count), limit = CHARACTER_LIMIT}
+	if header.character_count != CHARACTER_COUNT {
+		return {}, {kind = .Bad_Count, value = u64(header.character_count), limit = CHARACTER_COUNT}
+	}
+	if header.reserved_first != 0 {
+		return {}, {kind = .Bad_Count, value = u64(header.reserved_first), limit = 0}
 	}
 	if header.size_count == 0 || header.size_count > SIZE_LIMIT {
 		return {}, {kind = .Bad_Count, value = u64(header.size_count), limit = SIZE_LIMIT}
@@ -274,10 +290,9 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 		}
 		// Sorted, each pair once, so a reader finds a pair by a binary search.
 		previous := -1
-		last_character := int(header.first_character) + character_count
 		for pair, offset in cache.pairs[index * int(header.pair_count):][:int(header.pair_count)] {
 			key := int(pair.left) << 8 | int(pair.right)
-			if int(pair.left) < int(header.first_character) || int(pair.left) >= last_character || int(pair.right) < int(header.first_character) || int(pair.right) >= last_character || key <= previous || pair.adjustment < -ADVANCE_LIMIT || pair.adjustment > ADVANCE_LIMIT {
+			if int(pair.left) >= character_count || int(pair.right) >= character_count || key <= previous || pair.adjustment < -ADVANCE_LIMIT || pair.adjustment > ADVANCE_LIMIT {
 				return {}, {kind = .Bad_Pair, index = u32(index * int(header.pair_count) + offset), value = u64(key), limit = u64(previous + 1)}
 			}
 			previous = key
@@ -308,17 +323,53 @@ validate_at :: proc "contextless" (address: uintptr, span: u64) -> (cache: Cache
 	return validate(([^]u8)(address)[:size])
 }
 
+// character_index gives the index of a character in each table of a cache:
+// 0 to 94 for 32 to 126, then 95 to 190 for U+00A0 to U+00FF. found is
+// false for a character outside both ranges: a control character, and
+// each character past U+00FF.
+character_index :: #force_inline proc "contextless" (character: rune) -> (index: int, found: bool) {
+	switch character {
+	case ASCII_FIRST ..= ASCII_LAST:
+		return int(character) - ASCII_FIRST, true
+	case LATIN_FIRST ..= LATIN_LAST:
+		return int(character) - LATIN_FIRST + ASCII_COUNT, true
+	}
+	return 0, false
+}
+
+// character_of_index gives the character of a character index; found is
+// false for an index past the last character.
+character_of_index :: proc "contextless" (index: int) -> (character: rune, found: bool) {
+	switch {
+	case index >= 0 && index < ASCII_COUNT:
+		return rune(index + ASCII_FIRST), true
+	case index >= ASCII_COUNT && index < CHARACTER_COUNT:
+		return rune(index - ASCII_COUNT + LATIN_FIRST), true
+	}
+	return 0, false
+}
+
 // glyph gives the size, and the entry of one character at one scale (1 to
 // 3) at the position 0, of a valid cache; found is false for a character
 // out of the cache.
-glyph :: #force_inline proc "contextless" (cache: ^Cache, character: u8, scale: int) -> (size: Size_Entry, entry: Glyph_Entry, found: bool) {
+glyph :: #force_inline proc "contextless" (cache: ^Cache, character: rune, scale: int) -> (size: Size_Entry, entry: Glyph_Entry, found: bool) {
 	return glyph_at_position(cache, character, scale, 0)
 }
 
 // glyph_at_position gives the entry of one character at one scale and one
 // position (0 ..< position_count of the size) of a valid cache.
-glyph_at_position :: #force_inline proc "contextless" (cache: ^Cache, character: u8, scale: int, position: int) -> (size: Size_Entry, entry: Glyph_Entry, found: bool) {
-	index := int(character) - int(cache.header.first_character)
+glyph_at_position :: #force_inline proc "contextless" (cache: ^Cache, character: rune, scale: int, position: int) -> (size: Size_Entry, entry: Glyph_Entry, found: bool) {
+	index, in_cache := character_index(character)
+	if !in_cache {
+		return {}, {}, false
+	}
+	return glyph_of_index(cache, index, scale, position)
+}
+
+// glyph_of_index gives the entry of one character index at one scale and
+// one position of a valid cache: the placed glyph of the shaper is a
+// character index.
+glyph_of_index :: #force_inline proc "contextless" (cache: ^Cache, index: int, scale: int, position: int) -> (size: Size_Entry, entry: Glyph_Entry, found: bool) {
 	if index < 0 || index >= int(cache.header.character_count) || scale < 1 || scale > len(cache.sizes) {
 		return {}, {}, false
 	}
