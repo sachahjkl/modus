@@ -311,6 +311,73 @@ scroll_bar_asks_for_a_frame_only_for_its_pointer :: proc(t: ^testing.T) {
 	testing.expect(t, !scroll_bar_wants_frame(&state, &input, BAR_AREA, bar_identity))
 }
 
+// The view of the bar of the tests: the lines at its left.
+@(private = "file")
+VIEW_AREA :: Area{-400, 0, 400, 428}
+
+// The wheel: a notch over the view or over the bar moves the view by
+// SCROLL_WHEEL_LINES_PER_NOTCH lines; a notch elsewhere moves nothing; a
+// view shorter than that moves by its height; the first bar under the
+// pointer takes the notches, and a second view of the frame does not move.
+@(test)
+scroll_bar_takes_the_wheel_over_its_view :: proc(t: ^testing.T) {
+	memory: Bar_Tables
+	table := bar_table_of(&memory)
+	state: Interface_State
+	input: Input
+	bar_identity := identity("bar")
+	NOTCH :: display.WHEEL_TOWARD_THE_END
+	wheel_frame :: proc(table: ^Draw_Table, state: ^Interface_State, input: ^Input, view: Area, range: Scroll_Range) -> Scroll_Bar_Result {
+		frame := frame_begin(table, state, input)
+		result := scroll_bar(&frame, BAR_AREA, identity("bar"), .Vertical, range, {}, "", view)
+		frame_end(&frame)
+		input_clear(input)
+		return result
+	}
+	range := Scroll_Range{total = 100, visible = 26, first = 37}
+
+	// Over the view: three lines toward the end, then two notches back.
+	input_add(&input, {kind = .Pointer, x = -200, y = 100, wheel = NOTCH})
+	testing.expect(t, scroll_bar_wants_frame(&state, &input, BAR_AREA, bar_identity, VIEW_AREA))
+	result := wheel_frame(&table, &state, &input, VIEW_AREA, range)
+	testing.expect(t, result.wheel_taken)
+	testing.expect_value(t, result.first, 37 + SCROLL_WHEEL_LINES_PER_NOTCH)
+	input_add(&input, {kind = .Pointer, x = -200, y = 100, wheel = -2 * NOTCH})
+	result = wheel_frame(&table, &state, &input, VIEW_AREA, range)
+	testing.expect_value(t, result.first, 37 - 2 * SCROLL_WHEEL_LINES_PER_NOTCH)
+	// Over the bar, with no view: the bar takes the notch.
+	input_add(&input, {kind = .Pointer, x = 8, y = 200, wheel = NOTCH})
+	result = wheel_frame(&table, &state, &input, {}, range)
+	testing.expect_value(t, result.first, 37 + SCROLL_WHEEL_LINES_PER_NOTCH)
+	// Elsewhere: no frame and no move. The pointer leaves the bar first: the
+	// frame of the notch over the bar drew it lit, so the next frame draws
+	// it unlit whatever the wheel does.
+	input_add(&input, {kind = .Pointer, x = 300, y = 200})
+	wheel_frame(&table, &state, &input, VIEW_AREA, range)
+	input_add(&input, {kind = .Pointer, x = 300, y = 200, wheel = NOTCH})
+	testing.expect(t, !scroll_bar_wants_frame(&state, &input, BAR_AREA, bar_identity, VIEW_AREA))
+	result = wheel_frame(&table, &state, &input, VIEW_AREA, range)
+	testing.expect(t, !result.wheel_taken)
+	testing.expect(t, !result.changed)
+	// Past the end: the view stops at its last place.
+	input_add(&input, {kind = .Pointer, x = -200, y = 100, wheel = 100 * NOTCH})
+	result = wheel_frame(&table, &state, &input, VIEW_AREA, range)
+	testing.expect_value(t, result.first, range.total - range.visible)
+	// A view of two lines moves by two lines for one notch.
+	input_add(&input, {kind = .Pointer, x = -200, y = 100, wheel = NOTCH})
+	result = wheel_frame(&table, &state, &input, VIEW_AREA, {total = 100, visible = 2, first = 10})
+	testing.expect_value(t, result.first, 12)
+	// Two bars of one frame: the first under the pointer takes the notch.
+	input_add(&input, {kind = .Pointer, x = -200, y = 100, wheel = NOTCH})
+	frame := frame_begin(&table, &state, &input)
+	inner := scroll_bar(&frame, {-100, 0, SCROLL_BAR_THICKNESS, 100}, identity("inner"), .Vertical, range, {}, "", {-300, 0, 200, 200})
+	outer := scroll_bar(&frame, BAR_AREA, bar_identity, .Vertical, range, {}, "", VIEW_AREA)
+	frame_end(&frame)
+	input_clear(&input)
+	testing.expect(t, inner.wheel_taken && inner.changed)
+	testing.expect(t, !outer.wheel_taken && !outer.changed)
+}
+
 // The records of one color and one kind, and the last of them.
 @(private = "file")
 records_of :: proc(table: ^Draw_Table, kind: Draw_Kind, color: graphics.Color) -> (count: int, last: Draw_Record) {

@@ -48,6 +48,9 @@ commands_of_the_pointer_the_picture_and_the_monitor :: proc(t: ^testing.T) {
 	testing.expect_value(t, qmp_pointer_move_command(40, -7), EVENTS_START + "{\"type\":\"rel\",\"data\":{\"axis\":\"x\",\"value\":40}},{\"type\":\"rel\",\"data\":{\"axis\":\"y\",\"value\":-7}}" + EVENTS_END)
 	testing.expect_value(t, qmp_pointer_button_command(true), EVENTS_START + "{\"type\":\"btn\",\"data\":{\"down\":true,\"button\":\"left\"}}" + EVENTS_END)
 	testing.expect_value(t, qmp_pointer_button_command(false), EVENTS_START + "{\"type\":\"btn\",\"data\":{\"down\":false,\"button\":\"left\"}}" + EVENTS_END)
+	// One notch of the wheel: the button goes down and up in one command.
+	testing.expect_value(t, qmp_pointer_wheel_command(true), EVENTS_START + "{\"type\":\"btn\",\"data\":{\"down\":true,\"button\":\"wheel-down\"}},{\"type\":\"btn\",\"data\":{\"down\":false,\"button\":\"wheel-down\"}}" + EVENTS_END)
+	testing.expect_value(t, qmp_pointer_wheel_command(false), EVENTS_START + "{\"type\":\"btn\",\"data\":{\"down\":true,\"button\":\"wheel-up\"}},{\"type\":\"btn\",\"data\":{\"down\":false,\"button\":\"wheel-up\"}}" + EVENTS_END)
 	testing.expect_value(t, qmp_screendump_command("build/screen.ppm"), "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"build/screen.ppm\"}}")
 	testing.expect_value(t, qmp_monitor_command("i/b 0x64"), "{\"execute\":\"human-monitor-command\",\"arguments\":{\"command-line\":\"i/b 0x64\"}}")
 	// A quote and a backslash of a path are escaped.

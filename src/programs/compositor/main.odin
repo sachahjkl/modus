@@ -88,6 +88,7 @@ import "modus:support/bar"
 import "modus:support/mark"
 import "modus:support/palette"
 import "modus:contract/ring"
+import "modus:support/key_path"
 import "modus:support/system"
 import "modus:contract/pointer_pictures"
 import program_page "modus:contract/disk_program_page"
@@ -575,7 +576,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					send(&clients[order[order_count - 1]], ring.Record{kind = u32(display.Event_Kind.Key), values = record.values})
 				}
 			case .Pointer:
-				pointer_moved(int(i64(record.values[0])), int(i64(record.values[1])), u32(record.values[2]))
+				// The input service is a program: a count of notches far
+				// past a hand is cut, as the window layer cuts it.
+				wheel := int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
+				pointer_moved(int(i64(record.values[0])), int(i64(record.values[1])), u32(record.values[2]), wheel)
 				pointer_moves += 1
 			}
 		}
@@ -825,7 +829,13 @@ inside :: proc "contextless" (x, y, left, top, width, height: int) -> bool {
 	return x >= left && y >= top && x < left + width && y < top + height
 }
 
-pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) {
+// pointer_moved takes one pointer record of the input service: a move, the
+// buttons, and the notches of the wheel. The wheel goes where the pointer
+// goes: to the palette while it is open, else to the program of the window
+// in front when the pointer is over its surface. A window behind gets no
+// notch: the input goes only to the program that has the focus, so no
+// program reads input that the principal gave to another one.
+pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, wheel: int) {
 	close_before := close_button_under_pointer()
 	pointer_x = clamp(pointer_x + motion_x, 0, screen.width - 1)
 	pointer_y = clamp(pointer_y + motion_y, 0, screen.height - 1)
@@ -845,7 +855,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 
 	if palette_is_open() {
 		// The panel takes the pointer: no menu and no window receives it.
-		palette_pointer(motion_x != 0 || motion_y != 0, pressed, released)
+		palette_pointer(motion_x != 0 || motion_y != 0, pressed, released, wheel)
 		return
 	}
 	if dragging >= 0 {
@@ -939,9 +949,14 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 		y := pointer_y - client.y - TITLE_HEIGHT
 		// One event more when the pointer leaves the surface: the program
 		// then draws at rest what the pointer was over (a scroll bar).
-		over := held || inside(x, y, 0, 0, client.surface.width, client.surface.height)
+		on_surface := inside(x, y, 0, 0, client.surface.width, client.surface.height)
+		over := held || on_surface
 		if over || client.pointer_over {
-			send(client, ring.Record{kind = u32(display.Event_Kind.Pointer), values = {0 = u64(i64(x)), 1 = u64(i64(y)), 2 = u64(buttons)}})
+			// The notches go only with a pointer over the surface: not
+			// while a held button sends the pointer from outside it, and
+			// not in the event that says that the pointer left.
+			notches := on_surface ? wheel : 0
+			send(client, ring.Record{kind = u32(display.Event_Kind.Pointer), values = {0 = u64(i64(x)), 1 = u64(i64(y)), 2 = u64(buttons), 3 = u64(i64(notches))}})
 		}
 		client.pointer_over = over
 	}

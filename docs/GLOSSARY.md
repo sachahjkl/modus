@@ -4661,13 +4661,25 @@ Do not use: dirty tracking, invalidation.
 
 A scroll bar is the element beside a view that shows a part of a longer content: it shows where the view is in the content, and the pointer moves the view with it.
 
-Each scroll bar of the system is one element of the interface package, `scroll_bar`, and the scroll bars of the site have the same form: both come from one table of sizes and colors, `src/library/support/graphics/scroll_bar.odin`. Its parts are two arrow buttons, the track, and the thumb with its grip. A program gives the units of its content, the units in view and the first unit in view, and takes the new first unit. A scroll bar is vertical or horizontal. The pointer over a scroll bar has the shape of the arrow.
+Each scroll bar of the system is one element of the interface package, `scroll_bar`, and the scroll bars of the site have the same form: both come from one table of sizes and colors, `src/library/support/graphics/scroll_bar.odin`. Its parts are two arrow buttons, the track, and the thumb with its grip. A program gives the units of its content, the units in view and the first unit in view, and takes the new first unit. A scroll bar is vertical or horizontal. The pointer over a scroll bar has the shape of the arrow. A wheel notch over the view of a vertical scroll bar, or over the bar, moves the view by three lines.
 
 A scroll bar is not a bar (the element that shows a value against a maximum) and not the bar of the desktop. It takes no key: the keys of a view belong to the element that owns the view.
 
 The design: `docs/DESIGN.md`, "The scroll bar", and `docs/INTERFACE.md`, "4.1 The scroll bar".
 
 Do not use: scrollbar (one word, outside a CSS name), scroll mark, scroller.
+
+### Wheel notch
+
+A wheel notch is one step of the wheel of a pointing device, toward the principal or away from the principal.
+
+The input service reads the notches of the PS/2 mouse in the IntelliMouse protocol and puts them in the pointer record, as a signed count: `display.WHEEL_TOWARD_THE_END` for each notch toward the principal, which moves a view toward the end of its content, as the key Down does. The compositor gives them to the palette while it is open, else to the program of the window in front when the pointer is over its surface. A window behind gets no notch: the input goes only to the program that has the focus. In a program, the first scroll bar of the frame whose view is under the pointer takes them, and moves its view by three lines for each notch, or by its height for a shorter view. Example: one notch over the lines of the console moves its view three lines up or down.
+
+A wheel notch is not a button of the pointer: it has no press and no release. It is not a count of pixels.
+
+The design: `src/md/features/scroll_bar.md`, and `docs/INTERFACE.md`, "4.1 The scroll bar".
+
+Do not use: scroll event, wheel click, wheel delta.
 
 ### Scroll bar track
 
