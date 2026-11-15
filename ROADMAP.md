@@ -15,6 +15,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **The screen shows each frame of the compositor whole.** The compositor puts a frame on the screen in one step, by a page flip or at the vertical blank, so a window that changes many times a second never shows a cut between two of its pictures. [Design](src/md/infrastructure/whole_frame.md)
 - **An outside module imports another outside module.** The import of a module of another project names a module of the same project, and not only a module of the system. A developer then writes a library module and the programs that import it outside the repository. [Design](src/md/infrastructure/third_party_module.md)
 - **The option for the debug information in the compiler of the Odin project.** The kind of debug information that adds no instruction is offered to the Odin project. A developer then builds the modules of the system with the compiler of that project, with no fork. [Design](src/md/infrastructure/debug_information_and_code.md)
 - **Linux in a guest.** A principal runs Linux, and the programs of Linux, in a guest beside the programs of the system. [Design](src/md/features/foreign_systems.md)
