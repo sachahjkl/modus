@@ -217,6 +217,16 @@ An element can name what it acts on: its act name (`GLOSSARY.md`), a text of at 
 - **Go to**: the compositor raises the window and sends it the event `display.Event_Kind.Go_To` with the hash. `window_events` gives the focus to the element of the last frame that named it (`focus_by_act_name`), and writes "interface: settings: the focus is on the element of settings.set:grid_fit". The event counts as an event: the program draws the next frame, which shows the focus.
 - **What a window cannot do**: it names an act, never a rectangle. A window that names an act that it does not have gets the palette to raise it, and its window layer finds no element; it cannot point at another window.
 
+### 4.3 Element names
+
+An element can have an element name (`GLOSSARY.md`), a text of at most 32 bytes such as `frame 0`: a machine test presses the element by it, not at a place that the scenario computes (`TOOLS.md`, "How a step presses an element").
+
+- **The names that come alone**: a button is named by its label, a text input by its placeholder. A scroll bar that the caller names (the last argument of `scroll_bar`, or `List_Rows_Options.scroll_bar_name`) names its arrow buttons "<name> arrow up" and "<name> arrow down", or "arrow left" and "arrow right"; its thumb has no name, because it moves each time the content grows.
+- **The call**: `element_name(frame, area, "frame 0")`, in each frame that draws the element, with the area where it takes a press. The first element of a frame with a name keeps it.
+- **The bounds**: a frame keeps 64 element names (`ELEMENT_PLACE_CAPACITY`). An empty name, a name of more than 32 bytes (`ELEMENT_NAME_CAPACITY`) and a name past the 64 are counted in `Frame.element_places.dropped`; the window layer writes one line for the life of the window.
+- **The element lines**: after each frame that it draws, the window layer compares the names and the rectangles of the frame with the set that the log has from the window. A new name or a moved rectangle writes "interface: debugger_window: the element watch at x,y,width,height", in pixels of the surface; a name that left the frame writes "interface: debugger_window: the element watch is gone". A frame with no change writes no line. The compositor writes the lines of the palette the same way, in pixels of the screen (`element_places_publish`).
+- **What an element name is not**: it travels to no other program and gives no access. The palette does not read it; an act name stays the name that go to reads.
+
 ## 5. Text
 
 A program asks for a font and a scale, measures a text, and writes a text record; the package and `src/library/support/graphics` draw it. Two fonts exist: the font of the cells (monospace, 8 x 16) for values, and the interface font (proportional) for the words that name and explain (`docs/FONTS.md`).

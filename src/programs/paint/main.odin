@@ -157,8 +157,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		frame := interface.window_frame_begin(&window_drawing, &window)
 		table := frame.table
+		// The element name of the cell of each color: a machine test
+		// presses "red".
+		color_names := [len(colors)]string{"dark", "red", "green", "blue", "yellow", "violet"}
 		for index in 0 ..< len(colors) {
 			interface.draw_rectangle(table, index * PALETTE_CELL, 0, PALETTE_CELL, PALETTE_HEIGHT, colors[index])
+			interface.element_name(&frame, {index * PALETTE_CELL, 0, PALETTE_CELL, PALETTE_HEIGHT}, color_names[index])
 			if colors[index] == color {
 				// The chosen color: a white border of 3 pixels.
 				left := index * PALETTE_CELL

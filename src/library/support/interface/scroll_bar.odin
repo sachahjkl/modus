@@ -152,7 +152,13 @@ scroll_bar_along :: proc "contextless" (area: Area, direction: Scroll_Bar_Direct
 //
 // A scroll bar takes no key and is not in the order of Tab: the keys of
 // the view belong to the element that owns the view.
-scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, direction: Scroll_Bar_Direction, range: Scroll_Range, steps: Scroll_Bar_Steps = {}) -> (result: Scroll_Bar_Result) {
+//
+// A name gives its arrow buttons element names (element_name): "<name>
+// arrow up" and "<name> arrow down" for a vertical bar, "arrow left" and
+// "arrow right" for a horizontal one. The thumb has none: it moves each
+// time the content grows, and each move would be a line of the log. A bar
+// too short for its arrow buttons names nothing.
+scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, direction: Scroll_Bar_Direction, range: Scroll_Range, steps: Scroll_Bar_Steps = {}, name := "") -> (result: Scroll_Bar_Result) {
 	state := frame.state
 	input := frame.input
 	vertical := direction == .Vertical
@@ -239,7 +245,28 @@ scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 		frame.scroll_bar_lit = element
 	}
 	scroll_bar_draw(frame.table, area, direction, drawn, look, nil, u32(element))
+	if name != "" {
+		scroll_bar_parts_name(frame, area, direction, drawn, name)
+	}
 	return
+}
+
+// scroll_bar_parts_name gives the arrow buttons of a bar their element
+// names, at the places of a geometry.
+@(private = "file")
+scroll_bar_parts_name :: proc "contextless" (frame: ^Frame, area: Area, direction: Scroll_Bar_Direction, geometry: Scroll_Bar_Geometry, name: string) {
+	part_area :: proc "contextless" (area: Area, direction: Scroll_Bar_Direction, along, along_size: int) -> Area {
+		if direction == .Vertical {
+			return {area.x, area.y + along, area.width, along_size}
+		}
+		return {area.x + along, area.y, along_size, area.height}
+	}
+	if geometry.arrow_length == 0 {
+		return
+	}
+	vertical := direction == .Vertical
+	element_name_joined(frame, part_area(area, direction, 0, geometry.arrow_length), name, vertical ? "arrow up" : "arrow left")
+	element_name_joined(frame, part_area(area, direction, geometry.length - geometry.arrow_length, geometry.arrow_length), name, vertical ? "arrow down" : "arrow right")
 }
 
 // scroll_bar_wants_frame says if a program that draws only after a change

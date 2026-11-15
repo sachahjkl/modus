@@ -36,7 +36,8 @@
 // **What a reader sees**: the circle of nodes, the records in each ring, the
 // record that each node holds, and its work time. The log has "rings: ok, 6
 // programs, 6 rings, 5 records", "rings: node N stopped" or "started" after
-// a key, "rings: node N stopped alone" when the kernel stopped it, and
+// a key, "rings: the key a adds a record: N records in all", "rings: node N
+// stopped alone" when the kernel stopped it, and
 // "rings: node N does not run: M records wait in the ring before it".
 package rings
 
@@ -223,6 +224,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					toggle(int(event.character - '1'))
 				case 'a':
 					add(added % relay.NODE_COUNT)
+					system.log("rings: the key a adds a record: ", u64(added), " records in all")
 				}
 			case .Pointer:
 				pressed := event.buttons & ~buttons

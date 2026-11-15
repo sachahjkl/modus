@@ -205,9 +205,11 @@ large_number :: proc "contextless" (frame: ^Frame, x, y: int, text: string, colo
 
 // button draws a button with a label: the track, blue when it has the focus
 // or the pointer is over it. Enter or Space with the focus, or a press and a
-// release of the pointer on it, activate it.
+// release of the pointer on it, activate it. Its label is its element name
+// (element_name).
 button :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, label: string, open := false) -> Element_Result {
 	result := element_interact(frame, element, area, .Button)
+	element_name(frame, area, label)
 	color := graphics.Color(graphics.COLOR_TRACK)
 	switch {
 	case open || result.focused && result.under_pointer:
@@ -337,9 +339,13 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 // focus, a caret; the placeholder in the dim color when it is empty. With
 // the focus, a character adds to the text and Backspace removes the last
 // one; Enter activates it, in the order of the keys of the frame: the keys
-// after Enter are not taken. The text is in the memory of the caller.
+// after Enter are not taken. The text is in the memory of the caller. Its
+// placeholder, when it has one, is its element name (element_name).
 text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, text: []u8, count: ^int, placeholder := "") -> Element_Result {
 	result := element_interact(frame, element, area, .Text_Input)
+	if placeholder != "" {
+		element_name(frame, area, placeholder)
+	}
 	if result.focused {
 		keys: for &key in frame.input.keys[:frame.input.key_count] {
 			if key.taken {
@@ -442,6 +448,7 @@ List_Rows_Options :: struct {
 	// bar shows the place and takes no input.
 	scroll_bar:   Element_Identity,
 	scrolled:     ^Scroll_Bar_Result, // Where the list writes what the pointer did to its scroll bar. nil: the caller does not read it.
+	scroll_bar_name: string, // The element name of the scroll bar that takes the pointer, for the names of its parts (scroll_bar). Empty: its parts have none.
 }
 
 LIST_ROW_ICON_X :: 16 // From the left of a row to its icon, and to the text of a heading.
@@ -560,7 +567,7 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 		bar_area := Area{area.x + area.width - scroll_width, area.y, scroll_width, bar_length}
 		range := Scroll_Range{total = options.total, visible = visible_rows, first = options.first}
 		if options.scroll_bar != 0 {
-			moved := scroll_bar(frame, bar_area, options.scroll_bar, .Vertical, range)
+			moved := scroll_bar(frame, bar_area, options.scroll_bar, .Vertical, range, {}, options.scroll_bar_name)
 			if options.scrolled != nil {
 				options.scrolled^ = moved
 			}

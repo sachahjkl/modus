@@ -940,7 +940,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	if !view.gone && view.top >= view.oldest {
 		first_line = min(view.top - view.oldest, kept - shown_lines)
 	}
-	scroll_result = interface.scroll_bar(&frame, scroll_area, scroll_identity, .Vertical, {total = int(max(kept, 1)), visible = int(max(shown_lines, 1)), first = int(first_line)}, {page = rows - 1})
+	scroll_result = interface.scroll_bar(&frame, scroll_area, scroll_identity, .Vertical, {total = int(max(kept, 1)), visible = int(max(shown_lines, 1)), first = int(first_line)}, {page = rows - 1}, "scroll bar")
 	interface.window_frame_end(&drawing, &frame, window)
 	if table.full {
 		system.log("terminal: the draw table is full: records are missing")

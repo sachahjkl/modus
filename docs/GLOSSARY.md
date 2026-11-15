@@ -4381,6 +4381,30 @@ The design: `docs/INTERFACE.md`, "4.2 Act names".
 
 Do not use: action, anchor, target.
 
+### Element name
+
+An element name is a text of at most 32 bytes that names an element of a frame for a machine test, such as `watch` or `frame 0`, with the rectangle where it takes a press.
+
+A machine test presses an element by its element name, so a change of the layout of a window moves the press with the element. A button is named by its label, a text input by its placeholder, an arrow button of a scroll bar by the name of the bar and its direction; a program names another element with `element_name(frame, area, "frame 0")` when it builds it. The first element of a frame with a name keeps it. The window layer writes an element line when the rectangle of a name changes. Example: the step `{kind = .Click_Element, text = "debugger_window", element = "watch"}` presses the button `watch` of the window of the debugger.
+
+An element name is not an element identity: it is a text for a reader of the log, and the interface state does not follow it. It is not an act name: the palette does not read it, and it names one rectangle of one window.
+
+The design: `src/md/infrastructure/test_pointer.md`; `docs/TOOLS.md`, "How a step presses an element".
+
+Do not use: test id, locator.
+
+### Element line
+
+An element line is the line of the log that says where an element with an element name is, or that it is gone: `interface: debugger_window: the element watch at x,y,width,height`.
+
+A window writes it after a drawn frame in which the rectangle of the name is new or changed, and writes `the element <name> is gone` when its frame no longer has the name. A frame with no change writes no line. The compositor writes the element lines of the palette, in pixels of the screen, as `compositor: the palette: the element <name> at ...`. The modus tool reads the last element line of an element before a press.
+
+An element line is not a contract between two programs: no program reads it, and its form changes with the tool.
+
+The design: `src/md/infrastructure/test_pointer.md`.
+
+Do not use: layout dump, element report.
+
 ### Interface state
 
 The interface state is what the interface package keeps between frames, in the memory of the program: the element with the focus, the element under the pointer, the pressed element, the order of the focus, and the held part of a scroll bar.
