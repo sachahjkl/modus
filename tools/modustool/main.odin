@@ -436,10 +436,11 @@ COMMANDS :: [?]Command {
 	// of a pixel, a picture smaller than its drawing (docs/TOOLS.md, "The
 	// pictures of the mark").
 	{name = "mark", about = "draw one file of the mark: still | frame | animation | tile_map | table | uses | developer, with --variant smooth|cells, --cell <pixels>, --scheme dark|light, --background none|scheme, --animation <name>, --frame <number>, --forms yes|no, --width <pixels>, --format png|ico|svg|apng|json, --entry <variant>:<cell>:<pixels>, --dark-rule yes|no, --out <file>", run = run_mark},
-	// Converts the JPEG portrait of the program `temple` to the pixels that the
-	// program holds, `src/programs/temple/portrait.pixels`. The result is in the
-	// repository, so a build decodes no JPEG.
-	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
+	// Converts each picture of `resources/hall_of_fame/CREDITS.md` to the
+	// pixels of a portrait of the program `hall_of_fame`, in
+	// `src/programs/hall_of_fame/portraits`. The result is in the
+	// repository, so a build decodes no PNG file.
+	{name = "portraits", about = "convert the pictures of " + HALL_OF_FAME_CREDITS_FILE + " to the portraits of " + HALL_OF_FAME_PORTRAIT_FOLDER, run = run_portraits},
 	// Calls an export of a service of the machine that `modustool run`
 	// started, from the host, and prints the typed result.
 	//

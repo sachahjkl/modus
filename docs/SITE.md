@@ -746,7 +746,7 @@ Two tables: what the system holds, and what builds and tests it and is not a par
 | Spleen | `src/library/support/graphics/FONT_LICENSE`: line 1 `... comes from Spleen 8x16 <version>`, line 2 `(<address>).`, a line `Copyright ...`. The file holds the text of the license, not its name: "not recorded" |
 | The pointer themes | `resources/pointers/system.manifest` and `posy.manifest`: the lines `theme <name>`, `license <SPDX identifier>`, `attribution <text>` |
 | The cryptography | `src/library/support/cryptography/LICENSE.odin.txt` (`(zlib)`, `tag <release>`, `(https://...)`), `LICENSE.fiat-crypto.txt` (`(BSD-1-Clause)`), the count of the lines of `origin.manifest` |
-| The portrait of `temple` | `src/programs/temple/PORTRAIT_LICENSE`: a line `https://...`, a line `Author: ...`, the words `as public domain` |
+| The portraits of `hall_of_fame` | `resources/hall_of_fame/CREDITS.md`: one row of a table for each picture, with five cells: the PNG file in backquotes, the person, the source with its address `https://...`, the author and the license. One row of the page for each picture; its place is the file of pixels in `src/programs/hall_of_fame/portraits/`. The license words `CC BY 3.0`, `CC BY 4.0`, `CC BY-SA 4.0` and `CC0` show as their SPDX identifiers |
 | Versions and pins | `flake.nix`: `odinRelease = "<release>";` then `owner`, `repo`, `hash`; `buildTools = [...];`; `config.allowUnfreePredicate = ... == "<name>";`; a fetcher `<name> = name: hash:` and its line `url = "https://raw.githubusercontent.com/<owner>/<repository>/<commit>/..."`; the font sources `"<font>=${<fetcher> "<file>" "<hash>"}"` or `"<font>=${pkgs.<package>}/..."`; `OVMF_CODE = "${pkgs.<package>.fd}/..."`; `FONT_SOURCE = "${pkgs.<package>}/..."`. `flake.lock`: the first `"rev": "<commit>"` after the line `"nixpkgs": {` |
 | In the boot image | The table of `build/boot.image` of the last build; "not recorded" when the image is not built |
 
@@ -1337,7 +1337,7 @@ With the script (`module_graph.js`, loaded with `defer` by this page only, `Site
 
 ### The identity card
 
-The identity card (`GLOSSARY.md`) of a module: its name (a link to its page, but on its own page), its kind, its hash (64 hexadecimal digits), its size, the count of its exports (the entry is not counted), of its imports and of the modules that import it, its license, and the first sentence of its documentation with no reference. Its license: the license of the system, then each row of the licenses whose place is in the source folder of the module (the portrait of `temple`), each a link to its row on the page of the licenses. One procedure writes it on the page of the graph and on the page of the module (`site_module_card_write`); one procedure gathers its facts (`site_module_card_of`).
+The identity card (`GLOSSARY.md`) of a module: its name (a link to its page, but on its own page), its kind, its hash (64 hexadecimal digits), its size, the count of its exports (the entry is not counted), of its imports and of the modules that import it, its license, and the first sentence of its documentation with no reference. Its license: the license of the system, then each row of the licenses whose place is in the source folder of the module (the portraits of `hall_of_fame`), each a link to its row on the page of the licenses. One procedure writes it on the page of the graph and on the page of the module (`site_module_card_write`); one procedure gathers its facts (`site_module_card_of`).
 
 ## The references to documents
 

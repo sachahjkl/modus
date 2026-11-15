@@ -33,7 +33,7 @@ image_of_today := [?]Test_File {
 	{"life", 92924, .Program},
 	{"paint", 94208, .Program},
 	{"fault", 16384, .Program},
-	{"temple", 249856, .Program},
+	{"hall_of_fame", 249856, .Program},
 	{"node", 16384, .Program},
 	{"rings", 126976, .Program},
 	{"threads", 77824, .Program},

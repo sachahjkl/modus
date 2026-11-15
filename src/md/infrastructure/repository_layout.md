@@ -125,7 +125,7 @@ The words "SDK" and "collection" are not terms of the system: the term is source
 
 1. **The lists of folders in the tool.** The paths were text in many places. A path that is missed is a folder that a check no longer reads, with no error. So each folder of the sources has one named constant, in one file of the tool, and each path of the tool is made from them. A host test of the tool checks that each constant, each source of the table of the modules and each folder of a host test names something. The move of a folder is a change of one constant. What was found, beyond the lists that a reader expects (the library flags, the table of the modules, the folders of each check):
    - the files that the site reads from the sources: the license files, the sources of the reference tables, the packages of the type cards, the commands of the console;
-   - the files that a command writes into the sources: the font, the portrait, the release number;
+   - the files that a command writes into the sources: the font, the portraits of the hall of fame, the release number;
    - the paths in the messages of the tool, in the first line that the tool writes into a file of the cryptography, in the script of the search of the site, and in one text of a picture for a developer;
    - the lines that a scenario waits for, and the command with a path that a scenario types;
    - the relative path from the folder of the boot program to the root, in three settings of its compile. The tool now counts the parts of the folder.

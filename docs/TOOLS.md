@@ -167,7 +167,7 @@ What follows from the rule:
 
 | Program | The answer for the console |
 |---|---|
-| A program with no grant (`debug_target`, `plasma`, `fault`, `temple`, each program that the root service gives only the log and a window) | Given |
+| A program with no grant (`debug_target`, `plasma`, `fault`, `hall_of_fame`, each program that the root service gives only the log and a window) | Given |
 | A program with a right of the machine that the console holds, Inspect or Stop (`clock`, `processors`, `pages`, `flow`, `crowd`) | Given, until the grant `machine` of the console is revoked |
 | A program with the boot image, with or without Inspect (`pointers`, `rings`, `boot`, `rights`, `frames`, `locks`, `address_space`, `imports`, `return_fault`, `fault_ring`, `debugged`, `cryptography_vectors`, `interface_through_module`) | Given, until the grant `image` of the console is revoked |
 | A program with a private store (`notes`, `hierarchy`, `ranges`, `errors`, `unlock`) | Refused: the grant Store |
@@ -691,7 +691,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
 | `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
 | `key new <folder>`, `key show` | The key that signs the system description |
-| `font`, `vector_fonts`, `pointers`, `logo`, `portrait` | Convert a source (a font, a pointer theme, the mark, a picture) into the files of the repository. A build reads the result, never the source |
+| `font`, `vector_fonts`, `pointers`, `logo`, `portraits` | Convert a source (a font, a pointer theme, the mark, the pictures of the hall of fame) into the files of the repository. A build reads the result, never the source |
 | `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `library-imports` | Checks that each import of each source file of the kernel and of the contract packages names a package of the compiler or a contract package ("The imports of the kernel and of the contract packages") |
 | `rule-checks` | Checks the count of the kernel operations against the properties, and that no source of the system calls an allocator ("The rules that a check holds") |
@@ -1035,7 +1035,7 @@ Why this is the two facts. A program that waits, then runs, then waits again ent
 
 **What the condition by calls leaves out.**
 
-- A window that draws with no end has no last picture: `life`, `plasma`, `temple`, `threads`, `workers`, `rings`, `processors`, `limits`, `flood` (`programs_that_draw_without_end`). Its part of the picture is the frame that is there. No check compares the pixels of such a window. A program that draws with no end and is not in the list never settles: the picture fails at the hang bound, and the message names its window.
+- A window that draws with no end has no last picture: `life`, `plasma`, `threads`, `workers`, `rings`, `processors`, `limits`, `flood` (`programs_that_draw_without_end`). Its part of the picture is the frame that is there. No check compares the pixels of such a window. A program that draws with no end and is not in the list never settles: the picture fails at the hang bound, and the message names its window.
 - The windows of `remote` and `monitor`: these two programs run because of the reads themselves, and their windows count the calls.
 - A window whose program stopped: it gets no picture more.
 
