@@ -754,6 +754,7 @@ test_part_volumes := [?]Volumes_Of_Part {
 	{part = "debugger", procedures = {"debugger_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "kernel_events", procedures = {"kernel_events_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "iommu", procedures = {"iommu_tests_run"}, volumes = {BOOT_VOLUME}},
+	{part = "iommu_amd", procedures = {"iommu_amd_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "guest", procedures = {"guest_tests_run"}, volumes = {BOOT_VOLUME}},
 	// With `principals tpm`, the machines of the machine key sealed by the
 	// TPM too: the two volumes of the test of the seal, and the main volume,

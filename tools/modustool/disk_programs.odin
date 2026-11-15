@@ -923,6 +923,7 @@ disk_programs_import_steps :: proc(steps: ^[dynamic]Step, hashes: Store_Import_H
 	// writes its line when the start returned: the system fixes no order.
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with no grant", STORE_IMPORTER_MODULE, hashes.importer), any_order = true})
 	append(steps, Step{kind = .Wait, text = "store_importer: triple(14) of the module store_library of the store programs gives 42: as it must"})
+	disk_programs_nickname_steps(steps, hashes.importer)
 	append(steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", STORE_IMPORTER_MODULE)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", STORE_IMPORTER_MODULE)})
 	// The entry of the library now holds other bytes under the same name:
@@ -931,6 +932,26 @@ disk_programs_import_steps :: proc(steps: ^[dynamic]Step, hashes: Store_Import_H
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: stored %s from %s: %d bytes, the BLAKE3 hash of its bytes %s", STORE_LIBRARY_MODULE, STORE_LIBRARY_CHANGED_PATH, changed_library_size, hashes.changed_library)})
 	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", STORE_IMPORTER_MODULE, hashes.importer)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: refused %s from the disk: %s imports %s, and no file of the boot image or of the store programs has bytes with this hash; the import scan read 7 files", STORE_IMPORTER_MODULE, STORE_IMPORTER_MODULE, hashes.library), fails_on = "root: started store_importer from the disk"})
+}
+
+// disk_programs_nickname_steps adds the steps of the nickname of a disk
+// program in the windows. store_importer asks for the title console; the
+// compositor names its window store_importer, the nickname that the root
+// service gave in Client_Add. The monitor shows the nickname with the hash
+// prefix of the file from the disk program page, and the menu of the
+// windows shows it faded beside the nickname. The picture holds the menu
+// open over the monitor. The console is in front at the end.
+disk_programs_nickname_steps :: proc(steps: ^[dynamic]Step, importer_hash: string) {
+	prefix := importer_hash[:16]
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("compositor: surface %s ", STORE_IMPORTER_MODULE)})
+	append(steps, Step{kind = .Launch, text = "monitor"})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("monitor: the disk program %s, hash prefix %s, the file %s, from the root service", STORE_IMPORTER_MODULE, prefix, importer_hash)})
+	append(steps, Step{kind = .Click, text = BAR_WINDOWS_BUTTON})
+	append(steps, Step{kind = .Wait, text = "compositor: windows: "})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("compositor: the menu of the windows shows the disk program %s with the hash prefix %s, from the root service", STORE_IMPORTER_MODULE, prefix)})
+	append(steps, Step{kind = .Shot, text = "disk_program_windows"})
+	append(steps, Step{kind = .Click, text = BAR_WINDOWS_BUTTON})
+	append(steps, Step{kind = .Front, text = "console"})
 }
 
 // The machine passphrase of the test. It is a constant of the tool: a test

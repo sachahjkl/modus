@@ -408,7 +408,22 @@ A write of the table that fails is tried again at once, 3 tries at most. After t
 
 The tag does not refuse an older version of the table that the storage service kept and that a caller restored.
 
-Not built: the key of the TPM. The size of a store from the budget that the module asks for. The nickname with its hash in the monitor and in the menu.
+**The nickname in the windows.** The monitor and the menu of the windows show a disk program by its nickname, with the hash prefix of its file faded beside it (under it in the monitor): `store_importer 5f0c1a2b9e3d4f60`. Both come from the root service, which checked the bytes:
+
+- The record `Client_Add`, which tells the compositor of a new window, holds the nickname (values 1 to 3) and the first 8 bytes of the hash (value 4). The window has the nickname as its title, in the title bar, the menu of the windows and the palette: the title that the program asks for is not read, so the window of a disk program cannot have the title `console`. The menu and the palette (the window and its close) show the hash prefix after the nickname, so a nickname that only looks like a name of the system (`consoIe`) is told apart; the title bar shows the nickname alone.
+- A disk program cannot start a child: its budget holds one program, its own. So no child of it takes the name of a program of the system in the monitor.
+- The disk program page (`modus:contract/disk_program_page`) holds one row for each disk program that runs: its program slot, its program serial, its nickname and its whole hash. The root service maps it read-only into each program that it starts with the right Inspect, as the monitor. The root service learns the program slot and the program serial from `Program_State`, which gives them as its results 4 and 5.
+
+The monitor writes one line for each disk program that it shows, and the compositor one line for each disk program in the menu of the windows when the menu opens:
+
+```
+monitor: the disk program store_importer, hash prefix 5f0c1a2b9e3d4f60, the file 5f0c1a2b…, from the root service
+compositor: the menu of the windows shows the disk program store_importer with the hash prefix 5f0c1a2b9e3d4f60, from the root service
+```
+
+A mapping that does not fit in the 12 mappings of a start is dropped with one line of the log: `root: no room for the disk program page in the mappings of a start, which holds 12: the program starts without it`. The worst start uses 11 of them.
+
+Not built: the key of the TPM. The size of a store from the budget that the module asks for. The hash of a disk program in the exports of the monitor.
 
 ## 3. Static is dynamic
 

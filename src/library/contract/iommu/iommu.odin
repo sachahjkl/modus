@@ -1,11 +1,12 @@
-// The formats of the IOMMU of Intel (VT-d) that the kernel reads and
-// writes: the ACPI tables DMAR and MCFG, the registers of a remapping unit,
-// the root, context and second-level entries, the descriptors of the queue
-// of invalidations, the entries of the interrupt table and the address of a
-// remapped message, and a fault record. The two
-// parties are the kernel and the hardware; the formats are those of the
-// "Intel Virtualization Technology for Directed I/O, Architecture
-// Specification". The design is src/md/infrastructure/iommu.md.
+// The formats of the IOMMU that the kernel reads and writes. This file
+// holds those of Intel (VT-d): the ACPI tables DMAR and MCFG, the registers
+// of a remapping unit, the root, context and second-level entries, the
+// descriptors of the queue of invalidations, the entries of the interrupt
+// table and the address of a remapped message, and a fault record. The
+// formats are those of the "Intel Virtualization Technology for Directed
+// I/O, Architecture Specification". amd_vi.odin holds those of AMD
+// (AMD-Vi). The two parties are the kernel and the hardware. The design is
+// src/md/infrastructure/iommu.md.
 //
 // Each procedure here is pure: it reads bytes or values and gives values,
 // so the host tests check each format with no machine.
@@ -785,7 +786,7 @@ message_address :: proc "contextless" (index: u16) -> u64 {
 Fault :: struct {
 	address:   u64, // The page of the request; 0 for a refused interrupt.
 	requester: u16,
-	reason:    u8, // The fault reason of the specification.
+	reason:    u16, // The fault reason of VT-d, or the flags of a page fault of AMD-Vi.
 	read:      bool, // A read; else a write.
 	interrupt: bool, // A refused message interrupt: a reason from 0x20 to 0x2F.
 	index:     u16, // A refused interrupt: the index of the entry that the message named.
@@ -834,7 +835,7 @@ fault_line :: proc "contextless" (count: u64) -> Fault_Line {
 // a refused interrupt holds the index of the entry in the bits 63:48 of its
 // first word, and no address.
 fault_read :: proc "contextless" (low: u64, high: u64) -> (fault: Fault, recorded: bool) {
-	fault = {requester = u16(high), reason = u8(high >> 32), read = high >> 62 & 1 != 0}
+	fault = {requester = u16(high), reason = u16(high >> 32 & 0xFF), read = high >> 62 & 1 != 0}
 	if fault.reason >= FAULT_REASON_INTERRUPT_FIRST && fault.reason <= FAULT_REASON_INTERRUPT_LAST {
 		fault.interrupt = true
 		fault.index = u16(low >> 48)

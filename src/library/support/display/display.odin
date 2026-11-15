@@ -109,7 +109,12 @@ Event_Kind :: enum u32 {
 // The ring between the root service and the compositor.
 Control :: enum u32 {
 	None          = 0, // Not a command.
-	Client_Add    = 1, // root to compositor. values: ring memory handle (in the compositor)
+	// root to compositor. values: ring memory handle (in the compositor). For
+	// a disk program, values 1 to 3 hold its nickname, as the root ring
+	// carries a name of 23 bytes, and value 4 the first 8 bytes of the hash
+	// of its file (modus:contract/disk_program_page, hash_head); for another
+	// program, values 1 to 4 are 0.
+	Client_Add    = 1,
 	Client_Remove = 2, // root to compositor. values: the same handle
 	Start         = 3, // compositor to root. values: name (4 values)
 	Stop          = 4, // compositor to root. values: the handle of the client

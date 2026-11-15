@@ -601,7 +601,7 @@ a_fault_record :: proc(t: ^testing.T) {
 	testing.expect(t, recorded)
 	testing.expect_value(t, fault.address, u64(0x3F2_A000))
 	testing.expect_value(t, fault.requester, u16(0x88))
-	testing.expect_value(t, fault.reason, u8(6))
+	testing.expect_value(t, fault.reason, u16(6))
 	testing.expect(t, !fault.read)
 	fault, recorded = fault_read(0, high | 1 << 62)
 	testing.expect(t, fault.read)
@@ -622,7 +622,7 @@ a_record_of_a_refused_interrupt :: proc(t: ^testing.T) {
 	testing.expect_value(t, fault.index, u16(0x7800))
 	testing.expect_value(t, fault.address, u64(0))
 	testing.expect_value(t, fault.requester, u16(0xFFFF))
-	testing.expect_value(t, fault.reason, u8(0x21))
+	testing.expect_value(t, fault.reason, u16(0x21))
 	// Each reason from 0x20 to 0x26 is a refused interrupt; 0x1F and 0x30
 	// are not.
 	for reason in u64(0x20) ..= 0x26 {

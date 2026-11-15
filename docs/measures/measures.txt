@@ -1,99 +1,99 @@
 measure record 1
-time 2026-11-15 10:46 UTC
+time 2026-11-15 13:44 UTC
 release 0.92.0
-commit cee672e7835cf6bd47698fc4fa3caed1759d80e7
+commit fc7e60b70d93732a147d387900f8dac1ead65508
 tree clean
 host AMD Ryzen 7 5800X 8-Core Processor, 16 logical processors; QEMU with KVM
-checks 2215
+checks 2308
 number Kernel entries in one second, with 1, 2 and 4 programs that each take the locks of their own objects
 log build/test_output_measure.txt
-line 95
+line 96
 matching 1
 machine The machine of `modustool measure`: a measure run, only the desktop and the program that measures run
-text [locks] locks: kernel entries in one second, each locker on its own objects: 1 locker 7843413, 2 lockers 13955413, 4 lockers 26008533
+text [locks] locks: kernel entries in one second, each locker on its own objects: 1 locker 7435520, 2 lockers 13475200, 4 lockers 22526720
 number Reads of the time in one second from the time page, with no kernel entry
 log build/test_output_measure_clock.txt
-line 95
+line 96
 matching 1
 machine The machine of `modustool measure clock`: a measure run, only the desktop and the program `clock` run
-text [clock] clock: the time page: 1303568625 reads in one second, 0 kernel entries for one million reads
+text [clock] clock: the time page: 1485480535 reads in one second, 0 kernel entries for one million reads
 number Wakes in one second of two threads that wake each other on a busy machine, under the strategy EEVDF
 log build/test_output_scheduler_1.txt
-line 123
+line 124
 matching 1
 machine The machine of `modustool measure scheduler`: a measure run, only the desktop and the program `scheduler` run
-text [scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 40982 wakes in one second (16611 turns ended on the processor of the waker, 16 by an interrupt, 100 moves); a thread that sleeps 2 ms among 8 spinners: late by 2502 us in the middle, 20996 us at worst; 8 spinners of one weight: shares 10.5 % to 14.0 %, work 2552 million in one second; 12 spinners, weights 1 2 4: a spinner of each weight 5.2 %, 8.0 %, 11.6 %; 20833 turns ended by a wake, 399 moves, one pick 799 ns, one preemption by an interrupt 202940 ns in the kernel
+text [scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 182948 wakes in one second (72956 turns ended on the processor of the waker, 105 by an interrupt, 478 moves); a thread that sleeps 2 ms among 8 spinners: late by 890 us in the middle, 2890 us at worst; 8 spinners of one weight: shares 10.9 % to 14.0 %, work 14768 million in one second; 12 spinners, weights 1 2 4: a spinner of each weight 4.2 %, 7.7 %, 12.9 %; 82398 turns ended by a wake, 600 moves, one pick 82 ns, one preemption by an interrupt 2252 ns in the kernel
 number One glyph of the vector font, from its outline and from the glyph cache
 log build/test_output.txt
-line 2304
+line 2318
 matching 1
 machine The main machine of `modustool test`, while the other programs of the test run
-text [vector_glyphs] vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 2945 ns, scale 2 8142 ns, scale 3 16062 ns; from the glyph cache: 204 ns; Spleen 8x16: 25 ns
+text [vector_glyphs] vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 5109 ns, scale 2 12459 ns, scale 3 17232 ns; from the glyph cache: 206 ns; Spleen 8x16: 26 ns
 number A full frame of the compositor
 log build/test_output.txt
-line 2400
+line 2417
 matching 24
 machine The main machine of `modustool test`, while the other programs of the test run
-text [compositor:surfaces] compositor: a full frame of 1024x768 with 17 windows in 2028 us
+text [compositor:surfaces] compositor: a full frame of 1024x768 with 17 windows in 2102 us
 number Blocks read in one second from a virtio disk, through the block service in user space
 log build/test_output_measure_disk.txt
-line 99
+line 100
 matching 1
 machine The machine of `modustool measure disk`: a measure run, only the desktop and the program `disk` run
-text [disk] disk: read, 1 block in each request, 32 in flight: 427796 blocks in one second, kernel entries for 100 requests: 10 of this program, 19 of the block service, 0 errors
+text [disk] disk: read, 1 block in each request, 32 in flight: 450716 blocks in one second, kernel entries for 100 requests: 11 of this program, 20 of the block service, 0 errors
 number 1000 commits of a program to its private store, one commit for each step
 log build/test_output_persist_1.txt
-line 106
+line 108
 matching 1
 machine The first machine of the test of persistence of `modustool test`, on a new data disk
-text [notes] notes: count 1000, stopped: 1000 commits in 6971 ms
+text [notes] notes: count 1000, stopped: 1000 commits in 42122 ms
 number The header and the checksum of one UDP datagram, in the program that sends it
-log build/test_output_network.txt
-line 126
-matching 1
-machine The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host
-text [net] net: the header and the checksum of a datagram of 1472 bytes: 327 ns, in this program (no offload)
-number The round trip of one UDP datagram
 log build/test_output_network.txt
 line 127
 matching 1
 machine The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host
-text [net] net: the round trip of one datagram of 64 bytes: 46 us at least, 72 us in the middle, over 1000
-number UDP datagrams in one second, with 64 in flight
+text [net] net: the header and the checksum of a datagram of 1472 bytes: 347 ns, in this program (no offload)
+number The round trip of one UDP datagram
 log build/test_output_network.txt
-line 129
-matching 1
-machine The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host
-text [net] net: a burst with 64 datagrams in flight: 90987 datagrams in one second, sent and answered, 0 lost
-number TCP: 1 MiB that the program `fetch` receives from a server of the host
-log build/test_output_tcp_real.txt
 line 128
 matching 1
-machine The machine of `modustool test` with QEMU user networking: the remote is the TCP of the host, through libslirp
-text [fetch] fetch: GET /large: 1048576 bytes, fnv1a64 e7867887f2822325 as expected, 106.6 MB/s
-number TCP: 1 MiB that the program `fetch` sends to a server of the host
+machine The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host
+text [net] net: the round trip of one datagram of 64 bytes: 45 us at least, 81 us in the middle, over 1000
+number UDP datagrams in one second, with 64 in flight
+log build/test_output_network.txt
+line 130
+matching 1
+machine The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host
+text [net] net: a burst with 64 datagrams in flight: 68603 datagrams in one second, sent and answered, 0 lost
+number TCP: 1 MiB that the program `fetch` receives from a server of the host
 log build/test_output_tcp_real.txt
 line 129
 matching 1
 machine The machine of `modustool test` with QEMU user networking: the remote is the TCP of the host, through libslirp
-text [fetch] fetch: POST /sink, 1 MiB: the remote got the same hash, 20.6 MB/s
+text [fetch] fetch: GET /large: 1048576 bytes, fnv1a64 e7867887f2822325 as expected, 99.9 MB/s
+number TCP: 1 MiB that the program `fetch` sends to a server of the host
+log build/test_output_tcp_real.txt
+line 130
+matching 1
+machine The machine of `modustool test` with QEMU user networking: the remote is the TCP of the host, through libslirp
+text [fetch] fetch: POST /sink, 1 MiB: the remote got the same hash, 20.5 MB/s
 number ChaCha20-Poly1305: the seal of one QUIC datagram of 1200 bytes, through the module `cryptography`
 log build/test_output_cryptography.txt
-line 106
+line 107
 matching 1
 machine The machine of `modustool test crypto`
-text [cryptography_vectors] cryptography_vectors: seal ChaCha20-Poly1305: 3001 ns for 1200 bytes, 399 MB/s
+text [cryptography_vectors] cryptography_vectors: seal ChaCha20-Poly1305: 2838 ns for 1200 bytes, 422 MB/s
 number The same bytes after a second build
 log build/reproducible_build.txt
 line 1
 matching 1
 machine Written by `modustool check`, after it built every module and the boot program a second time and compared the bytes
-text 94 modules, their LLVM IR, their objects and their debug objects, 2 pointer theme files, and the boot program and its object are the same bytes after a second build
-boot kernel: boot: firmware: 913389 us
-boot kernel: boot: boot program: load the kernel, the boot image: 73511 us
-boot kernel: boot: boot program: page tables, memory map, jump: 28584 us
-boot kernel: boot: kernel: page frames, kernel page table: 1835 us
-boot kernel: boot: kernel: first processor, timer: 23814 us
-boot kernel: boot: kernel: other processors: 35055 us
-boot kernel: boot: kernel: root service: 6373 us
+text 97 modules, their LLVM IR, their objects and their debug objects, 2 pointer theme files, and the boot program and its object are the same bytes after a second build
+boot kernel: boot: firmware: 778778 us
+boot kernel: boot: boot program: load the kernel, the boot image: 38598 us
+boot kernel: boot: boot program: page tables, memory map, jump: 16829 us
+boot kernel: boot: kernel: page frames, kernel page table: 665 us
+boot kernel: boot: kernel: first processor, timer: 24879 us
+boot kernel: boot: kernel: other processors: 33469 us
+boot kernel: boot: kernel: root service: 4798 us
 end

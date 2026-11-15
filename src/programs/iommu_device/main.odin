@@ -15,8 +15,9 @@
 //    its entry.
 // 2. It writes a block of zeros, then reads it into the interrupt
 //    addresses: each write of the device there is a message that names an
-//    entry that the kernel did not give it. The kernel writes the line of
-//    the refused interrupt.
+//    entry that the kernel did not give it. On the IOMMU of Intel the kernel
+//    writes the line of the refused interrupt; the emulated IOMMU of AMD
+//    records no event for such a message, so no line comes there.
 // 3. It declares a new page with a known pattern, then closes its handle
 //    and keeps its mapping: the kernel takes the page out of the domain of
 //    the device at the close, and the service can still read it.

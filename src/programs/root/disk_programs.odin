@@ -23,6 +23,7 @@ package root
 // nickname to its next file.
 
 import "modus:contract/blake3"
+import program_page "modus:contract/disk_program_page"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -577,7 +578,11 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		return status
 	}
 	slot.client = client
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client)}})
+	// The compositor names the window by the nickname, beside the hash
+	// prefix of the file that this service checked: the program does not
+	// choose the name that the menu of the windows shows.
+	nickname := disk_program.name_pack(name)
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client), 1 = nickname[0], 2 = nickname[1], 3 = nickname[2], 4 = program_page.hash_head(hash)}})
 	grants[system.GRANT_DISPLAY] = {display_memory, {.Read, .Write}}
 	// The date page, the settings page, five glyph caches, the file of the
 	// storage service.
@@ -637,6 +642,7 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	slot.program = program
 	slot.hash = hash
 	slot.granted += {.Log}
+	disk_program_page_add(slot)
 	return .Ok
 }
 
