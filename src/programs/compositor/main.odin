@@ -301,11 +301,11 @@ bar_measure :: proc "contextless" () {
 		}
 		bar_layout = bar.layout_of(measured_font != nil ? &measured_font.regular : nil)
 		_, menu_top, _, menu_height := bar.menu(bar_layout)
-		area := Rectangle{0, 0, frame.width, max(BAR_HEIGHT, menu_top + menu_height)}
+		areas := [1]Rectangle{{0, 0, frame.width, max(BAR_HEIGHT, menu_top + menu_height)}}
 		for _ in 0 ..< ROUNDS {
 			start := system.nanoseconds()
 			screen_build(0, measured_font)
-			screen_draw(area)
+			screen_draw(areas[:])
 			least[measured] = min(least[measured], system.nanoseconds() - start)
 		}
 		measured += 1
@@ -938,9 +938,7 @@ pointer_leaves_front :: proc "contextless" () {
 draw :: proc "contextless" (now: u64) {
 	start := system.nanoseconds()
 	screen_build(now, display.interface_font_of())
-	for area in damage[:damage_count] {
-		draw_area(area, now)
-	}
+	draw_areas(damage[:damage_count])
 	// The windows that this frame read a picture of.
 	for &client in clients {
 		if client.surface.pixels == nil || client.presents == 0 {
@@ -978,37 +976,61 @@ draw :: proc "contextless" (now: u64) {
 	}
 }
 
-// draw_area draws all that is in one rectangle of the screen. The canvas is
-// the part of the frame in the rectangle: it clips each drawing operation.
-draw_area :: proc "contextless" (area: Rectangle, now: u64) {
-	width, height := area.right - area.left, area.bottom - area.top
-	canvas := graphics.view(frame, area.left, area.top, width, height)
-	origin_x, origin_y := -area.left, -area.top // The corner of the screen, in the canvas.
-	graphics.copy(canvas, origin_x, origin_y, background)
+// draw_areas draws all that is in the damage rectangles of the screen, then
+// copies each to the screen. The steps go in phases over all the
+// rectangles: the background, the draw table of the screen, the palette,
+// then the pointer and the copy. One rectangle with all its steps after the
+// other gives the same pixels, because no two damage rectangles touch
+// (damage_rectangle_add) and each step writes only inside its rectangle:
+// the phases let the drawing module take all the rectangles of a part in
+// one call.
+draw_areas :: proc "contextless" (areas: []Rectangle) {
+	for area in areas {
+		canvas := graphics.view(frame, area.left, area.top, area.right - area.left, area.bottom - area.top)
+		graphics.copy(canvas, -area.left, -area.top, background)
+	}
 
 	// The windows, the bar and the menus: one draw table for the frame
-	// (screen_build), each record cut to this area. The drawing module
+	// (screen_build), each record cut to each area. The drawing module
 	// draws in the coordinates of its canvas: the canvas is the whole
 	// frame, so the records stay in the coordinates of the screen.
-	screen_draw(area)
+	screen_draw(areas)
 
 	if palette_is_open() {
-		screen_draw_part(&palette_now, 0, palette_now.record_count, nil, frame, {area.left, area.top, area.right, area.bottom})
+		rectangles: [DAMAGE_CAPACITY]interface.Rectangle
+		count := rectangles_of_areas(areas, rectangles[:])
+		screen_draw_part(&palette_now, 0, palette_now.record_count, nil, frame, rectangles[:count])
 	}
 
-	pointer_draw(canvas, origin_x, origin_y) // pointer_picture.odin
-
-	target := graphics.view(screen, area.left, area.top, width, height)
-	if !red_first {
-		graphics.copy(target, 0, 0, canvas)
-		return
-	}
-	for y in 0 ..< height {
-		for column in 0 ..< width {
-			color := canvas.pixels[y * canvas.stride + column]
-			target.pixels[y * target.stride + column] = color >> 16 & 0xFF | color & 0xFF00 | (color & 0xFF) << 16
+	for area in areas {
+		width, height := area.right - area.left, area.bottom - area.top
+		canvas := graphics.view(frame, area.left, area.top, width, height)
+		pointer_draw(canvas, -area.left, -area.top) // pointer_picture.odin
+		target := graphics.view(screen, area.left, area.top, width, height)
+		if !red_first {
+			graphics.copy(target, 0, 0, canvas)
+			continue
+		}
+		for y in 0 ..< height {
+			for column in 0 ..< width {
+				color := canvas.pixels[y * canvas.stride + column]
+				target.pixels[y * target.stride + column] = color >> 16 & 0xFF | color & 0xFF00 | (color & 0xFF) << 16
+			}
 		}
 	}
+}
+
+// rectangles_of_areas gives the areas of the screen as rectangles of the
+// interface package, at most as many as rectangles holds.
+rectangles_of_areas :: proc "contextless" (areas: []Rectangle, rectangles: []interface.Rectangle) -> (count: int) {
+	for area in areas {
+		if count == len(rectangles) {
+			break
+		}
+		rectangles[count] = {area.left, area.top, area.right, area.bottom}
+		count += 1
+	}
+	return count
 }
 
 // frame_records appends the frame of a window as draw records of the
@@ -1223,36 +1245,49 @@ bar_mark_build :: proc "contextless" () {
 	records: [4]interface.Draw_Record
 	table := interface.Draw_Table{records = records[:]}
 	bar_background_records(&table, -bar.MARK_X, -bar.MARK_Y, bar.MARK_X + bar.MARK_SIZE)
-	screen_draw_part(&table, 0, table.record_count, nil, bar_mark_picture, {0, 0, bar.MARK_SIZE, bar.MARK_SIZE})
+	whole_picture := [1]interface.Rectangle{{0, 0, bar.MARK_SIZE, bar.MARK_SIZE}}
+	screen_draw_part(&table, 0, table.record_count, nil, bar_mark_picture, whole_picture[:])
 	// The mark of the bar is a small icon, one pixel for a cell: the cells
 	// variant.
 	mark.mark_draw(bar_mark_picture, 0, 0, bar.MARK_CELL_SIZE, .Cells, false)
 }
 
 // screen_draw_part draws the records first ..< first + count of a table
-// that touch one rectangle of a canvas, over the pixels that the canvas
-// has, with one call of the drawing module. A refusal draws nothing, and
-// writes one line on the log for the life of the compositor.
-screen_draw_part :: proc "contextless" (table: ^interface.Draw_Table, first, count: int, picture_memory: []graphics.Color, canvas: graphics.Canvas, rectangle: interface.Rectangle) {
+// that touch each rectangle of a canvas, over the pixels that the canvas
+// has, with one call of the drawing module for all the rectangles. A
+// refusal draws nothing, and writes one line on the log for the life of
+// the compositor.
+screen_draw_part :: proc "contextless" (table: ^interface.Draw_Table, first, count: int, picture_memory: []graphics.Color, canvas: graphics.Canvas, rectangles: []interface.Rectangle) {
 	refused: errors.Error_Record
-	if interface.draw_part_through_module(table, first, count, picture_memory, canvas, rectangle, false, 0, &refused) || screen_refusal_logged {
+	if interface.draw_part_through_module(table, first, count, picture_memory, canvas, rectangles, false, 0, &refused) || screen_refusal_logged {
 		return
 	}
 	screen_refusal_logged = true
-	system.log_in("surfaces", .Warning, "compositor: the drawing module refused execute_draw_table_10 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
+	system.log_in("surfaces", .Warning, "compositor: the drawing module refused execute_draw_table_in_rectangles_10 (the error kind ", u64(max(refused.kind, 0)), ", the argument ", u64(max(refused.argument, 0)), "): the part of the screen is not drawn. The compositor writes this line one time")
 }
 
-// screen_draw draws the parts of the screen table that meet one rectangle
-// of the screen, from the back to the front, into the frame: one call of
-// the drawing module for each part. The order of the calls is the order
-// of the records, so the pixels are those of one draw of the whole table.
-screen_draw :: proc "contextless" (area: Rectangle) {
-	rectangle := interface.Rectangle{area.left, area.top, area.right, area.bottom}
+// screen_draw draws the parts of the screen table into the frame, from the
+// back to the front: one call of the drawing module for each part that
+// meets an area, with the areas that it meets. The order of the calls is
+// the order of the records, so the pixels are those of one draw of the
+// whole table in each area.
+screen_draw :: proc "contextless" (areas: []Rectangle) {
 	for part in screen_parts[:screen_part_count] {
-		if part.bounded && (part.bounds.right <= area.left || area.right <= part.bounds.left || part.bounds.bottom <= area.top || area.bottom <= part.bounds.top) {
-			continue
+		rectangles: [DAMAGE_CAPACITY]interface.Rectangle
+		count := 0
+		for area in areas {
+			if count == len(rectangles) {
+				break
+			}
+			if part.bounded && (part.bounds.right <= area.left || area.right <= part.bounds.left || part.bounds.bottom <= area.top || area.bottom <= part.bounds.top) {
+				continue
+			}
+			rectangles[count] = {area.left, area.top, area.right, area.bottom}
+			count += 1
 		}
-		screen_draw_part(&screen_table, part.first, part.count, part.picture_memory, frame, rectangle)
+		if count > 0 {
+			screen_draw_part(&screen_table, part.first, part.count, part.picture_memory, frame, rectangles[:count])
+		}
 	}
 }
 
