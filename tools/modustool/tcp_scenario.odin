@@ -114,7 +114,7 @@ scenario_tcp := [?]Step {
 	// `server`: a measure, then the structural count: one copy each way, and
 	// no checksum (the TCP library of `server` checks and writes it).
 	{kind = .Wait, text = "network: a measure: the endpoint of server, TCP: the passes of this service over the data for each payload byte: "},
-	{kind = .Wait, text = "network: the endpoint of server, TCP: this service read each payload byte one time on receive and one time on send, for the copy, and computed no checksum of it: as it must"},
+	{kind = .Wait, text = "network: the endpoint of server, TCP: this service read each payload byte one time on receive, for the copy, and on send only the 8 bytes of each header that it checks, and 0 bytes of the data; it computed no checksum: as it must"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = "free_pages_no_budget_holds  0"},
