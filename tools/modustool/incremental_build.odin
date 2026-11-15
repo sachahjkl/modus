@@ -1,6 +1,7 @@
 package modustool
 
 import "modus:contract/blake3"
+import module "modus:contract/module"
 import "core:fmt"
 import "core:os"
 import "core:slice"
@@ -1226,6 +1227,33 @@ Build_Measure :: struct {
 	volumes_not_needed:   int, // The volumes that the command does not boot: not checked, not built.
 	volume_processes:     int, // The volume processes at once.
 	volume_times:         [dynamic]Build_Step_Time, // The whole time of the process of each built volume.
+	// The request of each module that has a table Budget, from its file,
+	// in the order of the table of the modules: a reader sees an amount
+	// change when a module grows.
+	budget_requests:      [dynamic]Build_Budget_Request,
+}
+
+// The budget that one module of a build asks for.
+Build_Budget_Request :: struct {
+	name:    string, // The name in the table of the modules, which lives as long as the tool.
+	request: module.Budget_Request,
+}
+
+// build_measure_budget_requests reads the request of each module of the
+// table from its file, after the step of the modules: a kept module too.
+build_measure_budget_requests :: proc() {
+	clear(&build_measure.budget_requests)
+	for build in module_builds {
+		// A module that this command did not build has no file: it asks for
+		// nothing in this build.
+		file, read_error := os.read_entire_file(module_path(build.name), context.temp_allocator)
+		if read_error != nil {
+			continue
+		}
+		if request, stated := module.budget_request(file); stated {
+			append(&build_measure.budget_requests, Build_Budget_Request{name = build.name, request = request})
+		}
+	}
 }
 
 build_measure: Build_Measure
@@ -1239,6 +1267,7 @@ build_measure_start :: proc() {
 		delete(volume_time.name)
 	}
 	delete(build_measure.volume_times)
+	delete(build_measure.budget_requests)
 	build_measure = {
 		started = time.tick_now(),
 	}
@@ -1264,6 +1293,14 @@ build_measure_lines :: proc(measure: Build_Measure, whole: time.Duration) -> []s
 	}
 	for volume_time in measure.volume_times {
 		append(&lines, fmt.tprintf("the build: %8.2f s: the process of the boot volume %s", seconds(volume_time.duration), volume_time.name))
+	}
+	// One line, each module one time.
+	if len(measure.budget_requests) > 0 {
+		requests := strings.builder_make(context.temp_allocator)
+		for item, index in measure.budget_requests {
+			fmt.sbprintf(&requests, "%s%s %d pages, %d programs, %d threads", index > 0 ? "; " : "", item.name, item.request.pages, item.request.programs, item.request.threads)
+		}
+		append(&lines, fmt.tprintf("the build: the budget that each module asks for, its stated budget and its counted parts: %s", strings.to_string(requests)))
 	}
 	return lines[:]
 }

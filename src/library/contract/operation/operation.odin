@@ -83,8 +83,13 @@ MODULE_BASE :: 0x0000_2000_0000_0000
 // maps it, and gives it to `Program_Start` as the stack address.
 STACK_TOP :: 0x0000_7FFF_FFE0_0000
 // The pages of the stack of the first thread: 64 pages, 256 KiB. A thread
-// that `system.thread_start` makes has its own count (`system.THREAD_STACK_PAGES`).
+// that `system.thread_start` makes has its own count (`THREAD_STACK_PAGES`).
 STACK_PAGES :: 64
+// The pages of the stack of a thread that `system.thread_start` makes when
+// its caller gives no other count. It is here, beside STACK_PAGES, because
+// the tool counts both in the budget that a module asks for
+// (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
+THREAD_STACK_PAGES :: 16
 // The address of the context of the program (`Context`): the starter maps one
 // page there and gives this address as the parameter of the entry.
 CONTEXT_ADDRESS :: 0x0000_7FFF_FFF0_0000

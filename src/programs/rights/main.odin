@@ -42,9 +42,9 @@ import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-// The amounts that the root service gave it by its name before its module
-// stated a request: no part is counted yet.
-MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 1, threads = 2}
+// The working memory: the rest of the pages that the root service gave it
+// by its name, once the tool counts its module, its threads and its window.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1554, programs = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record
@@ -55,7 +55,10 @@ LINE :: 22
 ANSWER_X :: 384
 WIDTH :: 544
 ATTEMPT_CAPACITY :: 9
-HEIGHT :: 12 + 5 * LINE + ATTEMPT_CAPACITY * LINE + 12
+// A literal, because the tool counts the pictures of the window from it;
+// the assertion keeps it equal to its layout.
+HEIGHT :: 332
+#assert(HEIGHT == 12 + 5 * LINE + ATTEMPT_CAPACITY * LINE + 12)
 
 COLOR_REFUSED :: 0xF06060
 COLOR_WRONG :: 0xE0B040

@@ -76,7 +76,7 @@ import "modus:support/system"
 // each, and a buffer of a request or an answer of about 64 KiB for each
 // stream: about 820 pages, in one mapping of the program (docs/QUIC.md,
 // section 7), and the call regions of its connections to services.
-MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3067, programs = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---

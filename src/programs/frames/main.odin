@@ -43,7 +43,7 @@ import "modus:support/system"
 import "modus:support/twins"
 
 // 8192 pages at a time, and five twins.
-MODULE_BUDGET :: system.Budget_Request{pages = 12288, programs = 6, threads = 6}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 11446, programs = 6, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record
@@ -55,7 +55,10 @@ ANSWER_X :: 384
 WIDTH :: 760
 CASE_CAPACITY :: 10
 MEASURE_LINES :: 3
-HEIGHT :: 12 + 4 * LINE + CASE_CAPACITY * LINE + LINE / 2 + MEASURE_LINES * LINE + 12
+// A literal, because the tool counts the pictures of the window from it;
+// the assertion keeps it equal to its layout.
+HEIGHT :: 409
+#assert(HEIGHT == 12 + 4 * LINE + CASE_CAPACITY * LINE + LINE / 2 + MEASURE_LINES * LINE + 12)
 
 LARGE_PAGES :: 8192
 SMALL_BUDGET :: 100 // The pages of a budget that this program makes for one case.

@@ -126,6 +126,11 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 	entry.parameter_count = u8(clamp(item.parameter_count, 0, palette_table.PARAMETER_CAPACITY))
 	for kind, index in item.parameters[:entry.parameter_count] {
 		entry.parameters[index] = palette_table.Value_Kind(u8(kind))
+		// What the number counts, where the command states it: the panel
+		// shows the unit after the number of the field.
+		if kind == .Integer {
+			entry.parameter_units[index] = item.parameter_units[index]
+		}
 	}
 	// The name of each parameter, whole or absent: the form of the palette
 	// names its fields with them.
@@ -787,6 +792,9 @@ palette_commands_add :: proc "contextless" () {
 		{"setting", {"name", "value"}},
 		{"manual_page", {"name", ""}},
 		{"strategy", {"name", ""}},
+		{"buffer", {"count", ""}},
+		{"debug_memory", {"place", "count"}},
+		{"wait_stop", {"milliseconds", ""}},
 	}
 	for item in named {
 		if found := palette_command_named(item.command); found != nil && found.run != nil {

@@ -303,7 +303,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `length(text)` | Integer | |
 | `text(integer)` | Text | |
 | `repeat(text, count)` | Text | |
-| `buffer(pages)` | Handle | A new memory object |
+| `buffer(count)` | Handle | A new memory object of `count` pages |
 | `byte(memory, place)` | Integer | |
 | `bytes(memory, first, count)` | Bytes | At most 4096 bytes of a memory object |
 | `release(memory)` | none | |
@@ -588,7 +588,7 @@ The console is the palette provider of the desktop: each of its commands is an e
 
 **The grant.** The console has the grant `Palette`. At its start it sends `Palette_Provide` to the root service, which makes two memory objects and gives them to the console and to the compositor: the entry table, which the console writes and the compositor maps read-only, and one ring. `grants("console")` shows the grant as `palette`. `revoke("console", "palette")` ends the table and the ring in the console, and the compositor unmaps its side: the palette then lists the programs and the windows only, and its footer says "the console gives no commands". The console stops its use of the two objects before it asks for the revocation. No kernel operation is new.
 
-**The entry table** (`src/library/contract/palette_table`). A header (a magic number, a version, the change count, the count of entries), a result area of 2048 bytes, a candidate area of 96 names, then at most 256 entries of 524 bytes. The version is 4. One entry is one command of the command table of now: a built-in command, a short name bound to an export, or an export of a module or of a service. A command that makes a record from its fields is not listed, and of two commands with one name the table has the one that a call runs.
+**The entry table** (`src/library/contract/palette_table`). A header (a magic number, a version, the change count, the count of entries), a result area of 2048 bytes, a candidate area of 96 names, then at most 256 entries of 536 bytes. The version is 5. One entry is one command of the command table of now: a built-in command, a short name bound to an export, or an export of a module or of a service. A command that makes a record from its fields is not listed, and of two commands with one name the table has the one that a call runs.
 
 | Field of an entry | Content |
 |---|---|
@@ -597,6 +597,7 @@ The console is the palette provider of the desktop: each of its commands is an e
 | `setting`, `setting_value` | A `Setting` entry: the number of the setting and of its value |
 | `flags` | `Destroys` for `shutdown`, `stop`, `revoke`, `lock`, `history_clear`, `unload` and `replace`; `In_Use` for the `Provider_Setting` entry of the strategy that the machine uses now |
 | `parameter_count`, `parameters` | The count of the parameters, and the kind of each one |
+| `parameter_units` | The integer unit of each Integer parameter that counts a size or a time: a value kind, `Size` or `Time`, and a unit of that kind. The built-in commands state it: `buffer` in pages, the count of `bytes` and of `debug_memory` in bytes, `wait_stop` in milliseconds. The table refuses a unit out of the contract, and a unit on a parameter that is no Integer. An export states none |
 | `result` | The kind of the result |
 | `name` | At most 64 bytes |
 | `signature` | The name, the parameters and the result, as `describe` gives them: `revoke(Text, Text) -> Integer`. One that passes 128 bytes shows `(...)` |

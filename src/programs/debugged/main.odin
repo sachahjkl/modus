@@ -61,7 +61,7 @@ import "modus:support/system"
 // Two children at a time, the program that is debugged and a second
 // debugger, each with a budget of two threads; its main thread, and one
 // thread of its own that only waits.
-MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 3, threads = 6}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1860, programs = 3, threads = 6}
 
 VALUE_ROLE :: 0 // The value of the context that gives the role of a child.
 VALUE_MODE :: 1 // What a child or a second debugger does: a Child_Mode or a Debugger_Mode.

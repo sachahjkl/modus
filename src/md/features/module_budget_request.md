@@ -17,28 +17,35 @@ The guide of the budgets is [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.
 
 **The request is a table of the module file.** The table `Budget` holds one record, `module.Budget_Request`: the pages, the programs and the threads that the module asks for. A module with no such table asks for the least budget. A part that is 0 asks for the least budget of that part, so a record of an older, shorter size reads its missing parts as the least.
 
-**The source states the request as one constant.** The form is:
+**The source states only what the tool cannot count.** The source states a stated budget: one constant of the type `system.Stated_Budget`. Its parts are the working memory, the programs, the threads and the size of the window. The tool counts the other pages, and writes the sum in the table. The form is:
 
 ```odin
-// Its loop, and the thread that makes the lists of the palette.
-MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 2}
+// Its loop, the thread that makes the lists of the palette, and the
+// tables of its surfaces.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3799, threads = 2}
+
+// A program with a window names the constants of its size.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2536, window_width = WIDTH, window_height = HEIGHT}
 ```
 
-The step that describes the exports reads it from the tree of the parser, as it reads an export, and the conversion writes the table. The reasons of this form:
+The step that describes the exports reads it from the tree of the parser, as it reads an export, and the conversion adds the counted parts and writes the table. The reasons of this form:
 
-- **The compiler checks the names.** The constant has the type of the record, so a field with a wrong name stops the compile. The tool then reads only integer literals: the number in the file is the number in the source, with no evaluation.
-- **No new import.** Each program imports `modus:support/system`, and `system.Budget_Request` is the record of the contract. A module of another project states it the same way.
-- **The comment before the constant gives the reasons.** The tool refuses the constant with no comment. The site shows the comment beside the amounts on the page of the module.
+- **The compiler checks the names.** The constant has the type of the record, so a field with a wrong name stops the compile. The tool reads only integer literals: the number in the file is the number in the source, with no evaluation.
+- **The source and the table are two records.** `system.Stated_Budget` exists only in a source; `module.Budget_Request` exists only in a file. A field `pages` that meant the working memory in a source and the whole pages in a file would be one name for two concepts.
+- **No new import.** Each program imports `modus:support/system`. A module of another project states it the same way.
+- **The comment before the constant gives the reasons of the working memory.** The tool refuses the constant with no comment. The site shows the comment beside the parts on the page of the module.
 - **No silent least budget.** A declaration named `MODULE_BUDGET` that the tool would not read is an error of the tool: inside a `when` (the tool reads the source with no setting of the build, and cannot know the branch that the compiler takes), or with other names in one declaration. A refused form says why in its message.
-- **The forms of Odin that hold the same value are taken.** The type can be on the declaration, `MODULE_BUDGET : system.Budget_Request : {...}`, and a part can be written with the prefix `0x`, `0o` or `0b` and with `_` between its digits.
+- **The forms of Odin that hold the same value are taken.** The type can be on the declaration, `MODULE_BUDGET : system.Stated_Budget : {...}`, and a part can be written with the prefix `0x`, `0o` or `0b` and with `_` between its digits.
 
-**The tool adds what it can count.** This is the second layer, not built. Three parts of a budget are facts, not choices:
+**The tool counts three parts.** Each one is a fact of the build, not a choice of the developer. The request is the sum: `pages = working memory + module pages + thread pages + window pages`. The programs and the threads go to the table as the source states them.
 
-- the pages of the loaded module and of each module that it imports: the sizes of their segments are in their files;
-- the pages of each thread: its stack and its thread area;
-- the pages of the two pictures of a window, when the source states the size of its window as constants.
+- **The module pages.** The memory size of the module, from the header of the file that the conversion writes, and the memory size of each module that it imports, at each level, each module one time, from their files. The conversion reads the file of each import already, for its hash. This is what a load pays when the program has its own copy of each module. A starter that shares the code of a module pays less, and the difference stays free in the budget of the program: an amount above the need, never below it.
+- **The thread pages.** The first thread: its stack (`op.STACK_PAGES`), the page of the context, and its thread area. Each other thread that the source states: a stack of `op.THREAD_STACK_PAGES`, the stack that `system.thread_start` makes when its caller gives no count, and its thread area. A thread area is the pages that the kernel pays from the budget: the thread record and the kernel ring (`op.THREAD_AREA_PAGES` minus the guard page, which has no memory). With no part `threads`, the tool counts the first thread.
+- **The window pages.** The two pictures of the window, as `display.open` makes them: the width times the height times the 4 bytes of a pixel, times 2, in whole pages. The parts `window_width` and `window_height` each name a constant of the package whose value is one integer literal, or are an integer literal. The program passes the same constants to `display.open`, so the counted pictures are the pictures that it opens. A size that the source computes (`WIDTH :: BAR_X + BAR_WIDTH + 64`) is written as a literal, with `#assert` of the expression beside it: the compiler checks the number, and the tool still evaluates nothing.
 
-The request of the source then is only the working memory that the program chooses: a table, a cache, a region of large pages. The step that writes the table adds the counted parts, and prints each part, so that a reader of the build sees where an amount comes from.
+What stays in the working memory: what the program chooses (a table, a cache, a region of large pages, the call regions of its connections), the budgets of its children, a stack that a thread asks for with another count, and the page tables of its address space.
+
+**Where a reader sees the parts.** `modustool test descriptions` computes the request again from the source and the files, compares it with the table, and prints the four parts of each module. The site shows on the page of the module the parts that the source gives: the working memory, the thread pages and the window pages; it builds no module, so it names the module pages as counted from the files of the build. The measure of each build has one line with the request of each module that has a table, so that a reader sees an amount change when a module grows.
 
 **The starter decides.** `system.budget_decide` is the rule, and each starter can use it. For each part:
 
@@ -70,20 +77,27 @@ A part above the largest budget of a disk program starts the program with that p
 - **A request as a call of the program at its start.** The program runs before it has its budget, so the starter must give a first budget by a guess: the same fault, one step later.
 - **A measure of a run in place of a request.** A run gives what one scenario used, not what the program needs at its largest.
 - **An attribute or a comment in place of a constant.** The compiler checks neither, and a typing fault in a name gives a module that asks for the least budget with no word.
-- **An expression in the constant** (`2048 + 1024`). The tool would then compute what the compiler computes, a second evaluator of Odin. The second layer computes the counted parts in the tool, from the facts of the files.
+- **An expression in the constant** (`2048 + 1024`). The tool would then compute what the compiler computes, a second evaluator of Odin. The tool computes the counted parts from the facts of the files, and reads a name only for the size of a window, and only a name whose value is one literal.
+- **The whole pages in the source, as the first form had them.** Each amount was a guess of the developer: the size of the module, the stacks and the pictures, written once and never checked. A module that grew kept its old amount, and the fault showed only when the program ran.
+- **A field `pages` that means the working memory.** One name for two concepts: the same field of the table holds the whole pages.
+- **A count of the window from the call of `display.open`.** The tool would find the call in the tree and evaluate its arguments: a second evaluator, and a call in a loop or in another package gives no size. The parts of the stated budget name the constants, and the program passes them.
+- **The two pictures at the largest size of the screen for each window.** A fact, but an amount far above the need of a small window: the sum of the programs of the boot image would leave less for the others.
+- **A count for a module with no constant.** It states no thread and no working memory, so a count of its module and of one thread would be smaller than the least budget, which it gets today. It keeps the least budget.
+- **The parts in the record of the table.** The table would explain itself, but the record would grow for a reader only; a starter decides on the sum. The tool computes the parts again from the source and the files, where a reader needs them.
 - **A disk program paid by the budget of the root service, up to the largest budget of the boot image.** Each start moved up to 8 programs and 32 threads out of the budget that the programs of the boot image need, and a few hostile files stopped a restart of a driver. A smaller largest budget alone still has no bound on the sum: the count of disk programs then decides it.
 - **Processor time and log records in the request.** They are limits that protect the other programs, and the starter owns them: one processor for each thread, and 1000 log records in each second.
 
 ## Subtle points
 
-- **A window in two sizes.** A program whose window follows a setting states its largest size.
-- **A program that starts programs** asks for the sum: its children are paid from its budget. Its request is the place where that sum is stated one time.
 - **The request is a part of what is signed.** The table is in the bytes of the module, so the hash of the module names it, and the system description holds that hash. A new table changed the hash of each module, the kernel too: the directory has one more entry.
 - **The kernel reads no request.** The kernel and the boot program check the range of each table of the directory (`module.validate`), the new one too, and read only the header, the segments, the rebases, the imports and the exports. No line of the kernel changed.
-- **The counted parts change with a build** (second layer). A module that grows then changes its request with no edit of its source.
+- **The counted parts change with a build.** A module that grows changes its request with no edit of its source, and its hash changes. An import that grows changes the request of each importer: the file of the import is an input of the conversion already, so the importer is converted again.
+- **A program that starts programs.** Its children are paid from its budget. Its stated threads hold the threads of its children, and the tool counts a stack and a thread area for each, as the children pay them; its working memory holds the rest of the budgets of its children.
+- **The window is checked by the compiler, not by the tool.** The tool cannot know that the program passes `WIDTH` to `display.open`. It knows that the counted size is the size of a constant of the program, and the `#assert` of a computed size keeps the literal equal to its expression.
+- **A window whose size follows a value** (the terminal: its columns and its rows come from its starter) states no window part. Its pictures stay in its working memory, at its largest size.
 
 ## State
 
-Built: the first layer. The table `Budget` and its reader; the constant `MODULE_BUDGET` of the source, read by the describe step and written by the conversion, and compared by `modustool test descriptions`; each amount of the old table of the root service moved to the source of its program, with its reasons; the rule of the starter, the two exceptions, the least and the largest budget; the one budget of the disk programs and the largest budget of a disk program; the line of a limit and the line of a refusal.
+Built: the table `Budget` and its reader; the stated budget of the source, read by the describe step; the three counted parts, added by the conversion, compared again by `modustool test descriptions` and shown with their parts there and on the site; one line of the measure of the build with the request of each module; the rule of the starter, the two exceptions, the least and the largest budget; the one budget of the disk programs and the largest budget of a disk program; the line of a limit and the line of a refusal. The working memory of each program is its old amount minus the counted parts of the build of that day, so no total changed.
 
-Left: the part of the store in the request, and the policy of the principal over the budget of the disk programs (`docs/DECISIONS.md`, D-260). The second layer, where the tool counts the pages of the module and of its imports, of each thread and of the two pictures of a window. The starters other than the root service (`scheduler`, `rings`, the console for its sandboxes) still give their children fixed amounts.
+Left: the part of the store in the request, and the policy of the principal over the budget of the disk programs (`docs/DECISIONS.md`, D-260). The page tables of the address space are not counted. The starters other than the root service (`scheduler`, `rings`, the console for its sandboxes) still give their children fixed amounts.

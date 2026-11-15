@@ -572,6 +572,11 @@ module_compile :: proc(build: Module_Build) -> bool {
 // for the number of each export that a slot names. It runs no compiler.
 module_convert :: proc(build: Module_Build) -> bool {
 	description := describe_package(build.source) or_return
+	// The request of the table Budget counts the pages of each import, at
+	// each level.
+	if description.budget.stated {
+		description.budget.import_memory_sizes = budget_import_memory_sizes(build) or_return
+	}
 	elf := read_file(module_linked_file(build.name)) or_return
 	imports := make([dynamic]Import_File, context.temp_allocator)
 	for name in build.imports {
@@ -795,14 +800,23 @@ test_descriptions :: proc() -> bool {
 			test_passed_print("the record %s}}, %d bytes, of %s comes from its source", strings.to_string(layout), item.size, build.name)
 		}
 		// The budget that the module asks for: the table Budget holds the
-		// constant of the source, and a source with none gives no table.
+		// stated budget of the source and the counted parts, computed here
+		// again from the source and the files; a source with none gives no
+		// table.
 		request, stated := module.budget_request(file)
-		if stated != described.budget.stated || request != described.budget.request {
-			fmt.eprintfln("modustool: test failed: the budget that %s asks for does not agree with its source", build.name)
+		if stated != described.budget.stated {
+			fmt.eprintfln("modustool: test failed: %s has %s table Budget, and its source %s", build.name, stated ? "a" : "no", described.budget.stated ? "states a budget" : "states none")
 			return false
 		}
 		if stated {
-			test_passed_print("the budget that %s asks for comes from its source: %d pages, %d programs, %d threads", build.name, request.pages, request.programs, request.threads)
+			head, _ := module.header(file)
+			import_sizes := budget_import_memory_sizes(build) or_return
+			counted, counted_ok := budget_count(described.budget.parts, head.memory_size, import_sizes)
+			if !counted_ok || request != counted.request {
+				fmt.eprintfln("modustool: test failed: the budget that %s asks for, %d pages, %d programs, %d threads, is not its stated budget and its counted parts: %s", build.name, request.pages, request.programs, request.threads, budget_count_line(counted))
+				return false
+			}
+			test_passed_print("the budget that %s asks for is its stated budget and its counted parts: %s", build.name, budget_count_line(counted))
 		}
 		if build.name == "math" {
 			test_passed_print("the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))

@@ -321,6 +321,9 @@ Documentation :: struct {
 // request, never a grant: the starter of the program accepts it, limits it
 // or widens it. A part that is 0 asks for the least budget of that part, and
 // a file with no table Budget asks for the least budget. No loader reads it.
+// The build writes it: the parts that the source states (system.Stated_Budget)
+// and the pages that the tool counts, of the modules, the threads and the
+// pictures of the window.
 //
 // The record can gain fields at its end: a reader reads a part that a
 // shorter record does not have as 0, the least.

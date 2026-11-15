@@ -78,9 +78,8 @@ import "modus:support/random"
 import "modus:support/system"
 import "base:intrinsics"
 
-// It starts fault and its child, and 3 threads under contention; the two
-// pictures of its window.
-MODULE_BUDGET :: system.Budget_Request{pages = 3072, programs = 3, threads = 4}
+// It starts fault and its child, and 3 threads under contention.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1476, programs = 3, threads = 4, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [1024]interface.Draw_Record
@@ -100,7 +99,10 @@ CASE_CAPACITY :: 25
 PAGE_HEIGHT :: 19 * CASE_HEIGHT
 // Under the cases: the line of the measures, on two lines when its numbers
 // are long.
-HEIGHT :: TOP + PAGE_HEIGHT + 8 + 2 * LINE + 8
+// A literal, because the tool counts the pictures of the window from it;
+// the assertion keeps it equal to its layout.
+HEIGHT :: 704
+#assert(HEIGHT == TOP + PAGE_HEIGHT + 8 + 2 * LINE + 8)
 SENTENCE_CAPACITY :: 480 // A stack trace of four named frames, with their files and lines.
 SENTENCE_ROOM :: WIDTH - 40 // The width of the box of a sentence, in pixels: from x 32 to the end of the band of its case.
 

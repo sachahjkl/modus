@@ -43,9 +43,9 @@ import "modus:contract/ring"
 import "modus:support/system"
 import "base:intrinsics"
 
-// The amounts that the root service gave it by its name before its module
-// stated a request: no part is counted yet.
-MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 1, threads = 3}
+// The working memory: the rest of the pages that the root service gave it
+// by its name, once the tool counts its module, its threads and its window.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1475, programs = 1, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record
@@ -61,8 +61,12 @@ LINE :: 24
 BAR_WIDTH :: 220
 RATE_X :: 232
 ENTRIES_X :: RATE_X + BAR_WIDTH + 110
-WIDTH :: ENTRIES_X + BAR_WIDTH + 96
-HEIGHT :: 12 + 3 * LINE + len(measures) * LINE + 2 * LINE + 12
+// The size is two literals, because the tool counts the pictures of the
+// window from them; each assertion keeps a literal equal to its layout.
+WIDTH :: 878
+#assert(WIDTH == ENTRIES_X + BAR_WIDTH + 96)
+HEIGHT :: 240
+#assert(HEIGHT == 12 + 3 * LINE + len(measures) * LINE + 2 * LINE + 12)
 
 COLOR_RATE :: 0x58D878
 COLOR_ENTRIES :: 0xE0A040

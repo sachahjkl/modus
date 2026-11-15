@@ -39,9 +39,9 @@ import "modus:contract/ring"
 import "modus:contract/settings"
 import "modus:support/system"
 
-// The amounts that the root service gave it by its name before its module
-// stated a request: no part is counted yet.
-MODULE_BUDGET :: system.Budget_Request{pages = 256, programs = 1, threads = 1}
+// The working memory: the rest of the pages that the root service gave it
+// by its name, once the tool counts its module and its thread.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 181, programs = 1, threads = 1}
 
 // The context of this service.
 GRANT_RING :: 0

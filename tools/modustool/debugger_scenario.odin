@@ -219,10 +219,10 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "[console]      0", any_order = true},
 	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 0"},
 	{kind = .Type, text = "columns(events(), \"kind procedure line\")"},
-	{kind = .Wait, text = "[console] breakpoint 0  debug_target::count_rounds    " + DEBUG_TARGET_LINE_OF_THE_CALL},
+	{kind = .Wait, text = "[console] breakpoint 0  debug_target::count_rounds   " + DEBUG_TARGET_LINE_OF_THE_CALL},
 	{kind = .Type, text = "columns(step_over(0), \"procedure line pending\")"},
 	{kind = .Wait, text = "debugger: the thread 0 of debug_target ran a call to its end, for step_over"},
-	{kind = .Wait, text = "[console] debug_target::count_rounds    " + DEBUG_TARGET_LINE_AFTER_THE_CALL + "        0"},
+	{kind = .Wait, text = "[console] debug_target::count_rounds   " + DEBUG_TARGET_LINE_AFTER_THE_CALL + "        0"},
 	{kind = .Type, text = "columns(breaks(), \"number kind\")"},
 	{kind = .Wait, text = "[console] 1 row of Break_Row"},
 

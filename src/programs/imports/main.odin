@@ -51,7 +51,7 @@ import "modus:support/random"
 import "modus:support/system"
 
 // Itself and two programs that import calendar.
-MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 3, threads = 3}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 808, programs = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record
@@ -75,7 +75,10 @@ CASES_Y :: 12 + 3 * LINE + LINE / 2 // Under the two lines of the head and the t
 // are sentences of two lines (docs/INTERFACE.md, "The text in a box").
 CASES_HEIGHT :: CASE_CAPACITY * LINE + 6 * graphics.LINE_HEIGHT
 MEASURES_Y :: CASES_Y + CASES_HEIGHT + LINE + LINE / 2 // Under the line that counts the cases with no room.
-HEIGHT :: MEASURES_Y + 3 * LINE + 12
+// A literal, because the tool counts the pictures of the window from it;
+// the assertion keeps it equal to its layout.
+HEIGHT :: 560
+#assert(HEIGHT == MEASURES_Y + 3 * LINE + 12)
 // A line of a measure is a text of at most 112 bytes in the font of the cells.
 #assert(112 * graphics.CELL_WIDTH <= WIDTH - 2 * LEFT)
 

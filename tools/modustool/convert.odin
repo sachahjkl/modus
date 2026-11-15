@@ -65,15 +65,32 @@ Module_Description :: struct {
 	budget:   Budget_Description, // The budget that the module asks for: the table Budget.
 }
 
+// The parts of the budget that a source states: the record
+// system.Stated_Budget of the source (src/library/support/system,
+// budget_request.odin). The tool cannot import that package, so it has
+// the same fields here.
+Stated_Budget :: struct {
+	working_memory_pages: u64,
+	programs:             u64,
+	threads:              u64,
+	window_width:         u64, // Pixels; 0: no window.
+	window_height:        u64,
+}
+
 // The budget that a module asks for, as its source states it in the
-// constant BUDGET_REQUEST_NAME (describe.odin).
+// constant BUDGET_REQUEST_NAME (describe.odin). The conversion adds the
+// counted parts (budget_count.odin).
 Budget_Description :: struct {
-	stated:  bool, // The source has the constant: the module has the table Budget.
-	request: module.Budget_Request,
-	comment: string, // The comment before the constant, in its Markdown: the reasons of the amounts.
+	stated:       bool, // The source has the constant: the module has the table Budget.
+	parts:        Stated_Budget, // A window part that named a constant holds its value.
+	window_names: [2]string, // The constant that each window part names, or "".
+	comment:      string, // The comment before the constant, in its Markdown: the reasons of the amounts.
 	// Where the source declares it: the site links the budget to its line.
-	file:    string,
-	line:    int,
+	file:         string,
+	line:         int,
+	// The memory size of each module that the module imports, at each
+	// level, each one time: module_convert reads them from their files.
+	import_memory_sizes: []u64,
 }
 
 // convert writes a module from a shared object that lld linked.
@@ -392,10 +409,15 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 	add_table(&output, &directory, .Fields, field_records[:])
 	add_table(&output, &directory, .Strings, string_bytes[:])
 	add_table(&output, &directory, .Documentation, documentation_records[:])
-	// A module whose source states no request has no table Budget: it asks
-	// for the least budget.
+	// A module whose source states no budget has no table Budget: it asks
+	// for the least budget. The memory size of the module is known here,
+	// before the tables, and no table changes it.
 	if description.budget.stated {
-		budget_records := [2]module.Budget_Request{1 = description.budget.request}
+		counted, counted_ok := budget_count(description.budget.parts, memory_size, description.budget.import_memory_sizes)
+		if !counted_ok {
+			return fail(name, "the budget that the module asks for passes the end of 64 bits")
+		}
+		budget_records := [2]module.Budget_Request{1 = counted.request}
 		add_table(&output, &directory, .Budget, budget_records[:])
 	}
 	for image, index in images {

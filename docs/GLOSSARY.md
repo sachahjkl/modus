@@ -872,6 +872,16 @@ The design: `docs/TOOLS.md`, "The log".
 
 Do not use: span (for this), token, highlight range.
 
+### Integer unit
+
+An integer unit is what an Integer parameter of a command counts: a value kind, Size or Time, and one unit of that kind, such as pages or milliseconds.
+
+A command states it beside the kind of its parameter, and the palette provider writes it in the palette table (`value_kinds.Integer_Unit`). The palette shows the unit after the number of the field, `buffer(count: 4 pages)`, so the principal types the number in the unit that the command reads. The units are those of a value run of the log: bytes, KiB, MiB, pages, blocks, ns, us, ms and s. The text of a unit comes from the contract, never from the provider. It converts nothing: `4` stays the number 4. A plain count, such as the number of a thread, has no integer unit. The built-in commands of the console state theirs; the description of an export has no place for one yet.
+
+The design: `src/md/features/palette.md`, "The form of an entry, from its descriptions".
+
+Do not use: dimension, measure (for this).
+
 ### Cut mark
 
 A cut mark is the end of a text that a place of a fixed size does not hold: the start of the text, cut after a whole character, then "... and N bytes more" (`modus:contract/cut_mark`).
@@ -1777,13 +1787,43 @@ Do not use: quota, cap, bandwidth, rate limit.
 
 A budget request is the pages, the programs and the threads that a module asks for its program: the table `Budget` of its file (`module.Budget_Request`).
 
-The source states it as the constant `MODULE_BUDGET`, with the reasons in its comment, and the build writes the table, so the hash of the module names it. It is never a grant: the starter decides, by its least budget and its largest budget, and can widen or limit it with a budget exception. A part that is 0, or a file with no table, asks for the least budget. Processor time and log records are not in it: they are limits that the starter sets.
+The source states its stated budget, and the build adds the counted parts and writes the table, so the hash of the module names it. It is never a grant: the starter decides, by its least budget and its largest budget, and can widen or limit it with a budget exception. A part that is 0, or a file with no table, asks for the least budget. Processor time and log records are not in it: they are limits that the starter sets.
 
-Example: `MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 2}` asks for 16 MiB, no child, and two threads.
+Example: the stated budget `{working_memory_pages = 2536, threads = 1, window_width = WIDTH, window_height = HEIGHT}` of a module of 117 pages with its imports and a window of 1000 x 704 asks for 2536 + 117 + 68 + 1375 = 4096 pages, no child, and one thread.
 
 The design: `src/md/features/module_budget_request.md`; the guide: `docs/MODULE_CONTRACT.md`, "The budget that a module asks for".
 
 Do not use: budget grant, resource manifest, reservation.
+
+### Stated budget
+
+A stated budget is the part of a budget request that the source of a module states: its working memory, its programs, its threads and the size of its window.
+
+It is one constant of the source, `MODULE_BUDGET`, of the type `system.Stated_Budget`, with the reasons in its comment. It holds only what the tool cannot count. The build adds the counted parts to it and writes the sum as the budget request. A window part names the constant of the size that the program passes to `display.open`, or is a literal.
+
+Example: `MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3799, programs = 1, threads = 2}`.
+
+The design: `src/md/features/module_budget_request.md`.
+
+Do not use: budget manifest, declared budget.
+
+### Working memory
+
+The working memory is the pages that a program chooses to use: its tables, its caches, the budgets of its children, a stack of another size, its page tables.
+
+It is the part `working_memory_pages` of a stated budget. It holds what no file of the build shows. A table in the data of the module is not working memory: the tool counts it with the module.
+
+Do not use: heap, scratch memory.
+
+### Counted part
+
+A counted part is a part of a budget request that the tool computes from the files of the build: the module pages, the thread pages and the window pages.
+
+The module pages are the memory size of the module and of each module that it imports. The thread pages are a stack and a thread area for each thread: 68 pages for the first one, 19 for each other one. The window pages are the two pictures of its window. A counted part changes with a build, with no change of the source.
+
+The design: `src/md/features/module_budget_request.md`; the guide: `docs/MODULE_CONTRACT.md`, "The budget that a module asks for".
+
+Do not use: overhead, estimate, automatic budget.
 
 ### Least budget
 
@@ -4103,7 +4143,7 @@ Do not use: palette source, palette backend, palette plugin.
 
 The palette form is the input band of the palette while it holds the call of a command with parameters: one typed field for each parameter.
 
-The form lets the input give the arguments of a command without a line. Each field has the name and the kind of its parameter: an Integer field takes digits, a Text field takes each character but a quote. The list under the band shows the candidates of the field that has the caret, which the palette provider gives: the programs that run, the modules of the boot image, the grants. Tab takes a candidate or goes to the next field; Enter in the last field runs. A press of the pointer in a field puts the caret there, and a press on a candidate takes it. The values go to the provider as typed values, an Integer as a number and a Text as its bytes, and the provider builds the line. Example: `revoke(name: plasma, grant: log)`.
+The form lets the input give the arguments of a command without a line. Each field has the name and the kind of its parameter: an Integer field takes digits, a Text field takes each character but a quote. The list under the band shows the candidates of the field that has the caret, which the palette provider gives: the programs that run, the modules of the boot image, the grants. Tab takes a candidate or goes to the next field; Enter in the last field runs. A press of the pointer in a field puts the caret there, and a press on a candidate or on a button of a field takes it. An Integer field with an integer unit shows the unit after its number. The values go to the provider as typed values, an Integer as a number and a Text as its bytes, and the provider builds the line. Example: `revoke(name: plasma, grant: log)`.
 
 The palette form is not an edit line: it holds no expression, no variable and no call inside a call. A command whose parameter is a Table or a Record has no form, and opens in the console.
 
@@ -4113,9 +4153,9 @@ Do not use: dialog, prompt, argument box.
 
 ### Field control
 
-A field control is the form in which the palette shows one field of a palette form, chosen from what the field is: a typed text, a typed Integer, a list of candidates, or a row of buttons.
+A field control is the form in which the palette shows one field of a palette form, chosen from what the field is: a typed text, a typed Integer, a typed number with its unit, a list of candidates, or a row of buttons.
 
-The field chooses its control, so no command needs a form of its own and a provider gives data only. One table of the code gives it (`palette.field_control`): the field that has the caret and at most 6 candidates that the provider says are closed, the only values of the parameter, is a row of buttons; other candidates are the list under the band, with the icon of their kind; a field with no candidate is typed, as a Text or as an Integer. Example: the field of `strategy(name: )` is a row of three buttons, `round_robin`, `fair`, `eevdf`.
+The field chooses its control, so no command needs a form of its own and a provider gives data only. One table of the code gives it (`palette.field_control`): the field that has the caret and at most 6 candidates that the provider says are closed, the only values of the parameter, is a row of buttons; other candidates are the list under the band, with the icon of their kind; a field with no candidate is typed, as a Text or as an Integer, and an Integer with an integer unit shows its unit after the number. Example: the field of `strategy(name: )` is a row of three buttons, `round_robin`, `fair`, `eevdf`.
 
 A field control is not an element of the interface package: the palette draws it in its own panel, and a program cannot give the palette one.
 

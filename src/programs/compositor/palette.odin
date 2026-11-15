@@ -84,6 +84,7 @@ palette_published_seen: u32 // The value of `published` that the loop saw last.
 palette_enter_waits: bool // Enter came while the list of the typed part was not made yet: it runs when the list comes.
 palette_go_to_waits: bool // Shift with Enter came while the list of the typed part was not made yet: it goes when the list comes.
 palette_pressed_value: int = -1 // The value of a setting row where the left button went down, until it goes up; or palette.NO_ROW.
+palette_pressed_button: int = -1 // The button of the field of a form where the left button went down, as an index in its shown candidates, until it goes up; or palette.NO_ROW.
 palette_tab_waits: bool // Tab came while the candidates of the field were on their way: it acts when they come.
 // The measures of one open of the panel: the lists that the loop adopted
 // while it was open, and how many of them showed what the list before
@@ -743,6 +744,11 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		if state_next == .Arguments {
 			palette.form_open(panel, picked)
 			system.log_in("surfaces", .Info, "compositor: the palette asks for the arguments of ", palette.entry_name(picked))
+			for field in 0 ..< panel.form.field_count {
+				if unit_text := palette.field_unit_text(&panel.form, field); unit_text != "" {
+					system.log_in("surfaces", .Info, "compositor: the field ", u64(field), " of ", palette.entry_name(&panel.form.entry), " takes a number in", unit_text)
+				}
+			}
 			palette_candidates_ask()
 			palette_refresh()
 			break
@@ -996,7 +1002,8 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 //
 // In a form, a press in the input band puts the caret in the field under
 // the pointer, at the character under it; a move over a candidate chooses
-// it, and a press and a release on one candidate take it, as Tab does.
+// it, and a press and a release on one candidate take it, as Tab does. A
+// press and a release on one button of a field take its value too.
 //
 // The scroll bar of the list is an element of the interface package: a
 // press on it, and each move while it holds the press, builds a frame of
@@ -1044,7 +1051,10 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool) {
 		}
 		if panel.state == .Arguments {
 			panel.pressed_row = candidate
-			if part == .Input_Band {
+			// A press on a button of the field: its release takes that
+			// value. The layout is the one that the last frame drew.
+			palette_pressed_button = palette.form_button_at(panel, &palette_before, left, top, pointer_x, pointer_y)
+			if part == .Input_Band && palette_pressed_button == palette.NO_ROW {
 				if field, caret, in_a_field := palette.form_place_at(&panel.form, left, pointer_x); in_a_field {
 					// Tab that waited for the candidates of the field
 					// before waits for nothing more.
@@ -1057,6 +1067,7 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool) {
 				}
 			}
 		} else {
+			palette_pressed_button = palette.NO_ROW
 			panel.pressed_row = palette.row_is_entry(panel, row) ? row : palette.NO_ROW
 			// A press on a button of a setting row: its release sets that
 			// value. The layout is the one that the last frame drew.
@@ -1092,6 +1103,18 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool) {
 				return
 			}
 		case .Arguments:
+			// A press and a release on one button of the field take its
+			// value, as Tab takes the value that Left and Right chose.
+			pressed_button := palette_pressed_button
+			palette_pressed_button = palette.NO_ROW
+			if pressed_button != palette.NO_ROW && pressed_button == palette.form_button_at(panel, &palette_before, left, top, pointer_x, pointer_y) {
+				form := &panel.form
+				palette.form_candidate_set(form, pressed_button)
+				if palette.form_candidate_take(form) {
+					system.log_in("surfaces", .Info, "compositor: a press takes the button ", palette.field_text(form, form.current), " of the field ", u64(form.current))
+				}
+				changed = true
+			}
 			if pressed_row != palette.NO_ROW && pressed_row == candidate {
 				palette.form_candidate_set(&panel.form, candidate)
 				if palette.form_candidate_take(&panel.form) {

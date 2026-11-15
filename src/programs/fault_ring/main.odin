@@ -140,7 +140,7 @@ import "modus:support/system"
 // One child at a time: 512 pages and 20 threads (17 that fault in a full
 // ring, its main thread and its handler); one thread of its own that spins
 // while a child tries to name it.
-MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 2, threads = 22}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2385, programs = 2, threads = 22, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 1000 // The window and its borders fit the screen of 1024 columns.

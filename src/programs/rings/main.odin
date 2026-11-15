@@ -49,8 +49,8 @@ import "modus:contract/ring"
 import "modus:support/random"
 import "modus:support/system"
 
-// Six nodes, and the two pictures of its window.
-MODULE_BUDGET :: system.Budget_Request{pages = 5120, programs = 7, threads = 7}
+// Six nodes.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4114, programs = 7, threads = 7, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 720
 HEIGHT :: 540

@@ -1,5 +1,7 @@
 package console
 
+import "modus:contract/value_kinds"
+
 // The commands of the debugger (docs/TOOLS.md, "The debugger"): each one
 // is an export of the service `debugger`, under a short name. The console
 // holds no state of the debugging and draws nothing here: the command
@@ -228,7 +230,7 @@ debugger_commands_start :: proc "contextless" () {
 	// - `place`: an address (`0x403010`), or the path of a global with its
 	//   package.
 	// - `count`: 1 to 4096 bytes.
-	command("debug_memory", {.Text, .Integer}, .Table, "the bytes of the debugged program: debugger.memory()", debug_memory)
+	command("debug_memory", {.Text, .Integer}, .Table, "the bytes of the debugged program: debugger.memory()", debug_memory, {{}, value_kinds.size_in(.Bytes)})
 	// Gives one row for each stop of a thread since the last call: the
 	// thread, the kind (`breakpoint N`, `watch N`, `step`), and the
 	// instruction with its procedure and its line.
@@ -238,5 +240,5 @@ debugger_commands_start :: proc "contextless" () {
 	// `events`.
 	//
 	// - `milliseconds`: the longest wait.
-	command("wait_stop", {.Integer}, .Table, "wait for a stop of the debugged program: debugger.wait_stop()", debug_wait_stop)
+	command("wait_stop", {.Integer}, .Table, "wait for a stop of the debugged program: debugger.wait_stop()", debug_wait_stop, {value_kinds.time_in(.Milliseconds)})
 }

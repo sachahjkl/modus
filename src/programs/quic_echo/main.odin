@@ -61,9 +61,8 @@ import "modus:support/system"
 
 // 16 QUIC connections of about 85 KiB each, 4 streams of about 130 KiB for
 // each, and an echo buffer of 16 KiB for each stream: about 2770 pages, in
-// one mapping of the program (docs/QUIC.md, section 6). Then the two
-// pictures of its window.
-MODULE_BUDGET :: system.Budget_Request{pages = 5120, programs = 1, threads = 1}
+// one mapping of the program (docs/QUIC.md, section 6).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3667, programs = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
