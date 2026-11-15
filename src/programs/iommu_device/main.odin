@@ -6,19 +6,28 @@
 // src/md/infrastructure/iommu.md, "The proof".
 //
 // **What it shows.** On a machine with the IOMMU, a device reaches only the
-// pages that its service declared with `Memory_Physical`:
+// pages that its service declared with `Memory_Physical`, and sends only
+// the message interrupts that its service was given:
 //
 // 1. It declares its queue and a data object of two pages, writes a block
 //    of the disk from the first page and reads it into the second: the
-//    bytes arrive.
-// 2. It declares a new page with a known pattern, then closes its handle
+//    bytes arrive, and the message interrupt of the device arrives through
+//    its entry.
+// 2. It writes a block of zeros, then reads it into the interrupt
+//    addresses: each write of the device there is a message that names an
+//    entry that the kernel did not give it. The kernel writes the line of
+//    the refused interrupt.
+// 3. It declares a new page with a known pattern, then closes its handle
 //    and keeps its mapping: the kernel takes the page out of the domain of
 //    the device at the close, and the service can still read it.
-// 3. It gives the address of that page to the device as the buffer of a
+// 4. It gives the address of that page to the device as the buffer of a
 //    read of the same block.
-// 4. It waits until the device needs a reset or used the request, and
+// 5. It waits until the device needs a reset or used the request, and
 //    checks that the page keeps its pattern. The kernel writes the line of
 //    the DMA fault, with the device and the address.
+//
+// The forged messages come before the DMA fault: a virtio device of QEMU
+// that needs a reset does no more requests.
 //
 // Then it answers the commands of the block ring, so that its client
 // sees that the machine goes on.
@@ -48,6 +57,15 @@ TEST_BLOCK :: 0
 // that it must not write in step 3.
 PATTERN_WRITTEN :: 0x5A
 PATTERN_KEPT :: 0xC3
+
+// The buffer of the forged messages, in the interrupt addresses
+// (src/md/infrastructure/iommu.md, "Interrupt remapping"). Each write of 4
+// bytes of the block is one message. A write whose bit 4 is set is in the
+// remappable form, and names an entry from 0x7800 on, past the interrupt
+// table of 16 entries. A write whose bit 4 is clear is in the compatible
+// form, and names the processor 0xF0 (the bits 19:12), which does not
+// exist: QEMU passes that form, which a unit of a real machine refuses.
+FORGED_MESSAGE_ADDRESS :: 0xFEEF_0000
 
 // The memory of the queue (pci.QUEUE_PAGES): pages 0 to 2 the virtqueue,
 // page 3 the header and the status of the one request.
@@ -182,8 +200,41 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("a block written from a declared page and read into another declared page did not arrive")
 	}
 	system.log("iommu_device: a block written from a declared page and read into another declared page: the 4096 bytes arrived: as it must")
+	// The message interrupt of each request: through its entry, which names
+	// this device. Each interrupt wakes the wait; the hang bound only ends a
+	// hang.
+	interrupt := ctx.handles[pci.GRANT_INTERRUPT]
+	interrupts: u64
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for {
+		wait := system.wait_begin()
+		counted, _ := system.call(.Interrupt_Read, u64(interrupt))
+		interrupts += counted[0]
+		if interrupts != 0 || system.time() >= deadline {
+			break
+		}
+		system.wait_end(&wait, deadline)
+	}
+	if interrupts == 0 {
+		fail("the device ended its requests, and no message interrupt arrived before the hang bound")
+	}
+	system.log("iommu_device: the message interrupt of the device arrived through its entry: as it must")
 
-	// 2. A page that this service declares, then no longer holds: it closes
+	// 2. Messages that no entry gives this device: a read of a block of
+	// zeros into the interrupt addresses, so each message has the value 0.
+	for index in 0 ..< block.BLOCK_SIZE {
+		bytes[index] = 0
+	}
+	request(REQUEST_WRITE, data_physical)
+	zeroed := request_end()
+	request(REQUEST_READ, FORGED_MESSAGE_ADDRESS)
+	forged := request_end()
+	if zeroed != .Used || forged != .Used {
+		fail("a read into the interrupt addresses: the device did not give the request back")
+	}
+	system.log("iommu_device: a read into the interrupt addresses, to entries that the kernel did not give this device: the device gave the request back: as it must")
+
+	// 3. A page that this service declares, then no longer holds: it closes
 	// its handle and keeps its mapping, so it can still read the page. The
 	// kernel takes the page out of the domain of the device at the close.
 	page, page_status := system.memory_create(1, 0, {.Contiguous})
@@ -201,11 +252,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.close(page)
 
-	// 3. The address of that page in a descriptor of a read.
+	// 4. The address of that page in a descriptor of a read.
 	request(REQUEST_READ, page_physical)
 	outcome := request_end()
 
-	// 4. The page keeps its bytes when the device did not reach it.
+	// 5. The page keeps its bytes when the device did not reach it.
 	kept := page_holds(page_bytes, PATTERN_KEPT)
 	switch {
 	case !kept:
