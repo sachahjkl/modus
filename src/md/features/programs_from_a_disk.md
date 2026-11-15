@@ -108,6 +108,10 @@ The store `programs` holds 4096 blocks, 16 MiB: the first pass of a scan never r
 
 **What the log says.** One line when the scan starts, with the count of the hashes that it wants, and one line for each file that it keeps: the hash, the importer and the name of the entry. The name of the entry is a help for the reader only: it names no module, and a load error gives it as the name of the hash.
 
+### The debug object
+
+The debug object of a module file is an object of the same store, named by the 64 hexadecimal digits of the hash of the module. The debugger service reads it at an attach, through a connection that reads only and that the root service ties to the debug access. The design is [debug_object_of_a_disk_program.md](debug_object_of_a_disk_program.md).
+
 ### The order of the start
 
 The storage service starts on demand, after the root service, as before. The root service starts no disk program during the start of the machine: the first one starts when a principal asks. So there is no cycle, and a machine with no data disk starts as before.
@@ -121,7 +125,7 @@ Two ways: the network, on a machine that runs, or a disk that the tool writes.
 The console calls its two exports through a connection, as for each service (`connect("programs")`):
 
 - `programs.receive(nickname, path)` sends `GET path` to the web server, takes a body of 1 to 4 MiB with a `Content-Length`, writes it as the object `nickname` of the root tree of the store, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that it received. The log says the same. The principal then types `start_from_disk(nickname, hash)`.
-- `programs.list()` gives one row for each object of the root tree but `grant_table`: its name, its bytes, and the BLAKE3 hash of its bytes, which the service reads again and computes. The service writes one line of the log for each row.
+- `programs.list()` gives one row for each object of the root tree but `grant_table` and the debug objects: its name, its bytes, and the BLAKE3 hash of its bytes, which the service reads again and computes. The service writes one line of the log for each row.
 
 The hash that `receive` gives is a help for the principal, not a proof: the root service still reads the bytes and checks them against the hash of the command. A service that another party changed, or a web server that gave other bytes, can make the store hold any bytes under the nickname. It cannot make them run under a hash that they do not have.
 

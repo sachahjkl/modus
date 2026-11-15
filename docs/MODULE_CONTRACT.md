@@ -339,7 +339,7 @@ A disk program whose imports are all in the boot image makes no scan.
 ```
 
 - `programs.receive(nickname, path)` sends `GET path`, takes a body of 1 to 4 MiB with a `Content-Length` before the deadline of a load (30 seconds), writes it as the object `nickname` in one commit, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that came. The nickname follows the rules of the name of a disk program: `programs` and `grant_table` are refused, so no file is written over the disk grant table. The path is 1 to 200 visible bytes that start with `/`.
-- `programs.list()` gives a row for each object of the root tree but `grant_table`: `name`, `bytes`, and `hash`, the BLAKE3 hash of its bytes, which the service reads again. An object over 4 MiB has no hash.
+- `programs.list()` gives a row for each object of the root tree but `grant_table` and the debug objects (section "The debug object of a disk program"): `name`, `bytes`, and `hash`, the BLAKE3 hash of its bytes, which the service reads again. An object over 4 MiB has no hash.
 
 The caller must act for the principal of the store: the root service gives the service the number of its principal (`disk_program.SERVICE_VALUE_PRINCIPAL`). The hash that the service gives is a help, not a proof: the root service checks the bytes at the start, so a changed service or a changed web server cannot make other bytes run under the hash that the principal types. The log has one line for each file stored, and one for each row of a list:
 
@@ -347,7 +347,7 @@ The caller must act for the principal of the store: the root service gives the s
 programs: stored visitor from /visitor: <count> bytes, the BLAKE3 hash of its bytes 5f0c…
 ```
 
-**The file on the disk.** `modustool` writes a data disk that holds the store `programs` (`TOOLS.md`, "The disk of the disk programs"), and prints the hash of each file.
+**The file on the disk.** `modustool` writes a data disk that holds the store `programs` (`TOOLS.md`, "The disk of the disk programs"), and prints the hash of each file. The debug object of each file goes beside it, under the hash of the module: the debugger names the procedures and the lines of a disk program (section "The debug object of a disk program").
 
 Not built: a budget above the largest budget of a disk program; an import from the store; a remote that the principal chooses for the module file service; a disk program that is a service.
 
@@ -1366,13 +1366,35 @@ A variable range, 12 bytes:
 - **The kernel** checks the range that the boot program gives: on a page, inside the bound, and inside one range of the memory of the boot. Then it gives these pages to the root service as a memory object with Read (`op.ROOT_DEBUG_IMAGE`, its size at `op.ROOT_VALUE_DEBUG_IMAGE_SIZE`). A refused range is one line of the log and no debug image, never a stop. It reads none of the bytes.
 - **Who pays**: no budget. The pages are memory of the boot, as the boot image: the kernel never gives them as free frames, and they stay taken for the whole run of the machine (the build prints its size: "modustool: the debug image has ..."). Each program that maps the debug image pays, from its own budget, the page tables of its mapping, as for each mapping.
 - **The root service** maps it read-only at the fixed range `Debug_Image` in each program with the grant `Debug_Image` (`console`, `inspect`, `errors`, `debugger`), with its size at the value 21 of the context (`op.CONTEXT_VALUE_DEBUG_IMAGE_SIZE`). A program finds it with `system.debug_image_of`, and the object of a module with `system.debug_object_of`.
-- **Why not the data disk**: an object of the storage service has at most 32 blocks (128 KiB) (`STORAGE.md`, section 3.4); the debug object of `console` is larger. **Why not the network**: a reader would need a network grant to show a stop report.
+- **Why not the data disk, for a module of the boot image**: a reader of the debug image needs no service to name a frame, so a stop report of the storage service itself has names, and the console needs no connection to show one. The module of a disk program has no other place: its debug object is on the data disk (section "The debug object of a disk program"). **Why not the network**: a reader would need a network grant to show a stop report.
 - **When modules load from storage** (`STORAGE.md`, section 5, step 4): a debug object is an object of the tree of the system or of its package, beside its module, and the reader finds it by the hash of the module, as today. The boot program then reads no debug image, and `system.debug_object_of` takes the object from the store. The format and the lookup do not change. Large objects (step 1) come before it.
+
+### The debug object of a disk program
+
+The module of a disk program is not in the boot image, so the debug image has no object for it. Its debug object is an object of the same store `programs`, beside its module file. The design is `src/md/features/debug_object_of_a_disk_program.md`.
+
+- **Its name** is the 64 hexadecimal digits of the hash of the module, in lower case (`disk_program.debug_object_name_write`). The module names it, not the principal: one file can have two nicknames. A nickname has at most 23 bytes, so no nickname is such a name. `programs.list()` does not list it.
+- **The tool writes it.** `modustool program-disk disk.img build/my_program.module` puts `build/my_program.debug` beside the module file in the store, when the file is there. It refuses a debug object that names another module.
+- **The debugger service reads it** at `attach`, for the module of the program that the boot image does not hold and the debug image does not describe. It sends the command `Debug_Store` of the root ring, with the name of the program and the call ring of its caller, as for `Debug`. The root service gives a connection to the store `programs` of the principal of the program only when it gave the service the debug access to that program for that caller, and only for a disk program. The connection reads only (`isolated.CALLER_READS_ONLY`): the storage service refuses each change on it. It reaches the whole store, for the read of one object: after the read, on each path, the service sends `Debug_Store` with the flag of an end, and the root service ends the connection. It ends at the latest with the debug access.
+- **The bounds.** The object has at most 8 MiB (`disk_program.DEBUG_OBJECT_BYTES_LIMIT`), in memory of the budget of the debugger service. The answer of the root service and the read have one deadline of 1500 ms. With the 2000 ms of the answer to `Debug`, the waits of `attach` take at most 3500 ms, under the 5000 ms after which `remote` ends a call. Each answer of the storage service must make progress, as in the load of a module file.
+- **The check.** The storage service chose the bytes: the service uses the object only when `debug_object.check` takes it and when the hash that it names is the hash of the module record. A read that fails is one line of the log, and the attach goes on with no debug object for the module.
+- **The use.** The debugger names the procedures, the lines, the types and the variables of the module, as for a module of the boot image, and names the module by the name of the program. The console, `inspect` and `errors` read the debug image only: their stop report of a disk program names offsets.
+
+The log of the attach, for the outside module of the test part `disk_programs`:
+
+```
+root: gave debugger a connection that reads only to the store programs of principal 0, for the debug object of outsider
+debugger: read the debug object 5f0c… of outsider from the store programs of principal 0: <size> bytes, checked whole
+root: disconnected programs from the service storage
+```
+
+Then `columns(where(stack(0), "procedure", "entry"), "module procedure file line")` in the console gives `outsider  entry      outsider/main.odin    81`: the source of the copy, by the name of its folder.
 
 ### The readers
 
 - `system.frame_text` writes a frame of a stop report: "fault::three + 0x8 in fault (src/programs/fault/main.odin:15)". Frame 0 is the instruction. Each next frame is a return address: the procedure and the line are those of the call, the byte before it. With no debug image, the frame is "fault + 0x1478".
 - The console (`fault_print`), the program `errors` (the stack of `fault`) and `inspect` (the stop report, made when the report changes) use it. `TOOLS.md`, "Names and lines".
+- The debugger service reads the debug image, and the debug object of a disk program from the store `programs` (section "The debug object of a disk program").
 - The modus tool reads the same debug objects with the same reader: the step `Trace` of the machine test, and the test of the build that reads the debug object of `fault` against its linked file.
 
 ### What the debug information does not give

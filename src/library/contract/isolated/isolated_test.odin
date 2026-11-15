@@ -445,5 +445,12 @@ the_grant_of_a_connection_names_the_principal :: proc(t: ^testing.T) {
 	testing.expect_value(t, acting & CALLER_AMOUNT_MASK, 0)
 	largest := caller_grant_make(CALLER_AMOUNT_MASK + 1, CALLER_PRINCIPAL_LIMIT, false)
 	testing.expect_value(t, largest, 0)
+	// An amount out of its field cannot set the flag of a connection that
+	// reads only, and the flag keeps the amount and the principal.
+	testing.expect(t, caller_grant_make(CALLER_READS_ONLY, 0, false) & CALLER_READS_ONLY == 0)
+	reading := caller_grant_make(4096, 2, false) | CALLER_READS_ONLY
+	testing.expect_value(t, reading & CALLER_AMOUNT_MASK, 4096)
+	testing.expect_value(t, caller_principal(reading), 2)
+	testing.expect(t, reading & CALLER_ACTS_FOR_PRINCIPAL == 0)
 	testing.expect_value(t, caller_principal(caller_grant_make(0, CALLER_PRINCIPAL_LIMIT - 1, true)), CALLER_PRINCIPAL_LIMIT - 1)
 }

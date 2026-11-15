@@ -43,7 +43,7 @@ A tool with no grant to inspect the machine reads nothing. It says so in its win
 | `scheduler` | machine, Inspect and Schedule | `Processor_Report`, `System_Report.strategy`, `Thread_Table_Report` (the machine number of its own threads; for the share policy, the threads of each program), `Program_Report` (the run time of each program) |
 | `manual` | machine, Inspect; boot image; replacement table | the flat tables of the modules, `Module_Report` of each slot |
 | `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)` |
-| `debugger` | machine, Inspect; boot image; debug image; the command `Debug` of the root ring | `Program_Report`, `Module_Report` and `Thread_Table_Report` of the program that it debugs; the registers and the memory of that program through its handle with `Debug` ("The debugger"). It serves the exports of the debugger |
+| `debugger` | machine, Inspect; boot image; debug image; the commands `Debug` and `Debug_Store` of the root ring | `Program_Report`, `Module_Report` and `Thread_Table_Report` of the program that it debugs; the registers and the memory of that program through its handle with `Debug` ("The debugger"). It serves the exports of the debugger |
 | `inspect` | machine, Inspect; boot image; debug image | `Program_Report`, `Module_Report`, and the four reports below, of the program that the principal chooses. It serves `mappings()`, `threads()` and `modules()` |
 
 ## The log
@@ -145,7 +145,7 @@ The code is `src/programs/debugger` (the service), `src/library/support/debuggin
 ### The service
 
 - **Its start.** The root service starts `debugger` when a caller asks for a connection to it: `connect("debugger")`, or the first command of the debugger in the console. It has no window.
-- **Its grants.** Serve (its exports); Debugger (the command `Debug` of the root ring, and no other command); Inspect (the thread report and the module report of a program); Debug_Image (the debug objects); Image (the name of each module, from its hash).
+- **Its grants.** Serve (its exports); Debugger (the commands `Debug` and `Debug_Store` of the root ring, and no other command: `Debug_Store` gives a connection that reads only to the store of the debug object of a disk program that the service debugs); Inspect (the thread report and the module report of a program); Debug_Image (the debug objects); Image (the name of each module, from its hash).
 - **How it debugs.** The service is the debugger of the program for the kernel: its main thread is the debug handler, so each breakpoint and each single step of the program is a fault record of that thread. It reads the threads and the module records with `Inspect`, the registers and the memory with `Thread_Control`, and the names, the lines, the types and the variables in the debug object of each module, by the hash of the module. It writes no byte in the program.
 - **One program at a time.** The service debugs one program, for one caller. A second `attach` while it does gets the error `Full` (`Debugged_Programs`). Each export but `attach` acts only for the caller that attached.
 - **The end of the debugging.** `detach()`; the end of the connection of the caller, or of the caller; the revocation of the grant `debug` of the caller; the stop of the program. The kernel then removes the breakpoints, clears the trap flag that the debugger wrote, and resumes each thread that the debugger held.
@@ -308,7 +308,7 @@ Debugging from another machine needs no mechanism of its own.
 - **What the host can do.** For a program with no grant, a host that holds the key of `remote` reads each byte of its memory and each register, writes its registers, and so chooses what the program runs. With the handles of that program it draws in its window and reads the keys and the pointer events that the compositor sends to it. Each client of `remote` is the one caller `remote`: two clients share one debugging, and one can steer or detach the debugging of the other (`QUIC.md`, section 7, "Who may call").
 - **The time of a call.** `remote` ends a call that takes more than 5000 ms, and with it its connection to the service: the root service then ends the debugging. Each export of the service has a bound under that time ("The bounds of the exports"). `wait_stop` waits 3000 ms at most: a caller on another machine calls it again, or reads `events()` after the line of the stop in the log.
 - **The source line.** `modustool call` prints, after a table whose record has the fields `path`, `line` and `hash`, the text of each line from the file of the repository, only when the file has that hash: "source: src/programs/debug_target/main.odin:79: ...". With another hash it says that the file changed since the build. A path that is absolute, that has a part `..` or that names a file of the compiler is not read.
-- **Where the debug objects are.** In the debug image of the debugged machine: the service names each address there. A caller on another machine can also read raw values (`registers`, `memory`) and name them with its own debug objects, by the hash of the module.
+- **Where the debug objects are.** In the debug image of the debugged machine: the service names each address there. The module of a disk program is not in the debug image: at `attach`, the service reads its debug object from the store `programs`, beside its module file, through a connection that reads only and that the root service gives with the debug access (`MODULE_CONTRACT.md`, "The debug object of a disk program"). A caller on another machine can also read raw values (`registers`, `memory`) and name them with its own debug objects, by the hash of the module.
 
 ### The test
 
@@ -642,7 +642,7 @@ The sizes, the hashes and the exports of this example are not those of a real mo
 
 The check does not compare the bytes of the two module files. The compiler orders the procedures of a module by the path of its packages, and the package of the copy has another path. The passed line of each example prints the start of the two hashes and says whether the bytes are the same: it is a fact of the run, not a condition.
 
-**An outside module in a machine.** A machine starts an outside module from a disk, as it starts any disk program ("The disk of the disk programs"): the boot image does not change. The command `program-disk` writes a data disk whose store `programs` holds each module file, under the name of its file, and prints the line of the console that starts each one:
+**An outside module in a machine.** A machine starts an outside module from a disk, as it starts any disk program ("The disk of the disk programs"): the boot image does not change. The command `program-disk` writes a data disk whose store `programs` holds each module file, under the name of its file, and its debug object `<name>.debug` from the same folder, under the hash of the module. It refuses a debug object that names another module. It prints the line of the console that starts each one:
 
 ```
 modustool program-disk build/data_disk.img ~/my_program/build/my_program.module
@@ -653,11 +653,19 @@ modustool run
 > start_from_disk("my_program", "<the 64 digits that the command printed>")
 ```
 
-`modustool run` starts the machine with `build/data_disk.img`. The command writes no disk over a file that exists: a data disk holds the stores of a principal. The module runs with no grant and with the budget that it asks for, up to the largest budget of a disk program, paid by the one budget of the disk programs (`MODULE_CONTRACT.md`, "The budget that a module asks for"), and its name is no name of a module of the boot image (`MODULE_CONTRACT.md`, "A program from a disk"). The test part `disk_programs` builds a copy of the program `visitor` outside the sources under the name `outsider`, puts its file on the disk, and starts it in the machine.
+`modustool run` starts the machine with `build/data_disk.img`. The command writes no disk over a file that exists: a data disk holds the stores of a principal. The module runs with no grant and with the budget that it asks for, up to the largest budget of a disk program, paid by the one budget of the disk programs (`MODULE_CONTRACT.md`, "The budget that a module asks for"), and its name is no name of a module of the boot image (`MODULE_CONTRACT.md`, "A program from a disk"). The test part `disk_programs` builds a copy of the program `visitor` outside the sources under the name `outsider`, puts its file and its debug object on the disk, and starts it in the machine. The debugger attaches to it, holds its thread, and gives the frame of the procedure where it sleeps with its file and its line:
+
+```
+> columns(debug("outsider"), "program described")
+outsider          1
+> columns(hold(0), "thread state")
+> columns(where(stack(0), "procedure", "entry"), "module procedure file line")
+outsider  entry      outsider/main.odin    81
+```
 
 **What is not built.**
 
-- The debug image of a machine has no debug object for an outside module: a stop report of it shows addresses.
+- The console, `inspect` and `errors` read the debug image only: their stop report of an outside module that runs from a disk shows addresses. The debugger names its frames.
 - An import names a module of the system. An outside module does not import another outside module.
 
 ## The commands of the tool
@@ -738,15 +746,18 @@ The tool prints one line for each file, with the hash that the command `start_fr
 
 ```
 modustool: build/test_disk_programs_disk.img: the store programs holds visitor, <count> bytes, hash <64 hexadecimal digits>
+modustool: build/test_disk_programs_disk.img: the store programs holds the debug object of the module <64 hexadecimal digits>, <count> bytes
 ```
 
-The module of the test is `visitor`: a row of the module table of the tool with no `image`, so the build makes its file and no boot image holds it. The disk of the test has three entries with that module:
+The module of the test is `visitor`: a row of the module table of the tool with no `image`, so the build makes its file and no boot image holds it. The disk of the test has these entries:
 
 | Entry | Its bytes | What the machine checks |
 |---|---|---|
 | `visitor` | The module file | The root service starts it; the program writes that its context holds the log, a window and its budget, and no handle of a grant; with the grant store, it counts its visits in the store of its nickname |
 | `changed` | The module file with one byte changed | The line names the hash of the module file: the root service refuses the bytes, and the log holds their hash |
 | `notes` | The module file | The grant table of the root service gives the name `notes` a store: the root service refuses the name before any read |
+| `outsider` | The module file of `visitor` built outside the sources by `module-build` ("An outside module in a machine") | The root service starts it with no grant; the debugger attaches to it and names a frame of its held thread by its procedure, its file and its line |
+| the hash of `outsider` | The debug object of `outsider`, under the 64 hexadecimal digits of the hash of the module | The debugger service reads it through the connection that reads only of the debug access, and checks that it names that module (`MODULE_CONTRACT.md`, "The debug object of a disk program"); `programs.list()` does not list it, and the import scan does not read it: its name of 64 bytes is no name of a disk program |
 | `grant_table` | A disk grant table that gives `visitor` the grant store, with a tag under a key of zero bytes | What a reader of the disk with no passphrase can write: the root service refuses it when the machine passphrase is set, and writes over it; restored later, it is refused under the opened key and kept |
 | `store_library` | The library module `store_library`, a row of the module table that no boot image holds | The import scan finds it by the hash of its bytes, for `store_importer` |
 | `store_importer` | The program `store_importer`, which imports `store_library` | The root service starts it with the library of the store; the program calls `triple(14)` and writes 42 |

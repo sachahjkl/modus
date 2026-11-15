@@ -133,6 +133,10 @@ caller_of :: proc "contextless" () -> (caller: Caller) {
 		caller.store = {system.name_of(connection.caller[:]), connection.grant & isolated.CALLER_AMOUNT_MASK}
 		caller.acts_for_principal = connection.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 		caller.principal = isolated.caller_principal(connection.grant)
+		// The root service gives a connection that reads only, for the
+		// debug object of a disk program: each change is refused on it, as
+		// on a share that reads only.
+		caller.read_only = connection.grant & isolated.CALLER_READS_ONLY != 0
 		return caller
 	}
 	store, _, found := connection_store(item.maker, 0)
