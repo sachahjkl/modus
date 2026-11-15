@@ -67,10 +67,12 @@ STATE_PAGE_ATTRIBUTES :: 0x668 // The page attribute table of the guest under ne
 // count the work of the kernel and of other programs.
 INTERCEPT_INSTRUCTIONS :: u32(1 << 0 | 1 << 1 | 1 << 2 | 1 << 3 | 1 << 15 | 1 << 18 | 1 << 22 | 1 << 24 | 1 << 26 | 1 << 27 | 1 << 28 | 1 << 31)
 // The second vector: vmrun (which the processor requires), vmmcall, vmload,
-// vmsave, stgi, clgi, skinit (0 to 6), wbinvd (9), monitor, mwait and its
-// conditional form (10 to 12), xsetbv (13). xsetbv would change the XCR0 of
+// vmsave, stgi, clgi, skinit (0 to 6), icebp (8: the int1 instruction, whose
+// debug exception the exception intercept does not cover), wbinvd (9),
+// monitor, mwait and its conditional form (10 to 12), xsetbv (13). xsetbv
+// would change the XCR0 of
 // the kernel, which the exit does not restore.
-INTERCEPT_MORE_INSTRUCTIONS :: u32(0b111_1111 | 1 << 9 | 1 << 10 | 1 << 11 | 1 << 12 | 1 << 13)
+INTERCEPT_MORE_INSTRUCTIONS :: u32(0b111_1111 | 1 << 8 | 1 << 9 | 1 << 10 | 1 << 11 | 1 << 12 | 1 << 13)
 // Each read and each write of a debug register: the exit does not restore
 // DR0 to DR3, which hold the breakpoints of threads.
 INTERCEPT_DEBUG_REGISTERS :: u32(0xFFFF_FFFF)
@@ -178,6 +180,7 @@ Guest_Support :: struct {
 	refusal:             string, // Why no guest runs: a line of the log.
 }
 guest_support: Guest_Support
+guest_reserved_bit_faults: u64 // Atomic: the nested page faults with the reserved bit, of every guest.
 
 guest_port_map: u64 // Physical: GUEST_PORT_MAP_PAGES pages of ones.
 guest_register_map: u64 // Physical: GUEST_REGISTER_MAP_PAGES pages of ones.
@@ -488,7 +491,13 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, guest:
 	}
 	// The event that the exit interrupted goes to the next entry, in this
 	// run or in the next one; with none, the next entry delivers nothing.
-	direct(block + CONTROL_EVENT_INJECTION, u64)^ = guest_event_to_deliver_again(direct(block + CONTROL_EXIT_EVENT, u64)^)
+	// After a refused state, the processor entered nothing and the word can
+	// hold an old event: it is not delivered again at each run.
+	if exit.code == GUEST_EXIT_REFUSED_STATE {
+		direct(block + CONTROL_EVENT_INJECTION, u64)^ = 0
+	} else {
+		direct(block + CONTROL_EVENT_INJECTION, u64)^ = guest_event_to_deliver_again(direct(block + CONTROL_EXIT_EVENT, u64)^)
+	}
 	// An interrupt of another processor that waits in processor_sync is
 	// held until the return to the program: the answer comes now.
 	sync_acknowledge(cpu)
@@ -626,7 +635,10 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> op.
 			// width of the nested table: an exit that a guest can cause
 			// never stops the machine. The run ends, and the program gets
 			// the exit of a memory fault.
-			log("kernel: a nested page fault with the reserved bit in a guest of program ", Module_Name{program_name(caller)}, ": error ", Hex(exit.information_1), " guest address ", Hex(exit.information_2), "; the run ends")
+			// One line at each power of two of the count, as the faults of
+			// a device: a guest repeats it at each run.
+			reserved_faults := intrinsics.atomic_add(&guest_reserved_bit_faults, 1) + 1
+			if reserved_faults & (reserved_faults - 1) == 0 do log("kernel: a nested page fault with the reserved bit (", reserved_faults, " in all) in a guest of program ", Module_Name{program_name(caller)}, ": error ", Hex(exit.information_1), " guest address ", Hex(exit.information_2), "; the run ends")
 			break
 		}
 		if exit.code != GUEST_EXIT_NESTED_PAGE_FAULT || intrinsics.atomic_load(&thread.stop_requested) {

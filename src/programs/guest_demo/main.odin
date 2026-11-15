@@ -16,8 +16,9 @@
 // as an exit record `Port_Write` with the port and the value; the program
 // moves the guest to the next instruction and runs it again; the `hlt`
 // arrives as an exit `Halt`. Then the program moves the guest to an `int1`
-// after the `hlt`: the debug exception arrives as an exit `Other` with the
-// exit code 0x41, because the kernel lets no guest deliver it to itself.
+// after the `hlt`: the instruction arrives as an exit `Other` with the
+// exit code 0x88 (icebp), because the kernel lets no guest deliver its debug
+// exception to itself.
 // Then it checks that a guest takes no thread: `Program_Start` of the guest
 // gives `Bad_State`.
 //
@@ -40,9 +41,12 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:support/system"
 
-// The program itself and its guest; one page of guest memory and the
-// page tables of the guest are its working memory.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 16, programs = 2, threads = 1}
+// The program itself and its guest. The working memory holds what the
+// counted parts do not: the load of the program (its page tables, its
+// stack guard, the copy of its writable data), one page of guest memory,
+// the page tables of the guest and the two pages that the first run takes.
+// 180 pages, as the other small programs that hold no window.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, programs = 2, threads = 1}
 
 // The name of the guest program in the reports and on the log.
 GUEST_NAME :: "guest_demo guest"
@@ -58,7 +62,7 @@ HALT_ADDRESS :: CODE_ADDRESS + 6 // The address of hlt in the guest.
 DEBUG_ADDRESS :: CODE_ADDRESS + 7 // The address of int1 in the guest.
 // The exit code of the processor for the debug exception (0x40 plus the
 // vector 1): the kernel does not let a guest deliver it to itself.
-DEBUG_EXCEPTION_EXIT_CODE :: 0x41
+DEBUG_EXCEPTION_EXIT_CODE :: 0x88 // The exit of the instruction int1 (icebp).
 
 // The runs of the guest that an interrupt of the machine ends with nothing
 // to answer, before the program gives up: a count, not a time. A tick ends
@@ -164,7 +168,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 		}
 		break
 	}
-	system.log("guest_demo: the debug exception of the guest arrived as an exit Other with the exit code 0x41: as it must")
+	system.log("guest_demo: the int1 of the guest arrived as an exit Other with the exit code 0x88: as it must")
 
 	// A guest has no kernel half in its page table: no thread runs on it.
 	if _, start_status := system.call(.Program_Start, u64(guest), CODE_ADDRESS, op.STACK_TOP, op.CONTEXT_ADDRESS); start_status != .Bad_State {

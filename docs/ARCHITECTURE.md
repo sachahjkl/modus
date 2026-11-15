@@ -1414,7 +1414,7 @@ The kernel handles one exit itself: a nested page fault on a page on first use o
 | `Refused_State` | nothing: the processor refused the state of the guest |
 | `Other` | the exit code and the first exit information of the processor |
 
-The guest exits at each port, each model-specific register, `rdpmc`, `cpuid`, `hlt`, each instruction of virtualization, `xsetbv`, `invd`, `wbinvd`, `monitor`, `mwait`, and each access to a debug register. Each of these touches a state that the guest shares with the kernel, or a device of the machine. A string instruction of a port is an exit `Other`: the program decodes it. The debug exception and the alignment check of the guest exit too, as `Other` with the exit codes 0x41 and 0x51: a guest could make the delivery of one of them raise it again for ever, and hold the processor.
+The guest exits at each port, each model-specific register, `rdpmc`, `cpuid`, `hlt`, each instruction of virtualization, `xsetbv`, `invd`, `wbinvd`, `monitor`, `mwait`, and each access to a debug register. Each of these touches a state that the guest shares with the kernel, or a device of the machine. A string instruction of a port is an exit `Other`: the program decodes it. The debug exception and the alignment check of the guest exit too, as `Other` with the exit codes 0x41 and 0x51, and the instruction `int1` exits by its own intercept (0x88): a guest could make the delivery of one of them raise it again for ever, and hold the processor.
 
 ### 4. The run
 
