@@ -47,6 +47,28 @@ The debugger service looks up an address of the module in this object, as it loo
 
 The object stays in the memory of the service until the debugging ends.
 
+### The stop report of a disk program
+
+A developer whose outside module faults must read where it faulted with no attach: the fault already happened, and a program that stopped cannot be attached to.
+
+**Where the stop report is.** The kernel keeps the stop report of a program while a handle names the program. The root service holds the only handle of a disk program, and closes it when it reaps the stopped program, in the same pass of its loop. So the console, `inspect` and `errors` never see the stop report of a disk program: the console reads the stop report of a call host that it started, `errors` the stop report of its own cases, and `inspect` a program that a handle still names. The kernel line of the fault names the module by the start of its hash and an offset.
+
+**The chosen form.** The root service keeps the stop report, and the debugger service names it:
+
+1. At the reap of a disk program whose stop report is not zero (a fault), the root service reads the report with its handle, takes out each value that can be a word of the memory of the program (`disk_program.stop_report_hide`), and keeps it with the principal, the nickname and the hash of the module file (`disk_program.Kept_Stop_Reports`). The log says "root: kept the stop report of <nickname>, a disk program of principal <n>: stop_report(\"<nickname>\") names its frames".
+2. `stop_report("<nickname>")` in the console calls the export `stop_report` of the debugger service. The service sends `Debug_Store` with the flag of a kept stop report (values[6]).
+3. The root service answers when the caller acts for its principal, its grant `debug` is not revoked, and the root service keeps a stop report of a disk program of that principal with that nickname. The answer is the connection that reads only of an attach, and a fourth handle: one page with the kept stop report, which the service may read only.
+4. The service copies the report, reads the debug object of the hash that the report names, with the bounds and the check of an attach, closes the connection, and sends the end. It gives one row for each frame: the module, the procedure, the offset, the file and the line, and in the row 0 what stopped the program. A row gives no absolute address: the module and the offset name the place. Then it frees the object. When the service debugs the same module, and the store of the same principal gave its object, it uses that object and reads none: another store can hold other names under the same hash.
+
+The reasons:
+
+- **The root service holds the report, and reads no debug object.** Its loop already holds the handle at the stop. A copy of one record costs about 1 KiB for each kept report. A debug object is a large input from a transport that the root service does not trust: its reader stays in the debugger service, which has the bounds and the check already.
+- **The debugger service names it.** It is the one program that reads the debug object of a disk program, through the one connection that the root service gives for it. A second reader of the store, in the console, would be a second path with its own bounds.
+- **The rule is the rule of `inspect`, for one principal.** The kept report is in the form that `Inspect` gives to each holder of the machine with the right Inspect: only the frames that a module record holds, and the address of a page fault in the first page or in the module of the instruction. The caller must act for the principal of the program, which can read the store `programs` and its debug objects anyway. The debug access is not needed: the report holds no byte of the memory of the program.
+- **A command flag, not a new command.** The flag changes only which program the connection is for: a program that the service debugs for that caller, or a kept report of the principal of that caller. The connection, its bounds, its end and its reader are the same.
+
+The bounds: the root service keeps 8 reports (`disk_program.KEPT_STOP_REPORT_CAPACITY`). A new fault of a nickname replaces the report of that nickname. Else a principal that holds 4 places (`disk_program.KEPT_STOP_REPORTS_OF_ONE_PRINCIPAL`) gives its own oldest place, so the faults of one principal never take more than half of the table from the others; else a new report takes a free place, or the place of the oldest. A stop of a nickname with no fault removes the report of its older fault: a kept report always tells how the last run of the nickname ended. An age in the row 0 was refused: a reader would have to compare it with runs that the system does not list. The reports last until the machine stops. The export waits at most 1500 ms for the answer and the read together, as the read of an attach. The connection ends at the end that the service sends, when the caller or the service stops, and when a new connection of the service replaces it.
+
 ## Refused forms
 
 - **The debug object inside the module file.** It changes the hash of the module, and so the identity that the principal names in `start_from_disk`. A build with debug information and one without would give two modules.
@@ -59,6 +81,12 @@ The object stays in the memory of the service until the debugging ends.
 - **A connection that can write.** The debugger service has no reason to change the store, and the store holds the disk grant table.
 - **A connection that lives for the whole debugging.** It holds one of the 8 connection places of the storage service while a developer debugs: a connection of another program, or the load of a module file, can then fail with `No_Slot`. It also keeps the reach of the whole store open for no use.
 - **A read that waits for the storage service with no deadline.** The service is the debugger of one program for one caller, and serves each other caller between two calls.
+- **The console, `inspect` and `errors` name the frames of a disk program themselves.** None of them sees its stop report: the root service reaps the program, and the report leaves the kernel with the last handle. Each would also need its own reader of the store and its own bounds.
+- **The root service names the frames, and writes a named stop report on the log.** It would read and check a debug object of up to 8 MiB, from a transport that it does not trust, into its own budget: the code that reads hostile input moves into the program that holds every grant.
+- **The root service keeps the stopped program until a reader comes.** A stopped program keeps its pages and its slot while a handle names it: the one budget of all disk programs would pay for a program that does not run.
+- **The console receives a handle of each disk program that it starts, with the right Read.** The console would hold a handle that keeps a stopped program, and it would need a reader of the store in each program that shows a stop report.
+- **The whole stop report, as `Program_State` gives it.** A frame that no module record holds, and the address of a page fault outside the module, can be words of the memory of the program. The caller of the kept report holds no debug access: it gets what `Inspect` gives.
+- **The kept report read by any caller with the grant Inspect.** The debug object is an object of the store of one principal. A caller of another principal would read the names of its procedures and its sources.
 
 ## Subtle points
 
@@ -66,13 +94,15 @@ The object stays in the memory of the service until the debugging ends.
 - **The connection reads only.** The storage service refuses each change on it (`No_Grant`, unit `Changes`, the result `ERROR_PLACE`), as on a share that reads only. A share made from it reads only.
 - **The connection reads the whole store, not one object.** Its root is the root tree of the store `programs` of the principal: each module file, each debug object, `grant_table`, and the versions of each. That is more than the program that the caller may debug. It is accepted because the reach is small and short: the holder is the debugger service, a program of the system that the root service starts; it reads one object by a name that it computes from the hash, and no export of it gives a byte of the store to a caller; the connection lives for that read only, at most 1500 ms, and ends at the end of the read or of the debug access; it cannot change the store, and the disk grant table is no secret: its tag protects it against a change, and it holds no key. A connection to one object is not built: the storage service names a connection by a store, and a share of one object would need a share by the module file service or by the root service, which holds no connection to the store while a debugger reads.
 - **The read is part of `attach`.** No other export of the service waits for the storage service. A second module of a disk program, when a disk program imports from the store, needs a second object; today one module of a disk program is not in the boot image.
-- **The console, `inspect` and `errors` read the debug image only.** A stop report of a disk program that they show names offsets. The debugger names its frames.
+- **The console, `inspect` and `errors` read the debug image only.** They never hold the stop report of a disk program. The export `stop_report` of the debugger names it.
+- **A kept report outlives its program.** The nickname can name another file since: the report keeps the hash of the file that faulted, and the service reads the debug object of that hash, never of the nickname.
+- **The object of a kept report is read into the budget of the service.** The budget holds one debug object of the largest size. While the service debugs a disk program with a large object, the read for a stop report of another module can find no memory: one line of the log says so, and the rows name offsets. A report of the module that the service debugs, for the same principal, uses the object that it holds.
+- **The page of the report is memory of the root service.** The root service makes it, gives it with the right Read only, and closes its own handle at once: the service holds it until it copied the report.
 
 ## Built and left
 
-Built: the name of the object, the command `program-disk` that writes it, the list of the module file service that skips it, the command `Debug_Store` of the root ring, the flag of a connection that reads only, the read at `attach` with its bounds and its check, and the names of the debugger for the module of a disk program. The test part `disk_programs` attaches the debugger to an outside module from the disk, and waits for the procedure, the file and the line of a frame.
+Built: the name of the object, the command `program-disk` that writes it, the list of the module file service that skips it, the command `Debug_Store` of the root ring, the flag of a connection that reads only, the read at `attach` with its bounds and its check, and the names of the debugger for the module of a disk program. The test part `disk_programs` attaches the debugger to an outside module from the disk, and waits for the procedure, the file and the line of a frame. The kept stop report of a disk program: the root service keeps it at the reap, `Debug_Store` with its flag gives it with the connection, and the export `stop_report` names its frames. The test part `disk_programs` starts a copy of the outside module that faults, and waits for the procedure, the file and the line of its frames.
 
 Left:
 
-- **The stop report of a disk program in the console, `inspect` and `errors`.** They name the frames of a disk program by offsets. The roadmap holds this work.
 - **The debug object of an import from the store.** It comes with the imports of a disk program from the store `programs`.

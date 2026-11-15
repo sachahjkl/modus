@@ -16,9 +16,22 @@ visitor_line_of_the_sleep_is_the_call :: proc(t: ^testing.T) {
 	if !testing.expect(t, read) {
 		return
 	}
-	line, found := source_line_of_content(string(content), 81)
-	testing.expect_value(t, VISITOR_LINE_OF_THE_SLEEP, "81")
+	line, found := source_line_of_content(string(content), 93)
+	testing.expect_value(t, VISITOR_LINE_OF_THE_SLEEP, "93")
 	testing.expect(t, found && line == "\tsleep_for_ever()", line)
+}
+
+// The line that the scenario of the stop report names is the line of the
+// write to the address 0 in fault_three of visitor.
+@(test)
+visitor_line_of_the_fault_is_the_write :: proc(t: ^testing.T) {
+	content, read := read_file(PROGRAM_SOURCES + DISK_PROGRAM_MODULE + "/main.odin")
+	if !testing.expect(t, read) {
+		return
+	}
+	line, found := source_line_of_content(string(content), 169)
+	testing.expect_value(t, VISITOR_LINE_OF_THE_FAULT, "169")
+	testing.expect(t, found && line == "\tintrinsics.volatile_store((^u64)(address), 1)", line)
 }
 
 // The bytes of a test file: no block of them is all zero.

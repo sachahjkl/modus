@@ -21,9 +21,12 @@
 // **What a reader sees.** Three lines on the log: "visitor: ok", the
 // handles of its context, and the refusal of a ring to the root service.
 // With a store, one line more: the count of its starts with that store,
-// which it keeps there. It opens no window.
+// which it keeps there. It opens no window. The copy that the test builds
+// with FAULTS_AFTER_THE_START writes one line more, then stops on a page
+// fault: `stop_report("outsider_fault")` names its frames.
 package visitor
 
+import "base:intrinsics"
 import op "modus:contract/operation"
 import "modus:support/storage"
 import "modus:support/system"
@@ -35,6 +38,10 @@ VISITS_OBJECT :: "visits"
 // (its module build file defines it): the copy is then another module, with
 // another hash, which the debug image of the machine does not describe.
 BUILT_OUTSIDE :: #config(BUILT_OUTSIDE, false)
+// True in a second copy that the test builds outside the sources: after its
+// first lines it writes to the address 0, three calls deep, so that the
+// root service keeps its stop report and the debugger names its frames.
+FAULTS_AFTER_THE_START :: #config(FAULTS_AFTER_THE_START, false)
 
 // The entry of visitor: it writes what its context holds, then sleeps
 // until it is stopped.
@@ -46,6 +53,8 @@ BUILT_OUTSIDE :: #config(BUILT_OUTSIDE, false)
 //    gives `Bad_Handle`: the program can ask the root service for nothing.
 // 3. With a store: it reads the count of its starts, adds one, writes it,
 //    and reads it again.
+// 4. In the copy built with FAULTS_AFTER_THE_START: it writes to the
+//    address 0, three calls deep (fault_one).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("visitor: ok, a program that the boot image does not hold")
@@ -77,6 +86,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if has_store {
 		visits_count(&client)
+	}
+	when FAULTS_AFTER_THE_START {
+		fault_one(ctx)
 	}
 	sleep_for_ever()
 }
@@ -129,4 +141,31 @@ visits_count :: proc "contextless" (client: ^storage.Client) {
 		return
 	}
 	system.log("visitor: the store of its nickname holds the visit ", now, ", read again: as it must")
+}
+
+// The depth that each procedure of the fault writes after its call: no
+// call is then the last instruction of a procedure, so each call keeps its
+// frame and its return address, and the stop report has every level.
+fault_depth: u64
+
+// fault_one writes a line, then writes to the address 0 three calls deep.
+// The address comes from a value of the context that no starter writes, so
+// the compiler cannot prove that it is 0 and drop the write. A write that
+// does not stop the program is a fault of the kernel: the line after it
+// says so.
+fault_one :: #force_no_inline proc "contextless" (ctx: ^system.Context) {
+	system.log("visitor: writes to the address 0, three calls deep: its stop report names the frames of its source")
+	fault_two(uintptr(ctx.values[14]))
+	intrinsics.volatile_store(&fault_depth, 1)
+	system.log("visitor: the write did not stop the program: WRONG")
+}
+
+fault_two :: #force_no_inline proc "contextless" (address: uintptr) {
+	fault_three(address)
+	intrinsics.volatile_store(&fault_depth, 2)
+}
+
+fault_three :: #force_no_inline proc "contextless" (address: uintptr) {
+	intrinsics.volatile_store((^u64)(address), 1)
+	intrinsics.volatile_store(&fault_depth, 3)
 }

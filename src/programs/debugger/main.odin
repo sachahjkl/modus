@@ -29,6 +29,12 @@
 // (disk_debug_object.odin). It writes no byte in the program: a breakpoint
 // is a debug register of a thread.
 //
+// **A disk program that faulted.** `stop_report("visitor")` needs no
+// attach: the root service keeps the stop report of a disk program that
+// stopped on a fault, and gives it with the same connection to the store.
+// The export names each frame with the debug object of the module
+// (stop_report.odin).
+//
 // **One program at a time.** The service debugs one program, for one
 // caller. A second `attach` while it does is refused with `Full`
 // (`Debugged_Programs`). The debugging ends at `detach()`, when the
@@ -196,6 +202,7 @@ Root_Request :: struct {
 	ring:       system.Handle, // The call ring of the caller.
 	end:        bool, // The command ends a debug access; else it asks for one.
 	store:      bool, // The command Debug_Store: the connection to the store of the debug object of a disk program.
+	kept:       bool, // With store: the connection is for the stop report that the root service kept, not for a debug access.
 	abandoned:  bool, // No export waits for the completion.
 	unsent:     bool, // The root ring was full: the loop of the entry sends it again.
 }
@@ -237,10 +244,11 @@ refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Statu
 // service that the debugging of the program ended for the caller: no
 // export waits for its completion, and a command that the ring has no room
 // for is sent again later. With `store`, the command is Debug_Store: the
-// connection to the store of the debug object of a disk program. tag is 0
-// when the table of the requests is full, or when a command that asks for
-// an access or a connection was not sent.
-root_request_send :: proc "contextless" (name: string, connection_ring: system.Handle, end: bool, store := false) -> (tag: u32) {
+// connection to the store of the debug object of a disk program; with
+// `kept` too, the connection and the stop report that the root service
+// kept of that program. tag is 0 when the table of the requests is full,
+// or when a command that asks for an access or a connection was not sent.
+root_request_send :: proc "contextless" (name: string, connection_ring: system.Handle, end: bool, store := false, kept := false) -> (tag: u32) {
 	if requests.head == nil {
 		return 0
 	}
@@ -256,7 +264,7 @@ root_request_send :: proc "contextless" (name: string, connection_ring: system.H
 		return 0
 	}
 	request_count += 1
-	free^ = {tag = request_count, ring = connection_ring, end = end, store = store, abandoned = end}
+	free^ = {tag = request_count, ring = connection_ring, end = end, store = store, kept = kept, abandoned = end}
 	free.name_count = copy(free.name[:], name)
 	if !root_request_put(free) {
 		if !end {
@@ -272,7 +280,7 @@ root_request_send :: proc "contextless" (name: string, connection_ring: system.H
 root_request_put :: proc "contextless" (request: ^Root_Request) -> bool {
 	packed := system.name_pack(string(request.name[:request.name_count]))
 	command := request.store ? system.Root_Command.Debug_Store : system.Root_Command.Debug
-	return system.send(&requests.commands, ring.Record{kind = u32(command), tag = request.tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(request.ring), 5 = u64(request.end)}})
+	return system.send(&requests.commands, ring.Record{kind = u32(command), tag = request.tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(request.ring), 5 = u64(request.end), 6 = u64(request.kept)}})
 }
 
 // root_completion_take takes a completion that no export waits for. The
@@ -288,17 +296,32 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 		}
 		request := item
 		item = {}
-		// A connection to the store that came after the attach stopped
-		// waiting: its handles are closed, and the root service ends the
-		// connection with the debug access.
+		// A connection to the store that came after the export stopped
+		// waiting: its handles are closed, the page of a kept stop report
+		// too. The root service ends the connection of an attach with the
+		// debug access; the connection of a kept stop report is a part of
+		// no access, so this service sends its end.
 		if request.store {
-			if system.Status(record.kind) == .Ok {
+			if system.Status(record.kind) == .Ok && !request.end {
 				answered := record.values
-				for word in answered[:3] {
+				count := request.kept ? 4 : 3
+				for word in answered[:count] {
 					handle := system.Handle(word)
 					if kind, _, through := system.handle_state(handle, requests_memory); (kind == .Program || kind == .Memory) && through {
 						system.close(handle)
 					}
+				}
+				// A newer open of the same caller that waits replaces this
+				// connection in the root service: an end now would end that
+				// newer connection while it reads.
+				newer_open := false
+				for &other in root_requests {
+					if other.tag != 0 && other.store && !other.end && other.ring == request.ring {
+						newer_open = true
+					}
+				}
+				if request.kept && !newer_open {
+					root_request_send(string(request.name[:request.name_count]), request.ring, true, store = true, kept = true)
 				}
 			}
 			return

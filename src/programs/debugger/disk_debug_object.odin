@@ -10,6 +10,10 @@ package debugger
 // reads the object into memory of its own budget, checks it whole, and
 // closes the connection. The object stays until the debugging ends.
 //
+// The same read serves the stop report of a disk program that stopped on a
+// fault: the root service kept the report, and gives it with the
+// connection (stop_report.odin). That object lives for one export.
+//
 // The storage service is a transport: it can give any bytes under the
 // name. The object is used only when `debug_object.check` takes it and
 // when the hash that it names is the hash of the module record.
@@ -18,6 +22,7 @@ import debug_object "modus:contract/debug_object"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/ring"
 import "modus:support/disk_program"
 import "modus:support/storage"
 import "modus:support/system"
@@ -31,14 +36,19 @@ import "modus:support/system"
 DISK_DEBUG_OBJECT_MILLISECONDS :: 1500
 #assert(ROOT_ANSWER_MILLISECONDS + DISK_DEBUG_OBJECT_MILLISECONDS + 1500 <= 5000)
 
-// The debug object of the module of the disk program that the service
-// debugs.
+// The debug object of the module of a disk program.
 Disk_Debug_Object :: struct {
 	module_hash: [32]u8, // The module of the disk program. Zero: the program is no disk program.
+	// The principal whose store `programs` gave the object. The check of
+	// the object proves its hash only: the names and the paths are those
+	// that this store holds, so the object serves a caller of this
+	// principal only.
+	principal:   u64,
 	memory:      system.Handle, // The memory of the object. 0: none.
 	object:      []u8, // The object, mapped, after its whole check. nil: none.
 }
 
+// The object of the disk program that the service debugs.
 disk_debug_object: Disk_Debug_Object
 
 // debug_object_for gives the debug object of the module with a hash: the
@@ -53,13 +63,18 @@ debug_object_for :: proc "contextless" (module_hash: [32]u8) -> []u8 {
 // disk_debug_object_forget gives back the memory of the object, when the
 // debugging ends.
 disk_debug_object_forget :: proc "contextless" () {
-	if disk_debug_object.object != nil {
-		system.memory_unmap(raw_data(disk_debug_object.object))
+	held_object_forget(&disk_debug_object)
+}
+
+// held_object_forget gives back the memory of one object.
+held_object_forget :: proc "contextless" (held: ^Disk_Debug_Object) {
+	if held.object != nil {
+		system.memory_unmap(raw_data(held.object))
 	}
-	if disk_debug_object.memory != 0 {
-		system.close(disk_debug_object.memory)
+	if held.memory != 0 {
+		system.close(held.memory)
 	}
-	disk_debug_object = {}
+	held^ = {}
 }
 
 // disk_module_of gives the module record of the program of the session
@@ -87,16 +102,30 @@ disk_module_of :: proc "contextless" () -> (module_hash: [32]u8, found: bool) {
 disk_debug_object_read :: proc "contextless" (name: string, connection_ring: system.Handle, module_hash: [32]u8, principal: u64) {
 	disk_debug_object_forget()
 	disk_debug_object.module_hash = module_hash
+	disk_debug_object.principal = principal
+	store_debug_object_read(name, connection_ring, &disk_debug_object, principal, nil)
+}
+
+// store_debug_object_read asks the root service for the connection to the
+// store `programs`, reads there the debug object of the module
+// `into.module_hash`, checks it, and closes the connection. With `kept`,
+// the command asks for the stop report that the root service kept of the
+// disk program `name`: the report comes with the connection, is copied to
+// `kept`, and names the module, so `into` starts empty. When the session
+// holds the object of that module already, no object is read: the caller
+// uses the one of the session.
+//
+// completion and answered: the answer of the root service, for an export
+// that gives its refusal. report_received: `kept` holds the report.
+store_debug_object_read :: proc "contextless" (name: string, connection_ring: system.Handle, into: ^Disk_Debug_Object, principal: u64, kept: ^disk_program.Kept_Stop_Report) -> (completion: ring.Record, answered: bool, report_received: bool) {
 	limit := system.time() + DISK_DEBUG_OBJECT_MILLISECONDS
-	digits: [disk_program.HASH_DIGITS]u8
-	disk_program.debug_object_name_write(&digits, module_hash)
-	object_name := string(digits[:])
-	tag := root_request_send(name, connection_ring, false, store = true)
+	for_report := kept != nil
+	tag := root_request_send(name, connection_ring, false, store = true, kept = for_report)
 	if tag == 0 {
 		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the command to the root service was not sent")
 		return
 	}
-	completion, answered := root_answer_wait(tag, limit)
+	completion, answered = root_answer_wait(tag, limit)
 	if !answered {
 		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the root service gave no connection to the store in ", u64(DISK_DEBUG_OBJECT_MILLISECONDS), " ms")
 		return
@@ -109,7 +138,7 @@ disk_debug_object_read :: proc "contextless" (name: string, connection_ring: sys
 	// root service ends it, so it holds no connection place of the storage
 	// service for the rest of the debugging. This defer runs after the
 	// defer below that closes the side of this service.
-	defer root_request_send(name, connection_ring, true, store = true)
+	defer root_request_send(name, connection_ring, true, store = true, kept = for_report)
 	// The handles are numbers from another program: each must be of its
 	// kind, and must have come through the ring to the root service.
 	service_handle := system.Handle(completion.values[0])
@@ -119,10 +148,32 @@ disk_debug_object_read :: proc "contextless" (name: string, connection_ring: sys
 	ring_kind, _, ring_through := system.handle_state(ring_handle, requests_memory)
 	region_kind, _, region_through := system.handle_state(region_handle, requests_memory)
 	valid := service_kind == .Program && service_through && ring_kind == .Memory && ring_through && region_kind == .Memory && region_through
+	store_principal := principal
+	held_by_the_session := false
+	if for_report {
+		// The page of the report: one page that the root service made,
+		// with the right Read. It is copied, then closed.
+		page := system.Handle(completion.values[3])
+		if page_kind, _, page_through := system.handle_state(page, requests_memory); page_kind == .Memory && page_through {
+			if address, mapped := system.memory_map(page, {}); mapped == .Ok {
+				kept^ = (^disk_program.Kept_Stop_Report)(address)^
+				system.memory_unmap(address)
+				report_received = true
+			}
+			system.close(page)
+		}
+		store_principal = completion.values[4]
+		into.module_hash = kept.module_hash
+		into.principal = store_principal
+		// The object of the session serves only when the store of the same
+		// principal gave it: another store can hold other names under the
+		// same hash.
+		held_by_the_session = disk_debug_object.object != nil && disk_debug_object.module_hash == kept.module_hash && disk_debug_object.principal == store_principal
+	}
 	storage_file := system.image_find(image, "storage")
 	client: storage.Client
 	opened := false
-	if valid && module.validate(storage_file) == .None {
+	if valid && (!for_report || report_received && !held_by_the_session) && module.validate(storage_file) == .None {
 		client, opened = storage.open_handles(ring_handle, region_handle, service_handle, storage_file)
 	}
 	if !opened {
@@ -132,9 +183,20 @@ disk_debug_object_read :: proc "contextless" (name: string, connection_ring: sys
 				system.close(handle)
 			}
 		}
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the connection to the store does not open")
+		switch {
+		case for_report && !report_received:
+			system.log("debugger: no stop report of ", system.Module_Name{name}, ": the page of the root service does not map")
+		case held_by_the_session:
+			// The object of the session describes the module: no read.
+		case:
+			system.log("debugger: no debug object for ", system.Module_Name{name}, ": the connection to the store does not open")
+		}
 		return
 	}
+	module_hash := into.module_hash
+	digits: [disk_program.HASH_DIGITS]u8
+	disk_program.debug_object_name_write(&digits, module_hash)
+	object_name := string(digits[:])
 	// The connection is closed in each case: the object is read whole in
 	// this export.
 	defer {
@@ -153,7 +215,7 @@ disk_debug_object_read :: proc "contextless" (name: string, connection_ring: sys
 		return
 	}
 	if status == .Failed && answer_value == storage.ERROR_ABSENT {
-		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the store ", disk_program.STORE_NAME, " of principal ", principal, " has no object ", object_name)
+		system.log("debugger: no debug object for ", system.Module_Name{name}, ": the store ", disk_program.STORE_NAME, " of principal ", store_principal, " has no object ", object_name)
 		return
 	}
 	if status != .Ok || answer_value < 0 {
@@ -172,11 +234,11 @@ disk_debug_object_read :: proc "contextless" (name: string, connection_ring: sys
 		system.log("debugger: no debug object for ", system.Module_Name{name}, ": no memory for its ", object_read.size, " bytes: status ", create_status)
 		return
 	}
-	disk_debug_object.memory = object_memory
+	into.memory = object_memory
 	address, map_status := system.memory_map(object_memory)
 	if map_status != .Ok {
-		disk_debug_object_forget()
-		disk_debug_object.module_hash = module_hash
+		held_object_forget(into)
+		into.module_hash = module_hash
 		system.log("debugger: no debug object for ", system.Module_Name{name}, ": its memory does not map: status ", map_status)
 		return
 	}
@@ -209,8 +271,8 @@ disk_debug_object_read :: proc "contextless" (name: string, connection_ring: sys
 		}
 		if problem != "" {
 			system.memory_unmap(address)
-			disk_debug_object_forget()
-			disk_debug_object.module_hash = module_hash
+			held_object_forget(into)
+			into.module_hash = module_hash
 			system.log("debugger: no debug object for ", system.Module_Name{name}, ": ", problem)
 			return
 		}
@@ -224,8 +286,8 @@ disk_debug_object_read :: proc "contextless" (name: string, connection_ring: sys
 	fault := debug_object.check(bytes)
 	if !described || named != module_hash || fault != .None {
 		system.memory_unmap(address)
-		disk_debug_object_forget()
-		disk_debug_object.module_hash = module_hash
+		held_object_forget(into)
+		into.module_hash = module_hash
 		if fault != .None {
 			system.log("debugger: refused the debug object ", object_name, " of ", system.Module_Name{name}, ": ", debug_object.fault_sentences[fault])
 		} else {
@@ -233,8 +295,9 @@ disk_debug_object_read :: proc "contextless" (name: string, connection_ring: sys
 		}
 		return
 	}
-	disk_debug_object.object = bytes
-	system.log("debugger: read the debug object ", object_name, " of ", system.Module_Name{name}, " from the store ", disk_program.STORE_NAME, " of principal ", principal, ": ", object_read.size, " bytes, checked whole")
+	into.object = bytes
+	system.log("debugger: read the debug object ", object_name, " of ", system.Module_Name{name}, " from the store ", disk_program.STORE_NAME, " of principal ", store_principal, ": ", object_read.size, " bytes, checked whole")
+	return
 }
 
 // store_call sends one call to the storage service and waits for its

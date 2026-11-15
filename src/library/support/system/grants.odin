@@ -275,6 +275,16 @@ Root_Command :: enum u32 {
 	// that it read the object: the root service ends the connection. The
 	// connection ends in any case when the debug access ends. Only the
 	// program with the grant Debugger sends this command.
+	//
+	// With values[6] not 0, the connection is for the stop report that the
+	// root service kept of the disk program with this nickname, which
+	// stopped on a fault: the caller must act for its principal, and the
+	// grant `debug` of the caller must not be revoked; no debug access is
+	// needed (`Absent`, unit `Stop_Reports`: no such report). The
+	// completion adds values[3], one page with a disk_program.Kept_Stop_Report
+	// (right Read), and values[4], the principal. The connection ends at the
+	// end that the service sends with values[6], and when the caller or the
+	// service stops.
 	Debug_Store = 22,
 }
 

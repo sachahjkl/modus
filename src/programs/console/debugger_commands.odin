@@ -102,6 +102,10 @@ debug_wait_stop :: proc "contextless" (arguments: []Value) -> Value {
 	return bound_call("debugger", "wait_stop", arguments)
 }
 
+debug_stop_report :: proc "contextless" (arguments: []Value) -> Value {
+	return bound_call("debugger", "stop_report", arguments)
+}
+
 // debugger_commands_start lists the commands of the debugger. The comment
 // above each command is its documentation on the site.
 debugger_commands_start :: proc "contextless" () {
@@ -241,4 +245,16 @@ debugger_commands_start :: proc "contextless" () {
 	//
 	// - `milliseconds`: the longest wait.
 	command("wait_stop", {.Integer}, .Table, "wait for a stop of the debugged program: debugger.wait_stop()", debug_wait_stop, {value_kinds.time_in(.Milliseconds)})
+	// Gives one row for each frame of the stop report of a disk program
+	// that stopped on a fault: the module, the procedure, the file and the
+	// line, from the debug object of its module in the store `programs`.
+	// It needs no `debug`: the program stopped, and the root service kept
+	// its report. Row 0 also says what stopped it.
+	//
+	// - `program`: the nickname of the disk program.
+	//
+	// ```
+	// > stop_report("visitor")
+	// ```
+	command("stop_report", {.Text}, .Table, "the frames of a disk program that faulted, named: debugger.stop_report()", debug_stop_report)
 }

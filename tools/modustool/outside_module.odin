@@ -551,9 +551,17 @@ outside_module_example_check :: proc(tool_path, system_folder: string, example: 
 // of the boot image.
 OUTSIDE_DISK_PROGRAM :: "outsider"
 
+// The name of a second module from the same copy, built with one more
+// setting: it writes to the address 0 after its start, and the test reads
+// its stop report. Its folder is the folder of the copy, so its debug
+// object names its sources from the folder `outsider` too.
+OUTSIDE_FAULT_PROGRAM :: "outsider_fault"
+
 // outside_program_for_a_disk builds that module as a developer does, and
-// gives its file and its debug object.
-outside_program_for_a_disk :: proc() -> (file: []u8, debug_file: []u8, ok: bool) {
+// gives its file and its debug object. With `faults`, it builds the module
+// OUTSIDE_FAULT_PROGRAM from the same folder. The folder is written again
+// at each build: the bytes that a build gave are read before the next one.
+outside_program_for_a_disk :: proc(faults := false) -> (file: []u8, debug_file: []u8, ok: bool) {
 	tool_path, path_error := os.get_executable_path(context.temp_allocator)
 	if path_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot find the file of the tool: %v", path_error)
@@ -564,9 +572,11 @@ outside_program_for_a_disk :: proc() -> (file: []u8, debug_file: []u8, ok: bool)
 		fmt.eprintfln("modustool: test failed: cannot read the folder of the system: %v", folder_error)
 		return nil, nil, false
 	}
-	example := Outside_Module_Example{name = OUTSIDE_DISK_PROGRAM, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE, build_file = "name: " + OUTSIDE_DISK_PROGRAM + "\ndefines: BUILT_OUTSIDE=true\n"}
+	module_name := faults ? OUTSIDE_FAULT_PROGRAM : OUTSIDE_DISK_PROGRAM
+	build_file := faults ? "name: " + OUTSIDE_FAULT_PROGRAM + "\ndefines: BUILT_OUTSIDE=true FAULTS_AFTER_THE_START=true\n" : "name: " + OUTSIDE_DISK_PROGRAM + "\ndefines: BUILT_OUTSIDE=true\n"
+	example := Outside_Module_Example{name = OUTSIDE_DISK_PROGRAM, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE, build_file = build_file}
 	folder := outside_module_example_build(tool_path, system_folder, example) or_return
-	out := join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER, "/", OUTSIDE_DISK_PROGRAM)
+	out := join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER, "/", module_name)
 	file = read_file(join(out, ".module")) or_return
 	debug_file = read_file(join(out, ".debug")) or_return
 	return file, debug_file, true

@@ -35,6 +35,10 @@
 //   `scan_read_done`, `scan_skip` (import_scan.odin): the account of the
 //   import scan that finds an import of a disk program in the store
 //   `programs` by the hash of its bytes, with its bounds.
+// - `Kept_Stop_Reports`, `stop_report_hide`, `kept_stop_report_keep`,
+//   `kept_stop_report_find` (kept_stop_report.odin): the stop report of a
+//   disk program that stopped on a fault, which the root service keeps
+//   after the reap and gives to the debugger service.
 //
 // See [disk program](term:disk-program).
 package disk_program

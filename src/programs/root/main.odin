@@ -58,7 +58,9 @@
 //   the principal whose session runs that program (`debug`).
 // - `Debug_Store`: for that debugger service, a connection that reads only
 //   to the store `programs` of a disk program that it debugs, where the
-//   debug object of the program is (debug_store.odin).
+//   debug object of the program is (debug_store.odin); or that connection
+//   and the stop report that this service kept of a disk program that
+//   stopped on a fault.
 //
 // A refused command has an error record in its completion (`refusal`): the
 // console prints it, for example after `revoke("notes", "store")` on a
@@ -920,7 +922,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case .Debug:
 					result = debug(&item, system.name_of(name[:]), record.values[4], record.values[5] != 0, &completion.values)
 				case .Debug_Store:
-					result = debug_store_open(&item, system.name_of(name[:]), record.values[4], record.values[5] != 0, &completion.values)
+					result = debug_store_open(&item, system.name_of(name[:]), record.values[4], record.values[5] != 0, record.values[6] != 0, &completion.values)
 				case .Replace:
 					result = replace(&item, system.name_of(name[:]), record.values[4], &completion.values)
 				case .Stop:
@@ -2101,6 +2103,9 @@ release :: proc "contextless" (item: ^Started) {
 			other.driver = nil
 		}
 	}
+	// The connection for a kept stop report ends with its caller and with
+	// the debugger service.
+	debug_store_release(item)
 	// A client that stops: its block service stops. A block service that
 	// stops: the device stops using memory.
 	if item.driver != nil && item.driver.program != 0 {
@@ -2152,6 +2157,9 @@ reap :: proc "contextless" () {
 		state, code := system.program_state(item.program)
 		if state == .Stopped {
 			system.log_in("programs", code == 0 ? .Info : .Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " stopped with code ", u64(code))
+			// The kernel forgets the stop report with the last handle,
+			// which release closes: a disk program keeps it here.
+			stop_report_keep(&item)
 			release(&item)
 		}
 	}
