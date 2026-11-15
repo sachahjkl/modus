@@ -19,8 +19,7 @@ import "base:intrinsics"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 
-FIRST_CHARACTER :: 32 // The first character of a glyph cache: the space.
-CHARACTER_COUNT :: glyph_cache.CHARACTER_LIMIT // The characters of a glyph cache: 32 to 126.
+CHARACTER_COUNT :: glyph_cache.CHARACTER_COUNT // The characters of a glyph cache: ASCII 32 to 126 and the Latin-1 Supplement.
 // The glyph of a character that the cache does not hold, and of each invalid sequence
 // of the text: the reader draws the replacement glyph in its place
 // (graphics.character_replacement), so that a reader sees that a character
@@ -38,7 +37,7 @@ TEXT_LIMIT :: 1 << 16
 // the text; advance includes the pair adjustment with the next character;
 // so the x of a glyph is the sum of the advances before it.
 Placed_Glyph :: struct {
-	glyph:   u32, // The index of the character in the glyph cache: character - 32. REPLACEMENT_GLYPH: a character outside the cache.
+	glyph:   u32, // The character index of the character (glyph_cache.character_index). REPLACEMENT_GLYPH: a character outside the cache.
 	x:       i32, // In 1/64 of a pixel.
 	advance: i32, // In 1/64 of a pixel.
 	cluster: u32, // The first byte of the character in the text.
@@ -59,18 +58,18 @@ Character_Advance :: struct {
 	advance: i32, // In 1/64 of a pixel.
 }
 
-// Spacing: the advances of the characters 32 to 126 and the pairs of one
-// font at one scale, sorted by left then right.
+// Spacing: the advances of the characters of a glyph cache, by their
+// character index, and the pairs of one font at one scale, sorted by left
+// then right.
 Spacing :: struct {
 	advances: []i32, // CHARACTER_COUNT of them.
-	pairs:    []glyph_cache.Pair_Entry, // The pair adjustments, sorted by left then right character.
+	pairs:    []glyph_cache.Pair_Entry, // The pair adjustments, sorted by left then right character index.
 }
 
 // spacing_of gives the spacing of one scale of a valid glyph cache. ok is
-// false for a cache of other characters than 32 to 126, or a scale that it
-// does not have.
+// false for a scale that the cache does not have.
 spacing_of :: proc "contextless" (cache: ^glyph_cache.Cache, scale: int) -> (spacing: Spacing, ok: bool) {
-	if cache.header.first_character != FIRST_CHARACTER || cache.header.character_count != CHARACTER_COUNT {
+	if cache.header.character_count != CHARACTER_COUNT {
 		return {}, false
 	}
 	advances := glyph_cache.advances_of(cache, scale)
@@ -83,17 +82,18 @@ spacing_of :: proc "contextless" (cache: ^glyph_cache.Cache, scale: int) -> (spa
 // glyph_of gives the glyph of a character: its index in the cache, or
 // REPLACEMENT_GLYPH.
 glyph_of :: #force_inline proc "contextless" (character: rune) -> u32 {
-	if character < FIRST_CHARACTER || character >= FIRST_CHARACTER + CHARACTER_COUNT {
+	index, found := glyph_cache.character_index(character)
+	if !found {
 		return REPLACEMENT_GLYPH
 	}
-	return u32(character - FIRST_CHARACTER)
+	return u32(index)
 }
 
 // advance_of gives the advance of a glyph, read once, from 0 to
 // glyph_cache.ADVANCE_LIMIT.
 @(private)
 advance_of :: #force_inline proc "contextless" (spacing: ^Spacing, glyph_given: u32) -> i32 {
-	glyph := glyph_given == REPLACEMENT_GLYPH ? u32(REPLACEMENT_ADVANCE_CHARACTER - FIRST_CHARACTER) : glyph_given
+	glyph := glyph_given == REPLACEMENT_GLYPH ? glyph_of(REPLACEMENT_ADVANCE_CHARACTER) : glyph_given
 	if int(glyph) >= len(spacing.advances) {
 		return 0
 	}
@@ -109,7 +109,7 @@ pair_of :: proc "contextless" (spacing: ^Spacing, left, right: u32) -> i32 {
 	if left >= CHARACTER_COUNT || right >= CHARACTER_COUNT {
 		return 0 // The replacement glyph has no pair.
 	}
-	key := (left + FIRST_CHARACTER) << 8 | (right + FIRST_CHARACTER)
+	key := left << 8 | right
 	low, high := 0, len(spacing.pairs)
 	for low < high {
 		middle := low + (high - low) / 2

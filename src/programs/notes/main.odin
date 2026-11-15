@@ -32,6 +32,7 @@
 package notes
 
 import "modus:contract/errors"
+import "modus:contract/text_encoding"
 import "modus:support/calendar"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -353,15 +354,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				history_read()
 				system.log("notes: the note is \"", string(note[:note_count]), "\", generation ", generation, ", ", u64(max(history_total - 1, 0)), " versions; one commit of the note: ", commit_time_total / max(commit_count, 1), " us in the mean of ", commit_count)
 			case 8:
+				// The note is UTF-8: Backspace removes its last whole
+				// character.
 				if note_count > 0 {
-					note_count -= 1
+					note_count = text_encoding.complete_characters(note[:note_count - 1])
 					keep("note", note[:note_count])
 					history_read()
 				}
-			case ' ' ..= '~':
-				if note_count < NOTE_CAPACITY {
-					note[note_count] = event.character
-					note_count += 1
+			case:
+				// A character whose bytes do not fit is not typed.
+				if length := text_encoding.character_encode(event.character, note[note_count:NOTE_CAPACITY]); length > 0 {
+					note_count += length
 					keep("note", note[:note_count])
 					history_read()
 				}

@@ -1040,7 +1040,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					system.log("errors: the window shows the page ", u64(shown_page + 1), " of the cases")
 				} else if event.pressed {
 					for index in 0 ..< len(cases) {
-						if key_names[index] == event.character {
+						if rune(key_names[index]) == event.character {
 							chosen = index
 						}
 					}

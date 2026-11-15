@@ -5,6 +5,7 @@ import "modus:contract/errors"
 import "modus:contract/palette_table"
 import "modus:contract/ring"
 import "modus:contract/settings"
+import "modus:contract/text_encoding"
 import "modus:support/bar"
 import "modus:support/display"
 import "modus:support/interface"
@@ -590,7 +591,7 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 }
 
 // palette_key_of translates a key of the keyboard into a key of the panel.
-palette_key_of :: proc "contextless" (code: u32, character: u8) -> palette.Key {
+palette_key_of :: proc "contextless" (code: u32, character: rune) -> palette.Key {
 	switch code {
 	case display.KEY_SUPER:
 		return .Super
@@ -621,14 +622,14 @@ palette_key_of :: proc "contextless" (code: u32, character: u8) -> palette.Key {
 	case display.KEY_TAB:
 		return .Tab
 	}
-	return character >= ' ' && character <= '~' ? palette.Key.Character : palette.Key.Other
+	return text_encoding.character_in_text(character) ? palette.Key.Character : palette.Key.Other
 }
 
 // palette_key takes a key for the palette. It gives true if the key is for
 // the palette, and false if it goes to the window that has the focus. The
 // key super opens and closes the panel. While the panel is open, it takes
 // each key: what a key does in each state is palette.key_action.
-palette_key :: proc "contextless" (code: u32, character: u8, pressed: bool, modifiers: u32) -> bool {
+palette_key :: proc "contextless" (code: u32, character: rune, pressed: bool, modifiers: u32) -> bool {
 	if !pressed {
 		if code == kept_key {
 			kept_key = 0
@@ -666,7 +667,7 @@ palette_key :: proc "contextless" (code: u32, character: u8, pressed: bool, modi
 // palette_act does one action of the panel: from a key, or from the
 // pointer (a press and a release on a row is Run or Confirm; a press
 // outside the panel is Close). cause: what closes the panel, for the log.
-palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, character: u8, cause: string) {
+palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, character: rune, cause: string) {
 	panel := &palette_panel
 	// The palette runs the row that is drawn: after a list moved the
 	// choice to another entry, Enter does nothing until a frame showed it.

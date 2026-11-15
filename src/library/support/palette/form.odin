@@ -125,7 +125,7 @@ form_message :: proc "contextless" (form: ^Form) -> string {
 // and leaves a sentence for the detail line. drawn: the panel shows
 // something new. leave: Backspace in the first field, empty: the input
 // goes back to the search.
-form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: u8) -> (drawn: bool, leave: bool) {
+form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune) -> (drawn: bool, leave: bool) {
 	form := &panel.form
 	if form.current < 0 || form.current >= form.field_count {
 		return false, false
@@ -167,8 +167,8 @@ form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: u8) -
 				message_set(form, form.current, "a text holds no quote")
 				return true, false
 			}
-			if field.count >= palette_table.ARGUMENT_TEXT_CAPACITY {
-				message_set(form, form.current, "a text of the palette has 48 characters at most; the console takes a longer one")
+			if field.count + line_editor.character_length(character) > palette_table.ARGUMENT_TEXT_CAPACITY {
+				message_set(form, form.current, "a text of the palette has 48 bytes at most; the console takes a longer one")
 				return true, false
 			}
 		}

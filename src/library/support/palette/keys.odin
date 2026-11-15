@@ -276,7 +276,7 @@ state_after :: proc "contextless" (state: State, action: Action, chosen: Chosen)
 // choice that no frame showed was of the list before, and the typed part
 // asks for a new list. The owner makes Enter wait for that list, and its
 // adoption chooses the first entry (Panel.typed_since_list).
-typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: u8) -> (drawn: bool, text_changed: bool) {
+typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune) -> (drawn: bool, text_changed: bool) {
 	edit_key := line_editor.Edit_Key.None
 	#partial switch key {
 	case .Left:
@@ -292,7 +292,7 @@ typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: u8) -> (dr
 	case .Delete:
 		edit_key = .Delete
 	case .Character:
-		if panel.line.count >= TYPED_CAPACITY {
+		if panel.line.count + line_editor.character_length(character) > TYPED_CAPACITY {
 			return false, false
 		}
 		edit_key = .Character

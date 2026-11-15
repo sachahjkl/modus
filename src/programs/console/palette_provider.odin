@@ -535,9 +535,10 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		// can change between the entry and the choice.
 		count := found.parameter_count
 		fits := count <= palette_table.PARAMETER_CAPACITY && palette_arguments_tag == record.tag && palette_arguments_bad != record.tag && record.values[4] == u64(count) && count > 0
-		// A Text of the palette is UTF-8, and a line of the console holds
-		// ASCII only until the keys give other characters: such a text is
-		// refused in words, never changed in silence.
+		// A Text of the palette and a line of the console are UTF-8. A text
+		// that a line cannot hold (an invalid sequence, which the
+		// compositor already refuses, or a quote) is refused in words,
+		// never changed in silence.
 		outside_line := false
 		for index in 0 ..< count {
 			if !fits || index not_in palette_arguments_given {
@@ -550,8 +551,12 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 			case found.parameters[index] == .Integer && argument.kind == .Integer:
 				system.write_part(&writer, argument.integer)
 			case found.parameters[index] == .Text && argument.kind == .Text:
-				for value in argument.text[:argument.length] {
-					if !line_editor.printable(value) {
+				argument_text := argument.text[:argument.length]
+				if !text_encoding.text_valid(argument_text) {
+					outside_line = true
+				}
+				for value in argument_text {
+					if value == '"' {
 						outside_line = true
 					}
 				}
@@ -565,7 +570,7 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		palette_arguments_given = {}
 		system.write_part(&writer, ")")
 		if fits && outside_line {
-			palette_refuse(record.tag, "a line of the console holds no character outside ASCII yet")
+			palette_refuse(record.tag, "a line of the console holds no quote and no invalid sequence of UTF-8 in a text")
 			return
 		}
 		if !fits || writer.dropped != 0 {

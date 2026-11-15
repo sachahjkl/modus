@@ -1,5 +1,7 @@
 package line_editor
 
+import "modus:contract/text_encoding"
+
 // The history: the last lines that the input entered, in a ring of bytes.
 // A line takes its own length, not LINE_CAPACITY: short lines leave room
 // for more of them. A line never wraps at the end of the ring: when it
@@ -23,9 +25,11 @@ History :: struct {
 
 // history_add adds a line as the newest one. added is false for an empty
 // line, and for a line equal to the newest one: the history does not hold
-// one line two times in a row. A line longer than LINE_CAPACITY is cut.
+// one line two times in a row. A line longer than LINE_CAPACITY is cut
+// after a whole character.
 history_add :: proc "contextless" (history: ^History, text_given: string) -> (added: bool) {
 	text := text_given[:min(len(text_given), LINE_CAPACITY)]
+	text = text[:text_encoding.complete_characters(transmute([]u8)text)]
 	if len(text) == 0 {
 		return false
 	}

@@ -3,9 +3,16 @@ package vector_font
 import "modus:contract/blake3"
 import "modus:contract/glyph_cache"
 
-FIRST_CHARACTER :: 32 // The first character of a glyph cache: the space.
 #assert(int(max(Stripe_Filter)) + 1 == glyph_cache.FILTER_COUNT)
-CHARACTER_COUNT :: glyph_cache.CHARACTER_LIMIT // The characters of a glyph cache: 32 to 126.
+CHARACTER_COUNT :: glyph_cache.CHARACTER_COUNT // The characters of a glyph cache: ASCII 32 to 126 and the Latin-1 Supplement.
+
+// character_of gives the character of a character index of a cache. The
+// index is below CHARACTER_COUNT at each call.
+@(private)
+character_of :: #force_inline proc "contextless" (index: int) -> rune {
+	character, _ := glyph_cache.character_of_index(index)
+	return character
+}
 
 // The places of the tables of a glyph cache file (modus:contract/glyph_cache).
 @(private)
@@ -69,7 +76,6 @@ cache_header_write :: proc "contextless" (out: []u8, font_bytes: []u8, font_name
 		version          = glyph_cache.VERSION,
 		renderer_version = RENDERER_VERSION,
 		file_size        = u64(layout.words + 4 * word_count),
-		first_character  = FIRST_CHARACTER,
 		character_count  = CHARACTER_COUNT,
 		size_count       = u32(size_count),
 		flags            = (grid_fit ? glyph_cache.FLAG_GRID_FIT : 0) | (proportional ? glyph_cache.FLAG_PROPORTIONAL : 0) | u32(Stripe_Filter.Five_Taps) << glyph_cache.FILTER_SHIFT,
@@ -87,13 +93,15 @@ cache_header_write :: proc "contextless" (out: []u8, font_bytes: []u8, font_name
 	return layout.words + 4 * word_count
 }
 
-// glyph_cache_build draws the characters 32 to 126 of a monospace font at
+// glyph_cache_build draws the characters of a glyph cache (ASCII 32 to 126
+// and the Latin-1 Supplement) of a monospace font at
 // the three scales of the grid and writes a glyph cache file
 // (modus:contract/glyph_cache) into the memory of the caller: one position, each
 // glyph the full width of its cell, each advance the width of the cell, no
 // pair. The modus tool makes the cache of the boot image with it; a
 // program makes its own cache of another font with it. It gives the size
-// of the file, or a problem; .Too_Many_Points also when out is too small.
+// of the file, or a problem; .Too_Many_Points also when out is too small,
+// .No_Glyph when the font lacks one of the characters.
 // scale_count: 3 for the text of the system, 1 for a weight that draws only
 // at scale 1 (the bold of the card titles).
 glyph_cache_build :: proc "contextless" (font: ^Font_File, font_bytes: []u8, font_name: string, grid_fit: bool, memory: ^Render_Memory, out: []u8, scale_count_asked := glyph_cache.SIZE_LIMIT) -> (size: int, problem: Font_Problem) {
@@ -112,7 +120,7 @@ glyph_cache_build :: proc "contextless" (font: ^Font_File, font_bytes: []u8, fon
 		tables.sizes[scale - 1] = {cell_width = u16(style.cell_width), cell_height = u16(style.cell_height), baseline = u16(style.baseline), position_count = 1, first_glyph = u32((scale - 1) * CHARACTER_COUNT)}
 		for index in 0 ..< CHARACTER_COUNT {
 			tables.advances[(scale - 1) * CHARACTER_COUNT + index] = i32(style.cell_width * glyph_cache.SUBPIXEL)
-			glyph_render(font, measures, style, rune(FIRST_CHARACTER + index), memory, pixels[:]) or_return
+			glyph_render(font, measures, style, character_of(index), memory, pixels[:]) or_return
 			// Only the rows with ink.
 			first, last := style.cell_height, -1
 			for row in 0 ..< style.cell_height {
@@ -141,7 +149,7 @@ glyph_cache_build :: proc "contextless" (font: ^Font_File, font_bytes: []u8, fon
 	return cache_header_write(out, font_bytes, font_name, grid_fit, false, layout, scale_count, 0, word_count), .None
 }
 
-// glyph_cache_build_proportional draws the characters 32 to 126 of a
+// glyph_cache_build_proportional draws the characters of a glyph cache of a
 // proportional font (docs/FONTS.md, section 12.4) and writes a glyph cache
 // file into the memory of the caller: for each scale 1 ..= len(positions),
 // each glyph at positions[scale - 1] subpixel positions, each kept as the
@@ -164,9 +172,9 @@ glyph_cache_build_proportional :: proc "contextless" (font: ^Font_File, font_byt
 	measures := proportional_measures(font, font_measures(font, memory) or_return) or_return
 	pair_table := pair_table_open(font) or_return
 	pair_count := 0
-	for left in rune(FIRST_CHARACTER) ..< FIRST_CHARACTER + CHARACTER_COUNT {
-		for right in rune(FIRST_CHARACTER) ..< FIRST_CHARACTER + CHARACTER_COUNT {
-			if character_pair_adjustment(font, &pair_table, left, right) != 0 {
+	for left in 0 ..< CHARACTER_COUNT {
+		for right in 0 ..< CHARACTER_COUNT {
+			if character_pair_adjustment(font, &pair_table, character_of(left), character_of(right)) != 0 {
 				pair_count += 1
 			}
 		}
@@ -183,23 +191,23 @@ glyph_cache_build_proportional :: proc "contextless" (font: ^Font_File, font_byt
 		position_count := positions[scale - 1]
 		tables.sizes[scale - 1] = {cell_width = u16(style.cell_width), cell_height = u16(style.cell_height), baseline = u16(style.baseline), position_count = u16(position_count), first_glyph = u32(first_glyph)}
 		for index in 0 ..< CHARACTER_COUNT {
-			advance := character_advance(font, rune(FIRST_CHARACTER + index))
+			advance := character_advance(font, character_of(index))
 			tables.advances[(scale - 1) * CHARACTER_COUNT + index] = units_to_subpixels(advance, scale, measures.advance)
 		}
-		// The pairs in the order of the characters: sorted.
+		// The pairs in the order of the character indexes: sorted.
 		pair := (scale - 1) * pair_count
 		for left in 0 ..< CHARACTER_COUNT {
 			for right in 0 ..< CHARACTER_COUNT {
-				adjustment := character_pair_adjustment(font, &pair_table, rune(FIRST_CHARACTER + left), rune(FIRST_CHARACTER + right))
+				adjustment := character_pair_adjustment(font, &pair_table, character_of(left), character_of(right))
 				if adjustment != 0 {
-					tables.pairs[pair] = {left = u8(FIRST_CHARACTER + left), right = u8(FIRST_CHARACTER + right), adjustment = units_to_subpixels(adjustment, scale, measures.advance)}
+					tables.pairs[pair] = {left = u8(left), right = u8(right), adjustment = units_to_subpixels(adjustment, scale, measures.advance)}
 					pair += 1
 				}
 			}
 		}
 		for position in 0 ..< position_count {
 			for index in 0 ..< CHARACTER_COUNT {
-				box := glyph_render_placed(font, measures, style, rune(FIRST_CHARACTER + index), position, position_count, memory) or_return
+				box := glyph_render_placed(font, measures, style, character_of(index), position, position_count, memory) or_return
 				entry := &tables.glyphs[first_glyph + position * CHARACTER_COUNT + index]
 				entry.word_offset = u32(word_count)
 				if box.row_count == 0 {
@@ -224,9 +232,9 @@ glyph_cache_build_proportional :: proc "contextless" (font: ^Font_File, font_byt
 // GLYPH_CACHE_LIMIT: room for the glyph cache of one monospace font with
 // each cell full at the three scales: a caller that gives this much never
 // gets a problem of room.
-GLYPH_CACHE_LIMIT :: 1024 + 3 * glyph_cache.GLYPH_ENTRY_SIZE * 95 + 3 * glyph_cache.ADVANCE_SIZE * 95 + 4 * 95 * (8 * 16 + 16 * 32 + 24 * 48)
+GLYPH_CACHE_LIMIT :: 1024 + 3 * glyph_cache.GLYPH_ENTRY_SIZE * CHARACTER_COUNT + 3 * glyph_cache.ADVANCE_SIZE * CHARACTER_COUNT + 4 * CHARACTER_COUNT * (8 * 16 + 16 * 32 + 24 * 48)
 
 // PROPORTIONAL_GLYPH_CACHE_LIMIT: room for the glyph cache of one
 // proportional font at the three scales, each with POSITION_LIMIT
 // positions, each glyph as wide as the work row and as high as its line.
-PROPORTIONAL_GLYPH_CACHE_LIMIT :: 1024 + 3 * glyph_cache.POSITION_LIMIT * glyph_cache.GLYPH_ENTRY_SIZE * 95 + 3 * glyph_cache.ADVANCE_SIZE * 95 + 3 * glyph_cache.PAIR_LIMIT * glyph_cache.PAIR_ENTRY_SIZE + 4 * glyph_cache.POSITION_LIMIT * 95 * PLACED_WIDTH_LIMIT * (16 + 32 + 48)
+PROPORTIONAL_GLYPH_CACHE_LIMIT :: 1024 + 3 * glyph_cache.POSITION_LIMIT * glyph_cache.GLYPH_ENTRY_SIZE * CHARACTER_COUNT + 3 * glyph_cache.ADVANCE_SIZE * CHARACTER_COUNT + 3 * glyph_cache.PAIR_LIMIT * glyph_cache.PAIR_ENTRY_SIZE + 4 * glyph_cache.POSITION_LIMIT * CHARACTER_COUNT * PLACED_WIDTH_LIMIT * (16 + 32 + 48)
