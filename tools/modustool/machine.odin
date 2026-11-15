@@ -2053,6 +2053,24 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   module    agenda"},
 	{kind = .Wait, text = "[console]   commands  3"},
 	{kind = .Wait, text = "[console]   memory    left the console"},
+	// Who may replace a module: the root service writes a replacement only
+	// for a row of the replacement list that the signing key of the system
+	// signed. No row names calendar by math; the row of calendar by lonely
+	// is signed by another key. The table does not change, so agenda still
+	// runs calendar, with its fault.
+	{kind = .Type, text = "replace(\"calendar\", \"math\")"},
+	{kind = .Wait, text = "root: refused the replacement of calendar by math: no signed row of the replacement list names it"},
+	{kind = .Wait, text = "[console] error: the root service refused the replacement of calendar by math: no signed row names it"},
+	{kind = .Type, text = "replace(\"calendar\", \"lonely\")"},
+	{kind = .Wait, text = "root: refused the replacement of calendar by lonely: the signature of its row does not verify under the signing key of the system"},
+	{kind = .Wait, text = "[console] error: the root service refused the replacement of calendar by lonely: its signature does not verify"},
+	{kind = .Type, text = "load(\"agenda\")"},
+	{kind = .Wait, text = "[console]   module     agenda"},
+	{kind = .Wait, text = "[console]   commands   3"},
+	{kind = .Type, text = "year_days(2000) + month_days(2, 2000)"},
+	{kind = .Wait, text = "[console] 393"},
+	{kind = .Type, text = "unload(\"agenda\")"},
+	{kind = .Wait, text = "[console]   memory    left the console"},
 	// The replacement of an import. The root service holds the table of the
 	// machine; the loader checks each export that agenda uses.
 	{kind = .Type, text = "replace(\"calendar\", \"calendar_changed\")"},

@@ -1,5 +1,6 @@
 package compositor
 
+import "modus:contract/errors"
 import "modus:contract/palette_table"
 import "modus:contract/ring"
 import "modus:contract/settings"
@@ -1196,8 +1197,14 @@ palette_refresh :: proc "contextless" () {
 	// named elements itself, in pixels of the screen, so that a machine
 	// test presses a field or a button by its name.
 	interface.element_places_publish(&palette_element_places_written, &palette_element_places_drawn, "surfaces", "compositor: ", PALETTE_ELEMENT_OWNER)
+	// The difference through the drawing module. It refuses only a table
+	// of more than 2^40 records or bytes; with no difference, the whole
+	// screen is drawn again.
 	changed: interface.Damage
-	interface.damage_by_difference(&palette_before, &palette_now, &changed)
+	refused: errors.Error_Record
+	if !interface.difference_through_module(&palette_before, &palette_now, &changed, &refused) {
+		damage_add(0, 0, screen.width, screen.height)
+	}
 	for rectangle in changed.rectangles[:changed.count] {
 		damage_add(rectangle.left, rectangle.top, rectangle.right - rectangle.left, rectangle.bottom - rectangle.top)
 	}

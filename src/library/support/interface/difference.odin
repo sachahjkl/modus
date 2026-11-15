@@ -52,13 +52,16 @@ damage_bounds :: proc "contextless" (damage: ^Damage) -> Rectangle {
 // equal, except the places of their texts in the two text tables, and the
 // bytes of their texts are equal. A text record whose range is not inside
 // its text table is equal to no record: its rectangle is damaged, and the
-// execution draws nothing for it. The check is on the records that it
+// execution draws nothing for it. Two Text_Grid records are equal when
+// their bytes are equal except their places: their cells are compared one
+// by one after it (grid_damage). The check is on the records that it
 // receives, the copies that it compares.
 records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now: ^Draw_Table, new: Draw_Record) -> bool {
 	old_without_place, new_without_place := old, new
-	// Only a text has a place that can change with no change of what is
-	// drawn. For a picture or a text grid, the same field is its index.
-	if is_text_kind(old.kind) && old.kind == new.kind {
+	// A text and a grid have a place in the text table that can change
+	// with no change of what is drawn. For a picture, the same field is
+	// its first pixel.
+	if (is_text_kind(old.kind) || old.kind == .Text_Grid) && old.kind == new.kind {
 		old_without_place.text_start, new_without_place.text_start = 0, 0
 	}
 	if (transmute([size_of(Draw_Record)]u8)old_without_place) != (transmute([size_of(Draw_Record)]u8)new_without_place) {
@@ -88,7 +91,7 @@ damage_by_difference :: proc "contextless" (before, now: ^Draw_Table, damage: ^D
 		new := intrinsics.volatile_load(&now.records[index])
 		if records_equal(before, old, now, new) {
 			if new.kind == .Text_Grid {
-				grid_damage(before, now, new, damage)
+				grid_damage(before, old, now, new, damage)
 			}
 			continue
 		}
@@ -124,17 +127,14 @@ damage_rest :: proc "contextless" (before, now: ^Draw_Table, first: int, damage:
 }
 
 // grid_damage damages, in each row of a grid that did not move, the span
-// from the first changed cell to the last one. A grid that the table before
-// does not have is damaged whole.
+// from the first changed cell to the last one. The two records are equal
+// except their places in their text tables. A grid whose cells one of the
+// two tables does not hold (grid_of) is damaged whole.
 @(private)
-grid_damage :: proc "contextless" (before, now: ^Draw_Table, record: Draw_Record, damage: ^Damage) {
-	index := int(record.text_start)
-	if index >= len(before.grids) || index >= len(now.grids) {
-		damage_add(damage, record_rectangle(record))
-		return
-	}
-	old, new := before.grids[index], now.grids[index]
-	if old.columns != new.columns || old.rows != new.rows || !grid_valid(old) || !grid_valid(new) {
+grid_damage :: proc "contextless" (before: ^Draw_Table, old_record: Draw_Record, now: ^Draw_Table, record: Draw_Record, damage: ^Damage) {
+	old, old_ok := grid_of(before, old_record)
+	new, new_ok := grid_of(now, record)
+	if !old_ok || !new_ok || old.columns != new.columns || old.rows != new.rows {
 		damage_add(damage, record_rectangle(record))
 		return
 	}

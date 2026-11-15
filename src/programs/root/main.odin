@@ -762,8 +762,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		text_settings_give(mappings[:], &mapping_count, &values)
 		date_page_give(mappings[:], &mapping_count, &values)
-		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared)
+		// The compositor imports the drawing module: its load needs the
+		// boot image as the source of its imports.
+		compositor_load_error: module.Load_Error
+		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared, load_source(), &compositor_load_error)
 		if status != .Ok {
+			if compositor_load_error.stage != .None {
+				buffer: [512]u8
+				writer := system.Writer{buffer = buffer[:]}
+				system.load_error_text(&writer, &compositor_load_error)
+				system.log_in("programs", .Error, "root: cannot load the compositor: ", system.written(&writer))
+			}
 			fail("cannot start the compositor", status)
 		}
 		// Its place in the table of the programs that this service started: a
@@ -898,7 +907,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case .Debug:
 					result = debug(&item, system.name_of(name[:]), record.values[4], record.values[5] != 0, &completion.values)
 				case .Replace:
-					result = replace(&item, system.name_of(name[:]), record.values[4])
+					result = replace(&item, system.name_of(name[:]), record.values[4], &completion.values)
 				case .Stop:
 					result = .Bad_Handle
 					for &other in started {
@@ -919,8 +928,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// and a name of another form. So do Disk_Grant and
 				// Nickname_Move and Disk_Grant_Persistence, whose name is a
 				// nickname of three values. Machine_Key carries a key where
-				// a name would be: no refusal reads it as a name.
-				if result != .Ok && command != .Debug && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key {
+				// a name would be: no refusal reads it as a name. A refused
+				// Replace wrote its own: a refused signature is a cause that
+				// only replace knows.
+				if result != .Ok && command != .Debug && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key && command != .Replace {
 					completion.values = refusal(system.Root_Command(record.kind), system.name_of(name[:]), record.values[4], result)
 				}
 				completion.kind = u32(result)
@@ -1753,47 +1764,6 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 	return .Ok
 }
 
-// replace changes the replacement table of the machine, for a program with
-// the role Replace: where a module imports the module `name`, the loaders
-// give the module of entry `by` of the boot image (from 1). 0 removes the
-// record. It refuses a chain: one replacement for one import, so a loader
-// never follows two records.
-replace :: proc "contextless" (asker: ^Started, name: string, by: u64) -> system.Status {
-	if .Replace not_in grants_of(system.name_of(asker.name[:])) {
-		return .No_Right
-	}
-	entries := system.image_entries(image)
-	from, to: [32]u8
-	from_name := ""
-	for &entry in entries {
-		if system.name_of(entry.name[:]) == name {
-			from = entry.hash
-			from_name = system.name_of(entry.name[:])
-		}
-	}
-	if from == {} || by > u64(len(entries)) {
-		return .Bad_Handle
-	}
-	if by != 0 {
-		to = entries[by - 1].hash
-		if to == from {
-			return .Bad_Operation
-		}
-		for item in system.replacements_read(replacement_table, &replacement_records) {
-			if item.from == to || item.to == from {
-				return .Bad_State
-			}
-		}
-	}
-	system.replacements_write(replacement_table, from, to) or_return
-	if by == 0 {
-		system.log_in("programs", .Info, "root: no replacement of ", system.Module_Name{from_name})
-	} else {
-		system.log_in("programs", .Info, "root: ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, " replaces ", system.Module_Name{from_name}, " in each load that follows")
-	}
-	return .Ok
-}
-
 // The palette provider (docs/CONSOLE.md, "8. The palette provider"): the one
 // program that gives the palette of the desktop entries of its own. This
 // service keeps a handle of the entry table and of the ring, so that a
@@ -1899,8 +1869,17 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	mappings: [8]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
-	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared)
+	// The terminal imports the drawing module: its load needs the boot
+	// image as the source of its imports.
+	load_error: module.Load_Error
+	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
+		if load_error.stage != .None {
+			buffer: [512]u8
+			writer := system.Writer{buffer = buffer[:]}
+			system.load_error_text(&writer, &load_error)
+			system.log_in("programs", .Warning, "root: cannot load the terminal: ", system.written(&writer))
+		}
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return status
 	}

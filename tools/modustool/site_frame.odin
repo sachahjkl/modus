@@ -41,7 +41,7 @@ SITE_RELEASES_FOLDER :: "releases"
 // The documents of docs/ that are working records of the project, not
 // guides: the site leaves them out. A link of a page to one of them names
 // the file in the repository.
-SITE_WORKING_RECORDS :: [?]string{"HANDOFF.md", "REVIEWS.md", "SITE.md", "FIRST_MILESTONE.md", "DECISIONS.md"}
+SITE_WORKING_RECORDS :: [?]string{"SITE.md"}
 SITE_DESCRIPTION_LIMIT :: 160
 // The start of the refresh of a redirect page; the link to the new address
 // follows it.
@@ -167,7 +167,7 @@ Site_Guide :: struct {
 	title:    string,
 	about:    string, // Its line in the table of documents of README.md, or "".
 	headings: []Site_Heading, // Each heading of its page, with its id: the guide sections of the search index.
-	items:    []Site_List_Item, // Each top-level item of an ordered list of its page, with its id: a reference to "choice <n>" finds it.
+	items:    []Site_List_Item, // Each top-level item of an ordered list of its page, with its id: a reference to "item <n>" finds it.
 }
 
 Site :: struct {
@@ -187,7 +187,6 @@ Site :: struct {
 	guides:       [dynamic]Site_Guide,
 	principles:   Site_Principles,
 	readme:       Site_Readme,
-	step_count:   int,
 	changelog:    Changelog,
 	measured:     []Site_Measured,
 	measure_record: Site_Measure_Record, // The measure record of the work tree.
@@ -201,7 +200,6 @@ Site :: struct {
 	tile_rules:   string, // The rules of the style sheet for the tiles of the boot image on the home.
 	news:         []Site_News, // Newest first.
 	roadmap:      Roadmap, // ROADMAP.md, as roadmap_read gives it.
-	gaps:         []Site_Gap, // The gaps of docs/FIRST_MILESTONE.md, as the status page shows them.
 	redirects:    map[string]string, // The HTML of each redirect page, by its old path.
 	redirect_counts: [Site_Address_Generation]int, // The redirect pages of each generation of old addresses.
 	reference_entries: []Site_Reference_Entry, // The pages of the reference, in the order of its index: the tree lists them.
@@ -575,13 +573,11 @@ site_build :: proc(address: string) -> bool {
 
 	properties_text := site_read(SITE_PROPERTIES_FILE) or_return
 	readme_text := site_read(SITE_README_FILE) or_return
-	reviews_text := site_read(SITE_REVIEWS_FILE) or_return
 	glossary_text := site_read("docs/GLOSSARY.md") or_return
-	properties_problem, readme_problem, reviews_problem: string
+	properties_problem, readme_problem: string
 	site.principles, properties_problem = site_properties_parse(properties_text)
 	site.readme, readme_problem = site_readme_parse(readme_text)
-	site.step_count, reviews_problem = site_reviews_step_count(reviews_text)
-	for problem in ([]string{properties_problem, readme_problem, reviews_problem}) {
+	for problem in ([]string{properties_problem, readme_problem}) {
 		if problem != "" {
 			fmt.eprintfln("modustool: site: %s", problem)
 			return false

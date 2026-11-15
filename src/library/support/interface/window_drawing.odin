@@ -12,10 +12,11 @@ import "modus:support/system"
 // sets it for each program that imports the module (the module table,
 // tools/modustool/modules.odin).
 //
-// Such a program has at most one picture memory, and no Text_Grid record:
-// a grid is named by an address, and the description of an export carries
-// values only. A frame with a grid, or with more than one picture memory,
-// is refused (frame_draw).
+// A window of such a program has at most one picture memory: a call of
+// the module takes one. A frame with more than one is refused
+// (frame_draw). A grid is in the text table, so the module draws it. The
+// compositor, which shows many picture memories, calls
+// draw_part_through_module once for each part of its screen.
 DRAWING_THROUGH_MODULE :: #config(DRAWING_THROUGH_MODULE, false)
 
 // What a program keeps to draw its window with the package, in its own
@@ -156,78 +157,108 @@ when DRAWING_THROUGH_MODULE {
 	// module with another version has other names, so the loader refuses
 	// it in place of a draw of records that it reads wrong. A new version
 	// stops the build here, until the names follow.
-	#assert(DRAW_RECORD_VERSION == 8)
+	#assert(DRAW_RECORD_VERSION == 9)
 
 	foreign _ {
-		@(link_name = "damage_of_draw_table_8")
+		@(link_name = "damage_of_draw_table_9")
 		module_damage_of_draw_table :: proc "c" (before: ^system.Table_To_Read(Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Module_Rectangle, error: ^errors.Error_Record) -> i64 ---
-		@(link_name = "execute_draw_table_8")
+		@(link_name = "execute_draw_table_9")
 		module_execute_draw_table :: proc "c" (now: ^system.Table_To_Read(Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, area: ^Module_Canvas_Rectangle, error: ^errors.Error_Record) -> i64 ---
 	}
 
-	// records_to_read and text_to_read give the table places of a draw
-	// table: the address of the memory of the program, and its counts. The
-	// module reads the records where they are.
+	// records_to_read gives the table place of the records first ..< first
+	// + count of a draw table, cut to the records of the frame: the address
+	// of the memory of the program, and its counts. The module reads the
+	// records where they are.
 	@(private = "file")
-	records_to_read :: proc "contextless" (table: ^Draw_Table) -> system.Table_To_Read(Draw_Record) {
-		return {records = raw_data(table.records), count = u64(table.record_count), capacity = u64(len(table.records))}
+	records_to_read :: proc "contextless" (table: ^Draw_Table, first, count: int) -> system.Table_To_Read(Draw_Record) {
+		start := clamp(first, 0, table.record_count)
+		taken := clamp(count, 0, table.record_count - start)
+		return {records = raw_data(table.records[start:]), count = u64(taken), capacity = u64(len(table.records) - start)}
 	}
 
+	// text_to_read gives the place of the text table of a draw table: the
+	// texts and the cells of the grids.
 	@(private = "file")
 	text_to_read :: proc "contextless" (table: ^Draw_Table) -> system.Bytes_To_Read {
 		return {bytes = raw_data(table.text), count = u64(table.text_count), capacity = u64(len(table.text))}
 	}
 
-	// frame_difference finds the damage from the table before to the table
-	// now, with the export of the drawing module. The module writes the
-	// rectangles into the memory of damage. It gives false when the module
-	// refused the call: drawing.module_error has the record, and damage is
-	// empty.
-	@(private = "file")
-	frame_difference :: proc "contextless" (drawing: ^Window_Drawing, before, now: ^Draw_Table, damage: ^Damage) -> bool {
-		before_records, before_text := records_to_read(before), text_to_read(before)
-		now_records, now_text := records_to_read(now), text_to_read(now)
+	// difference_through_module finds the damage from the table before to
+	// the table now, with the export of the drawing module: one call. The
+	// module writes the rectangles into the memory of damage. It gives
+	// false when the module refused the call: error has the record, and
+	// damage is empty.
+	difference_through_module :: proc "contextless" (before, now: ^Draw_Table, damage: ^Damage, error: ^errors.Error_Record) -> bool {
+		before_records, before_text := records_to_read(before, 0, before.record_count), text_to_read(before)
+		now_records, now_text := records_to_read(now, 0, now.record_count), text_to_read(now)
 		result := ([^]Module_Rectangle)(&damage.rectangles[0])[:DAMAGE_CAPACITY]
-		drawing.module_calls += 1
-		count := module_damage_of_draw_table(&before_records, &before_text, &now_records, &now_text, &result, &drawing.module_error)
+		count := module_damage_of_draw_table(&before_records, &before_text, &now_records, &now_text, &result, error)
 		if count < 0 {
 			damage.count = 0
-			module_refusal_log(drawing, "damage_of_draw_table_8")
 			return false
 		}
 		damage.count = int(min(count, DAMAGE_CAPACITY))
 		return true
 	}
 
-	// frame_draw paints each rectangle with the background and draws the
-	// records that touch it, with the export of the drawing module, one
-	// call for each rectangle: the pixels of the canvas are bytes of the
-	// program that the module writes in place, and the pixels of the
-	// pictures are the one picture memory of the table, which the module
-	// reads in place. It gives false when the module refused a call, or
-	// when the table has a grid or more than one picture memory, which the
-	// module cannot draw: drawing.module_error has the record.
-	@(private = "file")
-	frame_draw :: proc "contextless" (drawing: ^Window_Drawing, now: ^Draw_Table, canvas: graphics.Canvas, rectangles: []Rectangle) -> bool {
-		if len(now.picture_memories) > 1 || len(now.grids) != 0 {
-			drawing.module_error = errors.error_make(.Unsupported, .None, 1, i64(len(now.picture_memories)) + i64(len(now.grids)))
-			module_refusal_log(drawing, "execute_draw_table_8")
-			return false
-		}
-		now_records, now_text := records_to_read(now), text_to_read(now)
-		picture_memory: system.Bytes_To_Read
-		if len(now.picture_memories) == 1 {
-			memory := now.picture_memories[0]
-			memory_size := u64(len(memory)) * size_of(graphics.Color)
-			picture_memory = {bytes = ([^]u8)(raw_data(memory)), count = memory_size, capacity = memory_size}
-		}
+	// draw_part_through_module draws the records first ..< first + count of
+	// a table that touch one rectangle of a canvas, cut to it, with the
+	// export of the drawing module: one call. The pixels of the canvas are
+	// bytes of the program that the module writes in place. A Picture
+	// record of the part names picture memory 0: picture_memory, which the
+	// module reads in place. With fill_background, the rectangle is painted
+	// with background first. It gives false when the module refused the
+	// call: error has the record.
+	draw_part_through_module :: proc "contextless" (table: ^Draw_Table, first, count: int, picture_memory: []graphics.Color, canvas: graphics.Canvas, rectangle: Rectangle, fill_background: bool, background: graphics.Color, error: ^errors.Error_Record) -> bool {
+		records, text_bytes := records_to_read(table, first, count), text_to_read(table)
+		memory_size := u64(len(picture_memory)) * size_of(graphics.Color)
+		memory := system.Bytes_To_Read{bytes = ([^]u8)(raw_data(picture_memory)), count = memory_size, capacity = memory_size}
 		size := u64(canvas.stride) * u64(canvas.height) * size_of(graphics.Color)
 		pixels := system.Bytes_To_Change{bytes = ([^]u8)(canvas.pixels), count = size, capacity = size}
+		fill := i64(0)
+		if fill_background {
+			fill = 1
+		}
+		area := Module_Canvas_Rectangle{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = fill, background = i64(background), left = i64(rectangle.left), top = i64(rectangle.top), right = i64(rectangle.right), bottom = i64(rectangle.bottom)}
+		return module_execute_draw_table(&records, &text_bytes, &memory, &pixels, &area, error) >= 0
+	}
+
+	// frame_difference finds the damage from the table before to the table
+	// now, with the export of the drawing module. It gives false when the
+	// module refused the call: drawing.module_error has the record, and
+	// damage is empty.
+	@(private = "file")
+	frame_difference :: proc "contextless" (drawing: ^Window_Drawing, before, now: ^Draw_Table, damage: ^Damage) -> bool {
+		drawing.module_calls += 1
+		if !difference_through_module(before, now, damage, &drawing.module_error) {
+			module_refusal_log(drawing, "damage_of_draw_table_9")
+			return false
+		}
+		return true
+	}
+
+	// frame_draw paints each rectangle with the background and draws the
+	// records that touch it, with the export of the drawing module, one
+	// call for each rectangle. The pixels of the pictures are the one
+	// picture memory of the table. It gives false when the module refused
+	// a call, or when the table has more than one picture memory, which
+	// one call cannot draw: drawing.module_error has the record.
+	@(private = "file")
+	frame_draw :: proc "contextless" (drawing: ^Window_Drawing, now: ^Draw_Table, canvas: graphics.Canvas, rectangles: []Rectangle) -> bool {
+		if len(now.picture_memories) > 1 {
+			drawing.module_error = errors.error_make(.Unsupported, .None, 1, i64(len(now.picture_memories)))
+			module_refusal_log(drawing, "execute_draw_table_9")
+			return false
+		}
+		picture_memory: []graphics.Color
+		if len(now.picture_memories) == 1 {
+			picture_memory = now.picture_memories[0]
+		}
 		for rectangle in rectangles {
-			area := Module_Canvas_Rectangle{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = 1, background = i64(graphics.COLOR_BACKGROUND), left = i64(rectangle.left), top = i64(rectangle.top), right = i64(rectangle.right), bottom = i64(rectangle.bottom)}
 			drawing.module_calls += 1
-			if module_execute_draw_table(&now_records, &now_text, &picture_memory, &pixels, &area, &drawing.module_error) < 0 {
-				module_refusal_log(drawing, "execute_draw_table_8")
+			if !draw_part_through_module(now, 0, now.record_count, picture_memory, canvas, rectangle, true, graphics.COLOR_BACKGROUND, &drawing.module_error) {
+				module_refusal_log(drawing, "execute_draw_table_9")
 				return false
 			}
 		}
@@ -239,8 +270,8 @@ when DRAWING_THROUGH_MODULE {
 	// record in words. A refused draw presents nothing and makes the next
 	// frame whole, which is refused again: with no line, the window stays
 	// empty and the log says nothing. One line for the life of the window:
-	// the cause is in the program (a table, a shape, a grid), and each
-	// frame has the same one.
+	// the cause is in the program (a table, a shape, a picture memory), and
+	// each frame has the same one.
 	@(private = "file")
 	module_refusal_log :: proc "contextless" (drawing: ^Window_Drawing, export_name: string) {
 		if drawing.module_refusal_logged {
@@ -259,7 +290,7 @@ when DRAWING_THROUGH_MODULE {
 		case .Bad_Address:
 			cause = "the address of the pixels is not a multiple of 4"
 		case .Unsupported:
-			cause = "the frame has a grid of text cells, or pictures in more than one picture memory, which the module does not draw: this program must keep the interface package compiled in"
+			cause = "the frame has pictures in more than one picture memory, and one call of the module draws one"
 		}
 		system.log_in("programs", .Warning, "interface: the drawing module refused ", export_name, ": ", cause, " (the error kind ", u64(max(record.kind, 0)), ", the argument ", u64(max(record.argument, 0)), "). A refused difference draws each frame whole; a refused draw leaves the window as it was. A window writes this line one time")
 	}

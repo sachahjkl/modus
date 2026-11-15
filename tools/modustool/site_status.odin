@@ -1,19 +1,17 @@
 // The status page of the site (docs/SITE.md, "The status page"): the state
-// of each property in the words of docs/PROPERTIES.md, the evidence items
-// and the gaps of docs/FIRST_MILESTONE.md that name it, then the gaps as a
-// table, and for each property what it promises and what the machine test
-// shows of it (docs/DEMONSTRATIONS.md). What is not done is shown as plainly
-// as what is done. No sentence of the page but the one that says how to
-// read a state is a summary that the tool writes: each cell is a part of
-// one of the three documents. The planned work is not on this page: one
-// line leads to the page of the roadmap (site_roadmap.odin).
+// of each property in the words of docs/PROPERTIES.md, then for each
+// property what it promises and what the machine test shows of it
+// (docs/DEMONSTRATIONS.md). What is not done is shown as plainly as what is
+// done. No sentence of the page but the one that says how to read a state
+// is a summary that the tool writes: each cell is a part of one of the two
+// documents. The planned work is not on this page: one line leads to the
+// page of the roadmap (site_roadmap.odin).
 package modustool
 
 import "core:fmt"
 import "core:slice"
 import "core:strings"
 
-SITE_MILESTONE_FILE :: "docs/FIRST_MILESTONE.md"
 SITE_DEMONSTRATIONS_FILE :: "docs/DEMONSTRATIONS.md"
 
 // One row of the table of the demonstrations: what the machine test shows
@@ -79,59 +77,6 @@ site_demonstrations_read :: proc(content: string) -> (rows: []Site_Demonstration
 	return list[:], removal_list[:], ""
 }
 
-// One item of the list of the section "## Gaps": a line "- <text>" and the
-// lines that continue it, and the group above it: the last line of text
-// before it that is not an item ("Performance:"), or "" for the first items.
-Site_Gap :: struct {
-	number: int, // From 1, in the order of the file: its id on the status page is gap-<number>.
-	group:  string,
-	text:   string,
-	line:   int,
-}
-
-// site_gaps_read reads the list of the section "## Gaps". The form: items
-// "- <text>" at the start of a line, the lines that continue an item start
-// with a space; another line of text names the group of the items after it.
-site_gaps_read :: proc(content: string) -> (gaps: []Site_Gap, problem: string) {
-	lines := site_lines(content)
-	first := -1
-	for line, index in lines {
-		if line == "## Gaps" {
-			first = index + 1
-			break
-		}
-	}
-	if first < 0 {
-		return nil, SITE_MILESTONE_FILE + ": no line \"## Gaps\""
-	}
-	list := make([dynamic]Site_Gap, context.temp_allocator)
-	group := ""
-	open := false
-	for index in first ..< len(lines) {
-		line := lines[index]
-		if strings.has_prefix(line, "## ") || strings.has_prefix(line, "# ") {
-			break
-		}
-		switch {
-		case strings.trim_space(line) == "":
-			open = false
-		case strings.has_prefix(line, "- "):
-			append(&list, Site_Gap{number = len(list) + 1, group = group, text = strings.trim_space(line[2:]), line = index + 1})
-			open = true
-		case line[0] == ' ' && open:
-			last := &list[len(list) - 1]
-			last.text = strings.concatenate({last.text, " ", strings.trim_space(line)}, context.temp_allocator)
-		case:
-			group = strings.trim_suffix(strings.trim_space(line), ":")
-			open = false
-		}
-	}
-	if len(list) == 0 {
-		return nil, SITE_MILESTONE_FILE + ": the section \"## Gaps\" has no item \"- <text>\""
-	}
-	return list[:], ""
-}
-
 // site_property_numbers gives the properties that a text names. The rule:
 // "property <n>" with no regard to case, or "P<n>" with a capital P, each a
 // whole word; n from 1 to the count of the properties. "properties <n> and
@@ -167,12 +112,10 @@ site_property_numbers :: proc(text: string, property_count: int) -> []int {
 	return numbers[:]
 }
 
-// site_document_render renders a document of docs/ again, only for its ids,
-// its headings and its labelled items: the page of a guide has the same ids,
-// because the renderer gives the same ids to the same text. A working record
-// is not a page of the site; it is rendered for its items and their lines
-// only, and the HTML is dropped. What the renderer lists as not rendered is
-// listed once, by the guide.
+// site_document_render renders a guide of docs/ again, only for its ids and
+// its headings: the page of the guide has the same ids, because the
+// renderer gives the same ids to the same text. What the renderer lists as
+// not rendered is listed once, by the guide.
 site_document_render :: proc(site: ^Site, source: string) -> (renderer: Site_Renderer, ok: bool) {
 	content := site_read(source) or_return
 	page, is_guide := site.documents[source]
@@ -189,51 +132,11 @@ site_document_render :: proc(site: ^Site, source: string) -> (renderer: Site_Ren
 	return renderer, true
 }
 
-// site_item_links writes the labels of items of a document as links: to
-// their ids in the page of the document when it is a guide, else to their
-// lines in the file of the repository (a working record is not a page of
-// the site).
-site_item_links :: proc(site: ^Site, b: ^strings.Builder, from_page, source: string, items: []Site_List_Item) {
-	guide_page, is_guide := site.documents[source]
-	for item, index in items {
-		if index > 0 {
-			strings.write_string(b, ", ")
-		}
-		strings.write_string(b, "<a href=\"")
-		if is_guide {
-			site_escape(b, strings.concatenate({site_page_link(site, from_page, guide_page), "#", item.id}, context.temp_allocator))
-		} else {
-			site_escape(b, site_line_address(site, source, item.line))
-		}
-		strings.write_string(b, "\">")
-		site_escape(b, item.label)
-		strings.write_string(b, "</a>")
-	}
-}
-
 site_status_add :: proc(site: ^Site) -> bool {
 	path := site_section_page(.Status)
 	properties := site.principles.properties
-	milestone_text := site_read(SITE_MILESTONE_FILE) or_return
-	milestone := site_document_render(site, SITE_MILESTONE_FILE) or_return
 	principles := site_document_render(site, SITE_PROPERTIES_FILE) or_return
 	properties_page := site.documents[SITE_PROPERTIES_FILE]
-	gaps, gaps_problem := site_gaps_read(milestone_text)
-	if gaps_problem != "" {
-		fmt.eprintfln("modustool: site: %s", gaps_problem)
-		return false
-	}
-	site.gaps = gaps
-	evidence := make([dynamic]Site_List_Item, context.temp_allocator)
-	for item in milestone.items {
-		if item.section == "evidence" {
-			append(&evidence, item)
-		}
-	}
-	if len(evidence) == 0 {
-		fmt.eprintfln("modustool: site: %s: no numbered item under \"## Evidence\"", SITE_MILESTONE_FILE)
-		return false
-	}
 
 	demonstrations_text := site_read(SITE_DEMONSTRATIONS_FILE) or_return
 	demonstrations, removals, demonstrations_problem := site_demonstrations_read(demonstrations_text)
@@ -243,12 +146,12 @@ site_status_add :: proc(site: ^Site) -> bool {
 	}
 
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&b, "<h1>Status</h1>\n<p>The state of the system in this build: each of the %d properties in the words of its document, with the evidence items and the gaps that name it; then, for each property, what it promises, what the machine test shows today with its pictures, and what is not done; then all %d gaps. A gap is a part of the design that the code does not do yet.</p>\n", len(properties), len(gaps))
+	fmt.sbprintf(&b, "<h1>Status</h1>\n<p>The state of the system in this build: each of the %d properties in the words of its document; then, for each property, what it promises, what the machine test shows today with its pictures, and what is not done.</p>\n", len(properties))
 	strings.write_string(&b, "<p>A <strong>property</strong> is one fundamental rule of the system: what it does, and what it must never contain. Its <strong>status</strong> says whether the rule is decided. Its <strong>state</strong> says what a machine test shows of it: <em>Shown</em> when the test does the thing for real and checks the result, <em>Shown in part</em> when a named part has no test, <em>Not shown</em> when the system does not have the thing.</p>\n")
 
 	// The properties.
 	strings.write_string(&b, "<h2 id=\"properties\">Properties</h2>\n")
-	properties_table := site_table_start(&b, "Properties", {{"Property", .Prose}, {"Status", .Short}, {"Evidence items", .List}, {"Gaps", .List}}, {.None, .Status, .None, .None})
+	properties_table := site_table_start(&b, "Properties", {{"Property", .Prose}, {"Status", .Short}}, {.None, .Status})
 	for property in properties {
 		heading_id := ""
 		prefix := fmt.tprintf("%d. ", property.number)
@@ -271,45 +174,11 @@ site_status_add :: proc(site: ^Site) -> bool {
 		}
 		strings.write_string(&b, "</td>")
 		site_cell(&b, property.status)
-		naming := make([dynamic]Site_List_Item, context.temp_allocator)
-		for item in evidence {
-			if slice.contains(site_property_numbers(item.text, len(properties)), property.number) {
-				append(&naming, item)
-			}
-		}
-		// The items and the gaps are lists of labels: they break between
-		// the labels, never with a comma at the start of a line.
-		if len(naming) == 0 {
-			strings.write_string(&b, "<td class=\"missing\">none names it</td>")
-		} else {
-			labels := make([dynamic]string, context.temp_allocator)
-			for item in naming {
-				label := strings.builder_make(context.temp_allocator)
-				site_item_links(site, &label, path, SITE_MILESTONE_FILE, []Site_List_Item{item})
-				append(&labels, strings.to_string(label))
-			}
-			strings.write_string(&b, "<td class=\"code\">")
-			site_value_list(&b, labels[:])
-			strings.write_string(&b, "</td>")
-		}
-		gap_labels := make([dynamic]string, context.temp_allocator)
-		for gap in gaps {
-			if slice.contains(site_property_numbers(gap.text, len(properties)), property.number) {
-				append(&gap_labels, fmt.tprintf("<a href=\"#gap-%d\">%d</a>", gap.number, gap.number))
-			}
-		}
-		if len(gap_labels) == 0 {
-			strings.write_string(&b, "<td class=\"missing\">none names it</td>")
-		} else {
-			strings.write_string(&b, "<td class=\"code\">")
-			site_value_list(&b, gap_labels[:])
-			strings.write_string(&b, "</td>")
-		}
 		strings.write_string(&b, "</tr>\n")
 	}
 	site_table_end(&b, properties_table)
-	strings.write_string(&b, "<p class=\"source\">The status is the column \"Status\" of the summary of the properties. An evidence item or a gap names a property when its text says \"property &lt;n&gt;\" or \"P&lt;n&gt;\".</p>\n")
-	site_source_line(site, &b, SITE_PROPERTIES_FILE, SITE_MILESTONE_FILE)
+	strings.write_string(&b, "<p class=\"source\">The status is the column \"Status\" of the summary of the properties.</p>\n")
+	site_source_line(site, &b, SITE_PROPERTIES_FILE)
 
 	// Each property in prose: the promise from its first rule, then the
 	// demonstration. The page states what is not done as plainly as what is.
@@ -368,24 +237,10 @@ site_status_add :: proc(site: ^Site) -> bool {
 	}
 	site_source_line(site, &b, SITE_PROPERTIES_FILE, SITE_DEMONSTRATIONS_FILE)
 
-	// The gaps.
-	strings.write_string(&b, "<h2 id=\"gaps\">Gaps</h2>\n")
-	gaps_table := site_table_start(&b, "Gaps", {{"Gap", .Number}, {"Group", .Short}, {"What the code does not do", .Prose}})
-	for gap in gaps {
-		fmt.sbprintf(&b, "<tr id=\"gap-%d\" data-outline=\"Gap %d\"><td class=\"code\"><a href=\"", gap.number, gap.number)
-		site_escape(&b, site_line_address(site, SITE_MILESTONE_FILE, gap.line))
-		fmt.sbprintf(&b, "\">%d</a></td>", gap.number)
-		site_cell(&b, gap.group)
-		site_cell(&b, gap.text)
-		strings.write_string(&b, "</tr>\n")
-	}
-	site_table_end(&b, gaps_table)
-	site_source_line(site, &b, SITE_MILESTONE_FILE)
-
 	// The planned work is not on this page: it has its own, from its own file.
 	strings.write_string(&b, "<h2 id=\"planned\">What is planned</h2>\n")
 	site_roadmap_link_line(site, &b, path)
 
-	site_page_add(site, Site_Page{path = path, title = "Status", description = site_description_cut(fmt.tprintf("The state of each of the %d properties of %s, with its evidence and its gaps, and the list of the %d gaps.", len(properties), SITE_SYSTEM_NAME, len(gaps))), section = .Status, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_PROPERTIES_FILE, SITE_MILESTONE_FILE, SITE_DEMONSTRATIONS_FILE), layout = .Documentation})
+	site_page_add(site, Site_Page{path = path, title = "Status", description = site_description_cut(fmt.tprintf("The state of each of the %d properties of %s: what it promises, what the machine test shows of it, and what is not done.", len(properties), SITE_SYSTEM_NAME)), section = .Status, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_PROPERTIES_FILE, SITE_DEMONSTRATIONS_FILE), layout = .Documentation})
 	return true
 }

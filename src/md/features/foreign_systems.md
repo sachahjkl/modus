@@ -1,6 +1,6 @@
 # Foreign systems: programs of Linux and of NT
 
-The system implements no foreign interface. A foreign system runs whole inside a guest that holds only its grants (`docs/DECISIONS.md`, D-214). This file records the comparison that led to that rule, and the forms that were refused. Nothing of it is built.
+The system implements no foreign interface. A foreign system runs whole inside a guest that holds only its grants ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Objective"). This file records the comparison that led to that rule, and the forms that were refused. Nothing of it is built.
 
 The rule is in [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Objective". The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Guest".
 
@@ -62,7 +62,7 @@ A second address space is a page table that the kernel builds from memory object
 
 ## The order
 
-The primitives, then the IOMMU (a device reaches only the memory that its service was granted; the properties already require it on real hardware), then guest support, then Linux in a guest, then Wine in that guest, then the GPU. The order of the work is in `docs/FIRST_MILESTONE.md`.
+The primitives, then the IOMMU (a device reaches only the memory that its service was granted; the properties already require it on real hardware), then guest support, then Linux in a guest, then Wine in that guest, then the GPU. The order of the work is in `ROADMAP.md`.
 
 ## State
 

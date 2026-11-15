@@ -20,7 +20,6 @@ home_test_site :: proc() -> Site {
 	site := test_site()
 	site.boot_stages = site_boot_stages(HOME_TEST_BOOT_LOG)
 	site.release = "0.91.0"
-	site.step_count = 91
 	append(&site.pages, Site_Page{path = site_section_page(.Home), title = "Home", section = .Home})
 	append(&site.pages, Site_Page{path = site_section_page(.Releases), title = "Releases", section = .Releases})
 	append(&site.pages, Site_Page{path = site_page_file(SITE_NUMBERS_FOLDER), title = "Measured numbers", section = .Reference})
@@ -254,7 +253,7 @@ site_home_release_band :: proc(t: ^testing.T) {
 	site_release_band_write(&site, &b, site_section_page(.Home))
 	html := strings.to_string(b)
 	testing.expect(t, strings.contains(html, "<span class=\"value value-version release-number\">0.91.0</span>"), html)
-	testing.expect(t, strings.contains(html, "<time datetime=\"2026-11-12\">2026-11-12</time>, <strong>6</strong> changes, <strong>91</strong> steps so far"))
+	testing.expect(t, strings.contains(html, "<time datetime=\"2026-11-12\">2026-11-12</time>, <strong>6</strong> changes</span>"), html)
 	testing.expect_value(t, strings.count(html, "<li><span class=\"release-change-type\">"), SITE_RELEASE_BAND_CHANGE_COUNT)
 	types := CHANGE_TYPES
 	first := fmt.tprintf("<li><span class=\"release-change-type\">%s</span> <a href=\"releases/index.html#release-0-91-0-change-1\">The change 1</a></li>", types[0])
