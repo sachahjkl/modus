@@ -1360,7 +1360,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-14. Decided by: the owner.
 - Decision: the key of principal 0, the machine, signs its table of disk grants. By default the TPM seals it, and no one types anything. A passphrase is optional: when it is set, the key is opened only with the TPM and the passphrase together, so the disk and the machine without the passphrase open nothing. Until the key of the TPM is built, a machine with no passphrase keeps the disk grants of principal 0 until it stops, and a machine with a passphrase signs them with a key derived from it, and keeps them across a restart. Principal 0 stays the machine: the passphrase guards its key, and makes it no person (`PRINCIPALS.md`, "5. The session").
 - Words: of a passphrase for principal 0 or the key of the TPM: "Pk pas les 2 avec le mot de passe étant \"optionnel\"".
-- State: decided, not built.
+- State: the layer of the passphrase is built. `unlock` seals a random machine key under a key of Argon2id of the passphrase, and gives the root service only the key of the tag of the table; a table whose tag fails is refused and kept. Left: the seal by the TPM, a change of the passphrase, the table of a named principal on the disk, a counter against an older version of the table.
 - Where: `PRINCIPALS.md`, "5. The session"; `src/md/features/programs_from_a_disk.md`, "The grants of a disk program".
 
 ### D-260 The grants of a disk program: a nickname, a store of the nickname, a table signed by the key of the principal
