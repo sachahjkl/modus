@@ -123,11 +123,12 @@ import "modus:support/system"
 // Threads: 12 spinners, two threads that wake each other, one that sleeps,
 // a changer, a thread that starts threads; later, with its first thread,
 // the 15 threads of the four programs of the shares, or 8 spinners of its
-// own. Programs: itself and those four. Pages: its own 2048, and for the
-// four programs 4 x 512 and a stack and a thread area (19 pages) for each
-// of their 15 threads: 2333; and 1024 more for the second picture of its
-// window of 976 x 704.
-MODULE_BUDGET :: system.Budget_Request{pages = 5632, programs = 5, threads = 24}
+// own. Programs: itself and those four. The tool counts its module, a
+// stack and a thread area for each of the 24 threads, and its window. The
+// working memory: 512 for each of the four programs of the shares, its
+// own tables, and the rest of the 5632 pages that it had before the tool
+// counted.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3659, programs = 5, threads = 24, window_width = WIDTH, window_height = HEIGHT}
 
 STRATEGY_COUNT :: 3
 @(rodata)

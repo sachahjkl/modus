@@ -35,16 +35,20 @@ import "modus:support/interface"
 import "modus:support/system"
 import "base:intrinsics"
 
-// The amounts that the root service gave it by its name before its module
-// stated a request: no part is counted yet.
-MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 1, threads = 6}
+// The working memory: the rest of the pages that the root service gave it
+// by its name, once the tool counts its module, its threads and its window.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1389, programs = 1, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 SQUARE :: 176
 MARGIN :: 12
 LABEL :: 20
 HEADER :: 28
-WIDTH :: 2 * SQUARE + 3 * MARGIN
-HEIGHT :: HEADER + 2 * (SQUARE + LABEL) + 3 * MARGIN
+// The size is two literals, because the tool counts the pictures of the
+// window from them; each assertion keeps a literal equal to its layout.
+WIDTH :: 388
+#assert(WIDTH == 2 * SQUARE + 3 * MARGIN)
+HEIGHT :: 456
+#assert(HEIGHT == HEADER + 2 * (SQUARE + LABEL) + 3 * MARGIN)
 FRAME_TIME :: 33
 WORKER_COUNT :: 4
 ITERATIONS :: 28

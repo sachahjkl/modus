@@ -5,9 +5,10 @@ import "modus:support/disk_program"
 import "modus:support/system"
 
 // The budget of each program that this service starts. The module asks for
-// it: the table Budget of its file, which its source states as the constant
-// MODULE_BUDGET (docs/MODULE_CONTRACT.md, "The budget that a module asks
-// for"). This service decides: it accepts the request up to the largest
+// it: the table Budget of its file, which the build writes from the
+// constant MODULE_BUDGET of its source and the pages that the tool counts
+// (docs/MODULE_CONTRACT.md, "The budget that a module asks for"). This
+// service decides: it accepts the request up to the largest
 // budget of a program, limits a request above it, and keeps one table of
 // exceptions, each with its reason. The budget of a program of the boot
 // image comes from the budget of this service; the budget of a disk

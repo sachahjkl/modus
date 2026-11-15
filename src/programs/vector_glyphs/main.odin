@@ -40,9 +40,8 @@ import "modus:support/interface"
 import "modus:support/system"
 import "modus:support/vector_font"
 
-// The two pictures of a window of about 1000 x 704, 1386 pages, then the
-// glyph caches that it builds.
-MODULE_BUDGET :: system.Budget_Request{pages = 3072, programs = 1, threads = 1}
+// The glyph caches that it builds.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1362, programs = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 1008
 HEIGHT :: 704

@@ -735,7 +735,7 @@ Thread :: struct {
 // erases below its frame, and its frames (src/runtime/memory.asm). With less, the
 // thread stops at the guard page under its stack, and no other memory is
 // written.
-THREAD_STACK_PAGES :: 16
+THREAD_STACK_PAGES :: op.THREAD_STACK_PAGES
 
 // thread_start starts a new thread of this program at entry. The threads of
 // a program share all its memory and all its handles. The stack is new

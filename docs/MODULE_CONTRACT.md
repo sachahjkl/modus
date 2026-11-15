@@ -129,14 +129,31 @@ The table `Budget` holds one record at index 1, `module.Budget_Request` (24 byte
 - **A part that is 0** asks for the least budget of that part. So a record of an older, shorter size reads its missing parts as the least, by the rule of the table directory.
 - **Processor time and log records are not in the request.** They are limits that protect the other programs: the starter sets them.
 
-**The source states it** as one constant, with a comment that gives the reasons of the amounts:
+**The source states only what the tool cannot count**: its stated budget, one constant of the type `system.Stated_Budget`, with a comment that gives the reasons of the amounts:
 
 ```odin
-// Its loop, and the thread that makes the lists of the palette.
-MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 2}
+// The draw tables of the interface, and the tables of the rows.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2536, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 ```
 
-The step that describes the exports reads the constant from the tree of the parser, and the conversion writes the table (section "The steps of one module, as implemented"). The type can also be on the declaration: `MODULE_BUDGET : system.Budget_Request : {pages = 4096}`. Each part is an integer literal from 1, decimal or with the prefix `0x`, `0o` or `0b`, with `_` between digits if the source wants; a part left out is 0. The tool refuses another form, and its message says why: no comment, a variable, an expression, a name of a constant, a part of 0, a part that the record does not have, a part two times, a second constant in the package. A declaration of `MODULE_BUDGET` that the tool would not read is refused too, never read as no request: inside a `when` (the tool reads the source with no setting of the build), or with other names in one declaration. The compiler checks the type and the names of the fields, because the constant has the type of the record. `modustool test descriptions` compares the table of each module with its source.
+| Part of the stated budget | What it states | Left out |
+|---|---|---|
+| `working_memory_pages` | The pages that the program chooses: its tables, its caches, the budgets of its children, a stack of another size, its page tables | 0 |
+| `programs` | The `programs` of the request | The least |
+| `threads` | The `threads` of the request | The least |
+| `window_width`, `window_height` | The size of its window in pixels, as it passes it to `display.open`: an integer literal, or the name of a constant of the package whose value is one integer literal | No window |
+
+**The tool counts the other pages**, and the table holds the sum: `pages = working memory + module pages + thread pages + window pages`.
+
+| Counted part | Pages |
+|---|---|
+| The module pages | The memory size of the module, and of each module that it imports at each level, each module one time, from their files |
+| The thread pages | The first thread: its stack (`op.STACK_PAGES`, 64), the page of the context and its thread area (3): 68. Each other thread of `threads`: a stack of `op.THREAD_STACK_PAGES` (16) and its thread area: 19 |
+| The window pages | Two pictures of the width times the height times 4 bytes, in whole pages |
+
+A window of 1000 x 704 is 1375 pages. A size that the source computes is written as a literal, with an assertion of its expression beside it, so that the compiler checks the number: `WIDTH :: 774` and `#assert(WIDTH == BAR_X + BAR_WIDTH + 64)`. A module with no constant has no table: it asks for the least budget. A module that grows asks for more with no change of its source.
+
+The step that describes the exports reads the constant from the tree of the parser, and the conversion adds the counted parts and writes the table (section "The steps of one module, as implemented"). The type can also be on the declaration: `MODULE_BUDGET : system.Stated_Budget : {threads = 2}`. Each part is an integer literal from 1, decimal or with the prefix `0x`, `0o` or `0b`, with `_` between digits if the source wants. The tool refuses another form, and its message says why: no comment, a variable, an expression, a name of a constant in a part that is not a window part, a window part that names a constant of an expression or a name that the package does not have, one window part alone, a window part above 2048, a part of 0, a part that the record does not have, a part two times, a second constant in the package. A declaration of `MODULE_BUDGET` that the tool would not read is refused too, never read as no request: inside a `when` (the tool reads the source with no setting of the build), or with other names in one declaration. The compiler checks the type and the names of the fields, because the constant has the type of the record. `modustool test descriptions` computes the request of each module again from its source and the files, compares it with the table, and prints its four parts. The measure of each build has one line with the request of each module that has a table.
 
 **The rule of a starter** is `system.budget_decide`: for each part, a part of 0 takes the least budget; a part up to the largest budget of the starter is accepted; a part above it gets the largest budget. The root service applies it with its own amounts:
 
@@ -901,9 +918,9 @@ The tool writes `build/<name>.module` and `build/<name>.debug` in the folder of 
 | 1. Compile | `odin build` with `-target:freestanding_amd64_sysv -build-mode:llvm-ir -reloc-mode:pic -no-entry-point -default-to-nil-allocator -o:speed -vet -debug-info:same-code -collection:modus=src/library` | One LLVM IR file, `<name>.ll` |
 | 2. Make the object | `llc -O3 -misched-topdown --frame-pointer=all -relocation-model=pic --function-sections --data-sections` | One ELF object, `objects/<name>.o` |
 | 3. Assemble | `nasm -f elf64` | One object for `src/runtime/memory.asm`, one for each `.asm` file of the source folder, and for a module of the boot image one for each `.asm` file of `src/library/support/system` |
-| 4. Describe | The tool (`describe_package`) | The exports and their descriptions, and the budget that the module asks for (the constant `MODULE_BUDGET`), from the source; a version script that makes only the exports visible |
+| 4. Describe | The tool (`describe_package`) | The exports and their descriptions, and the stated budget (the constant `MODULE_BUDGET`), from the source; a version script that makes only the exports visible |
 | 5. Link | `ld.lld -shared -nostdlib -Bsymbolic --gc-sections --build-id=none -z now -z relro` | One ELF file, `linked.elf` |
-| 6. Convert | The tool (`import_declarations_check`, then `convert`) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module, `build/modules/<name>.module`, with the hashes of its imports in its import table, and the table `Budget` when the source states a request. A segment that is read-only after the load and that no loader writes becomes a constant segment (section 2, "Shared code"). A library module that still has a segment that is read-only after the load is refused (section "A library as a module") |
+| 6. Convert | The tool (`import_declarations_check`, then `convert`) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module, `build/modules/<name>.module`, with the hashes of its imports in its import table, and the table `Budget` when the source states a budget: the stated budget and the counted parts, from the memory size of the module and the files of its imports. A segment that is read-only after the load and that no loader writes becomes a constant segment (section 2, "Shared code"). A library module that still has a segment that is read-only after the load is refused (section "A library as a module") |
 | 7. Write the debug object | The tool | `build/modules/<name>.debug` (section "Debug information") |
 
 Why each choice:

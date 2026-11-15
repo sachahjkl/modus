@@ -38,9 +38,9 @@ import "modus:support/interface"
 import "modus:support/system"
 import "base:intrinsics"
 
-// The amounts that the root service gave it by its name before its module
-// stated a request: no part is counted yet.
-MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 1, threads = 9}
+// The working memory: the rest of the pages that the root service gave it
+// by its name, once the tool counts its module, its threads and its window.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1154, programs = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
 
 TILE :: 32
 COLUMNS :: 14
@@ -50,8 +50,12 @@ PICTURE_HEIGHT :: ROWS * TILE
 MARGIN :: 12
 HEADER :: 28
 PANEL :: 208
-WIDTH :: PICTURE_WIDTH + PANEL + 3 * MARGIN
-HEIGHT :: HEADER + PICTURE_HEIGHT + 2 * MARGIN
+// The size is two literals, because the tool counts the pictures of the
+// window from them; each assertion keeps a literal equal to its layout.
+WIDTH :: 692
+#assert(WIDTH == PICTURE_WIDTH + PANEL + 3 * MARGIN)
+HEIGHT :: 372
+#assert(HEIGHT == HEADER + PICTURE_HEIGHT + 2 * MARGIN)
 FRAME_TIME :: 33
 PICTURE_PAUSE :: 700 // Milliseconds between two pictures.
 WORKER_COUNT :: 4

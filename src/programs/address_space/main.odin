@@ -54,11 +54,11 @@ import "modus:support/interface"
 import "modus:support/random"
 import "modus:support/system"
 
-// 64 MiB of large pages, two ranges of 1 GiB with their page tables, a
-// child, and the two pictures of its window. The pages are above the
-// largest budget of a program: the root service has an exception for it
+// 64 MiB of large pages, two ranges of 1 GiB with their page tables, and
+// a child. With the counted parts, the pages are above the largest budget
+// of a program: the root service has an exception for it
 // (src/programs/root/budgets.odin).
-MODULE_BUDGET :: system.Budget_Request{pages = 41984, programs = 2, threads = 6}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 40530, programs = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 960
 HEIGHT :: 640

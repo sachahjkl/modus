@@ -42,9 +42,8 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
 
-// The two pictures of a window of 1000 x 704, 1375 pages, the draw tables
-// of the interface, and the tables of the rows.
-MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 1}
+// The draw tables of the interface, and the tables of the rows.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2536, programs = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 1000
 HEIGHT :: 704

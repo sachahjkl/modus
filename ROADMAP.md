@@ -8,7 +8,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **The tool counts the parts of the budget that a module asks for.** The tool adds to the request of a source the pages of the module and of its imports, of each thread and of the two pictures of its window. A source then states only its working memory, and no amount is a guess. [Design](src/md/features/module_budget_request.md)
 - **The window of the debugger takes a typed place and a click.** The window puts a breakpoint or a watch at a place that the developer types, shows the memory of the program, and takes a click on a row. A developer then needs the console for no act of the debugger. [Design](src/md/features/debugger_window.md)
 - **The grants of a disk program persist across a restart.** A named principal grants a disk program from its own session, and the signed disk grant table is read after the unlock. The monitor and the menu show each nickname with its hash. [Design](src/md/features/programs_from_a_disk.md)
 - **A disk program without the tool.** A principal stores a module file that came over the network in the store of the programs, lists the files of that store with their hashes, and a disk program imports a module of the same store. A developer then adds a program to a machine that runs. [Design](src/md/features/programs_from_a_disk.md)

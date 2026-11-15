@@ -1787,13 +1787,43 @@ Do not use: quota, cap, bandwidth, rate limit.
 
 A budget request is the pages, the programs and the threads that a module asks for its program: the table `Budget` of its file (`module.Budget_Request`).
 
-The source states it as the constant `MODULE_BUDGET`, with the reasons in its comment, and the build writes the table, so the hash of the module names it. It is never a grant: the starter decides, by its least budget and its largest budget, and can widen or limit it with a budget exception. A part that is 0, or a file with no table, asks for the least budget. Processor time and log records are not in it: they are limits that the starter sets.
+The source states its stated budget, and the build adds the counted parts and writes the table, so the hash of the module names it. It is never a grant: the starter decides, by its least budget and its largest budget, and can widen or limit it with a budget exception. A part that is 0, or a file with no table, asks for the least budget. Processor time and log records are not in it: they are limits that the starter sets.
 
-Example: `MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 2}` asks for 16 MiB, no child, and two threads.
+Example: the stated budget `{working_memory_pages = 2536, threads = 1, window_width = WIDTH, window_height = HEIGHT}` of a module of 117 pages with its imports and a window of 1000 x 704 asks for 2536 + 117 + 68 + 1375 = 4096 pages, no child, and one thread.
 
 The design: `src/md/features/module_budget_request.md`; the guide: `docs/MODULE_CONTRACT.md`, "The budget that a module asks for".
 
 Do not use: budget grant, resource manifest, reservation.
+
+### Stated budget
+
+A stated budget is the part of a budget request that the source of a module states: its working memory, its programs, its threads and the size of its window.
+
+It is one constant of the source, `MODULE_BUDGET`, of the type `system.Stated_Budget`, with the reasons in its comment. It holds only what the tool cannot count. The build adds the counted parts to it and writes the sum as the budget request. A window part names the constant of the size that the program passes to `display.open`, or is a literal.
+
+Example: `MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3799, programs = 1, threads = 2}`.
+
+The design: `src/md/features/module_budget_request.md`.
+
+Do not use: budget manifest, declared budget.
+
+### Working memory
+
+The working memory is the pages that a program chooses to use: its tables, its caches, the budgets of its children, a stack of another size, its page tables.
+
+It is the part `working_memory_pages` of a stated budget. It holds what no file of the build shows. A table in the data of the module is not working memory: the tool counts it with the module.
+
+Do not use: heap, scratch memory.
+
+### Counted part
+
+A counted part is a part of a budget request that the tool computes from the files of the build: the module pages, the thread pages and the window pages.
+
+The module pages are the memory size of the module and of each module that it imports. The thread pages are a stack and a thread area for each thread: 68 pages for the first one, 19 for each other one. The window pages are the two pictures of its window. A counted part changes with a build, with no change of the source.
+
+The design: `src/md/features/module_budget_request.md`; the guide: `docs/MODULE_CONTRACT.md`, "The budget that a module asks for".
+
+Do not use: overhead, estimate, automatic budget.
 
 ### Least budget
 

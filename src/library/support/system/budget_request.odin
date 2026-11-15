@@ -3,17 +3,33 @@ package system
 import module "modus:contract/module"
 
 // The budget that a module asks for, the record of the table Budget of its
-// file. The source of a module states it as one constant with a comment of
-// its reasons (docs/MODULE_CONTRACT.md, "The budget that a module asks for"):
+// file. A starter reads it and decides (budget_decide). A source does not
+// write it: it states a Stated_Budget, and the tool writes the sum.
+Budget_Request :: module.Budget_Request
+
+// The parts of the budget of a module that its source states: what the tool
+// cannot count. The source states it as one constant with a comment of the
+// reasons of its working memory (docs/MODULE_CONTRACT.md, "The budget that
+// a module asks for"):
 //
 // ```odin
-// // Its loop, and the thread that makes the lists of the palette.
-// MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 2}
+// // The tables of the rows that it shows.
+// MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2536, window_width = WIDTH, window_height = HEIGHT}
 // ```
 //
-// The tool reads the constant from the source and writes the table: the
-// numbers are integer literals.
-Budget_Request :: module.Budget_Request
+// The tool reads the constant from the source, counts the pages of the
+// module and of its imports, of each thread and of the two pictures of the
+// window, and writes the table Budget: its pages are the working memory and
+// the counted pages; its programs and its threads are the parts of this
+// record. A part is an integer literal; a window part can also name a
+// constant of the package whose value is one integer literal.
+Stated_Budget :: struct {
+	working_memory_pages: u64, // What the program chooses: its tables, its caches, the budgets of its children. Left out: none.
+	programs:             u64, // The program itself and each child at one time. Left out: the least.
+	threads:              u64, // Each thread at one time, the first one and the threads of the children. Left out: the least.
+	window_width:         u64, // The size of its window, in pixels, as it passes it to display.open. Left out: no window.
+	window_height:        u64,
+}
 
 // One part of a budget request.
 Budget_Part :: enum u8 {

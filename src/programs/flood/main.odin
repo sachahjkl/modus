@@ -29,9 +29,9 @@ package flood
 import "modus:support/system"
 import terminal "modus:support/terminal"
 
-// The amounts that the root service gave it by its name before its module
-// stated a request: no part is counted yet.
-MODULE_BUDGET :: system.Budget_Request{pages = 256, programs = 1, threads = 1}
+// The working memory: the rest of the pages that the root service gave it
+// by its name, once the tool counts its module and its thread.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, programs = 1, threads = 1}
 
 STATUS_LINES :: 1 << 16 // The lines between two statuses.
 KEY_LINES :: 256 // The lines between two looks at the keys.

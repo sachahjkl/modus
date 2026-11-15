@@ -56,7 +56,7 @@ import "modus:support/random"
 import "modus:support/system"
 
 // Four lockers of 1024 pages, then three at a time of the stress case.
-MODULE_BUDGET :: system.Budget_Request{pages = 9216, programs = 8, threads = 20}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7745, programs = 8, threads = 20, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [1024]interface.Draw_Record
@@ -87,7 +87,10 @@ WIDTH :: 784
 LINE :: 24 // A line of text (16) and 8 between lines.
 LEFT :: 16
 GAP :: 8
-HEIGHT :: LEFT + 4 * LINE + 2 * GAP + 2 * LINE + GAP + (len(op.Lock_Kind) + 1) * LINE + GAP + (CACHE_ROWS + 1) * LINE + GAP + 2 * LINE + LEFT
+// A literal, because the tool counts the pictures of the window from it;
+// the assertion keeps it equal to its layout.
+HEIGHT :: 624
+#assert(HEIGHT == LEFT + 4 * LINE + 2 * GAP + 2 * LINE + GAP + (len(op.Lock_Kind) + 1) * LINE + GAP + (CACHE_ROWS + 1) * LINE + GAP + 2 * LINE + LEFT)
 CACHE_ROWS :: 4 // The frame caches of the first 4 processors.
 COLUMN_X :: 304
 COLUMN_WIDTH :: 120

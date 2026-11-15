@@ -119,7 +119,7 @@ import terminal "modus:support/terminal"
 import "base:intrinsics"
 
 // Itself and four sandboxes, each a call host with its thread.
-MODULE_BUDGET :: system.Budget_Request{pages = 8192, programs = 5, threads = 6}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7583, programs = 5, threads = 6}
 
 CONSOLE_MARK :: "console: ready"
 

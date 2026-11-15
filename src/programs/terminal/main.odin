@@ -75,8 +75,10 @@ import "modus:support/system"
 import terminal "modus:support/terminal"
 import "base:intrinsics"
 
-// The lines that it keeps.
-MODULE_BUDGET :: system.Budget_Request{pages = 8192, programs = 1, threads = 2}
+// The lines that it keeps, and the two pictures of its window: their size
+// follows the columns and the rows that its starter gives, so the tool
+// cannot count them, and the working memory holds them at their largest.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8035, programs = 1, threads = 2}
 
 COLUMNS_LIMIT :: terminal.COLUMNS_LIMIT
 ROWS_LIMIT :: terminal.ROWS_LIMIT

@@ -36,7 +36,7 @@ import "modus:support/system"
 import "modus:support/virtio"
 
 // The budget of a block service: it drives one disk through one ring.
-MODULE_BUDGET :: system.Budget_Request{pages = 256, programs = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, programs = 1, threads = 1}
 
 REQUEST_READ :: 0
 REQUEST_WRITE :: 1
