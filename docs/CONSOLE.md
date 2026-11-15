@@ -278,6 +278,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `break_at(place)`, `watch(place, length)`, `breaks()`, `break_remove(number)` | Table of `Break_Row` | `number`, `kind`, `address`, `length`, `place` |
 | `debug_memory(place, count)` | Table of `Memory_Row` | `address`, `bytes`, `text` |
 | `events()`, `wait_stop(milliseconds)` | Table of `Event_Row` | `thread`, `kind`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
+| `stop_report(program)` | Table of `Stop_Frame_Row` | The frames of a disk program that stopped on a fault, with no attach: `frame`, `module`, `procedure`, `offset`, `file`, `line`, `stop` |
 | `program_modules()` | Table of `Program_Module` | One row for each module of each program: `slot`, `program`, `module`, `replaces`, `hash_head` |
 | `memory()` | Record `Memory` | The memory of the machine and the counters of the kernel. `free_pages_no_budget_holds` is 0 when each page is free or paid |
 | `locks()` | Table of `Lock` | One row for each kind of kernel lock: `lock`, `waits`, `takes` |
@@ -351,7 +352,7 @@ A fact that a service holds is an export of that service, and the console calls 
 |---|---|
 | `programs()` | The export `monitor.programs()`. With no service `monitor`, or when `monitor` lost its grant, the line fails with the error of the connection or of the export |
 | `setting(name, value)`, `manual_page(name)`, `strategy(name)` | The exports `settings.set`, `manual.show` and `scheduler.strategy_set`. The palette runs them ("8. The palette provider"). Each program must run: the command starts none. `strategy("eevdf")` sets the scheduling strategy of the machine, with `round_robin`, `fair` or `eevdf`: the console holds no right to change it, and the program `scheduler` holds it (`SCHEDULING.md`, "The change at run time") |
-| `debug`, `detach`, `threads`, `hold`, `resume`, `continue_all`, `registers`, `stack`, `locals`, `value`, `source`, `break_at`, `watch`, `breaks`, `break_remove`, `step`, `step_line`, `step_over`, `debug_memory`, `events`, `wait_stop` | The exports of the service `debugger`, which the root service starts when the console connects to it ("The commands of the debugger") |
+| `debug`, `detach`, `threads`, `hold`, `resume`, `continue_all`, `registers`, `stack`, `locals`, `value`, `source`, `break_at`, `watch`, `breaks`, `break_remove`, `step`, `step_line`, `step_over`, `debug_memory`, `events`, `wait_stop`, `stop_report` | The exports of the service `debugger`, which the root service starts when the console connects to it ("The commands of the debugger") |
 | `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `machine_passphrase`, `replace`, `connect` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |
 | `modules()` | The boot image that the root service granted to the console. `manual.modules()` gives the same modules with more fields, when the program `manual` runs |
 | `replacements()` | The replacement table that the root service granted to the console, read-only. `manual.replacements()` gives it too, when `manual` runs |
@@ -388,6 +389,9 @@ The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console
 | `debug_memory(place, count)` | `memory` |
 | `events()` | `events` |
 | `wait_stop(milliseconds)` | `wait_stop` |
+| `stop_report(program)` | `stop_report` |
+
+`stop_report` needs no `debug`: it names the frames of a disk program that stopped on a fault, from the stop report that the root service kept (`MODULE_CONTRACT.md`, "The debug object of a disk program").
 
 Three short names are not the name of their export, because the console has a command with that name: `resume` (`release` closes a handle of the console), `debug_memory` (`memory` gives the memory of the machine), and `debug`, the word for the act. The command that holds one thread is `hold`: `stop` stops a whole program by its name. No command of the debugger takes the name of a command that the console had.
 

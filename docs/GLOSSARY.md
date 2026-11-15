@@ -280,6 +280,18 @@ The design: `docs/MODULE_CONTRACT.md`, "A fault: the stack trace".
 
 Do not use: core dump, crash report, signal info.
 
+### Kept stop report
+
+A kept stop report is the copy of the stop report of a disk program that the root service keeps after the program stopped on a fault (`disk_program.Kept_Stop_Report`), with the hash of its module file.
+
+The kernel keeps a stop report while a handle names the program. The root service holds the only handle of a disk program and closes it at the reap, so no other program sees that report. The root service keeps a copy, in the form that `Inspect` gives: only the frames that a module record holds, and no other value that can be a word of the memory of the program. It keeps 8 of them, one for each nickname of a principal. `stop_report("visitor")` in the console asks the debugger service for it, with no attach: the service receives it with a connection to the store `programs`, reads the debug object of the module, and names each frame by its procedure, its file and its line.
+
+A kept stop report is not the stop report that the kernel gives: the kernel forgot the program, and the copy has fewer values. It is not a log: it lasts until the machine stops, and a new fault of the same nickname replaces it.
+
+The design: `docs/MODULE_CONTRACT.md`, "The debug object of a disk program".
+
+Do not use: crash log, saved stop report.
+
 ### Refused return
 
 A refused return is a return of the kernel to a thread that the processor refuses at `iretq`: the kernel stops the program of the thread, as its own fault, with the stop code `STOP_CODE_RETURN`.

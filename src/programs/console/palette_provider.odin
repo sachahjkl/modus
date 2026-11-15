@@ -819,6 +819,7 @@ palette_commands_add :: proc "contextless" () {
 		{"buffer", {"count", ""}},
 		{"debug_memory", {"place", "count"}},
 		{"wait_stop", {"milliseconds", ""}},
+		{"stop_report", {"program", ""}},
 	}
 	for item in named {
 		if found := palette_command_named(item.command); found != nil && found.run != nil {

@@ -145,7 +145,7 @@ The code is `src/programs/debugger` (the service), `src/library/support/debuggin
 ### The service
 
 - **Its start.** The root service starts `debugger` when a caller asks for a connection to it: `connect("debugger")`, or the first command of the debugger in the console. It has no window.
-- **Its grants.** Serve (its exports); Debugger (the commands `Debug` and `Debug_Store` of the root ring, and no other command: `Debug_Store` gives a connection that reads only to the store of the debug object of a disk program that the service debugs); Inspect (the thread report and the module report of a program); Debug_Image (the debug objects); Image (the name of each module, from its hash).
+- **Its grants.** Serve (its exports); Debugger (the commands `Debug` and `Debug_Store` of the root ring, and no other command: `Debug_Store` gives a connection that reads only to the store of the debug object of a disk program that the service debugs, or that stopped on a fault, with the stop report that the root service kept of it); Inspect (the thread report and the module report of a program); Debug_Image (the debug objects); Image (the name of each module, from its hash).
 - **How it debugs.** The service is the debugger of the program for the kernel: its main thread is the debug handler, so each breakpoint and each single step of the program is a fault record of that thread. It reads the threads and the module records with `Inspect`, the registers and the memory with `Thread_Control`, and the names, the lines, the types and the variables in the debug object of each module, by the hash of the module. It writes no byte in the program.
 - **One program at a time.** The service debugs one program, for one caller. A second `attach` while it does gets the error `Full` (`Debugged_Programs`). Each export but `attach` acts only for the caller that attached.
 - **The end of the debugging.** `detach()`; the end of the connection of the caller, or of the caller; the revocation of the grant `debug` of the caller; the stop of the program. The kernel then removes the breakpoints, clears the trap flag that the debugger wrote, and resumes each thread that the debugger held.
@@ -214,6 +214,7 @@ Each export gives a table, or a negative number with an error record. A caller t
 | `memory(place, count)` | At most 4096 bytes from an address or from a global, 16 in each row: the address, the bytes in hexadecimal, their printable characters |
 | `events()` | One row for each stop of a thread since the last call: the thread, the kind (`breakpoint N`, `watch N`, `step`, `int3`, `int1`), the instruction, its module, its procedure, its offset, its file and its line |
 | `wait_stop(milliseconds)` | Wait for the next stop, at most the given time and 3000 ms, then the rows of `events()` |
+| `stop_report(program)` | With no attach: the stop report that the root service kept of a disk program of the principal of the caller that stopped on a fault. One row for each frame: the frame number, the module, the procedure, the offset, the file, the line, and in the row 0 what stopped the program (`MODULE_CONTRACT.md`, "The debug object of a disk program") |
 
 **The errors.** Each failure is an error record (`MODULE_CONTRACT.md`, section 8):
 
@@ -245,6 +246,7 @@ Each export gives a table, or a negative number with an error record. A caller t
 | Export | What it waits for | Bound |
 |---|---|---|
 | `attach` | The answer of the root service | 2000 ms. A later answer is taken when it comes: the service closes the handle and tells the root service that the access ended |
+| `stop_report` | The answer of the root service and the read of the debug object, together | 1500 ms. A later answer is taken when it comes: the service closes its handles and tells the root service to end the connection |
 | `step` | The record of one step | 1000 ms |
 | `step_line` | The records of its steps, together | 2000 ms, and 4096 instructions |
 | `step_over` | The records of its steps and of the return of each call, together | 2000 ms, and 4096 instructions outside the calls |
@@ -660,12 +662,19 @@ modustool run
 outsider          1
 > columns(hold(0), "thread state")
 > columns(where(stack(0), "procedure", "entry"), "module procedure file line")
-outsider  entry      outsider/main.odin    81
+outsider  entry      outsider/main.odin    93
+```
+
+A module that faults needs no attach. The test part builds the same copy a second time, under the name `outsider_fault`, with a setting that writes to the address 0 three calls deep after the start. The root service keeps the stop report of a disk program that stopped on a fault, and the debugger names its frames:
+
+```
+> start_from_disk("outsider_fault", "<hash>")
+> columns(where(stop_report("outsider_fault"), "procedure", "visitor::fault_three"), "module procedure file line")
+outsider_fault  visitor::fault_three  outsider/main.odin   169
 ```
 
 **What is not built.**
 
-- The console, `inspect` and `errors` read the debug image only: their stop report of an outside module that runs from a disk shows addresses. The debugger names its frames.
 - An import names a module of the system. An outside module does not import another outside module.
 
 ## The commands of the tool

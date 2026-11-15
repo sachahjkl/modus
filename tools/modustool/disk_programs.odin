@@ -335,15 +335,19 @@ program_debug_object_file :: proc(module_name: string, module_file: []u8, object
 // sources, and its debug object under the hash of the module: the
 // debugger attaches to outsider, reads the debug object through the
 // storage service, and names a frame of it by its procedure, its file and
-// its line (disk_programs_debugger_steps).
+// its line (disk_programs_debugger_steps). And outsider_fault, the same
+// copy built to write to the address 0 after its start, with its debug
+// object: the root service keeps its stop report, and the debugger names
+// its frames with no attach (disk_programs_stop_report_steps).
 //
 // And two modules that no boot image holds: store_library, a library
 // module, and store_importer, a program that imports it.
 //
-// The disk holds 8 objects: 6 module files (visitor, changed, notes,
-// outsider, store_library, store_importer), the debug object of outsider
-// and grant_table. The list of the module file service skips the debug
-// object and grant_table, and counts received, which it writes: 7 files.
+// The disk holds 10 objects: 7 module files (visitor, changed, notes,
+// outsider, outsider_fault, store_library, store_importer), the debug
+// objects of outsider and outsider_fault, and grant_table. The list of the
+// module file service skips the debug objects and grant_table, and counts
+// received, which it writes: 8 files.
 //
 // The storage service runs before the first line that reads the store, so
 // no step depends on the time of the open of the disk.
@@ -395,6 +399,11 @@ disk_programs_tests_run :: proc() -> bool {
 	// Its debug object, beside it in the store, under the hash of the
 	// module: the debugger reads it at an attach.
 	outsider_debug_file := program_debug_object_file(OUTSIDE_DISK_PROGRAM, outsider_file, outsider_debug_object) or_return
+	// The same copy, built to fault after its start, with its debug
+	// object: the root service keeps its stop report, and the debugger
+	// names its frames with no attach.
+	fault_file, fault_debug_object := outside_program_for_a_disk(faults = true) or_return
+	fault_debug_file := program_debug_object_file(OUTSIDE_FAULT_PROGRAM, fault_file, fault_debug_object) or_return
 	forged: disk_program.Grant_Table
 	if disk_program.table_allow(&forged, DISK_PROGRAM_MODULE, blake3.hash(module_file), .Store) != .None {
 		fmt.eprintln("modustool: the table of the disk of the disk programs takes no row")
@@ -410,10 +419,11 @@ disk_programs_tests_run :: proc() -> bool {
 	changed_library_file := slice.clone(library_file)
 	defer delete(changed_library_file)
 	changed_library_file[len(changed_library_file) - 1] ~= 0x01
-	files := [?]Program_File{{DISK_PROGRAM_MODULE, module_file}, {"changed", changed_file}, {"notes", module_file}, {OUTSIDE_DISK_PROGRAM, outsider_file}, outsider_debug_file, {disk_program.TABLE_OBJECT_NAME, forged_bytes[:]}, {STORE_LIBRARY_MODULE, library_file}, {STORE_IMPORTER_MODULE, importer_file}}
+	files := [?]Program_File{{DISK_PROGRAM_MODULE, module_file}, {"changed", changed_file}, {"notes", module_file}, {OUTSIDE_DISK_PROGRAM, outsider_file}, outsider_debug_file, {OUTSIDE_FAULT_PROGRAM, fault_file}, fault_debug_file, {disk_program.TABLE_OBJECT_NAME, forged_bytes[:]}, {STORE_LIBRARY_MODULE, library_file}, {STORE_IMPORTER_MODULE, importer_file}}
 	program_disk_write(TEST_DISK_PROGRAMS_DISK, files[:]) or_return
-	hash_digits, changed_digits, outsider_digits: [disk_program.HASH_DIGITS]u8
+	hash_digits, changed_digits, outsider_digits, fault_digits: [disk_program.HASH_DIGITS]u8
 	disk_program.hash_write(&outsider_digits, blake3.hash(outsider_file))
+	disk_program.hash_write(&fault_digits, blake3.hash(fault_file))
 	disk_program.hash_write(&hash_digits, blake3.hash(module_file))
 	disk_program.hash_write(&changed_digits, blake3.hash(changed_file))
 	// The machine test frees the temporary memory after each step: the
@@ -422,6 +432,8 @@ disk_programs_tests_run :: proc() -> bool {
 	changed_hash := fmt.aprintf("%s", string(changed_digits[:]))
 	outsider_hash := fmt.aprintf("%s", string(outsider_digits[:]))
 	defer delete(outsider_hash)
+	fault_hash := fmt.aprintf("%s", string(fault_digits[:]))
+	defer delete(fault_hash)
 	defer delete(hash)
 	defer delete(changed_hash)
 	import_hashes := Store_Import_Hashes {
@@ -437,7 +449,7 @@ disk_programs_tests_run :: proc() -> bool {
 	// The storage service takes the disk of the tool before or after the
 	// console has its window: the system fixes no order, so neither wait
 	// moves the place of the log.
-	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 8 objects", any_order = true})
+	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 10 objects", any_order = true})
 	append(&steps, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
 	append(&steps, Step{kind = .Front, text = "console"})
 	append(&steps, Step{kind = .Type, text = "connect(\"storage\")"})
@@ -458,6 +470,7 @@ disk_programs_tests_run :: proc() -> bool {
 	disk_programs_debugger_steps(&steps, outsider_hash)
 	append(&steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", OUTSIDE_DISK_PROGRAM)})
 	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", OUTSIDE_DISK_PROGRAM)})
+	disk_programs_stop_report_steps(&steps, fault_hash)
 	// The bytes of the entry are not the bytes of the hash of the line.
 	append(&steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"changed\", \"%s\")", hash)})
 	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: refused changed from the disk: its bytes have the hash %s", changed_hash)})
@@ -615,7 +628,44 @@ disk_programs_tests_run :: proc() -> bool {
 // The line of the source of the program visitor where its entry calls
 // sleep_for_ever: the place of the frame of the entry while the thread
 // sleeps. A change of that file above the call changes it.
-VISITOR_LINE_OF_THE_SLEEP :: "81"
+VISITOR_LINE_OF_THE_SLEEP :: "93"
+
+// The line of the source of the program visitor where fault_three writes
+// to the address 0: the place of the frame 0 of the stop report of the
+// copy that faults. A change of that file above the write changes it.
+VISITOR_LINE_OF_THE_FAULT :: "169"
+
+// disk_programs_stop_report_steps adds the steps of the stop report of a
+// disk program. The copy of the outside module that faults writes to the
+// address 0 three calls deep, and stops. The root service holds its only
+// handle and reaps it at once, so the kernel forgets its stop report: the
+// root service keeps a copy. Then `stop_report` in the console, with no
+// attach: the debugger service receives the kept report with a connection
+// that reads only to the store, reads the debug object of the module, and
+// names the frame 0 by its procedure, its file by the name of the folder of
+// the copy, and its line.
+//
+// The row is drawn through `columns`, so that the widths of its columns
+// depend only on values that the scenario knows. A column of an integer is
+// as wide as its header or its value, with the value at its right.
+disk_programs_stop_report_steps :: proc(steps: ^[dynamic]Step, fault_hash: string) {
+	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", OUTSIDE_FAULT_PROGRAM, fault_hash)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with no grant", OUTSIDE_FAULT_PROGRAM, fault_hash), any_order = true})
+	append(steps, Step{kind = .Wait, text = "visitor: writes to the address 0, three calls deep: its stop report names the frames of its source", fails_on = "visitor: the write did not stop the program: WRONG"})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: kept the stop report of %s, a disk program of principal 0: stop_report(\"%s\") names its frames", OUTSIDE_FAULT_PROGRAM, OUTSIDE_FAULT_PROGRAM)})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("columns(where(stop_report(\"%s\"), \"procedure\", \"visitor::fault_three\"), \"module procedure file line\")", OUTSIDE_FAULT_PROGRAM)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: gave debugger the kept stop report of %s and a connection that reads only to the store %s of principal 0, for console", OUTSIDE_FAULT_PROGRAM, disk_program.STORE_NAME)})
+	// The object of the store has the hash of the module that faulted as
+	// its name.
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("debugger: read the debug object %s of %s from the store %s of principal 0: ", fault_hash, OUTSIDE_FAULT_PROGRAM, disk_program.STORE_NAME)})
+	// The root service ends the connection at the end that the debugger
+	// sends after the read: it writes its line before or after the
+	// console draws the row.
+	append(steps, Step{kind = .Wait, text = "root: disconnected programs from the service storage", any_order = true})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("debugger: the stop report of %s: ", OUTSIDE_FAULT_PROGRAM)})
+	line_padding := strings.repeat(" ", max(0, len("line") - len(VISITOR_LINE_OF_THE_FAULT)), context.temp_allocator)
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s  visitor::fault_three  %s/main.odin  %s%s", OUTSIDE_FAULT_PROGRAM, OUTSIDE_DISK_PROGRAM, line_padding, VISITOR_LINE_OF_THE_FAULT)})
+}
 
 // disk_programs_debugger_steps adds the steps of the debugger on the
 // outside module that runs from the disk. The debugger service reads the
@@ -679,7 +729,7 @@ disk_programs_network_steps :: proc(steps: ^[dynamic]Step, hash: string, changed
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: the file changed, %d bytes, the BLAKE3 hash of its bytes %s", changed_size, changed_hash)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: the file %s, %d bytes, the BLAKE3 hash of its bytes %s", RECEIVED_NICKNAME, module_size, hash)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: the file %s, %d bytes, the BLAKE3 hash of its bytes %s", DISK_PROGRAM_MODULE, module_size, hash)})
-	append(steps, Step{kind = .Wait, text = "programs: listed 7 module files of the store programs, each hash computed on its bytes"})
+	append(steps, Step{kind = .Wait, text = "programs: listed 8 module files of the store programs, each hash computed on its bytes"})
 	// The file that came over the network starts by its hash, with no
 	// grant: its nickname has no row.
 	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", RECEIVED_NICKNAME, hash)})
@@ -711,9 +761,9 @@ hash_digits_of :: proc(bytes: []u8) -> string {
 // its bytes, and the program calls it. Then the module file service writes
 // the library with one byte changed over its entry: no file of the store
 // has the hash of the import any more, and the start is refused with one
-// line. The scan reads each of the 6 files of the store but the program
-// and the disk grant table: changed, notes, outsider, received,
-// store_library and visitor.
+// line. The scan reads each of the 7 files of the store but the program
+// and the disk grant table: changed, notes, outsider, outsider_fault,
+// received, store_library and visitor.
 disk_programs_import_steps :: proc(steps: ^[dynamic]Step, hashes: Store_Import_Hashes, changed_library_size: int) {
 	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", STORE_IMPORTER_MODULE, hashes.importer)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s imports 1 modules that the boot image does not hold: the import scan reads the store programs to find them by the hash of their bytes", STORE_IMPORTER_MODULE)})
@@ -729,7 +779,7 @@ disk_programs_import_steps :: proc(steps: ^[dynamic]Step, hashes: Store_Import_H
 	append(steps, Step{kind = .Type, text = fmt.aprintf("programs.receive(\"%s\", \"%s\")", STORE_LIBRARY_MODULE, STORE_LIBRARY_CHANGED_PATH)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: stored %s from %s: %d bytes, the BLAKE3 hash of its bytes %s", STORE_LIBRARY_MODULE, STORE_LIBRARY_CHANGED_PATH, changed_library_size, hashes.changed_library)})
 	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", STORE_IMPORTER_MODULE, hashes.importer)})
-	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: refused %s from the disk: %s imports %s, and no file of the boot image or of the store programs has bytes with this hash; the import scan read 6 files", STORE_IMPORTER_MODULE, STORE_IMPORTER_MODULE, hashes.library), fails_on = "root: started store_importer from the disk"})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: refused %s from the disk: %s imports %s, and no file of the boot image or of the store programs has bytes with this hash; the import scan read 7 files", STORE_IMPORTER_MODULE, STORE_IMPORTER_MODULE, hashes.library), fails_on = "root: started store_importer from the disk"})
 }
 
 // The machine passphrase of the test. It is a constant of the tool: a test
