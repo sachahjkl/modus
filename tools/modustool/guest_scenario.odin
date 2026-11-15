@@ -83,6 +83,14 @@ host_gives_guest_support :: proc() -> (gives: bool, reason: string) {
 	}
 	nested, nested_err := os.read_entire_file("/sys/module/kvm_amd/parameters/nested", context.temp_allocator)
 	if nested_err != nil {
+		// The build sandbox of Nix shows /dev/kvm and the flags of the
+		// processor, and hides /sys: the module of the host is unknown
+		// there. A KVM that the sandbox hands on is the KVM of the host,
+		// with its nested virtualization: the boot line of the kernel shows
+		// what the test machine gets.
+		if !os.exists("/sys/module") {
+			return true, "KVM on an AMD host, in a sandbox that hides /sys: the kernel reads the support of the test machine"
+		}
 		return false, "the host has no module kvm_amd loaded (/sys/module/kvm_amd/parameters/nested)"
 	}
 	value := strings.trim_space(string(nested))
