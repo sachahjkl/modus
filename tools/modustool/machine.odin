@@ -1258,6 +1258,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface: settings: the focus is on the element of settings.set:grid_fit", any_order = true},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
+	// The console came in front for the load of a module, and its window
+	// can cover the close box of plasma.
+	{kind = .Front, text = "plasma"},
 	{kind = .Close, text = "plasma"},
 	{kind = .Wait, text = "root: plasma stopped"},
 	// The scheduling strategy: the program scheduler holds the right to
