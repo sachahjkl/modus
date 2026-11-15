@@ -7,6 +7,19 @@ import format "modus:contract/store"
 import "modus:support/disk_program"
 import "modus:support/storage_mount"
 
+// The line that the scenario of the debugger names is the line of the
+// call of sleep_for_ever in the entry of visitor.
+@(test)
+visitor_line_of_the_sleep_is_the_call :: proc(t: ^testing.T) {
+	content, read := read_file(PROGRAM_SOURCES + DISK_PROGRAM_MODULE + "/main.odin")
+	if !testing.expect(t, read) {
+		return
+	}
+	line, found := source_line_of_content(string(content), 81)
+	testing.expect_value(t, VISITOR_LINE_OF_THE_SLEEP, "81")
+	testing.expect(t, found && line == "\tsleep_for_ever()", line)
+}
+
 // The bytes of a test file: no block of them is all zero.
 @(private = "file")
 test_file_bytes :: proc(count: int, seed: u8) -> []u8 {

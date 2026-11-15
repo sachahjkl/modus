@@ -612,10 +612,10 @@ disk_programs_tests_run :: proc() -> bool {
 	return machine_test(fourth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 4), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK)
 }
 
-// The line of the source of the program visitor where sleep_for_ever calls
-// sleep_once: the place of the frame of sleep_for_ever while the thread
+// The line of the source of the program visitor where its entry calls
+// sleep_for_ever: the place of the frame of the entry while the thread
 // sleeps. A change of that file above the call changes it.
-VISITOR_LINE_OF_THE_SLEEP :: "83"
+VISITOR_LINE_OF_THE_SLEEP :: "81"
 
 // disk_programs_debugger_steps adds the steps of the debugger on the
 // outside module that runs from the disk. The debugger service reads the
@@ -640,11 +640,13 @@ disk_programs_debugger_steps :: proc(steps: ^[dynamic]Step, outsider_hash: strin
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s          1", OUTSIDE_DISK_PROGRAM)})
 	append(steps, Step{kind = .Type, text = "columns(hold(0), \"thread state\")"})
 	append(steps, Step{kind = .Wait, text = "[console]      0  held"})
-	// The thread sleeps in sleep_once, which sleep_for_ever calls: the
-	// frame of sleep_for_ever names the procedure, the source of the copy
-	// by the name of its folder, and the line of the call.
-	append(steps, Step{kind = .Type, text = "columns(where(stack(0), \"procedure\", \"visitor::sleep_for_ever\"), \"module procedure file line\")"})
-	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s  visitor::sleep_for_ever  %s/main.odin    %s", OUTSIDE_DISK_PROGRAM, OUTSIDE_DISK_PROGRAM, VISITOR_LINE_OF_THE_SLEEP)})
+	// The thread sleeps in a call of the system, whose stub keeps no frame
+	// of its own: the walk of the frame pointers reaches the entry of the
+	// program, at the line where it calls sleep_for_ever. That frame names
+	// the procedure, the source of the copy by the name of its folder, and
+	// the line: what only the debug object from the store gives.
+	append(steps, Step{kind = .Type, text = "columns(where(stack(0), \"procedure\", \"entry\"), \"module procedure file line\")"})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s  entry      %s/main.odin    %s", OUTSIDE_DISK_PROGRAM, OUTSIDE_DISK_PROGRAM, VISITOR_LINE_OF_THE_SLEEP)})
 	// The detach gives the thread back and ends the debug access.
 	append(steps, Step{kind = .Type, text = "detach()"})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: debugger ended the debugging of %s for console", OUTSIDE_DISK_PROGRAM)})

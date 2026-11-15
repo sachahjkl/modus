@@ -564,7 +564,7 @@ outside_program_for_a_disk :: proc() -> (file: []u8, debug_file: []u8, ok: bool)
 		fmt.eprintfln("modustool: test failed: cannot read the folder of the system: %v", folder_error)
 		return nil, nil, false
 	}
-	example := Outside_Module_Example{name = OUTSIDE_DISK_PROGRAM, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE, build_file = "name: " + OUTSIDE_DISK_PROGRAM + "\n"}
+	example := Outside_Module_Example{name = OUTSIDE_DISK_PROGRAM, source = PROGRAM_SOURCES + DISK_PROGRAM_MODULE, build_file = "name: " + OUTSIDE_DISK_PROGRAM + "\ndefines: BUILT_OUTSIDE=true\n"}
 	folder := outside_module_example_build(tool_path, system_folder, example) or_return
 	out := join(folder, "/", OUTSIDE_MODULE_OUTPUT_FOLDER, "/", OUTSIDE_DISK_PROGRAM)
 	file = read_file(join(out, ".module")) or_return

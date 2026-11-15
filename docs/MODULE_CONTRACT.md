@@ -1388,7 +1388,7 @@ debugger: read the debug object 5f0c… of outsider from the store programs of p
 root: disconnected programs from the service storage
 ```
 
-Then `columns(where(stack(0), "procedure", "visitor::sleep_for_ever"), "module procedure file line")` in the console gives `outsider  visitor::sleep_for_ever  outsider/main.odin    83`: the source of the copy, by the name of its folder.
+Then `columns(where(stack(0), "procedure", "entry"), "module procedure file line")` in the console gives `outsider  entry      outsider/main.odin    81`: the source of the copy, by the name of its folder.
 
 ### The readers
 

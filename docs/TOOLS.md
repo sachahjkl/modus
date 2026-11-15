@@ -659,8 +659,8 @@ modustool run
 > columns(debug("outsider"), "program described")
 outsider          1
 > columns(hold(0), "thread state")
-> columns(where(stack(0), "procedure", "visitor::sleep_for_ever"), "module procedure file line")
-outsider  visitor::sleep_for_ever  outsider/main.odin    83
+> columns(where(stack(0), "procedure", "entry"), "module procedure file line")
+outsider  entry      outsider/main.odin    81
 ```
 
 **What is not built.**

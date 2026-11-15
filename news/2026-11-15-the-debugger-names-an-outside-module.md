@@ -9,4 +9,4 @@ A module built outside the repository runs on a machine from its data disk, with
 
 When the debugger attaches to such a program, it reads that debug object through the storage service, with a connection that reads only and that ends after the read. It uses the object only when the object names the hash of the module that runs.
 
-The stack of the program then shows its procedures, its source files by the name of the folder of the developer, and its lines: `visitor::sleep_for_ever  outsider/main.odin    83`.
+The stack of the program then shows its procedures, its source files by the name of the folder of the developer, and its lines: `entry      outsider/main.odin    81`.

@@ -31,6 +31,11 @@ import "modus:support/system"
 // The object of the store that holds the count of the starts.
 VISITS_OBJECT :: "visits"
 
+// True in the copy that the test builds outside the sources of the system
+// (its module build file defines it): the copy is then another module, with
+// another hash, which the debug image of the machine does not describe.
+BUILT_OUTSIDE :: #config(BUILT_OUTSIDE, false)
+
 // The entry of visitor: it writes what its context holds, then sleeps
 // until it is stopped.
 //
@@ -44,6 +49,9 @@ VISITS_OBJECT :: "visits"
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("visitor: ok, a program that the boot image does not hold")
+	when BUILT_OUTSIDE {
+		system.log("visitor: built outside the sources of the system")
+	}
 	client, has_store := storage.open(ctx)
 	granted := 0
 	for handle, index in ctx.handles {
@@ -74,10 +82,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 }
 
 // sleep_for_ever sleeps until the program is stopped. It and sleep_once are
-// never inlined: a debugger that holds the thread finds a frame of this
-// procedure at the line of its call of sleep_once, in the source of this
-// program, and not inside the system library. The test of the debug object
-// of a disk program waits for that frame.
+// never inlined, so the entry keeps a frame at its call of sleep_for_ever,
+// in the source of this program: the test of the debug object of a disk
+// program waits for that frame of the entry, with its line.
 sleep_for_ever :: #force_no_inline proc "contextless" () -> ! {
 	for {
 		sleep_once()
