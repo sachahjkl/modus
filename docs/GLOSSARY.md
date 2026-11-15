@@ -4463,7 +4463,7 @@ Do not use: character matrix, screen buffer.
 
 A picture record is a draw record that shows the pixels of a picture of the program, with a generation that changes when the pixels change.
 
-A program that computes its own pixels, such as `life`, `paint`, `plasma` or `temple`, puts its image in a draw table as one record. The record names its pixels by values: the number of its picture memory, the index of its first pixel there, its stride and its size, with its generation. The program raises the generation when its pixels change; with the same generation the record compares equal and damages nothing. The compositor draws the surface of each window as a picture record too.
+A program that computes or holds its own pixels, such as `life`, `paint`, `plasma` or `hall_of_fame`, puts its image in a draw table as one record. The record names its pixels by values: the number of its picture memory, the index of its first pixel there, its stride and its size, with its generation. The program raises the generation when its pixels change; with the same generation the record compares equal and damages nothing. The compositor draws the surface of each window as a picture record too.
 
 A picture record is not a picture of a surface: it shows a canvas that the program holds, inside its surface. It holds no address: the same record means the same pixels in the drawing module.
 
@@ -6276,6 +6276,26 @@ The generator of the pictures of the mark writes it from the PNG data of each fr
 The design: `docs/TOOLS.md`, "The pictures of the mark".
 
 Do not use: GIF, animated logo, sprite animation.
+
+### Hall of fame
+
+The hall of fame is the program `hall_of_fame`: one card for each person whose work inspired the system, with the name of the person and one line on what they made.
+
+A card shows a portrait when a picture of the person has a license that lets the repository hold it with a credit, and then the credit of the picture under it. Each other card shows the name and the line alone, with no picture and no initials. A person is in it for work that the system learned from, not for fame. The arrows, Home, End and the pointer choose a card.
+
+The design: `src/md/features/hall_of_fame.md`.
+
+Do not use: temple, wall of fame, credits screen.
+
+### Portrait credit
+
+A portrait credit is the author and the license of one portrait of the hall of fame, which the program shows under the portrait.
+
+`resources/hall_of_fame/CREDITS.md` holds the source, the author and the license of each picture; the program shows the author and the license, and the page of the licenses of the site shows one row for each picture. A host test of the modus tool checks that the program has the credit of each row.
+
+The design: `src/md/features/hall_of_fame.md`.
+
+Do not use: attribution line, copyright notice.
 
 ### Site
 

@@ -539,7 +539,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		site_license_table(site, &b, "What the system holds", site.licenses.system_rows, system_ids)
 		strings.write_string(&b, "<h2 id=\"build\">Used to build and test, not a part of the system</h2>\n")
 		site_license_table(site, &b, "What builds and tests it", site.licenses.build_rows, build_ids)
-		site_source_line(site, &b, SITE_LICENSE_FILE, SITE_FONT_FOLDER, SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, CRYPTOGRAPHY_MANIFEST, SITE_PORTRAIT_LICENSE_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
+		site_source_line(site, &b, SITE_LICENSE_FILE, SITE_FONT_FOLDER, SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, CRYPTOGRAPHY_MANIFEST, HALL_OF_FAME_CREDITS_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
 		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_LICENSE_FILE, SITE_FLAKE_FILE), layout = .Documentation})
 		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE, count = len(site.licenses.system_rows) + len(site.licenses.build_rows), kind = .Grant})
 	}

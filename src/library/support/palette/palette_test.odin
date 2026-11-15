@@ -12,7 +12,7 @@ import "modus:support/kind_icons"
 import "modus:support/line_editor"
 
 @(private = "file")
-PROGRAMS := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "temple", "clock"}
+PROGRAMS := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "sample", "clock"}
 
 // A panel and its list, in one allocation: the panel is its first field.
 @(private = "file")
@@ -228,7 +228,7 @@ a_recent_choice_wins_a_tie_only :: proc(t: ^testing.T) {
 	defer panel_free(panel)
 	panel_of_test(panel)
 	for &entry in panel.list.entries[:panel.list.entry_count] {
-		if entry.kind == .Program && (entry_name(&entry) == "paint" || entry_name(&entry) == "temple") {
+		if entry.kind == .Program && (entry_name(&entry) == "paint" || entry_name(&entry) == "sample") {
 			recent_note(panel, &entry)
 		}
 	}
@@ -240,12 +240,12 @@ a_recent_choice_wins_a_tie_only :: proc(t: ^testing.T) {
 	testing.expect_value(t, row_text(panel, 1), "plasma (window)")
 	testing.expect_value(t, row_text(panel, 2), "pages (program)")
 	testing.expect_value(t, row_text(panel, 3), "plasma (program)")
-	// "pl": plasma holds it at its start, temple in its middle. temple is
+	// "pl": plasma holds it at its start, sample in its middle. sample is
 	// the newest choice, and still comes after each plasma.
 	type_text(panel, "l")
 	testing.expect_value(t, row_text(panel, 0), "plasma (window)")
 	testing.expect_value(t, row_text(panel, 1), "plasma (program)")
-	testing.expect_value(t, row_text(panel, 2), "temple (program)")
+	testing.expect_value(t, row_text(panel, 2), "sample (program)")
 }
 
 // With no typed part: the windows, the front one first, then the programs
