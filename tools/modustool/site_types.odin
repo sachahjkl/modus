@@ -190,6 +190,8 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Map_Flags", type_info_of(op.Map_Flags)},
 		{"operation", "Program_State", type_info_of(op.Program_State)},
 		{"operation", "Device_Kind", type_info_of(op.Device_Kind)},
+		{"operation", "Device_Memory_Fact", type_info_of(op.Device_Memory_Fact)},
+		{"operation", "Device_Memory_Facts", type_info_of(op.Device_Memory_Facts)},
 		{"operation", "Inspect_Kind", type_info_of(op.Inspect_Kind)},
 		{"operation", "Program_Mapping_Flag", type_info_of(op.Program_Mapping_Flag)},
 		{"operation", "Program_Mapping", type_info_of(op.Program_Mapping)},

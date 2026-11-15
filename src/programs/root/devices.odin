@@ -15,6 +15,12 @@ import "modus:support/system"
 
 configuration_ports: system.Handle
 
+// The IOMMU gives the network device device windows: the datagram region of
+// an endpoint then needs no contiguous memory (src/md/infrastructure/iommu.md,
+// "Device addresses"). Written when the frame service starts, before the
+// network service gives it a read region.
+network_device_windows: bool
+
 device_handle :: proc "contextless" (kind: op.Device_Kind, a, b: u64) -> (handle: system.Handle, values: [7]u64, status: system.Status) {
 	values, status = system.call(.Device_Create, u64(machine), u64(kind), a, b)
 	return system.Handle(values[0]), values, status
@@ -35,20 +41,45 @@ DRIVER_FRAME :: Driver{"frame", pci.DEVICE_VIRTIO_NETWORK, frame.RING_CAPACITY, 
 // disk of the measures (src/md/infrastructure/iommu.md, "The proof").
 DRIVER_IOMMU_DEVICE :: Driver{"iommu_device", pci.DEVICE_VIRTIO_BLOCK, block.RING_CAPACITY, block.SERVICE_RING}
 
-// driver_start starts the device service of the device at a place of bus 0.
-// It gives the ring of the device service: this service gives it to the
-// client.
-driver_start :: proc "contextless" (device_number: u32, kind: Driver = DRIVER_BLOCK) -> (driver: ^Started, ring_memory: system.Handle, status: system.Status) {
-	if configuration_ports == 0 {
-		configuration_ports, _, status = device_handle(.Ports, pci.PORT_ADDRESS, pci.PORT_COUNT)
-		if status != .Ok {
-			return nil, 0, status
-		}
+// configuration_open takes the ports of the configuration, once.
+configuration_open :: proc "contextless" () -> system.Status {
+	if configuration_ports != 0 {
+		return .Ok
 	}
-	place := pci.Place{bus = 0, device = device_number}
+	status: system.Status
+	configuration_ports, _, status = device_handle(.Ports, pci.PORT_ADDRESS, pci.PORT_COUNT)
+	return status
+}
+
+// scratch_disk_place gives the place of the disk of the measures: its place
+// of bus 0, or, when that place holds no virtio device and a bridge is at
+// pci.SCRATCH_BRIDGE_DEVICE, the place 0 of the secondary bus of the
+// bridge, which the firmware numbered.
+scratch_disk_place :: proc "contextless" () -> pci.Place {
+	place := pci.Place{device = pci.SCRATCH_DISK_DEVICE}
+	if configuration_open() != .Ok || pci.read_32(place, 0) & 0xFFFF == pci.VENDOR_VIRTIO {
+		return place
+	}
+	bridge := pci.Place{device = pci.SCRATCH_BRIDGE_DEVICE}
+	if pci.read_32(bridge, 0) & 0xFFFF == 0xFFFF || pci.read_32(bridge, pci.OFFSET_HEADER_TYPE) >> 16 & 0x7F != 1 {
+		return place
+	}
+	return pci.Place{bus = pci.read_32(bridge, pci.OFFSET_BUS_NUMBERS) >> 8 & 0xFF, device = 0}
+}
+
+// driver_start starts the device service of the device at a place of the
+// bus. It gives the ring of the device service: this service gives it to
+// the client. The lines of the log name a device of bus 0 by its place
+// only, and another one with its bus.
+driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOCK) -> (driver: ^Started, ring_memory: system.Handle, status: system.Status) {
+	configuration_open() or_return
 	identity := pci.read_32(place, 0)
 	if identity & 0xFFFF != pci.VENDOR_VIRTIO || identity >> 16 != kind.device {
-		system.log_in("devices", .Error, "root: no virtio device for ", system.Module_Name{kind.name}, " at the place ", u64(device_number), " of the bus")
+		if place.bus == 0 {
+			system.log_in("devices", .Error, "root: no virtio device for ", system.Module_Name{kind.name}, " at the place ", u64(place.device), " of the bus")
+		} else {
+			system.log_in("devices", .Error, "root: no virtio device for ", system.Module_Name{kind.name}, " at the place ", u64(place.device), " of the bus ", u64(place.bus), ", behind a bridge")
+		}
 		return nil, 0, .Bad_Handle
 	}
 	for &item in started {
@@ -124,17 +155,27 @@ driver_start :: proc "contextless" (device_number: u32, kind: Driver = DRIVER_BL
 
 	// The memory of each BAR, except the BARs of the table of the
 	// interrupts: the device service does not change its interrupt.
+	// The kernel says of each range whether the IOMMU gives the device
+	// device windows; every range of one device names the same device.
+	// No range read: no fact, so the region of the network stays contiguous.
+	windows, read_a_range := true, false
 	for bar, index in bars {
 		if bar.size == 0 || u32(index) == table_bar || u32(index) == pending_place & 7 {
 			continue
 		}
 		memory: system.Handle
-		memory, _, status = device_handle(.Memory, bar.address, (bar.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+		facts: [7]u64
+		memory, facts, status = device_handle(.Memory, bar.address, (bar.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 		if status != .Ok {
 			return nil, 0, status
 		}
+		windows &&= .Windows in transmute(op.Device_Memory_Facts)facts[1]
+		read_a_range = true
 		made[2 + index] = memory
 		grants[pci.GRANT_BAR + index] = {memory, {.Read, .Write}}
+	}
+	if kind.device == pci.DEVICE_VIRTIO_NETWORK {
+		network_device_windows = windows && read_a_range
 	}
 	copied := system.memory_create(1) or_return
 	made[1] = copied
@@ -167,7 +208,11 @@ driver_start :: proc "contextless" (device_number: u32, kind: Driver = DRIVER_BL
 	driver.role = {.System_Part}
 	driver.granted = {.Log}
 	copy(driver.name[:len(driver.name) - 1], kind.name)
-	system.log_in("devices", .Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(device_number), " of the bus")
+	if place.bus == 0 {
+		system.log_in("devices", .Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(place.device), " of the bus")
+	} else {
+		system.log_in("devices", .Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(place.device), " of the bus ", u64(place.bus), ", behind a bridge")
+	}
 	return driver, ring_memory, .Ok
 }
 

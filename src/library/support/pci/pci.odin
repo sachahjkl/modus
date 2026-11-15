@@ -59,6 +59,8 @@ write_16 :: proc "contextless" (place: Place, offset: u32, value: u16) {
 }
 
 OFFSET_COMMAND :: 0x04 // The command register.
+OFFSET_HEADER_TYPE :: 0x0C // The word whose byte 2 is the header type: 1 is a bridge.
+OFFSET_BUS_NUMBERS :: 0x18 // A bridge: the primary, the secondary and the subordinate bus, one byte each.
 OFFSET_BAR :: 0x10 // The first base address register.
 OFFSET_CAPABILITIES :: 0x34 // The pointer to the first capability.
 COMMAND_MEMORY :: 1 << 1 // The device answers its memory.
@@ -130,9 +132,13 @@ capability :: proc "contextless" (configuration: []u8, kind: u8) -> u32 {
 
 // The fixed machine: the system targets one fixed machine at a time, so the
 // places of its devices are constants. The tool puts each disk at a place on bus
-// 0. The boot volume is at another place: no service receives it.
+// 0. The boot volume is at another place: no service receives it. The
+// machine with the IOMMU puts the disk of the measures behind a root port
+// of PCI Express at SCRATCH_BRIDGE_DEVICE, at the place 0 of its secondary
+// bus, so that a device behind a bridge is tested.
 DATA_DISK_DEVICE :: 0x10 // The disk of the storage service.
 SCRATCH_DISK_DEVICE :: 0x11 // A disk for the measures of the block service.
+SCRATCH_BRIDGE_DEVICE :: 0x1C // The root port in front of the disk of the measures, on the machine with the IOMMU.
 NETWORK_DEVICE :: 0x12 // The network device of the frame service.
 VENDOR_VIRTIO :: 0x1AF4 // The vendor identifier of the virtio devices.
 DEVICE_VIRTIO_BLOCK :: 0x1042 // A virtio 1 block device with no older interface.

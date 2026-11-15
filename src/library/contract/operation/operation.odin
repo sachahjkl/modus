@@ -333,7 +333,9 @@ Operation :: enum u32 {
 	// - `Bad_Address`: the pages are not inside the object; the address is not a multiple of 4096, is below
 	//   4096, ends above `USER_END`, or meets another mapping.
 	// - `Bad_Operation`: `Write` with `Execute`; or a flag that the kernel does not know, which it refuses
-	//   before it reads the handles.
+	//   before it reads the handles; or, with the IOMMU in use, `memory` is device memory over the
+	//   registers of a device with a domain and `program` names another program: only the holder of the
+	//   registers maps them, so that its mappings keep the domain of the device.
 	// - `No_Slot`: the program has 128 mappings, or the kernel finds no free place for the address that it
 	//   chooses.
 	// - `No_Budget`, `No_Memory`: the budget of the program that receives the mapping cannot pay its page
@@ -542,7 +544,8 @@ Operation :: enum u32 {
 	// **Results**
 	//
 	// 1. the handle;
-	// 2. for `Message` only: the address that the device writes;
+	// 2. for `Message`: the address that the device writes; for `Memory`: the `Device_Memory_Facts` of
+	//    the device whose base address register starts at `a` (empty with no IOMMU in use);
 	// 3. for `Message` only: the value that the device writes there.
 	//
 	// **Statuses**
@@ -798,34 +801,41 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Handle`: `handle` names nothing, or `program` is not a program handle.
 	// - `No_Right`: the program handle has not **Control**.
-	Memory_Physical = 25, // (machine, memory) -> physical address.
-	// Gives the physical address of the first page of a memory object whose pages follow each other in
-	// physical memory and do not move: an object created `Contiguous` or `Large_Pages`, or the registers of
-	// a device. A device service gives these addresses to its device, which reads and writes the memory
-	// with no processor (direct memory access).
+	Memory_Physical = 25, // (machine, memory) -> device address.
+	// Gives the address that a device uses for the first page of a memory object, so that a device service
+	// gives it to its device, which reads and writes the memory with no processor (direct memory access).
+	// For an object whose pages follow each other in physical memory and do not move (an object created
+	// `Contiguous` or `Large_Pages`, or the registers of a device), it is the physical address of the first
+	// page.
 	//
 	// When the IOMMU is in use, the call is also the declaration: each page of the object, which is not
 	// device memory, becomes memory that each device whose registers the caller holds by a handle can read,
 	// and write only while the caller holds a handle with **Write** to the object. A program that holds no
-	// such handle declares nothing. The pages leave the device when the program closes or loses its last
-	// handle to the object or to the registers of the device, when the object ends, or when the program
-	// stops (docs/ARCHITECTURE.md, "K5. Device grant and interrupts").
+	// such handle declares nothing. An object that is not contiguous then has a device window: its pages
+	// get their frames now, and the devices see them in their order from the address that the call gives,
+	// at 2^38 or above: a device that gives fewer than 39 bits of address must get contiguous objects only
+	// (`Device_Create` says whether the unit of a device gives windows: `Device_Memory_Facts`). The pages leave the
+	// device when the program closes or loses its last handle to the object, when it holds neither a handle
+	// nor a mapping of the registers of the device, when the object ends, or when the program stops
+	// (docs/ARCHITECTURE.md, "K5. Device grant and interrupts").
 	//
 	// **Arguments**
 	//
 	// - `machine`: the machine handle, with **Physical**.
 	// - `memory`: a memory handle with **Read**.
 	//
-	// **Results**: the physical address.
+	// **Results**: the device address: the physical address, or the address of the window.
 	//
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `machine` or `memory` is not a handle of its kind with its right.
-	// - `Bad_Operation`: the pages of the object are not contiguous: they get their frames at their first
-	//   use, from anywhere.
-	// - `Bad_Operation`: also, with the IOMMU in use, a page of the object is past the addresses that the
-	//   tables of a device map (2^39 or 2^48).
-	// - `Bad_State`: another program declared memory to the same device, and it still runs.
+	// - `Bad_Operation`: the pages of the object are not contiguous, and no IOMMU is in use or the caller
+	//   holds the registers of no device: they get their frames at their first use, from anywhere.
+	// - `Bad_Operation`: also, with the IOMMU in use, a contiguous object ends above 2^38 or above the
+	//   address width of the unit of a device; or an object that is not contiguous is `Uncommitted`, larger
+	//   than 128 MiB (`iommu.WINDOW_SIZE`), or declared to a device whose unit gives no windows.
+	// - `Bad_State`: another program declared memory to the same device, and it still holds or maps its
+	//   registers.
 	// - `No_Slot`: the caller holds the registers of more than 4 devices, or the 32 slots of the devices of
 	//   the kernel are in use.
 	// - `No_Budget`: the budget of the caller cannot pay for a page of the tables of the device.
@@ -2462,6 +2472,18 @@ Device_Kind :: enum u64 {
 	Message   = 4, // A message interrupt (MSI-X): the results give the address and the value that the device writes.
 }
 
+// What `Device_Create` of the kind `Memory` says of the device whose
+// registers the range holds, in its second result. The root service reads
+// it to choose the memory that it makes for the device: with `Windows`, an
+// object that is not contiguous serves (src/md/infrastructure/iommu.md,
+// "Device addresses"). An empty set: no IOMMU in use, or a device that gets
+// no domain.
+Device_Memory_Fact :: enum u64 {
+	Domain  = 0, // The IOMMU gives the device a device domain: it reaches only the memory that its service declares.
+	Windows = 1, // The remapping unit of the device gives device windows: `Memory_Physical` accepts an object that is not contiguous.
+}
+Device_Memory_Facts :: bit_set[Device_Memory_Fact; u64]
+
 // The message interrupts: each one has a vector of its own on the first
 // processor. `Device_Create` gives `No_Slot` for a 17th.
 MESSAGE_CAPACITY :: 16
@@ -2899,6 +2921,10 @@ Boot_Report :: struct {
 	cycle_frequency:        u64, // Cycles of the cycle counter per second.
 	timer_frequency:        u64, // Counts of the timer of a processor per second.
 	trust:                  info.Boot_Trust, // The trust record of the boot program, as it wrote it.
+	// The remapping units of the IOMMU that translate the accesses of the devices. 0: no IOMMU in use, and
+	// each device reaches all memory. Whether one device has a domain and device windows is the second
+	// result of `Device_Create` of its registers (`Device_Memory_Facts`).
+	iommu_unit_count:       u64,
 }
 
 // The state of one program slot: its state, its name, its counts and what
