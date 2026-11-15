@@ -70,18 +70,22 @@ network_service :: proc "contextless" () -> (service: ^Started, status: system.S
 // ring and the datagram region, given to the network service with the
 // grant. This service makes the region, not the program: a region of the
 // program would let the program revoke the mapping of the network service,
-// which would stop on a page fault for all programs. It gives the two
-// handles: give them to the program, then close them.
+// which would stop on a page fault for all programs. The region is
+// contiguous, and the network service gets it with Give: the network
+// service gives it to the frame service with Read only, and the device
+// reads the data of each send there (src/md/infrastructure/network_data_path.md,
+// "The send with no copy"). It gives the two handles: give them to the
+// program, then close them.
 endpoint_open :: proc "contextless" (slot: ^Started, name: string) -> (ring_memory, region_memory: system.Handle, status: system.Status) {
 	service := network_service() or_return
 	ring_memory = system.memory_create(ring.pages(datagram.RING_CAPACITY)) or_return
-	region_memory, status = system.memory_create(datagram.REGION_PAGES)
+	region_memory, status = system.memory_create(datagram.REGION_PAGES, 0, {.Contiguous})
 	given: [2]system.Handle
 	if status == .Ok {
 		given[0], status = system.give(service.network_memory, ring_memory, {.Read, .Write})
 	}
 	if status == .Ok {
-		given[1], status = system.give(service.network_memory, region_memory, {.Read, .Write})
+		given[1], status = system.give(service.network_memory, region_memory, {.Read, .Write, .Give})
 	}
 	grant := endpoint_of(name)
 	grant.inspect = .Inspect in grants_of(name)

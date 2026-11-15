@@ -53,14 +53,21 @@
 // network service, and its revocation would stop the network service on a
 // page fault, for all programs: a thread that uses memory that its program
 // lost stops its program on a page fault.
-// The network service copies a datagram or a segment one time: from the
-// region to its frame, or from its frame to the region. It computes no
+// The region is contiguous: the network service lends it to the frame
+// service with the right Read only, and the device reads the data of each
+// datagram or segment to send there.
+//
+// The network service copies a datagram or a segment that arrives one time:
+// from its frame to the region. One that leaves is not copied: the network
+// service copies its first 8 bytes (the ports, and the length of UDP) for
+// its check, and the device reads the rest from the region. It computes no
 // checksum of the transport: the program writes the checksum of what it
 // sends, and checks the checksum of what it receives. The network service
 // checks the ports of what a program sends in its own copy, which the
 // program cannot change: a program sends only from the local ports of its
 // endpoint, to the remote of its grant. A program that writes a wrong
-// checksum, or that does not check one, harms its own traffic only
+// checksum, that does not check one, or that writes a place before the
+// completion of its Send, harms its own traffic only
 // (docs/NETWORK.md, "The path of a datagram and of a segment").
 //
 // Many requests are in flight. A Receive stays in flight until a datagram
@@ -117,8 +124,8 @@ Command :: enum u32 {
 	// ones of the header: the network service reads them in its copy;
 	// values[3] is not read. The source port must be the local port of the
 	// endpoint, and the length field must be values[1]. The completion comes
-	// when the network service has copied the datagram: the place is free
-	// again. A segment endpoint: the place holds a whole segment,
+	// when the device has read the datagram from the place: the place is
+	// free again, and not before. A segment endpoint: the place holds a whole segment,
 	// SEGMENT_LEAST to SEGMENT_LIMIT bytes, with its checksum; the source
 	// port must be a local port of the endpoint. The network service
 	// computes no checksum of a datagram or a segment: a wrong one goes on
@@ -190,7 +197,7 @@ Status :: enum u32 {
 	Ok           = 0, // The request is done: the values are its results.
 	Bad_Command  = 1, // Unsupported: the command is not known, or not for this grant; Too_Small: a segment of fewer bytes than SEGMENT_LEAST, or a datagram of fewer bytes than DATAGRAM_LEAST; Bad_Value, unit Bytes: the length field of the UDP header of a Send is not its count of bytes (value: the field; limit: the count).
 	Out_Of_Range = 2, // Out_Of_Range, unit Bytes: a byte is not in the region. value: the end of the place and its count; limit: the size of the region.
-	No_Region    = 3, // Absent, unit Region: the endpoint has no datagram region.
+	No_Region    = 3, // Absent, unit Region: the endpoint has no datagram region. Refused, unit Region: the frame service refused the frame of a Send (found: its frame status), as when it does not hold the region of the endpoint.
 	// No_Grant, unit Endpoint: the remote is not the remote of the grant.
 	// value: the remote that the request named (errors.endpoint_pack);
 	// limit: the remote of the grant, 0 when it names none (revoked, or a

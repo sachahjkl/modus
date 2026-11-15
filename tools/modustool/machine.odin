@@ -442,6 +442,9 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up", any_order = true},
 	{kind = .Wait, text = "network: the headers of IPv4 and Ethernet of a frame with a payload of 1480 bytes: ", any_order = true},
 	{kind = .Wait, text = "network: an endpoint for net: the local port 49152, the grant 10.0.2.2 port 7", any_order = true},
+	// The datagram region of `net` is a read region of the frame service:
+	// the device reads the data of each datagram there, with no copy.
+	{kind = .Wait, text = "frame: a read region of 128 pages at the place 0, held with the right Read only: the device reads the data of the frames to send there", any_order = true},
 	{kind = .Wait, text = "root: started net"},
 	{kind = .Wait, text = "net: the link and the address: 10.0.2.15/24, the link is up, 52:54:00:12:34:56"},
 	{kind = .Wait, text = "net: ARP: who has 10.0.2.2: the gateway answered 52:55:0a:00:02:02 in "},
@@ -493,10 +496,11 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "root: net stopped with code 0"},
 	{kind = .Wait, text = "network: the endpoint of net ended: "},
 	// The passes of the network service over the bytes of the datagrams of
-	// `net`: a measure, then the structural count: one copy each way, and no
-	// checksum.
+	// `net`: a measure, then the structural count: one copy on receive, on
+	// send the copy of 8 bytes of each header and no byte of the data, and
+	// no checksum.
 	{kind = .Wait, text = "network: a measure: the endpoint of net, UDP: the passes of this service over the data for each payload byte: "},
-	{kind = .Wait, text = "network: the endpoint of net, UDP: this service read each payload byte one time on receive and one time on send, for the copy, and computed no checksum of it: as it must"},
+	{kind = .Wait, text = "network: the endpoint of net, UDP: this service read each payload byte one time on receive, for the copy, and on send only the 8 bytes of each header that it checks, and 0 bytes of the data; it computed no checksum: as it must"},
 	// The calls of the host (docs/MODULE_CONTRACT.md, "A call from the
 	// host"). The remote service holds an endpoint whose grant names the
 	// host, and connects to the services that the root service names for it.

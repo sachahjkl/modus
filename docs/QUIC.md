@@ -19,7 +19,7 @@ QUIC needs no new part of the kernel. The network service carries UDP datagrams,
 | Part | Where | Why |
 |---|---|---|
 | The datagrams | An endpoint of the network service, as for UDP today. A server needs datagrams from any remote on one port: a listen grant of UDP, with admitted remotes, as for TCP (section 6) | The service multiplexes the one pair of queues of the device (the line "As built" of property 5 in `PROPERTIES.md`) |
-| The UDP header and its checksum | The program, with `network.udp_header_write` on send and `network.udp_data_read` on receive (`src/library/support/network`) | The network service copies a datagram and computes no checksum of it (`NETWORK.md`, "The path of a datagram and of a segment") |
+| The UDP header and its checksum | The program, with `network.udp_header_write` on send and `network.udp_data_read` on receive (`src/library/support/network`) | The network service copies a datagram that arrives, copies 8 bytes of the header of one that leaves, and computes no checksum of it (`NETWORK.md`, "The path of a datagram and of a segment") |
 | QUIC: packets, keys, streams, loss, congestion | `src/library/support/quic`, a library in the program that holds the connection | QUIC is a library in the program; its state is memory of the program |
 | TLS 1.3 | `src/library/support/quic` too: QUIC carries the handshake in CRYPTO frames, with no record layer | One library for one connection |
 | The primitives | The module `cryptography`, loaded in the program through its import slots | Proven code, one module, named by its hash (`docs/CRYPTOGRAPHY.md`) |

@@ -17,7 +17,7 @@ The first layer of the network is the base: the frame service, the network servi
 The kernel carries no network data and holds no network protocol. A program that talks over the network runs the protocol itself, as a library, and one service of user space only checks each datagram or segment against the grant of the program. Three rules follow:
 
 - The network stack is a library in the program that uses the network (property 5). A fault in TCP or QUIC harms only the program that runs it.
-- The network service is on the control path of each datagram and each segment: it reads the headers and checks them against the grant. It is on the data path for one copy in each direction, and for nothing else: it computes no checksum of the bytes and writes no header of UDP or TCP. The reason is the device of the first machine, which has one pair of queues (section "The path of a datagram and of a segment").
+- The network service is on the control path of each datagram and each segment: it reads the headers and checks them against the grant. It is on the data path for one copy of what arrives, and for nothing else: on send, the device reads the data from the memory of the program, the service copies only 8 bytes of the header for its check, and it computes no checksum of the bytes and writes no header of UDP or TCP. The reason is the device of the first machine, which has one pair of queues (section "The path of a datagram and of a segment").
 - The network has UDP, TCP and QUIC, and a server as a scenario: `server` speaks HTTP over TCP, and `quic_echo` and `remote` speak QUIC over UDP.
 
 ## The parts
@@ -27,7 +27,7 @@ Each part of the network is a program or a library of user space. The table name
 | Part | Where | What it does |
 |---|---|---|
 | TCP library | `src/library/support/tcp` | The state machine, the windows, the timers, the reassembly, the congestion control. Pure code over memory of the caller: no kernel operation, no allocation. The modus tool uses the same package on the host |
-| Network service | `src/programs/network` | Gives each program with the grant one endpoint. It checks the header of each datagram and each segment against the grant, writes and checks the IPv4 header, and copies the datagram or the segment one time. It computes no checksum of UDP or TCP and keeps no state of a connection |
+| Network service | `src/programs/network` | Gives each program with the grant one endpoint. It checks the header of each datagram and each segment against the grant, writes and checks the IPv4 header, and copies a datagram or a segment that arrives one time. On send it copies 8 bytes of the header, and the device reads the rest from the datagram region. It computes no checksum of UDP or TCP and keeps no state of a connection |
 | Protocol library | `src/library/support/network` | For the network service: Ethernet, ARP, IPv4, ICMP echo, and the checks of the header of UDP and TCP (`parse`). For a program with a datagram endpoint: the UDP header and its checksum (`udp_header_write`, `udp_data_read`) |
 | Server | `src/programs/server` | A program with a listen grant on the TCP port 80. One thread serves all its connections from one connection table. It speaks a small HTTP/1.1 |
 | Client | `src/programs/fetch` | A program with a segment grant of one remote. It fetches pages and measures |
@@ -59,11 +59,12 @@ The payload of a frame is what follows the IPv4 header: a whole datagram with it
 | Hop | What runs | Bytes of the payload that it touches |
 |---|---|---|
 | The program | It writes the payload in a place of its datagram region: the header of UDP or TCP, the data, and the checksum over both (`tcp.header_write`, `network.udp_header_write`) | The passes of the program itself |
-| The network service | It copies the payload from the region to a send place of the frame region | **One pass: the copy** |
+| The network service | It copies the first 8 bytes of the payload from the region to a send place of the frame region | The header only: 8 bytes |
 | The network service | `header_granted` reads the two ports, and the length field of UDP, in its own copy, and checks them against the endpoint and the grant | The header only, in the copy |
-| The network service | `network.ipv4_frame` writes the headers of IPv4 and Ethernet | None |
-| The frame service | It gives the frame to the device | None |
-| The device | It reads the frame region | Read one time by the device |
+| The network service | `network.ipv4_frame` writes the headers of IPv4 and Ethernet before the copy | None |
+| The frame service | It gives the device a chain of three parts: the virtio header, the headers in the frame region, the rest of the payload in the datagram region, which it holds as a read region | None |
+| The device | It reads the frame region and the datagram region | Read one time by the device |
+| The frame service | When the device used the frame, it completes the frame; the network service then completes the `Send` of the program, which can write its place again | None |
 
 ### The passes of the network service
 
@@ -73,12 +74,24 @@ A pass is one read or one write of each byte of a payload by one program. The ta
 |---|---|---|---|
 | Arrives | TCP | 2: the TCP checksum, then the copy | 1: the copy |
 | Arrives | UDP | 2: the UDP checksum, then the copy | 1: the copy |
-| Leaves | TCP | 1: the copy | 1: the copy |
-| Leaves | UDP | 2: the copy, then the UDP checksum | 1: the copy |
+| Leaves | TCP | 1: the copy | 0 over the data: a copy of 8 bytes of the header |
+| Leaves | UDP | 2: the copy, then the UDP checksum | 0 over the data: a copy of the 8 bytes of the header |
 
-The network service counts its passes. For each endpoint and each direction it counts the datagrams or the segments, their bytes, and the bytes of each pass (`data_pass` in `src/programs/network`, called at each place that reads the bytes). When an endpoint ends, the log has two lines: a measure, "network: a measure: the endpoint of server, TCP: the passes of this service over the data for each payload byte: 1.00 on receive (...), 1.00 on send (...)", and the structural fact, "network: the endpoint of server, TCP: this service read each payload byte one time on receive and one time on send, for the copy, and computed no checksum of it: as it must". The machine tests of `net`, `server` and `quic_echo` wait for the second line. It is a count of passes, not a speed.
+The network service counts its passes. For each endpoint and each direction it counts the datagrams or the segments, their bytes, the bytes of each pass, and the bytes of the data among them (`data_pass` in `src/programs/network`, called at each place that reads the bytes). When an endpoint ends, the log has two lines: a measure, "network: a measure: the endpoint of server, TCP: the passes of this service over the data for each payload byte: 1.00 on receive (...), a fraction on send (...); the bytes of the data that this service read on send: 0", and the structural fact, "network: the endpoint of server, TCP: this service read each payload byte one time on receive, for the copy, and on send only the 8 bytes of each header that it checks, and 0 bytes of the data; it computed no checksum: as it must". The machine tests of `net`, `server` and `quic_echo`, and the test `iommu` for `net`, wait for the second line. It is a count of passes, not a speed.
 
-The one copy on receive cannot leave with this device. The device chooses the place of a frame before any program knows whose frame it is, so one program that is not the receiver must read the headers, and the bytes must then move to the receiver. The copy on send can leave: the device can read the data from the datagram region of the program, when the network service gives it a private copy of the headers. That form is not built. A device that gives each endpoint its own receive queue, and steers frames by the destination port, removes the copy on receive too; the device of the test machine has no such queues.
+The one copy on receive cannot leave with this device. The device chooses the place of a frame before any program knows whose frame it is, so one program that is not the receiver must read the headers, and the bytes must then move to the receiver. A device that gives each endpoint its own receive queue, and steers frames by the destination port, removes the copy on receive too; the device of the test machine has no such queues.
+
+### The send with no copy
+
+The device reads the data of a datagram or a segment where the program wrote it. The rules:
+
+- The root service makes the datagram region of each endpoint contiguous. The network service gives it to the frame service with the right Read only, as a read region at the place of the endpoint (`Read_Region_Add` of the frame contract). The frame service refuses a read region with the right Write.
+- On a machine with the IOMMU, the frame service declares the read region with `Memory_Physical` through a handle with Read only: the network device reads the region and cannot write it.
+- The `Send` of a program completes when the device read the frame, not before. A program writes a place again only after the completion of its `Send`. A program that writes it before changes what goes on the wire, and harms only its own packet.
+- The program writes the checksum, as before. The device computes none.
+- When an endpoint ends, the frame service keeps its handle of the region until the last frame that reads it is complete, then closes it. The memory of the region stays while the device reads it, whatever the program and the network service close.
+
+The design: `src/md/infrastructure/network_data_path.md`, "The send with no copy".
 
 ### Who checks what
 
@@ -97,7 +110,7 @@ The one copy on receive cannot leave with this device. The device chooses the pl
 
 Three rules follow from the table.
 
-- **A program cannot send as another program.** The network service writes the source address. It reads the source port in its own copy of the header, after the copy, and never reads the region of the program a second time: the program cannot change what was checked. A program controls the data and the checksum of its own datagrams and segments, and nothing else.
+- **A program cannot send as another program.** The network service writes the source address. It reads the source port in its own copy of the first 8 bytes of the header, after the copy, and never reads the region of the program a second time: the program cannot change what was checked. The device reads the rest from the region, and the program can change it until the device read it. A program controls the data and the checksum of its own datagrams and segments, and nothing else.
 - **A wrong checksum harms its writer only.** A program that sends a wrong checksum loses its own datagram or segment: the remote drops it. A program that does not check the checksum of what it receives takes damaged bytes as data: the harm stays in that program. The TCP library always checks. A program with a datagram endpoint chooses the rule in its call of `network.udp_data_read`.
 - **The checksum comes after the choice of the endpoint.** The network service chooses the endpoint by a port that it did not check with the checksum. A frame whose port the wire damaged, and that the check of Ethernet let pass, can reach the endpoint of another port. The program of that endpoint then refuses it by its checksum, after it saw the bytes. The grant, not the checksum, is the guard against a hostile sender: a hostile sender writes a correct checksum.
 
@@ -112,7 +125,7 @@ A segment endpoint is an endpoint (`src/library/contract/datagram`) whose grant 
 1. A Send names a whole segment in the region: the TCP header, its options and its data, where a datagram endpoint names a whole datagram: the UDP header and its data. In both, the program writes the header and its checksum, and a Receive gives the whole segment or datagram.
 2. The grant names TCP ports, not UDP ports, and a client grant has a block of local ports.
 
-The library writes the segments directly in the places of the datagram region, so a segment is copied one time on its path: by the network service, between the region and the frame.
+The library writes the segments directly in the places of the datagram region. A segment that arrives is copied one time on its path: by the network service, from the frame to the region. A segment that leaves is not copied: the device reads it from the region, after the headers that the network service wrote.
 
 ### The grant of a segment endpoint
 
@@ -144,7 +157,7 @@ This table is the one state of TCP in the network service: addresses and ports, 
 | Arrives | Checks the Ethernet and IPv4 headers, and the length and the data offset of the TCP header (`network.parse`). It does not check the TCP checksum | The service reads the ports to choose the endpoint; it reads no byte of the data. A segment with a wrong checksum reaches the endpoint of its port, and the TCP library drops it |
 | Arrives | Finds the endpoint by the local port, checks the remote against the grant, admits a remote of a listen grant | Property 20, line 3 |
 | Arrives | Copies the segment from the frame to the region | The device writes the frame region of the service, not the region of the program |
-| Sent | Copies the segment from the region to the frame, then reads its ports from the copy | A port is checked in bytes that the program cannot change after the check |
+| Sent | Copies the first 8 bytes of the segment from the region to the frame, then reads its ports from the copy. The device reads the rest from the region | A port is checked in bytes that the program cannot change after the check, and the service reads no byte of the data |
 | Sent | Checks the local port against the block or the listen port, and the remote against the grant or the table of admitted remotes | Property 20, lines 3 and 11 |
 | Sent | Writes the IPv4 and Ethernet headers | It must check them anyway |
 | Sent | Does not check the TCP checksum | A wrong checksum harms only the program that wrote it: the remote drops the segment |
@@ -162,11 +175,11 @@ Property 5 says that the kernel is off the data path, and that the network stack
 - The kernel carries no data and has no network code. No kernel entry carries a datagram or a segment: an entry is a wait or a wake, and one entry serves a batch.
 - The transport is in the program: the whole of TCP (`src/library/support/tcp`), the whole of QUIC (`src/library/support/quic`), and the header and the checksum of UDP (`src/library/support/network`, `udp_header_write` and `udp_data_read`). The program can read and change each field of its connections.
 - The network service is on the control path of each datagram and each segment, in both directions: it reads the headers and checks them against the grant.
-- The network service is on the data path for one copy in each direction. It computes no checksum of the data and writes no header of the transport.
+- The network service is on the data path for one copy of what arrives. On send, it copies 8 bytes of the header for its check, and the device reads the data from the datagram region of the program. It computes no checksum of the data and writes no header of the transport.
 - IPv4, ARP and ICMP echo stay in the network service: they are the shared identity of the machine.
 - The network service keeps only the ports and, for a listen grant, the remotes that came to it: no sequence number, no window and no key.
 
-Two changes take the network service further off the data path. The first needs no other device: the device reads the data of a frame to send from the datagram region of the program, and the network service checks a private copy of the headers; then no byte of data that leaves passes through the service. The second needs a device with a receive queue for each endpoint and an exact filter by destination port that only the frame service programs; then the copy on receive leaves too. Neither is built.
+One change takes the network service further off the data path. It needs a device with a receive queue for each endpoint and an exact filter by destination port that only the frame service programs; then the copy on receive leaves too. It is not built.
 
 ## The TCP library
 

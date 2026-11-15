@@ -119,6 +119,31 @@ DEBUG_TARGET_LINE_AFTER_THE_CALL :: "102"
 DEBUG_TARGET_TEXT_OF_THE_STORE :: "\tintrinsics.volatile_store(sum, before + step)"
 
 DEBUG_TARGET_RUNS :: "debug_target: 64 more rounds ran, so the program is not held: as it must"
+
+// The places that the scenario presses in the window of the debugger, from
+// the corner of its surface: the middle of an element of the layout of
+// src/programs/debugger_window/main.odin. A change of that layout changes
+// them.
+//
+// - The debug place field and its three buttons, in the card of the
+//   program: the inside of the card starts at (24, 48).
+// - The first row of the source: under the path of the file, which has one
+//   line, in the card at the right whose inside starts at (360, 48).
+// - The first row of the stack: the inside of its card starts at (360, 392).
+// - The first row of the breakpoints: the inside of its card starts at
+//   (24, 496).
+DEBUGGER_WINDOW_FIELD_X :: 100
+DEBUGGER_WINDOW_FIELD_Y :: 84
+DEBUGGER_WINDOW_BUTTONS_Y :: 116
+DEBUGGER_WINDOW_BREAK_AT_X :: 70
+DEBUGGER_WINDOW_WATCH_X :: 171
+DEBUGGER_WINDOW_MEMORY_X :: 272
+DEBUGGER_WINDOW_SOURCE_ROW_X :: 500
+DEBUGGER_WINDOW_SOURCE_ROW_Y :: 76
+DEBUGGER_WINDOW_STACK_ROW_X :: 400
+DEBUGGER_WINDOW_STACK_ROW_Y :: 400
+DEBUGGER_WINDOW_BREAK_ROW_X :: 100
+DEBUGGER_WINDOW_BREAK_ROW_Y :: 504
 // The sentence of a refused debug access names the start grant that
 // refuses, by its name (src/library/contract/start_grant): the name goes between the
 // two parts.
@@ -246,8 +271,10 @@ scenario_debugger_commands := [?]Step {
 
 	// The window of the debugger: the same exports, through a connection of
 	// its own. It attaches by a typed name, holds the main thread, runs one
-	// line of it over each call, and detaches. Each act is one line of the
-	// log of the window.
+	// line of it over each call, puts a breakpoint, a watch and a memory
+	// view at a typed debug place, takes a click on a row of the source, of
+	// the stack and of the breakpoints, and detaches. Each act is one line
+	// of the log of the window.
 	{kind = .Launch, text = "debugger_window"},
 	{kind = .Wait, text = "debugger_window: ok, connected to the service debugger", any_order = true},
 	{kind = .Wait, text = "compositor: surface debugger_window", any_order = true},
@@ -278,6 +305,35 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "debugger_window: removed the breakpoint 0"},
 	{kind = .Key, text = "o"},
 	{kind = .Wait, text = "debugger_window: one line, over each call, of the thread 0"},
+	// The debug place field: a breakpoint at a procedure, a watch of a
+	// global and the memory of a global, each typed in the field and taken
+	// by a press on its button. A break and a watch empty the field; the
+	// press on the field gives it the focus again.
+	{kind = .Click, inside_window = "debugger_window", x = DEBUGGER_WINDOW_FIELD_X, y = DEBUGGER_WINDOW_FIELD_Y},
+	{kind = .Keys, text = "debug_target::add_step"},
+	{kind = .Click, inside_window = "debugger_window", x = DEBUGGER_WINDOW_BREAK_AT_X, y = DEBUGGER_WINDOW_BUTTONS_Y},
+	{kind = .Wait, text = "debugger_window: a breakpoint at debug_target::add_step"},
+	{kind = .Click, inside_window = "debugger_window", x = DEBUGGER_WINDOW_FIELD_X, y = DEBUGGER_WINDOW_FIELD_Y},
+	{kind = .Keys, text = "debug_target::rounds"},
+	{kind = .Click, inside_window = "debugger_window", x = DEBUGGER_WINDOW_WATCH_X, y = DEBUGGER_WINDOW_BUTTONS_Y},
+	{kind = .Wait, text = "debugger_window: a watch of 8 bytes at debug_target::rounds"},
+	{kind = .Click, inside_window = "debugger_window", x = DEBUGGER_WINDOW_FIELD_X, y = DEBUGGER_WINDOW_FIELD_Y},
+	{kind = .Keys, text = "debug_target::table"},
+	{kind = .Click, inside_window = "debugger_window", x = DEBUGGER_WINDOW_MEMORY_X, y = DEBUGGER_WINDOW_BUTTONS_Y},
+	// The count of the rows depends on the place of the global in its
+	// page: the line is waited for up to the count.
+	{kind = .Wait, text = "debugger_window: the memory at debug_target::table: "},
+	{kind = .Shot, text = "debugger_window_memory"},
+	// A click on a row does what a key does. The source row of the chosen
+	// frame (the caller, from the key pgdn above): a breakpoint at its
+	// line. The first row of the stack: the frame 0. The first row of the
+	// breakpoints: the breakpoint 0, at add_step, leaves.
+	{kind = .Click, inside_window = "debugger_window", x = DEBUGGER_WINDOW_SOURCE_ROW_X, y = DEBUGGER_WINDOW_SOURCE_ROW_Y},
+	{kind = .Wait, text = "debugger_window: a breakpoint at " + DEBUG_TARGET_SOURCE_FILE + ":"},
+	{kind = .Click, inside_window = "debugger_window", x = DEBUGGER_WINDOW_STACK_ROW_X, y = DEBUGGER_WINDOW_STACK_ROW_Y},
+	{kind = .Wait, text = "debugger_window: the frame 0 of the thread 0: "},
+	{kind = .Click, inside_window = "debugger_window", x = DEBUGGER_WINDOW_BREAK_ROW_X, y = DEBUGGER_WINDOW_BREAK_ROW_Y},
+	{kind = .Wait, text = "debugger_window: removed the breakpoint 0"},
 	{kind = .Key, text = "d"},
 	{kind = .Wait, text = "debugger_window: detached from debug_target"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
