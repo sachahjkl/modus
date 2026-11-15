@@ -70,6 +70,10 @@ import "modus:support/pci"
 import "modus:support/system"
 import "modus:support/virtio"
 
+// The amounts that the root service gave it by its name before its module
+// stated a request: no part is counted yet.
+MODULE_BUDGET :: system.Budget_Request{pages = 256, programs = 1, threads = 1}
+
 FEATURE_FLUSH :: 9 // The device has a cache for writes, and the request Flush.
 
 // A request of the device: a header that the device reads, the data, and a

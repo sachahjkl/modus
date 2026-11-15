@@ -61,14 +61,14 @@ One load runs at a time. A second command during a load is refused with `Busy`.
 
 ### The least right
 
-A program of the boot image has a row in the grant table: its name gives it its grants, its budget and the limit of its store. A disk program has no row, and gets:
+A program of the boot image has a row in the grant table: its name gives it its grants and the limit of its store. A disk program has no row, and gets:
 
 - the log, with the right Write only, and a window, as each program has;
 - the date page, the settings page and the glyph caches, read-only, as each program with a window has;
 - no start grant: no root ring, no machine handle, no boot image, no store, no endpoint, no service ring;
-- the budget of a program that no row names: 2048 pages, one program, one thread.
+- the budget that its file asks for, up to the largest budget of a disk program, with no budget exception, paid by the one budget of all disk programs; a file that asks for nothing gets the least budget, 2048 pages, one program, one thread ([module_budget_request.md](module_budget_request.md)).
 
-Nothing in the file gives a grant. The root service reads no table of the file to decide a grant.
+Nothing in the file gives a grant. The root service reads no table of the file to decide a grant; the table `Budget` is a request, which the root service limits.
 
 **A disk program cannot take a row by its name.** The root service refuses, before any read, a name that a module of the boot image has, a name that the grant table gives a grant, a name of a program of the system, and the name `programs`. Without this rule a file named `notes` would start with the store of `notes`, and a file named `console` with the root ring.
 

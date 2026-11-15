@@ -18,6 +18,8 @@ SITE_ERRORS_FILE :: SOURCE_FOLDER_CONTRACT + "/errors/errors.odin"
 SITE_FIXED_ADDRESSES_FILE :: FIXED_ADDRESSES_FOLDER + "/fixed_addresses.odin"
 SITE_SYSTEM_GRANTS_FILE :: SYSTEM_LIBRARY_FOLDER + "/grants.odin"
 SITE_ROOT_FILE :: PROGRAM_SOURCES + "root/main.odin"
+// The rule of the root service for the budget that a module asks for.
+SITE_ROOT_BUDGETS_FILE :: PROGRAM_SOURCES + "root/budgets.odin"
 SITE_START_GRANT_FILE :: SOURCE_FOLDER_CONTRACT + "/start_grant/start_grant.odin"
 SITE_MODULES_FILE :: "tools/modustool/modules.odin"
 SITE_CONSOLE_COMMAND_FILES :: [?]string{PROGRAM_SOURCES + "console/commands.odin", PROGRAM_SOURCES + "console/debugger_commands.odin", PROGRAM_SOURCES + "console/tables.odin"}
@@ -58,8 +60,6 @@ Site_Reference :: struct {
 	root_grant_names: map[string]string,
 	program_grants:   []Site_Name_Case,
 	grants_otherwise: Site_Name_Case,
-	program_budgets:  []Site_Name_Case,
-	budget_otherwise: Site_Name_Case,
 	fixed_ranges:     []Site_Enumeration_Member,
 	console_commands: []Site_Console_Command,
 	modules:          []Site_Module,
@@ -166,12 +166,9 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	note(&problems, problem)
 	reference.program_grants, reference.grants_otherwise, problem = site_name_switch_read(root_text, SITE_ROOT_FILE, "grants_of")
 	note(&problems, problem)
-	reference.program_budgets, reference.budget_otherwise, problem = site_name_switch_read(root_text, SITE_ROOT_FILE, "things_of")
-	note(&problems, problem)
-	// A page shows each member of a set as a link to its row, and each field
-	// of a budget as a value: a set that holds another thing stops the command.
+	// A page shows each member of a set as a link to its row: a set that
+	// holds another thing stops the command.
 	note(&problems, site_name_cases_problem(reference.program_grants, reference.grants_otherwise, SITE_ROOT_FILE, "grants_of", reference.start_grants, true))
-	note(&problems, site_name_cases_problem(reference.program_budgets, reference.budget_otherwise, SITE_ROOT_FILE, "things_of", nil, false))
 	reference.fixed_ranges, problem = site_enumeration_read(fixed_text, SITE_FIXED_ADDRESSES_FILE, "Fixed_Range")
 	note(&problems, problem)
 	commands := make([dynamic]Site_Console_Command, context.temp_allocator)

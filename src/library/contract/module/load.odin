@@ -488,6 +488,16 @@ field_text :: proc "contextless" (record: []u8, item: Field) -> string {
 	return string(bytes[:count])
 }
 
+// budget_request gives the budget that a module asks for: record 1 of the
+// table Budget. stated is false when the file has no such record: the module
+// then asks for the least budget. A record shorter than `Budget_Request`
+// gives 0 for each part that it does not have, and a record that is longer
+// gives its first parts. Call validate first: it checks the range of the
+// table in the file.
+budget_request :: proc "contextless" (file: []u8) -> (request: Budget_Request, stated: bool) {
+	return record(file, .Budget, 1, Budget_Request)
+}
+
 // documentation gives the documentation of a module: one line, and the text.
 // A module with no documentation gives two empty texts.
 documentation :: proc "contextless" (file: []u8) -> (about, text: string) {

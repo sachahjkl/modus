@@ -45,6 +45,10 @@ import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
 
+// The two pictures of a window of about 1000 x 704, 1386 pages, then the
+// pointer themes that it checks.
+MODULE_BUDGET :: system.Budget_Request{pages = 3072, programs = 1, threads = 1}
+
 WIDTH :: 976
 HEIGHT :: 704
 COLUMNS :: 5 // Tiles in a line.

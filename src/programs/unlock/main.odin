@@ -68,6 +68,10 @@ import "modus:support/random"
 import "modus:support/storage"
 import "modus:support/system"
 
+// The blocks of Argon2id, 19 MiB (4864 pages), its window and its module
+// (src/library/support/principals, DERIVATION_MEMORY_PAGES).
+MODULE_BUDGET :: system.Budget_Request{pages = 6144, programs = 1, threads = 1}
+
 // The cost record of the export argon2id of the module cryptography: the
 // same fields, in the same order (src/modules/cryptography).
 Argon2id_Cost :: struct {

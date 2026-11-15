@@ -63,18 +63,6 @@ disk_load: Disk_Load
 // for a principal.
 disk_reader: Started
 
-// The budget of a program that no table of this service names: the things
-// of the default, the processor time of one processor for each thread, and
-// 1000 log records in each second. A disk program has this budget.
-least_budget :: proc "contextless" () -> system.Budget_Amounts {
-	// The empty name is the name of no case: the things of the default.
-	amounts := things_of("")
-	own, _ := system.budget_read()
-	amounts.processor = min(amounts.threads * 1_000_000, own.processor)
-	amounts.log_records = 1000
-	return amounts
-}
-
 // disk_refused writes the line of a refusal on the log, and gives the
 // values of the completion.
 disk_refused :: proc "contextless" (name: string, values: [7]u64, parts: ..system.Part) -> [7]u64 {
@@ -444,7 +432,18 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	copy(slot.name[:len(slot.name) - 1], name)
 	slot.principal = principal
 	program: system.Handle
-	program, status = system.program_start(file, name, grants, random.values_with_seed(&program_generator, values), least_budget(), mappings[:mapping_count], nil, load_source(), load_error)
+	// Its request, up to the largest budget of a disk program, paid by the
+	// one budget of the disk programs: a file of a disk cannot take what
+	// the programs of the boot image need. Its name selects no exception.
+	disk_programs: system.Handle
+	disk_programs, status = disk_programs_budget_get()
+	if status == .Ok {
+		program_budget := disk_budget_of(file, name, disk_programs)
+		program, status = system.program_start(file, name, grants, random.values_with_seed(&program_generator, values), program_budget, mappings[:mapping_count], nil, load_source(), load_error, disk_programs)
+		if status == .No_Budget {
+			budget_refusal_log(name, program_budget, disk_programs, "the disk programs")
+		}
+	}
 	if status != .Ok {
 		release(slot) // The compositor forgets the ring.
 		return status

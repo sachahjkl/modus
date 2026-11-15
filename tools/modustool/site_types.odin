@@ -244,6 +244,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"module", "Record", type_info_of(module.Record)},
 		{"module", "Field", type_info_of(module.Field)},
 		{"module", "Documentation", type_info_of(module.Documentation)},
+		{"module", "Budget_Request", type_info_of(module.Budget_Request)},
 		{"module", "Error", type_info_of(module.Error)},
 		{"module", "Bound_Import", type_info_of(module.Bound_Import)},
 		{"module", "Replacement", type_info_of(module.Replacement)},

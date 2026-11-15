@@ -836,9 +836,11 @@ source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[
 //   source:   where the loader finds the imports, and the replacements that
 //             the caller gives to the program.
 //   error:    when the load fails, the record of the failure.
+//   from_budget: the budget that pays `amounts`, with the right Spend; 0:
+//             the budget of this program.
 // The module is at PROGRAM_BASE, its imports after it.
 // The program stops when the last handle to it closes.
-program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil) -> (program: Handle, status: Status) {
+program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0) -> (program: Handle, status: Status) {
 	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 {
 		return 0, .Bad_Operation
 	}
@@ -860,7 +862,7 @@ program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	// The program holds the one handle to its budget: when the program
 	// stops, the budget ends.
 	budget: Handle
-	budget, status = budget_create(amounts)
+	budget, status = budget_create(amounts, from_budget)
 	if status != .Ok {
 		return 0, status
 	}

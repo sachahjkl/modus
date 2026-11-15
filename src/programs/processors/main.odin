@@ -43,6 +43,10 @@ import op "modus:contract/operation"
 import "modus:support/system"
 import "base:intrinsics"
 
+// The amounts that the root service gave it by its name before its module
+// stated a request: no part is counted yet.
+MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 1, threads = 9}
+
 PICTURE_WIDTH :: 448
 PICTURE_HEIGHT :: 320
 MARGIN :: 12

@@ -110,12 +110,12 @@ DEBUG_TARGET_SOURCE_FILE :: PROGRAM_SOURCES + "debug_target/main.odin"
 // file, a volatile store. The compiler gives
 // the load of the first statement and the store one row of the line table,
 // with this line. A change of that file above the procedure changes it.
-DEBUG_TARGET_LINE_OF_THE_STORE :: "79"
+DEBUG_TARGET_LINE_OF_THE_STORE :: "82"
 // The line of count_rounds that calls add_step, and the line after it: the
 // place of a step over a call. A change of that file above them changes
 // them.
-DEBUG_TARGET_LINE_OF_THE_CALL :: "98"
-DEBUG_TARGET_LINE_AFTER_THE_CALL :: "99"
+DEBUG_TARGET_LINE_OF_THE_CALL :: "101"
+DEBUG_TARGET_LINE_AFTER_THE_CALL :: "102"
 DEBUG_TARGET_TEXT_OF_THE_STORE :: "\tintrinsics.volatile_store(sum, before + step)"
 
 DEBUG_TARGET_RUNS :: "debug_target: 64 more rounds ran, so the program is not held: as it must"

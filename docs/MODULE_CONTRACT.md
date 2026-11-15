@@ -65,7 +65,8 @@ A module is one file that holds its code and everything needed to use it: what i
 | table directory    |  one entry per table: offset, count, record size
 +--------------------+
 | flat tables        |  segments, imports, slots, exports, rebases,
-|                    |  functions, strings, documentation, records, fields
+|                    |  functions, strings, documentation, records, fields,
+|                    |  budget
 +--------------------+
 | segment data       |  code, read-only data, data; each segment on a page
 +--------------------+
@@ -113,6 +114,69 @@ The build takes the documentation from the comments of the source: the comment b
 `manual.described(words)` compares its words with the line of help and with the documentation text. The text keeps its marks: a word between two marks is found, and two words with a mark between them are not.
 
 The model is the BTF format of Linux, changed so that all records have a fixed size. [Types §5]
+
+### The budget that a module asks for
+
+The table `Budget` holds one record at index 1, `module.Budget_Request` (24 bytes): the pages, the programs and the threads that the module asks for its program. It is a request, never a grant: the starter of the program decides. No loader reads it.
+
+| Part | What it counts |
+|---|---|
+| `pages` | The pages of memory: the modules, the stacks, the pictures and the working memory of the program |
+| `programs` | The program itself, and each child that runs at one time |
+| `threads` | Each thread that runs at one time, the first one included, and the threads of the children |
+
+- **No table.** A module with no table `Budget` asks for the least budget of its starter.
+- **A part that is 0** asks for the least budget of that part. So a record of an older, shorter size reads its missing parts as the least, by the rule of the table directory.
+- **Processor time and log records are not in the request.** They are limits that protect the other programs: the starter sets them.
+
+**The source states it** as one constant, with a comment that gives the reasons of the amounts:
+
+```odin
+// Its loop, and the thread that makes the lists of the palette.
+MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 2}
+```
+
+The step that describes the exports reads the constant from the tree of the parser, and the conversion writes the table (section "The steps of one module, as implemented"). The type can also be on the declaration: `MODULE_BUDGET : system.Budget_Request : {pages = 4096}`. Each part is an integer literal from 1, decimal or with the prefix `0x`, `0o` or `0b`, with `_` between digits if the source wants; a part left out is 0. The tool refuses another form, and its message says why: no comment, a variable, an expression, a name of a constant, a part of 0, a part that the record does not have, a part two times, a second constant in the package. A declaration of `MODULE_BUDGET` that the tool would not read is refused too, never read as no request: inside a `when` (the tool reads the source with no setting of the build), or with other names in one declaration. The compiler checks the type and the names of the fields, because the constant has the type of the record. `modustool test descriptions` compares the table of each module with its source.
+
+**The rule of a starter** is `system.budget_decide`: for each part, a part of 0 takes the least budget; a part up to the largest budget of the starter is accepted; a part above it gets the largest budget. The root service applies it with its own amounts:
+
+| Amount | Pages | Programs | Threads |
+|---|---|---|---|
+| The least budget | 2048 | 1 | 1 |
+| The largest budget of a program | 16384 | 8 | 32 |
+
+Each program gets one processor of time for each of its threads, and 1000 log records in each second. The root service keeps a table of budget exceptions (`budget_exceptions` in `src/programs/root/budgets.odin`): a row names one program of the boot image, gives it another largest budget or other limits in time, and holds its reason. A disk program and a module of another project have no row.
+
+**A disk program** is paid by one budget that the root service makes from its own at the first disk program, and keeps (`src/library/support/disk_program/budget.odin`):
+
+| Amount | Pages | Programs | Threads | Processor | Log records |
+|---|---|---|---|---|---|
+| The budget of all disk programs | 16384 | 4 | 16 | two processors | 1000 in each second |
+| The largest budget of one disk program | 8192 | 1 | 4 | one processor for each thread | 1000 in each second |
+
+A file chooses its own request, so the sum of all disk programs has one bound: the programs of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk program holds no grant that starts a program, so one program slot loses nothing. The log has one line when the budget of the disk programs is made:
+
+```
+root: the disk programs share one budget of 64 MiB, 4 programs and 16 threads
+```
+
+A request above the largest budget starts the program with the largest budget, and the log has one line for each part:
+
+```
+root: big asks for 50000 pages, and a program gets at most 16384: it starts with 16384
+root: visitor asks for 8 threads, and a disk program gets at most 4: it starts with 4
+```
+
+A start that fails for the budget names the part that is short, and the budget that pays:
+
+```
+root: cannot start locks: it gets 9216 pages, and the budget of this service holds 4000
+root: cannot start visitor: it gets 1 programs, and the budget of the disk programs holds 0
+```
+
+When the budget of the root service holds each part, the budget of the program was too small for its own load, and the line says that the module asks for too little.
+
+The design and the refused forms: `src/md/features/module_budget_request.md`.
 
 ## 2. Loading
 
@@ -207,7 +271,7 @@ The root service does not read the hash of the entry: the hash of an object diff
 
 One load runs at a time: a second command during a load is refused (`Busy`).
 
-**What the program receives.** A program of the boot image has its grants, its budget and the limit of its store by its name, in the tables of the root service. A disk program has no row there. It receives the log with the right Write, a window, and the pages that each program with a window maps read-only (the date, the settings, the glyph caches). It receives no grant: no root ring, no handle of the machine, no boot image, no store, no endpoint, no service ring. Its budget is the budget of a program that no table names: 2048 pages, one program, one thread. No table of the file gives a grant.
+**What the program receives.** A program of the boot image has its grants and the limit of its store by its name, in the tables of the root service. A disk program has no row there. It receives the log with the right Write, a window, and the pages that each program with a window maps read-only (the date, the settings, the glyph caches). It receives no grant: no root ring, no handle of the machine, no boot image, no store, no endpoint, no service ring. Its budget is the budget that its file asks for, up to the largest budget of a disk program (8192 pages, one program, 4 threads), paid by the one budget of all disk programs; a file with no table `Budget` gets the least budget, 2048 pages, one program, one thread (section 1, "The budget that a module asks for"). Its name selects no budget exception. No table of the file gives a grant.
 
 **A name gives nothing.** The root service refuses, before any read, a name that the grant table gives a grant, a name of a program of the system, and a name of a module of the boot image:
 
@@ -223,7 +287,7 @@ Without this rule a file named `notes` would start with the store of `notes`.
 
 **The file on the disk.** `modustool` writes a data disk that holds the store `programs` (`TOOLS.md`, "The disk of the disk programs"), and prints the hash of each file.
 
-Not built: a command that gives a disk program a grant or a larger budget; a command that stores a file that came from the network; an import from the store; a list of the entries of the store with their hashes; a disk program that is a service.
+Not built: a command that gives a disk program a grant or a budget above the largest budget of a disk program; a command that stores a file that came from the network; an import from the store; a list of the entries of the store with their hashes; a disk program that is a service.
 
 ## 3. Static is dynamic
 
@@ -795,9 +859,9 @@ The tool writes `build/<name>.module` and `build/<name>.debug` in the folder of 
 | 1. Compile | `odin build` with `-target:freestanding_amd64_sysv -build-mode:llvm-ir -reloc-mode:pic -no-entry-point -default-to-nil-allocator -o:speed -vet -debug-info:same-code -collection:modus=src/library` | One LLVM IR file, `<name>.ll` |
 | 2. Make the object | `llc -O3 -misched-topdown --frame-pointer=all -relocation-model=pic --function-sections --data-sections` | One ELF object, `objects/<name>.o` |
 | 3. Assemble | `nasm -f elf64` | One object for `src/runtime/memory.asm`, one for each `.asm` file of the source folder, and for a module of the boot image one for each `.asm` file of `src/library/support/system` |
-| 4. Describe | The tool (`describe_package`) | The exports and their descriptions, from the source; a version script that makes only the exports visible |
+| 4. Describe | The tool (`describe_package`) | The exports and their descriptions, and the budget that the module asks for (the constant `MODULE_BUDGET`), from the source; a version script that makes only the exports visible |
 | 5. Link | `ld.lld -shared -nostdlib -Bsymbolic --gc-sections --build-id=none -z now -z relro` | One ELF file, `linked.elf` |
-| 6. Convert | The tool (`import_declarations_check`, then `convert`) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module, `build/modules/<name>.module`, with the hashes of its imports in its import table. A segment that is read-only after the load and that no loader writes becomes a constant segment (section 2, "Shared code"). A library module that still has a segment that is read-only after the load is refused (section "A library as a module") |
+| 6. Convert | The tool (`import_declarations_check`, then `convert`) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module, `build/modules/<name>.module`, with the hashes of its imports in its import table, and the table `Budget` when the source states a request. A segment that is read-only after the load and that no loader writes becomes a constant segment (section 2, "Shared code"). A library module that still has a segment that is read-only after the load is refused (section "A library as a module") |
 | 7. Write the debug object | The tool | `build/modules/<name>.debug` (section "Debug information") |
 
 Why each choice:

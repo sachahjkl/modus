@@ -48,6 +48,13 @@ import "core:strings"
 //     sentence, without the name of the export.
 //   - The export "entry" has one parameter, an address. Its form is fixed by
 //     the contract, and its description has no parameter.
+//   - The constant MODULE_BUDGET, at most one in the package, is the budget
+//     that the module asks for: system.Budget_Request{pages = N, programs =
+//     N, threads = N}, or MODULE_BUDGET : system.Budget_Request : {...};
+//     each part an integer literal from 1, decimal or with a prefix 0x, 0o
+//     or 0b; a part left out 0 (the least); a comment before it that gives
+//     the reasons; at the top level of a file, alone in its declaration
+//     (budget_request_read).
 // Another type is an error: the tool does not guess a description.
 
 ENTRY_NAME :: "entry"
@@ -72,6 +79,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 		}
 		source := read_file(path) or_return
 		file := parse_source(path, string(source), &state) or_return
+		budget_request_read(file, &description.budget) or_return
 		append(&files, file)
 		if markdown := markdown_of(file.docs); description.markdown == "" {
 			description.markdown = markdown
@@ -706,6 +714,166 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		append(list, description)
 	}
 	return true
+}
+
+// The constant of a source that states the budget that its module asks for
+// (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
+BUDGET_REQUEST_NAME :: "MODULE_BUDGET"
+
+// budget_request_read reads the constant BUDGET_REQUEST_NAME of one parsed
+// file into budget. A file with no such constant leaves budget as it is.
+// The tool reads integer literals only, so the number of the table is the
+// number of the source; the compiler checks the type and the names of the
+// fields, because the constant has the type of the record.
+budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> bool {
+	path := file.fullpath
+	// An argument of the format, not a part of it: its braces are text.
+	FORM :: "the form is " + BUDGET_REQUEST_NAME + " :: system.Budget_Request{pages = N, programs = N, threads = N}"
+	for statement in file.decls {
+		// A declaration inside a `when`: the tool reads the source with no
+		// setting of the build, so it cannot know the branch that the
+		// compiler takes, and it never gives the least budget in silence.
+		if when_statement, is_when := statement.derived.(^ast.When_Stmt); is_when {
+			if found := budget_request_in_when(when_statement); found != nil {
+				return describe_fail(path, found, "%s is inside a `when`: the tool reads the source with no setting of the build and cannot know the branch that the compiler takes. Declare it at the top level of a file, with one value", BUDGET_REQUEST_NAME)
+			}
+			continue
+		}
+		declaration, is_value := statement.derived.(^ast.Value_Decl)
+		if !is_value || !declaration_names(declaration, BUDGET_REQUEST_NAME) {
+			continue
+		}
+		if len(declaration.names) != 1 {
+			return describe_fail(path, declaration, "%s is declared with other names: declare it alone, so that the tool reads one value", BUDGET_REQUEST_NAME)
+		}
+		if budget.stated {
+			return describe_fail(path, declaration, "%s is stated two times in the package: a module asks for one budget", BUDGET_REQUEST_NAME)
+		}
+		if declaration.is_mutable {
+			return describe_fail(path, declaration, "%s is a variable: it is a constant (::), so that the program cannot change the request that the build wrote; %s", BUDGET_REQUEST_NAME, FORM)
+		}
+		if len(declaration.values) != 1 {
+			return describe_fail(path, declaration, "%s has no value: %s", BUDGET_REQUEST_NAME, FORM)
+		}
+		literal, is_literal := declaration.values[0].derived.(^ast.Comp_Lit)
+		if !is_literal {
+			return describe_fail(path, declaration, "%s is not a record literal: the tool reads the parts of a literal and evaluates no expression; %s", BUDGET_REQUEST_NAME, FORM)
+		}
+		// The type is on the literal, or on the declaration in the form
+		// `MODULE_BUDGET : system.Budget_Request : {...}`.
+		types := [2]^ast.Expr{literal.type, declaration.type}
+		typed := false
+		for type in types {
+			if type == nil {
+				continue
+			}
+			typed = true
+			type_name := ""
+			#partial switch named in type.derived {
+			case ^ast.Ident:
+				type_name = named.name
+			case ^ast.Selector_Expr:
+				type_name = named.field.name
+			}
+			if type_name != "Budget_Request" {
+				return describe_fail(path, declaration, "%s has the type %s: its type is system.Budget_Request, the record of the table Budget, so that the compiler checks the names of its parts", BUDGET_REQUEST_NAME, type_text(file.src, type))
+			}
+		}
+		if !typed {
+			return describe_fail(path, declaration, "%s has no type: give it the type system.Budget_Request, so that the compiler checks the names of its parts; %s", BUDGET_REQUEST_NAME, FORM)
+		}
+		request: module.Budget_Request
+		for element in literal.elems {
+			field_value, is_field := element.derived.(^ast.Field_Value)
+			field: ^ast.Ident
+			if is_field {
+				field, _ = field_value.field.derived.(^ast.Ident)
+			}
+			if field == nil {
+				return describe_fail(path, element, "%s: each part has its name (pages = N), so that a part never takes the place of another", BUDGET_REQUEST_NAME)
+			}
+			number, is_number := field_value.value.derived.(^ast.Basic_Lit)
+			if !is_number {
+				if constant, is_name := field_value.value.derived.(^ast.Ident); is_name {
+					return describe_fail(path, element, "%s: the part %s is the name %s: write its number; the tool reads integer literals and evaluates no name", BUDGET_REQUEST_NAME, field.name, constant.name)
+				}
+				return describe_fail(path, element, "%s: the part %s is an expression: write one integer literal; the tool evaluates no expression, so the number of the file is the number of the source", BUDGET_REQUEST_NAME, field.name)
+			}
+			if number.tok.kind != .Integer {
+				return describe_fail(path, element, "%s: the part %s is %s, which is not an integer: a part counts pages, programs or threads", BUDGET_REQUEST_NAME, field.name, number.tok.text)
+			}
+			// A separator of digits, as in 41_984, is no digit. A prefix
+			// 0x, 0o or 0b gives the base.
+			digits, _ := strings.remove_all(number.tok.text, "_", context.temp_allocator)
+			value, parsed := strconv.parse_u64_maybe_prefixed(digits)
+			if !parsed {
+				return describe_fail(path, element, "%s: the part %s is %s, which is not an integer of 64 bits that the tool can read", BUDGET_REQUEST_NAME, field.name, number.tok.text)
+			}
+			if value == 0 {
+				return describe_fail(path, element, "%s: the part %s is 0: leave the part out to ask for the least budget of that part", BUDGET_REQUEST_NAME, field.name)
+			}
+			place: ^u64
+			switch field.name {
+			case "pages":
+				place = &request.pages
+			case "programs":
+				place = &request.programs
+			case "threads":
+				place = &request.threads
+			case:
+				return describe_fail(path, element, "%s has no part %s: its parts are pages, programs and threads; processor time and log records are limits that the starter sets", BUDGET_REQUEST_NAME, field.name)
+			}
+			if place^ != 0 {
+				return describe_fail(path, element, "%s states the part %s two times", BUDGET_REQUEST_NAME, field.name)
+			}
+			place^ = value
+		}
+		comment := markdown_of(declaration.docs)
+		if comment == "" {
+			return describe_fail(path, declaration, "%s has no comment: the comment before it gives the reason of each amount", BUDGET_REQUEST_NAME)
+		}
+		budget^ = {stated = true, request = request, comment = comment, file = path, line = declaration.pos.line}
+	}
+	return true
+}
+
+// declaration_names says if one of the names of a declaration is name.
+@(private = "file")
+declaration_names :: proc(declaration: ^ast.Value_Decl, name: string) -> bool {
+	for expression in declaration.names {
+		if identifier, is_identifier := expression.derived.(^ast.Ident); is_identifier && identifier.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// budget_request_in_when gives a declaration of BUDGET_REQUEST_NAME in a
+// `when` of the top level of a file, in its body or in its else, at any
+// depth of blocks and of `when`s; nil when there is none.
+@(private = "file")
+budget_request_in_when :: proc(statement: ^ast.Stmt) -> ^ast.Value_Decl {
+	if statement == nil {
+		return nil
+	}
+	#partial switch item in statement.derived {
+	case ^ast.Value_Decl:
+		if declaration_names(item, BUDGET_REQUEST_NAME) {
+			return item
+		}
+	case ^ast.When_Stmt:
+		if found := budget_request_in_when(item.body); found != nil {
+			return found
+		}
+		return budget_request_in_when(item.else_stmt)
+	case ^ast.Block_Stmt:
+		for inner in item.stmts {
+			if found := budget_request_in_when(inner); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
 }
 
 // markdown_of gives the Markdown of a comment, as its author wrote it: the
