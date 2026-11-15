@@ -27,6 +27,10 @@
 //   table of principal 0.
 // - `PROGRAMS_BUDGET`, `LARGEST_BUDGET` (budget.odin): the one budget that
 //   pays all disk programs, and the most that one of them gets.
+// - `Import_Scan`, `scan_want`, `scan_entry_add`, `scan_next`,
+//   `scan_read_done`, `scan_skip` (import_scan.odin): the account of the
+//   import scan that finds an import of a disk program in the store
+//   `programs` by the hash of its bytes, with its bounds.
 //
 // See [disk program](term:disk-program).
 package disk_program

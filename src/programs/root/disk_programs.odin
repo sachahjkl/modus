@@ -10,7 +10,9 @@ package root
 // grant. The storage service is a program that this service started: it is
 // not trusted to choose what runs, and it is not waited for. The load is a
 // state of the loop of this service (disk_load_step), so each other ring is
-// served while the bytes come.
+// served while the bytes come. An import that the boot image does not hold
+// is found in the same store by the hash of its bytes, in more states of
+// the same load (import_scan.odin).
 //
 // The disk grant table of each principal binds a nickname, the name of the
 // entry, to the hash of one file, with the grants of that file
@@ -39,6 +41,9 @@ Disk_Load_Stage :: enum u8 {
 	Idle, // No load runs.
 	Size, // The answer of the storage service to the question of the size of the object.
 	Bytes, // The next bytes of the object.
+	List, // A page of the entries of the root tree of the store, for the import scan (import_scan.odin).
+	Import_Size, // The size of the entry that the import scan reads.
+	Import_Bytes, // The next bytes of that entry.
 }
 
 // The one load from the disk that runs. A second command during a load is
@@ -55,7 +60,7 @@ Disk_Load :: struct {
 	connection:     ^Connection, // The connection of this service to the storage service. nil: it ended.
 	client:         storage.Client, // The call ring and the call region of that connection, mapped here.
 	sent:           storage.Sent_Call, // The call whose answer this service waits for.
-	arguments:      [3]isolated.Argument, // The arguments of that call.
+	arguments:      [4]isolated.Argument, // The arguments of that call.
 	argument_count: int,
 	read:           disk_program.Read, // The size of the file, and the bytes that came.
 	memory:         system.Handle, // The memory of the file, from the budget of this service. 0: none yet.
@@ -266,7 +271,8 @@ disk_load_ask :: proc "contextless" (export: string, offset: u64, with_offset: b
 }
 
 // disk_load_end ends the load: this service gives back what it held for it
-// (the connection, the mappings, the memory of the file), and the asker
+// (the connection, the mappings, the memory of the file and of the files
+// of the import scan), and the asker
 // receives the completion. It gives the values back, for a caller that
 // sends the completion itself.
 disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [7]u64 {
@@ -293,6 +299,7 @@ disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [
 	if load.memory != 0 {
 		system.close(load.memory)
 	}
+	disk_imports_end()
 	if load.asker != nil && load.asker.program != 0 && load.asker.requests.head != nil {
 		system.send(&load.asker.requests.completions, ring.Record{kind = u32(status), tag = load.tag, values = values})
 	}
@@ -342,6 +349,12 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 			return
 		}
 		system.wait_records(wait, &load.client.calls.completions)
+		return
+	}
+	if status == .Failed && value == storage.ERROR_ABSENT && (load.stage == .Import_Size || load.stage == .Import_Bytes) {
+		// An entry of the list that left the store since: the scan goes on
+		// without it.
+		disk_import_entry_skip(wait)
 		return
 	}
 	if status == .Failed && value == storage.ERROR_ABSENT {
@@ -418,7 +431,13 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 			system.wait_records(wait, &load.client.calls.completions)
 			return
 		}
-		disk_load_complete()
+		disk_load_complete(wait)
+	case .List:
+		disk_import_list_answer(value, wait)
+	case .Import_Size:
+		disk_import_size_answer(value, wait)
+	case .Import_Bytes:
+		disk_import_bytes_answer(text, wait)
 	}
 }
 
@@ -428,11 +447,12 @@ disk_load_deadline :: proc "contextless" () -> u64 {
 	return disk_load.stage == .Idle ? system.WAIT_FOREVER : disk_load.deadline
 }
 
-// disk_load_complete checks the bytes of the file that came whole, and
-// starts them. The hash is computed on the bytes that this service holds:
-// the hash of the entry of the storage service is not read. So the storage
-// service gives the bytes that the command names, or nothing runs.
-disk_load_complete :: proc "contextless" () {
+// disk_load_complete checks the bytes of the file that came whole, then
+// finds its imports that the boot image does not hold (import_scan.odin).
+// The hash is computed on the bytes that this service holds: the hash of
+// the entry of the storage service is not read. So the storage service
+// gives the bytes that the command names, or nothing runs.
+disk_load_complete :: proc "contextless" (wait: ^system.Wait) {
 	load := &disk_load
 	kind := u32(system.Root_Command.Start_From_Disk)
 	name := string(load.name[:load.name_length])
@@ -443,6 +463,16 @@ disk_load_complete :: proc "contextless" () {
 		disk_load_end(.Bad_Operation, disk_refused(name, errors.ring_fail(kind, .Not_Authentic, .None, 2, i64(head[0])), "its bytes have the hash ", system.Hash{found[:]}, ", and the hash asked is ", system.Hash{asked[:]}))
 		return
 	}
+	disk_imports_begin(wait)
+}
+
+// disk_load_start starts the file whose bytes this service checked, with
+// the files of the store that the import scan kept beside the boot image.
+disk_load_start :: proc "contextless" () {
+	load := &disk_load
+	kind := u32(system.Root_Command.Start_From_Disk)
+	name := string(load.name[:load.name_length])
+	found := load.hash
 	principal := load.principal
 	// The grants are read now, not at the command: a change of the table
 	// during the load is the table of this start.
@@ -457,7 +487,7 @@ disk_load_complete :: proc "contextless" () {
 		return
 	}
 	load_error: module.Load_Error
-	status := disk_program_run(name, load.bytes, found, principal, granted, &load_error)
+	status := disk_program_run(name, load.bytes, found, principal, granted, disk_imports_files(), &load_error)
 	if status != .Ok {
 		if load_error.stage != .None {
 			buffer: [512]u8
@@ -493,8 +523,10 @@ disk_load_complete :: proc "contextless" () {
 // grant table of its principal: with the grant store, a connection to the
 // store of its nickname, in its context as a program of the boot image
 // receives its private store. Its modules are copies that its own budget
-// pays: it maps no prepared module of this service.
-disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_program.HASH_SIZE]u8, principal: u64, disk_grants: disk_program.Disk_Grants, load_error: ^module.Load_Error) -> system.Status {
+// pays: it maps no prepared module of this service. store_files are the
+// files of the store that the import scan kept: its load source holds them
+// beside the boot image.
+disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_program.HASH_SIZE]u8, principal: u64, disk_grants: disk_program.Disk_Grants, store_files: []system.Source_File, load_error: ^module.Load_Error) -> system.Status {
 	// The storage service runs before a slot is chosen: a start of it
 	// takes the first free slot.
 	storage_service: ^Started
@@ -587,7 +619,9 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	disk_programs, status = disk_programs_budget_get()
 	if status == .Ok {
 		program_budget := disk_budget_of(file, name, disk_programs)
-		program, status = system.program_start(file, name, grants, random.values_with_seed(&program_generator, values), program_budget, mappings[:mapping_count], nil, load_source(), load_error, disk_programs)
+		source := load_source()
+		source.files = store_files
+		program, status = system.program_start(file, name, grants, random.values_with_seed(&program_generator, values), program_budget, mappings[:mapping_count], nil, source, load_error, disk_programs)
 		if status == .No_Budget {
 			budget_refusal_log(name, program_budget, disk_programs, "the disk programs")
 		}
