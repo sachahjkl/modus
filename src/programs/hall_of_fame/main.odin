@@ -74,7 +74,7 @@ Person :: struct {
 @(rodata)
 people := [?]Person {
 	{name = "Casey Muratori", work = "Handmade Hero, Molly Rocket, and the spread of the immediate-mode interface."},
-	{name = "Jonathan Blow", work = "Braid, The Witness, and the language Jai.", portrait = .Jonathan_Blow, credit_author = "The producers of the video", credit_license = "All rights reserved by its producers; used as a credited frame"},
+	{name = "Jonathan Blow", work = "Braid, The Witness, Order of the Sinking Star, and the language Jai.", portrait = .Jonathan_Blow, credit_author = "The producers of the video", credit_license = "All rights reserved by its producers; used as a credited frame"},
 	{name = "United States Graphics Company", work = "Engineering graphics, and the typeface Berkeley Mono."},
 	{name = "ThePrimeagen (Michael Paulson)", work = "Videos and streams about programming.", portrait = .Theprimeagen, credit_author = "Tessa Bury", credit_license = "CC BY 4.0"},
 	{name = "Ginger Bill (Bill Hall)", work = "Odin, the language that modus is written in."},
