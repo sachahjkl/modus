@@ -555,10 +555,12 @@ Operation :: enum u32 {
 	//
 	// 1. the handle;
 	// 2. for `Message`: the address that the device writes: the remappable form of the entry with
-	//    interrupt remapping in use, else the compatible form; for `Memory`: the `Device_Memory_Facts` of
-	//    the device whose base address register starts at `a` (empty with no IOMMU in use);
-	// 3. for `Message` only: the value that the device writes there: 0 in the remappable form, else the
-	//    vector.
+	//    interrupt remapping of Intel in use, else the compatible form of the first processor; for
+	//    `Memory`: the `Device_Memory_Facts` of the device whose base address register starts at `a`
+	//    (empty with no IOMMU in use);
+	// 3. for `Message` only: the value that the device writes there: 0 in the remappable form; the
+	//    index of the entry in the interrupt table of the device with interrupt remapping of AMD in use;
+	//    else the vector.
 	//
 	// **Statuses**
 	//

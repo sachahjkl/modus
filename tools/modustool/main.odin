@@ -684,7 +684,7 @@ run_machine :: proc(args: []string) -> int {
 }
 
 // The parts of the machine test that `test <part>` runs alone.
-test_parts := [?]string{"main", "network", "power", "hierarchy", "ranges", "disk_programs", "tcp", "quic", "quic-real", "crypto", "random", "shortage", "extended_state", "return_fault", "fault_ring", "debugger", "kernel_events", "iommu", "guest", "principals", "outside_module", "trusted_boot"}
+test_parts := [?]string{"main", "network", "power", "hierarchy", "ranges", "disk_programs", "tcp", "quic", "quic-real", "crypto", "random", "shortage", "extended_state", "return_fault", "fault_ring", "debugger", "kernel_events", "iommu", "iommu_amd", "guest", "principals", "outside_module", "trusted_boot"}
 
 // test_arguments_problem gives the refusal of the arguments of `test`, or
 // "" when they name the whole test, one part, or `trusted_boot tpm`. A word
@@ -806,6 +806,10 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "iommu" {
 		return iommu_tests_run() ? 0 : EXIT_FAILURE
 	}
+	// `test iommu_amd`: the machine with the IOMMU of AMD only.
+	if len(args) == 1 && args[0] == "iommu_amd" {
+		return iommu_amd_tests_run() ? 0 : EXIT_FAILURE
+	}
 	// `test guest`: the machine of the guest only.
 	if len(args) == 1 && args[0] == "guest" {
 		return guest_tests_run() ? 0 : EXIT_FAILURE
@@ -835,7 +839,7 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "quic-real" {
 		return quic_real_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !debugger_tests_run() || !kernel_events_tests_run() || !iommu_tests_run() || !guest_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !hierarchy_tests_run() || !ranges_tests_run() || !disk_programs_tests_run() || !power_loss_run() || !power_loss_settings_run() || !power_loss_ranges_run() || !test_modules() || !test_descriptions() || !test_debug_objects() || !outside_module_examples_check() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !debugger_tests_run() || !kernel_events_tests_run() || !iommu_tests_run() || !iommu_amd_tests_run() || !guest_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !hierarchy_tests_run() || !ranges_tests_run() || !disk_programs_tests_run() || !power_loss_run() || !power_loss_settings_run() || !power_loss_ranges_run() || !test_modules() || !test_descriptions() || !test_debug_objects() || !outside_module_examples_check() {
 		return EXIT_FAILURE
 	}
 	fmt.println("modustool: all tests passed")
@@ -1092,7 +1096,15 @@ processor_models := [Processor_Model]string {
 // The network device goes to the peer (`-netdev dgram`), or, when forward
 // has a port, to QEMU user networking with its TCP (web_host.odin).
 // processor gives the processor of the machine (Processor_Model).
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu := false) -> (command: []string, ok: bool) {
+// The IOMMU of a machine: none, the unit of Intel, or the unit of AMD
+// (src/md/infrastructure/iommu.md).
+Machine_Iommu :: enum {
+	None,
+	Intel,
+	Amd,
+}
+
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None) -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -1147,7 +1159,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// the processor: its variables are written only there. QEMU refuses
 		// interrupt remapping when KVM holds the whole interrupt controller:
 		// the machine with the IOMMU splits it. QEMU accepts both together.
-		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu ? ",kernel-irqchip=split" : ""}, context.temp_allocator),
+		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu != .None ? ",kernel-irqchip=split" : ""}, context.temp_allocator),
 		"-accel",
 		"kvm",
 		"-accel",
@@ -1169,14 +1181,21 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-netdev",
 		network_device,
 	)
-	// The machine of the part iommu: the remapping unit of Intel, before
-	// each device of PCI, which takes its place behind it, with interrupt
-	// remapping (src/md/infrastructure/iommu.md, "Interrupt remapping").
-	// Each virtio device sends its accesses through the unit only with
-	// iommu_platform, which a device with the legacy interface refuses.
+	// The machines of the parts iommu and iommu_amd: the remapping unit of
+	// Intel or of AMD, before each device of PCI, which takes its place
+	// behind it, with interrupt remapping (src/md/infrastructure/iommu.md,
+	// "Interrupt remapping"). Without dma-remap, the unit of AMD translates
+	// no access of an emulated device. Each virtio device sends its accesses
+	// through the unit only with iommu_platform, which a device with the
+	// legacy interface refuses.
 	virtio_iommu := ""
-	if iommu {
+	switch iommu {
+	case .None:
+	case .Intel:
 		append(&list, "-device", "intel-iommu,intremap=on")
+		virtio_iommu = ",iommu_platform=on"
+	case .Amd:
+		append(&list, "-device", "amd-iommu,dma-remap=on,intremap=on")
 		virtio_iommu = ",iommu_platform=on"
 	}
 	if paused {
@@ -1205,7 +1224,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// and a firmware with a network stack can try a network boot first.
 		// On the machine with the IOMMU, the boot disk has the modern
 		// interface only, so that it too goes through the unit.
-		iommu ? "virtio-blk-pci,drive=boot,bootindex=0,disable-legacy=on,iommu_platform=on" : "virtio-blk-pci,drive=boot,bootindex=0",
+		iommu != .None ? "virtio-blk-pci,drive=boot,bootindex=0,disable-legacy=on,iommu_platform=on" : "virtio-blk-pci,drive=boot,bootindex=0",
 		"-drive",
 		strings.concatenate({"if=none,id=data,format=raw,file=", data_disk}, context.temp_allocator),
 		"-device",
@@ -1213,7 +1232,12 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-drive",
 		"if=none,id=scratch,format=raw,file=" + SCRATCH_DISK,
 	)
-	if iommu {
+	// The disk of the measures is on bus 0 on the machine of AMD: QEMU 10
+	// records the device of a page fault of AMD-Vi by its device and its
+	// function only, with no bus, so the line of a DMA fault names the
+	// device only on bus 0 (src/md/infrastructure/iommu.md, "Two vendors
+	// behind one kernel side").
+	if iommu == .Intel {
 		// The disk of the measures behind a root port of PCI Express, on the
 		// bus that the firmware gives the port: the kernel must give it a
 		// context table of that bus (src/md/infrastructure/iommu.md,
@@ -1226,7 +1250,12 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 			fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,bus=scratch_port,addr=0x0%s", virtio_iommu),
 		)
 	} else {
-		append(&list, "-device", fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x", pci.SCRATCH_DISK_DEVICE))
+		// A virtio device of QEMU with no iommu_platform reads and writes
+		// the memory of the machine directly, past the unit, while its
+		// message interrupts still go through the unit: on the machine with
+		// the IOMMU of AMD the disk of the measures needs it as every other
+		// disk does. With no IOMMU, virtio_iommu is empty.
+		append(&list, "-device", fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x%s", pci.SCRATCH_DISK_DEVICE, virtio_iommu))
 	}
 	if firmware != .Usual {
 		if test_output == "" {
