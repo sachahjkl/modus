@@ -21,73 +21,91 @@ DMAR_HOST_ADDRESS_WIDTH :: 36
 
 // The kinds of a remapping structure of the table DMAR.
 STRUCTURE_UNIT :: 0 // A remapping unit (DRHD): its registers and its devices.
-STRUCTURE_RESERVED_MEMORY :: 1 // A range of memory that a device uses for the firmware (RMRR).
-UNIT_SIZE :: 16 // The bytes of a unit before its list of devices.
+STRUCTURE_RESERVED_MEMORY :: 1 // A reserved memory range (RMRR): memory that a device keeps using for the firmware.
+UNIT_SIZE :: 16 // The bytes of a unit before its device scopes: the kind, the length, the flags, a reserved byte, the segment, the base of its registers.
 UNIT_INCLUDES_EVERY_DEVICE :: 1 // The flag INCLUDE_PCI_ALL of a unit: it covers each device of its segment that no other unit lists.
+// The bytes of a reserved memory range before its device scopes: the kind,
+// the length, 2 reserved bytes, the segment, the first byte, the last byte.
+RESERVED_MEMORY_SIZE :: 24
 
-// A device scope of a unit: its kind, its length, 2 reserved bytes, the
-// enumeration identifier, the start bus, then the path, one pair of the
-// device and the function for each bridge down to the device.
+// A device scope: its kind, its length, 2 reserved bytes, the enumeration
+// identifier, the start bus, then the path, one pair of the device and the
+// function for each bridge down to the device.
 SCOPE_HEADER_SIZE :: 6
 SCOPE_ENDPOINT :: 1 // A function of PCI.
 SCOPE_BRIDGE :: 2 // A bridge of PCI: the function of the bridge, and the buses behind it.
 
-// The functions of bus 0: 32 devices of 8 functions, one bit each, at the
-// index device * 8 + function.
-FUNCTIONS_OF_BUS_0 :: 256
+// The bounds of what the kernel keeps of a table DMAR. A table past one of
+// them leaves the IOMMU off: the kernel would otherwise program a part of
+// the units, and a device of a unit that is off can write the tables of the
+// others.
+UNIT_CAPACITY :: 4 // A machine of Intel has 2 or 3: one for its graphics device, one for every other device.
+RESERVED_RANGE_CAPACITY :: 8
+SCOPE_CAPACITY :: 64 // The scopes of the units and of the reserved ranges together.
+PATH_CAPACITY :: 4 // The pairs of a path: the bridges down to a device, plus the device.
+
+// A remapping unit as the table gives it.
+Unit :: struct {
+	register_base:         u64, // The physical address of its registers.
+	segment:               u16,
+	includes_every_device: bool, // INCLUDE_PCI_ALL: it covers each device of its segment that no other unit names.
+}
+
+// A reserved memory range: memory of the firmware that the devices of its
+// scopes read and write.
+Reserved_Range :: struct {
+	start: u64, // The first byte: a multiple of 4096.
+	end:   u64, // The byte after the last: a multiple of 4096.
+}
+
+// A device scope of a unit or of a reserved range, as the table gives it.
+// Only an endpoint and a bridge are kept: the other kinds (an interrupt
+// controller, a timer) name no requester of a DMA access.
+Scope :: struct {
+	owner:       u8, // The index of its unit, or of its reserved range.
+	reserved:    bool, // A scope of a reserved range; else of a unit.
+	bridge:      bool, // A bridge, and each bus behind it; else an endpoint.
+	start_bus:   u8,
+	path_length: u8, // 1 to PATH_CAPACITY.
+	path:        [PATH_CAPACITY][2]u8, // The device and the function of each pair.
+}
 
 // What the kernel found in the table DMAR.
 Dmar :: struct {
-	host_address_width: u32, // The bits of a physical address that a device can give.
-	register_base:      u64, // The physical address of the registers of the first unit.
-	unit_count:         u32,
-	reserved_memory_count: u32,
-	// The functions of bus 0 whose accesses pass through the unit. Another
-	// function reaches all memory: the unit does not see it.
-	covered:            [FUNCTIONS_OF_BUS_0 / 32]u32,
+	host_address_width:   u32, // The bits of a physical address that a device can give.
+	unit_count:           u32,
+	units:                [UNIT_CAPACITY]Unit,
+	reserved_range_count: u32,
+	reserved_ranges:      [RESERVED_RANGE_CAPACITY]Reserved_Range,
+	scope_count:          u32,
+	scopes:               [SCOPE_CAPACITY]Scope,
 }
 
-// dmar_covers says whether the unit translates the accesses of this
-// function of bus 0.
-dmar_covers :: proc "contextless" (dmar: Dmar, device, function: u32) -> bool {
-	index := (device & 31) * 8 + (function & 7)
-	return dmar.covered[index / 32] & (1 << (index % 32)) != 0
-}
-
-// covered_count gives the number of functions of bus 0 that the unit covers.
-covered_count :: proc "contextless" (dmar: Dmar) -> u32 {
-	count: u32
-	for word in dmar.covered {
-		for bit in u32(0) ..< 32 {
-			count += (word >> bit) & 1
-		}
-	}
-	return count
-}
-
-// Why the kernel does not use the units of a table DMAR. The kernel uses
-// one form: one unit of segment 0, that covers every device or lists the
-// functions that it covers, with no range of memory reserved for a device.
+// Why the kernel does not use the units of a table DMAR.
 Dmar_Problem :: enum u8 {
 	None,
 	Too_Short, // The table ends before its first structure.
-	Bad_Structure, // A structure has a length below its own header, or passes the end of the table.
+	Bad_Structure, // A structure or a scope has a wrong length, or a reserved range is not whole pages.
 	No_Unit, // No remapping unit.
-	Several_Units, // More than one unit: the kernel programs one.
-	Other_Segment, // The unit covers a segment of PCI other than 0.
-	Reserved_Memory, // A device needs a range of memory of the firmware: its domain would need it.
+	Too_Many_Units, // More than UNIT_CAPACITY units.
+	Other_Segment, // A unit or a reserved range of a segment of PCI other than 0.
+	Too_Many_Ranges, // More than RESERVED_RANGE_CAPACITY reserved ranges.
+	Too_Many_Scopes, // More than SCOPE_CAPACITY scopes of an endpoint or a bridge.
+	Long_Path, // A scope with more than PATH_CAPACITY pairs.
 }
 
 // The text of each problem, after "no IOMMU in use: " on the log.
 @(rodata)
 DMAR_PROBLEM_TEXTS := [Dmar_Problem]string {
-	.None             = "none",
-	.Too_Short        = "the DMA remapping table is too short",
-	.Bad_Structure    = "a structure of the DMA remapping table has a wrong length",
-	.No_Unit          = "the DMA remapping table has no unit",
-	.Several_Units    = "the DMA remapping table has several units, and the kernel programs one",
-	.Other_Segment    = "the unit covers a segment of PCI other than 0",
-	.Reserved_Memory  = "a device needs a range of memory of the firmware",
+	.None            = "none",
+	.Too_Short       = "the DMA remapping table is too short",
+	.Bad_Structure   = "a structure of the DMA remapping table has a wrong length, or a reserved range is not whole pages",
+	.No_Unit         = "the DMA remapping table has no unit",
+	.Too_Many_Units  = "the DMA remapping table has more than 4 units",
+	.Other_Segment   = "a unit or a reserved range is of a segment of PCI other than 0",
+	.Too_Many_Ranges = "the DMA remapping table has more than 8 reserved memory ranges",
+	.Too_Many_Scopes = "the DMA remapping table has more than 64 device scopes",
+	.Long_Path       = "a device scope has a path of more than 4 bridges and devices",
 }
 
 load_16 :: proc "contextless" (bytes: []u8, offset: int) -> u16 {
@@ -110,7 +128,6 @@ dmar_read :: proc "contextless" (table: []u8) -> (dmar: Dmar, problem: Dmar_Prob
 		return {}, .Too_Short
 	}
 	dmar.host_address_width = u32(table[DMAR_HOST_ADDRESS_WIDTH]) + 1
-	first_problem := Dmar_Problem.None
 	offset := DMAR_STRUCTURES_START
 	for offset + 4 <= len(table) {
 		kind := load_16(table, offset)
@@ -123,57 +140,156 @@ dmar_read :: proc "contextless" (table: []u8) -> (dmar: Dmar, problem: Dmar_Prob
 			if length < UNIT_SIZE {
 				return dmar, .Bad_Structure
 			}
-			dmar.unit_count += 1
-			if dmar.unit_count == 1 {
-				flags := table[offset + 4]
-				segment := load_16(table, offset + 6)
-				dmar.register_base = load_64(table, offset + 8)
-				if segment != 0 {
-					first_problem = .Other_Segment
-				}
-				if flags & UNIT_INCLUDES_EVERY_DEVICE != 0 {
-					for &word in dmar.covered {
-						word = max(u32)
-					}
-				}
-				// The scopes of the unit. A function of bus 0 named with a
-				// path of one pair is covered; a function behind a bridge
-				// has no domain in this form, and a scope of another kind
-				// (an interrupt controller, a timer) names no requester.
-				scope := offset + UNIT_SIZE
-				for scope < offset + length {
-					if offset + length - scope < SCOPE_HEADER_SIZE {
-						return dmar, .Bad_Structure
-					}
-					scope_kind := table[scope]
-					scope_length := int(table[scope + 1])
-					if scope_length < SCOPE_HEADER_SIZE || scope_length > offset + length - scope {
-						return dmar, .Bad_Structure
-					}
-					start_bus := table[scope + 5]
-					if (scope_kind == SCOPE_ENDPOINT || scope_kind == SCOPE_BRIDGE) && start_bus == 0 && scope_length == SCOPE_HEADER_SIZE + 2 {
-						index := u32(table[scope + 6] & 31) * 8 + u32(table[scope + 7] & 7)
-						dmar.covered[index / 32] |= 1 << (index % 32)
-					}
-					scope += scope_length
-				}
+			if dmar.unit_count == UNIT_CAPACITY {
+				return dmar, .Too_Many_Units
 			}
+			segment := load_16(table, offset + 6)
+			if segment != 0 {
+				return dmar, .Other_Segment
+			}
+			dmar.units[dmar.unit_count] = {
+				register_base         = load_64(table, offset + 8),
+				segment               = segment,
+				includes_every_device = table[offset + 4] & UNIT_INCLUDES_EVERY_DEVICE != 0,
+			}
+			if scope_problem := scopes_read(&dmar, table[offset + UNIT_SIZE:offset + length], u8(dmar.unit_count), false); scope_problem != .None {
+				return dmar, scope_problem
+			}
+			dmar.unit_count += 1
 		case STRUCTURE_RESERVED_MEMORY:
-			dmar.reserved_memory_count += 1
+			if length < RESERVED_MEMORY_SIZE {
+				return dmar, .Bad_Structure
+			}
+			if dmar.reserved_range_count == RESERVED_RANGE_CAPACITY {
+				return dmar, .Too_Many_Ranges
+			}
+			if load_16(table, offset + 6) != 0 {
+				return dmar, .Other_Segment
+			}
+			// The table gives the last byte: the range must be whole pages,
+			// and its end must not wrap.
+			start, last := load_64(table, offset + 8), load_64(table, offset + 16)
+			if start % 4096 != 0 || last < start || last == max(u64) || (last + 1) % 4096 != 0 {
+				return dmar, .Bad_Structure
+			}
+			dmar.reserved_ranges[dmar.reserved_range_count] = {start = start, end = last + 1}
+			if scope_problem := scopes_read(&dmar, table[offset + RESERVED_MEMORY_SIZE:offset + length], u8(dmar.reserved_range_count), true); scope_problem != .None {
+				return dmar, scope_problem
+			}
+			dmar.reserved_range_count += 1
 		}
 		offset += length
 	}
-	switch {
-	case dmar.unit_count == 0:
+	if dmar.unit_count == 0 {
 		return dmar, .No_Unit
-	case dmar.unit_count > 1:
-		return dmar, .Several_Units
-	case first_problem != .None:
-		return dmar, first_problem
-	case dmar.reserved_memory_count != 0:
-		return dmar, .Reserved_Memory
 	}
 	return dmar, .None
+}
+
+// scopes_read reads the device scopes of one unit or one reserved range,
+// and keeps each endpoint and each bridge.
+@(private = "file")
+scopes_read :: proc "contextless" (dmar: ^Dmar, bytes: []u8, owner: u8, reserved: bool) -> Dmar_Problem {
+	scope := 0
+	for scope < len(bytes) {
+		if len(bytes) - scope < SCOPE_HEADER_SIZE {
+			return .Bad_Structure
+		}
+		kind := bytes[scope]
+		length := int(bytes[scope + 1])
+		if length < SCOPE_HEADER_SIZE || length > len(bytes) - scope {
+			return .Bad_Structure
+		}
+		if kind == SCOPE_ENDPOINT || kind == SCOPE_BRIDGE {
+			path_bytes := length - SCOPE_HEADER_SIZE
+			if path_bytes == 0 || path_bytes % 2 != 0 {
+				return .Bad_Structure
+			}
+			if path_bytes / 2 > PATH_CAPACITY {
+				return .Long_Path
+			}
+			if dmar.scope_count == SCOPE_CAPACITY {
+				return .Too_Many_Scopes
+			}
+			item := &dmar.scopes[dmar.scope_count]
+			item^ = {owner = owner, reserved = reserved, bridge = kind == SCOPE_BRIDGE, start_bus = bytes[scope + 5], path_length = u8(path_bytes / 2)}
+			for pair in 0 ..< path_bytes / 2 {
+				item.path[pair] = {bytes[scope + SCOPE_HEADER_SIZE + 2 * pair] & 31, bytes[scope + SCOPE_HEADER_SIZE + 2 * pair + 1] & 7}
+			}
+			dmar.scope_count += 1
+		}
+		scope += length
+	}
+	return .None
+}
+
+// Bridge_Read gives the secondary and the subordinate bus of the bridge at
+// a place of the bus. found is false when the place holds no bridge. The
+// kernel gives a procedure that reads the configuration memory; a host test
+// gives a table.
+Bridge_Read :: #type proc "contextless" (bus, device, function: u32) -> (secondary: u32, subordinate: u32, found: bool)
+
+// A device scope with its path followed through the bridges of the bus.
+Resolved_Scope :: struct {
+	found:     bool, // Each bridge of the path is there: the scope names a requester.
+	requester: u16, // The function that the scope names: the endpoint, or the bridge.
+	first_bus: u8, // A bridge: its secondary bus.
+	last_bus:  u8, // A bridge: its subordinate bus, the last bus behind it.
+}
+
+// scope_resolve follows the path of a scope: from its start bus, each pair
+// but the last is a bridge, whose secondary bus holds the next pair. A
+// secondary bus at or below the bus of its bridge is refused: the buses grow
+// away from bus 0, and such a number would make a loop of the walk.
+scope_resolve :: proc "contextless" (scope: Scope, bridge_read: Bridge_Read) -> (resolved: Resolved_Scope) {
+	if scope.path_length == 0 || scope.path_length > PATH_CAPACITY {
+		return {}
+	}
+	bus := u32(scope.start_bus)
+	for pair in 0 ..< int(scope.path_length) - 1 {
+		secondary, _, found := bridge_read(bus, u32(scope.path[pair][0]), u32(scope.path[pair][1]))
+		if !found || secondary <= bus || secondary > 255 {
+			return {}
+		}
+		bus = secondary
+	}
+	last := scope.path[scope.path_length - 1]
+	resolved.requester = requester(bus, u32(last[0]), u32(last[1]))
+	if scope.bridge {
+		secondary, subordinate, found := bridge_read(bus, u32(last[0]), u32(last[1]))
+		if !found || secondary <= bus || subordinate < secondary || subordinate > 255 {
+			return {}
+		}
+		resolved.first_bus, resolved.last_bus = u8(secondary), u8(subordinate)
+	}
+	resolved.found = true
+	return resolved
+}
+
+// unit_of gives the unit that translates the accesses of a requester: the
+// first unit with a scope that names it (an endpoint with this requester,
+// or a bridge with this requester or with its bus behind it), else the
+// unit of segment 0 with INCLUDE_PCI_ALL. covered is false when no unit
+// translates them: the device reaches all memory. resolved holds the
+// resolved scope of each scope of the table, at the same index.
+unit_of :: proc "contextless" (dmar: ^Dmar, resolved: ^[SCOPE_CAPACITY]Resolved_Scope, requester: u16) -> (unit: u32, covered: bool) {
+	bus := requester_bus(requester)
+	for index in 0 ..< min(int(dmar.scope_count), SCOPE_CAPACITY) {
+		scope := &dmar.scopes[index]
+		item := &resolved[index]
+		if scope.reserved || !item.found {
+			continue
+		}
+		if item.requester == requester || (scope.bridge && bus >= u32(item.first_bus) && bus <= u32(item.last_bus)) {
+			return u32(scope.owner), true
+		}
+	}
+	for index in 0 ..< min(int(dmar.unit_count), UNIT_CAPACITY) {
+		if dmar.units[index].includes_every_device && dmar.units[index].segment == 0 {
+			return u32(index), true
+		}
+	}
+	return 0, false
 }
 
 // The table MCFG: the ACPI header, 8 reserved bytes, then one entry of 16
@@ -183,14 +299,19 @@ MCFG_ENTRIES_START :: 44
 MCFG_ENTRY_SIZE :: 16
 
 // The memory of the configuration of PCI of one range of buses of segment 0.
+// Each bus has 1 MiB of it.
 Configuration_Memory :: struct {
 	base:      u64, // The physical address of the configuration of the first bus of the range.
 	first_bus: u8,
 	last_bus:  u8,
 }
 
-// mcfg_read gives the range of segment 0 that holds bus 0. found is false
-// when the table names none.
+// CONFIGURATION_BUS_SIZE is the configuration memory of one bus: 32
+// devices of 8 functions of 4096 bytes.
+CONFIGURATION_BUS_SIZE :: u64(1) << 20
+
+// mcfg_read gives the range of segment 0 that starts at bus 0. found is
+// false when the table names none.
 mcfg_read :: proc "contextless" (table: []u8) -> (memory: Configuration_Memory, found: bool) {
 	for offset := MCFG_ENTRIES_START; offset + MCFG_ENTRY_SIZE <= len(table); offset += MCFG_ENTRY_SIZE {
 		segment := load_16(table, offset + 8)
@@ -244,6 +365,58 @@ header_memory_bases :: proc "contextless" (header: [HEADER_WORDS]u32) -> (bases:
 // header_is_multi_function says if a function 0 has other functions.
 header_is_multi_function :: proc "contextless" (header: [HEADER_WORDS]u32) -> bool {
 	return header[3] >> 16 & 0x80 != 0
+}
+
+// header_is_bridge says if a function is a bridge of PCI: the header type 1.
+header_is_bridge :: proc "contextless" (header: [HEADER_WORDS]u32) -> bool {
+	return header[3] >> 16 & 0x7F == 1
+}
+
+// bridge_buses gives the secondary bus of a bridge, the bus just behind
+// it, and its subordinate bus, the last bus behind it: the bytes 0x19 and
+// 0x1A of its header.
+bridge_buses :: proc "contextless" (header: [HEADER_WORDS]u32) -> (secondary: u32, subordinate: u32) {
+	return header[6] >> 8 & 0xFF, header[6] >> 16 & 0xFF
+}
+
+// The words of the configuration of a function that the kernel reads to
+// know the kind of a bridge: the first 256 bytes, the space of PCI before
+// PCI Express, which holds the capability of PCI Express.
+CONFIGURATION_WORDS :: 64
+CAPABILITY_PCI_EXPRESS :: 0x10
+STATUS_CAPABILITIES :: u32(1) << 20 // The bit of the status, in the word 1: the function has a list of capabilities.
+
+// The port types of the capability of PCI Express (bits 7:4 of its
+// capability register) whose bridge passes the requester of each device
+// behind it unchanged: a root port, the upstream and the downstream port of
+// a switch.
+PORT_ROOT :: 4
+PORT_SWITCH_UPSTREAM :: 5
+PORT_SWITCH_DOWNSTREAM :: 6
+
+// bridge_passes_requesters says if a bridge gives each device behind it
+// its own requester. A bridge of PCI Express does. A conventional bridge (a
+// bridge from PCI Express to PCI, or one with no capability of PCI Express)
+// gives the accesses of the devices behind it its own requester, or the
+// one of its secondary bus, so they all share it. The walk of the
+// capabilities stops after 48, as a list that loops would never end.
+bridge_passes_requesters :: proc "contextless" (configuration: ^[CONFIGURATION_WORDS]u32) -> bool {
+	if configuration[1] & STATUS_CAPABILITIES == 0 {
+		return false
+	}
+	offset := configuration[0x34 / 4] & 0xFC
+	for _ in 0 ..< 48 {
+		if offset < 0x40 || offset > 0xFC {
+			return false
+		}
+		word := configuration[offset / 4]
+		if word & 0xFF == CAPABILITY_PCI_EXPRESS {
+			port := word >> 20 & 0xF
+			return port == PORT_ROOT || port == PORT_SWITCH_UPSTREAM || port == PORT_SWITCH_DOWNSTREAM
+		}
+		offset = word >> 8 & 0xFC
+	}
+	return false
 }
 
 // requester gives the requester identifier of a function: the name of a
@@ -330,11 +503,55 @@ global_command :: proc "contextless" (status: u32, bit: u32) -> u32 {
 
 CONTEXT_INVALIDATE :: u64(1) << 63 // Set to start; the unit clears it when done.
 CONTEXT_GLOBAL :: u64(1) << 61 // Each context entry of the unit.
+CONTEXT_DOMAIN :: u64(2) << 61 // The context entries of one domain identifier, in the bits 15:0.
 
 IOTLB_INVALIDATE :: u64(1) << 63
 IOTLB_GLOBAL :: u64(1) << 60 // Each translation of each domain.
+IOTLB_DOMAIN :: u64(2) << 60 // The translations of one domain identifier, in the bits 47:32.
 IOTLB_DRAIN_READS :: u64(1) << 49
 IOTLB_DRAIN_WRITES :: u64(1) << 48
+
+// The command of the context cache that forgets every context entry: once,
+// at the start of a unit.
+CONTEXT_COMMAND_GLOBAL :: CONTEXT_INVALIDATE | CONTEXT_GLOBAL
+
+// context_command_domain gives the command of the context cache that
+// forgets the context entries of one domain identifier. A unit with the
+// caching mode tags an entry that is not present with the identifier 0.
+context_command_domain :: proc "contextless" (domain: u16) -> u64 {
+	return CONTEXT_INVALIDATE | CONTEXT_DOMAIN | u64(domain)
+}
+
+// The command of the IOTLB that forgets every translation, with the drain
+// of the reads and the writes in flight: once, at the start of a unit.
+IOTLB_COMMAND_GLOBAL :: IOTLB_INVALIDATE | IOTLB_GLOBAL | IOTLB_DRAIN_READS | IOTLB_DRAIN_WRITES
+
+// iotlb_command_domain gives the command of the IOTLB that forgets the
+// translations of one domain identifier, with the drain of the reads and
+// the writes in flight.
+iotlb_command_domain :: proc "contextless" (domain: u16) -> u64 {
+	return IOTLB_INVALIDATE | IOTLB_DOMAIN | IOTLB_DRAIN_READS | IOTLB_DRAIN_WRITES | u64(domain) << 32
+}
+
+// The device addresses of the objects that are not contiguous
+// (src/md/infrastructure/iommu.md, "Device addresses"): the window of the
+// memory object of the slot n starts at WINDOW_BASE + n * WINDOW_SIZE, and
+// maps its pages in their order. A contiguous object, and a reserved memory
+// range, has its physical address as its device address, and must end at
+// or below WINDOW_BASE.
+WINDOW_BASE :: u64(1) << 38
+WINDOW_SIZE :: u64(1) << 27 // 128 MiB: the largest object that is not contiguous that a device gets.
+WINDOW_PAGES :: WINDOW_SIZE / 4096
+
+// window_address gives the device address of the first page of the memory
+// object of a slot that is not contiguous.
+window_address :: proc "contextless" (slot: u32) -> u64 {
+	return WINDOW_BASE + u64(slot) * WINDOW_SIZE
+}
+
+// The largest reserved memory range that the kernel maps: 1 GiB. Its
+// tables are memory of the kernel, which no budget pays.
+RESERVED_RANGE_PAGE_LIMIT :: (u64(1) << 30) / 4096
 
 // context_invalidation_done says if the context command register shows a
 // finished invalidation that the unit made: the bit of the command is
@@ -365,6 +582,17 @@ capability_levels :: proc "contextless" (capability: u64) -> u32 {
 	}
 	return 0
 }
+
+// capability_address_width gives the widest device address that the unit
+// translates (MGAW, bits 21:16, plus 1). The unit blocks a request above
+// it, whatever its tables map.
+capability_address_width :: proc "contextless" (capability: u64) -> u32 {
+	return u32(capability >> 16 & 0x3F) + 1
+}
+
+// The address width that the device windows need: the last window ends at
+// 2^39.
+WINDOW_ADDRESS_WIDTH :: 39
 
 // capability_caching_mode says if the unit can keep an entry that is not
 // present: then a new entry needs an invalidation too.

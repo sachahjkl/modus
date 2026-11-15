@@ -78,6 +78,7 @@ boot_report :: proc "contextless" (report: ^op.Boot_Report) {
 		cycle_frequency     = cycle_frequency,
 		timer_frequency     = u64(timer_count) * 16 * TICKS_PER_SECOND,
 		trust               = boot.trust,
+		iommu_unit_count    = iommu_in_use ? u64(iommu_unit_count) : 0,
 	}
 	start: u64
 	for stage in Stage {

@@ -9,25 +9,28 @@ package modustool
 // write and its read through declared pages arrive; its read into a page
 // that it declared and whose handle it then closed does not arrive, the kernel writes the line of
 // the DMA fault with the device and the address, and the service still
-// answers its client. The device of the disk of the measures is at the
-// place 17 of bus 0 (pci.SCRATCH_DISK_DEVICE). Then `net` sends its
-// datagrams: the network device at the place 18 reads their data from the
-// datagram region of `net`, through the unit, with no DMA fault.
+// answers its client. The disk of the measures is behind a root port of PCI
+// Express at the place 28 of bus 0 (pci.SCRATCH_BRIDGE_DEVICE), at the
+// place 0 of bus 1: its accesses go through the context table of bus 1.
+// Then `net` sends its datagrams: the network device at the place 18 reads
+// their data from the datagram region of `net`, which is not contiguous,
+// through its window in the unit, with no DMA fault.
 
 TEST_OUTPUT_IOMMU :: BUILD_FOLDER + "/test_output_iommu.txt"
 
 @(rodata)
 scenario_iommu := [?]Step {
-	{kind = .Wait, text = "kernel: IOMMU: translation on, ", fails_on = "kernel: no IOMMU"},
+	// One unit; the walk found bus 0 and the bus behind the root port.
+	{kind = .Wait, text = "kernel: IOMMU: translation on, 1 units, 2 buses, ", fails_on = "kernel: no IOMMU"},
 	{kind = .Wait, text = "kernel: ok"},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"iommu\")"},
-	{kind = .Wait, text = "root: started iommu_device for the device at the place 17 of the bus"},
+	{kind = .Wait, text = "root: started iommu_device for the device at the place 0 of the bus 1, behind a bridge"},
 	{kind = .Wait, text = "iommu_device: a block written from a declared page and read into another declared page: the 4096 bytes arrived: as it must"},
 	// The line of the kernel and the line of the service come from two
 	// parties: either can be first.
-	{kind = .Wait, text = "kernel: a DMA fault of the device at bus 0, device 17, function 0 (service iommu_device): a write of ", any_order = true},
+	{kind = .Wait, text = "kernel: a DMA fault of the device at bus 1, device 0, function 0 (service iommu_device): a write of ", any_order = true},
 	// A virtio device of QEMU that the unit refuses needs a reset; the line
 	// names what the device did, and the bytes of the page are the check.
 	{kind = .Wait, text = ", and the page keeps its 4096 bytes: as it must", fails_on = "iommu_device: a read into a page that was not declared: the device wrote the page", any_order = true},

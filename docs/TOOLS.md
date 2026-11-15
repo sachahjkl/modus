@@ -710,7 +710,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `fault_ring` | The machine of the fault ring |
 | `debugger` | The two machines of the debugger: the contract of the kernel, then the commands of the service `debugger` |
 | `kernel_events` | The machine of the kernel events |
-| `iommu` | The machine with the IOMMU of Intel: the system with translation on, then the test device service `iommu_device`, whose device does not reach a page that it did not declare (`ARCHITECTURE.md`, "K5. Device grant and interrupts") |
+| `iommu` | The machine with the IOMMU of Intel, with the disk of the measures behind a root port of PCI Express: the system with translation on, then the test device service `iommu_device` on that disk, whose device does not reach a page that it did not declare, then `net`, whose datagram region the network device reads through a device window (`ARCHITECTURE.md`, "K5. Device grant and interrupts") |
 | `shortage` | The machine of the shortage of frames |
 | `principals` | The two machines of the principals |
 | `hierarchy` | The machines of the hierarchy of storage |

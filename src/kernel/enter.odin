@@ -235,6 +235,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
 		}
+		// The registers of a device with a domain drive the device only from
+		// the program that holds them: a mapping in another program would
+		// outlive the domain of the owner, and could make the device write
+		// what the next service of the device declares
+		// (src/md/infrastructure/iommu.md, "Mechanism in the kernel, policy outside").
+		if to != program && regions[slot.object].requester != 0 {
+			return .Bad_Operation
+		}
 		address, status := map_region(to, slot.object, v[2], flags, v[4], v[5], holding_of_handle(program, slot))
 		results[0] = address
 		return status
@@ -603,6 +611,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .No_Slot
 			}
 			results[0] = u64(handle)
+			results[1] = transmute(u64)iommu_device_facts(regions[region].requester)
 			return .Ok
 		case .Message:
 			message := u32(INTERRUPT_CAPACITY)
@@ -844,13 +853,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Memory_Physical:
 		_ = handle_find(program, v[0], .Machine, {.Physical}) or_return
 		slot := handle_find(program, v[1], .Memory, {.Read}) or_return
-		if !regions[slot.object].contiguous {
-			return .Bad_Operation // Its frames come at first use, from anywhere: no one address names them.
-		}
 		// The call of a device service declares the object to its devices,
-		// which write it only when this handle can.
-		iommu_declare(program_index, slot.object, .Write in slot.rights) or_return
-		results[0] = regions[slot.object].physical
+		// which write it only when this handle can, and gives the address
+		// that they use for it.
+		results[0] = iommu_declare(program_index, slot.object, .Write in slot.rights) or_return
 		return .Ok
 
 	case .Memory_Commit:
