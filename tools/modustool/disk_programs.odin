@@ -449,7 +449,12 @@ disk_programs_tests_run :: proc() -> bool {
 	append(&steps, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
 	// The listener of the tool is the web server of the module file
 	// service: QEMU gives it the address 10.0.2.100 port 80.
-	served := [?]Listener_File{{path = "/" + DISK_PROGRAM_MODULE, bytes = module_file}, {path = STORE_LIBRARY_CHANGED_PATH, bytes = changed_library_file}}
+	// The listener sends the file during a later step: the memory of
+	// context.temp_allocator is free again after each step, so the bytes
+	// that it serves live until the end of the test.
+	served_bytes := slice.clone(module_file)
+	defer delete(served_bytes)
+	served := [?]Listener_File{{path = "/" + DISK_PROGRAM_MODULE, bytes = served_bytes}, {path = STORE_LIBRARY_CHANGED_PATH, bytes = changed_library_file}}
 	machine_test(steps[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 1), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK, user_network = true, served_files = served[:]) or_return
 
 	// The second machine, on the same disk.
