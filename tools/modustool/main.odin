@@ -167,8 +167,31 @@ DOCUMENT_SCREENSHOT_FOLDER :: "docs/screenshots"
 RESOURCE_FOLDER :: "resources"
 // The development log: one folder of pictures per run of `screenshots`. It
 // is beside the repository, not in it: no run replaces the pictures of
-// another run.
-DEVELOPMENT_LOG_FOLDER :: "../kernel-devlog"
+// another run. It is beside the main working tree: a run in a worktree
+// writes there too, not beside the worktree.
+DEVELOPMENT_LOG_NAME :: "kernel-devlog"
+
+// development_log_folder gives the development log beside the main
+// working tree.
+development_log_folder :: proc() -> string {
+	if !os.is_file(".git") {
+		return "../" + DEVELOPMENT_LOG_NAME // The main working tree: .git is a folder.
+	}
+	content, _ := read_file(".git")
+	return development_log_folder_of(string(content))
+}
+
+// development_log_folder_of gives the development log for the content of
+// the file .git. In a worktree, it is "gitdir: <main>/.git/worktrees/<name>".
+development_log_folder_of :: proc(git_file: string) -> string {
+	text := strings.trim_space(git_file)
+	if strings.has_prefix(text, "gitdir: ") {
+		if at := strings.index(text, "/.git/worktrees/"); at > len("gitdir: ") {
+			return join(text[len("gitdir: "):at], "/../", DEVELOPMENT_LOG_NAME)
+		}
+	}
+	return "../" + DEVELOPMENT_LOG_NAME
+}
 
 Command :: struct {
 	name, about: string,
@@ -326,7 +349,7 @@ COMMANDS :: [?]Command {
 	// - `compress`: no machine; it compresses each PNG file of
 	//   `docs/screenshots` and `resources` whose data is stored with no
 	//   compression, and prints the bytes before and after.
-	{name = "screenshots", about = "test, the second build and the measure runs, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
+	{name = "screenshots", about = "test, the second build and the measure runs, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of the development log " + DEVELOPMENT_LOG_NAME + " beside the main working tree; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	// Runs a machine that measures, with no other load: the numbers that it
 	// prints are measures, never conditions of the test.
 	//
@@ -359,7 +382,7 @@ COMMANDS :: [?]Command {
 	// - no argument, or `terminal`: the film of the terminal.
 	// - `palette`: the film of the palette.
 	// - `heron`: the film of the program heron.
-	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4, " + FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of " + DEVELOPMENT_LOG_FOLDER + ", and " + FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = run_film},
+	{name = "film", about = "build, start the machine, film a scenario (" + FILM_NAMES + "; no argument: terminal), and write " + FILM_FOLDER + "/<name>.mp4, " + FILM_FOLDER + "/<name>.webm, a copy of the MP4 file in a new folder of the development log " + DEVELOPMENT_LOG_NAME + " beside the main working tree, and " + FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = run_film},
 	// Converts the BDF file of the font of the terminal (Spleen 8x16, from
 	// `FONT_SOURCE`) to Odin data in `src/library/support/graphics/font.odin`. The result
 	// is in the repository, so a build does not need the BDF file: run it only
@@ -872,8 +895,9 @@ screenshots_copy :: proc() -> bool {
 	// The name of the folder is the time of the run, in UTC.
 	year, month, day := time.date(time.now())
 	hour, minute, second := time.clock(time.now())
-	log_folder := fmt.tprintf("%s/%04d-%02d-%02d_%02d%02d%02d", DEVELOPMENT_LOG_FOLDER, year, int(month), day, hour, minute, second)
-	if !ok || !make_folder(DOCUMENT_SCREENSHOT_FOLDER) || !make_folder(DEVELOPMENT_LOG_FOLDER) || !make_folder(log_folder) {
+	development_log := development_log_folder()
+	log_folder := fmt.tprintf("%s/%04d-%02d-%02d_%02d%02d%02d", development_log, year, int(month), day, hour, minute, second)
+	if !ok || !make_folder(DOCUMENT_SCREENSHOT_FOLDER) || !make_folder(development_log) || !make_folder(log_folder) {
 		return false
 	}
 	for picture in pictures {

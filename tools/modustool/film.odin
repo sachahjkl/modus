@@ -500,7 +500,7 @@ film_write :: proc(name: string) -> bool {
 	// The name of the folder is the time of the run, in UTC.
 	year, month, day := time.date(time.now())
 	hour, minute, second := time.clock(time.now())
-	log_folder := fmt.tprintf("%s/%04d-%02d-%02d_%02d%02d%02d_film_%s", DEVELOPMENT_LOG_FOLDER, year, int(month), day, hour, minute, second, name)
+	log_folder := fmt.tprintf("%s/%04d-%02d-%02d_%02d%02d%02d_film_%s", development_log_folder(), year, int(month), day, hour, minute, second, name)
 	make_folder(log_folder) or_return
 	target := join(log_folder, "/", name, FILM_MP4_SUFFIX)
 	if copy_error := os.copy_file(target, output); copy_error != nil {
