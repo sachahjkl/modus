@@ -108,6 +108,7 @@ columns, rows: int
 measure: bool // The window shows the rates of the program, and the status on its own line.
 text_y, text_width, text_height, status_y, hint_y, width, height, graph_x: int
 scroll_area: interface.Area // The scroll bar of the lines: at the right edge of the window, from the head to the line over the status.
+text_view_area: interface.Area // The rows of the lines: the wheel over them moves the view.
 scroll_identity: interface.Element_Identity
 
 layout :: proc "contextless" () {
@@ -121,6 +122,7 @@ layout :: proc "contextless" () {
 	graph_x = TEXT_X + text_width - HISTORY * GRAPH_BAR
 	scroll_top := measure ? HEAD_HEIGHT - 6 : 0
 	scroll_area = {width - SCROLL_WIDTH, scroll_top, SCROLL_WIDTH, status_y - 4 - scroll_top}
+	text_view_area = {TEXT_X, text_y, text_width, text_height}
 	scroll_identity = interface.identity("the scroll bar of the lines")
 	list_scroll_identity = interface.identity("the scroll bar of the completion list")
 }
@@ -852,6 +854,7 @@ scroll_result: interface.Scroll_Bar_Result
 // The scroll bar of the completion list in the last frame: its area (no
 // width: the frame had no such bar), and what the pointer did to it.
 list_scroll_area: interface.Area
+list_view_area: interface.Area // The cells of the rows of the completion list in the last frame, or no width: the wheel over them belongs to the list.
 list_scroll_result: interface.Scroll_Bar_Result
 list_scroll_identity: interface.Element_Identity
 // The first row that the terminal asked the program for, and the first row
@@ -970,6 +973,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	// comes last, so that the records before keep their places in the
 	// table when the list opens or closes: the damage stays small.
 	list_scroll_area = {}
+	list_view_area = {}
 	list_scroll_result = {}
 	if view.list_columns > 0 {
 		x := TEXT_X + view.list_left * CELL_WIDTH - 1
@@ -990,6 +994,13 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 				interface.draw_kind_icon(table, icon_x, icon_y, view.list_icons[index], 1, view.list_icon_colors[index])
 			}
 		}
+		// The cells of the rows: the wheel over them belongs to the list.
+		// A list with no scroll bar shows each row, so a notch over it
+		// moves nothing: it does not move the lines under the list.
+		list_view_area = {TEXT_X + view.list_left * CELL_WIDTH, text_y + view.list_top * CELL_HEIGHT, view.list_columns * CELL_WIDTH, view.list_rows * CELL_HEIGHT}
+		if !view.list_scroll && frame.input.pointer_known && interface.area_contains(list_view_area, frame.input.pointer_x, frame.input.pointer_y) {
+			frame.input.wheel = 0
+		}
 		// The scroll bar of the list, over its last cells and the right
 		// column of its border. The program that writes owns the list and
 		// its choice: the bar takes the pointer, and the first row that
@@ -998,7 +1009,17 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 			bar_length := view.list_rows * CELL_HEIGHT
 			bar_x := TEXT_X + (view.list_left + view.list_columns - LIST_SCROLL_CELLS) * CELL_WIDTH
 			list_scroll_area = {bar_x, text_y + view.list_top * CELL_HEIGHT, SCROLL_WIDTH, bar_length}
-			list_scroll_result = interface.scroll_bar(&frame, list_scroll_area, list_scroll_identity, .Vertical, {total = view.list_total, visible = view.list_rows, first = view.list_first})
+			// The list lies over the lines: its bar comes before the bar of
+			// the lines, and takes the wheel over the list first.
+			// While the program has not answered a request, the bar starts
+			// from the row that the terminal asked for: else a second
+			// notch, or a second press, gives the same row again and is
+			// lost.
+			list_first := view.list_first
+			if list_first_asked >= 0 && view.list_first == list_first_when_asked {
+				list_first = list_first_asked
+			}
+			list_scroll_result = interface.scroll_bar(&frame, list_scroll_area, list_scroll_identity, .Vertical, {total = view.list_total, visible = view.list_rows, first = list_first}, {}, "", list_view_area)
 		}
 	}
 	// The scroll bar of the lines: where the view is in the lines that the
@@ -1010,7 +1031,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	if !view.gone && view.top >= view.oldest {
 		first_line = min(view.top - view.oldest, kept - shown_lines)
 	}
-	scroll_result = interface.scroll_bar(&frame, scroll_area, scroll_identity, .Vertical, {total = int(max(kept, 1)), visible = int(max(shown_lines, 1)), first = int(first_line)}, {page = rows - 1}, "scroll bar")
+	scroll_result = interface.scroll_bar(&frame, scroll_area, scroll_identity, .Vertical, {total = int(max(kept, 1)), visible = int(max(shown_lines, 1)), first = int(first_line)}, {page = rows - 1}, "scroll bar", text_view_area)
 	interface.window_frame_end(&drawing, &frame, window)
 	if table.full {
 		system.log("terminal: the draw table is full: records are missing")
@@ -1161,13 +1182,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				dirty = true
 				continue
 			}
-			// The pointer goes to the scroll bar of the lines, and to no
-			// other part of the window: a frame is built only when the
-			// pointer is on the bar, holds it, or leaves it lit.
+			// The pointer goes to the scroll bars, and to no other part of
+			// the window: a frame is built only when the pointer is on a
+			// bar, holds it, leaves it lit, or turns the wheel over the
+			// view of a bar.
 			if event.kind == .Pointer {
 				interface.input_add(&drawing.input, event)
-				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, list_scroll_area, list_scroll_identity) {
+				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity, text_view_area) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, list_scroll_area, list_scroll_identity, list_view_area) {
 					dirty = true
+				} else {
+					// A notch over no view moves nothing: it must not wait
+					// in the input for a later frame and move a view then.
+					drawing.input.wheel -= event.wheel
 				}
 				pointer_shape_follow(&window)
 				continue
@@ -1297,6 +1323,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if scroll_result.pressed_now != .None && scroll_result.pressed_now != .Thumb {
 				scroll_log("a press on ", scroll_part_words(scroll_result.pressed_now))
 			}
+			if scroll_result.wheel_taken {
+				wheel_log()
+			}
 		}
 		if scroll_result.drag_ended {
 			if scroll_drag_moved {
@@ -1332,6 +1361,9 @@ list_scroll_send :: proc "contextless" () -> (sent: bool) {
 			list_drag_moved ||= moved.held == .Thumb
 			if moved.pressed_now != .None && moved.pressed_now != .Thumb {
 				system.log("terminal: a press on ", scroll_part_words(moved.pressed_now), " of the scroll bar of the completion list of ", program_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
+			}
+			if moved.wheel_taken {
+				system.log("terminal: the wheel moves the completion list of ", program_name, ": the rows from ", u64(moved.first), " of ", u64(view.list_total))
 			}
 		}
 	}
@@ -1384,6 +1416,16 @@ scroll_part_words :: proc "contextless" (part: interface.Scroll_Bar_Part) -> str
 		return "the track under the thumb"
 	}
 	return "the thumb"
+}
+
+// wheel_log writes that the wheel moved the view of the lines, and where
+// the view is after it: one line for each frame that the wheel moved.
+wheel_log :: proc "contextless" () {
+	if request.follow {
+		system.log("terminal: the wheel moves the view of ", program_name, ": the view follows the last lines")
+	} else {
+		system.log("terminal: the wheel moves the view of ", program_name, ": the view starts at line ", request.top + 1, " of ", view.count)
+	}
 }
 
 // scroll_log writes what the pointer did on the scroll bar of the lines,

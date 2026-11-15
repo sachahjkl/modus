@@ -70,7 +70,13 @@ Scroll_Bar_Result :: struct {
 	pressed_now:   Scroll_Bar_Part, // The part where the button went down in this frame, or None.
 	held:          Scroll_Bar_Part, // The part that holds the press, or None.
 	drag_ended:    bool, // The button went up in this frame after a drag of the thumb.
+	wheel_taken:   bool, // The bar took the notches of the wheel of this frame: the pointer is over its view or over it.
 }
+
+// The lines that one notch of the wheel moves a view, in units of the line
+// step of the bar. A view shorter than this moves by its own height: a
+// notch never passes a line that the view did not show.
+SCROLL_WHEEL_LINES_PER_NOTCH :: 3
 
 // The largest total of a range: past it, a product with a count of pixels
 // could pass the integer.
@@ -153,12 +159,22 @@ scroll_bar_along :: proc "contextless" (area: Area, direction: Scroll_Bar_Direct
 // A scroll bar takes no key and is not in the order of Tab: the keys of
 // the view belong to the element that owns the view.
 //
+// The wheel moves the view of a vertical bar: view is the area of the
+// content that the bar moves (the lines, the rows). When the pointer is
+// over the view or over the bar, each notch of the frame moves the view by
+// SCROLL_WHEEL_LINES_PER_NOTCH lines, and the bar takes the notches: a
+// second view of the frame under the pointer does not move. A caller with
+// a view inside another view (a list over the lines) calls the bar of the
+// inner view first. A zero view: the wheel moves the view only over the
+// bar. A horizontal bar takes no notch.
+//
 // A name gives its arrow buttons element names (element_name): "<name>
 // arrow up" and "<name> arrow down" for a vertical bar, "arrow left" and
-// "arrow right" for a horizontal one. The thumb has none: it moves each
-// time the content grows, and each move would be a line of the log. A bar
-// too short for its arrow buttons names nothing.
-scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, direction: Scroll_Bar_Direction, range: Scroll_Range, steps: Scroll_Bar_Steps = {}, name := "") -> (result: Scroll_Bar_Result) {
+// "arrow right" for a horizontal one, and its view "<name> view". The
+// thumb has none: it moves each time the content grows, and each move
+// would be a line of the log. A bar too short for its arrow buttons names
+// no button.
+scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, direction: Scroll_Bar_Direction, range: Scroll_Range, steps: Scroll_Bar_Steps = {}, name := "", view: Area = {}) -> (result: Scroll_Bar_Result) {
 	state := frame.state
 	input := frame.input
 	vertical := direction == .Vertical
@@ -196,6 +212,23 @@ scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 		if (part == .Arrow_Back || part == .Arrow_Forward) && frame.time != 0 {
 			state.scroll_bar_repeat_at = frame.time + graphics.SCROLL_BAR_REPEAT_AFTER
 		}
+	}
+	over_view := input.pointer_known && area_contains(view, input.pointer_x, input.pointer_y)
+	if vertical && input.wheel != 0 && (inside || over_view) {
+		// A move past the range ends at an end of the view, so the
+		// notches, the step and their product are cut to the range first:
+		// the product of two large numbers would pass the integer and
+		// move the view the other way.
+		limit := geometry.range + 1
+		notch_step := clamp(SCROLL_WHEEL_LINES_PER_NOTCH * min(line_step, limit), 1, max(min(range.visible, limit), 1))
+		notches := clamp(input.wheel, -limit, limit)
+		if abs(notches) > limit / notch_step {
+			first += notches > 0 ? limit : -limit
+		} else {
+			first += notches * notch_step
+		}
+		input.wheel = 0
+		result.wheel_taken = true
 	}
 	held := state.pressed == element ? state.scroll_bar_part : Scroll_Bar_Part.None
 	if held != .None {
@@ -247,6 +280,9 @@ scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 	scroll_bar_draw(frame.table, area, direction, drawn, look, nil, u32(element))
 	if name != "" {
 		scroll_bar_parts_name(frame, area, direction, drawn, name)
+		if view.width > 0 && view.height > 0 {
+			element_name_joined(frame, view, name, "view")
+		}
 	}
 	return
 }
@@ -271,14 +307,18 @@ scroll_bar_parts_name :: proc "contextless" (frame: ^Frame, area: Area, directio
 
 // scroll_bar_wants_frame says if a program that draws only after a change
 // must build a frame for the pointer: the pointer is over the bar, the
-// button went down on it, the bar holds the press, or the last frame drew
-// the bar lit and the pointer left it.
-scroll_bar_wants_frame :: proc "contextless" (state: ^Interface_State, input: ^Input, area: Area, element: Element_Identity) -> bool {
+// button went down on it, the bar holds the press, the last frame drew the
+// bar lit and the pointer left it, or the wheel turned with the pointer
+// over the view of the bar (the view that the caller gives scroll_bar).
+scroll_bar_wants_frame :: proc "contextless" (state: ^Interface_State, input: ^Input, area: Area, element: Element_Identity, view: Area = {}) -> bool {
 	if state.pressed == element || state.scroll_bar_lit == element {
 		return true
 	}
 	if !input.pointer_known {
 		return false
+	}
+	if input.wheel != 0 && area_contains(view, input.pointer_x, input.pointer_y) {
+		return true
 	}
 	return area_contains(area, input.pointer_x, input.pointer_y) || input.pressed && area_contains(area, input.press_x, input.press_y)
 }
