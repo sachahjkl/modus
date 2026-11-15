@@ -1,0 +1,3 @@
+type: Added
+
+**Interrupt remapping on Intel.** On a machine with the IOMMU of Intel whose units offer interrupt remapping, a device sends only the message interrupts that `Device_Create` made for it: a device service can no longer make its device write another vector into the interrupt addresses. A refused interrupt is a line of the log with the device, the entry and the reason, and a count of its own; nothing stops. `Device_Create` of the kind `Message` now takes the base of a memory base address register of the device, and the kernel tells each unit to forget an entry through its queue of invalidations. `modustool test iommu` runs the system with remapping on, and a test device service whose forged messages are refused.

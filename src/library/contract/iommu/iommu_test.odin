@@ -71,6 +71,26 @@ builder_table :: proc(builder: ^Table_Builder) -> []u8 {
 	return builder.bytes[:builder.length]
 }
 
+// The flag INTR_REMAP of the table: QEMU with intremap=on sets it (with the
+// bit 1, the opt-out of x2APIC, which the kernel does not read); a firmware
+// that clears it gives no interrupt remapping.
+@(test)
+the_flag_of_interrupt_remapping :: proc(t: ^testing.T) {
+	builder: Table_Builder
+	builder_start(&builder, 38)
+	unit_add(&builder, UNIT_INCLUDES_EVERY_DEVICE, 0, 0xFED9_0000)
+	dmar, problem := dmar_read(builder_table(&builder))
+	testing.expect_value(t, problem, Dmar_Problem.None)
+	testing.expect(t, !dmar.interrupt_remapping)
+	builder.bytes[DMAR_FLAGS] = 0x3
+	dmar, problem = dmar_read(builder_table(&builder))
+	testing.expect_value(t, problem, Dmar_Problem.None)
+	testing.expect(t, dmar.interrupt_remapping)
+	builder.bytes[DMAR_FLAGS] = 0x2
+	dmar, _ = dmar_read(builder_table(&builder))
+	testing.expect(t, !dmar.interrupt_remapping)
+}
+
 // The bridges of the bus of the tests: a root port at 0:1C.0 with bus 1
 // behind it; a root port at 0:1E.0 with the buses 2 and 3, and a switch
 // port at 2:0.0 with bus 3; a bridge at 0:1D.0 whose secondary bus is 0,
@@ -357,14 +377,39 @@ the_kinds_of_a_bridge :: proc(t: ^testing.T) {
 	testing.expect(t, !bridge_passes_requesters(&configuration))
 }
 
-// The commands of the invalidation of one domain, and the device windows.
+// The descriptors of the queue of invalidations, bit by bit from the
+// specification: the kind in the bits 3:0, the granularity in 5:4, the
+// domain identifier in 31:16, and no bit that QEMU checks as reserved.
 @(test)
-the_invalidation_of_one_domain :: proc(t: ^testing.T) {
-	testing.expect_value(t, context_command_domain(5), u64(1) << 63 | u64(2) << 61 | 5)
-	testing.expect_value(t, context_command_domain(0) >> 61 & 3, u64(2))
-	testing.expect_value(t, iotlb_command_domain(5), u64(1) << 63 | u64(2) << 60 | u64(1) << 49 | u64(1) << 48 | u64(5) << 32)
-	testing.expect_value(t, CONTEXT_COMMAND_GLOBAL >> 61 & 3, u64(1))
-	testing.expect_value(t, IOTLB_COMMAND_GLOBAL >> 60 & 3, u64(1))
+the_descriptors_of_the_queue :: proc(t: ^testing.T) {
+	testing.expect_value(t, descriptor_context(5), [2]u64{1 | 2 << 4 | 5 << 16, 0})
+	testing.expect_value(t, descriptor_context(0)[0], u64(1 | 2 << 4)) // The identifier 0 of the caching mode.
+	testing.expect_value(t, descriptor_context(7, true), [2]u64{1 | 1 << 4, 0})
+	// The IOTLB with the drain of the writes (bit 6) and of the reads (bit 7).
+	testing.expect_value(t, descriptor_iotlb(5), [2]u64{2 | 2 << 4 | 1 << 6 | 1 << 7 | 5 << 16, 0})
+	testing.expect_value(t, descriptor_iotlb(0, true), [2]u64{2 | 1 << 4 | 1 << 6 | 1 << 7, 0})
+	testing.expect_value(t, descriptor_interrupt_entry(9), [2]u64{4 | 1 << 4 | 9 << 32, 0})
+	testing.expect_value(t, descriptor_interrupt_entry(0, true), [2]u64{4, 0})
+	// The wait: the status write (bit 5), the fence (bit 6), the number in
+	// 63:32, and the address aligned to 4 bytes.
+	wait := descriptor_wait(0x1234_5040, 77)
+	testing.expect_value(t, wait, [2]u64{5 | 1 << 5 | 1 << 6 | u64(77) << 32, 0x1234_5040})
+	testing.expect_value(t, descriptor_wait(0x1234_5043, 1)[1], u64(0x1234_5040))
+	// The reserved bits that QEMU 10 refuses in each kind.
+	testing.expect_value(t, descriptor_context(0xFFFF)[0] & 0xFFFC_0000_0000_F1C0, u64(0))
+	testing.expect_value(t, descriptor_iotlb(0xFFFF)[0] & 0xFFFF_FFFF_0000_F100, u64(0))
+	testing.expect_value(t, descriptor_interrupt_entry(0xFFFF)[0] & 0xFFFF_0000_07FF_F1E0, u64(0))
+	testing.expect_value(t, wait[0] & 0xFFFF_F180, u64(0))
+	// The queue of one page, and its tail in the bits 18:4.
+	testing.expect_value(t, queue_address_register(0x7654_3000), u64(0x7654_3000))
+	testing.expect_value(t, queue_tail_register(3), u64(0x30))
+	testing.expect_value(t, queue_tail_register(QUEUE_DESCRIPTORS), u64(0))
+	testing.expect_value(t, QUEUE_DESCRIPTORS * DESCRIPTOR_SIZE, 4096)
+}
+
+// The device windows.
+@(test)
+the_device_windows :: proc(t: ^testing.T) {
 	testing.expect_value(t, window_address(0), u64(1) << 38)
 	testing.expect_value(t, window_address(1) - window_address(0), WINDOW_SIZE)
 	// The windows of 2048 memory objects end where a domain of 39 bits ends.
@@ -469,7 +514,13 @@ the_capability_of_a_unit :: proc(t: ^testing.T) {
 	testing.expect_value(t, capability_domain_count(capability), u64(256))
 	testing.expect(t, !capability_caching_mode(capability))
 	testing.expect(t, capability_caching_mode(capability | 1 << 7))
-	testing.expect_value(t, extended_iotlb_offset(u64(0x20) << 8), u64(0x200))
+	// The extended capability of QEMU with intremap=on: the queue (bit 1)
+	// and interrupt remapping (bit 3).
+	extended := u64(0x20) << 8 | 1 << 1 | 1 << 3
+	testing.expect(t, extended_queue(extended))
+	testing.expect(t, extended_interrupt_remapping(extended))
+	testing.expect(t, !extended_queue(extended &~ (1 << 1)))
+	testing.expect(t, !extended_interrupt_remapping(extended &~ (1 << 3)))
 	testing.expect(t, !extended_coherent(0))
 	// QEMU gives a width of 39 bits by default: MGAW 38 in the bits 21:16.
 	testing.expect_value(t, capability_address_width(u64(38) << 16), u32(WINDOW_ADDRESS_WIDTH))
@@ -478,6 +529,10 @@ the_capability_of_a_unit :: proc(t: ^testing.T) {
 	// A command keeps translation on and drops the one-shot bits.
 	status := GLOBAL_TRANSLATION | GLOBAL_ROOT_TABLE | GLOBAL_WRITE_BUFFER
 	testing.expect_value(t, global_command(status, GLOBAL_ROOT_TABLE), GLOBAL_TRANSLATION | GLOBAL_ROOT_TABLE)
+	// It keeps the queue and remapping on, and drops the one-shot bit of the
+	// interrupt table.
+	status = GLOBAL_TRANSLATION | GLOBAL_QUEUED_INVALIDATION | GLOBAL_INTERRUPT_TABLE
+	testing.expect_value(t, global_command(status, GLOBAL_INTERRUPT_REMAPPING), GLOBAL_TRANSLATION | GLOBAL_QUEUED_INVALIDATION | GLOBAL_INTERRUPT_REMAPPING)
 }
 
 // A mode that the firmware left on refuses the unit, in this order.
@@ -490,20 +545,30 @@ the_modes_that_the_firmware_left_on :: proc(t: ^testing.T) {
 	testing.expect_value(t, global_status_problem(GLOBAL_INTERRUPT_REMAPPING), Global_Status_Problem.Interrupt_Remapping_On)
 }
 
-// An invalidation is done when its bit is clear, and made when the unit
-// gives a granularity that is not 0.
+// The entry of a message interrupt and the address that its device writes,
+// bit by bit from the specification, and as QEMU 10 reads them.
 @(test)
-the_end_of_an_invalidation :: proc(t: ^testing.T) {
-	finished, made := context_invalidation_done(CONTEXT_INVALIDATE | CONTEXT_GLOBAL)
-	testing.expect(t, !finished)
-	finished, made = context_invalidation_done(u64(1) << 59)
-	testing.expect(t, finished && made)
-	finished, made = context_invalidation_done(CONTEXT_GLOBAL)
-	testing.expect(t, finished && !made)
-	finished, made = iotlb_invalidation_done(IOTLB_GLOBAL | u64(1) << 57)
-	testing.expect(t, finished && made)
-	finished, made = iotlb_invalidation_done(IOTLB_INVALIDATE)
-	testing.expect(t, !finished && !made)
+the_interrupt_entries :: proc(t: ^testing.T) {
+	// The vector 64 to the processor 3, for the device 1:0.0 only.
+	entry := interrupt_entry(64, 3, requester(1, 0, 0))
+	testing.expect_value(t, entry[0], u64(1) | u64(64) << 16 | u64(3) << 40)
+	testing.expect_value(t, entry[1], u64(0x100) | u64(1) << 18)
+	// Physical mode, fixed delivery, at the edge, faults recorded: the bits
+	// 15:1 are 0.
+	testing.expect_value(t, entry[0] & 0xFFFE, u64(0))
+	// The register of the table: 16 entries are 2^(3 + 1), and no x2APIC.
+	testing.expect_value(t, interrupt_table_register(0x55_5000), u64(0x55_5003))
+	testing.expect_value(t, interrupt_table_register(0x55_5000) & (1 << 11), u64(0))
+	// The remappable form: 0xFEE, the index in the bits 19:5, its bit 15 in
+	// the bit 2, the bit 4 set, no subhandle.
+	testing.expect_value(t, message_address(0), u64(0xFEE0_0010))
+	testing.expect_value(t, message_address(5), u64(0xFEE0_00B0))
+	testing.expect_value(t, message_address(0x8001), u64(0xFEE0_0034))
+	testing.expect_value(t, message_address(15) & (1 << 3), u64(0))
+	// The forged message of the test: 0xFEEF_0010 names the entry 0x7800.
+	forged := u64(0xFEEF_0010)
+	testing.expect_value(t, forged >> 5 & 0x7FFF | (forged >> 2 & 1) << 15, u64(0x7800))
+	testing.expect(t, 0x7800 >= INTERRUPT_TABLE_ENTRIES)
 }
 
 // The first faults of a device are whole lines, then one line at each
@@ -542,4 +607,30 @@ a_fault_record :: proc(t: ^testing.T) {
 	testing.expect(t, fault.read)
 	_, recorded = fault_read(0x3F2_A000, high &~ (1 << 63))
 	testing.expect(t, !recorded)
+	testing.expect(t, !fault.interrupt)
+}
+
+// A record of a refused interrupt, as QEMU writes it for a DMA write to the
+// interrupt addresses: the requester 0xFFFF, the reason 0x21 (an index past
+// the table), the index in the bits 63:48 of the first word, and no address.
+@(test)
+a_record_of_a_refused_interrupt :: proc(t: ^testing.T) {
+	high := u64(1) << 63 | u64(0x21) << 32 | 0xFFFF
+	fault, recorded := fault_read(u64(0x7800) << 48, high)
+	testing.expect(t, recorded)
+	testing.expect(t, fault.interrupt)
+	testing.expect_value(t, fault.index, u16(0x7800))
+	testing.expect_value(t, fault.address, u64(0))
+	testing.expect_value(t, fault.requester, u16(0xFFFF))
+	testing.expect_value(t, fault.reason, u8(0x21))
+	// Each reason from 0x20 to 0x26 is a refused interrupt; 0x1F and 0x30
+	// are not.
+	for reason in u64(0x20) ..= 0x26 {
+		fault, _ = fault_read(0, u64(1) << 63 | reason << 32)
+		testing.expect(t, fault.interrupt)
+	}
+	fault, _ = fault_read(0, u64(1) << 63 | u64(0x1F) << 32)
+	testing.expect(t, !fault.interrupt)
+	fault, _ = fault_read(0, u64(1) << 63 | u64(0x30) << 32)
+	testing.expect(t, !fault.interrupt)
 }

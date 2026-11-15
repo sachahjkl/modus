@@ -1138,8 +1138,10 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"qemu-system-x86_64",
 		"-machine",
 		// The firmware with Secure Boot needs the system management mode of
-		// the processor: its variables are written only there.
-		firmware == .With_Secure_Boot ? "q35,smm=on" : "q35",
+		// the processor: its variables are written only there. QEMU refuses
+		// interrupt remapping when KVM holds the whole interrupt controller:
+		// the machine with the IOMMU splits it. QEMU accepts both together.
+		strings.concatenate({"q35", firmware == .With_Secure_Boot ? ",smm=on" : "", iommu ? ",kernel-irqchip=split" : ""}, context.temp_allocator),
 		"-accel",
 		"kvm",
 		"-accel",
@@ -1162,14 +1164,13 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		network_device,
 	)
 	// The machine of the part iommu: the remapping unit of Intel, before
-	// each device of PCI, which takes its place behind it. No interrupt
-	// remapping: the kernel does not program it
-	// (src/md/infrastructure/iommu.md, "Interrupt remapping"). Each virtio
-	// device sends its accesses through the unit only with iommu_platform,
-	// which a device with the legacy interface refuses.
+	// each device of PCI, which takes its place behind it, with interrupt
+	// remapping (src/md/infrastructure/iommu.md, "Interrupt remapping").
+	// Each virtio device sends its accesses through the unit only with
+	// iommu_platform, which a device with the legacy interface refuses.
 	virtio_iommu := ""
 	if iommu {
-		append(&list, "-device", "intel-iommu,intremap=off")
+		append(&list, "-device", "intel-iommu,intremap=on")
 		virtio_iommu = ",iommu_platform=on"
 	}
 	if paused {

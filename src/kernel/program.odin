@@ -808,6 +808,17 @@ handle_insert_undo :: proc "contextless" (program: ^Program, handle: op.Handle) 
 		intrinsics.atomic_sub(&threads[slot.object].references, 1)
 	case .Budget:
 		intrinsics.atomic_sub(&budgets[slot.object].references, 1)
+	case .Interrupt:
+		// As handle_close: else the count stays one too high, and a message
+		// interrupt that no handle names is never free again. The caller
+		// holds the control lock, as handle_insert of an interrupt needs.
+		interrupt_references[slot.object] -= 1
+		if interrupt_owner[slot.object] == index_of_program(program) {
+			intrinsics.atomic_store(&interrupt_owner[slot.object], 0)
+		}
+		if interrupt_references[slot.object] == 0 && slot.object >= INTERRUPT_LINES {
+			iommu_message_end(slot.object - INTERRUPT_LINES)
+		}
 	}
 	slot^ = {generation = slot.generation}
 }
@@ -885,6 +896,11 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 		interrupt_references[slot.object] -= 1
 		if interrupt_owner[slot.object] == index_of_program(program) {
 			intrinsics.atomic_store(&interrupt_owner[slot.object], 0)
+		}
+		// The device of a message interrupt that no handle names sends it
+		// no more, before the index can be given to another device.
+		if interrupt_references[slot.object] == 0 && slot.object >= INTERRUPT_LINES {
+			iommu_message_end(slot.object - INTERRUPT_LINES)
 		}
 	case .Ports:
 		slot.kind = .None

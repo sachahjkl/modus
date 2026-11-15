@@ -2699,7 +2699,7 @@ A message interrupt is an interrupt that a device sends as a write of a value to
 
 A device signals that it has done work by an interrupt. The old interrupt lines are few and shared between devices; a message interrupt belongs to one device, so the kernel knows which device signalled with no question to it. The kernel gives each message interrupt a vector of its own on the first processor; it has 16 (`MESSAGE_CAPACITY`).
 
-The root service makes one with `Device_Create`, the kind `Message`, with the machine handle and the right **Devices**. The results are an interrupt handle with **Give** and **Read**, the address that the device must write, and the value that it must write there. The root service writes the address and the value in the table of the device on the bus, enables the table, and gives the interrupt handle to the device service with the right **Read**. The device service never writes the configuration of its device.
+The root service makes one with `Device_Create`, the kind `Message`, with the machine handle and the right **Devices**, and the base of a memory base address register of the device, which names the device. The results are an interrupt handle with **Give** and **Read**, the address that the device must write, and the value that it must write there. The root service writes the address and the value in the table of the device on the bus, enables the table, and gives the interrupt handle to the device service with the right **Read**. The device service never writes the configuration of its device. With interrupt remapping, only that device can send it (see "Interrupt remapping").
 
 When the device writes the value, the kernel adds 1 to the count of the interrupt and to the `events` word of each thread of the program that holds the handle, and wakes them. The device service reads and resets the count with `Interrupt_Read`, then reads its queues.
 
@@ -2715,7 +2715,7 @@ The IOMMU is the unit of the machine that translates each address that a device 
 
 A device reads and writes memory by itself. Without an IOMMU, a device service with a fault can make its device write any page of the machine. With it, the kernel maps in the tables of a device only the pages that its service declared, so a device reaches no other memory. The kernel programs the remapping units of Intel (VT-d) when the firmware lists them in the ACPI table DMAR; the test machine has one in the part `iommu` of the test only. A service declares a memory object with `Memory_Physical`, the call that already gives it the address for its device: the kernel maps the pages in the domain of each device whose registers the service holds by a handle (see "Device domain"). A machine with no IOMMU writes one line at its start and runs as before, with no such isolation; its `Boot_Report.iommu_unit_count` is 0.
 
-The IOMMU is not the page table of a program: a program never sees it, and it translates the addresses of devices only. It does not remap interrupts in this system.
+The IOMMU is not the page table of a program: a program never sees it, and it translates the addresses of devices and checks their message interrupts only. The kernel programs no IOMMU of AMD yet.
 
 The design: `src/md/infrastructure/iommu.md`; the guide: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
 
@@ -2787,11 +2787,35 @@ A DMA fault is an access of a device to an address that its device domain does n
 
 The unit records the requester of the device, the page, and whether it was a read or a write, and sends its fault event to the first processor. The kernel then writes one line on the log with the device, its service, the address and the count of faults of that device, and frees the record. After the first 4 faults of a device, it writes only one line of the count at each power of two, so a device that faults in a loop does not flood the log. A DMA fault stops no program and not the machine: the bytes of the page do not change. A virtio device of QEMU that the unit refuses stops its own requests until a reset, which its service sees in the status of the device.
 
-A DMA fault is not a page fault: no thread caused it, and no fault ring receives it.
+A DMA fault is not a page fault: no thread caused it, and no fault ring receives it. It is not a refused interrupt either, which has its own line and its own count (see "Interrupt remapping").
 
 The design: `src/md/infrastructure/iommu.md`, "A DMA fault".
 
 Do not use: IOMMU fault, DMAR fault.
+
+### Queue of invalidations
+
+The queue of invalidations is a ring of descriptors in memory of the kernel through which the kernel tells a remapping unit to forget the entries that it keeps.
+
+A unit keeps the context entries, the translations and the interrupt entries that it read. When the kernel clears or changes one, it writes descriptors that name the domain or the interrupt entry, then a wait descriptor, moves the tail of the queue, and waits until the unit writes the number of the wait in a word of the kernel. The unit then forgot each entry, and drained the accesses in flight. Each unit has one queue of one page; each invalidation waits for its end, so the queue never fills. A unit with no queue leaves the IOMMU off, with one line. A unit that does not reach the wait in one second, or that refuses a descriptor, stops the machine.
+
+A queue of invalidations is not a ring between programs: no program sees it, and only the kernel and the unit read it.
+
+The design: `src/md/infrastructure/iommu.md`, "The end of a grant".
+
+Do not use: QI, invalidation queue, IQ.
+
+### Interrupt remapping
+
+Interrupt remapping is the check by the IOMMU of each message interrupt of a device against an interrupt table that the kernel writes, so a device sends only the message interrupts that its service was given.
+
+A message interrupt is a write of 4 bytes to the interrupt addresses, and a device can make that write as any other: without remapping, a device service can make its device send any vector of any processor. With remapping, the kernel writes one interrupt entry for each message interrupt that `Device_Create` makes: the vector, the first processor, and the requester of its device. The device writes the index of its entry, and the unit refuses the message to every other device, the compatible form, and an entry that is not present. A refused interrupt is a line of the log with its device, the entry and the reason, and a count of its own, by the rule of the lines of a DMA fault; nothing stops. The kernel turns remapping on in every unit or in none, and only when the table DMAR allows it. Example: a test device service that reads a block into the interrupt addresses makes its device send messages to entries that it was not given, and the kernel writes `kernel: an interrupt of the device at bus 255, device 31, function 7 (service no service) is refused: entry 30720; ...`.
+
+Interrupt remapping is not a route of the lines of the 8259: those lines do not go through the IOMMU.
+
+The design: `src/md/infrastructure/iommu.md`, "Interrupt remapping".
+
+Do not use: IR, IRTE, interrupt translation.
 
 ### Bus
 

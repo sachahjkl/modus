@@ -2,14 +2,18 @@ package modustool
 
 // The IOMMU (src/md/infrastructure/iommu.md): one machine with the
 // remapping unit of Intel (machine_command, the argument iommu). The
-// whole system starts with translation on: the storage service runs on the
-// data disk, so each page that its block service gives to the device is
-// declared. Then the program iommu, a client of the disk of the measures,
-// makes the root service start the test device service iommu_device: its
-// write and its read through declared pages arrive; its read into a page
-// that it declared and whose handle it then closed does not arrive, the kernel writes the line of
-// the DMA fault with the device and the address, and the service still
-// answers its client. The disk of the measures is behind a root port of PCI
+// whole system starts with translation and interrupt remapping on: the
+// storage service runs on the data disk, so each page that its block
+// service gives to the device is declared, and each interrupt of a device
+// comes through its entry. Then the program iommu, a client of the disk of
+// the measures, makes the root service start the test device service
+// iommu_device: its write and its read through declared pages arrive, with
+// its message interrupt; its read into the interrupt addresses is a set of
+// messages to entries that it was not given, and the kernel writes the line
+// of the refused interrupt; its read into a page that it declared and whose
+// handle it then closed does not arrive, the kernel writes the line of the
+// DMA fault with the device and the address, and the service still answers
+// its client. The disk of the measures is behind a root port of PCI
 // Express at the place 28 of bus 0 (pci.SCRATCH_BRIDGE_DEVICE), at the
 // place 0 of bus 1: its accesses go through the context table of bus 1.
 // Then `net` sends its datagrams: the network device at the place 18 reads
@@ -22,12 +26,19 @@ TEST_OUTPUT_IOMMU :: BUILD_FOLDER + "/test_output_iommu.txt"
 scenario_iommu := [?]Step {
 	// One unit; the walk found bus 0 and the bus behind the root port.
 	{kind = .Wait, text = "kernel: IOMMU: translation on, 1 units, 2 buses, ", fails_on = "kernel: no IOMMU"},
+	{kind = .Wait, text = "kernel: IOMMU: interrupt remapping on: a device sends only the message interrupts that its service was given", fails_on = "kernel: IOMMU: no interrupt remapping"},
 	{kind = .Wait, text = "kernel: ok"},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"iommu\")"},
 	{kind = .Wait, text = "root: started iommu_device for the device at the place 0 of the bus 1, behind a bridge"},
 	{kind = .Wait, text = "iommu_device: a block written from a declared page and read into another declared page: the 4096 bytes arrived: as it must"},
+	{kind = .Wait, text = "iommu_device: the message interrupt of the device arrived through its entry: as it must"},
+	// QEMU gives a DMA write to the interrupt addresses no requester: the
+	// record names 0xFFFF, the device 255:31.7. The entry 0x7800 is the
+	// first remappable message of the read, past the table of 16 entries.
+	{kind = .Wait, text = "kernel: an interrupt of the device at bus 255, device 31, function 7 (service no service) is refused: entry 30720; reason 0000000000000021; refused interrupts of this device: 1", any_order = true},
+	{kind = .Wait, text = "iommu_device: a read into the interrupt addresses, to entries that the kernel did not give this device: the device gave the request back: as it must", any_order = true},
 	// The line of the kernel and the line of the service come from two
 	// parties: either can be first.
 	{kind = .Wait, text = "kernel: a DMA fault of the device at bus 1, device 0, function 0 (service iommu_device): a write of ", any_order = true},
