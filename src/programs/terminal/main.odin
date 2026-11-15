@@ -75,6 +75,9 @@ import "modus:support/system"
 import terminal "modus:support/terminal"
 import "base:intrinsics"
 
+// The lines that it keeps.
+MODULE_BUDGET :: system.Budget_Request{pages = 8192, programs = 1, threads = 2}
+
 COLUMNS_LIMIT :: terminal.COLUMNS_LIMIT
 ROWS_LIMIT :: terminal.ROWS_LIMIT
 CELL_WIDTH :: graphics.CELL_WIDTH

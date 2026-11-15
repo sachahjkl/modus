@@ -33,6 +33,9 @@ import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:support/system"
 
+// The two pictures of its window, then the pages that its cases spend.
+MODULE_BUDGET :: system.Budget_Request{pages = 1280, programs = 1, threads = 4}
+
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record
 text_now, text_before: [8192]u8

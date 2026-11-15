@@ -58,6 +58,11 @@ import op "modus:contract/operation"
 import "modus:support/random"
 import "modus:support/system"
 
+// Two children at a time, the program that is debugged and a second
+// debugger, each with a budget of two threads; its main thread, and one
+// thread of its own that only waits.
+MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 3, threads = 6}
+
 VALUE_ROLE :: 0 // The value of the context that gives the role of a child.
 VALUE_MODE :: 1 // What a child or a second debugger does: a Child_Mode or a Debugger_Mode.
 VALUE_ADDRESS :: 2 // A second debugger: the address of the procedure of the child where it sets its breakpoint.

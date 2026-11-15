@@ -792,6 +792,16 @@ test_descriptions :: proc() -> bool {
 			}
 			test_passed_print("the record %s}}, %d bytes, of %s comes from its source", strings.to_string(layout), item.size, build.name)
 		}
+		// The budget that the module asks for: the table Budget holds the
+		// constant of the source, and a source with none gives no table.
+		request, stated := module.budget_request(file)
+		if stated != described.budget.stated || request != described.budget.request {
+			fmt.eprintfln("modustool: test failed: the budget that %s asks for does not agree with its source", build.name)
+			return false
+		}
+		if stated {
+			test_passed_print("the budget that %s asks for comes from its source: %d pages, %d programs, %d threads", build.name, request.pages, request.programs, request.threads)
+		}
 		if build.name == "math" {
 			test_passed_print("the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))
 		}

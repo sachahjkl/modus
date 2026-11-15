@@ -640,7 +640,7 @@ modustool run
 > start_from_disk("my_program", "<the 64 digits that the command printed>")
 ```
 
-`modustool run` starts the machine with `build/data_disk.img`. The command writes no disk over a file that exists: a data disk holds the stores of a principal. The module runs with no grant and with the least budget, and its name is no name of a module of the boot image (`MODULE_CONTRACT.md`, "A program from a disk"). The test part `disk_programs` builds a copy of the program `visitor` outside the sources under the name `outsider`, puts its file on the disk, and starts it in the machine.
+`modustool run` starts the machine with `build/data_disk.img`. The command writes no disk over a file that exists: a data disk holds the stores of a principal. The module runs with no grant and with the budget that it asks for, up to the largest budget of a disk program, paid by the one budget of the disk programs (`MODULE_CONTRACT.md`, "The budget that a module asks for"), and its name is no name of a module of the boot image (`MODULE_CONTRACT.md`, "A program from a disk"). The test part `disk_programs` builds a copy of the program `visitor` outside the sources under the name `outsider`, puts its file on the disk, and starts it in the machine.
 
 **What is not built.**
 

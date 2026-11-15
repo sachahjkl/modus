@@ -55,6 +55,9 @@ import "modus:contract/ring"
 import "modus:support/random"
 import "modus:support/system"
 
+// Four lockers of 1024 pages, then three at a time of the stress case.
+MODULE_BUDGET :: system.Budget_Request{pages = 9216, programs = 8, threads = 20}
+
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [1024]interface.Draw_Record
 text_now, text_before: [16384]u8

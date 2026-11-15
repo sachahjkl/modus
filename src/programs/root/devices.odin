@@ -148,7 +148,7 @@ driver_start :: proc "contextless" (device_number: u32, kind: Driver = DRIVER_BL
 	ring_memory, status = system.memory_create(ring.pages(kind.ring_capacity))
 	if status == .Ok {
 		grants[kind.ring_role] = {ring_memory, {.Read, .Write}}
-		driver.program, status = system.program_start(system.image_find(image, kind.name), kind.name, grants, random.values_with_seed(&program_generator, {}), budget_of(kind.name))
+		driver.program, status = system.program_start(system.image_find(image, kind.name), kind.name, grants, random.values_with_seed(&program_generator, {}), budget_of(system.image_find(image, kind.name), kind.name))
 	}
 	if status != .Ok {
 		pci.write_16(place, pci.OFFSET_COMMAND, command &~ pci.COMMAND_BUS_MASTER)

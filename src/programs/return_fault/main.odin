@@ -53,6 +53,9 @@ import "modus:support/interface"
 import "modus:support/random"
 import "modus:support/system"
 
+// One child at a time, with one thread.
+MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 2, threads = 2}
+
 LINE :: interface.TABLE_LINE
 WIDTH :: 896
 HEIGHT :: 320

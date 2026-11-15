@@ -61,18 +61,18 @@ One load runs at a time. A second command during a load is refused with `Busy`.
 
 ### The least right
 
-A program of the boot image has a row in the grant table: its name gives it its grants, its budget and the limit of its store. A disk program has no row, and gets:
+A program of the boot image has a row in the grant table: its name gives it its grants and the limit of its store. A disk program has no row, and gets:
 
 - the log, with the right Write only, and a window, as each program has;
 - the date page, the settings page and the glyph caches, read-only, as each program with a window has;
 - no start grant: no root ring, no machine handle, no boot image, no endpoint, no service ring, and no store unless the disk grant table gives one to its nickname (see below);
-- the budget of a program that no row names: 2048 pages, one program, one thread.
+- the budget that its file asks for, up to the largest budget of a disk program, with no budget exception, paid by the one budget of all disk programs; a file that asks for nothing gets the least budget, 2048 pages, one program, one thread ([module_budget_request.md](module_budget_request.md)).
 
-Nothing in the file gives a grant. The root service reads no table of the file to decide a grant: it reads the disk grant table of the principal, which only a command of the principal changes.
+Nothing in the file gives a grant. The root service reads no table of the file to decide a grant: it reads the disk grant table of the principal, which only a command of the principal changes. The table `Budget` of the file is a request, which the root service limits.
 
 **A disk program cannot take a row by its name.** The root service refuses, before any read, a name that a module of the boot image has, a name that the grant table gives a grant, a name of a program of the system, and the name `programs`. Without this rule a file named `notes` would start with the store of `notes`, and a file named `console` with the root ring.
 
-**The budget of the starter pays nothing for the code.** A program of the boot image maps the shared code of its module from the table of prepared modules of the root service, which the budget of the root service pays. A disk program gets a copy of each of its modules from its own budget. So a disk program holds no page of the root service while it runs.
+**The budget of the starter pays nothing for the code.** A program of the boot image maps the shared code of its module from the table of prepared modules of the root service, which the budget of the root service pays. A disk program gets a copy of each of its modules from its own budget. So a disk program holds no page of the root service while it runs, but the pages of the one budget of the disk programs, which the root service set apart at the first disk program.
 
 ### The imports
 
@@ -115,7 +115,7 @@ One file can have two nicknames. Each nickname has its own row, its own grants a
 - The prefix `disk-` keeps the stores of the disk programs apart from the stores of the boot image: the name of a module has no byte `-`. A nickname with a store has letters, digits, `-` and `_` only, so it cannot build the ending `.history` or `.principal.N` of another store.
 - A name of a store has 31 bytes at most. A nickname whose store name does not fit is refused at `allow`, not cut.
 
-The size of the store is a line of the budget that the module asks for (`src/md/features/module_budget_request.md`). That budget is not built: the store has the default limit of a store, 64 blocks.
+The size of the store is a line of the budget that the module asks for (`src/md/features/module_budget_request.md`). The request of that budget has no part for the store yet: the store has the default limit of a store, 64 blocks.
 
 **The update.** `nickname_move(nickname, hash)` points the nickname to another file. Its grants and its store follow. Before the change, the log says "root: the file <hash> will get the data of <nickname>". A program of the nickname that runs keeps the grants of its start.
 

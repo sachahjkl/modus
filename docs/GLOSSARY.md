@@ -190,7 +190,7 @@ A disk program is a program whose module file is an object of the store `program
 
 A disk program adds a program to a machine with no new boot image. The principal names it by its name and by the hash of its file: `start_from_disk("visitor", "5f0c…")`. The root service reads the object, computes the BLAKE3 hash of the bytes, and starts them only when that hash is the hash of the command: the storage service carries the bytes and does not choose them. The store is the store `programs` of the principal of the caller, and each entry of its root tree is one module file, named after its program.
 
-A disk program has no row in the tables by name of the root service. It receives the log and a window, the grants of its nickname in the disk grant table and no other grant, and the budget of a program that no table names. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image, by hash.
+A disk program has no row in the tables by name of the root service. It receives the log and a window, the grants of its nickname in the disk grant table and no other grant, and the budget that its file asks for, up to the largest budget of a disk program, paid by the one budget of all disk programs. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image, by hash.
 
 A disk program is not a package: it has no signer, no version number and no statement of the grants that it asks for. It is not installed: nothing of the machine changes when its file is written.
 
@@ -1772,6 +1772,42 @@ A limit is a property of a budget for time: the microseconds of processor time, 
 Time does not return, so it does not move as pages do. A limit holds for the budget and for each budget that came from it: what a thread uses counts in its budget and in each budget above. A new budget has a limit that is not above the limit of the budget that it came from. With the limit 0 a budget has no time: its threads do not run.
 
 Do not use: quota, cap, bandwidth, rate limit.
+
+### Budget request
+
+A budget request is the pages, the programs and the threads that a module asks for its program: the table `Budget` of its file (`module.Budget_Request`).
+
+The source states it as the constant `MODULE_BUDGET`, with the reasons in its comment, and the build writes the table, so the hash of the module names it. It is never a grant: the starter decides, by its least budget and its largest budget, and can widen or limit it with a budget exception. A part that is 0, or a file with no table, asks for the least budget. Processor time and log records are not in it: they are limits that the starter sets.
+
+Example: `MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 2}` asks for 16 MiB, no child, and two threads.
+
+The design: `src/md/features/module_budget_request.md`; the guide: `docs/MODULE_CONTRACT.md`, "The budget that a module asks for".
+
+Do not use: budget grant, resource manifest, reservation.
+
+### Least budget
+
+The least budget is the budget that a starter gives to a module that asks for nothing, and for each part of a budget request that is 0.
+
+The least budget of the root service is 2048 pages, one program and one thread (`LEAST_BUDGET` in `src/programs/root/budgets.odin`). A module whose request is smaller gets its smaller request: the least budget fills a part that the module does not state, it is no floor.
+
+Do not use: default budget, minimum budget.
+
+### Largest budget
+
+The largest budget is the most that a starter gives to one program for each part of a budget request.
+
+A part above it starts the program with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service is 16384 pages, 8 programs and 32 threads for a program of the boot image (`LARGEST_BUDGET` in `src/programs/root/budgets.odin`). A disk program, and a module of another project, has a smaller one, 8192 pages, one program and 4 threads, and one budget of the root service pays all of them together (`src/library/support/disk_program/budget.odin`).
+
+Do not use: maximum budget, cap, ceiling.
+
+### Budget exception
+
+A budget exception is a row of a starter that gives one program, by its name, another largest budget or other limits in time, with the reason beside it.
+
+A row with a larger amount widens a request, a row with a smaller amount limits it. The root service has two (`budget_exceptions` in `src/programs/root/budgets.odin`). The name of a disk program never selects a row: a name gives nothing.
+
+Do not use: budget override, special case.
 
 ### Period
 

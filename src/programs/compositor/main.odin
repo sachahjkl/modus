@@ -83,6 +83,9 @@ import "modus:support/system"
 import "modus:contract/pointer_pictures"
 import "base:intrinsics"
 
+// Its loop, and the thread that makes the lists of the palette.
+MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 2}
+
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0
 GRANT_INPUT :: 1

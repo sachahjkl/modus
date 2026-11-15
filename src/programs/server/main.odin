@@ -58,6 +58,10 @@ import "modus:support/random"
 import "modus:support/system"
 import "modus:support/tcp"
 
+// Its table of connections with their buffers (CAPACITY), and the two
+// pictures of a large window.
+MODULE_BUDGET :: system.Budget_Request{pages = 5120, programs = 1, threads = 1}
+
 CAPACITY :: 48 // Connections at one time, with the ones in TIME-WAIT.
 REMOTE_LIMIT :: 24 // The open connections of one remote address: half the table (tcp.Table.remote_limit).
 SEND_SIZE :: 64 * 1024

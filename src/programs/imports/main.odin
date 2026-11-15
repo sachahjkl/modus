@@ -50,6 +50,9 @@ import op "modus:contract/operation"
 import "modus:support/random"
 import "modus:support/system"
 
+// Itself and two programs that import calendar.
+MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 3, threads = 3}
+
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record
 text_now, text_before: [8192]u8
