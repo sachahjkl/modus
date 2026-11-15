@@ -316,6 +316,48 @@ state_blocks_of :: proc "contextless" (root: Pointer, size: u64) -> u64 {
 	return blocks
 }
 
+// root_by_hash gives the root of a current object of a store whose state
+// has this hash and this size, or no block (docs/STORAGE.md, "4.7 The same
+// object one time"). The hash index gives candidates by the first 8 bytes
+// of the hash; the hash of an entry comes from the disk, so each candidate
+// is confirmed: its block tree, read and checked, must give the whole hash.
+// A root that the service knows as damaged is never a candidate. A
+// candidate whose blocks give another hash takes the key of that hash, so
+// an entry that lies costs one confirmation; a lookup confirms at most
+// HASH_CONFIRMATION_LIMIT candidates. A failure of the device sets
+// plan.device.
+HASH_CONFIRMATION_LIMIT :: 4
+
+root_by_hash :: proc "contextless" (store_index: int, hash: [32]u8, size: u64) -> Pointer {
+	search := storage_mount.hash_search_begin(&opened, hash, size, store_index)
+	for _ in 0 ..< HASH_CONFIRMATION_LIMIT {
+		candidate, found := storage_mount.hash_index_next(&opened, &search)
+		if !found {
+			return {}
+		}
+		if state_damaged(candidate) || size > format.OBJECT_SIZE_LIMIT {
+			continue
+		}
+		confirmed, outcome := block_tree.state_hash(&object_source, {root = candidate, size = size}, &object_hash_room)
+		switch outcome {
+		case .Device:
+			plan.device = true
+			return {}
+		case .Wrong:
+			// A block under the root went wrong since the open: the state is
+			// damaged, as a read finds it.
+			storage_mount.damaged_under_set(&opened, candidate.block)
+			continue
+		case .Good:
+		}
+		if confirmed == hash {
+			return candidate
+		}
+		storage_mount.hash_index_rekey(&opened, candidate, confirmed)
+	}
+	return {}
+}
+
 // current_blocks_change changes the count of the blocks of the current
 // objects of the store of the plan; a count that would go below 0 is a
 // fault of the engine.
@@ -575,7 +617,16 @@ work_failure_take :: proc "contextless" () -> (damaged: bool) {
 // keeps its block. The state before becomes a version. It gives the
 // generation of the commit, or an ERROR_ number with the error record.
 // `name_argument` is the argument of the name in the export.
-object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, kind: Change_Kind, data: []u8, given_source: State_Of_Object, error: ^errors.Error_Record, name_argument: i64, pending: ^Pending_Object = nil, measure: ^Commit_Measure = nil) -> i64 {
+// `finds_by_hash`: the connection of the caller reaches the whole store, so
+// the new state names the root of an object of the store with the same
+// bytes when one exists (docs/STORAGE.md, "4.7 The same object one time").
+// A caller that reaches one tree of the store only must not learn, from
+// its count of blocks, what bytes the rest of the store holds.
+object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, kind: Change_Kind, data: []u8, given_source: State_Of_Object, finds_by_hash: bool, error: ^errors.Error_Record, name_argument: i64, pending: ^Pending_Object = nil, measure: ^Commit_Measure = nil) -> i64 {
+	// While the store has a writable share of a tree open, no commit of it
+	// looks up a hash: the holder sees the count of blocks of the whole store
+	// (docs/STORAGE.md, "4.7 The same object one time").
+	looks_up := finds_by_hash && !writable_tree_share_open(store.name)
 	count := blocks_of(u64(len(data)))
 	if kind == .Write && count > WHOLE_WRITE_BLOCKS {
 		return errors.fail(error, ERROR_TOO_LARGE, .Too_Long, .Bytes, name_argument + 1, i64(len(data)), WHOLE_WRITE_BLOCKS * BLOCK_SIZE)
@@ -677,7 +728,9 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		for change_index in 0 ..< len(changes) {
 			block_tree.work_change(&object_work, change_index)
 		}
-		finished := block_tree.work_finish(&object_work)
+		// The values and the hash first: a root of the store with the same
+		// bytes saves each write of the block tree.
+		finished := block_tree.work_hash(&object_work)
 		if work_failure_take() {
 			plan_drop()
 			if existed {
@@ -688,23 +741,59 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		if plan_refused() {
 			return plan_refusal(error)
 		}
+		same_bytes_root: Pointer
+		if looks_up && finished.root_new {
+			same_bytes_root = root_by_hash(store_index, finished.hash, size)
+			if plan_refused() {
+				return plan_refusal(error)
+			}
+		}
 		next.size = size
-		next.pointer = finished.root
 		next.hash = finished.hash
-		new_blocks = finished.blocks
-		if !finished.root_new {
-			state_name(finished.root) // The new entry names a root of the state before.
+		if same_bytes_root.block != 0 {
+			// The work gives back each name that its copies gave, and the new
+			// entry names the found root.
+			block_tree.work_drop(&object_work)
+			next.pointer = same_bytes_root
+			state_name(same_bytes_root)
+			new_blocks = state_blocks_of(same_bytes_root, size)
+		} else {
+			block_tree.work_write(&object_work, &finished)
+			if work_failure_take() {
+				plan_drop()
+				return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, name_argument)
+			}
+			next.pointer = finished.root
+			new_blocks = finished.blocks
+			if !finished.root_new {
+				state_name(finished.root) // The new entry names a root of the state before.
+			}
+		}
+		if plan_refused() {
+			return plan_refusal(error)
 		}
 		if measure != nil {
 			work_measure := object_work.measure
 			measure^ = {object_blocks = i64(blocks_of(size)), held_blocks = i64(new_blocks), changed = i64(work_measure.changed), hashed_blocks = i64(work_measure.hashed_blocks), hashed_nodes = i64(work_measure.hashed_nodes), object_written = i64(work_measure.written)}
 		}
 	case .Restore, .Clone:
+		// No block is written: the hash index only decides which root of
+		// the same bytes the entry names, so that a version keeps no copy
+		// alive after it is thinned.
+		state_root := source.root
+		if looks_up && state_root.block != 0 {
+			if same_bytes_root := root_by_hash(store_index, source.hash, source.size); same_bytes_root.block != 0 {
+				state_root = same_bytes_root
+			}
+			if plan_refused() {
+				return plan_refusal(error)
+			}
+		}
 		next.size = source.size
-		next.pointer = source.root
+		next.pointer = state_root
 		next.hash = source.hash
 		state_name(next.pointer)
-		new_blocks = state_blocks_of(source.root, source.size)
+		new_blocks = state_blocks_of(state_root, source.size)
 	}
 	current_blocks_change(new_blocks, old_blocks)
 	if !existed {

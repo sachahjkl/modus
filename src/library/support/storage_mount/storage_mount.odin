@@ -176,6 +176,9 @@ State :: struct {
 	// The walk of the store that the open reads now: the walks of its trees
 	// name it, so it lives in the state, not on the stack.
 	store_walk:    Store_Walk,
+	// The roots of the current objects by their hash (hash_index.odin): the
+	// walk makes it, and the service keeps it up to date.
+	hash_index:    Hash_Index,
 }
 
 // What the open of a disk found: the counts, the damage, which root it
@@ -208,6 +211,11 @@ Mount :: struct {
 	stores_with_wrong_count: u64, // Stores walked whole whose count of blocks, or a count of the store block or of an entry, is wrong.
 	reference_overflow:   u64, // Blocks with more names than a count holds.
 	stores_recounted:     u64, // Stores whose count in the root differs from the recount: the open takes the recount.
+	// Roots of current objects whose store has another root with the same
+	// first 8 bytes of hash and the same size: two copies of one object,
+	// that the hash index did not find at their commit (docs/STORAGE.md,
+	// "4.7 The same object one time").
+	repeated_hashes:      u64,
 }
 
 // REFERENCE_LIMIT is the most names of one block that a count holds: the
@@ -543,13 +551,14 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 	state.store_damaged = {}
 	state.store_damaged_objects = {}
 	state.store_blocks = {}
+	hash_index_reset(state)
 	mark(state, 0, true)
 	mark(state, 1, true)
 	result.stores, result.objects, result.trees, result.removing = 0, 0, 0, 0
 	result.checked, result.wrong = 0, 0
 	result.damaged_objects, result.damaged_stores, result.named_twice, result.stores_with_wrong_count = 0, 0, 0, 0
 	result.versions, result.damaged_versions, result.shared, result.named_by_two_stores = 0, 0, 0, 0
-	result.reference_overflow, result.stores_recounted = 0, 0
+	result.reference_overflow, result.stores_recounted, result.repeated_hashes = 0, 0, 0
 	for &store, index in candidate.stores {
 		if store.name[0] == 0 {
 			continue
@@ -715,6 +724,11 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 			state.store_damaged_objects[index] += 1
 			walking.complete = false
 		case .Good:
+		}
+		// Each entry is counted, a damaged one too, so that a commit that
+		// replaces it takes its count back; a lookup skips a damaged root.
+		if hash_index_name(state, entry.hash, entry.pointer, entry.size) {
+			result.repeated_hashes += 1
 		}
 		if entry.versions.block != 0 && !walk_versions(walking, entry.versions) {
 			walking.device = true

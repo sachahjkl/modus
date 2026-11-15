@@ -34,10 +34,14 @@ import "base:intrinsics"
 import block_tree "modus:support/storage_object"
 import tree "modus:support/storage_tree"
 import "modus:support/principals"
+import "modus:support/random"
 import "modus:support/system"
 
-// Its tables, about 34 MB, are data of its module, so the tool counts them
-// with the module: the count of names of each block of the disk, the
+slot_key_generator: random.Generator // The seed of the context: the key of the slots of the hash index.
+
+// Its tables, about 44 MB, are data of its module, so the tool counts them
+// with the module: the count of names of each block of the disk, the hash
+// index of the roots of the current objects (10 MB), the
 // changes of one commit (8 MB: each block of the disk), the leaves of one
 // version index, the versions of one object for versions(), the nodes of
 // the trees of one commit and of one read, the walks of the trees, the
@@ -152,6 +156,34 @@ caller_of :: proc "contextless" () -> (caller: Caller) {
 	return caller
 }
 
+// reaches_whole_store says if the root of the connection of a caller is the
+// root of its store: the connection of the program of the store, or a
+// share of the whole store. Only such a caller finds an object by its hash
+// (docs/STORAGE.md, "4.7 The same object one time"): a share of one tree
+// must not learn from its count of blocks what the rest of the store holds.
+reaches_whole_store :: proc "contextless" (caller: ^Caller) -> bool {
+	return caller.depth == 0
+}
+
+// writable_tree_share_open says if a store has a share open that can write
+// and whose root is a tree inside the store, not its root. While it is
+// open, no commit of the store looks up a hash, and a new root of the
+// store is never a candidate: its holder writes bytes and reads the count
+// of blocks of the whole store, so either way it would learn what bytes the
+// rest of the store holds (docs/STORAGE.md, "4.7 The same object one
+// time").
+writable_tree_share_open :: proc "contextless" (store_name: string) -> bool {
+	for &item in shares {
+		if item.connection.calls.head == nil || item.read_only || item.depth == 0 {
+			continue
+		}
+		if store, _, found := connection_store(item.maker, 0); found && store.name == store_name {
+			return true
+		}
+	}
+	return false
+}
+
 // A path of a call: the store and the root of a place, and one more name.
 Path :: struct {
 	store: Store_Of,
@@ -205,12 +237,17 @@ place_path :: proc "contextless" (caller: ^Caller, place: i64, error: ^errors.Er
 // that acts for principal N names the stores of principal N only: the
 // principal of a store is in its name (principals.store_name_principal).
 // Principal 0, the machine, names no store of a named principal. A caller
-// that does not act for a principal, and a share, name their own store only.
+// that does not act for a principal names its own store only. A share names
+// no store: its root is a tree that its maker chose, and a place on the
+// root of its own store would reach, and change, the whole store.
 may_name_store :: proc "contextless" (caller: ^Caller, store_name: string) -> bool {
+	if caller.connection == nil || share_of(caller.connection) != nil {
+		return false
+	}
 	if store_name == caller.store.name {
 		return true
 	}
-	if !caller.acts_for_principal || caller.connection == nil || share_of(caller.connection) != nil {
+	if !caller.acts_for_principal {
 		return false
 	}
 	return principals.store_name_principal(store_name) == caller.principal
@@ -314,7 +351,7 @@ write :: proc "c" (place: i64, name: ^string, data: ^string, error: ^errors.Erro
 	if refused < 0 {
 		return refused
 	}
-	return object_change(named.caller.store, path_names(&named.path), named.name, .Write, transmute([]u8)data^, {}, error, 2)
+	return object_change(named.caller.store, path_names(&named.path), named.name, .Write, transmute([]u8)data^, {}, reaches_whole_store(&named.caller), error, 2)
 }
 
 // read gives the bytes of the object `name` under a place: the range from 0 to its end, as read_range gives it, with the pending changes of this connection. The result is the count of bytes; the size when they do not fit in the result; or a negative number with an error record.
@@ -760,7 +797,7 @@ stores :: proc "c" (result: ^[]u8) -> i64 {
 // ---------------------------------------------------------------------
 // The exports of versions.
 
-// open_store gives a place on the root of another store, for the exports that read it and for restore and clone: a caller that acts for principal N names the stores of principal N; another caller names its own store only (may_name_store). write, add, remove, rename and share refuse a place of another store. The result is the place, or a negative number with an error record.
+// open_store gives a place on the root of another store, for the exports that read it and for restore and clone: a caller that acts for principal N names the stores of principal N; another caller names its own store only; a share names no store, not even the store of its maker (may_name_store). write, add, remove, rename and share refuse a place of another store. The result is the place, or a negative number with an error record.
 //
 // **Error kinds**
 //
@@ -895,7 +932,7 @@ restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.
 	if state_refused < 0 {
 		return state_refused
 	}
-	return object_change(named.path.store, path_names(&named.path), named.name, .Restore, nil, state, error, 2)
+	return object_change(named.path.store, path_names(&named.path), named.name, .Restore, nil, state, reaches_whole_store(&named.caller), error, 2)
 }
 
 // clone makes the object `new_name` under a place a copy of the object `name` under the same place: the two name the same blocks until one of them changes. A state of new_name before becomes a version. The place: as for versions. The result is the generation of the commit, or a negative number with an error record.
@@ -924,7 +961,7 @@ clone :: proc "c" (place: i64, name: ^string, new_name: ^string, error: ^errors.
 	if !target_ok {
 		return ERROR_NAME
 	}
-	return object_change(named.path.store, path_names(&named.path), target, .Clone, nil, current_state(&object), error, 3)
+	return object_change(named.path.store, path_names(&named.path), target, .Clone, nil, current_state(&object), reaches_whole_store(&named.caller), error, 3)
 }
 
 // compare gives the ranges of bytes that differ between two states of the object `name` under a place (two generations: a version or the current version). Two blocks that the two states both name are equal bytes and are not read. The place: as for versions. The result is the count of the ranges, or a negative number with an error record.
@@ -1089,6 +1126,15 @@ shares_serve :: proc "contextless" () -> (calls: int) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	date_page = date.page_of(ctx)
+	// The key of the slots of the hash index: a new one at each start, so
+	// that no party can choose hashes whose first slots make one long run.
+	if !random.generator_from_context(&slot_key_generator, ctx) {
+		system.log_in("storage", .Error, "storage: no seed in the context of the program")
+		system.stop(1)
+	}
+	slot_key: [8]u8
+	random.fill(&slot_key_generator, slot_key[:])
+	opened.hash_index.slot_key = intrinsics.unaligned_load((^u64)(&slot_key[0]))
 	ok: bool
 	if service, ok = system.service_open(ctx); !ok {
 		system.log_in("storage", .Error, "storage: no service ring")

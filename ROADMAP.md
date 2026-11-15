@@ -37,7 +37,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The program `manual` opens the links of a page.** A link to a term, a guide or a declaration in the documentation of a module opens its page in the program `manual`. Today only a link to a module or to an export opens.
 - **The console colors each field by its value kind.** The description of a field of a record states its value kind, so the console draws a size, a time or a handle in a field in its color. Today a field has the color of its type only.
 - **The history of a store.** A version is a state of a whole store, and the versions of each object are found in it. A principal then steps a store back as one thing, not object by object.
-- **The same object is kept one time.** The storage service finds an object by its hash, so an object that two entries name takes its blocks once.
 - **A faster switch between threads.** A processor that takes again the thread whose extended state its registers hold skips the restore of that state. A measure gives the gain.
 - **The history of each measure, release by release.** The measure record keeps the numbers of each release, and the site draws a chart of each measure over the releases. A reader then sees whether a change made the system faster or slower.
 - **Measures on a quiet host.** The numbers of the windows, of the calls, of the vector forms and of QUIC are measured on a host with no other load. A reader then compares them from one release to the next.

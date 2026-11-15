@@ -52,6 +52,10 @@ scenario_hierarchy_first := [?]Step {
 	{kind = .Wait, text = "hierarchy: the read-only share cannot remove: as it must"},
 	{kind = .Wait, text = "hierarchy: after unshare, the handles of the share are revoked: a call gives Gone: as it must"},
 	{kind = .Wait, text = "hierarchy: a writable share writes in tree_005, and the maker reads it: as it must"},
+	{kind = .Wait, text = "hierarchy: a share of a tree cannot open the root of its own store: as it must"},
+	// Three blocks of data and one object node, for each of the two writes
+	// (docs/STORAGE.md, "4.7 The same object one time").
+	{kind = .Wait, text = "hierarchy: while a writable share of a tree is open, the bytes that it wrote took 4 blocks, the same bytes written by the maker took 4 blocks more, and the removal through the share freed 4: the share learns nothing of what the rest of the store holds: as it must"},
 	{kind = .Wait, text = "hierarchy: the first run leaves 102100 objects and 1090 trees: as it must"},
 	{kind = .Wait, text = "hierarchy: done, 0 wrong"},
 	{kind = .Wait, text = "root: hierarchy stopped with code 0"},

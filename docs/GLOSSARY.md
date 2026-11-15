@@ -3822,7 +3822,7 @@ Copy on write makes shared blocks: a commit writes new blocks only on the paths 
 
 One exception: the count of the current objects (`current_blocks`) counts a block that two clones share two times, so a change at the limit of a store can be refused early.
 
-A shared block is not a deduplicated block: the service does not search for equal bytes; it shares only what a commit did not change, and what a clone names.
+A commit also shares the blocks of a whole object: when a current object of the same store has the hash of the new state, the entry names its root: the term Hash index, below. The service does not search for equal blocks inside two different objects.
 
 The design: `docs/STORAGE.md`, "Versions, thinning and the limit".
 
@@ -4146,6 +4146,18 @@ The hash of an object is not always the hash of a module: a module file with an 
 The design: `docs/STORAGE.md`, "The hash of an object".
 
 Do not use: content id, checksum (for this).
+
+### Hash index
+
+The hash index is the table in the memory of the storage service that finds the root of the current state of an object of a store by the hash of that state.
+
+The hash index keeps the same object one time: a write, a commit of ranges, a restore or a clone whose new state has the hash and the size of a current object of the same store names the root of that object, and writes no block of it. The open of the disk makes the index from the entries, so it is never on the disk and a loss of power leaves nothing of it to repair; a commit changes it after its root is on the disk. The index keeps the first 8 bytes of each hash; before an entry names a root, the service computes the hash of that state again from its blocks. A commit finds by hash only from a connection that reaches the whole store, and only while the store has no writable share of a tree open; a root that a commit adds while one is open is never a candidate, so the holder of the share learns nothing of the rest of the store. Example: the program `ranges` writes an object of 1 MiB under two names, and the store holds 261 blocks for both.
+
+The hash index is not an index on the disk, holds no version, and never names a block of another store.
+
+The design: `docs/STORAGE.md`, "4.7 The same object one time".
+
+Do not use: deduplication, dedup table, content-addressed store.
 
 ### Range
 
