@@ -62,6 +62,12 @@ PALETTE_INPUT_BAND_Y :: 96 + 24 // The middle line of the input band.
 // 16 pixels from the left of the panel, in cells of 16 pixels, and the
 // character 25 is in the name of the second parameter.
 PALETTE_REVOKE_SECOND_FIELD_X :: 192 + 16 + 25 * 16
+// In the band of the form "strategy(name: )", 16 characters: the buttons
+// of the field start 4 + 16 pixels after the caret at the end of the call,
+// on the next column of the grid of 8 (form_buttons_layout): 192 + 16 + 16
+// * 16 + 20 = 484, then 488. The press is 8 pixels inside the first button,
+// at the start of its name.
+PALETTE_STRATEGY_FIRST_BUTTON_X :: 488 + 8
 PALETTE_SCROLL_BAR_X :: 192 + 640 - 1 - 9 // The middle column of the scroll bar of the list: 17 pixels wide, inside the border of the panel.
 PALETTE_SCROLL_BAR_ARROW_DOWN_Y :: 96 + 48 + 288 - 9 // The middle of its arrow button at the bottom: the list is 288 pixels high under the input band of 48.
 
@@ -1131,6 +1137,40 @@ scenario := [?]Step {
 	{kind = .Wait, text = " for \">\": "},
 	{kind = .Click, x = PALETTE_SCROLL_BAR_X, y = PALETTE_SCROLL_BAR_ARROW_DOWN_Y},
 	{kind = .Wait, text = "compositor: the scroll bar of the palette: a press on the arrow down, the rows from 1"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// A field that counts a size shows its unit after the number: the
+	// console states that buffer takes a count of pages (the picture).
+	// Escape leaves the form, and no memory object is made.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ">buffer"},
+	{kind = .Wait, text = " for \">buffer\": buffer (command)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks for the arguments of buffer"},
+	{kind = .Wait, text = "compositor: the field 0 of buffer takes a number in pages"},
+	{kind = .Keys, text = "4"},
+	{kind = .Shot, text = "palette_unit"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// The buttons of a field take the pointer. The field of strategy is a
+	// row of three buttons in the band, from the first column of the grid
+	// after the call "strategy(name: )". Right chooses fair; a press and a
+	// release on the first button take round_robin, as Tab takes the value
+	// that the keys chose. Escape leaves with no change of the strategy.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ">strategy"},
+	{kind = .Wait, text = " for \">strategy\": strategy (command)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = " candidates for the field 0, as a row of buttons"},
+	{kind = .Key, text = "right"},
+	{kind = .Click, x = PALETTE_STRATEGY_FIRST_BUTTON_X, y = PALETTE_INPUT_BAND_Y},
+	{kind = .Wait, text = "compositor: a press takes the button round_robin of the field 0"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	// The settings: the palette starts the program settings. Its window

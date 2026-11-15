@@ -8,6 +8,7 @@ import op "modus:contract/operation"
 import module "modus:contract/module"
 import "modus:contract/ring"
 import "modus:contract/start_grant"
+import "modus:contract/value_kinds"
 import "modus:support/disk_program"
 import "modus:support/random"
 import "modus:support/system"
@@ -75,6 +76,7 @@ Command :: struct {
 	name:            string,
 	parameters:      [ARGUMENT_CAPACITY]Kind,
 	parameter_names: [ARGUMENT_CAPACITY]string, // From the description of an export. "": no name.
+	parameter_units: [ARGUMENT_CAPACITY]value_kinds.Integer_Unit, // What the Integer of each parameter counts, as a built-in command states it. {}: a plain number.
 	parameter_count: int,
 	result:          Kind,
 	about:           string,
@@ -184,10 +186,13 @@ request_count: u32 // The tag of the last command to the root service.
 names: [8192]u8
 names_count: int
 
-command :: proc "contextless" (name: string, parameters: []Kind, result: Kind, about: string, run: proc "contextless" (arguments: []Value) -> Value) {
+// units: what the Integer of each parameter counts, in the order of the
+// parameters; a command whose numbers are plain counts gives none.
+command :: proc "contextless" (name: string, parameters: []Kind, result: Kind, about: string, run: proc "contextless" (arguments: []Value) -> Value, units: []value_kinds.Integer_Unit = nil) {
 	item := &commands[command_count]
 	item^ = {name = name, parameter_count = len(parameters), result = result, about = about, run = run}
 	copy(item.parameters[:], parameters)
+	copy(item.parameter_units[:], units)
 	command_count += 1
 }
 
@@ -597,7 +602,7 @@ commands_start :: proc "contextless" () {
 	// Read, Write)". `byte` and `bytes` read it.
 	//
 	// Error: "the budget of the console cannot pay for N pages".
-	command("buffer", {.Integer}, .Handle, "a new memory object, in pages", buffer_create)
+	command("buffer", {.Integer}, .Handle, "a new memory object, in pages", buffer_create, {value_kinds.size_in(.Pages)})
 	// Gives one byte of a memory object, from 0: the console maps the object
 	// for the time of the command.
 	//
@@ -619,7 +624,7 @@ commands_start :: proc "contextless" () {
 	//
 	// Errors: the handle names no memory object; the object does not have
 	// these bytes; the count is not 0 to 4096.
-	command("bytes", {.Handle, .Integer, .Integer}, .Bytes, "bytes of a memory object", buffer_bytes)
+	command("bytes", {.Handle, .Integer, .Integer}, .Bytes, "bytes of a memory object", buffer_bytes, {{}, {}, value_kinds.size_in(.Bytes)})
 	// Closes a memory object that `buffer` made: the console gives its
 	// handle back, and the kernel frees the pages when no handle names the
 	// object. It gives nothing.

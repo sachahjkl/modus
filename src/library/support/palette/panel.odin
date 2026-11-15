@@ -726,6 +726,8 @@ Band_Class :: enum u8 {
 	Quiet, // Punctuation, and the name of a parameter that has not the caret.
 	Label, // The name of the parameter that has the caret.
 	Value, // What the input typed.
+	Size_Unit, // The unit after the number of a field that counts a size.
+	Time_Unit, // The unit after the number of a field that counts a time.
 }
 
 BAND_CAPACITY :: 512 // The characters of the band of a form: more than a name and six fields of 48 characters with their names.
@@ -781,6 +783,9 @@ form_band_layout :: proc "contextless" (form: ^Form, band: ^Band_Layout) {
 		}
 		band_put(band, field_text(form, field), .Value)
 		band.value_counts[field] = band.count - band.value_starts[field]
+		// The unit stays while the field is empty: it says what to type.
+		// A press on it puts the caret at the end of the number.
+		band_put(band, field_unit_text(form, field), field_unit(form, field).kind == .Time ? Band_Class.Time_Unit : Band_Class.Size_Unit)
 	}
 	band_put(band, ")", .Quiet)
 	band.caret = min(band.caret, band.count)
@@ -862,6 +867,24 @@ form_buttons_layout :: proc "contextless" (table: ^interface.Draw_Table, form: ^
 	return buttons
 }
 
+// form_button_at gives the button of the current field of a form under a
+// point of the screen, as an index in the shown candidates, or NO_ROW: the
+// same layout as the drawing (form_buttons_layout), for a panel whose
+// corner is at (panel_x, panel_y). table: the draw table of the last frame
+// of the panel, for the measure of the names.
+form_button_at :: proc "contextless" (panel: ^Panel, table: ^interface.Draw_Table, panel_x, panel_y, x, y: int) -> int {
+	if panel.state != .Arguments || !panel.form.active {
+		return NO_ROW
+	}
+	buttons := form_buttons_layout(table, &panel.form, panel_x, panel_y)
+	for area, index in buttons.areas[:buttons.count] {
+		if interface.area_contains(area, x, y) {
+			return index
+		}
+	}
+	return NO_ROW
+}
+
 // form_buttons_draw draws the buttons of the current field of a form: the
 // chosen candidate filled. In the band, a button that is not chosen has
 // the surface of a card, so it shows on the track of the band; under the
@@ -918,6 +941,10 @@ form_band_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, x, y
 			color = graphics.COLOR_TEXT
 		case .Value:
 			color = graphics.COLOR_WHITE
+		case .Size_Unit:
+			color = graphics.value_kind_color(.Size, false)
+		case .Time_Unit:
+			color = graphics.value_kind_color(.Time, false)
 		}
 		interface.draw_text(table, text_x + (start - first) * BAND_CELL_WIDTH, text_y, string(characters[start:end]), color, font)
 		start = end
@@ -948,6 +975,7 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 		for field in 0 ..< form.field_count {
 			interface.text_put(&act, field > 0 ? ", " : "")
 			interface.text_put(&act, field_text(form, field))
+			interface.text_put(&act, field_unit_text(form, field))
 		}
 		interface.text_put(&act, "): ")
 		interface.text_put(&act, string(form.given.about[:form.given.about_length]))
@@ -994,6 +1022,10 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 		name := field_name(form, form.current)
 		interface.text_put(&prompt, name != "" ? name : "the parameter")
 		interface.text_put(&prompt, form.given.parameters[form.current] == .Integer ? ": an Integer" : ": a Text")
+		if unit_text := field_unit_text(form, form.current); unit_text != "" {
+			interface.text_put(&prompt, ", in")
+			interface.text_put(&prompt, unit_text)
+		}
 		interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&prompt), text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
 	}
 	if message := form_message(form); message != "" {

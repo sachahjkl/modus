@@ -18,7 +18,11 @@ package modustool
 //     Escape: nothing is revoked;
 //  8. ":" and a setting: the font of the whole desktop changes behind the
 //     open panel, then changes back;
-//  9. shutdown: the question, and Escape.
+//  9. a number with its unit: buffer takes a count of pages;
+// 10. a row of buttons in the band: strategy, Right, and a press on a
+//     button;
+// 11. go to: the window of settings comes to the front;
+// 12. shutdown: the question, and Escape.
 //
 // Each key of a scene and each wait for a line of the log is one that the
 // main scenario of the machine test has (machine.odin): the film shows only
@@ -201,10 +205,34 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 
-	// Scene 9: a field with a few closed values is a row of buttons in the
+	// Scene 9: a field that counts a size shows its unit after the number.
+	// The command buffer takes a count of pages: the band says "pages" while
+	// the field is empty, and after the 4 that the scene types. Escape
+	// leaves with no memory object made.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Film_Type, text = ">buffer"},
+	{kind = .Wait, text = " for \">buffer\": buffer (command)"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks for the arguments of buffer"},
+	{kind = .Wait, text = "compositor: the field 0 of buffer takes a number in pages"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
+	{kind = .Film_Type, text = "4"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+
+	// Scene 10: a field with a few closed values is a row of buttons in the
 	// band. The command strategy takes one of three names: the form shows
-	// them as buttons, Right moves the choice, and Escape leaves with no
-	// change: the program scheduler that serves it does not run here.
+	// them as buttons, Right moves the choice, a press on the first button
+	// takes round_robin, and Escape leaves with no change: the program
+	// scheduler that serves it does not run here.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
@@ -218,7 +246,8 @@ scenario_palette_film := [?]Step {
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
 	{kind = .Key, text = "right"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
-	{kind = .Key, text = "right"},
+	{kind = .Click, x = PALETTE_STRATEGY_FIRST_BUTTON_X, y = PALETTE_INPUT_BAND_Y},
+	{kind = .Wait, text = "compositor: a press takes the button round_robin of the field 0"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette goes back to the search"},
@@ -227,7 +256,7 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 
-	// Scene 10: go to. The window of settings, open since the start of the
+	// Scene 11: go to. The window of settings, open since the start of the
 	// film, names the act of each of its rows. The band of ":grid" then
 	// offers Shift with Enter, which raises the window of settings and puts
 	// the focus on the row of the grid fit.
@@ -242,7 +271,7 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "interface: settings: the focus is on the element of settings.set:grid_fit", any_order = true},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
 
-	// Scene 11: a command that destroys asks for a second Enter, on a row
+	// Scene 12: a command that destroys asks for a second Enter, on a row
 	// that says the act in full. Escape goes back, and nothing stops.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},

@@ -101,6 +101,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "palette_strategy.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The scheduling strategies as one row of the palette: a button for each strategy, a line under the one in use."},
 	{file = "palette_arguments.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "A command with a parameter in the palette: start asks for a name, and the list gives the modules that match."},
 	{file = "palette_arguments_two.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "A command with two parameters in the palette: revoke has the name plasma, and the list gives the grants of that program."},
+	{file = "palette_unit.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "A number with its unit in the palette: buffer takes a count of pages, and the band shows pages after the 4 that was typed."},
 	{file = "palette_confirm.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The palette asks for a second Enter before it stops a program and closes its window."},
 	{file = "palette_confirm_command.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The palette asks for a second Enter before the command shutdown, which stops the machine."},
 	{file = "palette_result.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "A command chosen in the palette runs as a line of the console: memory() is in the console behind the panel."},

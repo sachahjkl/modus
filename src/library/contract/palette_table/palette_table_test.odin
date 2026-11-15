@@ -2,6 +2,7 @@
 package palette_table
 
 import "core:testing"
+import "modus:contract/value_kinds"
 
 @(private = "file")
 table_of_test :: proc(count: int) -> []u8 {
@@ -251,4 +252,35 @@ an_act_name_and_a_setting_row_are_checked :: proc(t: ^testing.T) {
 	testing.expect_value(t, entry_problem(&entry), Problem.None)
 	entry.value_name_length = 6 // A value with no setting.
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
+}
+
+// An integer unit is one of the contract, and only on an Integer parameter
+// that the entry has: the panel shows it after the number of the field.
+@(test)
+an_integer_unit_is_checked :: proc(t: ^testing.T) {
+	entry: Entry
+	entry.kind = .Command
+	entry.name_length = u8(copy(entry.name[:], "bytes"))
+	entry.signature_length = u8(copy(entry.signature[:], "bytes(Handle, Integer, Integer) -> Bytes"))
+	entry.parameter_count = 3
+	entry.parameters[0], entry.parameters[1], entry.parameters[2] = .Handle, .Integer, .Integer
+	entry.parameter_units[2] = value_kinds.size_in(.Bytes)
+	testing.expect_value(t, entry_problem(&entry), Problem.None)
+	entry.parameter_units[2] = value_kinds.time_in(.Seconds)
+	testing.expect_value(t, entry_problem(&entry), Problem.None)
+	entry.parameter_units[2] = {kind = .Size, unit = u8(max(value_kinds.Size_Unit)) + 1} // Past the units of a size.
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+	entry.parameter_units[2] = {kind = .Module, unit = 0} // A kind that counts nothing.
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+	entry.parameter_units[2] = {kind = .None, unit = 1} // A unit of no kind.
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+	entry.parameter_units[2] = {}
+	entry.parameter_units[0] = value_kinds.size_in(.Pages) // A Handle has no number.
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+	entry.parameter_units[0] = {}
+	entry.parameter_units[3] = value_kinds.size_in(.Pages) // A parameter that the entry does not have.
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+	testing.expect_value(t, value_kinds.integer_unit_text(value_kinds.size_in(.Pages)), " pages")
+	testing.expect_value(t, value_kinds.integer_unit_text(value_kinds.time_in(.Milliseconds)), " ms")
+	testing.expect_value(t, value_kinds.integer_unit_text({}), "")
 }
