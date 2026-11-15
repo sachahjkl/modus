@@ -246,10 +246,13 @@ commands_start :: proc "contextless" () {
 	// the command connects to `monitor` when the console has no connection
 	// to it yet, and calls `monitor.programs()`. The rows are those of that
 	// export: the slot, the name, the state, the pages, the handles, the
-	// threads, the processor time and the kernel entries of each program.
+	// threads, the processor time and the kernel entries of each program,
+	// and the hash of the file of a disk program, whose name is its
+	// nickname.
 	//
 	// ```
 	// > columns(where(programs(), "state", "waiting"), "slot name threads")
+	// > columns(where(programs(), "name", "visitor"), "name hash")
 	// ```
 	//
 	// Errors: those of `connect("monitor")` when the service does not run,

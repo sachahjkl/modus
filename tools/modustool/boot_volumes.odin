@@ -738,7 +738,7 @@ Volumes_Of_Part :: struct {
 test_part_volumes := [?]Volumes_Of_Part {
 	{part = "main", procedures = {"main_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "network", procedures = {"network_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "power", procedures = {"power_loss_run", "power_loss_sequence", "power_loss_settings_run", "power_loss_ranges_run"}, volumes = {BOOT_VOLUME}},
+	{part = "power", procedures = {"power_loss_run", "power_loss_sequence", "power_loss_settings_run", "power_loss_ranges_run", "dropped_write_run"}, volumes = {BOOT_VOLUME}},
 	{part = "hierarchy", procedures = {"hierarchy_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "ranges", procedures = {"ranges_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "disk_programs", procedures = {"disk_programs_tests_run", "disk_programs_named_principal_tests_run"}, volumes = {BOOT_VOLUME}},

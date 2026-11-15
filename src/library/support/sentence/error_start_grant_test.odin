@@ -3,6 +3,7 @@ package sentence
 
 import "modus:contract/errors"
 import "modus:contract/start_grant"
+import "core:fmt"
 import "core:testing"
 
 // A refused debug access names the start grant that refuses by its name,
@@ -20,7 +21,8 @@ debug_access_refused_by_a_named_grant :: proc(t: ^testing.T) {
 	writer = Writer{buffer = buffer[:]}
 	record = errors.error_make(.No_Grant, .Debug_Access, 1, 0, 0, 1 + i64(max(start_grant.Grant)))
 	error_text(&writer, &record, "debugger.attach", "program")
-	testing.expect_value(t, written(&writer), "debugger.attach: the caller has no grant for this: the debug access to this program: the grant System_Part of the program refuses it")
+	last_name, _ := start_grant.grant_name(i64(max(start_grant.Grant)))
+	testing.expect_value(t, written(&writer), fmt.tprintf("debugger.attach: the caller has no grant for this: the debug access to this program: the grant %s of the program refuses it", last_name))
 	writer = Writer{buffer = buffer[:]}
 	record = errors.error_make(.No_Grant, .Debug_Access, 1, 0, 0, 1 + i64(start_grant.Grant.Root_Ring))
 	error_text(&writer, &record, "debugger.attach", "program")
@@ -47,7 +49,7 @@ debug_access_refused_by_a_grant_with_no_name :: proc(t: ^testing.T) {
 	writer := Writer{buffer = buffer[:]}
 	record := errors.error_make(.No_Grant, .Debug_Access, 1, 0, 0, 2 + i64(max(start_grant.Grant)))
 	error_text(&writer, &record, "debugger.attach", "program")
-	testing.expect_value(t, written(&writer), "debugger.attach: the caller has no grant for this: the debug access to this program: a grant of the program refuses it, the start grant number 27, which this program does not know")
+	testing.expect_value(t, written(&writer), fmt.tprintf("debugger.attach: the caller has no grant for this: the debug access to this program: a grant of the program refuses it, the start grant number %d, which this program does not know", 1 + i64(max(start_grant.Grant))))
 
 	writer = Writer{buffer = buffer[:]}
 	record = errors.error_make(.No_Grant, .Debug_Access, 1, 0, 0, -5)
