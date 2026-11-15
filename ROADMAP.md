@@ -6,6 +6,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
+- **The drawing exports take the rectangles of a frame in one call.** The draw export of the drawing module takes the table of the damage rectangles of a frame, now that an export has room for it. A window then crosses the border of the module one time for each frame, and not one time for each rectangle. [Design](src/md/api/picture.md)
 - **The grants of a disk program of a named principal persist across a restart.** A named principal grants a disk program from its own session, and its signed disk grant table is read after the unlock, as the table of the machine is after the machine passphrase. The monitor and the menu show each nickname with its hash. [Design](src/md/features/programs_from_a_disk.md)
 - **A disk program imports a module of the store of the programs.** The root service finds each import of a disk program by its hash in the same store, reads it with the bounds of a load, and checks its hash. A developer then adds a program and its library modules to a machine that runs. [Design](src/md/features/programs_from_a_disk.md)
 - **The debug object of an outside module in a machine.** The debug image of a machine holds the debug object of a module that runs from a disk. A stop report of that module then names its procedures and its lines, and the debugger shows its source. [Design](src/md/infrastructure/third_party_module.md)

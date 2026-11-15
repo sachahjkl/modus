@@ -1,6 +1,6 @@
 # Module contract
 
-`src/library/contract/module/format.odin` is version 1 of the format at the level of bytes.
+`src/library/contract/module/format.odin` is version 2 of the format at the level of bytes.
 
 This document gives the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `GLOSSARY.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -96,7 +96,7 @@ The loader reads none of these tables: they are for a caller that must know the 
 
 | Table | One record describes |
 |---|---|
-| Functions | One export (`module.Function`, 104 bytes): its name, one line of help, its documentation text, the name, the type, the detail and the direction of each of its parameters (6 at most), the type and the detail of its result, and the description of its error record (0: it gives none) |
+| Functions | One export (`module.Function`, 168 bytes): its name, one line of help, its documentation text, the name, the type, the detail and the direction of each of its parameters (12 at most), the type and the detail of its result, and the description of its error record (0: it gives none) |
 | Records | One record that an export receives or gives: its name, its size (256 bytes at most) and the range of its fields |
 | Fields | One field of a record: its name, its offset, its type (Integer, Handle or Text), signed or unsigned, and its detail (the size of an integer or a text, the rights of a handle) |
 | Strings | The bytes of all names, help lines and documentation texts |
@@ -397,7 +397,7 @@ A program can link a library into its own file (static) or find it at load (dyna
 
 Status: Chosen: registers, with a subset of the C convention, not the whole convention.
 
-A call to an export is an ordinary function call: its values go in the registers that the C convention of the machine uses, limited to a small subset that every compiler can produce. Because each parameter is one register, the same description lets a caller in another program send the same values as a record through a ring: the isolated call.
+A call to an export is an ordinary function call: its values go in the registers that the C convention of the machine uses, and past the sixth on the stack, limited to a small subset that every compiler can produce. Because each parameter is one word of 8 bytes, the same description lets a caller in another program send the same values as a record through a ring: the isolated call.
 
 ### The choice
 
@@ -407,11 +407,11 @@ On x86-64 this is the System V AMD64 assignment:
 | Item | Rule |
 |---|---|
 | Parameters | Scalars only: an integer of 64 bits or less, a `f32` or `f64`, an address, a handle |
-| Integer parameters | Up to 6, in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, in order |
+| Integer parameters | Up to 12 (`module.PARAMETER_CAPACITY`). The first 6 in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, in order. The 7th to the 12th on the stack, one word of 8 bytes each: the 7th at the stack pointer of the call, the 8th 8 bytes above it, and so on |
 | Float parameters | Up to 8, in `xmm0` to `xmm7`, in order |
 | Results | Up to 2 integers in `rax`, `rdx`, and up to 2 floats in `xmm0`, `xmm1` |
 | A record, a slice, a string, a variant | Passed as the address of memory that the caller owns. Never by value |
-| More parameters than registers | Not permitted. Use a record |
+| More integer parameters than registers | On the stack, by the rule of System V for a value of the integer class. The count includes the buffer of a Text or Table result, the place of a Record result and the address of an error record |
 | Variable parameter lists | Not permitted |
 | Errors | A function that can fail gives a negative integer result, and writes an error record at an address that the caller gives (section 8) |
 
@@ -426,7 +426,7 @@ The C conventions have real defects. The subset avoids each one:
 | The rules for a record passed by value are complex, differ between System V and Windows, and differ between compilers in edge cases [Types §7] | No record by value |
 | Variable parameter lists need special rules | Not permitted |
 | Types with a size that depends on the system (`long`, bare `enum`, `long double`) | Only the base types of section 5 |
-| Parameters on the stack have alignment and order rules | No parameter on the stack |
+| Parameters on the stack have alignment and order rules | Only integer words of 8 bytes on the stack, in order, with the stack on a multiple of 16 bytes at the call: the one rule of System V for them |
 | Windows x64 has 4 register parameters and a reserved stack area | Not used. One assignment per machine architecture |
 
 - **Why not a new convention**: A new convention needs a change in each compiler. Every language can already produce this subset: `proc "c"` in Odin, `extern "C"` in C, Rust and Zig. This satisfies the rule that no contract depends on one language (P19).
@@ -438,7 +438,13 @@ The description of a function is its list of parameters and results, each with a
 
 - **Direct call**: the values go in registers, as above.
 - **Isolated call**: the argument record is derived by rule: one field per parameter, in order. The results travel in a completion record. The derivation is mechanical; nobody writes a second encoding.
-- **One generic entry routine**: Because every parameter is a scalar, one small routine loads up to 6 integer registers and 8 float registers from two arrays and calls the export. The receiving side of a ring and the console both use it. A library for foreign calls is not needed. It is `export_call` in `src/library/support/system/enter.asm`: 30 instructions.
+- **One generic entry routine**: Because every parameter is a scalar, one small routine loads 6 integer registers and 8 float registers from two arrays, writes the integers 7 to 12 in six words of stack, and calls the export. It always writes the six words: a callee reads the words that it has, so the routine needs no count and no description. The receiving side of a ring and the console both use it. A library for foreign calls is not needed. It is `export_call` in `src/library/support/system/enter.asm`: 44 instructions.
+
+### Why an export takes more than six arguments
+
+The bound was six arguments: the integer registers of the convention, with no parameter on the stack. It bent borders of modules that were right: the drawing module takes one damage rectangle for each call, because its table of rectangles had no place, and the cells of a text grid are copied into the text table of the frame, because the damage of a grid needs two more tables and no parameter was left for them. The description describes each export completely at each count, so the count of the parameters is no sign that a border is wrong. The bound is now 12: twice the registers, and four more than the largest export that is planned. A bound stays because a `Function` record and the private copy of a receiver have a fixed size. The design: `src/md/api/call_form_arguments.md`.
+
+The export `weigh` of `src/modules/sample` takes nine parameters and an error record: ten arguments, four on the stack. Each of its numbers has its own weight, so a value in the place of another gives another sum: `weigh(1, 2, 3, 4, 5, 6, 7, 8, "A")` is 269. The machine test of the console calls it in a direct call and in an isolated call.
 
 ### The isolated call, as implemented
 
@@ -446,7 +452,7 @@ The code is `src/library/contract/isolated/` and `src/programs/host`.
 
 - **Call host**: The caller starts one program per module: the call host. The call host receives two memory objects: the call ring and the call region. Like each program, it also has its budget and, if the caller gives it, the log. It receives no other handle. The caller maps the file of the module in the call host, read-only, with no handle. The call host checks the file and loads the module.
 - **Argument record**: One field per parameter, in order. A scalar is 8 bytes. A parameter that the direct call passes by address is the record itself: a Text is a slice of 16 bytes, `{offset, count}`. The offset is in the call region.
-- **Where it travels**: The argument record is in the call region. The command record names it: `kind` is the export index, `values[0]` is the offset of the argument record, `values[1]` is its size. Reason: 6 integers and 8 floats are 112 bytes, and a record of a ring has 56 bytes of values. One place for all argument records needs no second path.
+- **Where it travels**: The argument record is in the call region. The command record names it: `kind` is the export index, `values[0]` is the offset of the argument record, `values[1]` is its size. Reason: 12 integers and 8 floats are 160 bytes, and a record of a ring has 56 bytes of values. One place for all argument records needs no second path.
 - **Completion record**: `kind` is a status (`isolated.Status`): 0 `Ok`; 1 `Bad_Export`, the module has no export with this index, or the export has no description; 2 `Bad_Arguments`, the argument record or one of its slices is not in the call region; 3 `Bad_Handle`, a handle of the argument record did not come through the call ring or lacks a right of the description ("Records and handles, as implemented"); 4 `Load_Failed`, only in the first completion of a call host, with the tag 0 (section 2, "The error of a load"). `values[0]` and `values[1]` are the integer results; `values[2]` and `values[3]` are the float results.
 - **The receiver checks**: The call host reads the types from the description in the module, not from the caller. It copies the argument record to private memory once. It checks the offset and the count of each slice against the size of the call region, with no overflow. Then it calls `export_call`.
 - **The caller checks**: The caller reads a bounded number of completion records, and ignores each record whose tag is not the tag of the call.
@@ -470,7 +476,7 @@ The code is `src/library/contract/isolated/` and `src/programs/host`.
 - **A handle is lent**: The description has the rights that the export needs. The caller gives a copy of its handle to the receiver, with these rights only, through the call ring: the kernel operation `Handle_Give`, with the memory object of the call ring as the target. The receiver closes the copy when the export returns. The caller keeps its handle.
 - **The receiver proves each handle**: The number of the handle is in memory that the caller writes. The receiver asks the kernel if this handle came through the call ring (`Handle_State`), and if it has each right of the description. If not, the status of the call is 3, "bad handle", and the export does not run. Without this proof a caller names a handle that the receiver holds for itself.
 - **The caller takes back what it lent**: the caller gives a handle that comes from a copy of its own handle, and revokes the copy after the call (`system.lend`, `system.lend_end`, the kernel operation `Handle_Revoke`). The handle of the receiver ends, and each mapping that the export made with it. An export that keeps a mapping for a later call stops its program on a page fault at the first use. If the caller cannot give each handle, it revokes those that it gave and sends no record.
-- **Limits**: 16 handles for one call. A result record has no handle. An export with a Record result has 5 parameters at most.
+- **Limits**: 16 handles for one call. A result record has no handle. An export with a Record result has 11 parameters at most: the place of the result is the 12th argument.
 - **A Table result** (property 12; `GLOSSARY.md`, "Table"): records of one description that follow each other, in memory of the caller. The callee writes the records that fit and gives the count of the full table, as a Text result gives its count of bytes; a count larger than the capacity means "the table did not fit", and a negative count is an error that the documentation of the export names. A record of a Table has no Handle. The caller reads `min(count, capacity)` records: it trusts neither number (`isolated.result_table`). It gives many records in one call, in memory of the caller, never a list of pointers. For a table as a parameter, see section "Tables and bytes as parameters".
 - **In Odin**: `^Name` is a Record, `result: ^Name` as the last parameter is a Record result, `result: ^[]Name` as the last parameter is a Table result, `^system.Table_To_Read(Name)` (and `_Change`, `_Append`) is a Table parameter, `^system.Bytes_To_Read` (and `_Change`, `_Append`) is Bytes, a field `[N]u8` is a Text of N bytes, a field `u8`, `i32`, `u32`, ... or an `enum u8` is an Integer of its size, and `system.Lent({.Read, .Write})` is a Handle. `Name` can be a struct of the package or of a package of the source library that the file imports (`^information.Module`). The tool reads them in the source (`modustool`, `describe.odin`). A module in another language writes the same tables.
 - **Tests**: `odin test` of `src/library/contract/isolated` has a round trip with a record, a handle and a record result, and the refused cases. The machine test calls `src/modules/sample` in a call host and in the console.
@@ -565,7 +571,7 @@ The description is the same in the three ways (P10, P19). The source of the expo
 
 #### The format
 
-- `Function.parameter_directions` (6 bytes, one for each parameter) is at the end of the Functions record: 104 bytes (96 without it), by the growth rule of the table directory. A reader of a file with 96-byte records reads each direction as 0, Read. No version and no feature bit change: each module is built again with the system (the system keeps no backward compatibility), and the growth rule keeps a smaller record readable.
+- `Function.parameter_directions` (12 bytes, one for each parameter) is beside the other arrays of one byte of the Functions record (168 bytes). The format version 2 gave the record this layout.
 - `Type.Bytes = 6`.
 - **Integer fields of 1, 2, 4 or 8 bytes** (the draw record has `u8`, `i32` and `u32` fields): `Field.detail` of an Integer is its size in bytes, 0 for 8; `Field.unsigned` (one byte of the field) is 1 for an unsigned integer. An Integer field is at an offset that is a multiple of its size. `module.field_integer` reads one as an i64. Odin `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, and an `enum` with such a backing type, are Integer fields.
 - **The checks**: the loader does not read descriptions (section 2); each reader checks what it uses. `module.record_type` checks the size and the alignment of each Integer field. `isolated.record_size` refuses a direction out of the enumeration, a direction on a parameter that is not a Table or Bytes, a Table whose record is not valid or has a Handle field, Bytes with a detail. `information.check` gives a `Problem` with the byte of the file for each of them (`manual.check`).
@@ -701,7 +707,8 @@ A library module (`GLOSSARY.md`) is a module that holds code that many programs 
 
 - An export does a whole piece of work on tables of the caller: "find the damage of this frame", "draw this draw table into these pixels". A direct call passes the address of each table place, and copies nothing (section "Tables and bytes as parameters", form (i)).
 - An export is not one small step that a caller repeats many times for one result. Such a step needs an adapter on each side of the border, and the adapter costs more than the call: one element of the interface through the adapter of `interface_module` costs about 100 ns more than the element compiled in, and a call through an import slot costs 2.4 ns (`INTERFACE.md`, section 7).
-- A parameter that the description cannot carry (a record that holds an address, a slice by value, a procedure value, a seventh parameter) is a sign that the border is in the wrong place, not a reason for a second call form. The description stays the one form: the same export serves a direct call, a call host and a service (P12, P19).
+- A parameter that the description cannot carry by its kind (a record that holds an address, a slice by value, a procedure value) is a sign that the border is in the wrong place, not a reason for a second call form. The description stays the one form: the same export serves a direct call, a call host and a service (P12, P19).
+- The count of the parameters is not such a sign. The description describes each export completely at each count, up to 12 arguments (section 4, "Why an export takes more than six arguments"). An export takes each table of its work as its own parameter: no record and no second call carries a table that has no place.
 - The version of a record whose values have a meaning that the description does not hold (a kind of draw record) is in the name of each export that reads it: `execute_draw_table_9`. Another version is another name, so a replacement with another version fails the check by name.
 
 **What stays compiled into each program, and why.**
@@ -820,7 +827,7 @@ The description of an export names each parameter and the result with one member
 
 | Limit | Value |
 |---|---|
-| Parameters of one export | 6 (`PARAMETER_CAPACITY`): the integer registers of the call form |
+| Arguments of one export | 12 (`PARAMETER_CAPACITY`): its parameters, the buffer or the place of a result, and the address of an error record (`call_argument_count`). 6 in registers, the others on the stack |
 | Size of a record that a call carries | 256 bytes (`RECORD_SIZE_LIMIT`) |
 | Handles that one call lends | 16 (`HANDLE_CAPACITY`): its Handle parameters and the Handle fields of its Record parameters |
 | A result record, and a record of a table | no Handle field |
@@ -857,7 +864,7 @@ fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64) -> i64
 
 An Integer parameter can state what it counts: a size or a time, in one unit. It is the integer unit of the parameter (`GLOSSARY.md`, "Integer unit"). The palette shows the unit after the number of the field, and the checks treat a different unit as a different meaning.
 
-- **In the file**: the detail of the Integer parameter, `Function.parameter_details[n]`. Byte 1 is the value kind (`Size` or `Time`), byte 2 the unit (`Size_Unit` or `Duration_Unit`), bytes 0 and 3 are 0 (`value_kinds.integer_unit_detail`). The detail 0 is a plain number. The record keeps its 104 bytes, and the format version stays 1.
+- **In the file**: the detail of the Integer parameter, `Function.parameter_details[n]`. Byte 1 is the value kind (`Size` or `Time`), byte 2 the unit (`Size_Unit` or `Duration_Unit`), bytes 0 and 3 are 0 (`value_kinds.integer_unit_detail`). The detail 0 is a plain number. The unit takes no field of its own in the record.
 - **In the source**: the type of the parameter is one of the distinct types of `src/library/contract/value_kinds`, in place of `i64`:
 
   | Type | Unit |
@@ -1378,4 +1385,4 @@ These rules close the open questions of the contract:
 ## Open questions
 
 1. **Initial data of a merged module.** Rule 3 gives each program one copy of the data of each module. The merge tool must keep this true when it merges two modules that both have data.
-2. **Description tables.** Version 1 of the format has one function record per export: name, help text, up to 6 parameter types, result type. The types are `Integer`, `Text`, `Record`, `Handle`, `Table` and `Bytes` (`src/library/contract/module/format.odin`; section 5). The type, field and parameter tables are not yet specified at the level of bytes.
+2. **Description tables.** Version 2 of the format has one function record per export: name, help text, up to 12 parameter types, result type. The types are `Integer`, `Text`, `Record`, `Handle`, `Table` and `Bytes` (`src/library/contract/module/format.odin`; section 5). The type, field and parameter tables are not yet specified at the level of bytes.

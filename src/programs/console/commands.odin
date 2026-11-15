@@ -309,7 +309,7 @@ commands_start :: proc "contextless" () {
 	// > load("sample")
 	// Loaded
 	//   module     sample
-	//   commands   11
+	//   commands   12
 	//   call       direct
 	//   hash_head  <the first 8 bytes of its hash>
 	// ```
@@ -354,7 +354,7 @@ commands_start :: proc "contextless" () {
 	// > unload("sample")
 	// Unloaded
 	//   module    sample
-	//   commands  11
+	//   commands  12
 	//   memory    left the console
 	// ```
 	//
@@ -1361,11 +1361,11 @@ services_check :: proc "contextless" () {
 // for the result of an export.
 callable_by_console :: proc "contextless" (file: []u8, function: module.Function) -> bool {
 	function := function
-	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || function.result > .Table || function.result == .Handle {
+	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || module.call_argument_count(int(function.parameter_count), function.result, function.error_record != 0) > system.CALL_INTEGERS || function.result > .Table || function.result == .Handle {
 		return false
 	}
 	if function.result == .Record || function.result == .Table {
-		if _, ok := module.record_type(file, function.result_detail); !ok || function.parameter_count == ARGUMENT_CAPACITY {
+		if _, ok := module.record_type(file, function.result_detail); !ok {
 			return false
 		}
 	}
@@ -1432,7 +1432,8 @@ record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value
 }
 
 // call_export calls an export of a loaded module with the call form: each
-// argument in one integer register, in order. An Integer is the value; a Text
+// argument in one integer word, in order: 6 in registers, the others on the
+// stack. An Integer is the value; a Text
 // is the address of its slice record; a Record is the address of its bytes;
 // a Handle is the handle. The module is in this program: it has each handle
 // of the console, and the rights of a description limit nothing here.

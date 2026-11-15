@@ -270,6 +270,27 @@ scale_values_up_to :: proc "c" (readings: ^system.Table_To_Change(Reading), fact
 	return i64(readings.count)
 }
 
+// WEIGH_LABEL_LIMIT is the most bytes of the label of weigh.
+WEIGH_LABEL_LIMIT :: 16
+
+// weigh gives the sum of eight numbers, each times its place (1 to 8), plus the value of each byte of a label. It takes nine parameters and an error record: ten arguments, four of them on the stack after the six registers (docs/MODULE_CONTRACT.md, "4. The call form"). Each number has another weight, so a value in the wrong place gives another sum: `weigh(1, 2, 3, 4, 5, 6, 7, 8, "A")` gives 269.
+//
+// A label of more than 16 bytes fails with -1 and an error record `Too_Long` for the label, argument 9.
+@(export, link_name = "weigh")
+weigh :: proc "c" (first, second, third, fourth, fifth, sixth, seventh, eighth: i64, label: ^string, error: ^errors.Error_Record) -> i64 {
+	// The slice record is a copy of the receiver in an isolated call, and
+	// memory of the caller in a direct call: read it once.
+	text := intrinsics.volatile_load(label)
+	if len(text) > WEIGH_LABEL_LIMIT {
+		return errors.fail(error, -1, .Too_Long, .Bytes, 9, i64(len(text)), WEIGH_LABEL_LIMIT)
+	}
+	sum := first + 2 * second + 3 * third + 4 * fourth + 5 * fifth + 6 * sixth + 7 * seventh + 8 * eighth
+	for index in 0 ..< len(text) {
+		sum += i64(text[index])
+	}
+	return sum
+}
+
 // The same module as a program: a service that serves the exports above.
 // An export needs nothing from the entry.
 //

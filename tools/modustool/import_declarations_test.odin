@@ -239,6 +239,115 @@ the_unit_of_an_integer_parameter_is_described_and_checked :: proc(t: ^testing.T)
 	testing.expect(t, strings.has_prefix(problem, "the type other_units.Size_In_Pages has no description"), problem)
 }
 
+// The source of a module whose export takes nine parameters, three of them
+// past the six registers, a Text result and an error record: eleven
+// arguments of the call form.
+@(private = "file")
+NINE_PARAMETER_SOURCE :: `// A module of the tests.
+package nine_of_the_test
+
+import "modus:contract/errors"
+import "modus:support/system"
+
+Reading :: struct {
+	sensor: i64,
+	value:  i64,
+}
+
+// combine gives a text from nine values.
+@(export, link_name = "combine")
+combine :: proc "c" (first: i64, name: ^string, second, third, fourth, fifth: i64, readings: ^system.Table_To_Read(Reading), label: ^string, rows: ^system.Table_To_Change(Reading), result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+	return 0
+}
+`
+
+// declared_nine_difference compares a declaration of combine with the
+// signature given, in an importer whose record has other names and the
+// same layout.
+@(private = "file")
+declared_nine_difference :: proc(t: ^testing.T, signature: string) -> (difference: string, readable: bool) {
+	exports := make([dynamic]Export_Description, context.temp_allocator)
+	records: []Record_Description
+	if !testing.expect(t, describe_source("nine_of_the_test.odin", NINE_PARAMETER_SOURCE, &exports, nil, &records)) || !testing.expect_value(t, len(exports), 1) {
+		return "the export was not described", false
+	}
+	described := call_form_of_description(exports[0], records)
+	source := strings.concatenate({`package importer_of_nine
+
+import "modus:contract/errors"
+import "modus:support/system"
+
+Measure :: struct {
+	place:  i64,
+	amount: i64,
+}
+
+foreign _ {
+	combine :: proc "c" `, signature, ` ---
+}
+`}, context.temp_allocator)
+	state: Describe_State
+	state.records = make([dynamic]Record_Description, context.temp_allocator)
+	state.structs = make(map[string]Struct_Source, context.temp_allocator)
+	file, parsed := parse_source("importer_of_nine.odin", source, &state)
+	if !testing.expect(t, parsed) {
+		return "the importer was not parsed", false
+	}
+	declarations := make([dynamic]Foreign_Declaration, context.temp_allocator)
+	foreign_declarations_collect(file.decls[:], &declarations)
+	if !testing.expect_value(t, len(declarations), 1) {
+		return "the declaration was not found", false
+	}
+	declared, problem, form_readable := call_form_of_declaration(&state, source, declarations[0].type)
+	if !form_readable {
+		return problem, false
+	}
+	return call_forms_difference(declared, described), true
+}
+
+// An export takes more parameters than the six integer registers: the
+// description holds all nine with their types and directions, and the check
+// of a declaration compares the parameters past the sixth as it compares
+// the first ones.
+@(test)
+an_export_with_nine_parameters_is_described_and_checked :: proc(t: ^testing.T) {
+	exports := make([dynamic]Export_Description, context.temp_allocator)
+	if testing.expect(t, describe_source("nine_of_the_test.odin", NINE_PARAMETER_SOURCE, &exports)) && testing.expect_value(t, len(exports), 1) {
+		export := exports[0]
+		testing.expect_value(t, export.result, module.Type.Text)
+		testing.expect(t, export.error_record != 0, "the export has an error record")
+		testing.expect_value(t, module.call_argument_count(len(export.parameters), export.result, export.error_record != 0), 11)
+		types := [9]module.Type{.Integer, .Text, .Integer, .Integer, .Integer, .Integer, .Table, .Text, .Table}
+		if testing.expect_value(t, len(export.parameters), 9) {
+			for type, index in types {
+				testing.expect_value(t, export.parameters[index], type)
+			}
+			testing.expect_value(t, export.directions[6], module.Direction.Read)
+			testing.expect_value(t, export.directions[8], module.Direction.Change)
+			testing.expect_value(t, export.names[8], "rows")
+		}
+	}
+	GOOD_NINE_SIGNATURE :: `(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), text: ^string, changed: ^system.Table_To_Change(Measure), result: ^[]u8, error: ^errors.Error_Record) -> i64`
+	difference, readable := declared_nine_difference(t, GOOD_NINE_SIGNATURE)
+	testing.expect(t, readable, difference)
+	testing.expect_value(t, difference, "")
+	Case :: struct {
+		signature: string,
+		sentence:  string,
+	}
+	cases := [?]Case {
+		{`(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), changed: ^system.Table_To_Change(Measure), result: ^[]u8, error: ^errors.Error_Record) -> i64`, "it has 8 parameters, the export has 9"},
+		{`(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), text: i64, changed: ^system.Table_To_Change(Measure), result: ^[]u8, error: ^errors.Error_Record) -> i64`, "its parameter 8 is Integer, the export has Text"},
+		{`(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), text: ^string, changed: ^system.Table_To_Read(Measure), result: ^[]u8, error: ^errors.Error_Record) -> i64`, "its parameter 9 has the direction Read, the export has Change"},
+		{`(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), text: ^string, changed: ^system.Table_To_Change(Measure), result: ^[]u8) -> i64`, "it has no error record, the export has one"},
+	}
+	for item in cases {
+		difference, readable = declared_nine_difference(t, item.signature)
+		testing.expectf(t, readable, "the declaration %s was not read: %s", item.signature, difference)
+		testing.expectf(t, difference == item.sentence, "the declaration %s: the difference is \"%s\", not \"%s\"", item.signature, difference, item.sentence)
+	}
+}
+
 // declarations_of_source parses one source and gives the procedures of its
 // `foreign` blocks that the tool finds.
 @(private = "file")

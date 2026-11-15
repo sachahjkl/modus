@@ -64,6 +64,24 @@ scale_values_up_to_stops_at_the_first_reading_too_large :: proc(t: ^testing.T) {
 	testing.expect_value(t, errors.Kind(error.kind), errors.Kind.Too_Small)
 }
 
+// weigh reads each of its nine parameters in its place: each number has
+// its own weight, so a value in the place of another gives another sum. A
+// label past its limit names argument 9 in the error record.
+@(test)
+weigh_reads_nine_parameters_in_their_places :: proc(t: ^testing.T) {
+	error: errors.Error_Record
+	label := "A"
+	testing.expect_value(t, weigh(1, 2, 3, 4, 5, 6, 7, 8, &label, &error), 269)
+	empty := ""
+	testing.expect_value(t, weigh(0, 0, 0, 0, 0, 0, 0, 1, &empty, &error), 8)
+	long := "a label of twenty bytes"
+	testing.expect_value(t, weigh(1, 2, 3, 4, 5, 6, 7, 8, &long, &error), -1)
+	testing.expect_value(t, errors.Kind(error.kind), errors.Kind.Too_Long)
+	testing.expect_value(t, error.argument, 9)
+	testing.expect_value(t, error.value, 23)
+	testing.expect_value(t, error.limit, WEIGH_LABEL_LIMIT)
+}
+
 // The test runs on the host: the module links src/library/support/system, whose entries
 // of the machine (src/library/support/system/enter.asm) are not on the host. The
 // package gives the two entries of the kernel for a host

@@ -2479,11 +2479,21 @@ The terminal shows it apart from the lines: no line is drawn again. A program sh
 
 Do not use: progress bar hack, carriage return.
 
+### Call form
+
+The call form is where a call of an export puts each of its arguments and finds each result: the C convention of the machine, in a subset that every compiler gives.
+
+On x86-64 an export takes up to 12 integer arguments (`module.PARAMETER_CAPACITY`): the first 6 in `rdi`, `rsi`, `rdx`, `rcx`, `r8` and `r9`, the others on the stack, one word of 8 bytes each. The count includes the buffer of a Text or Table result, the place of a Record result and the address of an error record. The results are in `rax` and `rdx`. A record, a slice and a table are never passed by value: the argument is an address. The one routine `export_call` calls each export from an array of values. It is not the calling convention of a language: an Odin procedure of the convention `"odin"` passes one more argument, its context.
+
+The design: `docs/MODULE_CONTRACT.md`, "4. The call form"; `src/md/api/call_form_arguments.md`.
+
+Do not use: ABI (for this), calling sequence.
+
 ### Direct call
 
 A direct call is a call of an export of a module that is in the address space of the caller.
 
-The arguments are in registers, by the call form: up to 6 integers and 8 floats; a record, a text or a table goes as the address of memory of the caller. A direct call costs what a call of a function costs: a call through a slot of an import took 3.5 ns. The callee runs with all the access of the caller, so a direct call is for a module that the caller trusts.
+The arguments are where the call form puts them: up to 12 integers, 6 in registers and the others on the stack, and 8 floats; a record, a text or a table goes as the address of memory of the caller. A direct call costs what a call of a function costs: a call through a slot of an import took 3.5 ns. The callee runs with all the access of the caller, so a direct call is for a module that the caller trusts.
 
 The design: `docs/MODULE_CONTRACT.md`, "The call form".
 
@@ -6489,7 +6499,7 @@ Do not use: tag, badge, cross-reference (for this).
 
 A wire form is one of the types of the call form of the module contract, a member of `Type` of `src/library/contract/module`: Integer, Text, Record, Handle, Table or Bytes.
 
-It says how a call carries a parameter or a result: in one register, and what that register holds or points to. An Integer is the value; a Text, a Record, a Table and Bytes are an address of memory of the caller with a header; a Handle is a handle number. Because each parameter has a wire form in the description of an export, one export serves a direct call, an isolated call and the console with no glue code.
+It says how a call carries a parameter or a result: in one word of the call form (a register, or a word of the stack past the sixth argument), and what that word holds or points to. An Integer is the value; a Text, a Record, a Table and Bytes are an address of memory of the caller with a header; a Handle is a handle number. Because each parameter has a wire form in the description of an export, one export serves a direct call, an isolated call and the console with no glue code.
 
 The design: `docs/MODULE_CONTRACT.md`, "5. The types".
 
