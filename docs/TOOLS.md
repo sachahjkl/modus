@@ -698,6 +698,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `module-hashes write <file>`, `module-hashes compare <file>` | Records the hash of each module of the build in a file, or compares the build with such a record and fails when a module has another hash ("The hashes of the modules of two builds") |
 | `site` | Writes the site in `build/site/` |
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
+| `ship step`, `ship correction`, `ship <release number>` | The release in one command: the changelog, a commit, a signed release tag, one atomic push to `master` ("The release") |
 | `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
 | `key new <folder>`, `key show` | The key that signs the system description |
 | `font`, `vector_fonts`, `pointers`, `logo`, `portraits` | Convert a source (a font, a pointer theme, the mark, the pictures of the hall of fame) into the files of the repository. A build reads the result, never the source |
@@ -1225,6 +1226,57 @@ The generator refuses a request with no sense, with a sentence, and writes no fi
 A PNG file of the generator is the smallest that the encoder of the Odin standard library writes for its pixels: the highest level of its deflate, once with each row filter, the smallest kept. No pixel is lost. The picture for a developer is written at the common level, in one pass.
 
 The host tests of the generator are in `mark_pictures_test.odin` and `mark_formats_test.odin`: each kind of request, each refusal, the table of the uses, the words of the command, and each format read back. The test of the icon file compares each entry with the PNG file of its picture, byte for byte. The test of the vector file draws its rectangles as a reader does, for each color scheme, and compares each pixel with the picture. The test of the animated file builds one PNG file from the data of each frame, decodes it, and compares its pixels and its time with the frame. `only_the_generator_draws_the_mark` fails when a file of the tool outside the generator calls a drawing procedure of `src/library/support/mark`, or builds an icon file, a vector file or an animated file of the mark.
+
+### The release
+
+A release (`GLOSSARY.md`, "Release") is one section of `CHANGELOG.md`, one commit on `master`, and its release tag `v<release number>` on that commit. `modustool ship` makes the three and pushes them at once. The intent is `src/md/infrastructure/releases.md`.
+
+```
+## [0.93.0] - 2026-11-15 18:48
+
+### Added
+
+- **A thing**: what the system does now.
+
+[0.93.0]: https://github.com/sachahjkl/modus/releases/tag/v0.93.0
+[0.92.0]: https://github.com/sachahjkl/modus/releases/tag/v0.92.0
+```
+
+- The heading gives the release time (`GLOSSARY.md`, "Release time"): the day and the minute in UTC, with no zone in the text. An old heading whose time no record holds gives its day alone; the newest release always has its time.
+- The release links (`GLOSSARY.md`, "Release link") close the file: one empty line after the last release, then one line for each release, newest first, with no empty line between them.
+
+| Command | What it does |
+|---|---|
+| `modustool ship step` | The release `0.(N+1).0` after the newest release `0.N.x`: a release of new work |
+| `modustool ship correction` | The release `0.N.(x+1)`: a correction after the newest release |
+| `modustool ship <release number>` | That release; it must come after the newest release |
+| `modustool ship ... --dry-run` | Checks the branch, the tree and `origin/master`, then prints the number, the release tag, the commands and the changes of the release. It writes nothing; the fetch updates the remote-tracking branches only |
+| `modustool changelog release <release number>` | Writes the section with the time of the host in UTC and its release link, sets `RELEASE_NUMBER`, and deletes the fragments. `ship` runs it |
+| `modustool changelog times` | Gives each old heading with its day alone the time of the commit of its release, and adds each missing release link |
+
+**What `ship` does, in order.**
+
+1. It refuses a branch other than `master`, a tree with changes that are not committed, and a `master` that does not hold `origin/master` after a fetch.
+2. It takes the newest release: the higher of `RELEASE_NUMBER` in `src/library/contract/release/release.odin`, read from the file, and of the highest tag `v*`. It takes the next number from it.
+3. It runs `changelog release`. If that fails, it puts the tree back to the last commit.
+4. It commits `CHANGELOG.md`, the source of the release number and the deleted fragments, with the message `Release <number>`.
+5. It makes the release tag with `git tag -s -a`: annotated, and signed by the git configuration of the publisher of the system. If git cannot sign, `ship` undoes the commit and stops.
+6. It pushes with `git push --atomic origin HEAD:refs/heads/master refs/tags/v<number>`: `origin` gets the commit and the tag, or neither.
+7. If `origin` refuses the push because `origin/master` moved, `ship` deletes the tag, undoes the commit, fetches, merges `origin/master`, and goes back to step 2 with the next number. It tries three times at most (`SHIP_ATTEMPT_COUNT`). A merge with a conflict is aborted, and `ship` stops.
+
+`ship` does not run the full check: run it on the commit before `ship`. The release workflow starts from the tag.
+
+**The old headings.** `changelog times` reads three records of git for each heading with its day alone, in this order, and takes the first whose commit was made on the day of the heading, in the zone of the committer: the release tag; the oldest commit that wrote `RELEASE_NUMBER :: "<number>"` in a file `*release/release.odin`; the oldest commit that added the heading to `CHANGELOG.md`. It writes that time in UTC. A heading with no record on its day keeps its day alone, and the command names it. The command writes nothing when the result does not have the form that `changelog check` asks for.
+
+`changelog check` refuses, for the release:
+
+| Fault | The rule |
+|---|---|
+| The heading | `## [<major>.<minor>.<patch>] - <yyyy-mm-dd hh:mm>`, a day of the calendar and a time of the day; the day alone only for a release that is not the newest |
+| The order | The release numbers descend and the release times do not rise. Two headings with a time compare by the minute; with a day alone, by the day |
+| The release links | One for each release, in the order of the releases, each with the address of its release tag; no link for a number that is not a release; no empty line between two links; nothing after them |
+
+The code is `tools/modustool/changelog.odin` and `tools/modustool/ship.odin`; the host tests are `changelog_test.odin` and `ship_test.odin`. A test checks the plan of git commands as data, and never runs git.
 
 ### The roadmap
 

@@ -394,7 +394,7 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 	for changelog_release in site.changelog.releases {
 		number := release_number_text(changelog_release.number)
 		first := len(changelog_release.entries) > 0 ? entry_joined(changelog_release.entries[0].lines) : ""
-		site_search_add(&entries, number, site_section_page(.Releases), site_release_id(number), .Release, fmt.tprintf("%s: %s", changelog_release.date, first))
+		site_search_add(&entries, number, site_section_page(.Releases), site_release_id(number), .Release, fmt.tprintf("%s: %s", release_moment_shown(changelog_release), first))
 	}
 	system_ids, build_ids := site_license_row_ids(site.licenses)
 	license_page := site_page_file(SITE_LICENSES_FOLDER)

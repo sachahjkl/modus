@@ -247,13 +247,13 @@ site_home_release_band :: proc(t: ^testing.T) {
 		entry = Changelog_Entry{type_index = index < 5 ? 0 : 1, lines = lines}
 	}
 	releases := make([]Changelog_Release, 1, context.temp_allocator)
-	releases[0] = {date = "2026-11-12", entries = entries}
+	releases[0] = {date = "2026-11-12", time_of_day = "18:48", entries = entries}
 	site.changelog.releases = releases
 	b := strings.builder_make(context.temp_allocator)
 	site_release_band_write(&site, &b, site_section_page(.Home))
 	html := strings.to_string(b)
 	testing.expect(t, strings.contains(html, "<span class=\"value value-version release-number\">0.91.0</span>"), html)
-	testing.expect(t, strings.contains(html, "<time datetime=\"2026-11-12\">2026-11-12</time>, <strong>6</strong> changes</span>"), html)
+	testing.expect(t, strings.contains(html, "<time datetime=\"2026-11-12T18:48Z\">2026-11-12 18:48 UTC</time>, <strong>6</strong> changes</span>"), html)
 	testing.expect_value(t, strings.count(html, "<li><span class=\"release-change-type\">"), SITE_RELEASE_BAND_CHANGE_COUNT)
 	types := CHANGE_TYPES
 	first := fmt.tprintf("<li><span class=\"release-change-type\">%s</span> <a href=\"releases/index.html#release-0-91-0-change-1\">The change 1</a></li>", types[0])
