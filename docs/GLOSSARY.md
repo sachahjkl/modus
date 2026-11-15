@@ -1979,7 +1979,7 @@ Do not use: alias, pet name, display name.
 
 A disk grant table is the table of the root service that binds each nickname of one principal to the hash of one module file, with the grants of that file.
 
-The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The persisted form is the object `grant_table` of the store `programs` of the principal, with a tag of keyed BLAKE2b under a key that a passphrase gives. For principal 0 that passphrase is optional (see "Machine passphrase", below): with none, the table lasts until the machine stops; with one, the root service reads the table after it is typed and writes it after each change. A table whose tag fails is refused, and gives no grant.
+The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The persisted form is the object `grant_table` of the store `programs` of the principal, with a tag of keyed BLAKE2b under a key that a passphrase gives. For principal 0 that passphrase is optional (see "Machine passphrase", below): with none, the table lasts until the machine stops; with one, the root service reads the table after it is typed and writes it after each change. For a named principal the key comes from its unlock key at its unlock: the root service reads the table at the first unlock of the run, and a console of its session changes it. A table whose tag fails is refused, and gives no grant.
 
 A disk grant table is not the grant table of the root service (`grants_of`), which gives the programs of the boot image their grants by their names, and which a disk program never reaches.
 
@@ -2121,7 +2121,7 @@ Do not use: user account, login.
 
 A session is the tree of programs that started from the root handles of one principal.
 
-The root service records the principal of each program that it starts: 0 for the programs of the system, the named principal that is unlocked for a program that the desktop starts, the principal of the asking program for a program that a program starts. The log says it: "root: started notes, in the session of principal 1 "alice"". The principal of the session names the stores of the program.
+The root service records the principal of each program that it starts: 0 for the programs of the system, the named principal that is unlocked for a program that the desktop starts, the principal of the asking program for a program that a program starts. The log says it: "root: started notes, in the session of principal 1 "alice"". The principal of the session names the stores of the program. A program of the session with the grant to act for the principal acts for that principal only: a console that the desktop starts during the session of alice changes her disk grant table.
 
 The design: `docs/PRINCIPALS.md`, "The session".
 
@@ -2131,7 +2131,7 @@ Do not use: login, user session.
 
 The unlock is the act that starts the session of a named principal: Argon2id derives a key from its passphrase, and that key opens the seal of its secret keys.
 
-A wrong passphrase gives another key, and the seal does not open: no passphrase and no hash of a passphrase is kept or compared. After the unlock the program `unlock` erases the secret keys and tells the root service, which starts the session.
+A wrong passphrase gives another key, and the seal does not open: no passphrase and no hash of a passphrase is kept or compared. After the unlock the program `unlock` tells the root service, which starts the session, and gives it the key of the tag of the disk grant table of the principal, which keyed BLAKE2b derives from the unlock key. Then it erases the secret keys.
 
 The design: `docs/PRINCIPALS.md`, "The unlock and the lock".
 

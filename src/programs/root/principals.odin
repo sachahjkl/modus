@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/errors"
 import "modus:contract/system_description"
 import "modus:support/principals"
 import "modus:support/system"
@@ -27,7 +28,8 @@ import "modus:support/system"
 //
 // `unlock` also keeps the record of the machine passphrase, and gives this
 // service the key of the tag of the disk grant table of principal 0
-// (Machine_Key; machine_grant_table.odin).
+// (Machine_Key), and with Principal_Unlock the key of the tag of the table
+// of the named principal (persisted_grant_table.odin).
 
 Principal_Record :: struct {
 	state:       system.Principal_State,
@@ -70,6 +72,7 @@ desktop_principal :: proc "contextless" () -> u64 {
 // principals_start makes the record of principal 0 from the trust record
 // that the boot program wrote (trust.odin read it).
 principals_start :: proc "contextless" () {
+	persisted_tables_start()
 	machine_record := &principal_records[principals.MACHINE]
 	machine_record^ = {state = .Machine, name_length = len(principals.MACHINE_NAME)}
 	copy(machine_record.name[:], principals.MACHINE_NAME)
@@ -135,6 +138,9 @@ principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 		return .Ok
 	}
 	record^ = {state = .Locked, name = name, name_length = name_length, public_key = public_key}
+	// Only a record that `unlock` made in this run lets its first key write
+	// over a table that does not verify (principal_key_take).
+	principal_created_in_this_run[1] = unlock_creating
 	unlock_creating = false
 	completion^[0] = 1
 	digits := system_description.hexadecimal(public_key)
@@ -143,13 +149,26 @@ principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 }
 
 // principal_unlock starts the session of a named principal: from now on the
-// desktop starts each program in it.
-principal_unlock :: proc "contextless" (number: u64) -> system.Status {
+// desktop starts each program in it. values[4] is its number; values[0..3]
+// and values[5] are the key of the tag of its disk grant table and its
+// origin, which this service takes before the session starts
+// (principal_key_take). A refusal writes its own error record in
+// completion: the values of the command hold a key where a name would be,
+// so the record of `refusal` is never built from them.
+principal_unlock :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> system.Status {
+	kind := u32(system.Root_Command.Principal_Unlock)
+	number := values[4]
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state == .Absent {
+		completion^ = errors.ring_fail(kind, .Absent, .Principals, 2, i64(min(number, 1 << 62)))
 		return .Bad_Handle
 	}
 	if principal_records[number].state != .Locked {
+		completion^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
+	}
+	if status := principal_key_take(number, values); status != .Ok {
+		completion^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
+		return status
 	}
 	principal_records[number].state = .Unlocked
 	system.log_in("programs", .Info, "root: the session of principal ", number, " \"", principal_name(number), "\" starts: the desktop starts each program in it")
@@ -207,3 +226,8 @@ principal_read :: proc "contextless" (number: u64, completion: ^[7]u64) -> syste
 // Set while `unlock` runs to create a principal: a reader of the records
 // sees the state Creating.
 unlock_creating: bool
+
+// For each principal: its record was made by a creation in this run of the
+// machine, not read from a file that existed. Only such a principal can
+// give a key of the origin PRINCIPAL_KEY_NEW.
+principal_created_in_this_run: [principals.PRINCIPAL_CAPACITY]bool

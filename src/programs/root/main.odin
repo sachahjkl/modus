@@ -52,7 +52,7 @@
 // - `Principal_Create`, `Principal_Lock`, `Principals`: the named
 //   principals (docs/PRINCIPALS.md, "7. The commands").
 // - `Machine_Passphrase`: the machine passphrase, which guards the key of
-//   the disk grant table of principal 0 (machine_grant_table.odin).
+//   the disk grant table of principal 0 (persisted_grant_table.odin).
 // - `Debug`: the handle of a program with the right Debug, for the
 //   debugger service, on behalf of a caller of that service that acts for
 //   the principal whose session runs that program (`debug`).
@@ -374,9 +374,10 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	if caller == &disk_reader {
 		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false)
 	}
-	// The connection of this service for the disk grant table of principal
-	// 0, an object of the same store (machine_grant_table.odin).
-	if caller == &machine_table_keeper {
+	// The connection of this service for the disk grant table of a
+	// principal, an object of the store of the module files of that
+	// principal (persisted_grant_table.odin).
+	if persisted_table_keeper_is(caller) {
 		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false)
 	}
 	// The connection of the debugger service to the same store, for the
@@ -871,7 +872,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					result = machine_passphrase_ask()
 				case .Machine_Key:
 					result = machine_key_take(record.values)
-					machine_key_ring_erase(&item.requests.commands)
+					key_ring_erase(&item.requests.commands)
 				case .Connect:
 					result = connect(&item, system.name_of(name[:]), &completion.values)
 				case .Connect_History:
@@ -912,7 +913,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case .Principal_Record:
 					result = principal_record(record.values, &completion.values)
 				case .Principal_Unlock:
-					result = principal_unlock(record.values[4])
+					result = principal_unlock(record.values, &completion.values)
+					key_ring_erase(&item.requests.commands)
 				case .Revoke:
 					result = revoke(system.name_of(name[:]), record.values[4], &completion.values)
 				case .Debug:
@@ -940,12 +942,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// Start_From_Disk wrote its own too: its values are a hash
 				// and a name of another form. So do Disk_Grant and
 				// Nickname_Move and Disk_Grant_Persistence, whose name is a
-				// nickname of three values. Machine_Key carries a key where
-				// a name would be: no refusal reads it as a name. A refused
-				// Replace wrote its own: a refused signature is a cause that
-				// only replace knows. A refused Debug_Store wrote its own, as
-				// Debug does.
-				if result != .Ok && command != .Debug && command != .Debug_Store && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key && command != .Replace {
+				// nickname of three values. Machine_Key and Principal_Unlock
+				// carry a key where a name would be: no refusal reads it as
+				// a name, and a refused Principal_Unlock wrote its own. A
+				// refused Replace wrote its own: a refused signature is a
+				// cause that only replace knows. A refused Debug_Store wrote
+				// its own, as Debug does.
+				if result != .Ok && command != .Debug && command != .Debug_Store && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key && command != .Principal_Unlock && command != .Replace {
 					completion.values = refusal(system.Root_Command(record.kind), system.name_of(name[:]), record.values[4], result)
 				}
 				completion.kind = u32(result)
@@ -955,7 +958,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		reap()
 		// After reap: a storage service that stopped ended its connections.
 		disk_load_step(&wait)
-		machine_table_step(&wait)
+		persisted_tables_step(&wait)
 		network_answers(&wait)
 		system.wait_records(&wait, &control.completions)
 		for &item in started {
@@ -966,7 +969,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// A load from the disk and a call for the disk grant table have a
 		// deadline: the wait ends there, with or without an answer of the
 		// storage service.
-		system.wait_end(&wait, min(disk_load_deadline(), machine_table_deadline()))
+		system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline()))
 	}
 }
 
@@ -1051,7 +1054,7 @@ refusal :: proc "contextless" (command: system.Root_Command, name: string, value
 		if status == .Bad_State {
 			return errors.ring_fail(kind, .Absent, .Principals)
 		}
-	case .Principals, .Principal_Unlock:
+	case .Principals:
 		if status == .Bad_Handle {
 			return errors.ring_fail(kind, .Absent, .Principals, 2, i64(min(value, 1 << 62)))
 		}
@@ -2065,9 +2068,7 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 	if disk_load.connection == connection {
 		disk_load.connection = nil
 	}
-	if machine_table.connection == connection {
-		machine_table.connection = nil
-	}
+	persisted_table_connection_ended(connection)
 	if debug_store.connection == connection {
 		debug_store = {}
 	}

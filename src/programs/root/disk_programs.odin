@@ -79,10 +79,12 @@ disk_reader: Started
 
 // The disk grant table of each principal. With no machine passphrase, no
 // key signs the table of principal 0: it lasts until the machine stops.
-// With one, it is read from the disk and written after each change
-// (machine_grant_table.odin). The table of a named principal is not kept
-// on the disk yet: no caller that acts for a named principal sends
-// Disk_Grant.
+// With one, it is read from the disk and written after each change. The
+// table of a named principal is read after its first unlock, under the key
+// that `unlock` gives with it, and written after each change
+// (persisted_grant_table.odin). A caller that acts for a named principal
+// is a program of its session, such as a console that the desktop starts
+// while the session runs.
 disk_grant_tables: [principals.PRINCIPAL_CAPACITY]disk_program.Grant_Table
 
 // disk_grant_table_of gives the table of a principal, or nil for a number
@@ -98,12 +100,14 @@ disk_grant_table_of :: proc "contextless" (principal: u64) -> ^disk_program.Gran
 // table: how long the table of the principal lasts.
 disk_grant_table_lasts :: proc "contextless" (principal: u64) -> string {
 	if principal == principals.MACHINE {
-		if machine_table.state == .No_Passphrase {
+		if persisted_tables[principals.MACHINE].state == .No_Passphrase {
 			return "; principal 0 has no passphrase, so its disk grant table lasts until the machine stops"
 		}
 		return "; the machine passphrase keeps the disk grant table of principal 0 on the disk"
 	}
-	return "; the disk grant table of a named principal is not kept on the disk yet"
+	// A change of the table of a named principal is taken only when the
+	// table is kept on the disk (persisted_table_refusal).
+	return "; the passphrase of the principal keeps its disk grant table on the disk"
 }
 
 // disk_store_limit gives the blocks of the store of a disk program in a
@@ -695,7 +699,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		values^ = errors.ring_fail(kind, .Absent, .Principals, 0)
 		return .Bad_State
 	}
-	if machine_table_refusal(caller.principal) {
+	if persisted_table_refusal(caller.principal) {
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
@@ -708,7 +712,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 			return .Bad_Handle
 		}
 		system.log_in("programs", .Info, "root: the nickname ", system.Module_Name{nickname}, ", the file ", system.Hash{row.hash[:]}, ", lost the grant ", grant_name, " for principal ", caller.principal, ", from its next start; its store stays on the disk", disk_grant_table_lasts(caller.principal))
-		machine_table_changed(caller.principal)
+		persisted_table_changed(caller.principal)
 		return .Ok
 	}
 	// The hash that the nickname names now: its row, else the disk program
@@ -741,7 +745,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		return .Bad_State
 	}
 	system.log_in("programs", .Info, "root: the nickname ", system.Module_Name{nickname}, ", the file ", system.Hash{hash[:]}, ", has the grant ", grant_name, " for principal ", caller.principal, ", from its next start", disk_grant_table_lasts(caller.principal))
-	machine_table_changed(caller.principal)
+	persisted_table_changed(caller.principal)
 	return .Ok
 }
 
@@ -763,7 +767,7 @@ nickname_move :: proc "contextless" (caller: ^Started, record: ring.Record, valu
 		values^ = errors.ring_fail(kind, .Absent, .Principals, 0)
 		return .Bad_State
 	}
-	if machine_table_refusal(caller.principal) {
+	if persisted_table_refusal(caller.principal) {
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
@@ -783,7 +787,7 @@ nickname_move :: proc "contextless" (caller: ^Started, record: ring.Record, valu
 		return .Bad_State
 	}
 	system.log_in("programs", .Info, "root: the nickname ", system.Module_Name{nickname}, " names the file ", system.Hash{hash[:]}, ", with its grants and its store", disk_grant_table_lasts(caller.principal))
-	machine_table_changed(caller.principal)
+	persisted_table_changed(caller.principal)
 	return .Ok
 }
 
@@ -819,7 +823,7 @@ disk_grant_persistence :: proc "contextless" (caller: ^Started, record: ring.Rec
 		values^ = errors.ring_fail(kind, .Absent, .Principals, 0)
 		return .Bad_State
 	}
-	if machine_table_refusal(caller.principal) {
+	if persisted_table_refusal(caller.principal) {
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
@@ -833,6 +837,6 @@ disk_grant_persistence :: proc "contextless" (caller: ^Started, record: ring.Rec
 	} else {
 		system.log_in("programs", .Info, "root: the row of the nickname ", system.Module_Name{nickname}, " in the disk grant table of principal ", caller.principal, " has the setting: ", persistence_words[persistence], disk_grant_table_lasts(caller.principal))
 	}
-	machine_table_changed(caller.principal)
+	persisted_table_changed(caller.principal)
 	return .Ok
 }
