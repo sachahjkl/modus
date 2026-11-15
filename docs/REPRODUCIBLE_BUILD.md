@@ -9,6 +9,7 @@ A module of this system is named by the hash of its bytes, so one source must gi
 - The flake pins one commit of a fork of Odin: the release `dev-2026-11a` and the option `-debug-info:<none|full|same-code>` (`flake.nix`, `odinRelease`). The fork applies no patch file. With no such option on the command line, the fork gives the output of the release (section 8).
 - The build of a module asks for the kind of debug information `same-code`, which adds no instruction, and `llc` schedules the machine instructions top-down (section 8).
 - The compiler runs on all its threads: no build passes `-thread-count` (section 7).
+- The compiler and `llc` use LLVM 18 with one commit of LLVM 21: dead store elimination works in a fixed order, so the debug records of a buffer come in one order (section 9).
 - Each full check builds everything two times and compares every output, then builds every module a third time with no debug information and compares each module (sections 6 and 8).
 - A usual build keeps a module whose inputs are the same as at its last build ("The incremental build and the same bytes"). Each build of a check is a whole build.
 - Sections 1 to 5 are the record of a fault of the older release `dev-2026-05`, its correction by a patch, and the measures. That patch is no longer applied, and its file is no longer in the repository.
@@ -25,7 +26,7 @@ A module of this system is named by the hash of its bytes, so one source must gi
 
 **For whom.** A reader who changes the compiler, its flags or the tool that builds the modules.
 
-**The map of this document.** "The outputs that the tool compares" and "What the build does to give the same bytes": the mechanism of today. "The incremental build and the same bytes": why a build can keep an output. "1. The cause" to "5. The parallelism of the tool": the fault of the old release and its patch. "6. What is proved, and what is not". "6a. The release dev-2026-11a of the compiler" and "7. The compiler on all its threads": the release that the compiler of today starts from. "8. The debug information": the option that the fork adds, and why debug information does not change the identity of a module.
+**The map of this document.** "The outputs that the tool compares" and "What the build does to give the same bytes": the mechanism of today. "The incremental build and the same bytes": why a build can keep an output. "1. The cause" to "5. The parallelism of the tool": the fault of the old release and its patch. "6. What is proved, and what is not". "6a. The release dev-2026-11a of the compiler" and "7. The compiler on all its threads": the release that the compiler of today starts from. "8. The debug information": the option that the fork adds, and why debug information does not change the identity of a module. "9. The order of dead store elimination": a fault of LLVM 18 that changed the order of debug records, and the commit that corrects it.
 
 ## The outputs that the tool compares
 
@@ -58,7 +59,7 @@ A deterministic compiler is necessary and not sufficient: the build itself must 
 - **No build identifier.** The linker gets `--build-id=none`.
 - **An empty folder for each build.** The tool resets the folder of the objects and the folder of the LLVM IR before it compiles, so no file of an earlier build enters the link.
 - **A fixed order.** The boot image holds the modules in the order of the module table (`module_builds`), not in the order in which the processes end.
-- **A pinned compiler.** The flake pins the compiler by one commit of a fork of Odin and the hash of its sources: the release `dev-2026-11a`, then 9 commits that add the option `-debug-info`. The flake applies no patch file: the changes are commits of the fork. `llc` comes from the LLVM of that compiler (18). `flake.lock` pins the other tools.
+- **A pinned compiler.** The flake pins the compiler by one commit of a fork of Odin and the hash of its sources: the release `dev-2026-11a`, then 9 commits that add the option `-debug-info`. The flake applies no patch file: the changes are commits of the fork. The compiler links LLVM 18 with one commit of LLVM 21, which the flake fetches by its hash (section 9). `llc` comes from that LLVM. `flake.lock` pins the other tools.
 - **A kind of debug information that adds no instruction.** The compile of a module passes `-debug-info:same-code`, not `-debug` (`module_compile_command`). Reason: `-debug` makes the compiler add instructions that only help a debugger, and it sets the constant `ODIN_DEBUG`, which a source can read. Both make another program. With `same-code` the compiler gives LLVM the code of a build with no debug information (section 8).
 - **One direction of the instruction scheduler.** `llc` gets `-misched-topdown` (`module_object_command`). Reason: in its bottom-up direction, the scheduler of machine instructions of LLVM 18 orders some register copies in another way when debug instructions stand in the block. The two builds of the kernel then differ with and without debug information. In the top-down direction they are the same bytes (section 8).
 - **No path of the host in a debug object.** A source path in a debug object is from the root of the repository or of the Odin installation. The tool refuses to write a debug object that holds an absolute path or the folder of the build (section 8).
@@ -255,3 +256,52 @@ In general, for a program that uses the compiler with this kind:
 ### The debug object
 
 - The debug object is an output of the build like the others: the second build compares it too, and `modustool repeat` counts its distinct contents in a column of its own. A source path in it is from the root of the repository or of the Odin installation, never absolute: the tool refuses to write a debug object with an absolute path of a file or with the folder of the build in its bytes, so it does not depend on the folder or the host of the build.
+
+## 9. The order of dead store elimination
+
+A buffer declared inside a loop of `console` gave another LLVM IR and another object at each build. The module and the debug object were the same bytes. The cause is in LLVM 18, and the flake corrects it at its source. The design, with the refused forms, is in `src/md/infrastructure/llvm_of_the_build.md`.
+
+### The symptom
+
+- `palette_candidates_give` (`src/programs/console/palette_provider.odin`) declares `value_buffer: [16]u8` inside a loop over the strategies. The optimizer unrolls the loop, and each copy of the loop zeroes the buffer with one `memset`.
+- `modustool repeat console 12`: 5 distinct LLVM IR files in 12 builds (2, 1, 5, 2, 2), 3 distinct objects, 1 distinct module, 1 distinct debug object.
+- Each difference is the order of three lines `llvm.dbg.assign` of `value_buffer`, with the fragments 0 to 40, 0 to 32 and 0 to 88 bits, the value 0 and the address `ptr undef`. No other line differs.
+
+### What is not the cause
+
+| Test | Distinct LLVM IR | What it shows |
+|---|---|---|
+| The compiler as the build runs it, 10 builds | 6 | The fault |
+| The same, with no address randomization (`setarch -R`) | 6 | The cause is not the place of the program in memory |
+| The same, with `-thread-count:1` | 5 | The flag does not remove it; with this release it still leaves two threads (section 6a) |
+| `-o:none -use-single-module`, so no optimization pass runs, 8 builds | 1 | The IR that the compiler gives to the optimizer is the same at each build |
+| `opt -passes="function(declare-to-assign),default<O3>"` on that IR, 8 runs | 1 | The passes alone give one result from one input in one thread |
+
+### The cause
+
+- **Assignment tracking.** When the compiler writes debug information with an optimization mode above `none`, it runs the pass `declare-to-assign` first. The release does it, for `-debug` and for `-debug-info:same-code`. Each store to a variable then has a debug record `llvm.dbg.assign` linked to it by an identifier. The copies of an unrolled loop share the identifier of the store that they copy.
+- **Dead store elimination.** When a later store overwrites a part of an earlier one, the pass makes the earlier store shorter: here, the `memset` of a copy of the loop that the next copy overwrites in part. `removePartiallyOverlappedStores` (`llvm/lib/Transforms/Scalar/DeadStoreElimination.cpp`) visits the stores to shorten in the order of a `DenseMap` keyed by the address of each instruction in memory.
+- **The records.** For each shortened store, `shortenAssignment` adds a record for the dead part after each record linked to that store. The three `memset` share one identifier, so the three new records stand together after each shared record, in the order of the visit.
+- **The addresses.** The compiler allocates on several threads, so the address of an instruction changes from one build to the next, also with no address randomization. So does the order of a table keyed by addresses. `opt` in one thread on one input did not show it. This is an inference from the tests above: no test traced the allocations.
+- The shortening of each store does not depend on the others, so the instructions are the same in each order: the module was the same bytes. The object differed in its debug sections.
+
+### The correction
+
+- LLVM commit `c833746c6c06` ("[DSE] Make iter order deterministic in removePartiallyOverlappedStores") changes the `DenseMap` into a `MapVector`, which keeps the order of insertion: the order of the instructions in the function. It is in LLVM 21. LLVM 19 and 20 do not have it.
+- The flake builds LLVM 18.1.8 of Nixpkgs with that commit, fetched by its hash (`flake.nix`, `llvm`). The Odin compiler links that LLVM, and `llc` comes from it.
+- No binary cache has this LLVM. A machine with no copy in its store builds it once: 29 minutes on a host with 16 processors under load. The tests of LLVM do not run.
+
+### The measures
+
+The source with the buffer inside the loop, `modustool repeat <module> <count>`, the stock LLVM 18 against LLVM 18 with the commit:
+
+| Module | Stock: distinct LLVM IR | Stock: distinct objects | With the commit: distinct LLVM IR | With the commit: distinct objects |
+|---|---|---|---|---|
+| `console` | 5 in 8 | 3 in 8 | 1 in 20 | 1 in 20 |
+| `compositor` | 1 in 8 | 1 in 8 | 1 in 8 | 1 in 8 |
+| `terminal` | 1 in 8 | 1 in 8 | 1 in 8 | 1 in 8 |
+| `storage` | 1 in 8 | 1 in 8 | 1 in 8 | 1 in 8 |
+
+- `modustool repeat all 8` with the commit, the buffer inside the loop: 94 modules with 1 distinct module, 1 distinct LLVM IR, 1 distinct object and 1 distinct debug object each, and the boot program with 1 distinct file and 1 distinct object.
+- The module and the debug object of `console` are the same bytes with the stock LLVM and with the commit. The commit changes the order of debug records, and no instruction.
+- So the buffer of `palette_candidates_give` is declared again where the code reads best, inside the loop.

@@ -14,10 +14,37 @@
     system = "x86_64-linux";
     pkgs = inputs.nixpkgs.legacyPackages.${system};
 
+    # LLVM 18, the LLVM of the Odin compiler, with one commit of LLVM 21.
+    # Dead store elimination of LLVM 18 shortens the stores that a later
+    # store overwrites in part, in the order of a hash table keyed by the
+    # addresses of the instructions in memory. The compiler allocates on
+    # several threads, so those addresses change from one build to the next. With
+    # debug information, each shortened store adds a debug record after a
+    # shared one, so the records came in another order at each build, and
+    # the LLVM IR and the object of a module were not the same bytes twice.
+    # The commit keeps the order of insertion. It changes no instruction
+    # (docs/REPRODUCIBLE_BUILD.md, "9. The order of dead store elimination").
+    # No binary cache has this build: a machine builds LLVM once.
+    llvm = pkgs.llvmPackages_18.llvm.overrideAttrs (old: {
+      patches =
+        old.patches
+        ++ [
+          (pkgs.fetchpatch {
+            name = "llvm-dead-store-elimination-deterministic-order.patch";
+            url = "https://github.com/llvm/llvm-project/commit/c833746c6c062677a040d18d837c7fad71939171.patch";
+            relative = "llvm";
+            hash = "sha256-AW11MQuxd82OLePO/x7vBnE/ozUD4qUjoF3cZQ1tE7A=";
+          })
+        ];
+      # The tests of LLVM take longer than its build. The commit is tested
+      # upstream, and the full check of the system builds every module.
+      doCheck = false;
+    });
+
     # The release of Odin is pinned here, not by Nixpkgs: Nixpkgs is months
-    # behind the releases of the compiler.
+    # behind the releases of the compiler. It links the LLVM above.
     odinRelease = "dev-2026-11a";
-    odin = pkgs.odin.overrideAttrs (_: {
+    odin = (pkgs.odin.override {llvmPackages_18 = pkgs.llvmPackages_18 // {inherit llvm;};}).overrideAttrs (_: {
       version = odinRelease;
       src = pkgs.fetchFromGitHub {
         # The fork of this system: the release above and the option
@@ -42,7 +69,7 @@
         cp odin $out/bin/odin
         cp -r base core $out/share
         wrapProgram $out/bin/odin \
-          --prefix PATH : ${pkgs.lib.makeBinPath (with pkgs.llvmPackages_18; [bintools llvm clang lld])} \
+          --prefix PATH : ${pkgs.lib.makeBinPath ([llvm] ++ (with pkgs.llvmPackages_18; [bintools clang lld]))} \
           --set-default ODIN_ROOT $out/share
         runHook postInstall
       '';
@@ -57,7 +84,7 @@
     # virt-firmware (virt-fw-vars): enrols the certificate of the firmware
     # signing key in a variable store of the firmware, with Secure Boot on.
     # openssl also makes the firmware signing key ("modustool key new").
-    buildTools = [odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware];
+    buildTools = [odin llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware];
 
     # The pointer theme of the owner (docs/POINTERS.md): "Posy's Cursor", the
     # package of nixpkgs, pinned by flake.lock. Its license is CC-BY-NC-4.0,
