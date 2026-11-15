@@ -1,6 +1,6 @@
 # The palette
 
-The palette is one panel that a key opens. It reaches every operation that the principal of the session can do: start a program, bring a window to the front, close a window, run a command of the console with its arguments, set a setting, set the scheduling strategy. It replaced the launcher, and the term launcher left the system (`docs/DECISIONS.md`, D-236).
+The palette is one panel that a key opens. It reaches every operation that the principal of the session can do: start a program, bring a window to the front, close a window, run a command of the console with its arguments, set a setting, set the scheduling strategy. It replaced the launcher, and the term launcher left the system.
 
 What the panel looks like and what each key does is in [`docs/DESIGN.md`](../../../docs/DESIGN.md), "Palette". The provider is in [`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "8. The palette provider". This file records why the palette has this form.
 
@@ -96,7 +96,7 @@ Refused: a view that leaves its choice behind (above); a scroll bar that the pan
 
 ## The form of an entry, from its descriptions
 
-The panel shows each entry in the form that its act asks for, and offers to go where the act lives (`docs/DECISIONS.md`, D-261). Nothing is written for one command: three rules derive the form. What an element or an entry acts on is its act name (`docs/GLOSSARY.md`): the word "action" is already what a key asks of the panel (`palette.Action`), and "place" is a term of the storage service.
+The panel shows each entry in the form that its act asks for, and offers to go where the act lives. Nothing is written for one command: three rules derive the form. What an element or an entry acts on is its act name (`docs/GLOSSARY.md`): the word "action" is already what a key asks of the panel (`palette.Action`), and "place" is a term of the storage service.
 
 **Rule 1: the control comes from the field.** One table of the support package of the palette gives a control for a field, from what the field is:
 

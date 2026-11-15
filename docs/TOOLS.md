@@ -393,7 +393,7 @@ A comment must stay true for a reader who has only the source file. A number of 
 
 ### What the check refuses
 
-`modustool check` reads each comment of the sources and refuses a comment that names a thing of the working records by its number, its label or its date. A comment gives the reason itself, in plain words. When the reason is long, a pointer names a document and its heading, as `(docs/MODULE_CONTRACT.md, "Did not fit, across calls")`, or a numbered section, as `(docs/CONSOLE.md, section 3)`.
+`modustool check` reads each comment of the sources and refuses a comment that names a property, a choice, a step, a review or a decision by its number, its label or its date. A comment gives the reason itself, in plain words. When the reason is long, a pointer names a document and its heading, as `(docs/MODULE_CONTRACT.md, "Did not fit, across calls")`, or a numbered section, as `(docs/CONSOLE.md, section 3)`.
 
 The check reads the `.odin`, `.asm` and `.nix` files of `src/kernel`, `src/boot`, `src/runtime`, `src/library/contract`, `src/library/support`, `src/modules`, `src/programs` and `tools`, with their tests, and `flake.nix`. It reads a comment with the scanner of the site (`tools/modustool/site_source_readers.odin`): the lines of comment that follow each other are one text. A form that a line break cuts is found, at the line where it starts. A string of the code is not a comment.
 
@@ -410,7 +410,6 @@ The check reads the `.odin`, `.asm` and `.nix` files of `src/kernel`, `src/boot`
 | A review by its number | `Review 10` | a review by its number |
 | A note of a review | `note 1 of the second read` | a note of a review by its number |
 | A decision by its identifier | `D-047` | a decision by its identifier |
-| An item of the handoff | `HANDOFF item 53` | an item of the handoff by its number |
 | Who made a decision | `decision of the coordinator`, `owner decision` | who made a decision |
 | A date with "owner", "decision", "decided", "added on" or "coordinator" in the 48 bytes before it | `(owner, 2026-11-11: ...)`, `Added on 2026-11-11` | the date of a decision |
 
@@ -517,7 +516,6 @@ A path is read from the root of the repository. A path that names nothing gives 
 
 **What it does not read.**
 
-- `docs/FIRST_MILESTONE.md`, `docs/HANDOFF.md`, `docs/REVIEWS.md` and `docs/DECISIONS.md`. Each is a record of its time: a choice of the past can name a file that was removed later, and that is not a fault of the record.
 - A fence of code: it holds a tree, a command or a log, not a pointer.
 - A path in running text, outside a code span. The site makes no link from it.
 - The news entries and the changelog.
@@ -1197,7 +1195,7 @@ A few lines that say what the file is.
 - A section is a list, which can be empty. An entry (`GLOSSARY.md`, "Roadmap entry") is `- **<summary>.** <one or two sentences>`. The summary is plain text of at most 80 bytes (`ROADMAP_SUMMARY_MOST`), with its period inside the bold. A next line of the same entry starts with two spaces.
 - The sentences say what the work gives a user of the system, or a developer who builds on it. They do not say how the code changes.
 - When an intent file holds the design of the work, the entry ends with its design link: `[Design](src/md/<file>.md)`. An entry has no other link.
-- The file gives no date: a planned date that passed is a false sentence that nothing corrects. It names no decision and no person: that record is `DECISIONS.md`.
+- The file gives no date: a planned date that passed is a false sentence that nothing corrects. It names no person: git keeps who decided what.
 
 **Who changes the file, and when.** The file is written by hand. An entry is added when a work is planned, and it moves from one section to another when its state changes. When a work is done, its entry is removed in the commit that adds the changelog fragment of the work. A work that is done in part keeps an entry whose summary names the part that is left.
 
@@ -1210,7 +1208,7 @@ A few lines that say what the file is.
 | The preamble | No front matter (`---`), no field `key: value`, no entry before the first section |
 | The form of an entry | A bold summary with its period, not empty, at most 80 bytes, with none of the characters `*`, `[`, `]`, `<`, `>`; then one space and one or two sentences. A sentence ends at a `.`, a `?` or a `!` outside a code span, before a space or the end of the text |
 | A date | A text `yyyy-mm-dd`, or the name of a month with a year after it. A year alone is not refused: `2048 pixels` is a count |
-| HTML, a decision, a role | A tag of HTML outside a code span; the identifier of a decision (a capital D, a `-`, then digits); the word `owner` |
+| HTML, a role | A tag of HTML outside a code span; the word `owner` |
 | A link | A link in the sentences; a design link that is not the last part of the entry, or that names no file `src/md/<file>.md`, or a file that does not exist |
 | An entry twice | Two summaries that are the same but for the case and the marks: on the site they would have one address |
 | A work that is done | A summary that is the bold summary of a fragment, or of an entry of a release |

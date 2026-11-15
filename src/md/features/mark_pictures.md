@@ -17,7 +17,7 @@ The command and its options are in [`docs/TOOLS.md`](../../../docs/TOOLS.md), "T
 
 ## The chosen form
 
-**Two variants, named by the request** (`docs/DECISIONS.md`, D-245). In the smooth variant a pixel takes the gradient of its part at the centre of the pixel. In the cells variant a pixel takes the gradient at the centre of its cell, so a cell is one color at every cell size. Each drawing procedure of `src/library/support/mark` takes the variant as a required argument: the choice is which mark a place wants, not an option of a renderer, and a caller that does not think about it does not compile.
+**Two variants, named by the request.** In the smooth variant a pixel takes the gradient of its part at the centre of the pixel. In the cells variant a pixel takes the gradient at the centre of its cell, so a cell is one color at every cell size. Each drawing procedure of `src/library/support/mark` takes the variant as a required argument: the choice is which mark a place wants, not an option of a renderer, and a caller that does not think about it does not compile.
 
 **The rule of the choice.** A picture is smooth. A small icon is cells. The program `heron` and the boot display are pictures; the bar of the desktop and the bar of the site are small icons. For an icon of the site the cell size says which it is: an icon of one pixel for a cell is a small icon; an icon of two pixels or more for a cell is a picture. The vector icon has no pixel of its own: it is the cells.
 

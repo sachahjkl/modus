@@ -59,7 +59,7 @@ news_of_a_damaged_entry :: proc(t: ^testing.T) {
 		{"picture: docs/screenshots/console.png", "picture: docs/screenshots/../../secret.png"},
 		{"picture: docs/screenshots/console.png", "picture: docs/screenshots/console.jpg"},
 		{"kind: Measured", "kind: Announced"},
-		{"guide: docs/CONSOLE.md", "guide: docs/HANDOFF.md"},
+		{"guide: docs/CONSOLE.md", "guide: docs/SITE.md"},
 		{"guide: docs/CONSOLE.md", "guide: CONSOLE.md"},
 		{"guide: docs/CONSOLE.md", "guide: docs/research/a.md"},
 		{"guide: docs/CONSOLE.md", "guide: docs/CONSOLE.md\ncolor: blue"},

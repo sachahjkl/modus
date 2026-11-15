@@ -166,26 +166,6 @@ roadmap_html_in_text :: proc(text: string) -> bool {
 	return false
 }
 
-// roadmap_decision_in_text gives the first identifier of a decision in a
-// text (a capital D, a "-", then digits), or "". The roadmap says what a
-// work gives; the record of the decisions is another document.
-roadmap_decision_in_text :: proc(text: string) -> string {
-	for index := 0; index + 3 <= len(text); index += 1 {
-		if text[index] != 'D' || text[index + 1] != '-' || !roadmap_is_digit(text[index + 2]) {
-			continue
-		}
-		if index > 0 && (roadmap_is_letter(text[index - 1]) || roadmap_is_digit(text[index - 1])) {
-			continue
-		}
-		end := index + 2
-		for end < len(text) && roadmap_is_digit(text[end]) {
-			end += 1
-		}
-		return text[index:end]
-	}
-	return ""
-}
-
 // roadmap_word_in_text tells whether a text holds a word of lowercase
 // letters as a whole word, with no regard to case.
 roadmap_word_in_text :: proc(text, word: string) -> bool {
@@ -305,17 +285,14 @@ roadmap_entry_parse :: proc(text: string, section: Roadmap_Section, line: int, p
 }
 
 // roadmap_text_problem gives the fault of a line of text of the file that
-// each part of it can have, or "": a date, a tag of HTML, the identifier of
-// a decision, the role of a person of the project.
+// each part of it can have, or "": a date, a tag of HTML, the role of a
+// person of the project.
 roadmap_text_problem :: proc(text: string) -> string {
 	if date := roadmap_date_in_text(text); date != "" {
 		return fmt.tprintf("the date %q; the roadmap gives no date", date)
 	}
 	if roadmap_html_in_text(text) {
 		return "a tag of HTML; the roadmap is plain Markdown"
-	}
-	if decision := roadmap_decision_in_text(text); decision != "" {
-		return fmt.tprintf("the decision %s; the roadmap names no decision: the record of the decisions is docs/DECISIONS.md", decision)
 	}
 	if roadmap_word_in_text(text, "owner") {
 		return "the word \"owner\"; the roadmap names no person and no role of the project"
@@ -362,7 +339,7 @@ roadmap_entry_finish :: proc(entries: ^[dynamic]Roadmap_Entry, entry_lines: ^[dy
 //   the next lines of its text start with two spaces;
 //   one empty line before and after each heading, no two empty lines, one
 //   line feed at the end, no tab and no space at the end of a line;
-//   no date, no tag of HTML, no decision and no person in any line;
+//   no date, no tag of HTML and no person in any line;
 //   no two entries with the same summary.
 roadmap_parse :: proc(content: string) -> (roadmap: Roadmap, problems: [dynamic]string) {
 	problems = make([dynamic]string, context.temp_allocator)
