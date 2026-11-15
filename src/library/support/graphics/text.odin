@@ -1,6 +1,7 @@
 package graphics
 
 import "modus:contract/glyph_cache"
+import "modus:contract/text_encoding"
 import "modus:support/text_shaping"
 
 // The text of the system (docs/FONTS.md). Two fonts draw on one grid of
@@ -113,17 +114,21 @@ text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, 
 	if !text_vector_drawn() || !text_state.has_bold_cache {
 		return text(canvas, x, y, characters, color)
 	}
-	at := x
-	for index in 0 ..< len(characters) {
-		if at >= canvas.width {
-			break
-		}
-		if at + CELL_WIDTH > 0 {
-			character_vector_with(&text_state.bold_cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, at, y, characters[index], color, 1)
+	bytes := transmute([]u8)characters
+	at, place := x, 0
+	for place < len(bytes) {
+		character, length, _ := text_encoding.character_decode(bytes, place)
+		place += length
+		if at < canvas.width && at + CELL_WIDTH > 0 {
+			if cell_font_draws(character) {
+				character_vector_with(&text_state.bold_cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, at, y, u8(character), color, 1)
+			} else {
+				character_replacement(canvas, at, y, color, 1)
+			}
 		}
 		at += CELL_WIDTH
 	}
-	return x + CELL_WIDTH * len(characters)
+	return at
 }
 
 // square_root_table_fill makes the table of the blend in linear light:
@@ -158,15 +163,32 @@ text_vector_drawn :: #force_inline proc "contextless" () -> bool {
 // text draws characters from (x, y), the top left corner of the first cell,
 // at scale 1. It gives the x after the last character.
 text :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color) -> int {
-	if !text_vector_drawn() {
-		at := x
-		for index in 0 ..< len(characters) {
-			character_spleen(canvas, at, y, characters[index], color)
-			at += CELL_WIDTH
-		}
-		return at
-	}
 	return text_scaled(canvas, x, y, characters, color, 1)
+}
+
+// cell_font_draws says if the fonts of the cells have a glyph for a
+// character: both hold FONT_FIRST to FONT_LAST, and a glyph cache of a
+// monospace font the same range (glyph_cache.CHARACTER_LIMIT).
+cell_font_draws :: #force_inline proc "contextless" (character: rune) -> bool {
+	return character >= FONT_FIRST && character <= FONT_LAST
+}
+
+// character_replacement draws the replacement glyph in the cell at (x, y):
+// the outline of a box from the top of a capital letter to the baseline,
+// in each font and at each scale. A reader draws it for a character that
+// the font lacks and for each invalid sequence of a text, so that a byte is never
+// drawn as a glyph and a reader sees that a character is there.
+character_replacement :: proc "contextless" (canvas: Canvas, x, y: int, color: Color, scale: int) {
+	BOX_LEFT :: 1
+	BOX_TOP :: 3
+	BOX_WIDTH :: 6
+	BOX_HEIGHT :: 9
+	left, top := x + BOX_LEFT * scale, y + BOX_TOP * scale
+	width, height := BOX_WIDTH * scale, BOX_HEIGHT * scale
+	fill(canvas, left, top, width, scale, color)
+	fill(canvas, left, top + height - scale, width, scale, color)
+	fill(canvas, left, top, scale, height, color)
+	fill(canvas, left + width - scale, top, scale, height, color)
 }
 
 // character draws one character in the cell at (x, y), at scale 1.
@@ -185,32 +207,37 @@ character :: proc "contextless" (canvas: Canvas, x, y: int, value: u8, color: Co
 text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color, scale_asked: int) -> int {
 	scale := clamp(scale_asked, 1, 3)
 	advance := CELL_WIDTH * scale
-	at := x
 	vector := text_vector_drawn()
-	for index in 0 ..< len(characters) {
-		if at >= canvas.width {
-			break
-		}
-		if at + advance > 0 {
+	// The text is UTF-8: one cell for each character, and one for each
+	// invalid sequence, which draws the replacement glyph.
+	bytes := transmute([]u8)characters
+	at, place := x, 0
+	for place < len(bytes) {
+		character, length, _ := text_encoding.character_decode(bytes, place)
+		place += length
+		if at < canvas.width && at + advance > 0 {
+			value := u8(character)
 			switch {
+			case !cell_font_draws(character):
+				character_replacement(canvas, at, y, color, scale)
 			case vector:
-				character_vector(canvas, at, y, characters[index], color, scale)
+				character_vector(canvas, at, y, value, color, scale)
 			case scale == 1:
-				character_spleen(canvas, at, y, characters[index], color)
+				character_spleen(canvas, at, y, value, color)
 			case:
-				character_spleen_enlarged(canvas, at, y, characters[index], color, scale)
+				character_spleen_enlarged(canvas, at, y, value, color, scale)
 			}
 		}
 		at += advance
 	}
-	return x + advance * len(characters)
+	return at
 }
 
 // text_width gives the width of a text in the font of the cells at scale 1,
-// in pixels: 8 pixels for each byte. Both fonts of the cells have that
-// width.
+// in pixels: 8 pixels for each character of the UTF-8 text, and for each
+// invalid sequence. Both fonts of the cells have that width.
 text_width :: proc "contextless" (characters: string) -> int {
-	return len(characters) * CELL_WIDTH
+	return text_encoding.character_count(transmute([]u8)characters) * CELL_WIDTH
 }
 
 // character_vector draws one character of the glyph cache: each word of the
@@ -353,13 +380,18 @@ text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_
 	}
 	position_count := int(cache.sizes[scale - 1].position_count)
 	for glyph in placed {
-		if glyph.glyph >= cache.header.character_count {
+		replacement := glyph.glyph == text_shaping.REPLACEMENT_GLYPH
+		if glyph.glyph >= cache.header.character_count && !replacement {
 			continue
 		}
 		pixel, position := glyph_cache.position_of(place + i64(glyph.x), position_count)
 		// A glyph far outside the canvas: its pixel does not fit an int of
 		// the canvas, and it draws nothing.
 		if pixel < -i64(glyph_cache.GLYPH_WIDTH_LIMIT) || pixel > i64(canvas.width) {
+			continue
+		}
+		if replacement {
+			character_replacement(canvas, int(pixel), y, color, scale)
 			continue
 		}
 		_, entry, found := glyph_cache.glyph_at_position(cache, u8(cache.header.first_character + glyph.glyph), scale, position)

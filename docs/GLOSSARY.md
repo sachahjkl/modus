@@ -4301,7 +4301,7 @@ Do not use: display list, command buffer, render tree.
 
 A text grid is a grid of text cells of a program (a character, reverse, a color, or a fill), drawn by one draw record.
 
-A terminal changes many cells many times in one second. One record for each cell makes a large table; one text grid record names the whole grid, up to 104 by 32 cells for the terminal. Its 40 bytes do not change when its cells change, so the difference compares the cells: in each row, the span from the first changed cell to the last one is damaged. Each draw table keeps its own copy of the cells that its picture shows. The execution draws the cells of one color that follow each other as one text. The console draws no pixels: its records go into the terminal, so the text grid of the terminal is also the drawing of the console.
+A cell holds one code point, so one cell is one character: the program that fills the grid decodes its UTF-8 text once, and the grid draws a code point that the font lacks as the replacement glyph. A terminal changes many cells many times in one second. One record for each cell makes a large table; one text grid record names the whole grid, up to 104 by 32 cells for the terminal. Its 40 bytes do not change when its cells change, so the difference compares the cells: in each row, the span from the first changed cell to the last one is damaged. Each draw table keeps its own copy of the cells that its picture shows. The execution draws the cells of one color that follow each other as one text. The console draws no pixels: its records go into the terminal, so the text grid of the terminal is also the drawing of the console.
 
 A text grid is not a screen buffer of a text mode: it is memory of the program, drawn into its surface.
 
@@ -4616,6 +4616,46 @@ Do not use: file dialog, powerbox.
 
 ## Text
 
+### Text encoding
+
+The text encoding is the one form of a text in every contract of the system: UTF-8 with no control character, and a length in bytes.
+
+Each record that two parties share holds its text in this form: an entry of the palette, a run of a result, a record of the terminal ring, a line of the log, the name of an object of a store, a `Text` of the module contract. A party that takes a text from another party checks it at its border with `text_encoding.text_valid` (`src/library/contract/text_encoding`), and a party that cuts a text cuts it after a whole character (`complete_characters`). A capacity of a field is a count of bytes, so it holds fewer characters than bytes when a text has characters outside ASCII. A name that is an identifier of the system (a module, an export, a field, a channel of the log, a setting, a program) stays in the visible characters of ASCII, so that each layout types it and it has one form only.
+
+The design: `src/md/data/text_encoding.md`.
+
+Do not use: charset, code page, string encoding.
+
+### Code point
+
+A code point is the number of one character of Unicode, from 0 to 0x10FFFF.
+
+UTF-8 writes a code point in one to four bytes: the code point 233, é, is the two bytes C3 A9. The cell of a text grid holds a code point, so one cell is one character. The console command `character` gives the text of a code point. A surrogate (0xD800 to 0xDFFF) and a control character are code points that no text of the system holds.
+
+The design: `src/md/data/text_encoding.md`.
+
+Do not use: rune (outside the code), character number, Unicode value.
+
+### Invalid sequence
+
+An invalid sequence is bytes of a text that are no character of the text encoding: a broken sequence of UTF-8, or a control character.
+
+The broken forms are an overlong form, a surrogate, a number above 0x10FFFF, a continuation byte with no first byte, and a sequence cut short; each is one byte long. The control characters are 0 to 31, 127 and 128 to 159: a terminal of the host acts on some of them, and a line of the system is a record, never a byte. A border that checks a text refuses it (the palette table, the name of an object of a store), the kernel writes `?` in place of each of its bytes in a line of the log, and a reader that draws shows the replacement glyph.
+
+The design: `src/md/data/text_encoding.md`.
+
+Do not use: fault (for this), bad byte, mojibake.
+
+### Replacement glyph
+
+The replacement glyph is the outline of a box that a reader draws in place of a character that the font lacks and of an invalid sequence.
+
+It is drawn by code, in each font and at each scale, so no font needs a glyph for it: the box goes from the top of a capital letter to the baseline, inside one cell. It shows that a character is there: a byte is never drawn as a glyph, and a `?` would read as a question mark. Text shaping places it as `REPLACEMENT_GLYPH`, with the advance of `0`.
+
+The design: `src/md/data/text_encoding.md`.
+
+Do not use: tofu, missing glyph, question mark (for this).
+
 ### Font
 
 A font is a set of glyphs of one design, with the measures that place them side by side.
@@ -4640,7 +4680,7 @@ A glyph is the form of one character in one font.
 
 The character is the number (the byte 0x30 is the character `0`); the glyph is the drawing of it. One character can have several glyphs in one font: Paper Mono has a plain zero (glyph 294) and a slashed zero (glyph 304), and a font feature chooses between them. A glyph has an outline and an advance; in a glyph cache it is a box of words of coverage.
 
-The system draws glyphs for the characters 32 to 126 only. A byte outside that range draws nothing in a text of cells, and is placed as `?` by text shaping, so that the reader sees that the font does not draw it.
+The system has glyphs for the characters 32 to 126 only. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
 
 The design: `docs/FONTS.md`, "5. The glyph cache".
 

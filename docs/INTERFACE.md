@@ -82,7 +82,7 @@ A draw record is 40 bytes. The fields are little-endian, in this order:
   - The compositor shows a surface after its first `Present`, and refuses a surface with memory for less than two pictures. It counts the `Present` records that named the picture that it already read: `pictures_drawn_again` in `compositor.windows()`, 0 for each program of the system. It refuses and counts a `Present` whose picture number is not 0 or 1 (`presents_refused`).
   - In one turn of its loop the compositor takes from the ring of a window the records that the ring holds at the start of the turn, at most the capacity of the ring (`system.records_of_turn`): a program that writes records with no end does not hold the compositor.
   - One thread of a program owns a window: `display.canvas_wait` and `display.wait_events` of one window are called from one thread.
-- A `Text_Grid` record shows a grid of text cells of the caller (`Text_Grid_Cell`: a character, reverse, a color; or filled: a character in its color on a cell of a fill color, for a list drawn over text, 12 bytes for each cell). Its 40 bytes do not change when its cells change: the difference compares the cells (section 2.4).
+- A `Text_Grid` record shows a grid of text cells of the caller (`Text_Grid_Cell`: a character, as a code point, reverse, a color; or filled: a character in its color on a cell of a fill color, for a list drawn over text, 16 bytes for each cell). Its 40 bytes do not change when its cells change: the difference compares the cells (section 2.4).
 
 ### 2.2 Damage by difference
 

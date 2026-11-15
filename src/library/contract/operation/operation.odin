@@ -382,7 +382,8 @@ Operation :: enum u32 {
 	//   the program. The program keeps it: it pays for its first thread at `Program_Start`, and for each
 	//   page table of the program after.
 	// - `name`, `name_length`: the name of the program, at most 31 bytes, in memory that the program can
-	//   read: the reports and the log show it.
+	//   read: the reports and the log show it. Each byte is a printable character of ASCII or the
+	//   space (32 to 126): a name starts each line of the log on the serial port.
 	//
 	// **Results**: the program handle.
 	//
@@ -390,6 +391,7 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
 	// - `Bad_Address`: `name_length` is above 31, or the program cannot read the name.
+	// - `Bad_Operation`: a byte of the name is outside 32 to 126.
 	// - `No_Budget`: the budget has no program slot or no page left, or it cannot pay the page tables.
 	// - `No_Slot`: the table of the programs of the kernel is full, or the handle table of the program.
 	Program_Start  = 7, // (program, entry, stack, context).

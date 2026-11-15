@@ -870,7 +870,7 @@ text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
 	cells_now: [3 * 8]Text_Grid_Cell
 	cells_drawn: [3 * 8]Text_Grid_Cell
 	for &cell, index in cells_now {
-		cell = {character = u8('a' + index % 26), color = 0xFFFFFF}
+		cell = {character = rune('a' + index % 26), color = 0xFFFFFF}
 	}
 	records_now, records_before: [4]Draw_Record
 	grids_now := [1]Text_Grid{{cells = cells_now[:], columns = 6, rows = 3, stride = 8}}
@@ -1042,7 +1042,7 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 			draw_rectangle(&now, bar * 6, 0, 5, int(bars >> uint(bar * 3)) % 3 * 4, 0x30A050)
 		}
 		for &cell, index in cells {
-			cell = {character = u8('a' + (index / COLUMNS + step * 3) % 26), reverse = (index + step) % 17 == 0, color = 0xE0E0E0}
+			cell = {character = rune('a' + (index / COLUMNS + step * 3) % 26), reverse = (index + step) % 17 == 0, color = 0xE0E0E0}
 			if (index + step) % 5 == 0 {
 				cell.character = 0
 			}
@@ -1383,7 +1383,7 @@ Grid_Tables :: struct {
 @(private = "file")
 grid_tables_make :: proc(tables: ^Grid_Tables, columns, rows, stride: int) {
 	for &cell, index in tables.cells_now {
-		cell = {character = u8('A' + index % 26), reverse = index % 7 == 0, color = graphics.Color(0x406080 + index % 3 * 0x203010)}
+		cell = {character = rune('A' + index % 26), reverse = index % 7 == 0, color = graphics.Color(0x406080 + index % 3 * 0x203010)}
 	}
 	tables.grids_now[0] = {cells = tables.cells_now[:], columns = columns, rows = rows, stride = stride}
 	tables.grids_before[0] = {cells = tables.cells_before[:]}

@@ -59,6 +59,7 @@ package terminal_records
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
 import "modus:contract/ring"
+import "modus:contract/text_encoding"
 import "modus:support/system"
 
 // The roles of the context of a program that has a terminal, and of the
@@ -132,9 +133,11 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           values[1]: for List_Row, the number of the row. The next record
 //           of the target takes the runs; a record of the target with no
 //           Code_Runs before it is plain.
-// The terminal draws each byte of a list or a hint that is not a character
-// of the font (under 32, over 126) as '?': the text of these records comes
-// from the descriptions of other programs.
+// The text of each record is UTF-8 (src/library/contract/text_encoding),
+// and each count is a count of bytes. The library cuts a text after a whole
+// character only. The terminal shows one cell for each character, and the
+// replacement glyph for each invalid sequence and for each character that the font
+// lacks: the text of these records comes from other programs.
 Kind :: enum u32 {
 	None     = 0, // Not a record: the terminal skips it.
 	Text     = 1, // A run of text.
@@ -203,7 +206,7 @@ Input_Record :: struct {
 // One key, as `key` gives it to the program.
 Key :: struct {
 	code:      u32, // The code of the key (display.KEY_*).
-	character: u8, // Its character in ASCII, or 0.
+	character: u8, // Its character in ASCII, or 0. A key gives no character outside ASCII yet.
 	modifiers: u32, // The modifiers held (display.MODIFIER_*).
 }
 
@@ -288,7 +291,7 @@ write :: proc "contextless" (terminal: ^Terminal, runs: ..Run) {
 	for run in runs {
 		text := run.text
 		for {
-			part := text[:min(len(text), RUN_LIMIT)]
+			part := text[:record_part(text, RUN_LIMIT)]
 			text = text[len(part):]
 			style := run.style
 			if len(text) != 0 {
@@ -316,7 +319,7 @@ line :: proc "contextless" (terminal: ^Terminal, runs: ..Run) {
 	for run in runs[:len(runs) - 1] {
 		text := run.text
 		for len(text) != 0 {
-			part := text[:min(len(text), RUN_LIMIT)]
+			part := text[:record_part(text, RUN_LIMIT)]
 			text = text[len(part):]
 			style := run.style
 			style.flags -= {.End_Line}
@@ -366,8 +369,8 @@ Hint_Text :: struct {
 // removes it. The two forms together are cut to RUN_LIMIT bytes, the long
 // form first.
 hint :: proc "contextless" (terminal: ^Terminal, long: Hint_Text, short: Hint_Text, style: Style) {
-	long_part := long.text[:min(len(long.text), RUN_LIMIT)]
-	short_part := short.text[:min(len(short.text), RUN_LIMIT - len(long_part))]
+	long_part := long.text[:record_part(long.text, RUN_LIMIT)]
+	short_part := short.text[:record_part(short.text, RUN_LIMIT - len(long_part))]
 	append(terminal, long_part)
 	append(terminal, short_part)
 	push(terminal, ring.Record{kind = u32(Kind.Hint), tag = u32(len(long_part) + len(short_part)), values = {0 = transmute(u64)style, 1 = u64(max(long.marked_start, 0)), 2 = u64(max(long.marked_count, 0)), 3 = u64(len(long_part)), 4 = u64(max(short.marked_start, 0)), 5 = u64(max(short.marked_count, 0))}})
@@ -375,9 +378,10 @@ hint :: proc "contextless" (terminal: ^Terminal, long: Hint_Text, short: Hint_Te
 }
 
 // hint_form_choose chooses the form of a hint line for a width of columns
-// cells: the long form when it fits; if not, the short form when the
-// program gave one; if not, the long form. shown is the bytes of the form
-// that the row shows: the form, cut to the columns.
+// cells, from the cells of each form (one for each character): the long
+// form when it fits; if not, the short form when the program gave one; if
+// not, the long form. shown is the cells of the form that the row shows:
+// the form, cut to the columns.
 hint_form_choose :: proc "contextless" (long_count, short_count, columns: int) -> (form: Hint_Form, shown: int) {
 	room := max(columns, 0)
 	if long_count <= room || short_count <= 0 {
@@ -391,8 +395,8 @@ hint_form_choose :: proc "contextless" (long_count, short_count, columns: int) -
 // and the places of the name that matched. A name and its text are cut to
 // RUN_LIMIT bytes together, the name first.
 list_row :: proc "contextless" (terminal: ^Terminal, row: int, name: string, about: string, matched: [2]u64, icon := List_Icon.None) {
-	name_part := name[:min(len(name), RUN_LIMIT)]
-	about_part := about[:min(len(about), RUN_LIMIT - len(name_part))]
+	name_part := name[:record_part(name, RUN_LIMIT)]
+	about_part := about[:record_part(about, RUN_LIMIT - len(name_part))]
 	append(terminal, name_part)
 	append(terminal, about_part)
 	push(terminal, ring.Record{kind = u32(Kind.List_Row), tag = u32(len(name_part) + len(about_part)), values = {0 = u64(row), 1 = u64(len(name_part)), 2 = matched[0], 3 = matched[1], 4 = u64(icon)}})
@@ -513,6 +517,24 @@ record_text :: proc "contextless" (text: string, buffer: ^[RUN_LIMIT]u8) -> stri
 	count := copy(buffer[:], text)
 	marked, _, _ := cut_mark.apply(buffer[:], count, len(text) - count)
 	return string(buffer[:marked])
+}
+
+// record_part gives the bytes of the start of a text that fit in room
+// bytes: the whole text when it fits, else its start cut after a whole
+// character. With a room of RUN_LIMIT bytes it is never 0 for a text that
+// is not empty, so a loop over the records of a long text moves on.
+@(private)
+record_part :: proc "contextless" (text: string, room: int) -> int {
+	if len(text) <= room {
+		return len(text)
+	}
+	if room <= 0 {
+		return 0
+	}
+	// A character has at most 4 bytes, so a record of RUN_LIMIT bytes always
+	// takes one; a smaller room that ends inside the first character takes
+	// none, and that character goes in the next record.
+	return text_encoding.complete_characters(transmute([]u8)text[:room])
 }
 
 // key gives the next key that was pressed. false: no key waits.

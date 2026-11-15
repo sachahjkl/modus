@@ -71,6 +71,7 @@ import "modus:support/key_path"
 import "modus:support/kind_icons"
 import "modus:contract/value_kinds"
 import "modus:contract/ring"
+import "modus:contract/text_encoding"
 import "modus:support/system"
 import terminal "modus:support/terminal"
 import "base:intrinsics"
@@ -172,7 +173,7 @@ Run :: struct {
 Line :: struct {
 	first_run: u64, // The count of runs that the terminal kept before this line.
 	run_count: u32,
-	length:    u32, // Characters.
+	length:    u32, // Bytes of UTF-8.
 }
 
 lines: [^]Line
@@ -343,6 +344,10 @@ apply :: proc "contextless" (record: ring.Record) {
 		status_line = {value = record.values[1], total = record.values[2], style = transmute(terminal.Style)record.values[0]}
 		status_line.length = copy(status_line.text[:], first)
 		status_line.length += copy(status_line.text[status_line.length:], second)
+		// A status longer than its field keeps its whole characters.
+		if status_line.length < len(first) + len(second) {
+			status_line.length = text_encoding.complete_characters(status_line.text[:status_line.length])
+		}
 	case .Clear:
 		forget()
 	case .Edit:
@@ -411,11 +416,23 @@ style_color :: proc "contextless" (style: terminal.Style) -> graphics.Color {
 	return terminal.code_kind_color(terminal.code_kind_of(u8(style.code)), plain)
 }
 
-// shown_character gives the byte that a cell shows for a byte of a list or
-// a hint: the font draws 32 to 126, and these texts come from the
-// descriptions of other programs.
-shown_character :: proc "contextless" (character: u8) -> u8 {
-	return character >= ' ' && character <= '~' ? character : '?'
+// The text of each record is UTF-8 from another program: a cell holds one
+// character, decoded once here, and an invalid sequence is one cell of the replacement
+// character (src/library/contract/text_encoding). A count of bytes of a
+// record (a cursor, a mark, a match, a run of code) names the character
+// that starts at that byte.
+
+// character_at gives the character that a cell shows for the bytes of a
+// record at place, and its bytes.
+character_at :: #force_inline proc "contextless" (text: []u8, place: int) -> (character: rune, length: int) {
+	character, length, _ = text_encoding.character_decode(text, place)
+	return
+}
+
+// cells_of gives the cells that a text of a record takes: one for each
+// character and each invalid sequence.
+cells_of :: #force_inline proc "contextless" (text: []u8) -> int {
+	return text_encoding.character_count(text)
 }
 
 // list_fill writes the cells of the completion list over the rows of the
@@ -453,8 +470,9 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 	// gives it to each row, so the names stay in one column.
 	icon_cells := 0
 	for &row in list_keeping.shown.rows[offset:][:shown_rows] {
-		about := row.length - row.name_length
-		longest = max(longest, row.name_length + (about > 0 ? 2 + about : 0))
+		name_cells := cells_of(row.text[:row.name_length])
+		about_cells := cells_of(row.text[row.name_length:row.length])
+		longest = max(longest, name_cells + (about_cells > 0 ? 2 + about_cells : 0))
 		if row.icon != .None {
 			icon_cells = LIST_ICON_CELLS
 		}
@@ -465,7 +483,9 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 	if list_width - 2 - scroll - icon_cells < 1 {
 		icon_cells = 0
 	}
-	anchor := min(list_keeping.shown.anchor, edit_line.length)
+	// The anchor is a byte of the edit line: the list starts at the cell of
+	// its character.
+	anchor := cells_of(edit_line.text[:min(list_keeping.shown.anchor, edit_line.length)])
 	left := min(anchor % columns, columns - list_width)
 	inner := list_width - 2 - scroll - icon_cells
 	view.list_icon_cells = icon_cells
@@ -504,27 +524,37 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 			about_color = name_color
 		}
 		code_cursor := 0 // The run of code of the bytes of the row, in order.
-		name_shown := min(row.name_length, inner)
-		for place in 0 ..< name_shown {
-			matched := row.matched[place / 64] & (1 << u64(place % 64)) != 0
-			kind := terminal.code_runs_kind_at(&row.code, place, &code_cursor)
-			name_cell := Cell{character = shown_character(row.text[place]), filled = true, color = chosen ? name_color : terminal.code_kind_color(kind, name_color), background = background}
+		// One cell for each character of the name; a match and a run of
+		// code name the byte where the character starts.
+		name_text := row.text[:row.name_length]
+		name_shown, name_place := 0, 0
+		for name_place < len(name_text) && name_shown < inner {
+			character, length := character_at(name_text, name_place)
+			matched := name_place < 128 && row.matched[name_place / 64] & (1 << u64(name_place % 64)) != 0
+			kind := terminal.code_runs_kind_at(&row.code, name_place, &code_cursor)
+			name_cell := Cell{character = character, filled = true, color = chosen ? name_color : terminal.code_kind_color(kind, name_color), background = background}
 			switch {
 			case matched && chosen:
 				name_cell.color, name_cell.background = graphics.COLOR_CHOSEN, graphics.COLOR_WHITE
 			case matched:
 				name_cell.color = tone_colors[.Accent]
 			}
-			cells[1 + icon_cells + place] = name_cell
+			cells[1 + icon_cells + name_shown] = name_cell
+			name_shown += 1
+			name_place += length
 		}
 		// What the name is, at the right, cut at its end when the room is short.
+		about_text := row.text[row.name_length:row.length]
 		about_room := inner - name_shown - 2
-		about_shown := about_room > 0 ? min(row.length - row.name_length, about_room) : 0
+		about_shown := about_room > 0 ? min(cells_of(about_text), about_room) : 0
 		about_left := 1 + icon_cells + inner - about_shown
-		for place in 0 ..< about_shown {
-			kind := terminal.code_runs_kind_at(&row.code, row.name_length + place, &code_cursor)
+		about_place := 0
+		for cell_index in 0 ..< about_shown {
+			character, length := character_at(about_text, about_place)
+			kind := terminal.code_runs_kind_at(&row.code, row.name_length + about_place, &code_cursor)
 			color := chosen ? about_color : terminal.code_kind_color(kind, about_color)
-			cells[about_left + place] = {character = shown_character(row.text[row.name_length + place]), filled = true, color = color, background = background}
+			cells[about_left + cell_index] = {character = character, filled = true, color = color, background = background}
+			about_place += length
 		}
 	}
 	view.list_left, view.list_top, view.list_columns, view.list_rows = left, top, list_width, shown_rows
@@ -588,8 +618,19 @@ view_make :: proc "contextless" () {
 	if lines[lines_written & (LINE_CAPACITY - 1)].run_count != 0 {
 		count += 1
 	}
-	// The line that the program changes takes rows after the last line.
-	edit_cells := edit_line.length + int(edit_line.has_cursor)
+	// The line that the program changes takes rows after the last line: one
+	// cell for each of its characters, decoded once here, and one for the
+	// cursor.
+	edit_characters: [terminal.RUN_LIMIT]rune
+	edit_starts: [terminal.RUN_LIMIT]u16 // The byte where each character starts.
+	edit_count := 0
+	for edit_place := 0; edit_place < edit_line.length; edit_count += 1 {
+		character, length := character_at(edit_line.text[:edit_line.length], edit_place)
+		edit_characters[edit_count], edit_starts[edit_count] = character, u16(edit_place)
+		edit_place += length
+	}
+	edit_cursor_cell := cells_of(edit_line.text[:edit_line.cursor])
+	edit_cells := edit_count + int(edit_line.has_cursor)
 	edit_rows := u64(min((edit_cells + columns - 1) / columns, rows))
 	// One row under the edit line stays free at all times, with or without
 	// a hint line: the hint is drawn over it, as the list is drawn over the
@@ -620,12 +661,12 @@ view_make :: proc "contextless" () {
 			first := int(number - count) * columns
 			code_cursor := 0 // The run of code of the bytes of this row, in order.
 			for column in 0 ..< columns {
-				place := first + column
-				if place < edit_line.length {
-					kind := terminal.code_runs_kind_at(&edit_line.code, place, &code_cursor)
-					row[column] = {character = edit_line.text[place], color = terminal.code_kind_color(kind, edit_color)}
+				cell_index := first + column
+				if cell_index < edit_count {
+					kind := terminal.code_runs_kind_at(&edit_line.code, int(edit_starts[cell_index]), &code_cursor)
+					row[column] = {character = edit_characters[cell_index], color = terminal.code_kind_color(kind, edit_color)}
 				}
-				if edit_line.has_cursor && place == edit_line.cursor {
+				if edit_line.has_cursor && cell_index == edit_cursor_cell {
 					row[column] = {character = max(row[column].character, ' '), reverse = true, color = COLOR_CURSOR}
 				}
 			}
@@ -641,19 +682,36 @@ view_make :: proc "contextless" () {
 		view.text_rows += 1
 		line := lines[number & (LINE_CAPACITY - 1)]
 		column := 0
+		continues := false // The line has a character after the last column.
 		for run_index in line.first_run ..< line.first_run + u64(line.run_count) {
 			run := runs[run_index & (RUN_CAPACITY - 1)]
 			color := style_color(run.style)
 			reverse := .Reverse in run.style.flags
-			for offset in 0 ..< u64(run.length) {
+			// The bytes of the run in one piece, since the kept bytes start
+			// again at their first byte after their last. A run has at most
+			// RUN_LIMIT bytes, and the library cuts a text after a whole
+			// character, so a run holds whole characters.
+			run_bytes: [terminal.RUN_LIMIT]u8
+			run_byte_count := int(min(run.length, terminal.RUN_LIMIT))
+			for offset in 0 ..< run_byte_count {
+				run_bytes[offset] = bytes[(run.start + u64(offset)) & (BYTE_CAPACITY - 1)]
+			}
+			run_place := 0
+			for run_place < run_byte_count {
 				if column == columns {
+					continues = true
 					break
 				}
-				row[column] = {character = bytes[(run.start + offset) & (BYTE_CAPACITY - 1)], reverse = reverse, color = color}
+				character, length := character_at(run_bytes[:run_byte_count], run_place)
+				row[column] = {character = character, reverse = reverse, color = color}
 				column += 1
+				run_place += length
+			}
+			if continues {
+				break
 			}
 		}
-		if int(line.length) > columns {
+		if continues {
 			row[columns - 1] = {character = '>', reverse = true, color = graphics.COLOR_DIM} // The line continues after the window.
 		}
 	}
@@ -665,13 +723,18 @@ view_make :: proc "contextless" () {
 // long form when it fits in the columns, if not its short form, cut to the
 // columns.
 hint_fill :: proc "contextless" (row: ^[COLUMNS_LIMIT]Cell) {
-	form, shown := terminal.hint_form_choose(hint_line.long_count, hint_line.length - hint_line.long_count, columns)
-	first := form == .Long ? 0 : hint_line.long_count
+	long_text := hint_line.text[:hint_line.long_count]
+	short_text := hint_line.text[hint_line.long_count:hint_line.length]
+	form, shown := terminal.hint_form_choose(cells_of(long_text), cells_of(short_text), columns)
+	text := form == .Long ? long_text : short_text
 	marked := hint_line.marked[form]
 	color := style_color(hint_line.style)
-	for place in 0 ..< shown {
+	place := 0 // The byte of the form where the character of the cell starts: the mark is in bytes.
+	for cell_index in 0 ..< shown {
+		character, length := character_at(text, place)
 		in_mark := place >= marked[0] && place < marked[0] + marked[1]
-		row[place] = {character = shown_character(hint_line.text[first + place]), color = in_mark ? tone_colors[.Accent] : color}
+		row[cell_index] = {character = character, color = in_mark ? tone_colors[.Accent] : color}
+		place += length
 	}
 }
 

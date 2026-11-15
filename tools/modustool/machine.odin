@@ -922,6 +922,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 14"},
 	{kind = .Type, text = "hash(\"abc\")"},
 	{kind = .Wait, text = "[console] 6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"},
+	// A Text is UTF-8 in every contract: the console writes a character
+	// outside ASCII, and the line of the log holds its two bytes C3 A9.
+	{kind = .Type, text = "\"caf\" + character(233)"},
+	{kind = .Wait, text = "[console] café"},
+	{kind = .Type, text = "length(character(233))"},
+	{kind = .Wait, text = "[console] 2"},
+	{kind = .Type, text = "character(55296)"},
+	{kind = .Wait, text = "error: 55296 is no character of a text"},
 	{kind = .Type, text = "length(5)"},
 	{kind = .Wait, text = "error: length: argument 1 is Text, not Integer"},
 	{kind = .Type, text = "where(modules(), \"name\", \"compositor\")"},
@@ -2517,6 +2525,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "errors: x a ring: root.Connect(\"storage\"), not callable: root.Connect: the caller has no grant for this: a connection to this service"},
 	{kind = .Wait, text = "errors: y an export: tally.add, a note of 40 bytes: tally.add: the argument note has 40 bytes; it can have at most 36 bytes"},
 	{kind = .Wait, text = "errors: ok, 25 cases, each with the expected error record"},
+	// The kernel writes "?" for each byte of a control character and of a
+	// broken sequence that a program gives to the operation Log itself:
+	// escape, carriage return, U+0085 (two bytes), a lead byte with no
+	// continuation. The line holds no byte that a terminal acts on.
+	{kind = .Wait, text = "[errors] errors: a log line with control bytes: ?[2J????( as it must"},
+	{kind = .Wait, text = "errors: a name of a program with an escape byte is refused: as it must"},
 	{kind = .Wait, text = "errors: under contention: "},
 	// A text longer than one row of log.records (one log record, 152
 	// bytes): its end is in the next row, and the tool joins the rows.

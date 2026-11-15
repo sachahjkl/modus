@@ -94,7 +94,7 @@ The renderer uses integers only, so the same font gives the same bytes on every 
 
 The glyph cache is the font already drawn: the tool renders each character at each scale at build time, and the programs only copy from it. It is a resource of the boot image, checked by its hash and mapped read-only into each program with a window.
 
-A table of drawn glyphs: for each scale (1, 2, 3) and each character 32 to 126. Format: `src/library/contract/glyph_cache`, version 2: a header of 128 bytes, a size entry of 16 bytes for each scale, a glyph entry of 12 bytes for each character, position and scale, the advance of each character and scale, the pairs of each scale, then the words; a glyph keeps only its rows with ink. Fixed capacity: 3 sizes, 95 characters, 3 positions, 9 025 pairs; no replacement rule is needed, because the table holds every glyph that the grid can draw. All zero is valid: a program with no cache draws Spleen.
+A table of drawn glyphs: for each scale (1, 2, 3) and each character 32 to 126. Format: `src/library/contract/glyph_cache`, version 2: a header of 128 bytes, a size entry of 16 bytes for each scale, a glyph entry of 12 bytes for each character, position and scale, the advance of each character and scale, the pairs of each scale, then the words; a glyph keeps only its rows with ink. Fixed capacity: 3 sizes, 95 characters, 3 positions, 9 025 pairs. A text is UTF-8; each character outside the cache, and each invalid sequence, draws the replacement glyph, which code draws and no cache holds (`docs/GLOSSARY.md`, "Replacement glyph"). All zero is valid: a program with no cache draws Spleen.
 
 **One format for the two kinds of font** (version 2, section 12.4). The tool writes every cache again, so no reader keeps version 1:
 
@@ -238,7 +238,7 @@ What its tables say, read on its files, against JetBrains Mono:
 | Box drawing U+2500 to 257F, block elements U+2580 to 259F | all 128 and all 32 | |
 
 - Its capitals are one row shorter than those of JetBrains Mono at scale 1 (9 rows against 10) and its letters are 1 % narrower in the em. Its line is the same 16 rows.
-- **Not built: the box-drawing characters.** The glyph cache holds ASCII 32 to 126; the console and the terminal send ASCII only. Paper Mono has each box-drawing and block character, so a wider cache (section 6, "a wider range") can take them later: about 4 100 bytes for each character with ink at the three scales.
+- **Not built: the box-drawing characters.** The glyph cache holds ASCII 32 to 126; the terminal draws each other character as the replacement glyph. Paper Mono has each box-drawing and block character, so a wider cache (section 6, "a wider range") can take them later: about 4 100 bytes for each character with ink at the three scales.
 - Not measured yet: the size of its glyph cache and of its SemiBold cache, and its look on the screen. `modustool vector_fonts` measures them; `build/fonts/candidates.png` and the picture `font_candidates` show it beside the others.
 
 The picture of the choice: `font_candidates` (the program `vector_glyphs`: the same line in Spleen and in the six fonts, the large number at scale 2, a word enlarged 4 times; each candidate from a cache that the program builds), and `build/fonts/candidates.png` (`modustool vector_fonts`: the same lines at scales 1, 2 and 3 in each candidate and in Spleen, the default with and without the grid fit, a word of each enlarged 5 times; drawn on the host by the same `src/library/support/graphics`).
@@ -271,7 +271,7 @@ The settings are the smallest form that keeps the properties:
 - **A cache whose hash is wrong**: the root service does not map it (one line on the log), and no program has it.
 - **A damaged font file** at build time: the tool stops the build with the problem (`vector_font.Font_Problem`). The reader checks each read (host test `hostile_files`: the file cut at each 211 bytes, 48 files with 64 changed bytes, each glyph drawn at the three scales: no fault).
 - **The boot display can use the vector font**: the glyph cache is in the boot image, and the root service checks its hash and validates it before its first boot display (the picture `boot_fails` is drawn by the root service, in the vector font). A screen with red in the low byte swaps the stripes of the text (`bootscreen.stripes_of_screen`).
-- **A character that the font lacks**: the system draws ASCII 32 to 126 only, and each candidate has all of them (the subset command refuses a font without one). A byte outside draws nothing, as with Spleen.
+- **A character that the font lacks**: the system has glyphs for ASCII 32 to 126 only, and each candidate has all of them (the subset command refuses a font without one). A text is UTF-8: the drawing decodes it, gives each character one cell, and draws each other character, and each invalid sequence, as the replacement glyph, the outline of a box (`graphics.character_replacement`), in both fonts and at each scale.
 
 ## 9. Measures
 
@@ -295,7 +295,7 @@ The console stays fast: the producer writes into the terminal ring, and the term
 - No grid fit of each stem; no stem darkening (`gui_toolkit` thickens the stripes by 0.2 pixel; not tried here).
 - The boot display and the first frames use the default settings until the boot pass of `settings` (section 7).
 - The scheduling strategy is not a setting and does not survive a stop (section 7).
-- The characters outside ASCII are not built: no cache has a glyph outside 32 to 126. A monospace cache has no subpixel position; the proportional font and its pairs are in section 12.
+- The glyphs outside ASCII are not built: no cache and no Spleen data has a glyph outside 32 to 126, so é draws the replacement glyph. The format of the cache keys a character in one byte. A monospace cache has no subpixel position; the proportional font and its pairs are in section 12.
 - The order of the stripes of the screen is not detected: under QEMU it is the panel of the host, which the system cannot read.
 - The measures of section 9 were taken on a host with a load above 8.
 
@@ -350,12 +350,12 @@ A module (property 10: shared code with exports), with batch exports whose param
 
 - **The spacing is two tables of the caller**, the advances and the pairs of one scale of its glyph cache (`text_shaping.spacing_of`). So the module holds no font and no state: an isolated call receives them in the call region like the text.
 - **Hostile tables**: the counts are checked (95 advances, at most 9 025 pairs, a text of at most 65 536 bytes, a table of at most 2^40 records). The caller can change its tables during the call, so no value is checked once and used later: each advance, pair, byte and range is read once, and kept in its limits at that read (an advance 0 to 64 pixels, an adjustment -64 to 64 pixels). Pairs out of order give wrong numbers, never a read out of the table. The x of each glyph then holds in an `i32`.
-- **A character outside the cache** (a control character, a byte above 126) is placed as `?`, so a reader sees that the font does not draw it.
+- **A character outside the cache** (a character above 126, a control character, an invalid sequence of UTF-8) is placed as `REPLACEMENT_GLYPH`, with the advance of `0` and no pair, and the reader draws the replacement glyph there, so a reader sees that the font does not draw it. Each placed glyph has the first byte of its character as its cluster.
 - **The widths in a table of ranges**: the width is a field of each range record, which the export writes (the direction Change), as `sum` in the records of `sample.sum_words`. So `measure_texts` has five parameters, and a sixth (the table of error details of `master`, `MODULE_CONTRACT.md` section 8) fits after the merge.
 
 **The design before the code:**
 
-- **Input**: the font (a record: its kind, its scale, its weight) and a table of characters: the bytes of a text, ASCII 32 to 126 in the first version.
+- **Input**: the font (a record: its kind, its scale, its weight) and a table of characters: the bytes of a text of UTF-8, with glyphs for ASCII 32 to 126.
 - **Output**: a table of placed glyphs, one for each character, in memory of the caller. A placed glyph is 16 bytes: the glyph (its index in the glyph cache), x (its origin from the origin of the run, in 1/64 of a pixel), the advance in 1/64 of a pixel (with the pair adjustment that follows it), and 4 bytes that are zero (a cluster number for a full shaper later).
 - **The measure of a text** is the sum of its advances: one export `text_width` that gives it with no output table, for the layout.
 - **Many texts in one call**: a second form takes a table of runs (each a start and a count in one table of bytes) and fills one table of placed glyphs and one table of widths: a window measures all its labels in one call.
@@ -410,7 +410,7 @@ Each part below is written. Part 2 also writes the two caches of B612 in `build/
 2. **The glyph cache version 2**: a glyph entry with its box width, its bearing and its positions; the advances and the pair table of each scale; its validation; the builder in `src/library/support/vector_font`; host tests: the bit-for-bit test of each position against a render at that offset, the golden hashes, damaged fields.
 3. **The shaping module** `text_shaping` with its exports over a validated cache; host tests: a run of each pair of ASCII gives the advances plus the pairs; the measure is the sum; many runs in one call give the same as one run at a time.
 4. **`graphics.text_proportional`**: draw a table of placed glyphs with the fast blend at thirds of a pixel; host tests bit for bit against the reference blend; the measure of section 5 for B612. Written:
-   - `graphics.text_proportional(canvas, place, y, placed, cache, scale, color)`: `place` is the x of the origin of the text in 1/64 of a pixel. Each glyph goes to the nearest position of its scale (`glyph_cache.position_of`), through the blend of the text of cells (`glyph_entry_draw`: the table blend, with the form of the target as its fallback), cut to the canvas. A glyph past the characters of the cache, or far outside the canvas, draws nothing.
+   - `graphics.text_proportional(canvas, place, y, placed, cache, scale, color)`: `place` is the x of the origin of the text in 1/64 of a pixel. Each glyph goes to the nearest position of its scale (`glyph_cache.position_of`), through the blend of the text of cells (`glyph_entry_draw`: the table blend, with the form of the target as its fallback), cut to the canvas. The glyph `REPLACEMENT_GLYPH` draws the replacement glyph at its place. Another glyph past the characters of the cache, or a glyph far outside the canvas, draws nothing.
    - The ink margin: the ink of a text passes the box that its measure gives by at most `PROPORTIONAL_INK_MARGIN` (2 pixels at scale 1) on each side. The host test `the_ink_lies_inside_the_measured_box` draws 200 texts at places with a fraction of a pixel and counts the pixels of ink outside the box and its margin.
    - The host test `proportional_text_gives_the_same_bytes_in_each_blend` compares the table blend, the SSE2 form and the scalar form for three texts, three places, each order of the stripes and four backgrounds.
    - The text of cells refuses a proportional cache (`graphics.cell_cache_problem`, the problem `Proportional`): its glyphs pass their cells, so the damage of a grid of text cells would leave stale pixels.

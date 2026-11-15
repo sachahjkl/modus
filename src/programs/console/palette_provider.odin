@@ -4,6 +4,7 @@ import op "modus:contract/operation"
 import "modus:contract/palette_table"
 import "modus:contract/ring"
 import "modus:contract/settings"
+import "modus:contract/text_encoding"
 import "modus:support/console_results"
 import "modus:support/line_editor"
 import "modus:support/system"
@@ -102,11 +103,11 @@ palette_active :: proc "contextless" () -> bool {
 
 // palette_entry_make makes the entry of one command. ok is false for a
 // command that the palette does not list: a command that makes a record
-// from its fields, a name that does not fit or that the font does not
-// draw, and a command that a later command with the same name hides.
+// from its fields, a name that does not fit or that is no identifier, and
+// a command that a later command with the same name hides.
 palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.Entry, ok: bool) {
 	item := &commands[number]
-	if item.record != 0 || len(item.name) == 0 || len(item.name) > palette_table.NAME_CAPACITY || !palette_table.printable(transmute([]u8)item.name) {
+	if item.record != 0 || len(item.name) == 0 || len(item.name) > palette_table.NAME_CAPACITY || !text_encoding.identifier_valid(transmute([]u8)item.name) {
 		return {}, false
 	}
 	for &later in commands[number + 1:command_count] {
@@ -136,7 +137,7 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 	// The name of each parameter, whole or absent: the form of the palette
 	// names its fields with them.
 	for name, index in item.parameter_names[:entry.parameter_count] {
-		if len(name) <= palette_table.PARAMETER_NAME_CAPACITY && palette_table.printable(transmute([]u8)name) {
+		if len(name) <= palette_table.PARAMETER_NAME_CAPACITY && text_encoding.text_valid(transmute([]u8)name) {
 			entry.parameter_name_lengths[index] = u8(copy(entry.parameter_names[index][:], name))
 		}
 	}
@@ -149,7 +150,7 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 	}
 	_, _ = signature_write(&writer, item, -1, true)
 	signature := string(buffer[:writer.count])
-	if writer.dropped != 0 || len(signature) > palette_table.SIGNATURE_CAPACITY || !palette_table.printable(transmute([]u8)signature) {
+	if writer.dropped != 0 || len(signature) > palette_table.SIGNATURE_CAPACITY || !text_encoding.text_valid(transmute([]u8)signature) {
 		short := system.Writer {
 			buffer = buffer[:],
 		}
@@ -158,13 +159,16 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 		signature = string(buffer[:short.count])
 	}
 	entry.signature_length = u8(copy(entry.signature[:], signature))
-	// The help sentence: its start, when it is longer than its field.
-	entry.about_length = u8(copy(entry.about[:], item.about))
-	for &value in entry.about[:entry.about_length] {
-		if value < 32 || value > 126 {
-			value = '?'
-		}
+	// The help sentence: its start, when it is longer than its field, cut
+	// after a whole character; an invalid sequence of it becomes "?", so that the table
+	// passes its check.
+	about := transmute([]u8)item.about
+	about_length := min(len(about), palette_table.ABOUT_CAPACITY)
+	if about_length < len(about) {
+		about_length = text_encoding.complete_characters(about[:about_length])
 	}
+	entry.about_length = u8(copy(entry.about[:], about[:about_length]))
+	text_encoding.invalid_sequences_replace(entry.about[:entry.about_length])
 	return entry, true
 }
 
@@ -525,6 +529,10 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		// has a value: the console checks them as it checks a line.
 		count := clamp(found.parameter_count, 0, ARGUMENT_CAPACITY)
 		fits := palette_arguments_tag == record.tag && palette_arguments_bad != record.tag && record.values[4] == u64(count) && count > 0
+		// A Text of the palette is UTF-8, and a line of the console holds
+		// ASCII only until the keys give other characters: such a text is
+		// refused in words, never changed in silence.
+		outside_line := false
 		for index in 0 ..< count {
 			if !fits || index not_in palette_arguments_given {
 				fits = false
@@ -536,6 +544,11 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 			case found.parameters[index] == .Integer && argument.kind == .Integer:
 				system.write_part(&writer, argument.integer)
 			case found.parameters[index] == .Text && argument.kind == .Text:
+				for value in argument.text[:argument.length] {
+					if !line_editor.printable(value) {
+						outside_line = true
+					}
+				}
 				system.write_part(&writer, "\"")
 				system.write_part(&writer, string(argument.text[:argument.length]))
 				system.write_part(&writer, "\"")
@@ -545,6 +558,10 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		}
 		palette_arguments_given = {}
 		system.write_part(&writer, ")")
+		if fits && outside_line {
+			palette_refuse(record.tag, "a line of the console holds no character outside ASCII yet")
+			return
+		}
 		if !fits || writer.dropped != 0 {
 			palette_refuse(record.tag, "the arguments do not fit the command: type the line in the console")
 			return
@@ -654,7 +671,7 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 	candidates: [palette_table.CANDIDATE_CAPACITY]palette_table.Candidate
 	count := 0
 	add :: proc "contextless" (into: ^[palette_table.CANDIDATE_CAPACITY]palette_table.Candidate, used: ^int, added: string) {
-		if used^ < palette_table.CANDIDATE_CAPACITY && len(added) > 0 && len(added) <= palette_table.CANDIDATE_NAME_CAPACITY && palette_table.printable(transmute([]u8)added) {
+		if used^ < palette_table.CANDIDATE_CAPACITY && len(added) > 0 && len(added) <= palette_table.CANDIDATE_NAME_CAPACITY && text_encoding.text_valid(transmute([]u8)added) {
 			into[used^].length = u8(copy(into[used^].name[:], added))
 			used^ += 1
 		}
@@ -862,7 +879,10 @@ palette_line_ended :: proc "contextless" () {
 			// has the start of its sentence.
 			writer = {buffer = area[:], fits = true}
 			palette_table.result_run(&writer, .Failure, console_results.FAILURE_START)
-			palette_table.result_run(&writer, .Failure, drawn.sentence[:min(len(drawn.sentence), palette_table.RESULT_COLUMN_CAPACITY - len(console_results.FAILURE_START))])
+			// The start of the sentence ends after a whole character.
+			room := min(len(drawn.sentence), palette_table.RESULT_COLUMN_CAPACITY - len(console_results.FAILURE_START))
+			start := text_encoding.complete_characters(transmute([]u8)drawn.sentence[:room])
+			palette_table.result_run(&writer, .Failure, drawn.sentence[:start])
 			palette_table.result_line_end(&writer)
 		}
 	} else {

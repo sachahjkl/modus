@@ -261,6 +261,24 @@ case_address :: proc "contextless" (writer: ^system.Writer) -> bool {
 	return kernel_text(writer, &record, status, .Bad_Address) && record.argument == 2
 }
 
+// log_filter_check calls the operation Log itself, past the support
+// library, with control characters and a broken sequence of UTF-8: the
+// kernel writes "?" for each of their bytes, and the scenario waits for
+// the line with each "?" in its place. Then it asks for a program whose
+// name starts with an escape byte: the name would start each line of that
+// program on the serial port, and the kernel refuses it.
+log_filter_check :: proc "contextless" () {
+	text := "errors: a log line with control bytes: \x1b[2J\r\xc2\x85\xc3( as it must"
+	system.call(.Log, u64(ctx_log), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0, 0, 0)
+	name := "\x1b[2J"
+	_, status := system.call(.Program_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
+	if status == .Bad_Operation {
+		system.log("errors: a name of a program with an escape byte is refused: as it must")
+	} else {
+		system.log("errors: WRONG: a name of a program with an escape byte gave ", status)
+	}
+}
+
 case_name :: proc "contextless" (writer: ^system.Writer) -> bool {
 	name := "a name of forty bytes, nine more than 31"
 	record: errors.Error_Record
@@ -1000,6 +1018,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else {
 		system.log("errors: ", u64(wrong), " cases of ", u64(len(cases)), " gave another answer")
 	}
+	log_filter_check()
 	if !contend() {
 		system.log("errors: WRONG: the case under contention failed")
 	}

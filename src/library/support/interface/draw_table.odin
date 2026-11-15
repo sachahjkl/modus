@@ -98,9 +98,14 @@ LINE_COORDINATE_LIMIT :: 1 << 15
 // color; or, reverse, in the color of the background on a cell of its
 // color; or, filled, in its color on a cell of the color background (a
 // list drawn over the text, a row that is chosen). A filled cell costs 4
-// bytes more than a cell with no background: 12 bytes for each cell.
+// bytes more than a cell with no background: 16 bytes for each cell.
+//
+// The cell holds a code point, not the bytes of UTF-8: one cell is one
+// character, so a reader that fills a grid decodes the text once, and the
+// grid compares and draws cells with no decode. A code point that the font
+// lacks draws the replacement glyph (src/md/data/text_encoding.md).
 Text_Grid_Cell :: struct {
-	character:  u8, // 0 to 32: no character.
+	character:  rune, // 0 to 32: no character.
 	reverse:    bool, // The character in the color of the background, on a cell of `color`.
 	filled:     bool, // The character in `color`, on a cell of `background`.
 	color:      graphics.Color, // The color of the character.

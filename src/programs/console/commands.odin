@@ -8,6 +8,7 @@ import op "modus:contract/operation"
 import module "modus:contract/module"
 import "modus:contract/ring"
 import "modus:contract/start_grant"
+import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:support/disk_program"
 import "modus:support/random"
@@ -617,6 +618,17 @@ commands_start :: proc "contextless" () {
 	// Gives the decimal text of an integer: `text(42) + " pages"` gives
 	// `42 pages`.
 	command("text", {.Integer}, .Text, "the decimal text of an integer", text)
+	// Gives the text of one character of Unicode, from its code point:
+	// `character(233)` gives the small letter e with an acute accent, two
+	// bytes of UTF-8, so `length(character(233))` gives 2.
+	//
+	// A line of the console holds ASCII, as the keys give it: this command
+	// writes each other character. The terminal shows a character that its
+	// font lacks as the replacement glyph, a box.
+	//
+	// Error: "N is no character of a text", for a control character, a
+	// surrogate (55296 to 57343) and a number past 1114111.
+	command("character", {.Integer}, .Text, "the text of one character, from its code point", character_text)
 	// Gives a text repeated a count of times: `repeat("ab", 3)` gives
 	// `ababab`.
 	//
@@ -2544,6 +2556,21 @@ length :: proc "contextless" (arguments: []Value) -> Value {
 
 text :: proc "contextless" (arguments: []Value) -> Value {
 	return {kind = .Text, text = scratch_text(arguments[0].integer)}
+}
+
+// character_text gives the UTF-8 of one code point: the text encoding
+// refuses each code point that is no character of a text.
+character_text :: proc "contextless" (arguments: []Value) -> Value {
+	code_point := arguments[0].integer
+	encoded: [text_encoding.CHARACTER_BYTES_LIMIT]u8
+	length := 0
+	if code_point >= 0 && code_point <= 0x10FFFF {
+		length = text_encoding.character_encode(rune(code_point), encoded[:])
+	}
+	if length == 0 {
+		return fail(code_point, " is no character of a text")
+	}
+	return {kind = .Text, text = scratch_text(string(encoded[:length]))}
 }
 
 repeat :: proc "contextless" (arguments: []Value) -> Value {

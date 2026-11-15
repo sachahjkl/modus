@@ -78,14 +78,15 @@ Name_Problem :: enum u8 {
 	None, // The name is valid.
 	Empty, // The name has no byte.
 	Too_Long, // More than NAME_LIMIT bytes.
-	Bad_Byte, // A zero byte or a byte '/', or the name is "." or "..": no name of an entry of a tree.
+	Bad_Byte, // A byte that is no visible character of ASCII, or a byte '/', or the name is "." or "..": no name of a program.
 	Store_Name, // The name of the store of the module files: its private store would be that store.
 	Table_Name, // The name of the object of the disk grant table in that store: the table would be read as a module file, and written over one.
 }
 
 // name_problem says why a text cannot be the name of a disk program, or
 // None. The name is the name of an entry of a tree, so it follows the rule
-// of such a name; offset is the place of the byte of Bad_Byte.
+// of such a name, and the name of a program, so it is ASCII; offset is the
+// place of the byte of Bad_Byte.
 name_problem :: proc "contextless" (name: string) -> (problem: Name_Problem, offset: int) {
 	if len(name) == 0 {
 		return .Empty, 0
@@ -93,8 +94,11 @@ name_problem :: proc "contextless" (name: string) -> (problem: Name_Problem, off
 	if len(name) > NAME_LIMIT {
 		return .Too_Long, 0
 	}
+	// The name of a program is an identifier of the system, as the name of
+	// a module: visible characters of ASCII, which each layout types and
+	// each log shows the same (src/md/data/text_encoding.md).
 	for index in 0 ..< len(name) {
-		if name[index] == 0 || name[index] == '/' {
+		if name[index] <= ' ' || name[index] > '~' || name[index] == '/' {
 			return .Bad_Byte, index
 		}
 	}

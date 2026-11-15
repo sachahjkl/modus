@@ -136,7 +136,7 @@ A pointer is a block number and a check. The check of a block of data is the fir
 
 | Field | An object | A tree |
 |---|---|---|
-| Name | 1 to 64 bytes, then zero bytes. No zero byte, no byte `/`, not `.` or `..` | the same |
+| Name | 1 to 64 bytes of UTF-8 with no control character (`docs/GLOSSARY.md`, "Text encoding"), then zero bytes. No byte `/`, not `.` or `..` | the same |
 | Kind | object | tree |
 | Size | its bytes | its entries |
 | Generation, time, date | of its last change | of its last change |
