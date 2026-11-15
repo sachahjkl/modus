@@ -12,7 +12,8 @@
 // nickname, with the hash prefix of its file faded under it, from the
 // [disk program page](term:disk-program-page) of the root service; the log
 // has one line for each one: "monitor: the disk program visitor, hash
-// prefix 5f0c…, the file 5f0c…, from the root service".
+// prefix 5f0c…, the file 5f0c…, from the root service". The export
+// programs() gives the whole hash of the file in the field `hash`.
 //
 // **Start**: the bar of the desktop, or `start("monitor")` in the console.
 // The log has "monitor: ok" after the first picture. From the console,
