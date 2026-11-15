@@ -21,6 +21,7 @@ import "core:slice"
 import "core:strings"
 import "modus:contract/blake3"
 import debug_object "modus:contract/debug_object"
+import "modus:contract/disk_program_page"
 import format "modus:contract/store"
 import "modus:support/disk_program"
 import block_tree "modus:support/storage_object"
@@ -942,7 +943,7 @@ disk_programs_import_steps :: proc(steps: ^[dynamic]Step, hashes: Store_Import_H
 // windows shows it faded beside the nickname. The picture holds the menu
 // open over the monitor. The console is in front at the end.
 disk_programs_nickname_steps :: proc(steps: ^[dynamic]Step, importer_hash: string) {
-	prefix := importer_hash[:16]
+	prefix := importer_hash[:disk_program_page.HASH_PREFIX_DIGITS]
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("compositor: surface %s ", STORE_IMPORTER_MODULE)})
 	append(steps, Step{kind = .Launch, text = "monitor"})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("monitor: the disk program %s, hash prefix %s, the file %s, from the root service", STORE_IMPORTER_MODULE, prefix, importer_hash)})
@@ -952,6 +953,13 @@ disk_programs_nickname_steps :: proc(steps: ^[dynamic]Step, importer_hash: strin
 	append(steps, Step{kind = .Shot, text = "disk_program_windows"})
 	append(steps, Step{kind = .Click, text = BAR_WINDOWS_BUTTON})
 	append(steps, Step{kind = .Front, text = "console"})
+	// The export of the monitor gives what its window shows: the nickname
+	// and the whole hash of the file. The short name programs() calls
+	// monitor.programs() and connects to the monitor itself. The name
+	// column is as wide as the nickname, and the hash as wide as its
+	// header, so the line has no padding.
+	append(steps, Step{kind = .Type, text = fmt.aprintf("columns(where(programs(), \"name\", \"%s\"), \"name hash\")", STORE_IMPORTER_MODULE)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s  %s", STORE_IMPORTER_MODULE, importer_hash)})
 }
 
 // The machine passphrase of the test. It is a constant of the tool: a test

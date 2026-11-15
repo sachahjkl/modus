@@ -11,7 +11,9 @@ for writer.count < 53 {
 system.writer_reset(&writer) // writer.count = 0 in a comment is no code.
 text := system.written(&writer)
 if writer.count == 0 {
-}`
+}
+command_writer.count += 4 // Another variable, whose name ends with writer.
+command_writer.buffer[place] = 1`
 	testing.expect_value(t, len(text_cut_problems(good)), 0)
 	bad := `writer := system.Writer{buffer = buffer[:]}
 writer.count = 0

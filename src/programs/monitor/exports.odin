@@ -3,7 +3,9 @@ package monitor
 import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import program_page "modus:contract/disk_program_page"
 import op "modus:contract/operation"
+import "modus:support/disk_program"
 import "modus:support/system"
 
 // The monitor is also a service: its exports give what its window shows, as
@@ -27,7 +29,14 @@ Program :: struct {
 	time:    i64, // Milliseconds of processor time.
 	entries: i64, // Kernel entries.
 	started: i64, // Microseconds after the start of the machine.
+	// A disk program: the BLAKE3 hash of its module file, in hexadecimal,
+	// as the root service checked it. Empty: the root service did not start
+	// this program from a disk.
+	hash:    [64]u8,
 }
+// The field holds the 64 digits that hash_write gives, with no zero byte
+// after them: a Text field ends at its end too.
+#assert(size_of(Program) - offset_of(Program, hash) == disk_program.HASH_DIGITS)
 
 // The name of one count: a row of the table of counts_named().
 Count_Name :: struct {
@@ -73,10 +82,15 @@ acts_for_principal :: proc "contextless" () -> bool {
 	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
-// programs gives one row for each program that runs, from the reports of the kernel: its slot, its name, its state, its pages with a frame and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, and the time of its start in microseconds.
+// programs gives one row for each program that runs, from the reports of the kernel: its slot, its name, its state, its pages with a frame and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, the time of its start in microseconds, and the hash of the file of a disk program.
 //
 // The monitor asks the kernel for the report of each program slot, and skips a slot with no program. A stopped
 // program that its parent has not closed yet has a row, with the state `stopped`.
+//
+// A program that the root service started from a disk has its nickname as its name, and the whole hash of its
+// module file in `hash`: 64 hexadecimal digits, from the [disk program page](term:disk-program-page) that the root
+// service writes, as the window of the monitor shows them. Each other program has an empty `hash`, also a program
+// with the name of a disk program.
 //
 // - **result**: a table of `Program` rows that the call fills. A table shorter than the count gets the first rows
 //   only; the result still counts every program.
@@ -89,7 +103,8 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   when the grant **Inspect** of the monitor was revoked.
 //
 // Example, in the console after `connect("monitor")`: `monitor.programs()`, or
-// `where(monitor.programs(), "threads", 2)` to keep the rows of a column value.
+// `where(monitor.programs(), "threads", 2)` to keep the rows of a column value, or
+// `columns(where(monitor.programs(), "name", "visitor"), "name hash")` for the file of a disk program.
 @(export, link_name = "programs")
 programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
@@ -117,7 +132,16 @@ programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
 				entries = i64(program.entries),
 				started = i64(program.start_time),
 			}
-			copy(row.name[:len(row.name) - 1], system.name_of(program.name[:]))
+			// A disk program: the nickname and the hash that the root
+			// service checked, matched as the window matches them, by the
+			// slot and the serial that the kernel reports.
+			if page_row, from_disk := program_page.row_find(disk_programs, slot, program.program_serial); from_disk {
+				nickname := program_page.nickname_of(page_row.nickname)
+				copy(row.name[:len(row.name) - 1], program_page.nickname_text(&nickname))
+				disk_program.hash_write(&row.hash, transmute([disk_program.HASH_SIZE]u8)page_row.hash)
+			} else {
+				copy(row.name[:len(row.name) - 1], system.name_of(program.name[:]))
+			}
 			if program.state <= max(op.Program_State) {
 				copy(row.state[:], state_names[program.state])
 			}

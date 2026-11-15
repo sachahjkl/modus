@@ -1,5 +1,6 @@
 package modustool
 
+import format "modus:contract/store"
 import "core:encoding/endian"
 import "core:fmt"
 import "core:net"
@@ -18,6 +19,9 @@ import "core:thread"
 // power (the tool ends QEMU with no warning), a real disk can hold the
 // durable image plus any subset of the pending writes, each one whole or
 // torn: power_loss.odin builds these images and checks each one.
+//
+// The disk can also drop one write: it answers Ok and keeps nothing, as a
+// disk with a fault that reports none (dropped_write.odin).
 //
 // The protocol: https://github.com/NetworkBlockDevice/nbd/blob/master/doc/proto.md
 // All numbers on the wire are big-endian.
@@ -77,6 +81,67 @@ Network_Block_Device :: struct {
 	// blocks of the commit are durable, its root is not. 0: never.
 	power_off_after_write: int,
 	powered_off:           bool,
+	// The dropped write (dropped_write.odin): not empty, the disk answers Ok
+	// to the first write that holds a block whose bytes start with this
+	// marker, and does not keep it.
+	drop_marker:       string,
+	drop_state:        Drop_State,
+	dropped_block:     u64, // The first block of the dropped write.
+}
+
+// The states of the dropped write, in their order. The disk keeps every
+// write until the root of the commit with the dropped write is durable,
+// then takes no more write, so that no later commit names the wrong block.
+Drop_State :: enum {
+	Armed, // No write was dropped yet.
+	Dropped, // The write with the marker was answered and not kept.
+	Root_Written, // A root was written after the dropped write.
+	Root_Durable, // A flush made that root durable: the next write powers the disk off.
+	Powered_Off, // A write came after the durable root: no write is kept or answered any more.
+}
+
+// The two places of the root block (docs/STORAGE.md, "3.1 The blocks"):
+// a write below them is the write of a root.
+ROOT_BLOCK_PLACES :: 2
+
+// Drop_Outcome says what the disk does with one write.
+Drop_Outcome :: enum {
+	Keep, // The disk keeps the write and answers it.
+	Drop, // The disk answers Ok and keeps nothing.
+	Power_Off, // The disk keeps nothing and answers nothing.
+}
+
+// drop_decide moves the dropped write to its next state for one write, and
+// says what the disk does with it. The caller holds the lock.
+drop_decide :: proc(server: ^Network_Block_Device, offset: u64, bytes: []u8) -> Drop_Outcome {
+	if server.drop_marker == "" {
+		return .Keep
+	}
+	switch server.drop_state {
+	case .Armed:
+		if offset < ROOT_BLOCK_PLACES * format.BLOCK_SIZE {
+			return .Keep
+		}
+		marker_length := len(server.drop_marker)
+		// QEMU can join the writes of several blocks into one request: each
+		// block of it is compared.
+		for start := 0; start + marker_length <= len(bytes); start += format.BLOCK_SIZE {
+			if string(bytes[start:][:marker_length]) == server.drop_marker {
+				server.drop_state = .Dropped
+				server.dropped_block = offset / format.BLOCK_SIZE
+				return .Drop
+			}
+		}
+	case .Dropped:
+		if offset < ROOT_BLOCK_PLACES * format.BLOCK_SIZE {
+			server.drop_state = .Root_Written
+		}
+	case .Root_Written:
+	case .Root_Durable, .Powered_Off:
+		server.drop_state = .Powered_Off
+		return .Power_Off
+	}
+	return .Keep
 }
 
 // disk_server_start serves an image: `image` is the disk at the start, and
@@ -287,20 +352,26 @@ disk_server_serve :: proc(server: ^Network_Block_Device, client: net.TCP_Socket)
 				put_u32(reply[4:], NBD_ERROR_INVALID)
 			} else {
 				sync.mutex_lock(&server.lock)
-				copy(server.current[offset:][:length], data[:length])
-				if flags & NBD_COMMAND_FLAG_FUA != 0 {
-					// Durable at its reply: the disk keeps it through a loss of
-					// power, with no flush.
-					copy(server.durable[offset:][:length], data[:length])
-				} else {
-					append(&server.pending, Pending_Write{offset = offset, bytes = clone_bytes(data[:length])})
+				outcome := drop_decide(server, offset, data[:length])
+				if outcome == .Keep {
+					copy(server.current[offset:][:length], data[:length])
+					if flags & NBD_COMMAND_FLAG_FUA != 0 {
+						// Durable at its reply: the disk keeps it through a loss of
+						// power, with no flush.
+						copy(server.durable[offset:][:length], data[:length])
+					} else {
+						append(&server.pending, Pending_Write{offset = offset, bytes = clone_bytes(data[:length])})
+					}
 				}
 				server.writes += 1
-				off := server.power_off_after_write != 0 && server.writes >= server.power_off_after_write && offset < 2 * 4096 && flags & NBD_COMMAND_FLAG_FUA == 0
+				off := server.power_off_after_write != 0 && server.writes >= server.power_off_after_write && offset < ROOT_BLOCK_PLACES * format.BLOCK_SIZE && flags & NBD_COMMAND_FLAG_FUA == 0
 				sync.mutex_unlock(&server.lock)
 				if off {
 					sync.atomic_store(&server.powered_off, true)
 					return // No reply: the machine waits for a disk that has no power.
+				}
+				if outcome == .Power_Off {
+					return // No reply: the commit after the dropped write never reaches the disk.
 				}
 			}
 			if !send_all(client, reply[:]) {
@@ -315,6 +386,9 @@ disk_server_serve :: proc(server: ^Network_Block_Device, client: net.TCP_Socket)
 			}
 			clear(&server.pending)
 			server.flushes += 1
+			if server.drop_state == .Root_Written {
+				server.drop_state = .Root_Durable
+			}
 			sync.mutex_unlock(&server.lock)
 			if !send_all(client, reply[:]) {
 				return
