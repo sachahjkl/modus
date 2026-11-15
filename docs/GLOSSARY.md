@@ -2009,7 +2009,7 @@ Do not use: short hash, abbreviated hash, fingerprint.
 
 The disk program page is one page that the root service writes and maps read-only, at its fixed range, into each program that it starts with the right Inspect of the machine: one row for each disk program that runs, with its program slot, its program serial, its nickname and the whole hash of its file.
 
-The monitor reads the program slot and the program serial of each program from the kernel, and finds there which programs the root service started from a disk, and the hash that it checked. The row names the program by its slot and its serial, not by its name: a program that another program named as a disk program has no row. The root service learns the two numbers from `Program_State` on the handle of the program. The page gives no handle and no right to act. Its form is `modus:contract/disk_program_page`.
+The monitor reads the program slot and the program serial of each program from the kernel, and finds there which programs the root service started from a disk, and the hash that it checked. Its window shows the hash prefix, and its export `monitor.programs()` gives the whole hash in the field `hash`. The row names the program by its slot and its serial, not by its name: a program that another program named as a disk program has no row. The root service learns the two numbers from `Program_State` on the handle of the program. The page gives no handle and no right to act. Its form is `modus:contract/disk_program_page`.
 
 The disk program page is not a grant of a connection to the root service, and not a list of the programs: the reports of `Inspect` list them.
 
