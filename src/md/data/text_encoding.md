@@ -67,6 +67,8 @@ A border that refuses keeps the rule of its contract: a table that fails is no t
 
 The **character index** (`glyph_cache.character_index`) numbers them: 0 to 94 for 32 to 126, then 95 to 190 for U+00A0 to U+00FF. Each table that keys a character keys it by this index: the glyphs and the advances of a glyph cache, its pairs, the placed glyph of the shaper, and the Spleen data. A reader finds a glyph by its code point with one call, and each table has no hole. The glyph cache is version 3: its header has no first character, and a cache holds the 191 characters, no fewer. The vector fonts in `resources/fonts` are subsets with the same 191 characters (`modustool vector_fonts`), and the Spleen data holds them (`modustool font`): Spleen 2.1.0 draws each character of the Latin-1 Supplement.
 
+**Two characters have an equivalent glyph.** A font that lacks U+00A0 (the space with no break) or U+00AD (the soft hyphen) draws it with the glyph of the space or of the hyphen, and the build log names each such character. Both are the same form by definition: U+00A0 is a space that a line does not break at, and U+00AD shows as a hyphen where it shows. Paper Mono has no soft hyphen. Each other character that a font lacks stops the build: a glyph of another letter would show a wrong letter, and the replacement glyph in one font and a letter in the other would make the fonts differ. A host test reads the source of each font and names each character that it lacks (`tools/modustool/vector_fonts_test.odin`).
+
 A pair of the glyph cache names its two characters by their character index, in one byte each: 190 fits.
 
 **What stays ASCII, and why.** A name that is an identifier of the system stays in the visible characters of ASCII:

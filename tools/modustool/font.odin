@@ -83,12 +83,12 @@ run_font :: proc(args: []string) -> int {
 	fmt.sbprintln(&out)
 	fmt.sbprintln(&out, "@(rodata)")
 	fmt.sbprintln(&out, "font := [glyph_cache.CHARACTER_COUNT][CELL_HEIGHT]u8 {")
-	for glyph, index in glyphs {
+	for glyph, glyph_index in glyphs {
 		fmt.sbprint(&out, "\t{")
 		for bits, line in glyph {
 			fmt.sbprintf(&out, "%s0x%02X", line == 0 ? "" : ", ", bits)
 		}
-		character, _ := glyph_cache.character_of_index(index)
+		character, _ := glyph_cache.character_of_index(glyph_index)
 		fmt.sbprintfln(&out, "}, // %d", int(character))
 	}
 	fmt.sbprintln(&out, "}")

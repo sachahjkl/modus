@@ -2,6 +2,7 @@
 package text_shaping
 
 import "modus:contract/glyph_cache"
+import "modus:contract/text_encoding"
 import "core:testing"
 import "modus:support/vector_font"
 
@@ -98,14 +99,31 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 		testing.expect_value(t, glyph.cluster, u32(index))
 	}
 	testing.expect_value(t, width, 3 * i64(zero))
-	// "é" is two bytes and one glyph: the glyph after it starts at byte 3.
-	count, width, ok = shape(&spacing, transmute([]u8)string("TéT"), placed[:])
+	// The first character past the Latin-1 Supplement (Ā, U+0100) is
+	// outside the cache: two bytes and one replacement glyph, so the glyph
+	// after it starts at byte 3.
+	OUTSIDE_THE_CACHE :: rune(glyph_cache.LATIN_LAST + 1)
+	_, in_cache := glyph_cache.character_index(OUTSIDE_THE_CACHE)
+	testing.expect(t, !in_cache)
+	text: [2 + text_encoding.CHARACTER_BYTES_LIMIT]u8
+	text[0] = 'T'
+	length := text_encoding.character_encode(OUTSIDE_THE_CACHE, text[1:])
+	text[1 + length] = 'T'
+	count, width, ok = shape(&spacing, text[:2 + length], placed[:])
 	testing.expect(t, ok && count == 3)
 	testing.expect_value(t, placed[1].glyph, REPLACEMENT_GLYPH)
 	testing.expect_value(t, placed[2].glyph, u32('T' - glyph_cache.ASCII_FIRST))
-	testing.expect_value(t, placed[2].cluster, u32(3))
+	testing.expect_value(t, placed[2].cluster, u32(1 + length))
 	testing.expect_value(t, placed[0].advance, spacing.advances['T' - glyph_cache.ASCII_FIRST]) // No pair with the replacement glyph.
 	testing.expect_value(t, width, 2 * i64(spacing.advances['T' - glyph_cache.ASCII_FIRST]) + i64(zero))
+	// "é" is in the cache: two bytes and its own glyph, by its character
+	// index, and the glyph after it starts at byte 3.
+	e_acute, _ := glyph_cache.character_index('é')
+	count, _, ok = shape(&spacing, transmute([]u8)string("TéT"), placed[:])
+	testing.expect(t, ok && count == 3)
+	testing.expect_value(t, placed[1].glyph, u32(e_acute))
+	testing.expect_value(t, placed[1].cluster, u32(1))
+	testing.expect_value(t, placed[2].cluster, u32(3))
 	// A text over the limit writes nothing.
 	long := make([]u8, TEXT_LIMIT + 1)
 	defer delete(long)

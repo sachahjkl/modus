@@ -149,6 +149,9 @@ run_vector_fonts :: proc(args: []string) -> int {
 			return EXIT_FAILURE
 		}
 		fmt.printfln("%-18s %10d %8d %10d %8d %8d %8d %6d %s", candidate.name, len(source), len(subset), report.composites, report.measures.advance, report.measures.x_height, report.measures.cap_height, report.pairs, report.zero)
+		for equivalent in report.equivalents {
+			fmt.printfln("modustool: %s has no glyph for U+%04X: its subset draws it with the glyph of U+%04X", candidate.name, int(equivalent.character), int(equivalent.taken_from))
+		}
 		if candidate.zero_form == .Slashed && report.zero_glyph == 0 {
 			fmt.printfln("modustool: %s has no single substitution of the feature zero for '0': its subset keeps the zero of the font", candidate.name)
 		}
@@ -169,6 +172,7 @@ Subset_Report :: struct {
 	zero:         string, // For the table of the command: "slashed (glyph n)" or "of the font".
 	measures:     vector_font.Font_Measures,
 	license_text: string,
+	equivalents:  [dynamic]Equivalent_Glyph, // The characters that the font lacks and that take the glyph of their equivalent.
 }
 
 // The glyphs of a subset: .notdef, then the characters of a glyph cache in
@@ -177,10 +181,41 @@ SUBSET_GLYPHS :: 1 + glyph_cache.CHARACTER_COUNT
 
 // subset_character gives the character of a glyph of a subset, past
 // .notdef.
-@(private = "file")
 subset_character :: proc(glyph: int) -> rune {
 	character, _ := glyph_cache.character_of_index(glyph - 1)
 	return character
+}
+
+// A character of the subset that the font lacks, drawn with the glyph of
+// another character.
+Equivalent_Glyph :: struct {
+	character:  rune,
+	taken_from: rune,
+}
+
+// The two characters of the Latin-1 Supplement that a font can lack and
+// that have a standard equivalent of the same form: the space with no
+// break draws as the space, the soft hyphen as the hyphen. Paper Mono has
+// no soft hyphen. Each other character that a font lacks is refused: a
+// guessed form would be a wrong letter (docs/FONTS.md, "6. The font file").
+@(rodata)
+equivalent_characters := [?]Equivalent_Glyph{{character = 0xA0, taken_from = ' '}, {character = 0xAD, taken_from = '-'}}
+
+// subset_glyph_of gives the glyph of the source that the subset draws for a
+// character: its own glyph, or the glyph of its equivalent when the font
+// lacks it. taken_from is the character whose glyph it is.
+subset_glyph_of :: proc(font: ^vector_font.Font_File, character: rune) -> (glyph: int, taken_from: rune, problem: vector_font.Font_Problem) {
+	glyph, problem = vector_font.glyph_of(font, character)
+	if problem != .No_Glyph {
+		return glyph, character, problem
+	}
+	for equivalent in equivalent_characters {
+		if equivalent.character == character {
+			glyph, problem = vector_font.glyph_of(font, equivalent.taken_from)
+			return glyph, equivalent.taken_from, problem
+		}
+	}
+	return 0, character, problem
 }
 
 // font_subset writes a TrueType file with the characters of a glyph cache
@@ -199,6 +234,7 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 		return nil, report, false
 	}
 	report.zero = "of the font"
+	report.equivalents = make([dynamic]Equivalent_Glyph, context.temp_allocator)
 	// The pair adjustments, read from the source as hostile input: each
 	// pair of two characters of the subset, by the glyphs of the subset.
 	kern: []u8
@@ -229,10 +265,14 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 		glyph := 0
 		if index > 0 {
 			character := subset_character(index)
-			glyph, problem = vector_font.glyph_of(&font, character)
+			taken_from: rune
+			glyph, taken_from, problem = subset_glyph_of(&font, character)
 			if problem != .None {
 				report.problem = fmt.tprintf("the character U+%04X: %s", int(character), vector_font.font_problem_names[problem])
 				return nil, report, false
+			}
+			if taken_from != character {
+				append(&report.equivalents, Equivalent_Glyph{character = character, taken_from = taken_from})
 			}
 			if character == '0' && candidate.zero_form == .Slashed {
 				substitute, substitution_problem := vector_font.single_substitution(&font, ZERO_FEATURE, glyph)

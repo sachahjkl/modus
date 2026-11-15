@@ -204,6 +204,11 @@ a_damaged_proportional_glyph_cache :: proc(t: ^testing.T) {
 	pair_count := int((^glyph_cache.Header)(raw_data(good)).pair_count)
 	layout := cache_layout_of(regular_positions[:], pair_count)
 	glyph_a := layout.glyphs + ('A' - glyph_cache.ASCII_FIRST) * glyph_cache.GLYPH_ENTRY_SIZE
+	// The places of the fields that the damages change, from their records.
+	POSITION_COUNT_AT :: int(offset_of(glyph_cache.Size_Entry, position_count))
+	FIRST_GLYPH_AT :: int(offset_of(glyph_cache.Size_Entry, first_glyph))
+	LEFT_AT :: int(offset_of(glyph_cache.Glyph_Entry, left))
+	WIDTH_AT :: int(offset_of(glyph_cache.Glyph_Entry, width))
 	Damage :: struct {
 		offset: int,
 		bytes:  [4]u8,
@@ -211,21 +216,21 @@ a_damaged_proportional_glyph_cache :: proc(t: ^testing.T) {
 		kind:   glyph_cache.Problem_Kind,
 	}
 	damages := [?]Damage {
-		{layout.sizes + 6, {4, 0, 0, 0}, 2, .Bad_Count}, // four positions
-		{layout.sizes + 6, {0, 0, 0, 0}, 2, .Bad_Count}, // no position
-		{layout.sizes + glyph_cache.SIZE_ENTRY_SIZE + 8, {1, 0, 0, 0}, 4, .Bad_Count}, // scale 2 does not start after scale 1
-		{glyph_a + 10, {65, 0, 0, 0}, 2, .Bad_Glyph}, // a width of 65
-		{glyph_a + 8, {0xEF, 0xFF, 0, 0}, 2, .Bad_Glyph}, // a left side of -17
-		{glyph_a + 8, {65, 0, 0, 0}, 2, .Bad_Glyph}, // a left side of 65
-		{glyph_a + 10, {0xFF, 0xFF, 0, 0}, 2, .Bad_Glyph}, // a width of 65535
+		{layout.sizes + POSITION_COUNT_AT, {glyph_cache.POSITION_LIMIT + 1, 0, 0, 0}, 2, .Bad_Count}, // one position more than the limit
+		{layout.sizes + POSITION_COUNT_AT, {0, 0, 0, 0}, 2, .Bad_Count}, // no position
+		{layout.sizes + glyph_cache.SIZE_ENTRY_SIZE + FIRST_GLYPH_AT, {1, 0, 0, 0}, 4, .Bad_Count}, // scale 2 does not start after scale 1
+		{glyph_a + WIDTH_AT, {glyph_cache.GLYPH_WIDTH_LIMIT + 1, 0, 0, 0}, 2, .Bad_Glyph}, // a width past the limit
+		{glyph_a + LEFT_AT, transmute([4]u8)i32(-glyph_cache.LEFT_LIMIT - 1), 2, .Bad_Glyph}, // a left side one past -LEFT_LIMIT (the two low bytes of the i32)
+		{glyph_a + LEFT_AT, {glyph_cache.GLYPH_WIDTH_LIMIT + 1, 0, 0, 0}, 2, .Bad_Glyph}, // a left side past the limit
+		{glyph_a + WIDTH_AT, {0xFF, 0xFF, 0, 0}, 2, .Bad_Glyph}, // a width of 65535
 		{layout.advances, {0x01, 0x10, 0, 0}, 4, .Bad_Advance}, // 4097
 		{layout.advances + 4, {0xFF, 0xFF, 0xFF, 0xFF}, 4, .Bad_Advance}, // -1
-		{layout.pairs, {31, 0, 0, 0}, 1, .Bad_Pair}, // a left character before the cache
-		{layout.pairs + 1, {127, 0, 0, 0}, 1, .Bad_Pair}, // a right character after it
+		{layout.pairs, {glyph_cache.CHARACTER_COUNT, 0, 0, 0}, 1, .Bad_Pair}, // a left character index past the cache
+		{layout.pairs + 1, {glyph_cache.CHARACTER_COUNT, 0, 0, 0}, 1, .Bad_Pair}, // a right character index past the cache
 		{layout.pairs + 4, {0x01, 0x10, 0, 0}, 4, .Bad_Pair}, // an adjustment of 4097
 		{layout.pairs + 4, {0xFF, 0xEF, 0xFF, 0xFF}, 4, .Bad_Pair}, // an adjustment of -4097
-		{120, {0x42, 0x23, 0, 0}, 4, .Bad_Count}, // 9026 pairs
-		{36, {glyph_cache.FLAG_GRID_FIT, 0, 0, 0}, 1, .Bad_Count}, // no FLAG_PROPORTIONAL: a monospace cache cannot have pairs
+		{int(offset_of(glyph_cache.Header, pair_count)), transmute([4]u8)u32(glyph_cache.PAIR_LIMIT + 1), 4, .Bad_Count}, // one pair more than the limit
+		{int(offset_of(glyph_cache.Header, flags)), {glyph_cache.FLAG_GRID_FIT, 0, 0, 0}, 1, .Bad_Count}, // no FLAG_PROPORTIONAL: a monospace cache cannot have pairs
 	}
 	for damage in damages {
 		copy(file[:size], good)

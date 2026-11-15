@@ -378,7 +378,7 @@ glyph_draw_cost_of_each_form :: proc(t: ^testing.T) {
 		}
 		for order in Subpixel_Order {
 			for scale in 1 ..= 3 {
-				for character in u8(32) ..= 126 {
+				for character in rune(32) ..= 126 {
 					// Places that cut the glyph at each edge, and places inside.
 					x := int(character) % 13 * 19 - 8
 					y := int(character) % 5 * 11 - 6
