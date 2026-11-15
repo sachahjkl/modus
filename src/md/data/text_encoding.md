@@ -14,7 +14,7 @@ The `Text` of the module contract is UTF-8 already ([`docs/MODULE_CONTRACT.md`](
 - **The kernel holds the border of the log.** A program calls the operation `Log` directly, so a check in the support library is no check.
 - **Each contract has a fixed size of field.** A length is a count of bytes, and a field holds fewer characters than bytes when a text has characters outside ASCII.
 - **The grid of cells shows one character in one cell.** A text that a byte count places is wrong for a character of two bytes.
-- **The fonts hold 32 to 126 only.** The glyph caches and Spleen have no glyph outside ASCII.
+- **The fonts hold 32 to 126 and the Latin-1 Supplement only.** The glyph caches and Spleen have no other glyph.
 - **Contract packages import no support package**, and the kernel imports contract packages only ([infrastructure/repository_layout.md](../infrastructure/repository_layout.md)).
 
 ## The chosen form
@@ -61,9 +61,15 @@ A border that refuses keeps the rule of its contract: a table that fails is no t
 
 **The cell of a text grid holds a code point.** `interface.Text_Grid_Cell.character` is a `rune`. One cell is one character, so the reader that fills a grid decodes the text once, and the grid compares and draws cells with no decode. The cell grows from 12 to 16 bytes, with two reserved bytes of 0 in place of a hidden pad, because `draw_text_grid` copies the cells into the text table of the frame and the drawing module reads them there ([../api/text_grid.md](../api/text_grid.md)): the bytes of a cell are part of the border of the module. So the draw record is version 10, and the exports are `damage_of_draw_table_10` and `execute_draw_table_in_rectangles_10`. A cell with the bytes of UTF-8 needs 4 bytes and a length, the same size, and a decode at each draw. A cell of a hostile caller with a code point that is no character of a text (a surrogate, a number past U+10FFFF) draws the replacement glyph.
 
-**The drawing of a character that the font lacks: one replacement glyph.** The drawing decodes UTF-8 and gives each character one cell (`graphics.text_scaled`, `text_bold`, `text_width`), or one placed glyph (`text_shaping.shape`). A character outside 32 to 126, a control character and each invalid sequence draw the replacement glyph: the outline of a box from the top of a capital letter to the baseline (`graphics.character_replacement`). Code draws it, in each font and at each scale, so no font needs a glyph for it. A byte is never drawn as a glyph, so a reader always sees that a character is there. The shaper gives the placed glyph `REPLACEMENT_GLYPH`, with the advance of `0` and no pair, and the first byte of each character as its cluster.
+**The drawing of a character that the font lacks: one replacement glyph.** The drawing decodes UTF-8 and gives each character one cell (`graphics.text_scaled`, `text_bold`, `text_width`), or one placed glyph (`text_shaping.shape`). A character that the fonts do not hold (outside 32 to 126 and U+00A0 to U+00FF), a control character and each invalid sequence draw the replacement glyph: the outline of a box from the top of a capital letter to the baseline (`graphics.character_replacement`). Code draws it, in each font and at each scale, so no font needs a glyph for it. A byte is never drawn as a glyph, so a reader always sees that a character is there. The shaper gives the placed glyph `REPLACEMENT_GLYPH`, with the advance of `0` and no pair, and the first byte of each character as its cluster.
 
-**The glyphs of Latin-1 are not built.** The cache builder draws 32 to 126 (`glyph_cache.CHARACTER_LIMIT`), and the Spleen data holds the same range. The glyphs of the Latin-1 Supplement are part of the work of the keys, in `ROADMAP.md`: the format of the glyph cache keys a character in one byte, so that work changes the cache format, the builder, the font command and the bounds of the boot image together.
+**The fonts hold two ranges: 32 to 126 and the Latin-1 Supplement.** The characters of a font are the 95 printable characters of ASCII and the 96 characters U+00A0 to U+00FF: 191 characters (`glyph_cache.CHARACTER_COUNT`). They are the characters of the languages of Western Europe, and each key of the layout of France gives one of them ([../features/keyboard_layout.md](../features/keyboard_layout.md)). U+0080 to U+009F are control characters, which a text never holds, so the two ranges have no gap that a character of a text could fall in.
+
+The **character index** (`glyph_cache.character_index`) numbers them: 0 to 94 for 32 to 126, then 95 to 190 for U+00A0 to U+00FF. Each table that keys a character keys it by this index: the glyphs and the advances of a glyph cache, its pairs, the placed glyph of the shaper, and the Spleen data. A reader finds a glyph by its code point with one call, and each table has no hole. The glyph cache is version 3: its header has no first character, and a cache holds the 191 characters, no fewer. The vector fonts in `resources/fonts` are subsets with the same 191 characters (`modustool vector_fonts`), and the Spleen data holds them (`modustool font`): Spleen 2.1.0 draws each character of the Latin-1 Supplement.
+
+**Two characters have an equivalent glyph.** A font that lacks U+00A0 (the space with no break) or U+00AD (the soft hyphen) draws it with the glyph of the space or of the hyphen, and the build log names each such character. Both are the same form by definition: U+00A0 is a space that a line does not break at, and U+00AD shows as a hyphen where it shows. Paper Mono has no soft hyphen. Each other character that a font lacks stops the build: a glyph of another letter would show a wrong letter, and the replacement glyph in one font and a letter in the other would make the fonts differ. A host test reads the source of each font and names each character that it lacks (`tools/modustool/vector_fonts_test.odin`).
+
+A pair of the glyph cache names its two characters by their character index, in one byte each: 190 fits.
 
 **What stays ASCII, and why.** A name that is an identifier of the system stays in the visible characters of ASCII:
 
@@ -79,7 +85,15 @@ Each of them is matched byte for byte against what a principal or a program type
 
 Two shared procedures of `text_encoding` hold the rule: `identifier_valid` (one or more bytes 33 to 126) for an identifier, and `identifier_words_valid` (bytes 32 to 126) for identifiers joined by spaces, as the title of a setting ("subpixel order") and the name of a setting entry of the palette ("set font to spleen"). In a palette entry, the signature, the help sentence, the parameter names, the candidates, a `Text` argument and the runs of a result are text for a reader: UTF-8.
 
-**What stays ASCII until the keys give other characters.** The line of the console, its history file and a passphrase are typed only. The line editor moves its caret by bytes. The palette refuses a `Text` argument outside ASCII in words ("a line of the console holds no character outside ASCII yet"), so a value is never changed in silence. The command `character` writes a character from its code point, so a principal can write é before the keys give it. A passphrase that the keys cannot type would lock its principal out.
+**The typed text is UTF-8.** The keys give characters of the Latin-1 Supplement ([../features/keyboard_layout.md](../features/keyboard_layout.md)), so each text that is only typed holds them:
+
+- **The line editor** (`line_editor`) keeps the bytes of UTF-8. Its caret is a place in bytes, always before a whole character. Left and Right move over a whole character, Backspace and Delete remove a whole character, and a key inserts the UTF-8 of its code point. A line holds a character of a text (`printable`), and a whole character only: a line of `LINE_CAPACITY` bytes refuses a character whose bytes do not fit. The console and the terminal place the cursor in cells, by the count of characters before the caret.
+- **The history file** keeps its form and its version: a line is UTF-8, checked with `text_valid`. A file of ASCII lines is a file of this form.
+- **The match of the completion and of the palette** compares whole characters, and folds the case of ASCII only. The names that a principal searches are identifiers, which are ASCII; the search of a history line compares é with é. A fold of é to e is a rule of one language (German writes ü as ue, not u), it needs a table of each letter, and it would make two lines that differ by an accent the same line. A character is never matched by half of its bytes.
+- **A `Text` argument of the palette** is UTF-8: the field takes each character that the keys give.
+- **A passphrase** is the bytes of UTF-8 of its characters, with no normalization. The keys give one form of each character: é is the precomposed U+00E9 from its key and from a dead key. So the same keys give the same bytes. A passphrase typed under another layout gives other bytes, as an ASCII passphrase already does. A normalization (NFC) would need the tables of Unicode in `unlock` for no case that the keys can make.
+
+The command `character` still writes a character from its code point: it writes a character that no key gives.
 
 ## The forms that were refused
 
@@ -88,6 +102,9 @@ Two shared procedures of `text_encoding` hold the rule: `identifier_valid` (one 
 - **Latin-1.** One byte for each character fits the fields, but it holds no character outside Western Europe, and it is a second encoding beside the `Text` of the module contract.
 - **A check in each contract with its own rule.** That is the state that this design removes: each contract had its own range of bytes.
 - **The replacement character drawn as `?`.** A `?` is a character of a text: a reader cannot tell an invalid sequence from a question mark.
+- **The code point as the index of a glyph cache.** A cache of the characters 32 to 255 has 33 entries for control characters that no text holds, and a reader still needs the check of those 33. The character index has no hole.
+- **A list of ranges in the header of a cache.** Each reader would search the list for each character. The two ranges are fixed by the contract, so a range is a constant, not a field.
+- **A cache that holds the Latin-1 Supplement or not.** Each reader would then check the count of each cache, and a font that lacks é would draw a box in one font and é in the other. Each font holds the 191 characters, and the build refuses a font that lacks one.
 - **A border that replaces where it can refuse.** A table that a provider wrote with an invalid sequence is a mistake of the provider; a refusal names it in the log, and a replacement hides it.
 
 ## Subtle points
@@ -98,9 +115,11 @@ Two shared procedures of `text_encoding` hold the rule: `identifier_valid` (one 
 - **The kernel replaces with `?`, not with U+FFFD.** U+FFFD is three bytes, and the value runs of a log line name offsets into the text.
 - **Bidirectional controls are characters of a text.** The drawing has no bidirectional algorithm: such a character the font lacks draws the replacement glyph and changes no order. A terminal of the host that reads the serial port can reorder a line with them; the log is for the developer, and the rule refuses the controls that act on a terminal.
 - **One code point, one cell.** A combining accent and a wide character take one cell each. No font of the system draws them, so each draws the replacement glyph in its own cell.
+- **The place of the caret is in bytes, the cursor in cells.** A line of `été` has 5 bytes and 3 cells. The line editor keeps bytes, because the text is bytes; a reader that draws counts the characters before the caret.
+- **A cut of a typed line.** A line of the history and a line that `line_set` receives end after a whole character (`complete_characters`), so a cut never leaves half of é.
 
 ## State
 
-Built: the contract package and its host tests; the checks of the palette table, the store names and the kernel log; the cut of the terminal library, the cut mark, the console output and the log of the support library; the drawing of the cells, of text and of the shaper with the replacement glyph; the cell of a grid as a code point; the command `character` with a machine test.
+Built: the contract package and its host tests; the checks of the palette table, the store names and the kernel log; the cut of the terminal library, the cut mark, the console output and the log of the support library; the drawing of the cells, of text and of the shaper with the replacement glyph; the cell of a grid as a code point; the command `character` with a machine test; the keys that give a character of the Latin-1 Supplement; the line editor by character, its history file and the passphrase in UTF-8; the glyphs of the Latin-1 Supplement in the glyph caches and in Spleen, with the machine test that types é.
 
-Left (the roadmap entry "Keys that type characters outside ASCII"): the keys that give a character outside ASCII, a line editor that moves by character, its history file, a passphrase outside ASCII, and the glyphs of the Latin-1 Supplement in the glyph caches and in Spleen.
+Left: a character outside the Latin-1 Supplement in a font.

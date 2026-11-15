@@ -428,7 +428,7 @@ commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error:
 	start := system.time()
 	written_before := blocks_written
 	measure: Commit_Measure
-	generation := object_change(ranged.named.caller.store, path_names(&ranged.named.path), ranged.named.name, .Ranges, nil, {}, error, 2, pending, &measure)
+	generation := object_change(ranged.named.caller.store, path_names(&ranged.named.path), ranged.named.name, .Ranges, nil, {}, reaches_whole_store(&ranged.named.caller), error, 2, pending, &measure)
 	if generation < 0 {
 		if generation == ERROR_PENDING || generation == ERROR_DAMAGED {
 			pending_drop(pending)

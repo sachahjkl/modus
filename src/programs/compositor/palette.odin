@@ -5,6 +5,7 @@ import "modus:contract/errors"
 import "modus:contract/palette_table"
 import "modus:contract/ring"
 import "modus:contract/settings"
+import "modus:contract/text_encoding"
 import "modus:support/bar"
 import "modus:support/display"
 import "modus:support/interface"
@@ -590,7 +591,7 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 }
 
 // palette_key_of translates a key of the keyboard into a key of the panel.
-palette_key_of :: proc "contextless" (code: u32, character: u8) -> palette.Key {
+palette_key_of :: proc "contextless" (code: u32, character: rune) -> palette.Key {
 	switch code {
 	case display.KEY_SUPER:
 		return .Super
@@ -621,14 +622,14 @@ palette_key_of :: proc "contextless" (code: u32, character: u8) -> palette.Key {
 	case display.KEY_TAB:
 		return .Tab
 	}
-	return character >= ' ' && character <= '~' ? palette.Key.Character : palette.Key.Other
+	return text_encoding.character_in_text(character) ? palette.Key.Character : palette.Key.Other
 }
 
 // palette_key takes a key for the palette. It gives true if the key is for
 // the palette, and false if it goes to the window that has the focus. The
 // key super opens and closes the panel. While the panel is open, it takes
 // each key: what a key does in each state is palette.key_action.
-palette_key :: proc "contextless" (code: u32, character: u8, pressed: bool, modifiers: u32) -> bool {
+palette_key :: proc "contextless" (code: u32, character: rune, pressed: bool, modifiers: u32) -> bool {
 	if !pressed {
 		if code == kept_key {
 			kept_key = 0
@@ -666,7 +667,7 @@ palette_key :: proc "contextless" (code: u32, character: u8, pressed: bool, modi
 // palette_act does one action of the panel: from a key, or from the
 // pointer (a press and a release on a row is Run or Confirm; a press
 // outside the panel is Close). cause: what closes the panel, for the log.
-palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, character: u8, cause: string) {
+palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, character: rune, cause: string) {
 	panel := &palette_panel
 	// The palette runs the row that is drawn: after a list moved the
 	// choice to another entry, Enter does nothing until a frame showed it.
@@ -1029,13 +1030,16 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 // The scroll bar of the list is an element of the interface package: a
 // press on it, and each move while it holds the press, builds a frame of
 // the panel with the pointer, and the element moves the view. While the
-// scroll bar holds the press, the pointer chooses and runs no row.
-palette_pointer :: proc "contextless" (moved, pressed, released: bool) {
+// scroll bar holds the press, the pointer chooses and runs no row. A notch
+// of the wheel over the rows or over the bar builds a frame too, and the
+// element moves the view by it; a notch elsewhere moves nothing.
+palette_pointer :: proc "contextless" (moved, pressed, released: bool, wheel: int) {
 	panel := &palette_panel
 	left, top := palette_place()
 	given := &palette_input
 	given.pointer_x, given.pointer_y = pointer_x, pointer_y
 	given.pointer_known = true
+	given.wheel += wheel
 	if pressed {
 		given.press_x, given.press_y = pointer_x, pointer_y
 	}
@@ -1044,9 +1048,11 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool) {
 	given.button_held = buttons & display.BUTTON_LEFT != 0
 	bar_area, bar_shown := palette.scroll_bar_area(panel, left, top)
 	bar_identity := palette.scroll_bar_identity()
-	// The pointer is over the scroll bar, holds it, or leaves it lit: the
-	// panel needs a frame for it.
-	bar_wants_frame := interface.scroll_bar_wants_frame(&palette_interface_state, given, bar_area, bar_identity)
+	// The pointer is over the scroll bar, holds it, leaves it lit, or turns
+	// the wheel over the rows: the panel needs a frame for it. A panel with
+	// no scroll bar has no view that the wheel moves.
+	view_area := bar_shown ? palette.scroll_view_area(left, top) : interface.Area{}
+	bar_wants_frame := interface.scroll_bar_wants_frame(&palette_interface_state, given, bar_area, bar_identity, view_area)
 	if palette_interface_state.pressed == bar_identity || pressed && bar_shown && interface.area_contains(bar_area, pointer_x, pointer_y) {
 		panel.pressed_row = palette.NO_ROW
 		palette_refresh()
@@ -1187,6 +1193,9 @@ palette_refresh :: proc "contextless" () {
 			palette_scroll_dragged ||= scrolled.held == .Thumb
 			if scrolled.pressed_now != .None && scrolled.pressed_now != .Thumb {
 				system.log_in("surfaces", .Info, "compositor: the scroll bar of the palette: a press on ", palette_scroll_part_words(scrolled.pressed_now), ", the rows from ", u64(scrolled.first))
+			}
+			if scrolled.wheel_taken {
+				system.log_in("surfaces", .Info, "compositor: the wheel moves the rows of the palette: the rows from ", u64(scrolled.first))
 			}
 		}
 		if scrolled.drag_ended {

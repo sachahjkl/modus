@@ -45,7 +45,7 @@ identity_with :: proc "contextless" (base: Element_Identity, index: int) -> Elem
 // One key that went down in a frame, from a display event.
 Key_Press :: struct {
 	code:      u32, // The code of the key, as the input service gives it.
-	character: u8, // The character of the key, or 0.
+	character: rune, // The character of the key as a code point, or 0.
 	modifiers: u32, // The keys Shift, Control and Alt that were down.
 	taken:     bool, // An element took the key: no other element takes it.
 }
@@ -60,6 +60,10 @@ Input :: struct {
 	// moves after it: the pointer is then at the end of the moves, and a
 	// drag needs the place where it began.
 	press_x, press_y:     int,
+	// The notches of the wheel in this frame, signed
+	// (display.WHEEL_TOWARD_THE_END). The first view under the pointer
+	// takes them (scroll_bar), and sets this to 0: no other view moves.
+	wheel:                int,
 	keys:                 [KEY_CAPACITY]Key_Press, // The keys of the frame, in order.
 	key_count:            int, // The keys in use.
 }
@@ -78,6 +82,9 @@ input_add :: proc "contextless" (input: ^Input, event: display.Event) -> bool {
 		input.pressed ||= held && !input.button_held
 		input.released ||= !held && input.button_held
 		input.button_held = held
+		// Each event cuts its notches to key_path.WHEEL_NOTCHES_LIMIT, so
+		// the sum of a frame stays far inside an int.
+		input.wheel += event.wheel
 		return true
 	case .Key:
 		if !event.pressed || input.key_count >= KEY_CAPACITY {
@@ -101,6 +108,7 @@ input_has_room :: proc "contextless" (input: ^Input) -> bool {
 input_clear :: proc "contextless" (input: ^Input) {
 	input.pressed = false
 	input.released = false
+	input.wheel = 0
 	input.key_count = 0
 }
 

@@ -31,6 +31,9 @@ import tree "modus:support/storage_tree"
 // What each image must give:
 //   - the disk opens, with no wrong block, no block named two times, and the
 //     counts of each store equal to what its trees name;
+//   - the hash index that the open makes reaches each of its roots, and no
+//     store has two roots of one hash and one size (docs/STORAGE.md, "4.7
+//     The same object one time");
 //   - the objects are those of the durable image, or those of the image with
 //     every write (the commit in flight at the loss, if its root was among
 //     the writes): each object byte for byte, never a mix of the two.
@@ -78,6 +81,7 @@ Stored_Object :: struct {
 	blocks:   []Stored_Block, // Its blocks of data, in their order: a hole is no block.
 	damaged:  bool,
 	hash_wrong: bool, // The hash of its entry is not the hash that its block tree gives.
+	root:     format.Pointer, // The root of its block tree: two names of one object have one root.
 	versions: []Stored_Version,
 	versions_damaged: bool,
 }
@@ -262,6 +266,7 @@ contents_visit :: proc "contextless" (one: ^tree.Walk, key: []u8, value: []u8) {
 	reader := &walking.reader
 	current := block_tree.State{root = entry.pointer, size = entry.size}
 	item.size = entry.size
+	item.root = entry.pointer
 	bytes_ok: bool
 	item.bytes, bytes_ok = contents_state_bytes(walking, current)
 	clear(&walking.collected)
@@ -486,6 +491,14 @@ crash_images_check :: proc(durable: []u8, pending: []Pending_Write, seed: u64) -
 			problem = fmt.tprintf("%d versions have a wrong block", contents.mount.damaged_versions)
 		case contents.mount.stores_with_wrong_count != 0:
 			problem = fmt.tprintf("%d stores have a wrong count of blocks", contents.mount.stores_with_wrong_count)
+		case storage_mount.hash_index_check(state) != 0:
+			problem = fmt.tprintf("the hash index that the open made has %d faults", storage_mount.hash_index_check(state))
+		// The programs of these scenarios write from the root of their store,
+		// with no writable share of a tree open: each commit looks up its hash,
+		// so a store never keeps one object two times. A scenario with such a
+		// share would make two roots of one hash on purpose.
+		case contents.mount.repeated_hashes != 0:
+			problem = fmt.tprintf("%d roots of current objects have the hash and the size of another root of their store: one object kept two times", contents.mount.repeated_hashes)
 		case hashes_wrong(&contents) != 0:
 			problem = fmt.tprintf("%d objects have another hash than the hash that their block tree gives", hashes_wrong(&contents))
 		case same_contents(&contents, before):
@@ -867,6 +880,21 @@ power_loss_ranges_run :: proc() -> bool {
 		return false
 	}
 	test_passed_print("the range writes: %d images of the disk after the loss of power in a loop of range commits, %d of them with a torn write: %d give the durable commit (generation %d), %d the commit of range writes in flight (generation %d, the object loop with %d blocks of data), none a mix", search.images, search.torn_images, search.older_images, durable.mount.generation, search.newer_images, in_flight.mount.generation, len(loop_in_flight.blocks))
+	// The same object under two names (docs/STORAGE.md, "4.7 The same object
+	// one time"): the two entries name one root in the durable image and in
+	// the image with each write; the search above checked the hash index of
+	// each image.
+	twin_images := [2]^Disk_Contents{&durable, &in_flight}
+	for contents in twin_images {
+		first := stored_object_of(contents, "ranges", "twin_a")
+		other := stored_object_of(contents, "ranges", "twin_b")
+		if first == nil || other == nil || first.root.block == 0 || first.root != other.root {
+			fmt.eprintfln("modustool: test failed: the objects twin_a and twin_b of the store ranges do not name one root (generation %d)", contents.mount.generation)
+			sync.mutex_unlock(&server.lock)
+			return false
+		}
+	}
+	test_passed_print("the range writes: in each image, the hash index that the open made names each root that it must, and no store keeps one object two times; twin_a and twin_b name one root")
 	hard, torn_root := hard_image(server.durable, pending)
 	defer delete(hard)
 	sync.mutex_unlock(&server.lock)
@@ -885,9 +913,10 @@ power_loss_ranges_run :: proc() -> bool {
 	append(&second, Step{kind = .Wait, text = fmt.aprintf("storage: ok, generation %d: ", durable.mount.generation), any_order = true})
 	append(&second, Step{kind = .Front, text = "console"})
 	append(&second, Step{kind = .Type, text = "start(\"ranges\")"})
-	append(&second, Step{kind = .Wait, text = "ranges: a store with 4 objects: the run after the remount"})
+	append(&second, Step{kind = .Wait, text = "ranges: a store with 6 objects: the run after the remount"})
 	append(&second, Step{kind = .Wait, text = "ranges: after the remount: the sparse object of 8589934592 bytes reads its 3 blocks and its 1000 writes, byte for byte: as it must"})
 	append(&second, Step{kind = .Wait, text = "ranges: after the remount: the small object, the object of the cut and the object of the loop: as it must"})
+	append(&second, Step{kind = .Wait, text = "ranges: after the remount: the same object of 1 MiB under a third name took no block: the open found it by its hash: as it must"})
 	append(&second, Step{kind = .Wait, text = "ranges: done, 0 wrong"})
 	append(&second, Step{kind = .Quit})
 	return machine_test(second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_POWER_LOSS, 6), 0, TEST_POWER_LOSS_DISK)

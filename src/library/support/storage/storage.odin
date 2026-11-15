@@ -526,14 +526,22 @@ unshare :: proc "contextless" (client: ^Client, number: i64, error: ^errors.Erro
 }
 
 // The counts of the store of a connection: the row of the export usage.
+// Through a share of a tree, the counts of that tree only: a share never
+// sees a count of the whole store (docs/STORAGE.md, "4.3 Read only, and
+// revocation").
 Usage :: struct {
-	objects:  i64, // The objects of the store.
-	trees:    i64, // The trees inside the tree of the store.
+	objects:  i64, // The objects of the store, or under the tree of a share.
+	trees:    i64, // The trees inside the tree of the store, or under the tree of a share.
 	versions: i64, // The versions of all the objects.
-	blocks:   i64, // The blocks that the store holds.
+	blocks:   i64, // The blocks that the store holds. A share of a tree: the blocks of its tree, a block that two objects share counted once for each.
 	limit:    i64, // The most blocks of the store, as its grant gives it.
-	removing: i64, // The trees that wait in the removal queue.
+	removing: i64, // The trees that wait in the removal queue. A share of a tree: 0.
 }
+
+// USAGE_NOT_COUNTED is the value of objects, trees, versions and blocks
+// when the tree of a share needs more reads to count than one call makes,
+// or a block of it is wrong.
+USAGE_NOT_COUNTED :: -1
 
 // usage gives the counts of the store of the connection.
 usage :: proc "contextless" (client: ^Client) -> (counts: Usage, status: Status) {

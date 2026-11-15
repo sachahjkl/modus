@@ -134,6 +134,14 @@ scroll_bar_area :: proc "contextless" (panel: ^Panel, panel_x, panel_y: int) -> 
 	return {rows_right(panel_x, total), panel_y + LIST_TOP, interface.LIST_ROW_SCROLL_WIDTH, LIST_HEIGHT}, true
 }
 
+// scroll_view_area gives the area of the rows that the scroll bar of the
+// panel moves, with the bar: the wheel over it moves the view. It is the
+// list area of the entries and of the candidates, which panel_draw gives
+// the list as its view.
+scroll_view_area :: proc "contextless" (panel_x, panel_y: int) -> interface.Area {
+	return {panel_x + BORDER, panel_y + LIST_TOP, PANEL_WIDTH - 2 * BORDER, LIST_HEIGHT}
+}
+
 // view_scrolled applies what the pointer did to the scroll bar in the last
 // draw of the panel (Panel.scrolled): the view goes to the first row that
 // the scroll bar asks for, and the choice goes with it, to the nearest
@@ -575,7 +583,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 		result_draw(frame, panel, x, y)
 	} else {
 		// The rows that the panel shows.
-		list_area := interface.Area{x + BORDER, y + LIST_TOP, PANEL_WIDTH - 2 * BORDER, LIST_HEIGHT}
+		list_area := scroll_view_area(x, y)
 		confirm_text: interface.Text_Builder
 		signatures: [LIST_ROWS][palette_table.SIGNATURE_CAPACITY + 8]u8
 		rows: [LIST_ROWS]interface.List_Row
@@ -1004,7 +1012,7 @@ form_band_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, x, y
 form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: int) {
 	table := frame.table
 	form := &panel.form
-	list_area := interface.Area{x + BORDER, y + LIST_TOP, PANEL_WIDTH - 2 * BORDER, LIST_HEIGHT}
+	list_area := scroll_view_area(x, y)
 	text_room := PANEL_WIDTH - 2 * TEXT_MARGIN
 	rows: [LIST_ROWS]interface.List_Row
 	if panel.state == .Confirm {

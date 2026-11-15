@@ -11,8 +11,10 @@ import "modus:support/vector_font"
 //
 // The command "vector_fonts" reads the font files of the candidates from
 // the build inputs of flake.nix (VECTOR_FONT_SOURCES), and writes for each
-// one a subset in resources/fonts: the characters 32 to 126 and the glyph
-// .notdef, each glyph a simple glyph with no hinting instructions. The
+// one a subset in resources/fonts: the characters of a glyph cache (ASCII
+// 32 to 126 and the Latin-1 Supplement, glyph_cache.character_index) and
+// the glyph .notdef, each glyph a simple glyph with no hinting
+// instructions. A font that lacks one of them is refused. The
 // subsets are in the repository, as the output of the command "font" is:
 // a build does not need the build inputs. The command also writes
 // build/fonts/candidates.png, the picture of the choice, from the same
@@ -147,6 +149,9 @@ run_vector_fonts :: proc(args: []string) -> int {
 			return EXIT_FAILURE
 		}
 		fmt.printfln("%-18s %10d %8d %10d %8d %8d %8d %6d %s", candidate.name, len(source), len(subset), report.composites, report.measures.advance, report.measures.x_height, report.measures.cap_height, report.pairs, report.zero)
+		for equivalent in report.equivalents {
+			fmt.printfln("modustool: %s has no glyph for U+%04X: its subset draws it with the glyph of U+%04X", candidate.name, int(equivalent.character), int(equivalent.taken_from))
+		}
 		if candidate.zero_form == .Slashed && report.zero_glyph == 0 {
 			fmt.printfln("modustool: %s has no single substitution of the feature zero for '0': its subset keeps the zero of the font", candidate.name)
 		}
@@ -162,18 +167,59 @@ run_vector_fonts :: proc(args: []string) -> int {
 Subset_Report :: struct {
 	problem:      string,
 	composites:   int, // Glyphs made of glyphs, made simple.
-	pairs:        int, // The pair adjustments of the characters 32 to 126 that the subset keeps.
+	pairs:        int, // The pair adjustments between the characters of the subset that it keeps.
 	zero_glyph:   int, // The glyph of the source that the subset draws for '0' in place of the glyph of the cmap; 0: the zero of the font.
 	zero:         string, // For the table of the command: "slashed (glyph n)" or "of the font".
 	measures:     vector_font.Font_Measures,
 	license_text: string,
+	equivalents:  [dynamic]Equivalent_Glyph, // The characters that the font lacks and that take the glyph of their equivalent.
 }
 
-// The glyphs of a subset: .notdef, then the characters 32 to 126.
-SUBSET_GLYPHS :: 96
+// The glyphs of a subset: .notdef, then the characters of a glyph cache in
+// the order of their character index: the glyph of the index i is i + 1.
+SUBSET_GLYPHS :: 1 + glyph_cache.CHARACTER_COUNT
 
-// font_subset writes a TrueType file with the characters 32 to 126 of a
-// font, from the first face of a collection.
+// subset_character gives the character of a glyph of a subset, past
+// .notdef.
+subset_character :: proc(glyph: int) -> rune {
+	character, _ := glyph_cache.character_of_index(glyph - 1)
+	return character
+}
+
+// A character of the subset that the font lacks, drawn with the glyph of
+// another character.
+Equivalent_Glyph :: struct {
+	character:  rune,
+	taken_from: rune,
+}
+
+// The two characters of the Latin-1 Supplement that a font can lack and
+// that have a standard equivalent of the same form: the space with no
+// break draws as the space, the soft hyphen as the hyphen. Paper Mono has
+// no soft hyphen. Each other character that a font lacks is refused: a
+// guessed form would be a wrong letter (docs/FONTS.md, "6. The font file").
+@(rodata)
+equivalent_characters := [?]Equivalent_Glyph{{character = 0xA0, taken_from = ' '}, {character = 0xAD, taken_from = '-'}}
+
+// subset_glyph_of gives the glyph of the source that the subset draws for a
+// character: its own glyph, or the glyph of its equivalent when the font
+// lacks it. taken_from is the character whose glyph it is.
+subset_glyph_of :: proc(font: ^vector_font.Font_File, character: rune) -> (glyph: int, taken_from: rune, problem: vector_font.Font_Problem) {
+	glyph, problem = vector_font.glyph_of(font, character)
+	if problem != .No_Glyph {
+		return glyph, character, problem
+	}
+	for equivalent in equivalent_characters {
+		if equivalent.character == character {
+			glyph, problem = vector_font.glyph_of(font, equivalent.taken_from)
+			return glyph, equivalent.taken_from, problem
+		}
+	}
+	return 0, character, problem
+}
+
+// font_subset writes a TrueType file with the characters of a glyph cache
+// of a font, from the first face of a collection.
 font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional: bool) -> (subset: []u8, report: Subset_Report, ok: bool) {
 	face, face_problem := vector_font.collection_face_offset(source, 0)
 	font, problem := vector_font.font_open(source, face)
@@ -188,6 +234,7 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 		return nil, report, false
 	}
 	report.zero = "of the font"
+	report.equivalents = make([dynamic]Equivalent_Glyph, context.temp_allocator)
 	// The pair adjustments, read from the source as hostile input: each
 	// pair of two characters of the subset, by the glyphs of the subset.
 	kern: []u8
@@ -217,12 +264,17 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 	for index in 0 ..< SUBSET_GLYPHS {
 		glyph := 0
 		if index > 0 {
-			glyph, problem = vector_font.glyph_of(&font, rune(31 + index))
+			character := subset_character(index)
+			taken_from: rune
+			glyph, taken_from, problem = subset_glyph_of(&font, character)
 			if problem != .None {
-				report.problem = fmt.tprintf("the character %d: %s", 31 + index, vector_font.font_problem_names[problem])
+				report.problem = fmt.tprintf("the character U+%04X: %s", int(character), vector_font.font_problem_names[problem])
 				return nil, report, false
 			}
-			if 31 + index == '0' && candidate.zero_form == .Slashed {
+			if taken_from != character {
+				append(&report.equivalents, Equivalent_Glyph{character = character, taken_from = taken_from})
+			}
+			if character == '0' && candidate.zero_form == .Slashed {
 				substitute, substitution_problem := vector_font.single_substitution(&font, ZERO_FEATURE, glyph)
 				#partial switch substitution_problem {
 				case .None:
@@ -307,7 +359,7 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 	append(&tables, Subset_Table{"post", post})
 	subset = sfnt_write(tables[:])
 	report.license_text = fmt.aprintf(
-		"%s\n\nThis file is a subset of %s, made by \"modustool vector_fonts\" (docs/FONTS.md):\nthe characters 32 to 126 and the glyph .notdef, each glyph a simple glyph\n(%d glyphs made of glyphs were made simple), no hinting instructions, no\nOpenType layout tables%s. The subset carries the name \"%s\".\nLicense of the source: %s.\n\nThe text of the license in the source font file:\n\n%s\n\nURL of the license: %s\nThe full text of the license: %s, in this folder.\n",
+		"%s\n\nThis file is a subset of %s, made by \"modustool vector_fonts\" (docs/FONTS.md):\nthe characters 32 to 126, the characters U+00A0 to U+00FF and the glyph\n.notdef, each glyph a simple glyph\n(%d glyphs made of glyphs were made simple), no hinting instructions, no\nOpenType layout tables%s. The subset carries the name \"%s\".\nLicense of the source: %s.\n\nThe text of the license in the source font file:\n\n%s\n\nURL of the license: %s\nThe full text of the license: %s, in this folder.\n",
 		copyright, candidate.name, report.composites, strings.concatenate({proportional ? fmt.tprintf("; the %d pair adjustments of its table kern between\nthese characters", report.pairs) : "", report.zero_glyph != 0 ? fmt.tprintf(";\nthe character 0 is the glyph %d of the source, the slashed zero of its\nfeature zero", report.zero_glyph) : ""}, context.temp_allocator), candidate.family, candidate.license, license, license_place, candidate.license_file,
 		allocator = context.temp_allocator,
 	)
@@ -315,18 +367,18 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 }
 
 // kern_table_write gives a kern table of version 0 with one subtable of
-// format 0: the pairs of the characters 32 to 126 whose adjustment is not
-// 0, by the glyphs of the subset (character c is glyph c - 31). The loops
-// go in the order of the glyphs, so the pairs are sorted.
+// format 0: the pairs of the characters of the subset whose adjustment is
+// not 0, by the glyphs of the subset (subset_character). The loops go in
+// the order of the glyphs, so the pairs are sorted.
 @(private = "file")
 kern_table_write :: proc(font: ^vector_font.Font_File, pair_table: ^vector_font.Pair_Table) -> (table: []u8, count: int) {
 	pairs := make([dynamic]u8, context.temp_allocator)
-	for left in rune(32) ..= 126 {
-		for right in rune(32) ..= 126 {
-			adjustment := vector_font.character_pair_adjustment(font, pair_table, left, right)
+	for left in 1 ..< SUBSET_GLYPHS {
+		for right in 1 ..< SUBSET_GLYPHS {
+			adjustment := vector_font.character_pair_adjustment(font, pair_table, subset_character(left), subset_character(right))
 			if adjustment != 0 {
-				append_u16(&pairs, u16(left - 31))
-				append_u16(&pairs, u16(right - 31))
+				append_u16(&pairs, u16(left))
+				append_u16(&pairs, u16(right))
 				append_u16(&pairs, u16(i16(adjustment)))
 				count += 1
 			}
@@ -402,31 +454,44 @@ simple_glyph_write :: proc(out: ^[dynamic]u8, outline: ^vector_font.Outline) -> 
 	return box
 }
 
-// character_map_write gives a cmap with one subtable of format 4: the
-// characters 32 to 126 are the glyphs 1 to 95.
+// character_map_write gives a cmap with one subtable of format 4 and three
+// segments: the characters 32 to 126 are the glyphs 1 to 95, the
+// characters U+00A0 to U+00FF the glyphs 96 to 191, and the last segment
+// ends at 0xFFFF, as the format needs.
 @(private = "file")
 character_map_write :: proc() -> []u8 {
+	ASCII_GLYPH_DELTA :: 1 - glyph_cache.ASCII_FIRST // The glyph of a character of ASCII is the character plus this.
+	LATIN_GLYPH_DELTA :: 1 + glyph_cache.ASCII_COUNT - glyph_cache.LATIN_FIRST // The same for the Latin-1 Supplement.
 	out := make([dynamic]u8, context.temp_allocator)
 	append_u16(&out, 0)
 	append_u16(&out, 1)
 	append_u16(&out, 3) // Windows, Unicode basic plane.
 	append_u16(&out, 1)
 	append_u32(&out, 12)
-	segments :: 2
+	segments :: 3
 	append_u16(&out, 4)
 	append_u16(&out, 16 + 8 * segments) // length
 	append_u16(&out, 0) // language
 	append_u16(&out, 2 * segments)
-	append_u16(&out, 4) // searchRange: 2 * 2^floor(log2(2)).
-	append_u16(&out, 1) // entrySelector.
-	append_u16(&out, 0) // rangeShift.
-	append_u16(&out, 126)
+	append_u16(&out, 4) // searchRange: 2 * 2^floor(log2(3)).
+	append_u16(&out, 1) // entrySelector: floor(log2(3)).
+	append_u16(&out, 2 * segments - 4) // rangeShift: 2 * segments - searchRange.
+	// The end of each segment.
+	append_u16(&out, glyph_cache.ASCII_LAST)
+	append_u16(&out, glyph_cache.LATIN_LAST)
 	append_u16(&out, 0xFFFF)
 	append_u16(&out, 0) // reservedPad
-	append_u16(&out, 32)
+	// The start of each segment.
+	append_u16(&out, glyph_cache.ASCII_FIRST)
+	append_u16(&out, glyph_cache.LATIN_FIRST)
 	append_u16(&out, 0xFFFF)
-	append_u16(&out, 0x10000 - 31) // 32 + (65536 - 31) is the glyph 1, modulo 65536.
+	// The delta of each segment, modulo 65536: the last one maps 0xFFFF to
+	// the glyph 0.
+	append_u16(&out, u16(0x10000 + ASCII_GLYPH_DELTA))
+	append_u16(&out, u16(0x10000 + LATIN_GLYPH_DELTA))
 	append_u16(&out, 1)
+	// No range offset: each glyph is its character plus the delta.
+	append_u16(&out, 0)
 	append_u16(&out, 0)
 	append_u16(&out, 0)
 	return out[:]
@@ -594,7 +659,7 @@ append_u32 :: proc(out: ^[dynamic]u8, value: u32) {
 	append_u16(out, u16(value))
 }
 
-// glyph_cache_of draws the characters 32 to 126 of a font file at the three
+// glyph_cache_of draws the characters of a glyph cache of a font file at the three
 // scales of the grid, and gives the glyph cache file (src/library/contract/glyph_cache),
 // in memory aligned on 8 bytes.
 glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scale_count := 3) -> (cache: []u8, ok: bool) {

@@ -10,7 +10,8 @@
 //   on the path: odin, lld-link, ld.lld, nasm, qemu-system-x86_64, swtpm
 //   OVMF_CODE, OVMF_VARS: the UEFI firmware image and its variable store
 //   OVMF_TPM_CODE, OVMF_TPM_VARS: the same firmware with a TPM driver and
-//     no system management mode, for the machines of the measure
+//     no system management mode, for the machines of the measure and of
+//     the machine key sealed by the TPM
 //   OVMF_FULL_CODE, OVMF_FULL_VARS: the firmware with Secure Boot (and system
 //     management mode), for the machines of Secure Boot
 //   SYSTEM_SIGNING_KEY (not set by the shell): the private key of the
@@ -330,12 +331,11 @@ COMMANDS :: [?]Command {
 	//   `extended_state`, `return_fault`, `trusted_boot`, also `hierarchy`,
 	//   `ranges`, `crypto`, `shortage`, `fault_ring`, `debugger`,
 	//   `kernel_events`.
-	//   `trusted_boot tpm` adds the two machines with a software TPM.
 	//
 	// ```
 	// nix develop -c modustool test network
 	// ```
-	{name = "test", about = "build, start the machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test principals`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`, `test trusted_boot`: one part only; `test trusted_boot tpm`: with the two machines that have a software TPM", run = run_test},
+	{name = "test", about = "build, start the machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test principals`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`, `test trusted_boot`: one part only", run = run_test},
 	// Builds, then starts the machine under QEMU in a window, with the log of
 	// the kernel on this terminal: the way to use the system by hand.
 	//
@@ -703,14 +703,11 @@ run_machine :: proc(args: []string) -> int {
 test_parts := [?]string{"main", "network", "power", "hierarchy", "ranges", "disk_programs", "tcp", "quic", "quic-real", "crypto", "random", "shortage", "extended_state", "return_fault", "fault_ring", "debugger", "kernel_events", "iommu", "iommu_amd", "guest", "principals", "outside_module", "trusted_boot"}
 
 // test_arguments_problem gives the refusal of the arguments of `test`, or
-// "" when they name the whole test, one part, or `trusted_boot tpm`. A word
-// that is not a part is refused: the whole test in its place takes minutes
-// and passes, and the reader believes that the part passed.
+// "" when they name the whole test or one part. A word that is not a part
+// is refused: the whole test in its place takes minutes and passes, and the
+// reader believes that the part passed.
 test_arguments_problem :: proc(args: []string) -> string {
 	if len(args) == 0 {
-		return ""
-	}
-	if len(args) == 2 && (args[0] == "trusted_boot" || args[0] == "principals") && args[1] == "tpm" {
 		return ""
 	}
 	if len(args) == 1 {
@@ -722,7 +719,7 @@ test_arguments_problem :: proc(args: []string) -> string {
 	}
 	given := strings.join(args, " ", context.temp_allocator)
 	known := strings.join(test_parts[:], ", ", context.temp_allocator)
-	return fmt.tprintf("test does not know the part `%s`; the parts: %s, `trusted_boot tpm` and `principals tpm`; with no argument, the whole test", given, known)
+	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test", given, known)
 }
 
 // The machines of the parts `main`, `network` and `shortage`: one procedure
@@ -766,10 +763,6 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "trusted_boot" {
 		return trusted_boot_tests_run() ? 0 : EXIT_FAILURE
 	}
-	// `test trusted_boot tpm`: with the two machines of the measure.
-	if len(args) == 2 && args[0] == "trusted_boot" && args[1] == "tpm" {
-		return trusted_boot_tests_run(with_tpm = true) ? 0 : EXIT_FAILURE
-	}
 	if len(args) == 1 && args[0] == "hierarchy" {
 		return hierarchy_tests_run() ? 0 : EXIT_FAILURE
 	}
@@ -810,14 +803,10 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "debugger" {
 		return debugger_tests_run() ? 0 : EXIT_FAILURE
 	}
-	// `test principals`: the two machines of the principals only.
+	// `test principals`: the two machines of the principals and the six
+	// machines of the machine key sealed by the TPM only.
 	if len(args) == 1 && args[0] == "principals" {
 		return principals_tests_run() ? 0 : EXIT_FAILURE
-	}
-	// `test principals tpm`: the four machines of the machine key sealed by
-	// the TPM, with a software TPM; opt-in, as `trusted_boot tpm`.
-	if len(args) == 2 && args[0] == "principals" && args[1] == "tpm" {
-		return principals_tpm_tests_run() ? 0 : EXIT_FAILURE
 	}
 	// `test kernel_events`: the machine of the kernel events only.
 	if len(args) == 1 && args[0] == "kernel_events" {

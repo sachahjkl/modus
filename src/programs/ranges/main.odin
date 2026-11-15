@@ -1,6 +1,6 @@
-// A test of the large objects of a store (docs/STORAGE.md, "Large objects"): an object of 8 GiB made by three range writes holds a few blocks; 1000 small writes at scrambled offsets and one commit hash and write what they touched, not the whole object; a version keeps its bytes; a cut and an extension; the refusals.
+// A test of the large objects of a store (docs/STORAGE.md, "Large objects"): an object of 8 GiB made by three range writes holds a few blocks; 1000 small writes at scrambled offsets and one commit hash and write what they touched, not the whole object; a version keeps its bytes; a cut and an extension; the refusals; the same object of 1 MiB under two names takes the blocks of one (docs/STORAGE.md, "4.7 The same object one time").
 //
-// The first run (an empty store) checks each case, then makes a loop of range commits (the scenario of a loss of power stops the machine in it). The second run, on the same disk after a new start of the machine, reads back what the first run left. Each case ends with a line "...: as it must", or a line "WRONG". The times and the counts of a commit are measures, printed: a case checks a bound that comes from the blocks changed, never a speed.
+// The first run (an empty store) checks each case, then makes a loop of range commits (the scenario of a loss of power stops the machine in it). The second run, on the same disk after a new start of the machine, reads back what the first run left, and writes the object of 1 MiB under a third name, which takes no block. Each case ends with a line "...: as it must", or a line "WRONG". The times and the counts of a commit are measures, printed: a case checks a bound that comes from the blocks changed, never a speed.
 //
 // **What it is for.** It proves that the cost of a change of a large object follows the bytes changed, not the
 // size of the object: a program can keep an object of gigabytes and change a few blocks of it in one commit.
@@ -23,6 +23,7 @@
 package ranges
 
 import "modus:contract/errors"
+import format "modus:contract/store"
 import "modus:support/storage"
 import "modus:support/system"
 
@@ -46,6 +47,15 @@ WRITE_BYTES :: 16
 CUT_BLOCKS :: 70
 CUT_SIZE :: 6000
 EXTENDED_SIZE :: GIB
+
+// The same object under two names (docs/STORAGE.md, "4.7 The same object
+// one time"): 1 MiB, two levels of object nodes. It holds its blocks of
+// data, one node of level 1 for each 64 of them, and the root.
+TWIN_SIZE :: u64(1) << 20
+TWIN_BLOCKS :: TWIN_SIZE / BLOCK
+TWIN_HELD :: TWIN_BLOCKS + TWIN_BLOCKS / format.OBJECT_FANOUT + 1
+TWIN_CHANGED_BLOCK :: 37 // The block that the change of the second name touches.
+TWIN_CHUNK :: 8 * BLOCK // Half of the call region: the region holds the other arguments too.
 
 // The loop of range commits: 200 commits of 4 writes of 64 bytes in an
 // object of 64 MiB.
@@ -206,6 +216,7 @@ first_run :: proc "contextless" () {
 	cut_case()
 	refusals()
 	conflict_case()
+	twin_case()
 	system.log("ranges: the cases took ", system.time() - start, " ms")
 	loop()
 }
@@ -305,6 +316,90 @@ conflict_case :: proc "contextless" () {
 	outcome(range_status == .Ok && write_status == .Ok && refused_with(commit_status, &error, .Absent, .Pending) && error.found == 1 && string(bytes) == "whole", "a commit after another change of the object is refused, and its pending changes are dropped")
 }
 
+// twin_byte gives the byte at an offset of the object of 1 MiB: never 0, so
+// that no block of it is a hole.
+twin_byte :: proc "contextless" (at: u64) -> u8 {
+	return u8((at * 5 + at / BLOCK) % 251 + 1)
+}
+
+// twin_write writes the object of 1 MiB under a name by ranges, and commits.
+twin_write :: proc "contextless" (name: string) -> (measure: storage.Commit_Measure, good: bool) {
+	chunk: [TWIN_CHUNK]u8
+	good = true
+	for at: u64 = 0; at < TWIN_SIZE; at += TWIN_CHUNK {
+		for index in 0 ..< u64(TWIN_CHUNK) {
+			chunk[index] = twin_byte(at + index)
+		}
+		_, status := storage.write_range(&client, storage.ROOT, name, at, chunk[:])
+		good &&= status == .Ok
+	}
+	status: storage.Status
+	measure, status = storage.commit(&client, storage.ROOT, name)
+	return measure, good && status == .Ok
+}
+
+// twin_read says if a name reads the object of 1 MiB, with the change of
+// the block TWIN_CHANGED_BLOCK when `changed`.
+twin_read :: proc "contextless" (name: string, changed: bool) -> bool {
+	chunk: [TWIN_CHUNK]u8
+	for at: u64 = 0; at < TWIN_SIZE; at += TWIN_CHUNK {
+		bytes, status := storage.read_range(&client, storage.ROOT, name, at, chunk[:])
+		if status != .Ok || u64(len(bytes)) != TWIN_CHUNK {
+			return false
+		}
+		for byte, index in bytes {
+			offset := at + u64(index)
+			expected := twin_byte(offset)
+			if changed && offset == TWIN_CHANGED_BLOCK * BLOCK + 5 {
+				expected ~= 0x5A
+			}
+			if byte != expected {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// store_blocks gives the blocks that the store holds, each one counted one
+// time; -1 when usage fails.
+store_blocks :: proc "contextless" () -> i64 {
+	counts, status := storage.usage(&client)
+	return status == .Ok ? counts.blocks : -1
+}
+
+// twin_case: the same object of 1 MiB under two names takes the blocks of
+// one; a change of one name copies the path of its block; the removal of
+// one name keeps the other.
+twin_case :: proc "contextless" () {
+	before := store_blocks()
+	first, first_good := twin_write("twin_a")
+	second, second_good := twin_write("twin_b")
+	after_two := store_blocks()
+	held := after_two - before
+	good := first_good && second_good && before >= 0 && first.held_blocks == i64(TWIN_HELD) && second.held_blocks == i64(TWIN_HELD)
+	outcome(good && held == i64(TWIN_HELD) && second.object_written == 0, "the same object of 1 MiB under two names holds ", u64(max(held, 0)), " blocks of the store, one object's worth; the second commit wrote ", u64(second.object_written), " blocks of its block tree")
+
+	// A change of one block of the second name: the block, its node of
+	// level 1 and the root are new; the first name keeps its bytes.
+	change := [1]u8{twin_byte(TWIN_CHANGED_BLOCK * BLOCK + 5) ~ 0x5A}
+	_, range_status := storage.write_range(&client, storage.ROOT, "twin_b", TWIN_CHANGED_BLOCK * BLOCK + 5, change[:])
+	changed, changed_status := storage.commit(&client, storage.ROOT, "twin_b")
+	path_written := i64(1 + format.object_levels(TWIN_SIZE))
+	changed_good := range_status == .Ok && changed_status == .Ok && changed.object_written == path_written
+	outcome(changed_good && twin_read("twin_a", false) && twin_read("twin_b", true), "a change of one block of the second name wrote ", u64(changed.object_written), " blocks of its block tree; the first name reads its bytes as before")
+
+	// The removal of the second name frees its own blocks only. Then the
+	// second name again: the two names stay on the disk, so that each
+	// image of a loss of power in the loop holds one object under two names.
+	_, remove_status := storage.remove(&client, storage.ROOT, "twin_b")
+	after_removal := store_blocks()
+	removal_good := remove_status == .Ok && after_removal == after_two && twin_read("twin_a", false)
+	again, again_good := twin_write("twin_b")
+	after_again := store_blocks()
+	outcome(removal_good && again_good && again.object_written == 0 && after_again == after_two, "the removal of the second name frees its own blocks only, the first name reads its 1 MiB, and the second name written again takes no block")
+}
+
 // loop makes commits of range writes, one after the other: the scenario of
 // a loss of power stops the machine in it.
 loop :: proc "contextless" () {
@@ -346,6 +441,12 @@ second_run :: proc "contextless" () {
 	}
 	loop_size, _ := storage.size(&client, storage.ROOT, "loop")
 	outcome(string(small) == "whole" && u64(cut_size) == EXTENDED_SIZE && kept && u64(loop_size) == LOOP_SIZE, "after the remount: the small object, the object of the cut and the object of the loop")
+	// The hash index is in memory only: the open made it again from the
+	// entries, so a third name of the same bytes takes no block.
+	twin_before := store_blocks()
+	third, third_good := twin_write("twin_c")
+	twin_after := store_blocks()
+	outcome(third_good && twin_read("twin_a", false) && third.object_written == 0 && twin_before >= 0 && twin_after == twin_before, "after the remount: the same object of 1 MiB under a third name took no block: the open found it by its hash")
 }
 
 // The entry of ranges: the first run on an empty store, or the second run on the store that the first run left;
@@ -354,7 +455,7 @@ second_run :: proc "contextless" () {
 // It opens its private store and reads its usage; with no store or no usage it writes "ranges: WRONG: ..." and
 // stops with the code 1. A store with no object gives the first run: each case, then the loop of range commits. A
 // store with objects gives the second run: it reads back the small object, the object of the cut and the object
-// of the loop. It writes "ranges: done, N wrong" and stops with the code 0, or 2 when a case is wrong.
+// of the loop, and writes the object of 1 MiB under a third name. It writes "ranges: done, N wrong" and stops with the code 0, or 2 when a case is wrong.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ok: bool

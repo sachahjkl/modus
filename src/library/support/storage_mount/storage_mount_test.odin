@@ -433,6 +433,403 @@ a_block_named_from_two_stores :: proc(t: ^testing.T) {
 	testing.expect(t, state.store_faulty[0] && state.store_faulty[1])
 }
 
+// A hash whose first 8 bytes are `prefix`, and `tail` after them.
+hash_with_prefix :: proc(prefix: u64, tail: u8) -> (hash: [32]u8) {
+	for index in 0 ..< 8 {
+		hash[index] = u8(prefix >> uint(8 * index))
+	}
+	for index in 8 ..< 32 {
+		hash[index] = tail
+	}
+	return hash
+}
+
+// Two entries that name one root (the same object under two names): the
+// open puts the root in the hash index one time, with two entries, and a
+// search by the hash finds it. The removal of one name keeps the root in
+// the index; the removal of the other takes it out.
+@(test)
+two_names_of_one_object :: proc(t: ^testing.T) {
+	disk := disk_make(16)
+	defer delete(disk.bytes)
+	object := disk_large_object(&disk)
+	hash := hash_with_prefix(0x0123_4567_89AB_CDEF, 7)
+	first := object_entry(object, {})
+	first.hash = hash
+	block: format.Store_Block
+	block.tree = disk_leaf(&disk, {{"a", first}, {"b", first}})
+	block.objects = 2
+	block.current_blocks = 2 * 3 // A block that two objects share counts two times.
+	block.node_blocks = 1
+	disk_root(&disk, disk_put(&disk, &block), 5)
+	state := new(State)
+	defer free(state)
+	result := mount(state, &disk, 16)
+	testing.expect_value(t, result.wrong, 0)
+	testing.expect_value(t, result.stores_with_wrong_count, 0)
+	testing.expect_value(t, result.repeated_hashes, 0)
+	testing.expect_value(t, state.hash_index.roots, 1)
+	testing.expect_value(t, hash_index_entries(state, object.root.block), 2)
+	testing.expect_value(t, state.references[object.root.block], 2)
+	testing.expect_value(t, hash_index_check(state), 0)
+	search := hash_search_begin(state, hash, object.size, 0)
+	found_root, found := hash_index_next(state, &search)
+	testing.expect(t, found && found_root == object.root, "the search by the hash finds the root")
+	_, more := hash_index_next(state, &search)
+	testing.expect(t, !more, "one root for the hash")
+	other_size := hash_search_begin(state, hash, object.size + 1, 0)
+	_, found = hash_index_next(state, &other_size)
+	testing.expect(t, !found, "another size is another object")
+	other_store := hash_search_begin(state, hash, object.size, 1)
+	_, found = hash_index_next(state, &other_store)
+	testing.expect(t, !found, "a root of another store is never a candidate")
+	hash_index_release(state, object.root)
+	testing.expect_value(t, hash_index_entries(state, object.root.block), 1)
+	testing.expect_value(t, state.hash_index.roots, 1)
+	hash_index_release(state, object.root)
+	testing.expect_value(t, hash_index_entries(state, object.root.block), 0)
+	testing.expect_value(t, state.hash_index.roots, 0)
+	testing.expect_value(t, hash_index_check(state), 0)
+}
+
+// Two roots with one hash in one store: the open counts the second one as
+// a repeated hash, and gives it a record with no slot: one key has one
+// slot, so equal keys make no run of slots.
+@(test)
+two_roots_with_one_hash :: proc(t: ^testing.T) {
+	disk := disk_make(16)
+	defer delete(disk.bytes)
+	first_object := disk_object(&disk)
+	second_object := disk_object(&disk)
+	hash := hash_with_prefix(42, 9)
+	first := object_entry(first_object, {})
+	second := object_entry(second_object, {})
+	first.hash, second.hash = hash, hash
+	block: format.Store_Block
+	block.tree = disk_leaf(&disk, {{"a", first}, {"b", second}})
+	block.objects = 2
+	block.current_blocks = 2
+	block.node_blocks = 1
+	disk_root(&disk, disk_put(&disk, &block), 4)
+	state := new(State)
+	defer free(state)
+	result := mount(state, &disk, 16)
+	testing.expect_value(t, result.repeated_hashes, 1)
+	testing.expect_value(t, state.hash_index.roots, 1)
+	testing.expect_value(t, hash_index_entries(state, first_object.root.block), 1)
+	testing.expect_value(t, hash_index_entries(state, second_object.root.block), 1)
+	testing.expect(t, hash_index_slotted(state, first_object.root.block) != hash_index_slotted(state, second_object.root.block), "one of the two roots has the slot of the key")
+	testing.expect_value(t, hash_index_check(state), 0)
+}
+
+// The first slot of a prefix, as hash_index.odin computes it.
+test_home :: proc(state: ^State, prefix: u64) -> u64 {
+	return ((prefix ~ state.hash_index.slot_key) * HASH_SLOT_MIX) >> (64 - HASH_SLOT_BITS)
+}
+
+// prefixes_with_home gives prefixes whose first slot is `home`, from the
+// prefix `from` on.
+prefixes_with_home :: proc(state: ^State, home: u64, from: u64, into: []u64) {
+	found := 0
+	for prefix := from; found < len(into); prefix += 1 {
+		if test_home(state, prefix) == home {
+			into[found] = prefix
+			found += 1
+		}
+	}
+}
+
+// Roots whose keys start at one slot, and at the last slot of the table: a
+// removal in the middle of a run moves the later roots back, and each root
+// that stays is found from its key.
+@(test)
+removals_in_a_run_of_slots :: proc(t: ^testing.T) {
+	state := new(State)
+	defer free(state)
+	ROOTS :: 12
+	roots: [ROOTS]format.Pointer
+	sizes: [ROOTS]u64
+	hashes: [ROOTS][32]u8
+	// Half of the keys start at the slot 5, the other half at the last slot,
+	// so their run goes around the end of the table.
+	low_prefixes: [ROOTS / 2]u64
+	high_prefixes: [ROOTS / 2]u64
+	prefixes_with_home(state, 5, 1, low_prefixes[:])
+	prefixes_with_home(state, HASH_SLOT_CAPACITY - 1, 1, high_prefixes[:])
+	for index in 0 ..< ROOTS {
+		roots[index] = {block = u64(100 + index), check = u64(1000 + index)}
+		sizes[index] = u64(index + 1)
+		state.owner[roots[index].block] = 1
+		prefix := index % 2 == 0 ? low_prefixes[index / 2] : high_prefixes[index / 2]
+		hashes[index] = hash_with_prefix(prefix, u8(index))
+		testing.expect(t, !hash_index_name(state, hashes[index], roots[index], sizes[index]))
+	}
+	testing.expect_value(t, state.hash_index.roots, ROOTS)
+	testing.expect_value(t, hash_index_check(state), 0)
+	removed := [?]int{0, 3, 6, 11}
+	for index in removed {
+		hash_index_release(state, roots[index])
+	}
+	testing.expect_value(t, state.hash_index.roots, ROOTS - len(removed))
+	testing.expect_value(t, hash_index_check(state), 0)
+	for index in 0 ..< ROOTS {
+		search := hash_search_begin(state, hashes[index], sizes[index], 0)
+		found_root, found := hash_index_next(state, &search)
+		is_removed := false
+		for gone in removed {
+			is_removed ||= gone == index
+		}
+		testing.expectf(t, found == !is_removed && (!found || found_root == roots[index]), "the root %d: found %v", index, found)
+	}
+}
+
+// More roots with one first slot than HASH_PROBE_LIMIT: the roots past the
+// bound keep a record and no slot, and no search reads past the bound.
+@(test)
+the_bound_of_a_run :: proc(t: ^testing.T) {
+	state := new(State)
+	defer free(state)
+	ROOTS :: HASH_PROBE_LIMIT + 8
+	prefixes: [ROOTS]u64
+	prefixes_with_home(state, 77, 1, prefixes[:])
+	for prefix, index in prefixes {
+		block := u64(200 + index)
+		state.owner[block] = 1
+		hash_index_name(state, hash_with_prefix(prefix, 1), {block = block, check = 1}, BLOCK_SIZE)
+	}
+	testing.expect_value(t, state.hash_index.roots, HASH_PROBE_LIMIT)
+	testing.expect_value(t, hash_index_check(state), 0)
+	for index in 0 ..< ROOTS {
+		testing.expectf(t, hash_index_slotted(state, u64(200 + index)) == (index < HASH_PROBE_LIMIT), "the root %d", index)
+	}
+	last := hash_search_begin(state, hash_with_prefix(prefixes[ROOTS - 1], 1), BLOCK_SIZE, 0)
+	_, found := hash_index_next(state, &last)
+	testing.expect(t, !found && last.read <= HASH_PROBE_LIMIT, "a root past the bound is not found, and the search stops at the bound")
+	// A removal in the full run keeps each other slotted root found.
+	hash_index_release(state, {block = 200, check = 1})
+	testing.expect_value(t, hash_index_check(state), 0)
+	for index in 1 ..< HASH_PROBE_LIMIT {
+		search := hash_search_begin(state, hash_with_prefix(prefixes[index], 1), BLOCK_SIZE, 0)
+		found_root, has := hash_index_next(state, &search)
+		testing.expectf(t, has && found_root.block == u64(200 + index), "the root %d after the removal", index)
+	}
+}
+
+// A linear congruential generator of Knuth (MMIX): a fixed run with no
+// random source.
+TEST_GENERATOR_SEED :: u64(20261115)
+TEST_GENERATOR_MULTIPLIER :: u64(6364136223846793005)
+TEST_GENERATOR_INCREMENT :: u64(1442695040888963407)
+TEST_GENERATOR_SHIFT :: 33 // The high bits of the state: the low bits of such a generator repeat with a short period.
+
+test_next_number :: proc(seed: ^u64) -> int {
+	seed^ = seed^ * TEST_GENERATOR_MULTIPLIER + TEST_GENERATOR_INCREMENT
+	return int(seed^ >> TEST_GENERATOR_SHIFT)
+}
+
+// Random inserts and removals of roots whose first slots are a few
+// neighbour slots, one of them at the end of the table, so that runs merge,
+// pass the bound and go around the end. After each step the index has no
+// fault, with no empty slot inside a run, and each root keeps the slot that
+// it had at its insert: a removal never makes another root unreachable.
+@(test)
+random_inserts_and_removals :: proc(t: ^testing.T) {
+	state := new(State)
+	defer free(state)
+	HOMES :: 4
+	ROOTS_OF_A_HOME :: 12
+	ROOTS :: HOMES * ROOTS_OF_A_HOME
+	STEPS :: 600 // Each step checks the whole table: 2^19 slots.
+	FIRST_BLOCK :: 400
+	homes := [HOMES]u64{HASH_SLOT_CAPACITY - 2, HASH_SLOT_CAPACITY - 1, 0, 3}
+	prefixes: [ROOTS]u64
+	for home, home_index in homes {
+		prefixes_with_home(state, home, 1, prefixes[home_index * ROOTS_OF_A_HOME:][:ROOTS_OF_A_HOME])
+	}
+	live: [ROOTS]bool
+	slotted_at_insert: [ROOTS]bool
+	for index in 0 ..< ROOTS {
+		state.owner[FIRST_BLOCK + index] = 1
+	}
+	seed := TEST_GENERATOR_SEED
+	faults := 0
+	lost := 0
+	for _ in 0 ..< STEPS {
+		index := test_next_number(&seed) % ROOTS
+		root := format.Pointer{block = u64(FIRST_BLOCK + index), check = u64(index)}
+		if live[index] {
+			hash_index_release(state, root)
+			live[index] = false
+		} else {
+			hash_index_name(state, hash_with_prefix(prefixes[index], u8(index)), root, BLOCK_SIZE)
+			live[index] = true
+			slotted_at_insert[index] = hash_index_slotted(state, root.block)
+		}
+		if hash_index_check(state) != 0 {
+			faults += 1
+		}
+		for other in 0 ..< ROOTS {
+			if live[other] && hash_index_slotted(state, u64(FIRST_BLOCK + other)) != slotted_at_insert[other] {
+				lost += 1
+			}
+		}
+	}
+	testing.expect_value(t, faults, 0)
+	testing.expect_value(t, lost, 0)
+}
+
+// A hidden root has no slot: no search finds it, and its release takes its
+// record out. A rekey gives a root the key of its true hash.
+@(test)
+hidden_roots_and_rekeys :: proc(t: ^testing.T) {
+	state := new(State)
+	defer free(state)
+	hidden_root := format.Pointer{block = 300, check = 3}
+	state.owner[hidden_root.block] = 1
+	hidden_hash := hash_with_prefix(0xABCD, 2)
+	hash_index_name(state, hidden_hash, hidden_root, BLOCK_SIZE, true)
+	testing.expect_value(t, hash_index_entries(state, hidden_root.block), 1)
+	testing.expect_value(t, state.hash_index.roots, 0)
+	search := hash_search_begin(state, hidden_hash, BLOCK_SIZE, 0)
+	_, found := hash_index_next(state, &search)
+	testing.expect(t, !found, "a hidden root is never a candidate")
+	hash_index_release(state, hidden_root)
+	testing.expect_value(t, hash_index_entries(state, hidden_root.block), 0)
+	testing.expect_value(t, hash_index_check(state), 0)
+
+	lying_root := format.Pointer{block = 301, check = 4}
+	state.owner[lying_root.block] = 1
+	lie := hash_with_prefix(0x1111, 5)
+	truth := hash_with_prefix(0x2222, 6)
+	hash_index_name(state, lie, lying_root, BLOCK_SIZE)
+	hash_index_rekey(state, lying_root, truth)
+	by_lie := hash_search_begin(state, lie, BLOCK_SIZE, 0)
+	_, found = hash_index_next(state, &by_lie)
+	testing.expect(t, !found, "after the rekey, the hash that the entry gave finds nothing")
+	by_truth := hash_search_begin(state, truth, BLOCK_SIZE, 0)
+	found_root, by_truth_found := hash_index_next(state, &by_truth)
+	testing.expect(t, by_truth_found && found_root == lying_root, "the true hash finds the root")
+	testing.expect_value(t, hash_index_check(state), 0)
+
+	// A damaged root leaves the slots, and its key is free for a new root
+	// with the same bytes.
+	hash_index_hide(state, lying_root)
+	testing.expect_value(t, hash_index_entries(state, lying_root.block), 1)
+	testing.expect(t, !hash_index_slotted(state, lying_root.block), "a hidden root has no slot")
+	repaired_root := format.Pointer{block = 302, check = 7}
+	state.owner[repaired_root.block] = 1
+	testing.expect(t, !hash_index_name(state, truth, repaired_root, BLOCK_SIZE), "the key is free")
+	testing.expect(t, hash_index_slotted(state, repaired_root.block), "the new root takes the slot of the key")
+	testing.expect_value(t, hash_index_check(state), 0)
+}
+
+// The index that commits change, step by step, is the index that a fresh
+// open of the same entries makes. A seeded run of writes (a new object or
+// the root of another name), removals and renames goes through
+// hash_index_entry_change, as the storage service calls it after each
+// commit; a rename changes no root, as in the service. Then a disk with
+// the entries of the end is opened, and the two indexes are compared root
+// by root.
+@(test)
+the_index_after_commits_is_the_index_of_a_new_open :: proc(t: ^testing.T) {
+	OBJECTS :: 8
+	NAMES :: 12
+	STEPS :: 400
+	DISK_BLOCKS :: 32
+	Model :: struct {
+		entries: [NAMES]format.Entry,
+	}
+	names := [NAMES]string{"n00", "n01", "n02", "n03", "n04", "n05", "n06", "n07", "n08", "n09", "n10", "n11"}
+	objects_entry :: proc(object: Object_Blocks, number: int) -> format.Entry {
+		entry := object_entry(object, {})
+		entry.hash = hash_with_prefix(u64(number + 1) * 0x0101_0101, u8(number))
+		return entry
+	}
+	// The disk of the start: the objects, then the names n00 to n03.
+	disk_of :: proc(model: ^Model, names: []string) -> (disk: Test_Disk, objects: [OBJECTS]Object_Blocks) {
+		disk = disk_make(DISK_BLOCKS)
+		for &object in objects {
+			object = disk_object(&disk)
+		}
+		named := make([dynamic]Named_Entry, context.temp_allocator)
+		for &entry, index in model.entries {
+			if entry.kind == .Object {
+				append(&named, Named_Entry{names[index], entry})
+			}
+		}
+		block: format.Store_Block
+		block.tree = disk_leaf(&disk, named[:])
+		block.objects = u64(len(named))
+		block.current_blocks = u64(len(named))
+		block.node_blocks = 1
+		disk_root(&disk, disk_put(&disk, &block), disk.next - 2)
+		return disk, objects
+	}
+	// The objects have the same blocks on each disk: a first disk gives
+	// them to the model.
+	model: Model
+	probe_disk, objects := disk_of(&model, names[:])
+	delete(probe_disk.bytes)
+	START_NAMES :: 4 // The names of the disk of the start: n00 to n03.
+	for index in 0 ..< START_NAMES {
+		model.entries[index] = objects_entry(objects[index], index)
+	}
+	start_disk, _ := disk_of(&model, names[:])
+	defer delete(start_disk.bytes)
+	live := new(State)
+	defer free(live)
+	start := mount(live, &start_disk, DISK_BLOCKS)
+	testing.expect_value(t, start.wrong, 0)
+	for &object in objects {
+		live.owner[object.root.block] = 1 // A commit gives each block that it names to its store.
+	}
+	seed := TEST_GENERATOR_SEED
+	next_number := test_next_number
+	for _ in 0 ..< STEPS {
+		name := next_number(&seed) % NAMES
+		before := model.entries[name]
+		switch next_number(&seed) % 3 {
+		case 0: // A write: a new object, or the bytes of another name.
+			number := next_number(&seed) % OBJECTS
+			after := objects_entry(objects[number], number)
+			hash_index_entry_change(live, before, after, false, false)
+			model.entries[name] = after
+		case 1: // A removal.
+			if before.kind == .Object {
+				hash_index_entry_change(live, before, {}, true, false)
+				model.entries[name] = {}
+			}
+		case 2: // A rename to a free name: no root changes.
+			to := next_number(&seed) % NAMES
+			if before.kind == .Object && model.entries[to].kind != .Object {
+				model.entries[to] = before
+				model.entries[name] = {}
+			}
+		}
+	}
+	if model.entries[0].kind != .Object {
+		after := objects_entry(objects[0], 0)
+		hash_index_entry_change(live, model.entries[0], after, false, false)
+		model.entries[0] = after
+	}
+	end_disk, _ := disk_of(&model, names[:])
+	defer delete(end_disk.bytes)
+	fresh := new(State)
+	defer free(fresh)
+	end := mount(fresh, &end_disk, DISK_BLOCKS)
+	testing.expect_value(t, end.wrong, 0)
+	testing.expect_value(t, hash_index_check(live), 0)
+	testing.expect_value(t, hash_index_check(fresh), 0)
+	testing.expect_value(t, live.hash_index.roots, fresh.hash_index.roots)
+	different := 0
+	for block in 0 ..< u64(format.DISK_BLOCKS_LIMIT) {
+		if live.hash_index.records[block] != fresh.hash_index.records[block] || hash_index_slotted(live, block) != hash_index_slotted(fresh, block) {
+			different += 1
+		}
+	}
+	testing.expect_value(t, different, 0)
+}
+
 entry_of :: proc(generation: u64) -> format.Version_Entry {
 	return {generation = generation, size = 1}
 }

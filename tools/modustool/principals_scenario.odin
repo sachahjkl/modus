@@ -152,8 +152,11 @@ scenario_principals_second := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
+// principals_tests_run runs the two machines of the principals, then the
+// six machines of the machine key sealed by the TPM (tpm_key_scenario.odin).
 principals_tests_run :: proc() -> bool {
 	disk_prepare(TEST_PRINCIPALS_DISK, DATA_DISK_SIZE, true) or_return
 	machine_test(scenario_principals_first[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PRINCIPALS, 1), MACHINE_STOP_OK, TEST_PRINCIPALS_DISK) or_return
-	return machine_test(scenario_principals_second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PRINCIPALS, 2), MACHINE_STOP_OK, TEST_PRINCIPALS_DISK)
+	machine_test(scenario_principals_second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PRINCIPALS, 2), MACHINE_STOP_OK, TEST_PRINCIPALS_DISK) or_return
+	return principals_tpm_tests_run()
 }

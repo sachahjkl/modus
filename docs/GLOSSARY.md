@@ -2191,7 +2191,7 @@ Do not use: log out, sign out.
 
 A passphrase is the text that derives the key of the seal of a named principal: 8 to 128 printable bytes.
 
-It is typed in the window of `unlock` only, shown as dots, and kept nowhere. It is never a text of the console, which keeps each line in its history.
+It is typed in the window of `unlock` only, shown as dots, and kept nowhere. It is never a text of the console, which keeps each line in its history. When the TPM seals the keys of the principal, the passphrase also gives the authorization value of the sealed object, so the TPM counts each wrong one.
 
 The design: `docs/PRINCIPALS.md`, "The passphrase".
 
@@ -2393,7 +2393,7 @@ Do not use: escape sequence, control character, stream.
 
 A key record is a record from a terminal to its program: the code of one key that was pressed, its character, and the modifiers that were held (Shift, Control).
 
-The program decides what a key does. The terminal keeps Page Up and Page Down for its own view.
+The character is a code point, or 0 for a key with no character: é of the layout of France is 233. A program that keeps the character writes its UTF-8. The program decides what a key does. The terminal keeps Page Up and Page Down for its own view.
 
 Do not use: standard input, character device, raw mode, cooked mode.
 
@@ -2409,7 +2409,7 @@ Do not use: line discipline, readline, cursor addressing, prompt.
 
 The line editor is the procedures of `src/library/support/line_editor` that change an edit line with keys: the caret, a character at the caret, Backspace, Delete.
 
-They have no state of their own: the line is a record of the program.
+They have no state of their own: the line is a record of the program. The line is UTF-8, and each key moves the caret over a whole character, or inserts or removes a whole character. The caret is a place in bytes, always before a whole character.
 
 Do not use: readline, line discipline.
 
@@ -3747,7 +3747,7 @@ Do not use: file descriptor, directory handle, working directory, path.
 
 A share is a connection to the storage service that the service itself makes for a caller, whose root is a tree of the store of the caller, with or without the right to change.
 
-A share is the way to give another program a part of a store, and only that part. `storage.share(place, read_only)` gives the caller two handles: the call ring and the call region of the new connection. The caller gives them to the other program with `Handle_Give`. The other program reaches the tree of the place and what is under it, and nothing above; a share made with `read_only` refuses each change with `No_Grant`, unit `Changes`. `storage.unshare(share)` revokes the two handles in each program (`Handle_Revoke`), and a later call gives `Gone`. When the grant of the store of the maker ends, each of its shares ends too, at its next call.
+A share is the way to give another program a part of a store, and only that part. `storage.share(place, read_only)` gives the caller two handles: the call ring and the call region of the new connection. The caller gives them to the other program with `Handle_Give`. The other program reaches the tree of the place and what is under it, and nothing above; a share made with `read_only` refuses each change with `No_Grant`, unit `Changes`. `storage.unshare(share)` revokes the two handles in each program (`Handle_Revoke`), and a later call gives `Gone`. When the grant of the store of the maker ends, each of its shares ends too, at its next call. A share names no store with `open_store`, and `usage()` through a share of a tree gives the counts of that tree only, never of the whole store.
 
 A share is not a mount and not a bind: it adds no name to any tree, and the program that receives it sees a connection with its own place 0.
 
@@ -3822,7 +3822,7 @@ Copy on write makes shared blocks: a commit writes new blocks only on the paths 
 
 One exception: the count of the current objects (`current_blocks`) counts a block that two clones share two times, so a change at the limit of a store can be refused early.
 
-A shared block is not a deduplicated block: the service does not search for equal bytes; it shares only what a commit did not change, and what a clone names.
+A commit also shares the blocks of a whole object: when a current object of the same store has the hash of the new state, the entry names its root: the term Hash index, below. The service does not search for equal blocks inside two different objects.
 
 The design: `docs/STORAGE.md`, "Versions, thinning and the limit".
 
@@ -4158,6 +4158,18 @@ The hash of an object is not always the hash of a module: a module file with an 
 The design: `docs/STORAGE.md`, "The hash of an object".
 
 Do not use: content id, checksum (for this).
+
+### Hash index
+
+The hash index is the table in the memory of the storage service that finds the root of the current state of an object of a store by the hash of that state.
+
+The hash index keeps the same object one time: a write, a commit of ranges, a restore or a clone whose new state has the hash and the size of a current object of the same store names the root of that object, and writes no block of it. The open of the disk makes the index from the entries, so it is never on the disk and a loss of power leaves nothing of it to repair; a commit changes it after its root is on the disk. The index keeps the first 8 bytes of each hash; before an entry names a root, the service computes the hash of that state again from its blocks. A commit finds by hash only from a connection that reaches the whole store, and only while the store has no writable share of a tree open; a root that a commit adds while one is open is never a candidate, and `usage()` through a share of a tree gives the counts of that tree only. A writable share can still measure the room left under the limit of the store by writes until one is refused. Example: the program `ranges` writes an object of 1 MiB under two names, and the store holds 261 blocks for both.
+
+The hash index is not an index on the disk, holds no version, and never names a block of another store.
+
+The design: `docs/STORAGE.md`, "4.7 The same object one time".
+
+Do not use: deduplication, dedup table, content-addressed store.
 
 ### Range
 
@@ -4661,13 +4673,25 @@ Do not use: dirty tracking, invalidation.
 
 A scroll bar is the element beside a view that shows a part of a longer content: it shows where the view is in the content, and the pointer moves the view with it.
 
-Each scroll bar of the system is one element of the interface package, `scroll_bar`, and the scroll bars of the site have the same form: both come from one table of sizes and colors, `src/library/support/graphics/scroll_bar.odin`. Its parts are two arrow buttons, the track, and the thumb with its grip. A program gives the units of its content, the units in view and the first unit in view, and takes the new first unit. A scroll bar is vertical or horizontal. The pointer over a scroll bar has the shape of the arrow.
+Each scroll bar of the system is one element of the interface package, `scroll_bar`, and the scroll bars of the site have the same form: both come from one table of sizes and colors, `src/library/support/graphics/scroll_bar.odin`. Its parts are two arrow buttons, the track, and the thumb with its grip. A program gives the units of its content, the units in view and the first unit in view, and takes the new first unit. A scroll bar is vertical or horizontal. The pointer over a scroll bar has the shape of the arrow. A wheel notch over the view of a vertical scroll bar, or over the bar, moves the view by three lines.
 
 A scroll bar is not a bar (the element that shows a value against a maximum) and not the bar of the desktop. It takes no key: the keys of a view belong to the element that owns the view.
 
 The design: `docs/DESIGN.md`, "The scroll bar", and `docs/INTERFACE.md`, "4.1 The scroll bar".
 
 Do not use: scrollbar (one word, outside a CSS name), scroll mark, scroller.
+
+### Wheel notch
+
+A wheel notch is one step of the wheel of a pointing device, toward the principal or away from the principal.
+
+The input service reads the notches of the PS/2 mouse in the IntelliMouse protocol and puts them in the pointer record, as a signed count: `display.WHEEL_TOWARD_THE_END` for each notch toward the principal, which moves a view toward the end of its content, as the key Down does. The compositor gives them to the palette while it is open, else to the program of the window in front when the pointer is over its surface. A window behind gets no notch: the input goes only to the program that has the focus. In a program, the first scroll bar of the frame whose view is under the pointer takes them, and moves its view by three lines for each notch, or by its height for a shorter view. Example: one notch over the lines of the console moves its view three lines up or down.
+
+A wheel notch is not a button of the pointer: it has no press and no release. It is not a count of pixels.
+
+The design: `src/md/features/scroll_bar.md`, and `docs/INTERFACE.md`, "4.1 The scroll bar".
+
+Do not use: scroll event, wheel click, wheel delta.
 
 ### Scroll bar track
 
@@ -4872,7 +4896,7 @@ Do not use: file dialog, powerbox.
 
 The text encoding is the one form of a text in every contract of the system: UTF-8 with no control character, and a length in bytes.
 
-Each record that two parties share holds its text in this form: an entry of the palette, a run of a result, a record of the terminal ring, a line of the log, the name of an object of a store, a `Text` of the module contract. A party that takes a text from another party checks it at its border with `text_encoding.text_valid` (`src/library/contract/text_encoding`), and a party that cuts a text cuts it after a whole character (`complete_characters`). A capacity of a field is a count of bytes, so it holds fewer characters than bytes when a text has characters outside ASCII. A name that is an identifier of the system (a module, an export, a field, a channel of the log, a setting, a program) stays in the visible characters of ASCII, so that each layout types it and it has one form only.
+Each record that two parties share holds its text in this form: an entry of the palette, a run of a result, a record of the terminal ring, a line of the log, the name of an object of a store, a `Text` of the module contract. A party that takes a text from another party checks it at its border with `text_encoding.text_valid` (`src/library/contract/text_encoding`), and a party that cuts a text cuts it after a whole character (`complete_characters`). A capacity of a field is a count of bytes, so it holds fewer characters than bytes when a text has characters outside ASCII. A typed text is UTF-8 too: the line of the console, its history and a passphrase. A name that is an identifier of the system (a module, an export, a field, a channel of the log, a setting, a program) stays in the visible characters of ASCII, so that each layout types it and it has one form only.
 
 The design: `src/md/data/text_encoding.md`.
 
@@ -4912,7 +4936,7 @@ Do not use: tofu, missing glyph, question mark (for this).
 
 A font is a set of glyphs of one design, with the measures that place them side by side.
 
-The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs once on the host and never in a program.
+The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126 and the Latin-1 Supplement, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs once on the host and never in a program.
 
 The system has three fonts:
 
@@ -4932,7 +4956,7 @@ A glyph is the form of one character in one font.
 
 The character is the number (the byte 0x30 is the character `0`); the glyph is the drawing of it. One character can have several glyphs in one font: Paper Mono has a plain zero (glyph 294) and a slashed zero (glyph 304), and a font feature chooses between them. A glyph has an outline and an advance; in a glyph cache it is a box of words of coverage.
 
-The system has glyphs for the characters 32 to 126 only. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
+The system has glyphs for the characters 32 to 126 and the Latin-1 Supplement (U+00A0 to U+00FF) only. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
 
 The design: `docs/FONTS.md`, "5. The glyph cache".
 
@@ -4988,17 +5012,27 @@ Do not use: hinting (alone), autohint.
 
 ### Glyph cache
 
-A glyph cache is a file that holds the glyphs of one font already drawn, as words of coverage, for each character 32 to 126 at each scale of the grid.
+A glyph cache is a file that holds the glyphs of one font already drawn, as words of coverage, for each character 32 to 126 and U+00A0 to U+00FF at each scale of the grid.
 
 A glyph cache moves all the work of a font out of the programs. The modus tool builds it at the build (`vector_font.glyph_cache_build`) and puts it in the boot image as a resource. The root service checks its hash once at the start, and maps it read-only at a fixed range in each program with a surface, each terminal and the compositor. A program validates it once (`glyph_cache.validate`: about 7 µs), then each draw reads the words of a glyph with no other check. A glyph from the cache costs about 109 ns at scale 1 over a flat color on the host.
 
-The format is `src/library/contract/glyph_cache`, version 2: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
+The format is `src/library/contract/glyph_cache`, version 3: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. Each table keys a character by its character index. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
 
 The cache has a fixed capacity and holds every glyph that the grid can draw, so it never fills on demand and never evicts. It is not an atlas of a GPU and not a cache that a program fills: no program writes it, and its address and its size never come from another program.
 
 The design: `docs/FONTS.md`, "5. The glyph cache", and "Who can write a cache".
 
 Do not use: atlas, texture cache, glyph bitmap.
+
+### Character index
+
+A character index is the number of a character in each table of a font of the system: 0 to 94 for the characters 32 to 126, then 95 to 190 for U+00A0 to U+00FF.
+
+The fonts hold these two ranges and no other character, so 191 numbers name each character that a font draws, with no hole: the control characters 127 to 159 between the ranges have no number. A glyph cache keys its glyphs, its advances and its pairs by it, the Spleen data of `src/library/support/graphics` keys its glyphs by it, and a placed glyph of text shaping is one. `glyph_cache.character_index` gives the number of a code point, and `glyph_cache.character_of_index` the code point of a number. A code point outside both ranges has no character index: it draws the replacement glyph.
+
+The design: `src/md/data/text_encoding.md`.
+
+Do not use: glyph id (for this), glyph number, character offset.
 
 ### Proportional cache
 
@@ -5038,6 +5072,16 @@ A setting is not a configuration file of one program: one value applies to every
 The design: `docs/FONTS.md`, "7. The setting".
 
 Do not use: preference, option, configuration.
+
+### Dead key
+
+A dead key is a key of a layout of the keyboard that gives no character itself, and puts its accent on the character of the next key.
+
+The layout of France has two: the key right of P gives the circumflex, and with Shift the diaeresis. `^` then `e` gives ê, and `¨` then `i` gives ï, because the words of French need â, ê, î, ô, û, ë, ï and ü and the keyboard has no other key for them. A space after a dead key gives the accent alone; a key with no accented form gives the accent, then its own character, as two key records; Shift and Control keep the accent waiting. The input service keeps the accent that waits, and the tables are in `src/library/support/keyboard_layout`.
+
+The design: `src/md/features/keyboard_layout.md`.
+
+Do not use: compose key (for this), accent key, modifier (for this).
 
 ### Settings page
 
@@ -5217,9 +5261,9 @@ Do not use: subpixel offset, bucket.
 
 ### Spacing
 
-The spacing is the two tables that text shaping reads for one font at one scale: the advances of the characters 32 to 126 and the pair adjustments, in 1/64 of a pixel.
+The spacing is the two tables that text shaping reads for one font at one scale: the advances of the characters of a glyph cache and the pair adjustments, in 1/64 of a pixel.
 
-`text_shaping.spacing_of` takes them from a validated glyph cache: 95 advances and the sorted pairs (`glyph_cache.Pair_Entry`). The caller then passes them to `shape_text` or `measure_texts` as tables. So the module of text shaping holds no font, and an isolated call receives the spacing in its call region like the text.
+`text_shaping.spacing_of` takes them from a validated glyph cache: 191 advances by character index and the sorted pairs (`glyph_cache.Pair_Entry`). The caller then passes them to `shape_text` or `measure_texts` as tables. So the module of text shaping holds no font, and an isolated call receives the spacing in its call region like the text.
 
 The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
@@ -5990,25 +6034,49 @@ Do not use: TPM driver (for the program), TPM daemon, resource manager.
 
 A secret is sealed by the TPM when the TPM holds it in a sealed object whose policy is the values of PCR 7 and PCR 11 at the seal: the TPM gives it back only to the same system, measured by the boot program, with the same state of Secure Boot.
 
-The TPM service seals with `TPM2_Create` under the storage key and a policy of `TPM2_PolicyPCR`, and unseals in a policy session. The record keeps the two areas of the sealed object that the TPM gives, which are useless on another TPM, and its creation data and creation ticket. Before each unseal the TPM checks the ticket (`TPM2_CertifyCreation`), and the service checks that the policy of the object is the policy of the PCR values of its creation: so an object that another system on the same machine made with the policy of this system is refused. A seal needs Secure Boot on. An older system, a changed system, a machine whose Secure Boot was turned off, or a copy of the disk on another machine opens nothing: the TPM answers that the policy fails. The machine key is the one secret sealed so today (`machine_seal()`).
+The TPM service seals with `TPM2_Create` under the storage key and a policy of `TPM2_PolicyPCR`, and unseals in a policy session. The record keeps the two areas of the sealed object that the TPM gives, which are useless on another TPM, and its creation data and creation ticket. Before each unseal the TPM checks the ticket (`TPM2_CertifyCreation`), and the service checks that the policy of the object is the policy of the PCR values of its creation: so an object that another system on the same machine made with the policy of this system is refused. A seal needs Secure Boot on. An older system, a changed system, a machine whose Secure Boot was turned off, or a copy of the disk on another machine opens nothing: the TPM answers that the policy fails. Two secrets are sealed so: the machine key (`machine_seal()`), and the TPM secret of a named principal, whose sealed object also has an authorization value.
 
-It is not an encryption under a passphrase: no passphrase is typed, and the strength is the TPM, not a derivation.
+For the machine key it is not an encryption under a passphrase: no passphrase is typed, and the strength is the TPM, not a derivation. For a named principal, the TPM and the passphrase are needed together.
 
-The design: `src/md/features/tpm_sealed_machine_key.md`; `docs/PRINCIPALS.md`, "The machine key sealed by the TPM".
+The design: `src/md/features/tpm_sealed_machine_key.md`, `src/md/features/tpm_sealed_principal_keys.md`; `docs/PRINCIPALS.md`, "The machine key sealed by the TPM" and "The keys sealed by the TPM".
 
 Do not use: bound to the TPM, TPM-encrypted, locked (for this).
 
 ### Recovery key
 
-A recovery key is a key of 20 random bytes, shown one time as 32 characters of base32 in 8 groups of 4, that opens a copy of the machine key when the TPM does not release it.
+A recovery key is a key of 20 random bytes, shown one time as 32 characters of base32 in 8 groups of 4, that opens a copy of the machine key, or of the keys of a named principal, when the TPM does not release them.
 
-The window of `unlock` shows it after `machine_seal()`, and never again: it is not kept on the disk and never written on the log. The record of the machine key holds the machine key sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key. When the TPM refuses (an update of the system, another machine, no TPM), the window asks for it; it accepts upper or lower case, with or without the `-`. After a recovery, `unlock` seals the key again to the system that runs, so the next start needs no recovery key. Its 160 random bits need no slow derivation.
+The window of `unlock` shows it after `machine_seal()`, or after the creation of a named principal whose keys the TPM seals, and never again: it is not kept on the disk and never written on the log. The record holds the key, or the keys, sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key, with a text for each use. When the TPM refuses (an update of the system, another machine, no TPM, a lockout), the window asks for it; it accepts upper or lower case, with or without the `-`. After a recovery, `unlock` seals the key again to the system that runs, so the next start needs no recovery key; for a named principal it first asks for a new passphrase, so the recovery key also replaces a lost passphrase. Its 160 random bits need no slow derivation.
 
 Example: `MZXW-6YTB-MZXW-6YTB-MZXW-6YTB-MZXW-6YTB`.
 
-The design: `src/md/features/tpm_sealed_machine_key.md`.
+The design: `src/md/features/tpm_sealed_machine_key.md`, `src/md/features/tpm_sealed_principal_keys.md`.
 
 Do not use: backup key, reset key, PIN, recovery password.
+
+### Authorization value
+
+An authorization value is the secret that a sealed object needs beside its policy: the TPM compares it at each unseal, counts each wrong one, and refuses each try for a time after too many.
+
+The keys of a named principal use it. The value is keyed BLAKE2b of the key that Argon2id derives from the passphrase, so a reader of the bus of the TPM still runs Argon2id for each guess. The policy of the object is `TPM2_PolicyPCR` then `TPM2_PolicyPassword`, and its attribute `noDA` is clear. A wrong value answers `TPM_RC_AUTH_FAIL`, which the TPM counted; after too many (three on the test machines), each try answers `TPM_RC_LOCKOUT`, and the window of `unlock` asks for the recovery key. The TPM service sends `TPM2_Shutdown` after each use that is not a counted failure, so a stop of the machine after a right passphrase counts no failure. The count limits the rate of the tries only while the lockout hierarchy of the TPM has an authorization value that the attacker does not know; modus sets none yet. The machine key has none.
+
+It is not the passphrase itself, and not a hash of it that is kept: nothing of it is on the disk.
+
+The design: `src/md/features/tpm_sealed_principal_keys.md`; `docs/PRINCIPALS.md`, "The keys sealed by the TPM".
+
+Do not use: PIN, password (for this), TPM password.
+
+### TPM secret
+
+The TPM secret is the 32 random bytes that the TPM seals for a named principal: with the key of the passphrase it gives the seal key of the secret keys of the principal.
+
+The seal key is keyed BLAKE2b of the TPM secret over the key of the passphrase. So the keys need the TPM, the measure of the system and the passphrase together, and a reader of the TPM secret still runs Argon2id for each guess. A new passphrase after a recovery gives a new TPM secret.
+
+It is not the machine key, and not a key of the principal: it signs and opens nothing alone.
+
+The design: `src/md/features/tpm_sealed_principal_keys.md`.
+
+Do not use: TPM key, sealed key (for this).
 
 ### Key check
 

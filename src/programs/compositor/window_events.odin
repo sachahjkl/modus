@@ -86,7 +86,7 @@ window_event_send :: proc "contextless" (client: ^Client, record: ring.Record) {
 	refused_before := queue.refused[class]
 	result: key_path.Put_Result
 	if class == .Pointer {
-		result = key_path.window_queue_put_pointer(queue, target, record, record.values[2])
+		result = key_path.window_queue_put_pointer(queue, target, record, record.values[2], i64(record.values[3]))
 	} else {
 		result = key_path.window_queue_put(queue, target, record, class)
 	}

@@ -537,13 +537,13 @@ site_search_rule_json :: proc() -> string {
 	// The braces of the object are added around the format: the format
 	// itself holds none.
 	return strings.concatenate({"{", fmt.tprintf(
-		"\"match\":%d,\"start\":%d,\"segment\":%d,\"sideBySide\":%d,\"gapOpen\":%d,\"gapByte\":%d,\"nameScanLimit\":%d,\"queryLimit\":%d,\"candidateScanLimit\":%d,\"rankedCapacity\":%d,\"rows\":%d,\"leastShare\":%d",
+		"\"match\":%d,\"start\":%d,\"segment\":%d,\"sideBySide\":%d,\"gapOpen\":%d,\"gapCharacter\":%d,\"nameScanLimit\":%d,\"queryLimit\":%d,\"candidateScanLimit\":%d,\"rankedCapacity\":%d,\"rows\":%d,\"leastShare\":%d",
 		line_editor.SCORE_MATCH,
 		line_editor.SCORE_START,
 		line_editor.SCORE_SEGMENT,
 		line_editor.SCORE_SIDE_BY_SIDE,
 		line_editor.SCORE_GAP_OPEN,
-		line_editor.SCORE_GAP_BYTE,
+		line_editor.SCORE_GAP_CHARACTER,
 		line_editor.NAME_SCAN_LIMIT,
 		line_editor.QUERY_LIMIT,
 		line_editor.CANDIDATE_SCAN_LIMIT,
@@ -734,14 +734,36 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by modustool si
 
   function lower(c) { return c >= 65 && c <= 90 ? c + 32 : c; }
 
-  // fuzzy_match: the query and the name are arrays of bytes.
-  function fuzzyMatch(query, name) {
-    if (query.length > RULE.queryLimit) return null;
-    if (query.length === 0) return { score: 0, places: [] };
-    const scanned = name.subarray(0, Math.min(name.length, RULE.nameScanLimit));
+  // characters: the whole characters of bytes of UTF-8, each as the number
+  // of its bytes, lowered when it is a letter of ASCII, with the place of
+  // its first byte. A character cut at the end is not read.
+  function characters(bytes) {
+    const list = [], starts = [];
+    let i = 0;
+    while (i < bytes.length) {
+      const first = bytes[i];
+      const length = first < 0xC0 ? 1 : first < 0xE0 ? 2 : first < 0xF0 ? 3 : 4;
+      if (i + length > bytes.length) break;
+      let value = 0;
+      for (let k = 0; k < length; k++) value = value * 256 + bytes[i + k];
+      list.push(lower(value));
+      starts.push(i);
+      i += length;
+    }
+    return { list: list, starts: starts };
+  }
+
+  // fuzzy_match: the query and the name are arrays of bytes of UTF-8; the
+  // match compares whole characters.
+  function fuzzyMatch(queryBytes, name) {
+    if (queryBytes.length > RULE.queryLimit) return null;
+    if (queryBytes.length === 0) return { score: 0, places: [] };
+    const scanned = characters(name.subarray(0, Math.min(name.length, RULE.nameScanLimit)));
+    const query = characters(queryBytes).list;
+    const text = scanned.list;
     let next = 0, end = -1;
-    for (let i = 0; i < scanned.length; i++) {
-      if (lower(scanned[i]) === lower(query[next])) {
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === query[next]) {
         next++;
         if (next === query.length) { end = i; break; }
       }
@@ -751,21 +773,21 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by modustool si
     const positions = new Array(query.length);
     let wanted = query.length - 1;
     for (let i = end; i >= 0 && wanted >= 0; i--) {
-      if (lower(scanned[i]) === lower(query[wanted])) { positions[wanted] = i; wanted--; }
+      if (text[i] === query[wanted]) { positions[wanted] = i; wanted--; }
     }
     let score = 0;
     for (let n = 0; n < query.length; n++) {
       const place = positions[n];
       score += RULE.match;
       if (place === 0) score += RULE.start;
-      else if (scanned[place - 1] === 46 || scanned[place - 1] === 95) score += RULE.segment;
+      else if (text[place - 1] === 46 || text[place - 1] === 95) score += RULE.segment;
       if (n > 0) {
         const gap = place - positions[n - 1] - 1;
         if (gap === 0) score += RULE.sideBySide;
-        else score -= RULE.gapOpen + (gap - 1) * RULE.gapByte;
+        else score -= RULE.gapOpen + (gap - 1) * RULE.gapCharacter;
       }
     }
-    return { score: score, places: positions };
+    return { score: score, places: positions.map(function (place) { return scanned.starts[place]; }) };
   }
 
   // ranked_before: the score, then the tie order, then the shorter name,

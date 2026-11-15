@@ -1,7 +1,8 @@
 // Text shaping as a module (docs/FONTS.md, section 12.3): each export calls
 // one function of src/library/support/text_shaping over tables in memory of the
 // caller. The spacing of the font is two tables of the caller: the
-// advances of the characters 32 to 126 and the pairs, of one scale of a
+// advances of the 191 characters of a glyph cache (ASCII 32 to 126, then
+// U+00A0 to U+00FF, by their character index) and the pairs, of one scale of a
 // glyph cache (text_shaping.spacing_of gives them from a cache). The
 // module holds no state of a program.
 //
@@ -20,7 +21,7 @@
 //
 // **The units**: each position and width is in 1/64 of a pixel.
 //
-// **What it does not do**: no glyph outside 32 to 126 (each other
+// **What it does not do**: no glyph outside 32 to 126 and U+00A0 to U+00FF (each other
 // character of the UTF-8 text, and each invalid sequence, is the replacement glyph),
 // no ligature, no direction other than left to right.
 package text_shaping_module
@@ -36,7 +37,7 @@ import shaping "modus:support/text_shaping"
 TABLE_LIMIT :: u64(1) << 40
 
 // spacing_of_tables makes the spacing of the package over the two tables.
-// It gives an error record for advances that are not 95 records (argument
+// It gives an error record for advances that are not 191 records (argument
 // 1) or more pairs than glyph_cache.PAIR_LIMIT (argument 2).
 @(private)
 spacing_of_tables :: proc "contextless" (advances: ^system.Table_To_Read(shaping.Character_Advance), pairs: ^system.Table_To_Read(glyph_cache.Pair_Entry), spacing: ^shaping.Spacing, error: ^errors.Error_Record) -> bool {
@@ -53,7 +54,7 @@ spacing_of_tables :: proc "contextless" (advances: ^system.Table_To_Read(shaping
 	return true
 }
 
-// shape_text appends the placed glyphs of a UTF-8 text: one for each character, x from the origin of the text and the advance with the pair adjustment, in 1/64 of a pixel, and the first byte of the character as its cluster. A character outside 32 to 126 and each invalid sequence (a control character, or a broken sequence of UTF-8) is one replacement glyph (glyph 4294967295), with the advance of "0": a caller that indexes a cache with a glyph checks its range first. The result is the count of placed glyphs of the full answer (larger than the capacity: it did not fit), or -1 with an error record: advances that are not 95 records (argument 1), more than 9025 pairs (argument 2), a text of more than 65536 bytes (argument 3), a table of placed glyphs over 2^40 records (argument 4).
+// shape_text appends the placed glyphs of a UTF-8 text: one for each character, x from the origin of the text and the advance with the pair adjustment, in 1/64 of a pixel, and the first byte of the character as its cluster. The glyph is the character index: 0 to 94 for 32 to 126, 95 to 190 for U+00A0 to U+00FF. Another character and each invalid sequence (a control character, or a broken sequence of UTF-8) is one replacement glyph (glyph 4294967295), with the advance of "0": a caller that indexes a cache with a glyph checks its range first. The result is the count of placed glyphs of the full answer (larger than the capacity: it did not fit), or -1 with an error record: advances that are not 191 records (argument 1), more than 36481 pairs (argument 2), a text of more than 65536 bytes (argument 3), a table of placed glyphs over 2^40 records (argument 4).
 @(export, link_name = "shape_text")
 shape_text :: proc "c" (advances: ^system.Table_To_Read(shaping.Character_Advance), pairs: ^system.Table_To_Read(glyph_cache.Pair_Entry), text: ^system.Bytes_To_Read, placed: ^system.Table_To_Append(shaping.Placed_Glyph), error: ^errors.Error_Record) -> i64 {
 	spacing: shaping.Spacing

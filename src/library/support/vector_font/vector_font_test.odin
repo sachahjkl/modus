@@ -203,8 +203,13 @@ golden_glyph_cache :: proc(t: ^testing.T) {
 	hashes: [3]u64
 	for size_entry, index in cache.sizes {
 		hash: u64 = 0xCBF2_9CE4_8422_2325
-		for glyph in cache.glyphs[size_entry.first_glyph:][:cache.header.character_count] {
+		for glyph, character_index in cache.glyphs[size_entry.first_glyph:][:cache.header.character_count] {
 			testing.expect(t, glyph.left == 0 && glyph.width == size_entry.cell_width) // A monospace cache: each glyph is its cell.
+			// The hash holds the glyphs of ASCII: the renderer draws them
+			// as before the Latin-1 Supplement came into the cache.
+			if character_index >= glyph_cache.ASCII_COUNT {
+				continue
+			}
 			words := cache.words[glyph.word_offset:][:int(glyph.row_count) * int(glyph.width)]
 			hash = (hash ~ u64(glyph.first_row) << 16 ~ u64(glyph.row_count)) * 0x0000_0100_0000_01B3
 			for word in words {
@@ -251,7 +256,8 @@ damaged_glyph_cache :: proc(t: ^testing.T) {
 		{0, 0x00, .Bad_Magic},
 		{8, 9, .Bad_Version},
 		{16, 1, .Bad_Size},
-		{28, 96, .Bad_Count}, // character_count
+		{int(offset_of(glyph_cache.Header, character_count)), glyph_cache.CHARACTER_COUNT - 1, .Bad_Count}, // one character fewer than the contract fixes
+		{int(offset_of(glyph_cache.Header, reserved_first)), 32, .Bad_Count}, // the first character of an older version
 		{32, 4, .Bad_Count}, // size_count
 		{40, 8, .Bad_Words}, // word_offset
 		{glyph_cache.HEADER_SIZE, 9, .Bad_Cell}, // the width of scale 1
@@ -264,7 +270,7 @@ damaged_glyph_cache :: proc(t: ^testing.T) {
 		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 8, 0xFF, .Bad_Glyph}, // a left side of 255
 		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 10, 9, .Bad_Glyph}, // a width of 9 in a cell of 8
 		{glyph_cache.HEADER_SIZE + 6, 3, .Bad_Count}, // three positions
-		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 3 * 95 * glyph_cache.GLYPH_ENTRY_SIZE, 0x01, .Bad_Advance}, // an advance of 513 in a cell of 8
+		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 3 * glyph_cache.CHARACTER_COUNT * glyph_cache.GLYPH_ENTRY_SIZE, 0x01, .Bad_Advance}, // an advance of 513 in a cell of 8
 		{120, 1, .Bad_Count}, // a pair
 		// The flags and the name.
 		{36, 0x04, .Bad_Flags}, // a flag that no reader knows
