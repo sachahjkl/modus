@@ -4,7 +4,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **Every program that draws imports the drawing module.** The programs that draw a picture, the terminal and the compositor use the drawing module, as 23 programs do today. The code of the drawing is then loaded one time, and one correction reaches every program. [Design](src/md/api/library_modules.md)
+- **The terminal and the compositor import the drawing module.** The terminal, whose text grid needs the cells of two frames for its damage, and the compositor, which shows the surfaces of other programs as pictures, use the drawing module, as 32 programs do today. The code of the drawing is then loaded one time, and one correction reaches every program. [Design](src/md/api/picture.md)
 
 ## Next
 

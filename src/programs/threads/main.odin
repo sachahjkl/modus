@@ -73,6 +73,9 @@ workers: [WORKER_COUNT]Worker
 // again.
 square_pixels: [WORKER_COUNT][SQUARE * SQUARE]graphics.Color
 square_pictures: [WORKER_COUNT]graphics.Canvas
+// The one picture memory of the draw tables: the pixels of the four
+// squares follow each other, so the drawing module reads each square there.
+picture_memories: [1][]graphics.Color
 records_now, records_before: [64]interface.Draw_Record
 text_now, text_before: [512]u8
 drawing: interface.Window_Drawing
@@ -175,8 +178,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 
-	drawing.now.pictures = square_pictures[:]
-	drawing.before.pictures = square_pictures[:]
+	picture_memories[0] = ([^]graphics.Color)(&square_pixels[0][0])[:WORKER_COUNT * SQUARE * SQUARE]
+	drawing.now.picture_memories = picture_memories[:]
+	drawing.before.picture_memories = picture_memories[:]
 	ready := false
 	for {
 		for event in display.next_event(&window) {
@@ -203,7 +207,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// The thread writes frames after a whole square: one read, so
 			// the generation and the label say the same count.
 			frames := intrinsics.volatile_load(&worker.frames)
-			interface.draw_picture(table, x, y, index, u32(frames))
+			interface.draw_picture(table, x, y, square_pictures[index], u32(frames))
 			y += SQUARE
 			after := interface.draw_text(table, x, y + 3, "thread ", graphics.COLOR_TEXT)
 			after = interface.draw_unsigned(table, after, y + 3, u64(index + 1), graphics.COLOR_TEXT)

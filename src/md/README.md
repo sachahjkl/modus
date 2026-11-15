@@ -81,6 +81,7 @@ The intent of the parts that were built before this folder is in other documents
 ## File Index
 
 - [api/library_modules.md](api/library_modules.md): which shared library becomes a module that programs import, where the border goes, and why there is no second kind of import
+- [api/picture.md](api/picture.md): how a Picture record names its pixels with values in a picture memory that the caller passes, why the draw export takes one rectangle for each call, and the forms that were refused: a table of places, lent memory objects, one span of addresses
 - [features/debugger_window.md](features/debugger_window.md): why the window of the debugger is a client of the service with no right over a program, and how it reads the rows of the exports
 - [features/foreign_systems.md](features/foreign_systems.md): why a foreign system runs whole inside a guest, and the forms of a Linux and an NT layer that were refused
 - [features/gpu_access.md](features/gpu_access.md): the access to a GPU through a driver domain and one serialization of commands, and the forms that were refused

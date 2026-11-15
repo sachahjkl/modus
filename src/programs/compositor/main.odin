@@ -1159,14 +1159,18 @@ loop_copy :: proc "contextless" (to, from: [^]u8, count: int) {
 // area. The palette has its own table; the pointer is drawn after both.
 screen_records: [512]interface.Draw_Record
 screen_text: [8192]u8
-screen_pictures: [CLIENT_CAPACITY + 1]graphics.Canvas // The surfaces, then the heron of the bar.
+// The picture memories of the screen: the picture of each surface that a
+// window shows, then the heron of the bar. Each surface is a memory object
+// of another program, mapped at its own address, so each picture has a
+// picture memory of its own.
+screen_picture_memories: [CLIENT_CAPACITY + 1][]graphics.Color
 screen_table := interface.Draw_Table{}
 
 // The heron of the bar (docs/DESIGN.md, "The mark"). Its gradients are
 // computed once, at the start, into this picture; each frame shows it with
 // a Picture record, a copy of 24 rows. Its generation never changes, so the
 // difference of two frames never finds it changed.
-BAR_MARK_PICTURE :: CLIENT_CAPACITY // Its index in screen_pictures.
+BAR_MARK_PICTURE :: CLIENT_CAPACITY // Its index in screen_picture_memories.
 BAR_MARK_GENERATION :: 1
 bar_mark_pixels: [bar.MARK_SIZE * bar.MARK_SIZE]graphics.Color
 bar_mark_picture: graphics.Canvas
@@ -1197,7 +1201,10 @@ bar_mark_build :: proc "contextless" () {
 // interface font of the names, or nil for the font of the cells (the
 // measure of bar_measure compares the two).
 screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface_Font) {
-	screen_table = {records = screen_records[:], text = screen_text[:], pictures = screen_pictures[:], interface_font = interface_font}
+	// A memory of a window that closed is never named again: a new
+	// mapping can have its address.
+	screen_picture_memories = {}
+	screen_table = {records = screen_records[:], text = screen_text[:], picture_memories = screen_picture_memories[:], interface_font = interface_font}
 	table := &screen_table
 	pointer_close := close_button_under_pointer()
 	for position in 0 ..< order_count {
@@ -1208,8 +1215,8 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		// before the first Present, the program draws in the memory of
 		// the surface, and the window has the background color.
 		if client.presents > 0 {
-			screen_pictures[position] = client.surface
-			interface.draw_picture(table, client.x + BORDER, client.y + TITLE_HEIGHT, position, 0)
+			screen_picture_memories[position] = client.surface.pixels[:client.surface.stride * client.surface.height]
+			interface.draw_picture(table, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface, 0)
 		} else {
 			interface.draw_rectangle(table, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height, graphics.COLOR_BACKGROUND)
 		}
@@ -1219,8 +1226,8 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	// of day (the time since boot when the system has no date).
 	width := frame.width
 	bar_background_records(table, width)
-	screen_pictures[BAR_MARK_PICTURE] = bar_mark_picture
-	interface.draw_picture(table, bar.MARK_X, bar.MARK_Y, BAR_MARK_PICTURE, BAR_MARK_GENERATION)
+	screen_picture_memories[BAR_MARK_PICTURE] = bar_mark_pixels[:]
+	interface.draw_picture(table, bar.MARK_X, bar.MARK_Y, bar_mark_picture, BAR_MARK_GENERATION)
 	bar_button_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, label: string, open: bool) {
 		interface.draw_rectangle(table, x, y, width, height, open ? graphics.COLOR_CHOSEN : graphics.COLOR_TRACK)
 		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)

@@ -65,7 +65,8 @@ The last row is a bundle with no table of what it holds yet. A fault in the text
 
 ## What is left, and what blocks it
 
-- **The Picture.** A Picture record names a canvas by its index in a list of addresses. A description cannot carry addresses. The form of a Picture in a description (offsets into one range of bytes, or lent memory objects) is a change of the contract with a design of its own. The programs that draw pictures, the terminal and the compositor wait for it.
+- **The Picture: done.** A Picture record names its pixels by values in a picture memory that the caller passes as bytes, so the programs that show a picture draw through the module. See [picture.md](picture.md).
+- **The terminal and the compositor.** A Text_Grid record names its cells by an address, and the damage of a grid needs the cells of two frames: two more parameters than an export has. The pictures of the compositor are the surfaces of other programs, one picture memory for each, and an export takes one. See [picture.md](picture.md), "What is built and what is left".
 - **The cell text** of the programs that draw text themselves: one more export of the drawing module, for one run of cells, not for one glyph. Count the calls of a full terminal first.
 - **The error sentences**: a record in, a text out, a cold path.
 - **The network libraries**: two users each. The gain is the graph and the replacement of a protocol stack, not the bytes.

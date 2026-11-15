@@ -46,7 +46,10 @@ strip: [PORTRAIT_HEIGHT][3]i32 // One column of the portrait, as red, green, blu
 // The window is one picture of this program, shown with the interface
 // package (a Picture record): the scene draws into it.
 picture_pixels: [WIDTH * HEIGHT]graphics.Color
-pictures: [1]graphics.Canvas
+picture: graphics.Canvas
+// The one picture memory of the draw table: the drawing module reads the
+// picture there.
+picture_memories: [1][]graphics.Color
 records_now, records_before: [2]interface.Draw_Record
 drawing: interface.Window_Drawing
 
@@ -64,8 +67,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	prepare()
-	pictures[0] = {pixels = raw_data(picture_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
-	drawing = interface.window_drawing_of_picture(records_now[:], records_before[:], pictures[:])
+	picture = {pixels = raw_data(picture_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	picture_memories[0] = picture_pixels[:]
+	drawing = interface.window_drawing_of_picture(records_now[:], records_before[:], picture_memories[:])
 
 	start := system.time()
 	next := start
@@ -75,10 +79,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		elapsed := now - start
 		// The first frame shows the portrait a little before it faces the viewer.
 		turn := f32((elapsed + TURN_TIME - TURN_TIME / 16) % TURN_TIME) / TURN_TIME
-		draw_light(pictures[0], int(elapsed / RAY_TIME))
-		draw_temple(pictures[0])
-		draw_portrait(pictures[0], turn)
-		interface.show_picture(&drawing, &window, u32(frame) + 1)
+		draw_light(picture, int(elapsed / RAY_TIME))
+		draw_temple(picture)
+		draw_portrait(picture, turn)
+		interface.show_picture(&drawing, &window, picture, u32(frame) + 1)
 		if frame == 0 {
 			system.log("temple: ok")
 		}

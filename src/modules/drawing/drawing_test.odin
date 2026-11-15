@@ -30,7 +30,8 @@ text_to_read :: proc(table: ^interface.Draw_Table) -> system.Bytes_To_Read {
 }
 
 // A canvas whose stride times its height wraps, as a hostile caller gives
-// it: the export refuses it with its error record, and draws nothing.
+// it: the export refuses it with its error record, and draws nothing. So
+// does a picture memory at an address that is not a multiple of 4.
 @(test)
 canvas_shape_that_wraps_is_refused :: proc(t: ^testing.T) {
 	sync.mutex_lock(&draw_lock)
@@ -39,30 +40,36 @@ canvas_shape_that_wraps_is_refused :: proc(t: ^testing.T) {
 	records := [1]interface.Draw_Record{{kind = .Rectangle, x = 0, y = 0, width = 1, height = 4, first_color = 0xFFFFFF}}
 	now := system.Table_To_Read(interface.Draw_Record){records = &records[0], count = 1, capacity = 1}
 	text := system.Bytes_To_Read{}
-	rectangles := [1]Damage_Rectangle{{0, 0, 1, 4}}
-	damage := system.Table_To_Read(Damage_Rectangle){records = &rectangles[0], count = 1, capacity = 1}
+	no_pictures := system.Bytes_To_Read{}
 	bytes := system.Bytes_To_Change{bytes = ([^]u8)(&pixels[0]), count = size_of(pixels), capacity = size_of(pixels)}
 	refused: errors.Error_Record
-	shape := Canvas_Shape{width = 1, height = 4, stride = (1 << 62) + 1}
-	testing.expect_value(t, execute_draw_table_7(&now, &text, &damage, &bytes, &shape, &refused), -1)
+	area := Canvas_Rectangle{width = 1, height = 4, stride = (1 << 62) + 1, right = 1, bottom = 4}
+	testing.expect_value(t, execute_draw_table_8(&now, &text, &no_pictures, &bytes, &area, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Too_Small))
 	testing.expect_value(t, refused.argument, 4)
-	shape = {width = 1, height = 0, stride = 1}
-	testing.expect_value(t, execute_draw_table_7(&now, &text, &damage, &bytes, &shape, &refused), -1)
+	area = {width = 1, height = 0, stride = 1, right = 1, bottom = 4}
+	testing.expect_value(t, execute_draw_table_8(&now, &text, &no_pictures, &bytes, &area, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Value))
 	testing.expect_value(t, refused.argument, 5)
-	shape = {width = 4, height = 4, stride = 1}
-	testing.expect_value(t, execute_draw_table_7(&now, &text, &damage, &bytes, &shape, &refused), -1)
+	area = {width = 4, height = 4, stride = 1, right = 1, bottom = 4}
+	testing.expect_value(t, execute_draw_table_8(&now, &text, &no_pictures, &bytes, &area, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Value))
 	testing.expect(t, pixels == [16]u32{}, "a refused call draws nothing")
 	// An address of the pixels that is not a multiple of 4.
 	shifted := system.Bytes_To_Change{bytes = ([^]u8)(&pixels[0])[1:], count = 16, capacity = 16}
-	shape = {width = 1, height = 4, stride = 1}
-	testing.expect_value(t, execute_draw_table_7(&now, &text, &damage, &shifted, &shape, &refused), -1)
+	area = {width = 1, height = 4, stride = 1, right = 1, bottom = 4}
+	testing.expect_value(t, execute_draw_table_8(&now, &text, &no_pictures, &shifted, &area, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Address))
-	// A good shape, and no error record asked.
-	shape = {width = 1, height = 4, stride = 4}
-	testing.expect_value(t, execute_draw_table_7(&now, &text, &damage, &bytes, &shape, nil), 1)
+	testing.expect_value(t, refused.argument, 4)
+	// An address of the picture memory that is not a multiple of 4.
+	shifted_pictures := system.Bytes_To_Read{bytes = ([^]u8)(&pixels[0])[1:], count = 16, capacity = 16}
+	area = {width = 1, height = 4, stride = 4, right = 1, bottom = 4}
+	testing.expect_value(t, execute_draw_table_8(&now, &text, &shifted_pictures, &bytes, &area, &refused), -1)
+	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Address))
+	testing.expect_value(t, refused.argument, 3)
+	testing.expect(t, pixels == [16]u32{}, "a refused call draws nothing")
+	// A good area, and no error record asked.
+	testing.expect_value(t, execute_draw_table_8(&now, &text, &no_pictures, &bytes, &area, nil), 0)
 	testing.expect_value(t, pixels[4], 0xFFFFFF)
 }
 
@@ -81,21 +88,21 @@ hostile_records_are_refused :: proc(t: ^testing.T) {
 	buffer: [8]Damage_Rectangle
 	result := buffer[:]
 	refused: errors.Error_Record
-	testing.expect_value(t, damage_of_draw_table_7(&before, &text, &now, &text, &result, &refused), 1)
+	testing.expect_value(t, damage_of_draw_table_8(&before, &text, &now, &text, &result, &refused), 1)
 	testing.expect_value(t, buffer[0], Damage_Rectangle{8, 0, 16, 16})
 	testing.expect_value(t, refused.kind, 0)
 	// A buffer of no rectangle: the count of the full table, and no write.
 	none := buffer[:0]
 	buffer[0] = {}
-	testing.expect_value(t, damage_of_draw_table_7(&before, &text, &now, &text, &none, &refused), 1)
+	testing.expect_value(t, damage_of_draw_table_8(&before, &text, &now, &text, &none, &refused), 1)
 	testing.expect_value(t, buffer[0], Damage_Rectangle{})
 	now.count = 1 << 41
-	testing.expect_value(t, damage_of_draw_table_7(&before, &text, &now, &text, &result, &refused), -1)
+	testing.expect_value(t, damage_of_draw_table_8(&before, &text, &now, &text, &result, &refused), -1)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Too_Long))
 	testing.expect_value(t, refused.argument, 3)
 	now.count = 1
 	long_text := system.Bytes_To_Read{bytes = &text_bytes[0], count = 1 << 41, capacity = 4}
-	testing.expect_value(t, damage_of_draw_table_7(&before, &long_text, &now, &text, &result, &refused), -1)
+	testing.expect_value(t, damage_of_draw_table_8(&before, &long_text, &now, &text, &result, &refused), -1)
 	testing.expect_value(t, refused.argument, 2)
 }
 
@@ -119,56 +126,77 @@ hostile_interface_text_records :: proc(t: ^testing.T) {
 	}
 	pixels: [64 * 16]u32
 	bytes := system.Bytes_To_Change{bytes = ([^]u8)(&pixels[0]), count = size_of(pixels), capacity = size_of(pixels)}
-	shape := Canvas_Shape{width = 64, height = 16, stride = 64}
-	rectangles := [1]Damage_Rectangle{{0, 0, 64, 16}}
-	damage := system.Table_To_Read(Damage_Rectangle){records = &rectangles[0], count = 1, capacity = 1}
+	area := Canvas_Rectangle{width = 64, height = 16, stride = 64, right = 64, bottom = 16}
+	no_pictures := system.Bytes_To_Read{}
 	for record, index in hostile {
 		records := [1]interface.Draw_Record{record}
 		now := system.Table_To_Read(interface.Draw_Record){records = &records[0], count = 1, capacity = 1}
 		pixels = {}
-		testing.expect_value(t, execute_draw_table_7(&now, &text, &damage, &bytes, &shape, nil), 1)
+		testing.expect_value(t, execute_draw_table_8(&now, &text, &no_pictures, &bytes, &area, nil), 0)
 		testing.expectf(t, pixels == [64 * 16]u32{}, "the hostile record %v draws", index)
 		if index == 0 {
 			buffer: [8]Damage_Rectangle
 			result := buffer[:]
-			testing.expect_value(t, damage_of_draw_table_7(&now, &text, &now, &text, &result, nil), 1)
+			testing.expect_value(t, damage_of_draw_table_8(&now, &text, &now, &text, &result, nil), 1)
 		}
 	}
 	good_records := [1]interface.Draw_Record{good}
 	good_table := system.Table_To_Read(interface.Draw_Record){records = &good_records[0], count = 1, capacity = 1}
-	testing.expect_value(t, execute_draw_table_7(&good_table, &text, &damage, &bytes, &shape, nil), 1)
+	testing.expect_value(t, execute_draw_table_8(&good_table, &text, &no_pictures, &bytes, &area, nil), 0)
 	testing.expect(t, pixels != [64 * 16]u32{}, "the good record draws")
 }
 
-// The fill of the shape: with it, a rectangle with no record is the
-// background; without it, the pixels stay. A Picture record and a
-// Text_Grid record draw nothing: the module has no picture and no grid.
+// The fill of the area: with it, a rectangle with no record is the
+// background; without it, the pixels stay. A Text_Grid record draws
+// nothing: the module has no grid. A Picture record draws the pixels of
+// the picture memory of the call, and nothing when it names a pixel past
+// that memory or a picture memory other than 0, as a hostile caller can
+// write it.
 @(test)
-fill_of_the_background_and_records_with_an_address :: proc(t: ^testing.T) {
+fill_of_the_background_pictures_and_grids :: proc(t: ^testing.T) {
 	sync.mutex_lock(&draw_lock)
 	defer sync.mutex_unlock(&draw_lock)
 	pixels: [8 * 8]u32
 	for &pixel in pixels {
 		pixel = 0x123456
 	}
-	records := [2]interface.Draw_Record{{kind = .Picture, width = 8, height = 8}, {kind = .Text_Grid, width = 8, height = 8}}
-	now := system.Table_To_Read(interface.Draw_Record){records = &records[0], count = 2, capacity = 2}
+	hostile := [3]interface.Draw_Record {
+		{kind = .Picture, width = 8, height = 8, second_color = 8, text_start = 1},
+		{kind = .Picture, kind_detail = 1, width = 8, height = 8, second_color = 8},
+		{kind = .Picture, width = 8, height = 8, second_color = max(u32), text_start = max(u32)},
+	}
+	records := [4]interface.Draw_Record{hostile[0], hostile[1], hostile[2], {kind = .Text_Grid, width = 8, height = 8}}
+	now := system.Table_To_Read(interface.Draw_Record){records = &records[0], count = 4, capacity = 4}
 	text := system.Bytes_To_Read{}
-	rectangles := [1]Damage_Rectangle{{2, 2, 6, 6}}
-	damage := system.Table_To_Read(Damage_Rectangle){records = &rectangles[0], count = 1, capacity = 1}
+	picture_pixels: [8 * 8]u32
+	for &pixel, index in picture_pixels {
+		pixel = u32(index) + 1
+	}
+	picture_memory := system.Bytes_To_Read{bytes = ([^]u8)(&picture_pixels[0]), count = size_of(picture_pixels), capacity = size_of(picture_pixels)}
 	bytes := system.Bytes_To_Change{bytes = ([^]u8)(&pixels[0]), count = size_of(pixels), capacity = size_of(pixels)}
-	shape := Canvas_Shape{width = 8, height = 8, stride = 8}
-	testing.expect_value(t, execute_draw_table_7(&now, &text, &damage, &bytes, &shape, nil), 1)
+	area := Canvas_Rectangle{width = 8, height = 8, stride = 8, left = 2, top = 2, right = 6, bottom = 6}
+	testing.expect_value(t, execute_draw_table_8(&now, &text, &picture_memory, &bytes, &area, nil), 0)
 	for pixel in pixels {
 		testing.expect_value(t, pixel, 0x123456)
 	}
-	shape.fill_background, shape.background = 1, 0xABCDEF
-	testing.expect_value(t, execute_draw_table_7(&now, &text, &damage, &bytes, &shape, nil), 1)
+	area.fill_background, area.background = 1, 0xABCDEF
+	testing.expect_value(t, execute_draw_table_8(&now, &text, &picture_memory, &bytes, &area, nil), 0)
 	for pixel, index in pixels {
 		x, y := index % 8, index / 8
 		expected: u32 = 0x123456
 		if x >= 2 && x < 6 && y >= 2 && y < 6 {
 			expected = 0xABCDEF
+		}
+		testing.expect_value(t, pixel, expected)
+	}
+	// The good picture: the whole memory, in the rectangle of the area.
+	records[0] = {kind = .Picture, width = 8, height = 8, second_color = 8, text_count = 1}
+	testing.expect_value(t, execute_draw_table_8(&now, &text, &picture_memory, &bytes, &area, nil), 0)
+	for pixel, index in pixels {
+		x, y := index % 8, index / 8
+		expected: u32 = 0x123456
+		if x >= 2 && x < 6 && y >= 2 && y < 6 {
+			expected = u32(index) + 1
 		}
 		testing.expect_value(t, pixel, expected)
 	}
@@ -194,9 +222,20 @@ PROOF_STRIDE :: PROOF_WIDTH + 3
 PROOF_SEEDS :: 24
 // The parts of a frame of build_proof_frame that a change can name.
 @(private = "file")
-PROOF_PARTS :: 32
+PROOF_PARTS :: 35
 @(private = "file")
 GUARD_PIXEL :: 0xA5A5A5A5
+
+// The picture memory of the frames of the proof: a pattern that differs at
+// each pixel, so a picture at a wrong place or with a wrong stride shows.
+@(private = "file")
+PROOF_PICTURE_WIDTH :: 64
+@(private = "file")
+PROOF_PICTURE_HEIGHT :: 32
+@(private = "file")
+proof_picture_pixels: [PROOF_PICTURE_WIDTH * PROOF_PICTURE_HEIGHT]graphics.Color
+@(private = "file")
+proof_picture_memories: [1][]graphics.Color
 
 @(private = "file")
 Proof_Tables :: struct {
@@ -237,11 +276,13 @@ color :: proc(list: []graphics.Color, generator: ^u32, place: ^int, part_changed
 
 // One frame with a record of each kind that the module draws: the
 // elements of a window (a background with its grid of points, a card, a
-// name with its value, a band, a cell, a bar, a large number), the two
-// gradients, a folded gap, a line at an angle, an outline, a clip around
-// two texts, the text of the cells at the three scales and in bold, and
-// the text of the interface font at a third of a pixel, to the right, bold
-// and at scale 2. The part `changed` differs from the frame with no change.
+// name with its value, a band, a cell, a bar, a large number), two
+// pictures of one picture memory (the whole width of a part, and a part
+// with a stride larger than its width), the two gradients, a folded gap, a
+// line at an angle, an outline, a clip around two texts, the text of the
+// cells at the three scales and in bold, and the text of the interface
+// font at a third of a pixel, to the right, bold and at scale 2. The part
+// `changed` differs from the frame with no change.
 @(private = "file")
 build_proof_frame :: proc(table: ^interface.Draw_Table, seed: u32, changed: int) {
 	words := [?]string{"To", "LT", "Ty", "settings", "AVATAR", "Wave", "palette", "jj", "fill", "rings", "0O 1lI", "Monitor", "the clock", "W", "i", "{0}%e", "12:34:56"}
@@ -253,6 +294,9 @@ build_proof_frame :: proc(table: ^interface.Draw_Table, seed: u32, changed: int)
 	input: interface.Input
 	frame := interface.Frame{table = table, state = &interface_state, input = &input}
 	interface.background(&frame, {0, 0, PROOF_WIDTH, PROOF_HEIGHT})
+	memory := graphics.Canvas{pixels = raw_data(proof_picture_pixels[:]), width = PROOF_PICTURE_WIDTH, height = PROOF_PICTURE_HEIGHT, stride = PROOF_PICTURE_WIDTH}
+	interface.draw_picture(table, 8, 214, graphics.view(memory, 0, 0, 40, 20), u32(pick(&state, &part, changed) % 3))
+	interface.draw_picture(table, 52, 212, graphics.view(memory, pick(&state, &part, changed) % 16, pick(&state, &part, changed) % 8, 24, 20), 1)
 	title := word(words[:], &state, &part, changed)
 	caption := word(words[:], &state, &part, changed)
 	content := interface.card(&frame, {8, 8, 236, 124}, title, caption, color(colors[:], &state, &part, changed))
@@ -362,17 +406,24 @@ first_difference :: proc(first, second: []u32) -> int {
 }
 
 // draw_through_the_exports draws rectangles of a table through the export,
-// with the fill of the background, as the window layer of the interface
+// one call for each rectangle, with the fill of the background and the one
+// picture memory of the table, as the window layer of the interface
 // package calls it.
 @(private = "file")
 draw_through_the_exports :: proc(t: ^testing.T, table: ^interface.Draw_Table, pixels: []u32, rectangles: []Damage_Rectangle) {
 	now, now_text := records_to_read(table), text_to_read(table)
-	places := system.Table_To_Read(Damage_Rectangle){records = raw_data(rectangles), count = u64(len(rectangles)), capacity = u64(len(rectangles))}
+	picture_memory: system.Bytes_To_Read
+	if len(table.picture_memories) == 1 {
+		size := u64(len(table.picture_memories[0]) * size_of(graphics.Color))
+		picture_memory = {bytes = ([^]u8)(raw_data(table.picture_memories[0])), count = size, capacity = size}
+	}
 	bytes := system.Bytes_To_Change{bytes = ([^]u8)(raw_data(pixels)), count = u64(len(pixels) * size_of(u32)), capacity = u64(len(pixels) * size_of(u32))}
-	shape := Canvas_Shape{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_STRIDE, fill_background = 1, background = i64(graphics.COLOR_BACKGROUND)}
-	refused: errors.Error_Record
-	testing.expect_value(t, execute_draw_table_7(&now, &now_text, &places, &bytes, &shape, &refused), i64(len(rectangles)))
-	testing.expect_value(t, refused.kind, 0)
+	for rectangle in rectangles {
+		area := Canvas_Rectangle{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_STRIDE, fill_background = 1, background = i64(graphics.COLOR_BACKGROUND), left = rectangle.left, top = rectangle.top, right = rectangle.right, bottom = rectangle.bottom}
+		refused: errors.Error_Record
+		testing.expect_value(t, execute_draw_table_8(&now, &now_text, &picture_memory, &bytes, &area, &refused), 0)
+		testing.expect_value(t, refused.kind, 0)
+	}
 }
 
 @(test)
@@ -412,7 +463,11 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 	defer delete(package_pixels)
 	defer delete(export_pixels)
 	package_canvas := graphics.Canvas{pixels = raw_data(package_pixels), width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_STRIDE}
-	frames, damage_rectangles, text_records := 0, 0, 0
+	for &pixel, index in proof_picture_pixels {
+		pixel = graphics.Color(u32(index) * 0x010307 + 0x204060)
+	}
+	proof_picture_memories[0] = proof_picture_pixels[:]
+	frames, damage_rectangles, text_records, picture_records := 0, 0, 0, 0
 	for configuration in configurations {
 		graphics.text_choice_set(configuration.font, configuration.order)
 		// The module reads the interface font of the program in its own
@@ -423,8 +478,8 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 			font_of_tables = &fonts.interface_font
 		}
 		for seed in 0 ..< u32(PROOF_SEEDS) {
-			before := interface.Draw_Table{records = before_memory.records[:], text = before_memory.text[:], interface_font = font_of_tables}
-			now := interface.Draw_Table{records = now_memory.records[:], text = now_memory.text[:], interface_font = font_of_tables}
+			before := interface.Draw_Table{records = before_memory.records[:], text = before_memory.text[:], picture_memories = proof_picture_memories[:], interface_font = font_of_tables}
+			now := interface.Draw_Table{records = now_memory.records[:], text = now_memory.text[:], picture_memories = proof_picture_memories[:], interface_font = font_of_tables}
 			build_proof_frame(&before, seed * 7919 + 1, -1)
 			build_proof_frame(&now, seed * 7919 + 1, int(seed) % PROOF_PARTS)
 			if !testing.expectf(t, !before.full && !before.refused && !now.full && !now.refused, "%s, seed %v: a frame did not fit its tables", configuration.name, seed) {
@@ -432,6 +487,7 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 			}
 			for record in now.records[:now.record_count] {
 				text_records += int(interface.is_text_kind(record.kind))
+				picture_records += int(record.kind == .Picture)
 			}
 			for &pixel, index in package_pixels {
 				pixel = GUARD_PIXEL
@@ -453,7 +509,7 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 			before_records, before_text := records_to_read(&before), text_to_read(&before)
 			now_records, now_text := records_to_read(&now), text_to_read(&now)
 			refused: errors.Error_Record
-			count := damage_of_draw_table_7(&before_records, &before_text, &now_records, &now_text, &buffer, &refused)
+			count := damage_of_draw_table_8(&before_records, &before_text, &now_records, &now_text, &buffer, &refused)
 			if !testing.expect_value(t, count, i64(package_damage.count)) {
 				return
 			}
@@ -486,5 +542,6 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 	// proof over empty frames proves nothing.
 	testing.expect(t, damage_rectangles > 0, "no frame had damage")
 	testing.expect(t, text_records > 0, "no frame had text")
-	log.infof("the exports and the package drew the same bytes: %v frames of %v x %v pixels in %v font states, %v damage rectangles, %v text records", frames, PROOF_WIDTH, PROOF_HEIGHT, len(configurations), damage_rectangles, text_records)
+	testing.expect(t, picture_records > 0, "no frame had a picture")
+	log.infof("the exports and the package drew the same bytes: %v frames of %v x %v pixels in %v font states, %v damage rectangles, %v text records, %v picture records", frames, PROOF_WIDTH, PROOF_HEIGHT, len(configurations), damage_rectangles, text_records, picture_records)
 }

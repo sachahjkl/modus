@@ -194,6 +194,9 @@ form_drawn: mark.Form_Cells // The cells of the form that the form picture shows
 frame_cells: mark.Heron_Cells // The cells of the frame on the stage.
 tile_generations: [TILE_COUNT]u32
 pictures: [TILE_COUNT]graphics.Canvas
+// The one picture memory of the draw tables: each tile is a part of the
+// stage, so the drawing module reads each tile there.
+picture_memories: [1][]graphics.Color
 
 // What the stage shows: a picture of the heron draws the stage again only
 // when one of these changed.
@@ -859,8 +862,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		picture = graphics.view(stage, index % TILE_COLUMNS * TILE, index / TILE_COLUMNS * TILE, TILE, TILE)
 	}
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	drawing.now.pictures = pictures[:]
-	drawing.before.pictures = pictures[:]
+	picture_memories[0] = stage_pixels[:]
+	drawing.now.picture_memories = picture_memories[:]
+	drawing.before.picture_memories = picture_memories[:]
 	order_memory = mark.ORDER_MEMORY_EMPTY
 	still_start()
 	last := system.nanoseconds()
@@ -897,7 +901,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		stage_draw()
 		frame := interface.window_frame_begin(&drawing, &window)
 		for generation, index in tile_generations {
-			interface.draw_picture(frame.table, index % TILE_COLUMNS * TILE, index / TILE_COLUMNS * TILE, index, generation)
+			interface.draw_picture(frame.table, index % TILE_COLUMNS * TILE, index / TILE_COLUMNS * TILE, pictures[index], generation)
 		}
 		band_draw(&frame)
 		damage_count := interface.window_frame_end(&drawing, &frame, &window)

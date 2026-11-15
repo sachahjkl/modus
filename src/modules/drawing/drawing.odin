@@ -11,13 +11,14 @@
 // [interface package](term:interface-package) keeps, in the program, what a
 // program calls many times for each frame: the elements, the layout, the
 // input. The [drawing module](term:drawing-module) takes what a program
-// calls two times for each frame: `damage_of_draw_table_7`, then
-// `execute_draw_table_7`.
+// calls a few times for each frame: `damage_of_draw_table_8` one time, then
+// `execute_draw_table_8` one time for each damage rectangle.
 //
 // **No copy.** Each parameter is memory of the caller, and a direct call
 // passes its address: the [draw table](term:draw-table) of the frame, the
-// draw table of the frame before, the rectangles, and the pixels of the
-// surface, which the module writes in place.
+// draw table of the frame before, the [picture memory](term:picture-memory)
+// of the pictures, and the pixels of the surface, which the module writes
+// in place.
 //
 // **What it keeps.** It allocates nothing, and it keeps no address of the
 // caller after a call. Its own data is a cache, one copy for each program
@@ -27,12 +28,17 @@
 // reads the choice of the settings again at each draw, so a program sends
 // it nothing when a setting changes.
 //
-// **What it does not draw.** A Picture record and a Text_Grid record name
-// pixels and cells by an address, which the description of an export
-// cannot carry: the module draws nothing for them. A program with such a
-// record keeps the interface package compiled in.
+// **Pictures.** A [picture record](term:picture-record) names its pixels by
+// values: the place of its first pixel in a picture memory, and its
+// stride. The caller passes one picture memory as bytes, and the module
+// checks each picture against it.
 //
-// **The version in the names.** The 7 in the name of each export is the
+// **What it does not draw.** A Text_Grid record names its cells by an
+// address, which the description of an export cannot carry: the module
+// draws nothing for it. A program with such a record keeps the interface
+// package compiled in.
+//
+// **The version in the names.** The 8 in the name of each export is the
 // version of the [draw record](term:draw-record). A draw record of another
 // version has exports with other names, so a module that reads the records
 // in another way cannot take the place of this one.
@@ -48,7 +54,7 @@ import "modus:support/interface"
 import "modus:support/system"
 
 // The names of the exports say which draw record they read.
-#assert(interface.DRAW_RECORD_VERSION == 7)
+#assert(interface.DRAW_RECORD_VERSION == 8)
 
 // A rectangle of the surface, in pixels: right and bottom are not in it.
 Damage_Rectangle :: struct {
@@ -58,14 +64,21 @@ Damage_Rectangle :: struct {
 	bottom: i64,
 }
 
-// The shape of the pixels of a canvas, 4 bytes for each pixel, and what
-// the draw does in each rectangle before the records.
-Canvas_Shape :: struct {
+// The shape of the pixels of a canvas, 4 bytes for each pixel, the one
+// rectangle of the canvas that a call draws, and what the draw does in it
+// before the records. One record, and not a table of rectangles beside a
+// shape: an export has six parameters, and the picture memory takes the
+// place that the table of rectangles had.
+Canvas_Rectangle :: struct {
 	width:           i64, // Pixels of a line that belong to the canvas.
 	height:          i64, // Lines.
 	stride:          i64, // Pixels from one line to the next: at least `width`.
-	fill_background: i64, // Not 0: each rectangle is painted with `background` first, so a record that the frame no longer has leaves no pixel.
+	fill_background: i64, // Not 0: the rectangle is painted with `background` first, so a record that the frame no longer has leaves no pixel.
 	background:      i64, // The color of that fill, 0x00RRGGBB.
+	left:            i64, // The rectangle that the call draws, in pixels of the canvas: right and bottom are not in it.
+	top:             i64,
+	right:           i64,
+	bottom:          i64,
 }
 
 // The most records or bytes of a table of a caller: no count times a size
@@ -87,18 +100,18 @@ ARGUMENT_NOW :: 1
 @(private)
 ARGUMENT_NOW_TEXT :: 2
 @(private)
-ARGUMENT_RECTANGLES :: 3
+ARGUMENT_PICTURE_MEMORY :: 3
 @(private)
 ARGUMENT_PIXELS :: 4
 @(private)
-ARGUMENT_SHAPE :: 5
+ARGUMENT_AREA :: 5
 
 // The text of the program that runs this copy of the module: what the
 // module loads one time, at the first draw. It is data of the module, and
 // the loader gives each program its own copy.
 //
 // The rule of the callers: one thread of a program at a time calls
-// execute_draw_table_7. It is the rule of the text state of the graphics
+// execute_draw_table_8. It is the rule of the text state of the graphics
 // package, which changes "between two frames" (src/library/support/graphics,
 // text.odin), and each window of the system has one loop that draws. The
 // module takes no lock for it and waits for no other thread: the load
@@ -113,7 +126,7 @@ ARGUMENT_SHAPE :: 5
 // cache record that is half of one cache and half of the other, and
 // fault. All of it is inside the program that broke the rule: the module
 // runs in its address space, with its own copy of this data.
-// damage_of_draw_table_7 reads no text state: any thread can call it.
+// damage_of_draw_table_8 reads no text state: any thread can call it.
 @(private)
 Program_Text :: struct {
 	loaded:               bool, // The text settings and the interface font were looked for.
@@ -194,9 +207,9 @@ draw_table_of :: proc "contextless" (records: ^system.Table_To_Read(interface.Dr
 	return {records = records.records[:record_count], record_count = int(record_count), text = text.bytes[:text_count], text_count = int(text_count)}, true
 }
 
-// damage_of_draw_table_7 gives the rectangles of the surface that differ between the draw table before and the draw table now. The result is a Table of at most 8 rectangles, which no two of them touch. A text record that names bytes past its text table differs from each record: its rectangle is damaged. Nothing is copied in a direct call: the two tables are read where the caller has them, and the rectangles are written into the buffer of the caller. It fails with -1 and the error record Too_Long, with the argument, for a table over 2^40 records or bytes.
-@(export, link_name = "damage_of_draw_table_7")
-damage_of_draw_table_7 :: proc "c" (before: ^system.Table_To_Read(interface.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 {
+// damage_of_draw_table_8 gives the rectangles of the surface that differ between the draw table before and the draw table now. The result is a Table of at most 8 rectangles, which no two of them touch. A text record that names bytes past its text table differs from each record: its rectangle is damaged. A Picture record differs when its generation, its picture memory, its first pixel or its stride differs: the module reads no pixel of a picture. Nothing is copied in a direct call: the two tables are read where the caller has them, and the rectangles are written into the buffer of the caller. It fails with -1 and the error record Too_Long, with the argument, for a table over 2^40 records or bytes.
+@(export, link_name = "damage_of_draw_table_8")
+damage_of_draw_table_8 :: proc "c" (before: ^system.Table_To_Read(interface.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 {
 	before_table, before_ok := draw_table_of(before, before_text, ARGUMENT_BEFORE, ARGUMENT_BEFORE_TEXT, error)
 	if !before_ok {
 		return -1
@@ -216,18 +229,19 @@ damage_of_draw_table_7 :: proc "c" (before: ^system.Table_To_Read(interface.Draw
 	return i64(damage.count)
 }
 
-// execute_draw_table_7 draws the records of a draw table into the pixels of a canvas, in each rectangle, cut to it. With `fill_background` of the shape not 0, each rectangle is painted with the color `background` first. The pixels are memory of the caller, written in place: no copy in a direct call. The text is drawn in the font that the settings of the program choose, from the glyph caches of the program. A text record that names bytes past its text table, a Picture record and a Text_Grid record draw nothing. The result is the count of rectangles. It fails with -1 and an error record: Bad_Value of `shape` for a width or a height below 1 or a stride below the width, Too_Small of `pixels` for bytes that do not hold `stride` times `height` pixels, Bad_Address of `pixels` for an address that is not a multiple of 4, Too_Long for a table over 2^40 records or bytes.
-@(export, link_name = "execute_draw_table_7")
-execute_draw_table_7 :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, rectangles: ^system.Table_To_Read(Damage_Rectangle), pixels: ^system.Bytes_To_Change, shape: ^Canvas_Shape, error: ^errors.Error_Record) -> i64 {
-	// One copy of the shape and of each count: the caller can change them
+// execute_draw_table_8 draws the records of a draw table into the pixels of a canvas, in the rectangle of `area`, cut to it. With `fill_background` of the area not 0, the rectangle is painted with the color `background` first. The pixels are memory of the caller, written in place: no copy in a direct call. The text is drawn in the font that the settings of the program choose, from the glyph caches of the program. A Picture record of picture memory 0 copies its pixels from `picture_memory`, from its first pixel, a line each stride pixels. A text record that names bytes past its text table, a Picture record of another picture memory or with a pixel past `picture_memory`, and a Text_Grid record draw nothing. The result is 0. It fails with -1 and an error record: Bad_Value of `area` for a width or a height below 1 or a stride below the width, Too_Small of `pixels` for bytes that do not hold `stride` times `height` pixels, Bad_Address of `pixels` or of `picture_memory` for an address that is not a multiple of 4, Too_Long for a table over 2^40 records or bytes.
+@(export, link_name = "execute_draw_table_8")
+execute_draw_table_8 :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, area: ^Canvas_Rectangle, error: ^errors.Error_Record) -> i64 {
+	// One copy of the area and of each count: the caller can change them
 	// during the call, and a value that is checked is the value that is
 	// used.
-	canvas_shape := intrinsics.volatile_load(shape)
+	canvas_shape := intrinsics.volatile_load(area)
 	pixel_bytes := intrinsics.volatile_load(&pixels.count)
 	pixel_address := intrinsics.volatile_load(&pixels.bytes)
-	rectangle_count := intrinsics.volatile_load(&rectangles.count)
+	picture_bytes := intrinsics.volatile_load(&picture_memory.count)
+	picture_address := intrinsics.volatile_load(&picture_memory.bytes)
 	if canvas_shape.width <= 0 || canvas_shape.height <= 0 || canvas_shape.stride < canvas_shape.width {
-		return errors.fail(error, -1, .Bad_Value, .None, ARGUMENT_SHAPE, canvas_shape.width <= 0 ? canvas_shape.width : canvas_shape.height <= 0 ? canvas_shape.height : canvas_shape.stride)
+		return errors.fail(error, -1, .Bad_Value, .None, ARGUMENT_AREA, canvas_shape.width <= 0 ? canvas_shape.width : canvas_shape.height <= 0 ? canvas_shape.height : canvas_shape.stride)
 	}
 	// No product wraps, also for a stride near 2^62 that a hostile caller
 	// gives: the stride is compared with the pixels of one line that the
@@ -238,29 +252,34 @@ execute_draw_table_7 :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Reco
 	if uintptr(pixel_address) % align_of(graphics.Color) != 0 {
 		return errors.fail(error, -1, .Bad_Address, .Bytes, ARGUMENT_PIXELS, i64(uintptr(pixel_address)), i64(min(pixel_bytes, u64(max(i64)))), 1)
 	}
-	if rectangle_count > TABLE_LIMIT {
-		return errors.fail(error, -1, .Too_Long, .Records, ARGUMENT_RECTANGLES, i64(min(rectangle_count, u64(max(i64)))), i64(TABLE_LIMIT))
+	if picture_bytes > TABLE_LIMIT {
+		return errors.fail(error, -1, .Too_Long, .Bytes, ARGUMENT_PICTURE_MEMORY, i64(min(picture_bytes, u64(max(i64)))), i64(TABLE_LIMIT))
+	}
+	if uintptr(picture_address) % align_of(graphics.Color) != 0 {
+		return errors.fail(error, -1, .Bad_Address, .Bytes, ARGUMENT_PICTURE_MEMORY, i64(uintptr(picture_address)), i64(picture_bytes), 1)
 	}
 	table, table_ok := draw_table_of(now, now_text, ARGUMENT_NOW, ARGUMENT_NOW_TEXT, error)
 	if !table_ok {
 		return -1
 	}
+	// The one picture memory of a call is number 0 of the table: the
+	// package checks each Picture record against it where it draws the
+	// record, so one place holds the rule.
+	picture_memories := [1][]graphics.Color{([^]graphics.Color)(picture_address)[:picture_bytes / size_of(graphics.Color)]}
+	table.picture_memories = picture_memories[:]
 	program_text_load()
 	if program_text.interface_font_given {
 		table.interface_font = &program_text.interface_font
 	}
 	canvas := graphics.Canvas{pixels = ([^]graphics.Color)(pixel_address), width = int(canvas_shape.width), height = int(canvas_shape.height), stride = int(canvas_shape.stride)}
 	surface := interface.Rectangle{0, 0, canvas.width, canvas.height}
-	for index in 0 ..< rectangle_count {
-		record := intrinsics.volatile_load(&rectangles.records[index])
-		rectangle := interface.Rectangle{int(record.left), int(record.top), int(record.right), int(record.bottom)}
-		if canvas_shape.fill_background != 0 {
-			area := interface.intersection(rectangle, surface)
-			if !interface.empty(area) {
-				graphics.fill(canvas, area.left, area.top, area.right - area.left, area.bottom - area.top, graphics.Color(canvas_shape.background))
-			}
+	rectangle := interface.Rectangle{int(canvas_shape.left), int(canvas_shape.top), int(canvas_shape.right), int(canvas_shape.bottom)}
+	if canvas_shape.fill_background != 0 {
+		filled := interface.intersection(rectangle, surface)
+		if !interface.empty(filled) {
+			graphics.fill(canvas, filled.left, filled.top, filled.right - filled.left, filled.bottom - filled.top, graphics.Color(canvas_shape.background))
 		}
-		interface.execute_in_rectangle(&table, canvas, rectangle)
 	}
-	return i64(rectangle_count)
+	interface.execute_in_rectangle(&table, canvas, rectangle)
+	return 0
 }

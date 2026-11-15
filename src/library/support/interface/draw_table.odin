@@ -36,7 +36,7 @@ import "modus:contract/glyph_cache"
 import "modus:support/display"
 import "modus:support/graphics"
 
-DRAW_RECORD_VERSION :: 7 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: the fields filled and background of a cell of a text grid. 6: the byte line_thickness is kind_detail, the weight of a text too. 7: Interface_Text, and the byte text_subpixel_x is text_origin_thirds.
+DRAW_RECORD_VERSION :: 8 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: the fields filled and background of a cell of a text grid. 6: the byte line_thickness is kind_detail, the weight of a text too. 7: Interface_Text, and the byte text_subpixel_x is text_origin_thirds. 8: a Picture names its pixels by its picture memory, its first pixel and its stride, not by an index in a list of canvases.
 
 // What one draw record draws. The fields of `Draw_Record` that each kind
 // reads are in the comment of the member.
@@ -52,9 +52,13 @@ Draw_Kind :: enum u8 {
 	// angle in first_color, the one meaning of such lines (docs/DESIGN.md,
 	// section 2).
 	Folded_Gap          = 7,
-	// The pixels of a picture of the caller: text_start is its index in
-	// Draw_Table.pictures, text_count its generation (a new number when its
-	// pixels change). The picture is drawn at (x, y), cut to width x height.
+	// The pixels of a picture of the caller, width x height at (x, y):
+	// kind_detail is the number of its picture memory in
+	// Draw_Table.picture_memories, text_start the index of its first pixel
+	// in that memory, second_color its stride (the pixels from one line to
+	// the next), text_count its generation (a new number when its pixels
+	// change). Each is a value, so the record means the same in each
+	// address space (docs/INTERFACE.md, section 2.1).
 	Picture             = 8,
 	// A grid of text cells of the caller: text_start is its index in
 	// Draw_Table.grids. The cells are drawn on the background that the frame
@@ -122,12 +126,12 @@ Draw_Record :: struct {
 	kind:            Draw_Kind, // What the record draws.
 	text_scale:      u8, // Text: 1, 2 or 3.
 	text_origin_thirds: u8, // Interface_Text: the origin after x + margin, in thirds of a pixel: 0, 1 or 2. 0 for the other kinds.
-	kind_detail:     u8, // Line: the thickness, 1 to LINE_THICKNESS_LIMIT pixels. Text: the weight (Font_Weight: 0 regular, 1 bold). 0 for the other kinds.
+	kind_detail:     u8, // Line: the thickness, 1 to LINE_THICKNESS_LIMIT pixels. Text: the weight (Font_Weight: 0 regular, 1 bold). Picture: its picture memory. 0 for the other kinds.
 	x, y:            i32, // The top left corner, in pixels of the surface.
 	width, height:   i32, // The size, in pixels; a Line: the vector to its end.
 	first_color:     u32, // The main color: see `Draw_Kind`.
-	second_color:    u32, // A gradient: its end color. Interface_Text: the ink margin.
-	text_start:      u32, // A text: its first byte in the text table. A picture or a grid: its index.
+	second_color:    u32, // A gradient: its end color. Interface_Text: the ink margin. Picture: its stride, in pixels.
+	text_start:      u32, // A text: its first byte in the text table. A picture: its first pixel in its picture memory. A grid: its index.
 	text_count:      u32, // A text: its bytes. A picture: its generation.
 	element:         u32, // The low 32 bits of the identity of the element that wrote the record.
 }
@@ -137,10 +141,11 @@ Draw_Record :: struct {
 // The draw records of one frame and the bytes of their texts, in the memory
 // of the program. full: a record or a text did not fit, and is not drawn:
 // the table is not the frame, so the next frame is drawn whole. refused: a
-// record that the caller asked for could not be made (a picture or a grid
-// that the table does not have, a grid whose cells are fewer than its
-// size). That record is missing, and each other record is in the table, so
-// the difference with the next frame stays exact.
+// record that the caller asked for could not be made (a picture outside
+// each picture memory of the table, a grid that the table does not have, a
+// grid whose cells are fewer than its size). That record is missing, and
+// each other record is in the table, so the difference with the next frame
+// stays exact.
 Draw_Table :: struct {
 	records:      []Draw_Record, // The memory of the records, from the caller.
 	record_count: int, // The records of the frame so far.
@@ -148,7 +153,10 @@ Draw_Table :: struct {
 	text_count:   int, // The bytes of the text table in use.
 	full:         bool, // A record or a text did not fit.
 	refused:      bool, // A record that the caller asked for was not made.
-	pictures:     []graphics.Canvas, // The pictures that Picture records show.
+	// The picture memories of the caller: each Picture record names its
+	// pixels in one of them. A program that draws through the drawing
+	// module has at most one; the compositor has one for each surface.
+	picture_memories: [][]graphics.Color,
 	grids:        []Text_Grid, // The grids that Text_Grid records show.
 	// The interface font that measures and draws the Interface_Text records
 	// of the table: the caches that the program validated (display). nil:
@@ -183,7 +191,7 @@ draw_table_copy :: proc "contextless" (target, source: ^Draw_Table) -> bool {
 	target.text_count = source.text_count
 	target.full = source.full
 	target.refused = source.refused
-	target.pictures = source.pictures
+	target.picture_memories = source.picture_memories
 	target.interface_font = source.interface_font
 	// The cells of each grid: the target keeps its own copy, in its memory.
 	if len(target.grids) < len(source.grids) {
@@ -277,16 +285,64 @@ draw_folded_gap :: proc "contextless" (table: ^Draw_Table, x, y, width, height: 
 	record_append(table, with_place({kind = .Folded_Gap, first_color = graphics.COLOR_DIM, second_color = graphics.COLOR_TRACK, element = element}, x, y, width, height))
 }
 
-// draw_picture appends the pixels of picture number index of the table, at
-// (x, y). generation is a new number each time its pixels change: the
-// difference sees the change.
-draw_picture :: proc "contextless" (table: ^Draw_Table, x, y: int, index: int, generation: u32, element: u32 = 0) {
-	if index < 0 || index >= len(table.pictures) {
+// draw_picture appends the pixels of a picture of the program at (x, y).
+// Each pixel of the picture must be inside one picture memory of the table:
+// the record names the first such memory, the index of the first pixel in
+// it, and the stride. generation is a new number each time its pixels
+// change: the difference sees the change. A picture with no pixel, or with
+// a pixel outside each picture memory, is refused.
+draw_picture :: proc "contextless" (table: ^Draw_Table, x, y: int, picture: graphics.Canvas, generation: u32, element: u32 = 0) {
+	memory, first, found := picture_place(table, picture)
+	if !found {
 		table.refused = true
 		return
 	}
-	picture := table.pictures[index]
-	record_append(table, with_place({kind = .Picture, text_start = u32(index), text_count = generation, element = element}, x, y, picture.width, picture.height))
+	record_append(table, with_place({kind = .Picture, kind_detail = u8(memory), second_color = u32(picture.stride), text_start = u32(first), text_count = generation, element = element}, x, y, picture.width, picture.height))
+}
+
+// picture_place finds the picture memory that holds each pixel of a
+// picture, and the index of its first pixel there. The numbers fit the
+// fields of a record: at most 256 memories, a first pixel and a stride
+// below 2^32, a size that an i32 holds; so the sum below cannot wrap.
+@(private)
+picture_place :: proc "contextless" (table: ^Draw_Table, picture: graphics.Canvas) -> (memory, first: int, found: bool) {
+	if picture.width <= 0 || picture.height <= 0 || picture.width > int(max(i32)) || picture.height > int(max(i32)) || picture.stride < picture.width || u64(picture.stride) > u64(max(u32)) {
+		return 0, 0, false
+	}
+	address := uintptr(picture.pixels)
+	for pixels, number in table.picture_memories[:min(len(table.picture_memories), 256)] {
+		start := uintptr(raw_data(pixels))
+		if address < start || (address - start) % size_of(graphics.Color) != 0 {
+			continue
+		}
+		index := u64(address - start) / size_of(graphics.Color)
+		if index > u64(max(u32)) {
+			continue
+		}
+		if index + u64(picture.height - 1) * u64(picture.stride) + u64(picture.width) <= u64(len(pixels)) {
+			return number, int(index), true
+		}
+	}
+	return 0, 0, false
+}
+
+// picture_of gives the pixels that a Picture record names, as a canvas, or
+// false when the record names a memory that the table does not have, a
+// picture with no pixel, a stride below its width, or a pixel past its
+// memory. A record that a caller wrote by hand can have any bytes, and
+// the check is in integers that cannot wrap: each factor is below 2^32.
+picture_of :: proc "contextless" (table: ^Draw_Table, record: Draw_Record) -> (picture: graphics.Canvas, ok: bool) {
+	number := int(record.kind_detail)
+	if number >= len(table.picture_memories) || record.width <= 0 || record.height <= 0 {
+		return {}, false
+	}
+	pixels := table.picture_memories[number]
+	first, stride := u64(record.text_start), u64(record.second_color)
+	width, height := u64(record.width), u64(record.height)
+	if stride < width || first + (height - 1) * stride + width > u64(len(pixels)) {
+		return {}, false
+	}
+	return {pixels = raw_data(pixels[first:]), width = int(width), height = int(height), stride = int(stride)}, true
 }
 
 // draw_text_grid appends the grid number index of the table at (x, y): one

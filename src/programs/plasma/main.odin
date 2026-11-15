@@ -30,7 +30,10 @@ palette: [256]graphics.Color
 // The window is one picture of this program, shown with the interface
 // package (a Picture record): the animation draws into it.
 picture_pixels: [WIDTH * HEIGHT]graphics.Color
-pictures: [1]graphics.Canvas
+picture: graphics.Canvas
+// The one picture memory of the draw table: the drawing module reads the
+// picture there.
+picture_memories: [1][]graphics.Color
 records_now, records_before: [2]interface.Draw_Record
 drawing: interface.Window_Drawing
 
@@ -60,8 +63,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		palette[i] = graphics.rgb(red, green, blue)
 	}
 
-	pictures[0] = {pixels = raw_data(picture_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
-	drawing = interface.window_drawing_of_picture(records_now[:], records_before[:], pictures[:])
+	picture = {pixels = raw_data(picture_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	picture_memories[0] = picture_pixels[:]
+	drawing = interface.window_drawing_of_picture(records_now[:], records_before[:], picture_memories[:])
 	frame: u64
 	next := system.time()
 	for {
@@ -74,7 +78,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				row[x] = palette[(int(value) >> 1 + t) & 255]
 			}
 		}
-		interface.show_picture(&drawing, &window, u32(frame) + 1)
+		interface.show_picture(&drawing, &window, picture, u32(frame) + 1)
 		if frame == 0 {
 			system.log("plasma: ok")
 		}
