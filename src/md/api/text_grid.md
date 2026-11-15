@@ -1,6 +1,6 @@
 # The text grid in a description
 
-The terminal shows its text as one Text_Grid record: a grid of cells, each a character in its colors. The drawing module draws a frame through described exports, and a description carries values only. This file records how a grid crosses the border of the module, so that the terminal draws through the drawing module (`docs/DECISIONS.md`, D-237).
+The terminal shows its text as one Text_Grid record: a grid of cells, each a character in its colors. The drawing module draws a frame through described exports, and a description carries values only. This file records how a grid crosses the border of the module, so that the terminal draws through the drawing module.
 
 The border of the drawing module is in [library_modules.md](library_modules.md). The Picture record, which made the same choice for pixels, is in [picture.md](picture.md). The guide is [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "2.4 Text grid".
 
