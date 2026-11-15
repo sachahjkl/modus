@@ -736,7 +736,7 @@ test_part_volumes := [?]Volumes_Of_Part {
 	{part = "power", procedures = {"power_loss_run", "power_loss_sequence", "power_loss_settings_run", "power_loss_ranges_run"}, volumes = {BOOT_VOLUME}},
 	{part = "hierarchy", procedures = {"hierarchy_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "ranges", procedures = {"ranges_tests_run"}, volumes = {BOOT_VOLUME}},
-	{part = "disk_programs", procedures = {"disk_programs_tests_run"}, volumes = {BOOT_VOLUME}},
+	{part = "disk_programs", procedures = {"disk_programs_tests_run", "disk_programs_named_principal_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "tcp", procedures = {"tcp_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "quic", procedures = {"quic_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "quic-real", procedures = {"quic_real_tests_run"}, volumes = {BOOT_VOLUME}},

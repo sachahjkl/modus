@@ -228,6 +228,34 @@ the_key_of_the_tag_of_the_machine :: proc(t: ^testing.T) {
 	testing.expect(t, problem == .None && read.count == 1)
 }
 
+// The key of the tag of a named principal comes from its unlock key, over
+// another text than the key of the machine: one secret gives two other keys
+// for the two uses, two principals give two keys, and a table of one
+// principal, or of the machine, does not verify under the key of another.
+@(test)
+the_key_of_the_tag_of_a_named_principal :: proc(t: ^testing.T) {
+	first_unlock_key, second_unlock_key := key_of(6), key_of(7)
+	first := table_key_of_principal_key(&first_unlock_key)
+	second := table_key_of_principal_key(&second_unlock_key)
+	testing.expect(t, first == table_key_of_principal_key(&first_unlock_key))
+	testing.expect(t, first != second)
+	testing.expect(t, first != first_unlock_key)
+	testing.expect(t, first != {})
+	testing.expect(t, first != table_key_of_machine_key(&first_unlock_key))
+	table: Grant_Table
+	testing.expect_value(t, table_allow(&table, "visitor", hash_of(1), .Store), Table_Problem.None)
+	bytes: [TABLE_SIZE]u8
+	table_encode(&table, &first, &bytes)
+	_, problem := table_decode(bytes[:], &second)
+	testing.expect_value(t, problem, Table_File_Problem.Not_Authentic)
+	machine := table_key_of_machine_key(&first_unlock_key)
+	_, problem = table_decode(bytes[:], &machine)
+	testing.expect_value(t, problem, Table_File_Problem.Not_Authentic)
+	read: Grant_Table
+	read, problem = table_decode(bytes[:], &first)
+	testing.expect(t, problem == .None && read.count == 1)
+}
+
 // A reader of the disk with no key cannot add a grant: a table with one
 // byte changed, a table of another key, and a table that the key signed
 // with a field out of its rules are each refused.

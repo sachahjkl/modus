@@ -193,18 +193,22 @@ program_object_write :: proc(disk: ^Program_Disk, bytes: []u8) -> (entry: format
 	return entry, root.blocks, true
 }
 
-// program_disk_encode gives the bytes of a data disk of disk_size bytes
-// that holds the store `programs` with these files, as one commit. The
-// entries are in the order of their names, in one leaf: the writer takes at
-// most the entries of one leaf. It refuses a name that the root service
-// would refuse as the name of an entry, a file with no byte, and a file
-// over the limit of a disk program.
-program_disk_encode :: proc(files: []Program_File, disk_size: int, allocator := context.allocator) -> (image: []u8, ok: bool) {
+// The store `programs` of the named principal 1, as the root service names
+// it for a load of a disk program of its session
+// (principals.store_name_write).
+PRINCIPAL_PROGRAMS_STORE :: disk_program.STORE_NAME + ".principal.1"
+
+// program_files_check refuses the files of one store that the root service
+// would refuse: a name that is no name of an entry, two files of one name,
+// a file with no byte, a file over the limit of a disk program, and more
+// files than one leaf holds. It gives the files in the order of their
+// names, in temporary memory.
+program_files_check :: proc(store_name: string, files: []Program_File) -> (sorted: []Program_File, ok: bool) {
 	if len(files) == 0 || len(files) > format.LEAF_CAPACITY {
-		fmt.eprintfln("modustool: the store %s of the tool holds 1 to %d files, and %d are given", disk_program.STORE_NAME, format.LEAF_CAPACITY, len(files))
+		fmt.eprintfln("modustool: the store %s of the tool holds 1 to %d files, and %d are given", store_name, format.LEAF_CAPACITY, len(files))
 		return nil, false
 	}
-	sorted := slice.clone(files, context.temp_allocator)
+	sorted = slice.clone(files, context.temp_allocator)
 	slice.sort_by(sorted, proc(a, b: Program_File) -> bool {
 		return a.name < b.name
 	})
@@ -218,7 +222,7 @@ program_disk_encode :: proc(files: []Program_File, disk_size: int, allocator := 
 			return nil, false
 		}
 		if index > 0 && sorted[index - 1].name == file.name {
-			fmt.eprintfln("modustool: two files of the store %s have the name %s", disk_program.STORE_NAME, file.name)
+			fmt.eprintfln("modustool: two files of the store %s have the name %s", store_name, file.name)
 			return nil, false
 		}
 		limit := debug_object_file ? disk_program.DEBUG_OBJECT_BYTES_LIMIT : disk_program.FILE_BYTES_LIMIT
@@ -227,13 +231,13 @@ program_disk_encode :: proc(files: []Program_File, disk_size: int, allocator := 
 			return nil, false
 		}
 	}
-	disk := Program_Disk {
-		image = make([]u8, disk_size, allocator),
-		next  = 2,
-	}
-	defer if !ok {
-		delete(disk.image, allocator)
-	}
+	return sorted, true
+}
+
+// program_store_put writes the objects of one store, its leaf and its
+// store block, and gives the cell of the store in the root. sorted are the
+// files that program_files_check gave.
+program_store_put :: proc(disk: ^Program_Disk, store_name: string, sorted: []Program_File, disk_size: int) -> (cell: format.Store_Entry, ok: bool) {
 	leaf: [format.BLOCK_SIZE]u8
 	header := (^format.Tree_Header)(&leaf)
 	header.magic = format.NODE_MAGIC
@@ -241,10 +245,10 @@ program_disk_encode :: proc(files: []Program_File, disk_size: int, allocator := 
 	record_size := size_of(format.Entry_Name) + size_of(format.Entry)
 	store_block: format.Store_Block
 	for file, index in sorted {
-		entry, held, written := program_object_write(&disk, file.bytes)
+		entry, held, written := program_object_write(disk, file.bytes)
 		if !written {
 			fmt.eprintfln("modustool: the file %s does not fit in a disk of %d bytes", file.name, disk_size)
-			return nil, false
+			return {}, false
 		}
 		record := leaf[format.TREE_HEADER_SIZE + index * record_size:][:record_size]
 		copy(record[:size_of(format.Entry_Name)], file.name)
@@ -252,48 +256,82 @@ program_disk_encode :: proc(files: []Program_File, disk_size: int, allocator := 
 		store_block.objects += 1
 		store_block.current_blocks += held
 	}
-	leaf_number := program_disk_put(&disk, leaf[:])
+	leaf_number := program_disk_put(disk, leaf[:])
 	store_block.tree = {block = leaf_number, check = format.check(leaf[:])}
 	store_block.node_blocks = 1
 	store_bytes := ([^]u8)(&store_block)[:format.BLOCK_SIZE]
-	store_number := program_disk_put(&disk, store_bytes)
+	store_number := program_disk_put(disk, store_bytes)
 	if disk.full {
-		fmt.eprintfln("modustool: the store %s does not fit in a disk of %d bytes", disk_program.STORE_NAME, disk_size)
-		return nil, false
+		fmt.eprintfln("modustool: the store %s does not fit in a disk of %d bytes", store_name, disk_size)
+		return {}, false
+	}
+	copy(cell.name[:format.NAME_CAPACITY - 1], store_name)
+	cell.limit = disk_program.STORE_BLOCKS_LIMIT
+	// Its store block, its leaf, and the blocks of its objects.
+	cell.used = 2 + store_block.current_blocks
+	cell.store = {block = store_number, check = format.check(store_bytes)}
+	return cell, true
+}
+
+// program_disk_encode gives the bytes of a data disk of disk_size bytes
+// that holds the store `programs` with these files, as one commit, and,
+// when principal_files has files, the store `programs` of the named
+// principal 1 with them. The entries of a store are in the order of their
+// names, in one leaf: the writer takes at most the entries of one leaf. It
+// refuses a name that the root service would refuse as the name of an
+// entry, a file with no byte, and a file over the limit of a disk program.
+program_disk_encode :: proc(files: []Program_File, disk_size: int, principal_files: []Program_File = nil, allocator := context.allocator) -> (image: []u8, ok: bool) {
+	sorted := program_files_check(disk_program.STORE_NAME, files) or_return
+	principal_sorted: []Program_File
+	if len(principal_files) > 0 {
+		principal_sorted = program_files_check(PRINCIPAL_PROGRAMS_STORE, principal_files) or_return
+	}
+	disk := Program_Disk {
+		image = make([]u8, disk_size, allocator),
+		next  = 2,
+	}
+	defer if !ok {
+		delete(disk.image, allocator)
 	}
 	root := new(format.Root, context.temp_allocator)
 	root.magic = format.ROOT_MAGIC
 	root.generation = PROGRAM_DISK_GENERATION
 	root.disk_blocks = u64(disk_size) / format.BLOCK_SIZE
-	copy(root.stores[0].name[:format.NAME_CAPACITY - 1], disk_program.STORE_NAME)
-	root.stores[0].limit = disk_program.STORE_BLOCKS_LIMIT
-	// Its store block, its leaf, and the blocks of its objects.
-	root.stores[0].used = 2 + store_block.current_blocks
-	root.stores[0].store = {block = store_number, check = format.check(store_bytes)}
+	root.stores[0] = program_store_put(&disk, disk_program.STORE_NAME, sorted, disk_size) or_return
+	if len(principal_sorted) > 0 {
+		root.stores[1] = program_store_put(&disk, PRINCIPAL_PROGRAMS_STORE, principal_sorted, disk_size) or_return
+	}
 	root.check = format.root_check(root)
 	copy(disk.image[:format.BLOCK_SIZE], ([^]u8)(root)[:format.BLOCK_SIZE])
 	return disk.image, true
 }
 
-// program_disk_write writes the disk of the store `programs` to a file,
-// and prints the hash of each module file: the hash that the principal
-// names in start_from_disk.
-program_disk_write :: proc(path: string, files: []Program_File) -> bool {
-	image := program_disk_encode(files, DATA_DISK_SIZE) or_return
+// program_disk_write writes the disk of the store `programs`, and of the
+// store `programs` of the named principal 1 when principal_files has
+// files, to a file, and prints the hash of each module file: the hash that
+// the principal names in start_from_disk.
+program_disk_write :: proc(path: string, files: []Program_File, principal_files: []Program_File = nil) -> bool {
+	image := program_disk_encode(files, DATA_DISK_SIZE, principal_files) or_return
 	defer delete(image)
 	if err := os.write_entire_file(path, image); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", path, err)
 		return false
 	}
-	for file in files {
-		if disk_program.debug_object_name_is(file.name) {
-			fmt.printfln("modustool: %s: the store %s holds the debug object of the module %s, %d bytes", path, disk_program.STORE_NAME, file.name, len(file.bytes))
-			continue
+	stores := [2]struct {
+		name:  string,
+		files: []Program_File,
+	}{{disk_program.STORE_NAME, files}, {PRINCIPAL_PROGRAMS_STORE, principal_files}}
+	for store in stores {
+		for file in store.files {
+			if disk_program.debug_object_name_is(file.name) {
+				fmt.printfln("modustool: %s: the store %s holds the debug object of the module %s, %d bytes", path, store.name, file.name, len(file.bytes))
+				continue
+			}
+			hash := blake3.hash(file.bytes)
+			digits: [disk_program.HASH_DIGITS]u8
+			disk_program.hash_write(&digits, hash)
+			fmt.printfln("modustool: %s: the store %s holds %s, %d bytes, hash %s", path, store.name, file.name, len(file.bytes), string(digits[:]))
 		}
-		hash := blake3.hash(file.bytes)
-		digits: [disk_program.HASH_DIGITS]u8
-		disk_program.hash_write(&digits, hash)
-		fmt.printfln("modustool: %s: the store %s holds %s, %d bytes, hash %s", path, disk_program.STORE_NAME, file.name, len(file.bytes), string(digits[:]))
 	}
 	return true
 }
@@ -411,7 +449,10 @@ disk_programs_tests_run :: proc() -> bool {
 	defer delete(changed_library_file)
 	changed_library_file[len(changed_library_file) - 1] ~= 0x01
 	files := [?]Program_File{{DISK_PROGRAM_MODULE, module_file}, {"changed", changed_file}, {"notes", module_file}, {OUTSIDE_DISK_PROGRAM, outsider_file}, outsider_debug_file, {disk_program.TABLE_OBJECT_NAME, forged_bytes[:]}, {STORE_LIBRARY_MODULE, library_file}, {STORE_IMPORTER_MODULE, importer_file}}
-	program_disk_write(TEST_DISK_PROGRAMS_DISK, files[:]) or_return
+	// The store programs of the named principal 1, before the principal
+	// exists: the module file, and the same forged table.
+	principal_files := [?]Program_File{{DISK_PROGRAM_MODULE, module_file}, {disk_program.TABLE_OBJECT_NAME, forged_bytes[:]}}
+	program_disk_write(TEST_DISK_PROGRAMS_DISK, files[:], principal_files[:]) or_return
 	hash_digits, changed_digits, outsider_digits: [disk_program.HASH_DIGITS]u8
 	disk_program.hash_write(&outsider_digits, blake3.hash(outsider_file))
 	disk_program.hash_write(&hash_digits, blake3.hash(module_file))
@@ -437,7 +478,7 @@ disk_programs_tests_run :: proc() -> bool {
 	// The storage service takes the disk of the tool before or after the
 	// console has its window: the system fixes no order, so neither wait
 	// moves the place of the log.
-	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 8 objects", any_order = true})
+	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 2 stores, 10 objects", any_order = true})
 	append(&steps, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
 	append(&steps, Step{kind = .Front, text = "console"})
 	append(&steps, Step{kind = .Type, text = "connect(\"storage\")"})
@@ -609,7 +650,115 @@ disk_programs_tests_run :: proc() -> bool {
 	append(&fourth, Step{kind = .Wait, text = "root: refused a machine passphrase: the machine has one, and a change is not built", fails_on = "root: the disk grant table of principal 0 is written in the store programs"})
 	append(&fourth, Step{kind = .Type, text = "shutdown()"})
 	append(&fourth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
-	return machine_test(fourth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 4), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK)
+	machine_test(fourth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 4), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK) or_return
+	return disk_programs_named_principal_tests_run(hash)
+}
+
+// The grants of a disk program of a named principal, on the same disk
+// (docs/PRINCIPALS.md, "The disk grant table of a named principal").
+//
+// The fifth machine: the machine passphrase is skipped, and the console
+// creates the principal alice. Its first unlock gives the root service the
+// key of the tag of its table: the table that the tool wrote in the store
+// programs of alice does not verify, and as the principal is new, the table
+// of this machine is written over it. A console that the desktop starts
+// during the session acts for alice: it starts visitor from the store of
+// alice, gives it the grant store, and visitor counts its first visit in
+// the store of its nickname for alice.
+//
+// The sixth machine: the passphrase of alice gives the key again, the
+// table is read with its row, and visitor starts by its nickname with the
+// grant store and finds its first visit.
+disk_programs_named_principal_tests_run :: proc(hash: string) -> bool {
+	fifth := make([dynamic]Step)
+	defer delete(fifth)
+	append(&fifth, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
+	append(&fifth, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&fifth, Step{kind = .Wait, text = "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", any_order = true})
+	append(&fifth, Step{kind = .Wait, text = "compositor: surface unlock"})
+	append(&fifth, Step{kind = .Front, text = "unlock"})
+	append(&fifth, Step{kind = .Key, text = "ret"})
+	append(&fifth, Step{kind = .Wait, text = "unlock: the machine passphrase is not typed: the disk grants of principal 0 stay absent until unlock asks again"})
+	append(&fifth, Step{kind = .Wait, text = "root: unlock stopped with code 0"})
+	append(&fifth, Step{kind = .Front, text = "console"})
+	append(&fifth, Step{kind = .Type, text = "principal_create(\"alice\")"})
+	append(&fifth, Step{kind = .Wait, text = "root: started unlock"})
+	append(&fifth, Step{kind = .Wait, text = "compositor: surface unlock"})
+	append(&fifth, Step{kind = .Front, text = "unlock"})
+	append(&fifth, Step{kind = .Type, text = PRINCIPAL_PASSPHRASE})
+	append(&fifth, Step{kind = .Type, text = PRINCIPAL_PASSPHRASE})
+	append(&fifth, Step{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it"})
+	// unlock stops before or after the lines of the root service on the
+	// table: this wait does not move the place of the log.
+	append(&fifth, Step{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true})
+	// The table that the tool wrote has a tag under a key of zero bytes:
+	// refused, and written over, as no record of alice signed it.
+	append(&fifth, Step{kind = .Wait, text = "root: refused the disk grant table of principal 1 from the store programs: its tag does not verify under the key of the principal: another key wrote it, or a byte changed; it gives no grant, and the table of the new principal is written over it"})
+	append(&fifth, Step{kind = .Wait, text = "root: the disk grant table of principal 1 is written in the store programs: 0 rows, with the tag of the key of the principal"})
+	// A console of the session: it acts for alice, and for no other
+	// principal.
+	disk_programs_session_console_steps(&fifth)
+	append(&fifth, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", DISK_PROGRAM_MODULE, hash)})
+	append(&fifth, Step{kind = .Wait, text = fmt.aprintf("root: reads %s from the store programs of the storage service, for principal 1", DISK_PROGRAM_MODULE)})
+	append(&fifth, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with no grant, in the session of principal 1 \"alice\"", DISK_PROGRAM_MODULE, hash), any_order = true})
+	append(&fifth, Step{kind = .Wait, text = "visitor: the context holds the log, a window and the budget, and no handle of a grant: as it must"})
+	append(&fifth, Step{kind = .Front, text = "console"})
+	append(&fifth, Step{kind = .Type, text = fmt.aprintf("allow(\"%s\", \"store\")", DISK_PROGRAM_MODULE)})
+	append(&fifth, Step{kind = .Wait, text = fmt.aprintf("root: the nickname %s, the file %s, has the grant store for principal 1, from its next start; the passphrase of the principal keeps its disk grant table on the disk", DISK_PROGRAM_MODULE, hash)})
+	append(&fifth, Step{kind = .Wait, text = "root: the disk grant table of principal 1 is written in the store programs: 1 rows, with the tag of the key of the principal"})
+	append(&fifth, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", DISK_PROGRAM_MODULE)})
+	append(&fifth, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", DISK_PROGRAM_MODULE)})
+	disk_programs_principal_store_steps(&fifth, hash, 1)
+	append(&fifth, Step{kind = .Type, text = "shutdown()"})
+	append(&fifth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
+	machine_test(fifth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 5), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK) or_return
+
+	// The sixth machine: the grant of alice is back after her unlock.
+	sixth := make([dynamic]Step)
+	defer delete(sixth)
+	append(&sixth, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
+	append(&sixth, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&sixth, Step{kind = .Wait, text = "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", any_order = true})
+	append(&sixth, Step{kind = .Wait, text = "compositor: surface unlock"})
+	append(&sixth, Step{kind = .Front, text = "unlock"})
+	append(&sixth, Step{kind = .Key, text = "ret"})
+	append(&sixth, Step{kind = .Wait, text = "unlock: principal 1 \"alice\" is locked: its passphrase opens its session"})
+	append(&sixth, Step{kind = .Type, text = PRINCIPAL_PASSPHRASE})
+	append(&sixth, Step{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" opens its seal; the root service receives the key of its disk grant table only, and the secret keys are erased", any_order = true})
+	append(&sixth, Step{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it"})
+	append(&sixth, Step{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true})
+	append(&sixth, Step{kind = .Wait, text = "root: read the disk grant table of principal 1 from the store programs: 1 rows, with the tag of the key of the principal", fails_on = "root: the disk grant table of principal 1 is written in the store programs"})
+	disk_programs_session_console_steps(&sixth)
+	disk_programs_principal_store_steps(&sixth, hash, 2)
+	append(&sixth, Step{kind = .Type, text = "shutdown()"})
+	append(&sixth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
+	return machine_test(sixth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 6), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK)
+}
+
+// disk_programs_session_console_steps adds the steps that start a console
+// from the menu of the desktop during the session of alice: the root
+// service starts it in that session, and its connections act for alice.
+// Its window is the console window in front: the next lines go to it.
+disk_programs_session_console_steps :: proc(steps: ^[dynamic]Step) {
+	append(steps, Step{kind = .Launch, text = "console"})
+	append(steps, Step{kind = .Wait, text = "root: started console, with a terminal, in the session of principal 1 \"alice\""})
+	append(steps, Step{kind = .Wait, text = "compositor: surface console"})
+	append(steps, Step{kind = .Front, text = "console"})
+}
+
+// disk_programs_principal_store_steps adds the steps of one start of the
+// nickname visitor of alice with no hash and the grant store: the root
+// service takes the hash of the row of the table of alice, and the program
+// finds its count of visits in the store of its nickname for alice. The
+// program stops at the end, and the console of the session is in front.
+disk_programs_principal_store_steps :: proc(steps: ^[dynamic]Step, hash: string, visit: int) {
+	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"\")", DISK_PROGRAM_MODULE)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with the grant store: the store disk-%s.principal.1, in the session of principal 1 \"alice\"", DISK_PROGRAM_MODULE, hash, DISK_PROGRAM_MODULE), any_order = true})
+	append(steps, Step{kind = .Wait, text = "visitor: the context holds the log, a window, the budget and a store, and no other handle of a grant: as it must"})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("visitor: the store of its nickname holds the visit %d, read again: as it must", visit)})
+	append(steps, Step{kind = .Front, text = "console"})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", DISK_PROGRAM_MODULE)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", DISK_PROGRAM_MODULE)})
 }
 
 // The line of the source of the program visitor where its entry calls

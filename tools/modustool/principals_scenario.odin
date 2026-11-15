@@ -111,7 +111,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Keys, text = PRINCIPAL_PASSPHRASE},
 	{kind = .Shot, text = "principals_unlock"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" opens its seal; the secret keys are erased: nothing uses them yet"},
+	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" opens its seal; the root service receives the key of its disk grant table only, and the secret keys are erased"},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it"},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: restored the note \"of alice\" and the count 1000, its 3 blocks agree", any_order = true},

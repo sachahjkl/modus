@@ -5,6 +5,7 @@ import "core:testing"
 import "modus:contract/blake3"
 import format "modus:contract/store"
 import "modus:support/disk_program"
+import "modus:support/principals"
 import "modus:support/storage_mount"
 
 // The line that the scenario of the debugger names is the line of the
@@ -89,6 +90,42 @@ the_storage_open_takes_the_disk_of_the_tool :: proc(t: ^testing.T) {
 		testing.expectf(t, slice.equal(stored.bytes, file.bytes), "the entry %s gives its bytes", file.name)
 		testing.expect_value(t, len(stored.versions), 0)
 	}
+}
+
+// The disk of a named principal: the store programs of principal 1 has the
+// name that the root service gives it, and the open of the storage service
+// takes a disk with both stores, each with its own objects.
+@(test)
+the_store_of_the_module_files_of_a_named_principal :: proc(t: ^testing.T) {
+	buffer: [32]u8
+	testing.expect(t, principals.store_name_write(&buffer, disk_program.STORE_NAME, 1, false))
+	testing.expect_value(t, string(buffer[:len(PRINCIPAL_PROGRAMS_STORE)]), PRINCIPAL_PROGRAMS_STORE)
+	testing.expect_value(t, buffer[len(PRINCIPAL_PROGRAMS_STORE)], u8(0))
+	files := [?]Program_File{{"one", test_file_bytes(100, 1)}, {"two", test_file_bytes(200, 2)}}
+	principal_files := [?]Program_File{{"one", test_file_bytes(300, 3)}}
+	image, encoded := program_disk_encode(files[:], 64 * format.BLOCK_SIZE, principal_files[:])
+	if !testing.expect(t, encoded) {
+		return
+	}
+	defer delete(image)
+	state := new(storage_mount.State)
+	defer free(state)
+	contents := disk_contents(image, state)
+	testing.expect(t, !contents.mount.failed && !contents.mount.needs_format)
+	testing.expect_value(t, contents.mount.stores, u64(2))
+	testing.expect_value(t, contents.mount.objects, u64(3))
+	testing.expect_value(t, contents.mount.wrong, u64(0))
+	testing.expect_value(t, contents.mount.stores_with_wrong_count, u64(0))
+	found := false
+	for &item in contents.objects {
+		if item.store == PRINCIPAL_PROGRAMS_STORE && item.name == "one" {
+			found = true
+			testing.expect(t, slice.equal(item.bytes, principal_files[0].bytes))
+		}
+	}
+	testing.expect(t, found)
+	stored := stored_program(&contents, "one")
+	testing.expect(t, stored != nil && slice.equal(stored.bytes, files[0].bytes))
 }
 
 // A file with no hole has the BLAKE3 hash of its bytes as the hash of its

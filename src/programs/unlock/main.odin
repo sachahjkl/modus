@@ -14,8 +14,10 @@
 // once: the machine runs as principal 0 only, with no unlock. With a file
 // it gives the public part of the record to the root service and asks for
 // the passphrase; when the seal opens, it tells the root service, which
-// starts the session of the principal, and it stops. The secret keys are
-// erased at once: no part of the system uses them yet. The root service
+// starts the session of the principal, and it stops. With that command it
+// gives the root service one key: the key of the tag of the disk grant
+// table of the principal, which keyed BLAKE2b gives from the secret unlock
+// key. The secret keys are then erased. The root service
 // starts it again after a lock. To create a principal, the root service
 // starts it with a name: the passphrase is typed two times, the keys are
 // made from the generator of the program, and the session starts.
@@ -51,7 +53,7 @@
 // - **Principals**: a ring to the root service for `Principal_Record`,
 //   `Principal_Unlock` and `Machine_Key` only. No other program can send
 //   these commands, so no other program can start a session or give the
-//   key of the disk grant table of principal 0.
+//   key of a disk grant table.
 //
 // **What a reader sees**: a window with the name of the principal and the
 // passphrase as dots; Enter tries it, Backspace removes one byte, Escape
@@ -62,7 +64,8 @@
 // - `unlock: the passphrase of principal 1 "alice" is wrong: ...`;
 // - `unlock: the machine passphrase opens the machine key; ...`.
 //
-// **What it does not prove**: the secret keys sign and decrypt nothing yet.
+// **What it does not prove**: the secret keys sign and decrypt nothing yet;
+// the unlock key only gives the key of the tag of the disk grant table.
 // A wrong passphrase costs one derivation of Argon2id; nothing counts or
 // slows the tries.
 //
@@ -288,7 +291,7 @@ create :: proc "contextless" () {
 		return
 	}
 	system.log("unlock: principal ", number, " \"", the_name(), "\" is created: its keys are sealed in the store of unlock under a key of Argon2id, 19456 KiB and 2 passes, derived in ", derived, " ms")
-	session_start()
+	session_start(&secrets, system.PRINCIPAL_KEY_NEW)
 }
 
 // passphrase_try opens the seal with the passphrase typed. A wrong passphrase gives
@@ -322,8 +325,8 @@ passphrase_try :: proc "contextless" () {
 		message, message_failed = "the record is not consistent: nothing is unlocked", true
 		return
 	}
-	system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" opens its seal; the secret keys are erased: nothing uses them yet")
-	session_start()
+	system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" opens its seal; the root service receives the key of its disk grant table only, and the secret keys are erased")
+	session_start(&secrets, system.PRINCIPAL_KEY_OPENED)
 }
 
 // machine_key_give gives the root service the key of the tag of the disk
@@ -473,8 +476,21 @@ machine_record_read :: proc "contextless" () -> Record_State {
 	return .Present
 }
 
-session_start :: proc "contextless" () {
-	completion, answered := root_command(.Principal_Unlock, {4 = number})
+// session_start asks the root service to start the session of the
+// principal, and gives it the key of the tag of the disk grant table of the
+// principal, which the secret unlock key gives, and nothing else: the root
+// service needs no key that opens the file or signs a grant. origin is
+// PRINCIPAL_KEY_OPENED or PRINCIPAL_KEY_NEW: the root service writes over a
+// table that does not verify only under the key of a new principal.
+session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, origin: u64) {
+	unlock_key: [disk_program.KEY_SIZE]u8
+	copy(unlock_key[:], secrets^[principals.SECRET_KEYS_SIZE - disk_program.KEY_SIZE:])
+	table_key := disk_program.table_key_of_principal_key(&unlock_key)
+	values := transmute([4]u64)table_key
+	defer erase(unlock_key[:])
+	defer erase(table_key[:])
+	defer erase(([^]u8)(rawptr(&values))[:size_of(values)])
+	completion, answered := root_command(.Principal_Unlock, {values[0], values[1], values[2], values[3], number, origin, 0})
 	if !answered || system.Status(completion.kind) != .Ok {
 		system.log("unlock: the root service did not start the session of principal ", number, ": status ", u64(completion.kind))
 		message, message_failed = "the root service did not start the session", true
