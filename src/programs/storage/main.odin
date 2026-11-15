@@ -37,8 +37,6 @@ import "modus:support/principals"
 import "modus:support/random"
 import "modus:support/system"
 
-slot_key_generator: random.Generator // The seed of the context: the key of the slots of the hash index.
-
 // Its tables, about 44 MB, are data of its module, so the tool counts them
 // with the module: the count of names of each block of the disk, the hash
 // index of the roots of the current objects (10 MB), the
@@ -715,22 +713,35 @@ unshare :: proc "c" (number: i64, error: ^errors.Error_Record) -> i64 {
 	return 0
 }
 
-// The counts of the store of a connection.
+// The counts of the store of a connection, or of the tree of a share of a
+// tree.
 Usage :: struct {
-	objects:  i64, // With the objects of the trees that wait to be freed.
+	objects:  i64, // With the objects of the trees that wait to be freed. A share of a tree: the objects under its tree.
 	trees:    i64,
 	versions: i64,
-	blocks:   i64, // The distinct blocks of the store.
+	blocks:   i64, // The distinct blocks of the store. A share of a tree: the blocks of its tree (tree_usage), or USAGE_NOT_COUNTED.
 	limit:    i64,
-	removing: i64, // The trees that a remove took out, and whose blocks are not free yet.
+	removing: i64, // The trees that a remove took out, and whose blocks are not free yet. A share of a tree: 0.
 }
 
-// usage gives the counts of the store of the caller, in one row.
+USAGE_NOT_COUNTED :: answers.USAGE_NOT_COUNTED
+
+// usage gives the counts of the store of the caller, in one row. Through a share of a tree, it gives the counts of that tree only: the objects, the trees and the versions under it, and its blocks (the nodes of its trees, the blocks of the current state of each object, the index and the leaves of their versions), with the limit of the store and no removal; a tree that needs more reads to count than SHARE_USAGE_READ_LIMIT, or that has a wrong block, gives USAGE_NOT_COUNTED in objects, trees, versions and blocks. A share never sees a count of the whole store: it would tell the holder what the rest of the store holds.
 @(export, link_name = "usage")
 usage :: proc "c" (result: ^[]Usage) -> i64 {
 	caller := caller_of()
 	row: Usage
-	if caller.connection != nil {
+	if caller.connection != nil && caller.depth > 0 {
+		row.limit = i64(caller.store.limit)
+		if index := store_find(caller.store.name); index >= 0 && !store_damaged[index] {
+			counts, outcome := tree_usage(index, caller.path[:caller.depth])
+			if outcome != .Found || counts.over_bound || counts.failed {
+				row.objects, row.trees, row.versions, row.blocks = USAGE_NOT_COUNTED, USAGE_NOT_COUNTED, USAGE_NOT_COUNTED, USAGE_NOT_COUNTED
+			} else {
+				row.objects, row.trees, row.versions, row.blocks = i64(counts.objects), i64(counts.trees), i64(counts.versions), i64(counts.blocks)
+			}
+		}
+	} else if caller.connection != nil {
 		row.limit = i64(caller.store.limit)
 		if index := store_find(caller.store.name); index >= 0 {
 			row.objects = i64(store_blocks[index].objects)
@@ -1128,12 +1139,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	date_page = date.page_of(ctx)
 	// The key of the slots of the hash index: a new one at each start, so
 	// that no party can choose hashes whose first slots make one long run.
+	// The generator is local: it serves this one draw, and leaves no state
+	// of the key in the data of the module.
+	slot_key_generator: random.Generator
 	if !random.generator_from_context(&slot_key_generator, ctx) {
 		system.log_in("storage", .Error, "storage: no seed in the context of the program")
 		system.stop(1)
 	}
 	slot_key: [8]u8
 	random.fill(&slot_key_generator, slot_key[:])
+	slot_key_generator = {}
 	opened.hash_index.slot_key = intrinsics.unaligned_load((^u64)(&slot_key[0]))
 	ok: bool
 	if service, ok = system.service_open(ctx); !ok {

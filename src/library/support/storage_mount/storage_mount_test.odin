@@ -615,6 +615,69 @@ the_bound_of_a_run :: proc(t: ^testing.T) {
 	}
 }
 
+// A linear congruential generator of Knuth (MMIX): a fixed run with no
+// random source.
+TEST_GENERATOR_SEED :: u64(20261115)
+TEST_GENERATOR_MULTIPLIER :: u64(6364136223846793005)
+TEST_GENERATOR_INCREMENT :: u64(1442695040888963407)
+TEST_GENERATOR_SHIFT :: 33 // The high bits of the state: the low bits of such a generator repeat with a short period.
+
+test_next_number :: proc(seed: ^u64) -> int {
+	seed^ = seed^ * TEST_GENERATOR_MULTIPLIER + TEST_GENERATOR_INCREMENT
+	return int(seed^ >> TEST_GENERATOR_SHIFT)
+}
+
+// Random inserts and removals of roots whose first slots are a few
+// neighbour slots, one of them at the end of the table, so that runs merge,
+// pass the bound and go around the end. After each step the index has no
+// fault, with no empty slot inside a run, and each root keeps the slot that
+// it had at its insert: a removal never makes another root unreachable.
+@(test)
+random_inserts_and_removals :: proc(t: ^testing.T) {
+	state := new(State)
+	defer free(state)
+	HOMES :: 4
+	ROOTS_OF_A_HOME :: 12
+	ROOTS :: HOMES * ROOTS_OF_A_HOME
+	STEPS :: 600 // Each step checks the whole table: 2^19 slots.
+	FIRST_BLOCK :: 400
+	homes := [HOMES]u64{HASH_SLOT_CAPACITY - 2, HASH_SLOT_CAPACITY - 1, 0, 3}
+	prefixes: [ROOTS]u64
+	for home, home_index in homes {
+		prefixes_with_home(state, home, 1, prefixes[home_index * ROOTS_OF_A_HOME:][:ROOTS_OF_A_HOME])
+	}
+	live: [ROOTS]bool
+	slotted_at_insert: [ROOTS]bool
+	for index in 0 ..< ROOTS {
+		state.owner[FIRST_BLOCK + index] = 1
+	}
+	seed := TEST_GENERATOR_SEED
+	faults := 0
+	lost := 0
+	for _ in 0 ..< STEPS {
+		index := test_next_number(&seed) % ROOTS
+		root := format.Pointer{block = u64(FIRST_BLOCK + index), check = u64(index)}
+		if live[index] {
+			hash_index_release(state, root)
+			live[index] = false
+		} else {
+			hash_index_name(state, hash_with_prefix(prefixes[index], u8(index)), root, BLOCK_SIZE)
+			live[index] = true
+			slotted_at_insert[index] = hash_index_slotted(state, root.block)
+		}
+		if hash_index_check(state) != 0 {
+			faults += 1
+		}
+		for other in 0 ..< ROOTS {
+			if live[other] && hash_index_slotted(state, u64(FIRST_BLOCK + other)) != slotted_at_insert[other] {
+				lost += 1
+			}
+		}
+	}
+	testing.expect_value(t, faults, 0)
+	testing.expect_value(t, lost, 0)
+}
+
 // A hidden root has no slot: no search finds it, and its release takes its
 // record out. A rekey gives a root the key of its true hash.
 @(test)
@@ -646,6 +709,17 @@ hidden_roots_and_rekeys :: proc(t: ^testing.T) {
 	by_truth := hash_search_begin(state, truth, BLOCK_SIZE, 0)
 	found_root, by_truth_found := hash_index_next(state, &by_truth)
 	testing.expect(t, by_truth_found && found_root == lying_root, "the true hash finds the root")
+	testing.expect_value(t, hash_index_check(state), 0)
+
+	// A damaged root leaves the slots, and its key is free for a new root
+	// with the same bytes.
+	hash_index_hide(state, lying_root)
+	testing.expect_value(t, hash_index_entries(state, lying_root.block), 1)
+	testing.expect(t, !hash_index_slotted(state, lying_root.block), "a hidden root has no slot")
+	repaired_root := format.Pointer{block = 302, check = 7}
+	state.owner[repaired_root.block] = 1
+	testing.expect(t, !hash_index_name(state, truth, repaired_root, BLOCK_SIZE), "the key is free")
+	testing.expect(t, hash_index_slotted(state, repaired_root.block), "the new root takes the slot of the key")
 	testing.expect_value(t, hash_index_check(state), 0)
 }
 
@@ -709,17 +783,8 @@ the_index_after_commits_is_the_index_of_a_new_open :: proc(t: ^testing.T) {
 	for &object in objects {
 		live.owner[object.root.block] = 1 // A commit gives each block that it names to its store.
 	}
-	// A linear congruential generator of Knuth (MMIX): a fixed run with no
-	// random source.
-	GENERATOR_SEED :: u64(20261115)
-	GENERATOR_MULTIPLIER :: u64(6364136223846793005)
-	GENERATOR_INCREMENT :: u64(1442695040888963407)
-	GENERATOR_SHIFT :: 33 // The high bits of the state: the low bits of such a generator repeat with a short period.
-	seed := GENERATOR_SEED
-	next_number :: proc(seed: ^u64) -> int {
-		seed^ = seed^ * GENERATOR_MULTIPLIER + GENERATOR_INCREMENT
-		return int(seed^ >> GENERATOR_SHIFT)
-	}
+	seed := TEST_GENERATOR_SEED
+	next_number := test_next_number
 	for _ in 0 ..< STEPS {
 		name := next_number(&seed) % NAMES
 		before := model.entries[name]

@@ -17,8 +17,10 @@ import format "modus:contract/store"
 // keeps a record and no slot, so equal keys never make a run of slots. The
 // first slot of a key comes from the 8 bytes mixed with a key of the slots
 // that the service draws at each start: no party can choose hashes that
-// fall in one run. A search, an insert, and the scan past each slot that a
-// removal moves back read at most HASH_PROBE_LIMIT slots.
+// fall in one run. A search and an insert read at most HASH_PROBE_LIMIT
+// slots. A removal reads at most HASH_PROBE_LIMIT slots past each slot that
+// it moves back: its cost follows the length of the run, which stays short
+// when no party chooses the first slots.
 
 // HASH_SLOT_BITS gives the count of the slots: twice the blocks of a disk.
 // A root is one block, so at most half of the slots are in use.
@@ -43,7 +45,7 @@ Root_Record :: struct {
 	size:        u64, // The size of the state.
 	check:       u64, // The check of the root: its Pointer is the block and this check.
 	entries:     u32, // The current entries that name the block as their root. 0: the block is not in the index.
-	hidden:      bool, // Never a candidate: the root was named first while its store had a writable share of a tree open. It has no slot.
+	hidden:      bool, // Never a candidate, and no slot: the root was named first while its store had a writable share of a tree open, or the service found it damaged.
 	reserved:    [3]u8, // 0.
 }
 #assert(size_of(Root_Record) == 32)
@@ -234,6 +236,21 @@ hash_index_rekey :: proc "contextless" (state: ^State, root: format.Pointer, has
 	slot_insert(state, root.block)
 }
 
+// hash_index_hide takes a root out of the slots for good: the service found
+// it damaged. Its record stays, so that its entries are counted, and the
+// key is free for a later root with the same bytes.
+hash_index_hide :: proc "contextless" (state: ^State, root: format.Pointer) {
+	if root.block < 2 || root.block >= format.DISK_BLOCKS_LIMIT {
+		return
+	}
+	record := &state.hash_index.records[root.block]
+	if record.entries == 0 || record.hidden {
+		return
+	}
+	slot_remove(state, root.block)
+	record.hidden = true
+}
+
 // Hash_Search is the state of a lookup of one key: hash_index_next gives
 // the next candidate.
 Hash_Search :: struct {
@@ -299,9 +316,10 @@ hash_index_slotted :: proc "contextless" (state: ^State, block: u64) -> bool {
 
 // hash_index_check gives the count of the faults of the index: a slot that
 // names a block with no record, or a hidden one, or that lies past
-// HASH_PROBE_LIMIT from its first slot, two slots with one key, and a
-// count of the roots that is not the count of the slots in use. The tests
-// run it on each image of a loss of power.
+// HASH_PROBE_LIMIT from its first slot, an empty slot between the first
+// slot of a root and its slot (a search would stop there and miss it), two
+// slots with one key, and a count of the roots that is not the count of
+// the slots in use. The tests run it on each image of a loss of power.
 hash_index_check :: proc "contextless" (state: ^State) -> (faults: u64) {
 	index := &state.hash_index
 	in_slots: u64
@@ -318,10 +336,12 @@ hash_index_check :: proc "contextless" (state: ^State) -> (faults: u64) {
 		if (u64(at) - hash_home(index, record.hash_prefix)) & (HASH_SLOT_CAPACITY - 1) >= HASH_PROBE_LIMIT {
 			faults += 1
 		}
-		// No other slot of the run before it has its key.
+		// Each slot of the run before it is in use, and none has its key.
 		probe := hash_home(index, record.hash_prefix)
 		for probe != u64(at) {
-			if index.slots[probe] != 0 && same_key(state, index.slots[probe], record.hash_prefix, record.size, state.owner[block]) {
+			if index.slots[probe] == 0 {
+				faults += 1
+			} else if same_key(state, index.slots[probe], record.hash_prefix, record.size, state.owner[block]) {
 				faults += 1
 			}
 			probe = slot_next(probe)
