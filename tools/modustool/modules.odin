@@ -111,7 +111,7 @@ module_builds := [?]Module_Build {
 	{name = "life", source = PROGRAM_SOURCES + "life", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "paint", source = PROGRAM_SOURCES + "paint", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "fault", source = PROGRAM_SOURCES + "fault", image = true},
-	{name = "temple", source = PROGRAM_SOURCES + "temple", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "hall_of_fame", source = PROGRAM_SOURCES + "hall_of_fame", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "heron", source = PROGRAM_SOURCES + "heron", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "node", source = PROGRAM_SOURCES + "node", image = true},
 	{name = "rings", source = PROGRAM_SOURCES + "rings", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},

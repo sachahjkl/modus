@@ -59,7 +59,7 @@ Site_Gallery_Group_Text :: struct {
 site_gallery_groups := [Site_Gallery_Group]Site_Gallery_Group_Text {
 	.Desktop         = {"The desktop and the palette", "The windows, the bar with its two menus, the palette that the key super opens, and the pointer."},
 	.Console         = {"The console and the terminal", "The console, where a command is a typed function, the terminal that draws the lines of a program, and the log."},
-	.Mark            = {"The mark and the graphics", "The program that plays the animations of the heron of the mark, and a program for fun."},
+	.Mark            = {"The mark and the graphics", "The program that plays the animations of the heron of the mark, and the hall of fame of the people whose work inspired the system."},
 	.Rights          = {"Rights, grants and faults", "Programs that show what a program reaches and what the kernel refuses: rights, revocation, isolation, budgets, faults and errors."},
 	.Modules         = {"Modules", "One file in several roles, the replacement of an import, and the information that each module carries."},
 	.Memory          = {"Memory, threads and time", "The address space of a program, its threads on several processors, the scheduling, and the paths that enter the kernel seldom."},
@@ -127,7 +127,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	// The mark and the graphics.
 	{file = "heron.png", group = .Mark, home = true, guide = "docs/DESIGN.md", caption = "The program heron: the heron of the mark held at a frame of its dash, in whole square cells, with the lines of the cells."},
 	{file = "heron_free.png", group = .Mark, guide = "docs/DESIGN.md", caption = "The same frame in the free way of the program heron: the frame is stretched, and its cells become rectangles."},
-	{file = "temple.png", group = .Mark, guide = "docs/INTERFACE.md", caption = "The temple of Jon: a portrait of Jonathan Blow that turns."},
+	{file = "hall_of_fame.png", group = .Mark, guide = "docs/INTERFACE.md", caption = "The hall of fame: the people whose work inspired modus, each on a card with a portrait and its credit, or with no picture."},
 
 	// Rights, grants and faults.
 	{file = "rights.png", group = .Rights, home = true, guide = "docs/ARCHITECTURE.md", caption = "A program with a part of the rights of two handles: the kernel does four operations and refuses five."},

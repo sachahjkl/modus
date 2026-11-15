@@ -14,7 +14,6 @@ SITE_FLAKE_FILE :: "flake.nix"
 SITE_FLAKE_LOCK_FILE :: "flake.lock"
 SITE_FONT_FOLDER :: "resources/fonts"
 SITE_SPLEEN_LICENSE_FILE :: SOURCE_FOLDER_SUPPORT + "/graphics/FONT_LICENSE"
-SITE_PORTRAIT_LICENSE_FILE :: SOURCE_FOLDER_PROGRAMS + "/temple/PORTRAIT_LICENSE"
 SITE_POSY_MANIFEST :: "resources/pointers/posy.manifest"
 SITE_SYSTEM_POINTER_MANIFEST :: "resources/pointers/system.manifest"
 SITE_ODIN_LICENSE_FILE :: CRYPTOGRAPHY_FOLDER + "/LICENSE.odin.txt"
@@ -49,6 +48,10 @@ site_spdx_names := [?][2]string {
 	{"CC-BY-NC-4.0", "CC-BY-NC-4.0"},
 	{"BSD-1-Clause", "BSD-1-Clause"},
 	{"zlib", "Zlib"},
+	{"CC BY-SA 4.0", "CC-BY-SA-4.0"},
+	{"CC BY 4.0", "CC-BY-4.0"},
+	{"CC BY 3.0", "CC-BY-3.0"},
+	{"CC0", "CC0-1.0"},
 }
 
 site_spdx :: proc(words: string) -> string {
@@ -491,22 +494,24 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	}
 	append(&system_rows, fiat)
 
-	// The portrait of the program temple.
-	portrait_text := site_read(SITE_PORTRAIT_LICENSE_FILE) or_return
-	portrait := Site_License_Row {
-		what          = "Portrait of the program temple",
-		place         = SITE_PORTRAIT_LICENSE_FILE,
-		license       = strings.contains(portrait_text, "as public domain") ? "public domain (as Wikimedia Commons marks it)" : SITE_NOT_RECORDED,
-		author        = strings.trim_suffix(site_line_after(portrait_text, "Author: "), "."),
-		in_boot_image = in_image(boot_image, "temple"),
+	// The portraits of the program hall_of_fame: one row for each picture
+	// of its credits file. The place is the file of pixels that the program
+	// holds, so the card of the module links each row.
+	credits, credits_problem := hall_of_fame_credits_read()
+	if credits_problem != "" {
+		return {}, fail(credits_problem)
 	}
-	for line in site_lines(portrait_text) {
-		if strings.has_prefix(line, "https://") {
-			portrait.author_address = strings.trim_space(line)
-			break
-		}
+	for credit in credits {
+		append(&system_rows, Site_License_Row {
+			what           = strings.concatenate({"Portrait of ", credit.person, " in the program hall_of_fame"}, context.temp_allocator),
+			place          = hall_of_fame_pixels_path(credit.file),
+			license        = site_spdx(credit.license),
+			author         = credit.author,
+			author_address = credit.address,
+			version        = fmt.tprintf("a crop of %d x %d pixels of the source, reduced to %d x %d", HALL_OF_FAME_SOURCE_WIDTH, HALL_OF_FAME_SOURCE_HEIGHT, HALL_OF_FAME_PORTRAIT_WIDTH, HALL_OF_FAME_PORTRAIT_HEIGHT),
+			in_boot_image  = in_image(boot_image, "hall_of_fame"),
+		})
 	}
-	append(&system_rows, portrait)
 
 	// What builds and tests the system: the tools of the development shell,
 	// and the firmware of the test machine.

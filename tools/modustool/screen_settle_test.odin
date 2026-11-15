@@ -57,8 +57,8 @@ log_window_rectangle_reads_the_lines :: proc(t: ^testing.T) {
 	plasma, plasma_found := log_window_rectangle(log, "plasma")
 	testing.expect(t, plasma_found)
 	testing.expect_value(t, plasma, Picture_Rectangle{104, 88, 104 + 320 + 2 * WINDOW_BORDER, 88 + WINDOW_TITLE_HEIGHT + 200 + WINDOW_BORDER})
-	_, temple_found := log_window_rectangle(log, "temple")
-	testing.expect(t, !temple_found, "a window that the log does not have")
+	_, hall_of_fame_found := log_window_rectangle(log, "hall_of_fame")
+	testing.expect(t, !hall_of_fame_found, "a window that the log does not have")
 	// A window made again after a move is at the place of its new surface.
 	again := strings.concatenate({log, "[compositor] compositor: surface life 480x320 at 144,120\n"}, context.temp_allocator)
 	life, life_found = log_window_rectangle(again, "life")
