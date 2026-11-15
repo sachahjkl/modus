@@ -344,7 +344,11 @@ iommu_requester_of :: proc "contextless" (physical: u64) -> u32 {
 				if base == physical {
 					// A function that the unit does not cover gives its
 					// accesses past the unit: a domain would isolate nothing.
+					// Such a device can write every page, the tables of the
+					// unit too, so it ends the isolation of each device: the
+					// log says so.
 					if !iommu.dmar_covers(iommu_dmar, device, function) {
+						log("kernel: IOMMU: the device at bus 0, device ", u64(device), ", function ", u64(function), " is not behind the unit: it reaches all memory, the tables of the unit too, and no device is isolated from it")
 						return 0
 					}
 					return 1 + u32(iommu.requester(0, device, function))

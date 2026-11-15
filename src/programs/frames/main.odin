@@ -42,6 +42,9 @@ import "modus:support/random"
 import "modus:support/system"
 import "modus:support/twins"
 
+// 8192 pages at a time, and five twins.
+MODULE_BUDGET :: system.Budget_Request{pages = 12288, programs = 6, threads = 6}
+
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record
 text_now, text_before: [8192]u8

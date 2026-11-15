@@ -765,8 +765,8 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-14. Decided by: the owner.
 - Decision: a module states the budget that it asks for. The starter of a program accepts the request, limits it or widens it, by its own constraints; a module never grants itself a budget. The flat table of the root service, one case with fixed amounts for each program, goes: it does not hold when a module of another project runs.
 - Words: "pour l'histoire des budgets \"demandés\" par un module, qu'un invoqueur peut accepter, limiter ou élargir, selon ses contraintes, est une bonne idée effectivement. cette liste statique plate que tu maintenais n'était pas gérable, surtout quand on voudra lancer des modules \"étrangers\", ça ne scale pas"
-- State: decided, not built. The entry of `ROADMAP.md`: "A module states the budget that it asks for."
-- Where: `ROADMAP.md`; `src/md/features/module_budget_request.md`.
+- State: the first layer is built. Each program states its request as a constant of its source, the tool writes it as a table of the module file, and the root service accepts it up to a largest budget, with a row of exceptions that each name a reason. The disk programs are paid from one budget that the root service makes once, so they cannot take the room of the programs of the boot image. Left: the tool counts the parts that it knows (the pages of the module, of the threads, of the pictures of a window).
+- Where: `MODULE_CONTRACT.md`, "The budget that a module asks for"; `src/md/features/module_budget_request.md`.
 
 ## 4. Memory
 
@@ -1356,6 +1356,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done. A grant whose object belongs to one program (a private store, a terminal, a device, a network endpoint, a service) refuses the debug access: the debugger would write what only that program can write.
 - Where: `TOOLS.md`, "The debugger: the design".
 
+### D-263 The key of the machine: sealed by the TPM, with an optional passphrase
+- 2026-11-14. Decided by: the owner.
+- Decision: the key of principal 0, the machine, signs its table of disk grants. By default the TPM seals it, and no one types anything. A passphrase is optional: when it is set, the key is opened only with the TPM and the passphrase together, so the disk and the machine without the passphrase open nothing. Until the key of the TPM is built, a machine with no passphrase keeps the disk grants of principal 0 until it stops, and a machine with a passphrase signs them with a key derived from it, and keeps them across a restart. Principal 0 stays the machine: the passphrase guards its key, and makes it no person (`PRINCIPALS.md`, "5. The session").
+- Words: of a passphrase for principal 0 or the key of the TPM: "Pk pas les 2 avec le mot de passe étant \"optionnel\"".
+- State: decided, not built.
+- Where: `PRINCIPALS.md`, "5. The session"; `src/md/features/programs_from_a_disk.md`, "The grants of a disk program".
+
 ### D-260 The grants of a disk program: a nickname, a store of the nickname, a table signed by the key of the principal
 - 2026-11-14. Decided by: the owner.
 - Decision: a disk program has a nickname that the principal chooses: the name of its entry in the store `programs`. Each display shows the nickname, with the hash of the file faded beside it; the file never chooses its nickname, and two hashes never share one. A grant names the hash. By default a disk program gets an isolated store of its own, attached to its nickname: an update is the principal pointing the nickname to a new hash, and the store follows, which the palette says before it is done; another file under another nickname gets a new, empty store. The size of the store is a line of the budget that the module asks for (D-254): the starter accepts, limits or widens it by a policy that the principal sets. The table of the grants persists across a restart: it is kept in the store of the principal, signed with a key derived from the passphrase, and read after the unlock; a table whose signature fails is refused. The persistence is a setting, global with an exception for each program; the default of a desktop is to persist.
@@ -1372,7 +1379,7 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ### D-256 A disk program is named by the hash of its file, and gets no grant
 - 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
-- Decision: `start_from_disk(name, hash)` starts a program from the store `programs` of the principal of the caller. The name only finds the entry; the hash of the command is the identity. The root service reads the bytes into its own memory, computes their hash and compares it with the hash of the command: it does not trust the storage service, and it never waits for it without a bound. A disk program gets the log, a window, the least budget and no grant. A name of the grant table, of a module of the boot image or of a system program is refused before any read: a name gives nothing. Its imports come from the boot image, by their hash. Refused: a name in a tree that gives the hash (the storage service would then choose what runs); a grant that the file states.
+- Decision: `start_from_disk(name, hash)` starts a program from the store `programs` of the principal of the caller. The name only finds the entry; the hash of the command is the identity. The root service reads the bytes into its own memory, computes their hash and compares it with the hash of the command: it does not trust the storage service, and it never waits for it without a bound. A disk program gets the log, a window and no grant; its budget is its request, up to the largest budget of a disk program, paid from the one budget of the disk programs (D-254). A name of the grant table, of a module of the boot image or of a system program is refused before any read: a name gives nothing. Its imports come from the boot image, by their hash. Refused: a name in a tree that gives the hash (the storage service would then choose what runs); a grant that the file states.
 - Words: "tout tout faire"
 - State: done. Left: grants for a disk program; a disk program without the tool; a disk program that is a service.
 - Where: `MODULE_CONTRACT.md`, "A program from a disk"; `TOOLS.md`, "The disk of the disk programs"; `src/md/features/programs_from_a_disk.md`; `FIRST_MILESTONE.md`, choice 756.
@@ -1850,7 +1857,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-10. Decided by: the owner.
 - Decision: the kernel and the system are named `modus`. The rename of the code, the tool, the bar and the README is one step of its own.
 - Words: "I think that we will call this kernel modus" (recorded in English).
-- State: in force. The bar and the README show the mark; the title of `README.md` is "modus" in the rewrite of the guides. Not done yet: the description of `flake.nix` still says "Next-Gen Kernel".
+- State: in force. The bar and the README show the mark; the title of `README.md` is "modus" in the rewrite of the guides; the description of `flake.nix` is the sentence of D-262.
 - Where: `FIRST_MILESTONE.md`, "Next steps", item 11.
 
 ### D-187 The repository is renamed modus
@@ -1880,6 +1887,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "aussi, va falloir renommer kerneltool en modustool je pense"
 - State: done.
 - Where: `TOOLS.md`; `AGENTS.md`, "Work".
+
+### D-262 The description of the project is one short sentence of what it gives
+- 2026-11-14. Decided by: the owner.
+- Decision: the description of the project, in the lead of `README.md`, which the site reads, in `flake.nix` and in the repository, is "A fast, modular operating system, sandboxed by default." "Sandboxed by default" is the title of property 2, the fact that "secure" means here. The coordinator objected to "fast" as a claim with no fact; the owner kept it, and the measured numbers of the README and of the site stand behind it.
+- Words: "change la description du projet à : A fast, secure and modular operating system. Ou qqchose comme ça, qui fait sens avec les objectifs du projet". Then: "Un truc court simple et impactant". Then, of a sentence with no word of speed: "Non c'est pas assez complet". Then, of a longer one: "Trop de blabla". Then, of three short ones, the first: "je disais un pour le nom du projet".
+- State: done.
+- Where: `README.md`; `flake.nix`; `SITE.md`, "What the owner must decide".
 
 ## Open questions for the owner
 

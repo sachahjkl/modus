@@ -72,6 +72,15 @@ one_unit_that_lists_its_functions :: proc(t: ^testing.T) {
 	table[scope + 4 * SCOPE + 1] = SCOPE_HEADER_SIZE + 5
 	_, problem = dmar_read(table[:])
 	testing.expect_value(t, problem, Dmar_Problem.Bad_Structure)
+	// A scope shorter than its header, which would never move the reader.
+	table[scope + 4 * SCOPE + 1] = 0
+	_, problem = dmar_read(table[:])
+	testing.expect_value(t, problem, Dmar_Problem.Bad_Structure)
+	// A unit that ends with too few bytes for the header of a scope.
+	table[scope + 4 * SCOPE + 1] = SCOPE_HEADER_SIZE + 4
+	store_16(table[:], DMAR_STRUCTURES_START + 2, u16(len(table) - DMAR_STRUCTURES_START - 6))
+	_, problem = dmar_read(table[:])
+	testing.expect_value(t, problem, Dmar_Problem.Bad_Structure)
 }
 
 // Each form that the kernel does not program gives its problem, and the
@@ -143,7 +152,7 @@ the_configuration_memory_of_bus_0 :: proc(t: ^testing.T) {
 }
 
 // A device with a register of ports, a memory register of 32 bits and one
-// of 64 bits: two bases. A bridge has two registers.
+// of 64 bits: two bases. A bridge gives no base.
 @(test)
 the_memory_bases_of_a_function :: proc(t: ^testing.T) {
 	header: [HEADER_WORDS]u32
@@ -160,8 +169,7 @@ the_memory_bases_of_a_function :: proc(t: ^testing.T) {
 
 	header[3] = 0x0081_0000 // A bridge, with several functions.
 	bases, count = header_memory_bases(header)
-	testing.expect_value(t, count, 1) // Its two registers: ports and memory of 32 bits.
-	testing.expect_value(t, bases[0], u64(0xFEB1_1000))
+	testing.expect_value(t, count, 0)
 	testing.expect(t, header_is_multi_function(header))
 
 	identifier := requester(0, 17, 0)

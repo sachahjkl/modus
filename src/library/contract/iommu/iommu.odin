@@ -213,16 +213,15 @@ configuration_offset :: proc "contextless" (bus, device, function, register: u32
 HEADER_WORDS :: 16
 
 // header_memory_bases gives the base address of each memory base address
-// register of a function: 6 for a device, 2 for a bridge. A register of
-// ports, or a base of 0, gives no base. A register of 64 bits takes the
-// next register as its high half.
+// register of a device: 6 registers. A bridge gives no base: a device of
+// conventional PCI behind it sends its accesses with the requester of the
+// bridge, so a domain of the bridge would also be a domain of each device
+// behind it. A register of ports, or a base of 0, gives no base. A
+// register of 64 bits takes the next register as its high half.
 header_memory_bases :: proc "contextless" (header: [HEADER_WORDS]u32) -> (bases: [6]u64, count: int) {
 	register_count := 0
-	switch header[3] >> 16 & 0x7F {
-	case 0:
+	if header[3] >> 16 & 0x7F == 0 {
 		register_count = 6
-	case 1:
-		register_count = 2
 	}
 	for index := 0; index < register_count; index += 1 {
 		value := header[4 + index]

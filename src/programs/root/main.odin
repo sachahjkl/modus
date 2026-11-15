@@ -16,8 +16,9 @@
 // - `callable_of`: the services that a program with the grant `Connect`
 //   can reach.
 // - `store_limit_of`: the blocks of a private store.
-// - `things_of` and `budget_of`: the pages, the programs, the threads, the
-//   processor time and the log records of each program.
+// - `budget_of` (budgets.odin): the budget that the module of a program
+//   asks for, accepted up to the largest budget of a program, and the table
+//   of the exceptions, each with its reason.
 //
 // A program that no case names receives the log and a window, and no grant.
 // A disk program is never a case of these tables: this service refuses a
@@ -36,6 +37,10 @@
 //   module file, which this service reads from the store `programs` of the
 //   storage service. Its completion comes when the load ends
 //   (disk_programs.odin; docs/MODULE_CONTRACT.md, "A program from a disk").
+// - `Disk_Grant`, `Nickname_Move`: the disk grant table of the principal
+//   of the caller: a grant to the file that a nickname names, and the move
+//   of a nickname to another file (disk_programs.odin;
+//   docs/MODULE_CONTRACT.md, "The grants of a disk program").
 // - `Connect`, `Disconnect`, `Connect_History`: a connection to a service.
 // - `Palette_Provide`: the entry table and the ring of the palette
 //   provider, for the program with the grant **Palette**.
@@ -348,6 +353,11 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	if caller == &disk_reader {
 		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false)
 	}
+	// A disk program: the grants of its start, never the grants of a name,
+	// and never the grant to act for a principal.
+	if caller.from_disk {
+		return isolated.caller_grant_make(disk_store_limit(caller, service), caller.principal, false)
+	}
 	name := system.name_of(caller.name[:])
 	role := grants_of(name)
 	amount: u64
@@ -356,141 +366,6 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	}
 	acts := .Acts_For_Principal in role && .Acts_For_Principal not_in caller.revoked
 	return isolated.caller_grant_make(amount, caller.principal, acts)
-}
-
-// The budget of each program, by name: pages of memory, programs, threads.
-// It comes from the budget of this service, and it returns when the program
-// stops.
-// The limits: the processor time of one processor for each thread, and 1000
-// log records in each second.
-budget_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
-	amounts := things_of(name)
-	own, _ := system.budget_read()
-	amounts.processor = min(name == "limits" ? 1_500_000 : amounts.threads * 1_000_000, own.processor)
-	amounts.log_records = name == "limits" ? 40 : 1000
-	return amounts
-}
-
-things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
-	switch name {
-	case "input":
-		return {pages = 256, programs = 1, threads = 1}
-	case "compositor":
-		return {pages = 4096, programs = 1, threads = 2} // Its loop, and the thread that makes the lists of the palette.
-	case "console":
-		return {pages = 8192, programs = 5, threads = 6} // 4 sandboxes.
-	case "rings":
-		return {pages = 5120, programs = 7, threads = 7} // 6 nodes, and the two pictures of its window.
-	case "threads":
-		return {pages = 2048, programs = 1, threads = 6}
-	case "workers":
-		return {pages = 2048, programs = 1, threads = 9}
-	case "rights":
-		return {pages = 2048, programs = 1, threads = 2}
-	case "limits":
-		return {pages = 2048, programs = 1, threads = 5}
-	case "origin":
-		return {pages = 2048, programs = 2, threads = 1} // One program that only receives.
-	case "frames":
-		return {pages = 12288, programs = 6, threads = 6} // 8192 pages at a time, and 5 twins.
-	case "budget":
-		return {pages = 1280, programs = 1, threads = 4} // The two pictures of its window, then the pages that its cases spend.
-	case "processors":
-		return {pages = 2048, programs = 1, threads = 9}
-	case "locks":
-		return {pages = 9216, programs = 8, threads = 20} // 4 lockers of 1024 pages, then 3 at a time of the stress case.
-	case "return_fault":
-		return {pages = 2048, programs = 2, threads = 2} // One child at a time, with one thread.
-	case "fault_ring":
-		return {pages = 4096, programs = 2, threads = 22} // One child at a time: 512 pages and 20 threads (17 that fault in a full ring, its main thread and its handler); one thread of its own that spins while a child tries to name it.
-	case "debugged":
-		return {pages = 2048, programs = 3, threads = 6} // Two children at a time, the program that is debugged and a second debugger, each with a budget of two threads; its main thread, and one thread of its own that only waits.
-	case "debug_target":
-		return {pages = 2048, programs = 1, threads = 2} // Its main thread, and one thread that only waits.
-	case "kernel_events":
-		// Program_Create takes the program and its first thread from this
-		// budget. Pages: its module, stack, context, thread area and page
-		// tables, about 142; its window, two pictures of 960 x 600 x 4
-		// bytes, 1126; its rings, 4 processors x (128 + 8192 x 64 bytes),
-		// 513; the thread that empties them, 16 + 3; one shared page for
-		// each child, 2; the load child, 256 + 4 loaders x (16 + 3), 332;
-		// the child that faults, at the same time, 256: 2394 in all, and
-		// 3072 leaves 678. Programs: itself and
-		// two children at one time. Threads: its main thread, 1; the load
-		// child, its main thread and 4 loaders, 5 (taken from this budget
-		// when it starts, for its life); then either the child that faults
-		// or the thread that empties the rings, 1, never both at one time:
-		// 7.
-		return {pages = 3072, programs = 3, threads = 7}
-	case "extended_state":
-		return {pages = 3072, programs = 1, threads = 32} // The main thread and up to 31 threads that hold their registers; the two pictures of a window of 1024 x 720, 1440 pages.
-	case "address_space":
-		return {pages = 41984, programs = 2, threads = 6} // 64 MiB of large pages, two ranges of 1 GiB with their page tables, a child, and the two pictures of its window.
-	case "scheduler":
-		// Threads: 12 spinners, two threads that wake each other, one that
-		// sleeps, a changer, a thread that starts threads; later, with its
-		// first thread, the 15 threads of the four programs of the shares,
-		// or 8 spinners of its own. Programs: itself and those four. Pages:
-		// its own 2048, and for the four programs 4 x 512 and a stack and a
-		// thread area (19 pages) for each of their 15 threads: 2333; and 1024
-		// more for the second picture of its window of 976 x 704.
-		return {pages = 5632, programs = 5, threads = 24}
-	case "flow":
-		return {pages = 2048, programs = 1, threads = 3}
-	case "crowd":
-		return {pages = 2048, programs = 1, threads = 5}
-	case "terminal":
-		return {pages = 8192, programs = 1, threads = 2} // The lines that it keeps.
-	case "flood":
-		return {pages = 256, programs = 1, threads = 1}
-	case "block", "frame", "iommu_device":
-		return {pages = 256, programs = 1, threads = 1}
-	case "storage":
-		// About 34 MB of tables: the count of names of each block of the
-		// disk, the changes of one commit (8 MB: each block of the disk), the
-		// leaves of one version index, the versions of one object for
-		// versions(), the nodes of the trees of one commit and of one read,
-		// the walks of the trees, the pending blocks of the ranges (4 MB),
-		// and the object nodes that one commit copies (7 MB).
-		return {pages = 10240, programs = 1, threads = 1}
-	case "disk":
-		return {pages = 2048, programs = 1, threads = 1}
-	case "imports":
-		return {pages = 2048, programs = 3, threads = 3} // Two programs that import calendar.
-	case "errors":
-		return {pages = 3072, programs = 3, threads = 4} // It starts fault and its child, and 3 threads under contention; the two pictures of its window.
-	case "server":
-		return {pages = 5120, programs = 1, threads = 1} // Its table of connections with their buffers (CAPACITY in src/programs/server), and the two pictures of a large window.
-	case "quic_echo":
-		// 16 QUIC connections of about 85 KiB each, 4 streams of about
-		// 130 KiB for each, and an echo buffer of 16 KiB for each stream:
-		// about 2770 pages, in one mapping of the program (docs/QUIC.md,
-		// section 6). Then the two pictures of its window.
-		return {pages = 5120, programs = 1, threads = 1}
-	case "remote":
-		// 2 QUIC connections of about 85 KiB each, 8 streams of about
-		// 130 KiB for each, and a buffer of a request or an answer of about
-		// 64 KiB for each stream: about 820 pages, in one mapping of the
-		// program (docs/QUIC.md, section 7), and the call regions of its
-		// connections to services.
-		return {pages = 4096, programs = 1, threads = 1}
-	case "unlock":
-		// The blocks of Argon2id, 19 MiB (4864 pages), its window and its
-		// module (src/library/support/principals, DERIVATION_MEMORY_PAGES).
-		return {pages = 6144, programs = 1, threads = 1}
-	case "pointers", "vector_glyphs":
-		// The two pictures of a window of about 1000 x 704, 1386 pages,
-		// then the pointer themes that pointers checks, or the glyph
-		// caches that vector_glyphs builds.
-		return {pages = 3072, programs = 1, threads = 1}
-	case "tables":
-		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
-	case "debugger_window":
-		return {pages = 4096, programs = 1, threads = 1} // The two pictures of a window of 1000 x 704, 1375 pages, the draw tables of the interface, and the tables of the rows.
-	}
-	// The things of a program that no case names. A disk program has them
-	// whatever its name (disk_programs.odin, least_budget).
-	return {pages = 2048, programs = 1, threads = 1}
 }
 
 // log_grant gives the grant of the log: each program that this service
@@ -540,6 +415,11 @@ Started :: struct {
 	// Debug (Root_Command.Debug): the debugger service. nil: none, or it
 	// stopped, or the grant was revoked.
 	debugger:        ^Started,
+	// A disk program: its name is a nickname, which no table by name of
+	// this service reads. Its grants are `role`, from the disk grant table
+	// of its principal at its start, and its store is the store of the
+	// nickname (disk_programs.odin).
+	from_disk:       bool,
 	// The caller of the debugger service for which this service gave that
 	// handle: the grant `debug` is a grant of this caller. nil with no
 	// debugger.
@@ -797,7 +677,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		input_values: [op.CONTEXT_VALUES]u64
 		input_mappings := [1]system.Mapping{{memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}}
 		fixed_addresses.range_mapped_add(&input_values, .Settings_Page)
-		_, status = system.program_start(system.image_find(image, "input"), "input", grants, random.values_with_seed(&program_generator, input_values), budget_of("input"), settings_page != nil ? input_mappings[:] : nil, &prepared)
+		_, status = system.program_start(system.image_find(image, "input"), "input", grants, random.values_with_seed(&program_generator, input_values), budget_of(system.image_find(image, "input"), "input"), settings_page != nil ? input_mappings[:] : nil, &prepared)
 		if status != .Ok {
 			fail("cannot start input", status)
 		}
@@ -861,7 +741,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		text_settings_give(mappings[:], &mapping_count, &values)
 		date_page_give(mappings[:], &mapping_count, &values)
-		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, random.values_with_seed(&program_generator, values), budget_of("compositor"), mappings[:mapping_count], &prepared)
+		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared)
 		if status != .Ok {
 			fail("cannot start the compositor", status)
 		}
@@ -940,6 +820,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				#partial switch command {
 				case .Start_From_Disk:
 					result, held = disk_start_begin(&item, record, &completion.values)
+				case .Disk_Grant:
+					result = disk_grant_change(&item, record, &completion.values)
+				case .Nickname_Move:
+					result = nickname_move(&item, record, &completion.values)
 				case .Connect:
 					result = connect(&item, system.name_of(name[:]), &completion.values)
 				case .Connect_History:
@@ -1004,8 +888,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// A refused Debug wrote its own error record: it names the
 				// grant that refuses, which only debug knows. A refused
 				// Start_From_Disk wrote its own too: its values are a hash
-				// and a name of another form.
-				if result != .Ok && command != .Debug && command != .Start_From_Disk {
+				// and a name of another form. So do Disk_Grant and
+				// Nickname_Move, whose name is a nickname of three values.
+				if result != .Ok && command != .Debug && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move {
 					completion.values = refusal(system.Root_Command(record.kind), system.name_of(name[:]), record.values[4], result)
 				}
 				completion.kind = u32(result)
@@ -1355,11 +1240,16 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 		mapping_count += 1
 	}
 	load_error: module.Load_Error
+	program_budget: system.Budget_Amounts
 	if status == .Ok {
-		slot.program, status = system.program_start(file, name, grants, random.values_with_seed(&program_generator, values), budget_of(name), mappings[:mapping_count], &prepared, load_source(), &load_error)
+		program_budget = budget_of(file, name)
+		slot.program, status = system.program_start(file, name, grants, random.values_with_seed(&program_generator, values), program_budget, mappings[:mapping_count], &prepared, load_source(), &load_error)
 	}
 	if status != .Ok {
-		if load_error.stage != .None {
+		// A budget of no page: the start failed before program_start.
+		if status == .No_Budget && program_budget.pages != 0 {
+			budget_refusal_log(name, program_budget, 0, "this service")
+		} else if load_error.stage != .None {
 			buffer: [512]u8
 			writer := system.Writer{buffer = buffer[:]}
 			system.load_error_text(&writer, &load_error)
@@ -1958,7 +1848,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	mappings: [8]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
-	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of("terminal"), mappings[:mapping_count], &prepared)
+	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared)
 	if status != .Ok {
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return status
@@ -2054,7 +1944,14 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	// another store.
 	store_name: system.Name
 	if system.name_of(service.name[:]) == "storage" {
-		if !principals.store_name_write(&store_name, system.name_of(caller.name[:]), caller.principal, history) {
+		// The store of a disk program is the store of its nickname, with a
+		// prefix that no module name has (disk_programs.odin).
+		program_of_the_store := system.name_of(caller.name[:])
+		disk_store_name: [32]u8
+		if caller.from_disk {
+			program_of_the_store = disk_program.store_program_name(&disk_store_name, program_of_the_store)
+		}
+		if !principals.store_name_write(&store_name, program_of_the_store, caller.principal, history) {
 			system.log_in("calls", .Warning, "root: the name of the store of ", system.Module_Name{system.name_of(caller.name[:])}, " for principal ", caller.principal, " has more than 31 bytes: no connection")
 			return nil, nil, 0, 0, .Bad_Operation
 		}

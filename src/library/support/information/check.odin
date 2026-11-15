@@ -53,6 +53,7 @@ table_names := [module.Table_Kind]string {
 	.Documentation = "Documentation",
 	.Records       = "Records",
 	.Fields        = "Fields",
+	.Budget        = "Budget",
 }
 
 // An error value with its detail. kind None: no problem.

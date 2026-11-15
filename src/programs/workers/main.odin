@@ -38,6 +38,10 @@ import "modus:support/interface"
 import "modus:support/system"
 import "base:intrinsics"
 
+// The amounts that the root service gave it by its name before its module
+// stated a request: no part is counted yet.
+MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 1, threads = 9}
+
 TILE :: 32
 COLUMNS :: 14
 ROWS :: 10

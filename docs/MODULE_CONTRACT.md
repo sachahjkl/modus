@@ -65,7 +65,8 @@ A module is one file that holds its code and everything needed to use it: what i
 | table directory    |  one entry per table: offset, count, record size
 +--------------------+
 | flat tables        |  segments, imports, slots, exports, rebases,
-|                    |  functions, strings, documentation, records, fields
+|                    |  functions, strings, documentation, records, fields,
+|                    |  budget
 +--------------------+
 | segment data       |  code, read-only data, data; each segment on a page
 +--------------------+
@@ -113,6 +114,69 @@ The build takes the documentation from the comments of the source: the comment b
 `manual.described(words)` compares its words with the line of help and with the documentation text. The text keeps its marks: a word between two marks is found, and two words with a mark between them are not.
 
 The model is the BTF format of Linux, changed so that all records have a fixed size. [Types §5]
+
+### The budget that a module asks for
+
+The table `Budget` holds one record at index 1, `module.Budget_Request` (24 bytes): the pages, the programs and the threads that the module asks for its program. It is a request, never a grant: the starter of the program decides. No loader reads it.
+
+| Part | What it counts |
+|---|---|
+| `pages` | The pages of memory: the modules, the stacks, the pictures and the working memory of the program |
+| `programs` | The program itself, and each child that runs at one time |
+| `threads` | Each thread that runs at one time, the first one included, and the threads of the children |
+
+- **No table.** A module with no table `Budget` asks for the least budget of its starter.
+- **A part that is 0** asks for the least budget of that part. So a record of an older, shorter size reads its missing parts as the least, by the rule of the table directory.
+- **Processor time and log records are not in the request.** They are limits that protect the other programs: the starter sets them.
+
+**The source states it** as one constant, with a comment that gives the reasons of the amounts:
+
+```odin
+// Its loop, and the thread that makes the lists of the palette.
+MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 2}
+```
+
+The step that describes the exports reads the constant from the tree of the parser, and the conversion writes the table (section "The steps of one module, as implemented"). The type can also be on the declaration: `MODULE_BUDGET : system.Budget_Request : {pages = 4096}`. Each part is an integer literal from 1, decimal or with the prefix `0x`, `0o` or `0b`, with `_` between digits if the source wants; a part left out is 0. The tool refuses another form, and its message says why: no comment, a variable, an expression, a name of a constant, a part of 0, a part that the record does not have, a part two times, a second constant in the package. A declaration of `MODULE_BUDGET` that the tool would not read is refused too, never read as no request: inside a `when` (the tool reads the source with no setting of the build), or with other names in one declaration. The compiler checks the type and the names of the fields, because the constant has the type of the record. `modustool test descriptions` compares the table of each module with its source.
+
+**The rule of a starter** is `system.budget_decide`: for each part, a part of 0 takes the least budget; a part up to the largest budget of the starter is accepted; a part above it gets the largest budget. The root service applies it with its own amounts:
+
+| Amount | Pages | Programs | Threads |
+|---|---|---|---|
+| The least budget | 2048 | 1 | 1 |
+| The largest budget of a program | 16384 | 8 | 32 |
+
+Each program gets one processor of time for each of its threads, and 1000 log records in each second. The root service keeps a table of budget exceptions (`budget_exceptions` in `src/programs/root/budgets.odin`): a row names one program of the boot image, gives it another largest budget or other limits in time, and holds its reason. A disk program and a module of another project have no row.
+
+**A disk program** is paid by one budget that the root service makes from its own at the first disk program, and keeps (`src/library/support/disk_program/budget.odin`):
+
+| Amount | Pages | Programs | Threads | Processor | Log records |
+|---|---|---|---|---|---|
+| The budget of all disk programs | 16384 | 4 | 16 | two processors | 1000 in each second |
+| The largest budget of one disk program | 8192 | 1 | 4 | one processor for each thread | 1000 in each second |
+
+A file chooses its own request, so the sum of all disk programs has one bound: the programs of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk program holds no grant that starts a program, so one program slot loses nothing. The log has one line when the budget of the disk programs is made:
+
+```
+root: the disk programs share one budget of 64 MiB, 4 programs and 16 threads
+```
+
+A request above the largest budget starts the program with the largest budget, and the log has one line for each part:
+
+```
+root: big asks for 50000 pages, and a program gets at most 16384: it starts with 16384
+root: visitor asks for 8 threads, and a disk program gets at most 4: it starts with 4
+```
+
+A start that fails for the budget names the part that is short, and the budget that pays:
+
+```
+root: cannot start locks: it gets 9216 pages, and the budget of this service holds 4000
+root: cannot start visitor: it gets 1 programs, and the budget of the disk programs holds 0
+```
+
+When the budget of the root service holds each part, the budget of the program was too small for its own load, and the line says that the module asks for too little.
+
+The design and the refused forms: `src/md/features/module_budget_request.md`.
 
 ## 2. Loading
 
@@ -207,7 +271,7 @@ The root service does not read the hash of the entry: the hash of an object diff
 
 One load runs at a time: a second command during a load is refused (`Busy`).
 
-**What the program receives.** A program of the boot image has its grants, its budget and the limit of its store by its name, in the tables of the root service. A disk program has no row there. It receives the log with the right Write, a window, and the pages that each program with a window maps read-only (the date, the settings, the glyph caches). It receives no grant: no root ring, no handle of the machine, no boot image, no store, no endpoint, no service ring. Its budget is the budget of a program that no table names: 2048 pages, one program, one thread. No table of the file gives a grant.
+**What the program receives.** A program of the boot image has its grants and the limit of its store by its name, in the tables of the root service. A disk program has no row there. It receives the log with the right Write, a window, and the pages that each program with a window maps read-only (the date, the settings, the glyph caches). It receives no other grant than the grants of its nickname in the disk grant table (below): no root ring, no handle of the machine, no boot image, no endpoint, no service ring. Its budget is the budget that its file asks for, up to the largest budget of a disk program (8192 pages, one program, 4 threads), paid by the one budget of all disk programs; a file with no table `Budget` gets the least budget, 2048 pages, one program, one thread (section 1, "The budget that a module asks for"). Its name selects no budget exception. No table of the file gives a grant.
 
 **A name gives nothing.** The root service refuses, before any read, a name that the grant table gives a grant, a name of a program of the system, and a name of a module of the boot image:
 
@@ -219,11 +283,53 @@ Without this rule a file named `notes` would start with the store of `notes`.
 
 **The imports.** A disk program imports by hash. Its load source is the boot image and the replacements of the machine: an import whose hash is not in the boot image fails the load at the stage Find. The modules of a disk program are copies that its own budget pays: it maps no prepared module of the root service.
 
-**The refusals of the command**, as the kinds of its error record: `Not_Authentic` (the bytes have another hash; argument 2), `Absent` (no entry has the name), `Exists` (a module of the boot image has the name), `Reserved` (the grant table names it), `Busy` (another load runs), `Too_Long` (the file passes the limit, or the name has more than 23 bytes), `Malformed` (the loader refuses the file), `No_Answer` (the deadline), `Damaged` (a block of the object has a wrong check), `Refused` with the status for the rest.
+**The refusals of the command**, as the kinds of its error record: `Not_Authentic` (the bytes have another hash; argument 2), `Absent` (no entry has the name; with the unit `Grants`, an empty hash and no row for the nickname), `Exists` (a module of the boot image has the name; with the unit `Grants`, the nickname names another file), `Reserved` (the grant table names it), `Busy` (another load runs), `Too_Long` (the file passes the limit, or the name has more than 23 bytes), `Malformed` (the loader refuses the file), `No_Answer` (the deadline), `Damaged` (a block of the object has a wrong check), `Refused` with the status for the rest.
 
 **The file on the disk.** `modustool` writes a data disk that holds the store `programs` (`TOOLS.md`, "The disk of the disk programs"), and prints the hash of each file.
 
-Not built: a command that gives a disk program a grant or a larger budget; a command that stores a file that came from the network; an import from the store; a list of the entries of the store with their hashes; a disk program that is a service.
+Not built: a budget above the largest budget of a disk program; a command that stores a file that came from the network; an import from the store; a list of the entries of the store with their hashes; a disk program that is a service.
+
+### The grants of a disk program
+
+Built in part. The principal gives a disk program a grant with a command. The grant names the file, by its hash, and the nickname of the file.
+
+**The nickname.** The name of the entry of a file in the store `programs` is its nickname: the principal chooses it, and the file never does. The log writes the hash of the file beside the nickname.
+
+**The disk grant table.** The root service keeps one disk grant table for each principal. A row binds a nickname to the hash of one file, with the grants of that file. A table has 16 rows. Two hashes never share a nickname: a start of a nickname with another hash than its row is refused before any read:
+
+```
+root: refused visitor from the disk: the nickname names the file 5f0c…, and the command names the file 9d41…; nickname_move points it to another file
+```
+
+An empty hash starts the file of the row: `start_from_disk("visitor", "")`. The bytes are still checked against that hash. A nickname with no row runs with no grant, so the root service does not refuse it.
+
+**The commands.** Each one comes from a caller that acts for its principal, and changes the table of that principal only. A grant takes effect at the next start of the program; `revoke` ends a grant of a program that runs.
+
+| Console | Root ring | What it does |
+|---|---|---|
+| `allow(nickname, grant)` | `Disk_Grant`, values[4] = 1 | Gives a grant to the file that the nickname names: the hash of its row, or with no row the hash of the disk program of that nickname that runs |
+| `disallow(nickname, grant)` | `Disk_Grant`, values[4] = 2 | Takes the grant. The row stays, and the store stays on the disk |
+| `nickname_move(nickname, hash)` | `Nickname_Move` | Points the nickname to another file. Its grants and its store follow |
+
+Before a move, the log says what follows:
+
+```
+root: the file 9d41… will get the data of visitor
+```
+
+**The store of a nickname.** The grant `store` gives an isolated store of its own, attached to the nickname: `disk-visitor` for principal 0, `disk-visitor.principal.1` for principal 1. A new version under the same nickname keeps its data; a file under another nickname gets a new, empty store. The name of a module has no byte `-`, so no program of the boot image has such a store. A nickname with a grant has letters, digits, `-` and `_` only, and a nickname whose store name passes 31 bytes is refused. The limit of the store is the default limit of a store, 64 blocks: the budget that a module asks for (section 1, "The budget that a module asks for") has no part for the size of a store yet.
+
+**The grants that no command gives.** A disk program never gets the ring of the root service (`Root_Ring`, `Connect`, `Principals`, `Debugger`), a right over the machine or a device (`Inspect`, `Stop`, `Schedule`, `Events`, `Data_Disk`, `Scratch_Disk`, `Network_Device`, `Settings`, `Clock`, `Replace`, `System_Part`), or the right to act for the principal. The root service refuses each one with `Reserved`, unit `Grants`:
+
+```
+root: refused the grant Root_Ring to the nickname visitor: no command gives it to a disk program, as it reaches the whole machine or the principal
+```
+
+Each other start grant is refused with `Unsupported`: a command gives `store` only.
+
+**How long a table lasts.** Principal 0 has no passphrase, so no key signs its table: the table of principal 0 lasts until the machine stops. The store of a nickname stays on the disk, and the next grant of `store` finds its data. The persisted form of a table is built in `modus:support/disk_program` (`table_encode`, `table_decode`): 1008 bytes, the rows that persist, a global setting of persistence with an exception for each row (the default is to persist), and a tag of keyed BLAKE2b under a key that the passphrase of a named principal gives. A table whose tag fails is refused, so a reader of the disk with no passphrase adds no grant.
+
+Not built: the read of the table of a named principal after the unlock and its write after a change, with the setting of persistence as a command: the console acts for principal 0 only (`PRINCIPALS.md`, "5. The session"), so no caller changes the table of a named principal yet. The size of a store from the budget that the module asks for. The nickname with its hash in the monitor and in the menu.
 
 ## 3. Static is dynamic
 
@@ -795,9 +901,9 @@ The tool writes `build/<name>.module` and `build/<name>.debug` in the folder of 
 | 1. Compile | `odin build` with `-target:freestanding_amd64_sysv -build-mode:llvm-ir -reloc-mode:pic -no-entry-point -default-to-nil-allocator -o:speed -vet -debug-info:same-code -collection:modus=src/library` | One LLVM IR file, `<name>.ll` |
 | 2. Make the object | `llc -O3 -misched-topdown --frame-pointer=all -relocation-model=pic --function-sections --data-sections` | One ELF object, `objects/<name>.o` |
 | 3. Assemble | `nasm -f elf64` | One object for `src/runtime/memory.asm`, one for each `.asm` file of the source folder, and for a module of the boot image one for each `.asm` file of `src/library/support/system` |
-| 4. Describe | The tool (`describe_package`) | The exports and their descriptions, from the source; a version script that makes only the exports visible |
+| 4. Describe | The tool (`describe_package`) | The exports and their descriptions, and the budget that the module asks for (the constant `MODULE_BUDGET`), from the source; a version script that makes only the exports visible |
 | 5. Link | `ld.lld -shared -nostdlib -Bsymbolic --gc-sections --build-id=none -z now -z relro` | One ELF file, `linked.elf` |
-| 6. Convert | The tool (`import_declarations_check`, then `convert`) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module, `build/modules/<name>.module`, with the hashes of its imports in its import table. A segment that is read-only after the load and that no loader writes becomes a constant segment (section 2, "Shared code"). A library module that still has a segment that is read-only after the load is refused (section "A library as a module") |
+| 6. Convert | The tool (`import_declarations_check`, then `convert`) | The check of each declaration of an import against the description of its export (section "The declaration of an import is checked"); then the module, `build/modules/<name>.module`, with the hashes of its imports in its import table, and the table `Budget` when the source states a request. A segment that is read-only after the load and that no loader writes becomes a constant segment (section 2, "Shared code"). A library module that still has a segment that is read-only after the load is refused (section "A library as a module") |
 | 7. Write the debug object | The tool | `build/modules/<name>.debug` (section "Debug information") |
 
 Why each choice:

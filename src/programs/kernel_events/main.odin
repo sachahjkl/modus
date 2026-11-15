@@ -66,6 +66,19 @@ import "modus:support/interface"
 import "modus:support/random"
 import "modus:support/system"
 
+// Program_Create takes the program and its first thread from this budget.
+// Pages: its module, stack, context, thread area and page tables, about
+// 142; its window, two pictures of 960 x 600 x 4 bytes, 1126; its rings, 4
+// processors x (128 + 8192 x 64 bytes), 513; the thread that empties them,
+// 16 + 3; one shared page for each child, 2; the load child, 256 + 4
+// loaders x (16 + 3), 332; the child that faults, at the same time, 256:
+// 2394 in all, and 3072 leaves 678. Programs: itself and two children at
+// one time. Threads: its main thread, 1; the load child, its main thread
+// and 4 loaders, 5 (taken from this budget when it starts, for its life);
+// then either the child that faults or the thread that empties the rings,
+// 1, never both at one time: 7.
+MODULE_BUDGET :: system.Budget_Request{pages = 3072, programs = 3, threads = 7}
+
 LINE :: interface.TABLE_LINE
 WIDTH :: 960
 HEIGHT :: 600

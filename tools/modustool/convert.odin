@@ -62,6 +62,18 @@ Module_Description :: struct {
 	markdown: string, // The comment of the package, as its author wrote it: the site renders it.
 	exports:  []Export_Description,
 	records:  []Record_Description, // The records that the exports use. Record n + 1 of the module is records[n].
+	budget:   Budget_Description, // The budget that the module asks for: the table Budget.
+}
+
+// The budget that a module asks for, as its source states it in the
+// constant BUDGET_REQUEST_NAME (describe.odin).
+Budget_Description :: struct {
+	stated:  bool, // The source has the constant: the module has the table Budget.
+	request: module.Budget_Request,
+	comment: string, // The comment before the constant, in its Markdown: the reasons of the amounts.
+	// Where the source declares it: the site links the budget to its line.
+	file:    string,
+	line:    int,
 }
 
 // convert writes a module from a shared object that lld linked.
@@ -380,6 +392,12 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 	add_table(&output, &directory, .Fields, field_records[:])
 	add_table(&output, &directory, .Strings, string_bytes[:])
 	add_table(&output, &directory, .Documentation, documentation_records[:])
+	// A module whose source states no request has no table Budget: it asks
+	// for the least budget.
+	if description.budget.stated {
+		budget_records := [2]module.Budget_Request{1 = description.budget.request}
+		add_table(&output, &directory, .Budget, budget_records[:])
+	}
 	for image, index in images {
 		// The zero bytes at the end of a segment are not stored.
 		data := image.data

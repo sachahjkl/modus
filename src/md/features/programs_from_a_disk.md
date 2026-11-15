@@ -61,18 +61,18 @@ One load runs at a time. A second command during a load is refused with `Busy`.
 
 ### The least right
 
-A program of the boot image has a row in the grant table: its name gives it its grants, its budget and the limit of its store. A disk program has no row, and gets:
+A program of the boot image has a row in the grant table: its name gives it its grants and the limit of its store. A disk program has no row, and gets:
 
 - the log, with the right Write only, and a window, as each program has;
 - the date page, the settings page and the glyph caches, read-only, as each program with a window has;
-- no start grant: no root ring, no machine handle, no boot image, no store, no endpoint, no service ring;
-- the budget of a program that no row names: 2048 pages, one program, one thread.
+- no start grant: no root ring, no machine handle, no boot image, no endpoint, no service ring, and no store unless the disk grant table gives one to its nickname (see below);
+- the budget that its file asks for, up to the largest budget of a disk program, with no budget exception, paid by the one budget of all disk programs; a file that asks for nothing gets the least budget, 2048 pages, one program, one thread ([module_budget_request.md](module_budget_request.md)).
 
-Nothing in the file gives a grant. The root service reads no table of the file to decide a grant.
+Nothing in the file gives a grant. The root service reads no table of the file to decide a grant: it reads the disk grant table of the principal, which only a command of the principal changes. The table `Budget` of the file is a request, which the root service limits.
 
 **A disk program cannot take a row by its name.** The root service refuses, before any read, a name that a module of the boot image has, a name that the grant table gives a grant, a name of a program of the system, and the name `programs`. Without this rule a file named `notes` would start with the store of `notes`, and a file named `console` with the root ring.
 
-**The budget of the starter pays nothing for the code.** A program of the boot image maps the shared code of its module from the table of prepared modules of the root service, which the budget of the root service pays. A disk program gets a copy of each of its modules from its own budget. So a disk program holds no page of the root service while it runs.
+**The budget of the starter pays nothing for the code.** A program of the boot image maps the shared code of its module from the table of prepared modules of the root service, which the budget of the root service pays. A disk program gets a copy of each of its modules from its own budget. So a disk program holds no page of the root service while it runs, but the pages of the one budget of the disk programs, which the root service set apart at the first disk program.
 
 ### The imports
 
@@ -90,22 +90,42 @@ The writer of the tool is checked by the open of the storage service: a host tes
 
 ### The grants of a disk program
 
-A disk program has no grant today. The next step gives the principal a command that grants one (`docs/DECISIONS.md`, D-260).
+The principal gives a disk program a grant with a command (`docs/DECISIONS.md`, D-260). The rules of the table are in `src/library/support/disk_program` (`grant_table.odin`), with no allocator and no kernel operation, so the host tests run each rule.
 
-**The nickname.** The name of the entry of a file in the store `programs` is its nickname: the principal chooses it, and the file never does. Each display shows the nickname, with the hash of the file faded beside it: the palette, the menu of the programs, the monitor, a stop report. Two hashes never share a nickname: the store refuses an entry whose name another hash has. A reader then tells programs apart by a word, and still sees what runs.
+**The nickname.** The name of the entry of a file in the store `programs` is its nickname: the principal chooses it, and the file never does. The root service names the program by its nickname (the slot, the log, `grants`, `stop`, the monitor), and the log writes the hash of the file beside it.
 
-**What a grant names.** The hash of the file: `allow(nickname, grant)` and `disallow(nickname, grant)`, from a caller that acts for the principal, write the row of the hash that the nickname names now. A file with another hash has no row, whatever its name.
+**The disk grant table.** The root service keeps one disk grant table for each principal ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Disk grant table"). A row binds a nickname to the hash of one file, and holds the grants of that file. 16 rows at most. It is apart from the tables by name of the root service (`grants_of`), which a disk program never reaches.
 
-**The store of a disk program.** By default each disk program gets an isolated store of its own, attached to its nickname, not to its hash.
+**Two hashes never share a nickname.** The rule holds in the root service, at `start_from_disk`, and not in the storage service:
 
-- The store of a hash: a new version of a program has another hash, and loses its data.
-- The store of the nickname: an update is the principal pointing the nickname to a new hash, and the store follows. The palette says it before the change is done: "this file will get the data of notes". A file under another nickname gets a new, empty store. No file chooses its store.
+- The storage service is a transport. Each program with a grant of the store `programs` can write a new object under a name, and the store has one object for each name anyway. A rule in the store holds only as long as the store is honest.
+- The root service computes the hash of the bytes before a start. It compares the hash with the row of the nickname: a row with another hash refuses the start before any read, with the two hashes in the sentence.
+- A nickname with no row gets no grant. So a file under it gains nothing, and the root service does not refuse it.
 
-The size of the store is a line of the budget that the module asks for (`src/md/features/module_budget_request.md`): the starter accepts it, limits it or widens it, by a policy that the principal sets.
+`start_from_disk(nickname, "")` takes the hash from the row of the nickname. The hash is still the identity: the bytes are checked against it, and the log writes it.
 
-**How long a grant lasts.** The table of the grants persists across a restart. It is an object of the store of the principal, signed with a key that is derived from the passphrase, as the key of the unlock is. The root service reads it after the unlock, and refuses a table whose signature fails: a reader of the disk who has no passphrase cannot add a grant. The persistence is a setting: global, with an exception for each program. The default of a desktop is to persist.
+One file can have two nicknames. Each nickname has its own row, its own grants and its own store: a grant names the file and the nickname together.
 
-**The grants that no command gives.** A disk program never gets the ring of the root service, a right over the machine or a device, the right to debug, or the right to act for the principal: each one is the whole machine, or the principal.
+**What a grant names.** `allow(nickname, grant)` and `disallow(nickname, grant)` write the row of the hash that the nickname names now: the hash of its row, or, with no row, the hash of the disk program of that nickname that runs. A nickname with neither is refused: the root service knows a hash only from a row or from a check of the bytes. The caller acts for its principal (`acts_for_principal`, not revoked), and changes the table of that principal only. A grant takes effect at the next start of the program: the kernel gives the handles of a grant at the start. `revoke` ends a grant of a program that runs, as for each program.
+
+**The store of a disk program.** The grant `store` gives an isolated store of its own, attached to the nickname, not to the hash. Its name is `disk-` and the nickname, with the ending of the principal (`disk-visitor`, `disk-visitor.principal.1`).
+
+- The store of a hash: a new version of a program has another hash, and loses its data. Refused.
+- The store of the nickname: an update is the principal pointing the nickname to a new hash, and the store follows. A file under another nickname gets a new, empty store. No file chooses its store.
+- The prefix `disk-` keeps the stores of the disk programs apart from the stores of the boot image: the name of a module has no byte `-`. A nickname with a store has letters, digits, `-` and `_` only, so it cannot build the ending `.history` or `.principal.N` of another store.
+- A name of a store has 31 bytes at most. A nickname whose store name does not fit is refused at `allow`, not cut.
+
+The size of the store is a line of the budget that the module asks for (`src/md/features/module_budget_request.md`). The request of that budget has no part for the store yet: the store has the default limit of a store, 64 blocks.
+
+**The update.** `nickname_move(nickname, hash)` points the nickname to another file. Its grants and its store follow. Before the change, the log says "root: the file <hash> will get the data of <nickname>". A program of the nickname that runs keeps the grants of its start.
+
+**The grants that no command gives.** A disk program never gets the ring of the root service (`root_ring`, `connect`, `principals`, `debugger`), a right over the machine or a device (`inspect`, `stop`, `schedule`, `events`, `data_disk`, `scratch_disk`, `network_device`, `settings`, `clock`, `replace`, `system_part`), or the right to act for the principal: each one is the whole machine, or the principal. The root service refuses each one with a sentence that says it. The other grants are not built: a command gives `store` only.
+
+**How long a grant lasts.** The disk grant table of a named principal persists across a restart. It is an object of a store of the principal, with a tag of keyed BLAKE2b (32 bytes) under a key that is derived from the passphrase, as the key of the unlock is. A reader of the disk who has no passphrase then cannot add a grant: a table whose tag fails is refused with a line of the log, and no grant. The persistence is a setting in the table: global, with an exception for each row. The default is to persist.
+
+Principal 0 has no passphrase, so no key signs its table: the table of principal 0 lasts until the machine stops. Its data stays: the store of a nickname is on the disk, and the next grant of `store` finds it.
+
+The format of the persisted table is built and tested on the host: `table_encode`, `table_decode`. The root service does not read or write it yet. The console, the only program that sends `allow`, acts for principal 0 only ([`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "5. The session"), so no caller can change the table of a named principal yet, and a key with no use is only a target.
 
 ## Refused forms
 
@@ -119,6 +139,11 @@ The size of the store is a line of the budget that the module asks for (`src/md/
 - **A deadline for each answer in place of one for the load.** The bound is then the deadline times the count of the calls. One deadline is one number to state.
 - **The table of prepared modules for a disk program.** The budget of the root service would hold the code of a program that has no row.
 - **A kernel operation that loads from a store.** The kernel has no file system and no loader for imports.
+- **The store refuses an entry whose name another hash has.** The storage service is a transport, and a rule that it holds is a rule of a party that the root service does not trust. The root service checks the hash anyway.
+- **A row of the table is made at the first start of a nickname.** A row with no grant protects nothing, and fills a table of 16 rows.
+- **`allow` on a nickname with no row and no program that runs, with a read of the bytes.** It needs a second load from the disk for a command that changes a table. The principal starts the program by its hash first.
+- **A table of principal 0 on the disk, with no tag or a tag under a key that the disk holds.** A reader of the disk could then add a grant.
+- **The console acts for the named principal of the session.** The console acts for its own session only; a console that acts for another principal is a confused deputy.
 
 ## Subtle points
 
@@ -126,16 +151,20 @@ The size of the store is a line of the budget that the module asks for (`src/md/
 - **A length from the storage service is copied, then checked.** The size is read one time. Each count of bytes is compared with what is left before a copy.
 - **The name of the caller of the connection is `programs`.** The root service is no row of its own table of started programs, so the connection has a caller record of its own. Its grant is the limit of the store, with no grant to act for a principal.
 - **The connection ends with the load.** The root service holds no handle of the storage service between two loads.
-- **The rule of the debug access needs no change.** It reads the grants that a program received at its start. A disk program received none, so a caller that acts for its principal can debug it.
+- **The rule of the debug access needs no change.** It reads the grants that a program received at its start. A disk program with no grant can be debugged by a caller that acts for its principal. A disk program with the grant `store` cannot: a store is a grant of one program.
+- **The root service finds a disk program by a flag of its slot, not by its name.** The connection of a disk program to the storage service gets the store of its nickname and the limit of that store, from the grants of its start, and never the grants that `grants_of` gives a name.
+- **A move does not change a program that runs.** It keeps its grants and its connections. The next start reads the row again.
 - **A read makes no commit.** The storage service writes the limit of a store at a change only. A machine whose disk has no store `programs` gets no new store from a refused command.
 
 ## Built and left
 
-Built: the command `Start_From_Disk` of the root ring and the command `start_from_disk` of the console; the load as a state of the loop of the root service, with its four bounds; the check of the hash; the least right, with the rule of the names; the disk of the tool with the store `programs`; the test part `disk_programs`.
+Built: the command `Start_From_Disk` of the root ring and the command `start_from_disk` of the console; the load as a state of the loop of the root service, with its four bounds; the check of the hash; the least right, with the rule of the names; the disk of the tool with the store `programs`; the test part `disk_programs`. The disk grant table: the nickname rule, `allow`, `disallow` and `nickname_move` (the commands `Disk_Grant` and `Nickname_Move` of the root ring), the grant `store` with the store of the nickname, and the format of the persisted table with its tag.
 
 Left:
 
-- **Grants for a disk program.** A command with which the principal gives a disk program a grant or a larger budget. The identity that such a grant names must not be the name alone.
+- **The persisted table in the machine.** The root service reads the table of a named principal after the unlock and writes it after each change, with the key that `unlock` derives; the setting of persistence as a command. It needs a caller that acts for a named principal and sends `allow`.
+- **A store size from the module.** The size of the store of a nickname from the budget that the module asks for, by a policy that the principal sets.
+- **The nickname in the windows.** The monitor and the menu show the nickname with the hash faded beside it. The kernel report of a program has its name and no hash, so the monitor needs the hash from the root service.
 - **A file that comes without the tool.** A console command that stores bytes that came from the network in the store `programs`.
 - **Imports from the same store.** The load source of a disk program is the boot image. An import by hash from the store needs the index from a hash to an object ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "5. Not built: the next steps").
 - **A list.** No command lists the entries of the store `programs` with their hashes.

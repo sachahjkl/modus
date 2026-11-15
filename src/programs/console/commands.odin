@@ -7,6 +7,7 @@ import "modus:contract/isolated"
 import op "modus:contract/operation"
 import module "modus:contract/module"
 import "modus:contract/ring"
+import "modus:contract/start_grant"
 import "modus:support/disk_program"
 import "modus:support/random"
 import "modus:support/system"
@@ -411,26 +412,67 @@ commands_start :: proc "contextless" () {
 	// file is an object of the store `programs` of the storage service, and
 	// not a file of the boot image. It gives nothing.
 	//
-	// - `name`: the name of the program and of its entry in the store, 1 to
-	//   23 bytes.
+	// - `name`: the nickname of the program: the name of its entry in the
+	//   store, 1 to 23 bytes.
 	// - `hash`: the BLAKE3 hash of the module file, 64 hexadecimal digits.
-	//   The tool that wrote the file prints it.
+	//   The tool that wrote the file prints it. An empty text takes the hash
+	//   that the nickname names in the disk grant table.
 	//
 	// The root service reads the object and starts its bytes only when
 	// their hash is `hash`: the storage service does not choose what runs.
-	// The program receives the log and a window, and no grant, whatever
-	// its name (docs/MODULE_CONTRACT.md, "A program from a disk").
+	// The program receives the log and a window, and the grants of its
+	// nickname in the disk grant table only, whatever its name
+	// (docs/MODULE_CONTRACT.md, "A program from a disk").
 	//
 	// ```
 	// > start_from_disk("visitor", "5f0c...")
+	// > start_from_disk("visitor", "")
 	// ```
 	//
 	// Errors: the name or the hash has a wrong form; the store has no
-	// object with the name; the bytes have another hash; a module of the
+	// object with the name; the bytes have another hash; the nickname
+	// names another file, or no file for an empty hash; a module of the
 	// boot image has the name, or the root service gives the name a grant;
 	// another load runs; the loader refuses the file; the storage service
 	// stopped or gave no answer.
-	command("start_from_disk", {.Text, .Text}, .None, "start a program of the store programs, by name and hash", start_from_disk)
+	command("start_from_disk", {.Text, .Text}, .None, "start a program of the store programs, by nickname and hash", start_from_disk)
+	// Gives a grant to the file that a nickname names, from its next start
+	// (docs/MODULE_CONTRACT.md, "The grants of a disk program"). It gives
+	// nothing.
+	//
+	// - `nickname`: the nickname of a disk program: letters, digits, `-`
+	//   and `_`, 1 to 23 bytes. Its row in the disk grant table, or the
+	//   disk program of that nickname that runs, gives the file.
+	// - `grant`: the name of a start grant. A command gives `store` only:
+	//   the store of the nickname, which follows the nickname to its next
+	//   file.
+	//
+	// ```
+	// > allow("visitor", "store")
+	// ```
+	//
+	// Errors: the nickname has a wrong form, no row and no program that
+	// runs; the grant is one that no command gives to a disk program (the
+	// ring of the root service, the machine, a device, the principal), or
+	// one that is not built; the table is full.
+	command("allow", {.Text, .Text}, .None, "give a disk program a grant, by nickname", allow)
+	// Takes a grant from the file that a nickname names, from its next
+	// start. The store stays on the disk; `revoke` ends the grant of a
+	// program that runs. It gives nothing.
+	//
+	// - `nickname`: the nickname of a disk program with a row.
+	// - `grant`: the name of the grant: `store`.
+	command("disallow", {.Text, .Text}, .None, "take a grant from a disk program, by nickname", disallow)
+	// Points a nickname to another file: its grants and its store follow.
+	// The log says "root: the file HASH will get the data of NICKNAME"
+	// before the change. It gives nothing.
+	//
+	// - `nickname`: a nickname with a row in the disk grant table.
+	// - `hash`: the BLAKE3 hash of the new file, 64 hexadecimal digits.
+	//
+	// Errors: the nickname has no row; the hash has a wrong form, or is the
+	// hash of its file already.
+	command("nickname_move", {.Text, .Text}, .None, "point a nickname to another file, with its grants and its store", nickname_move)
 	// Asks the root service to stop a program that runs. It gives nothing.
 	//
 	// - `name`: the name of the program, as `programs()` gives it.
@@ -2196,34 +2238,150 @@ start_from_disk :: proc "contextless" (arguments: []Value) -> Value {
 	case .Store_Name:
 		return fail("start_from_disk: \"", name, "\" is the name of the store of the module files, and no name of a program")
 	}
-	hash, parsed := disk_program.hash_parse(arguments[1].text)
-	if !parsed {
-		return fail("start_from_disk: the hash must be ", u64(disk_program.HASH_DIGITS), " hexadecimal digits; the argument has ", u64(len(arguments[1].text)), " bytes, or a byte that is no digit")
-	}
-	if requests.head == nil {
-		return fail_no_answer()
+	// An empty hash: the root service takes the hash of the row of the
+	// nickname in the disk grant table.
+	hash: [disk_program.HASH_SIZE]u8
+	if arguments[1].text != "" {
+		parsed: bool
+		hash, parsed = disk_program.hash_parse(arguments[1].text)
+		if !parsed {
+			return fail("start_from_disk: the hash must be ", u64(disk_program.HASH_DIGITS), " hexadecimal digits, or empty for the hash of the row of the nickname; the argument has ", u64(len(arguments[1].text)), " bytes, or a byte that is no digit")
+		}
 	}
 	hash_values := transmute([4]u64)hash
 	name_values := disk_program.name_pack(name)
+	record, answered := disk_request(.Start_From_Disk, {0 = hash_values[0], 1 = hash_values[1], 2 = hash_values[2], 3 = hash_values[3], 4 = name_values[0], 5 = name_values[1], 6 = name_values[2]}, START_FROM_DISK_ANSWER_LIMIT)
+	if !answered {
+		return fail_no_answer()
+	}
+	if system.Status(record.kind) == .Ok {
+		return {}
+	}
+	return start_from_disk_refusal(name, record)
+}
+
+// disk_request sends one command of the disk programs to the root service,
+// whose values are not a name of 31 bytes, and waits for its completion.
+// answered is false when the root service gave none before the limit.
+disk_request :: proc "contextless" (kind: system.Root_Command, values: [7]u64, time_limit: u64) -> (completion: ring.Record, answered: bool) {
+	if requests.head == nil {
+		return {}, false
+	}
 	request_count += 1
-	system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Start_From_Disk), tag = request_count, values = {0 = hash_values[0], 1 = hash_values[1], 2 = hash_values[2], 3 = hash_values[3], 4 = name_values[0], 5 = name_values[1], 6 = name_values[2]}})
-	limit := system.time() + START_FROM_DISK_ANSWER_LIMIT
+	system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_count, values = values})
+	limit := system.time() + time_limit
 	for {
 		for record in system.receive(&requests.completions) {
-			if record.tag != request_count {
-				continue
+			if record.tag == request_count {
+				return record, true
 			}
-			if system.Status(record.kind) == .Ok {
-				return {}
-			}
-			return start_from_disk_refusal(name, record)
 		}
 		wait: system.Wait
 		system.wait_records(&wait, &requests.completions)
 		if system.wait_end(&wait, limit) >= limit {
-			return fail_no_answer()
+			return {}, false
 		}
 	}
+}
+
+// nickname_check refuses a nickname that the root service would refuse
+// for a grant, with the line of the command: a record holds 23 bytes, and
+// a cut nickname can be the nickname of another program.
+nickname_check :: proc "contextless" (command_name: string, nickname: string) -> (refusal: Value, refused: bool) {
+	problem, offset := disk_program.nickname_grant_problem(nickname)
+	switch problem {
+	case .None:
+		return {}, false
+	case .Empty:
+		return fail(command_name, ": the nickname is empty; it must have 1 to ", u64(disk_program.NAME_LIMIT), " bytes"), true
+	case .Too_Long:
+		return fail(command_name, ": the nickname has ", u64(len(nickname)), " bytes; a nickname has at most ", u64(disk_program.NAME_LIMIT)), true
+	case .Bad_Byte, .Store_Name:
+		return fail(command_name, ": the byte ", u64(offset), " of the nickname is not a letter, a digit, '-' or '_'"), true
+	}
+	return {}, false
+}
+
+// disk_grant_named gives the start grant whose name is a text, in any
+// case: "store" or "Store".
+disk_grant_named :: proc "contextless" (text: string) -> (grant: start_grant.Grant, found: bool) {
+	for name, candidate in start_grant.GRANT_NAMES {
+		if len(name) != len(text) {
+			continue
+		}
+		same := true
+		for index in 0 ..< len(name) {
+			first, second := name[index], text[index]
+			if first >= 'A' && first <= 'Z' {
+				first += 'a' - 'A'
+			}
+			if second >= 'A' && second <= 'Z' {
+				second += 'a' - 'A'
+			}
+			if first != second {
+				same = false
+				break
+			}
+		}
+		if same {
+			return candidate, true
+		}
+	}
+	return .Root_Ring, false
+}
+
+// disk_grant_command asks the root service to give a grant to the file that
+// a nickname names, or to take it. The root service refuses a grant that
+// no command gives, with its sentence on the log.
+disk_grant_command :: proc "contextless" (command_name: string, action: u64, arguments: []Value) -> Value {
+	nickname := arguments[0].text
+	if refusal, refused := nickname_check(command_name, nickname); refused {
+		return refusal
+	}
+	grant, found := disk_grant_named(arguments[1].text)
+	if !found {
+		return fail(command_name, ": no start grant has the name ", arguments[1].text, "; a command gives a disk program the grant store")
+	}
+	packed := disk_program.name_pack(nickname)
+	completion, answered := disk_request(.Disk_Grant, {0 = packed[0], 1 = packed[1], 2 = packed[2], 4 = action, 5 = u64(grant)}, 3000)
+	if !answered {
+		return fail_no_answer()
+	}
+	if system.Status(completion.kind) != .Ok {
+		return fail_root(command_name == "allow" ? "allow: " : "disallow: ", completion)
+	}
+	return {}
+}
+
+allow :: proc "contextless" (arguments: []Value) -> Value {
+	return disk_grant_command("allow", system.DISK_GRANT_ALLOW, arguments)
+}
+
+disallow :: proc "contextless" (arguments: []Value) -> Value {
+	return disk_grant_command("disallow", system.DISK_GRANT_DISALLOW, arguments)
+}
+
+// nickname_move asks the root service to point a nickname to another file:
+// its grants and its store follow.
+nickname_move :: proc "contextless" (arguments: []Value) -> Value {
+	nickname := arguments[0].text
+	if refusal, refused := nickname_check("nickname_move", nickname); refused {
+		return refusal
+	}
+	hash, parsed := disk_program.hash_parse(arguments[1].text)
+	if !parsed {
+		return fail("nickname_move: the hash must be ", u64(disk_program.HASH_DIGITS), " hexadecimal digits; the argument has ", u64(len(arguments[1].text)), " bytes, or a byte that is no digit")
+	}
+	hash_values := transmute([4]u64)hash
+	packed := disk_program.name_pack(nickname)
+	completion, answered := disk_request(.Nickname_Move, {0 = hash_values[0], 1 = hash_values[1], 2 = hash_values[2], 3 = hash_values[3], 4 = packed[0], 5 = packed[1], 6 = packed[2]}, 3000)
+	if !answered {
+		return fail_no_answer()
+	}
+	if system.Status(completion.kind) != .Ok {
+		return fail_root("nickname_move: ", completion)
+	}
+	return {}
 }
 
 // start_from_disk_refusal makes the line fail with the refusal of the root
@@ -2240,9 +2398,18 @@ start_from_disk_refusal :: proc "contextless" (name: string, completion: ring.Re
 		head := transmute([8]u8)u64(error.value)
 		result = fail("start_from_disk: the bytes of \"", name, "\" in the store programs do not have the hash asked: their hash starts with ", system.Hash{head[:]}, ". The root service started nothing")
 	case .Absent:
-		result = fail("start_from_disk: the store programs has no object \"", name, "\"")
+		if errors.Unit(error.unit) == .Grants {
+			result = fail("start_from_disk: the nickname \"", name, "\" has no row in the disk grant table: name the hash of its file")
+		} else {
+			result = fail("start_from_disk: the store programs has no object \"", name, "\"")
+		}
 	case .Exists:
-		result = fail("start_from_disk: a module of the boot image has the name \"", name, "\": start() starts that module, and a disk program takes another name")
+		if errors.Unit(error.unit) == .Grants {
+			head := transmute([8]u8)u64(error.value)
+			result = fail("start_from_disk: the nickname \"", name, "\" names the file whose hash starts with ", system.Hash{head[:]}, ": nickname_move points it to another file. The root service started nothing")
+		} else {
+			result = fail("start_from_disk: a module of the boot image has the name \"", name, "\": start() starts that module, and a disk program takes another name")
+		}
 	case .Reserved:
 		result = fail("start_from_disk: the root service gives the name \"", name, "\" a grant, or keeps it for the system: a disk program takes no grant by its name")
 	case .Busy:

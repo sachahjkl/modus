@@ -23,6 +23,8 @@
 // - `Function`, `Type`, `Direction`, `Record`, `Field`, `Table_Place`: the
 //   call form of an export (docs/MODULE_CONTRACT.md, section 4).
 // - `Documentation`: the help of the module and of each export.
+// - `Budget_Request`: the budget that the module asks for its program
+//   (`budget_request`).
 // - `Load_Error`, `Load_Stage`, `Difference` (`error.odin`) and `Error`
 //   (`load.odin`): why a load failed.
 //
@@ -77,6 +79,7 @@ Table_Kind :: enum u32 {
 	Documentation = 8, // `Documentation` records: the help of the module and of each export.
 	Records       = 9, // `Record` records: the descriptions of the records that the exports take and give.
 	Fields        = 10, // `Field` records: the fields of those records.
+	Budget        = 11, // One `Budget_Request` record, at index 1: the budget that the module asks for.
 }
 // The tables that this version of the format knows.
 TABLE_COUNT :: len(Table_Kind)
@@ -312,6 +315,24 @@ Documentation :: struct {
 	text_count:   u32, // The bytes of the text.
 }
 #assert(size_of(Documentation) == 16)
+
+// The budget that a module asks for: record 1 of the table Budget
+// (docs/MODULE_CONTRACT.md, "The budget that a module asks for"). It is a
+// request, never a grant: the starter of the program accepts it, limits it
+// or widens it. A part that is 0 asks for the least budget of that part, and
+// a file with no table Budget asks for the least budget. No loader reads it.
+//
+// The record can gain fields at its end: a reader reads a part that a
+// shorter record does not have as 0, the least.
+//
+// Example: `{pages = 4096, programs = 1, threads = 2}` asks for 16 MiB, the
+// program itself and no child, and two threads.
+Budget_Request :: struct {
+	pages:    u64, // Pages of memory: its modules, its stacks, its pictures and its working memory.
+	programs: u64, // Program slots: the program itself, and each child that runs at one time.
+	threads:  u64, // Thread slots: each thread that runs at one time, the first one included, and the threads of its children.
+}
+#assert(size_of(Budget_Request) == 24)
 
 // The rebase table is not indexed. It is a sequence of 64-bit words in the
 // RELR form, and it names the 8-byte locations that hold a memory offset:

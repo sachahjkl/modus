@@ -30,7 +30,7 @@ import "base:intrinsics"
 import "modus:contract/settings"
 
 MAGIC :: 0x544C4150 // "PALT", little-endian.
-VERSION :: 3 // A new field or a new meaning of a field is a new version.
+VERSION :: 4 // A new field or a new meaning of a field is a new version.
 
 ENTRY_CAPACITY :: 256 // The entries of a table: the commands of a console at most.
 NAME_CAPACITY :: 64 // The bytes of the name of an entry.
@@ -44,6 +44,9 @@ PARAMETER_NAME_CAPACITY :: 16 // The bytes of the name of a parameter. A longer 
 ARGUMENT_TEXT_CAPACITY :: 48 // The bytes of a Text argument that the panel sends: 6 values of a ring record.
 CANDIDATE_CAPACITY :: 96 // The candidates of one parameter: the modules of a boot image fit.
 CANDIDATE_NAME_CAPACITY :: 31 // The bytes of the name of a candidate.
+ACT_NAME_CAPACITY :: 32 // The bytes of the act name of an entry: what it acts on, as an element of a window names it ("settings.set:font").
+SETTING_NAME_CAPACITY :: 24 // The bytes of the name of the setting of a Setting or Provider_Setting entry: the name of its setting row.
+VALUE_NAME_CAPACITY :: 24 // The bytes of the name of the value of a Setting or Provider_Setting entry: one button of its setting row.
 SNAPSHOT_TRIES :: 4 // The times that a reader copies a table that changes while it reads.
 
 // What an entry is.
@@ -76,7 +79,16 @@ Value_Kind :: enum u8 {
 	Bytes   = 6,
 }
 
-// One entry: 440 bytes.
+// One entry: 524 bytes.
+//
+// The three texts at its end are for the form of the entry in the panel
+// (docs/DESIGN.md, "Palette"). The act name says what the entry acts on,
+// in the words that an element of a window uses for the same thing: the
+// panel offers to go to a window that names it. The name of a setting and
+// the name of a value say which setting row an entry joins, and which
+// button it is there: the entries of one setting follow each other in the
+// table, and differ only in their value. The provider writes the three, so
+// the panel never parses the name of an entry.
 Entry :: struct {
 	kind:             Entry_Kind, // What the entry is.
 	flags:            Entry_Flags, // Its facts.
@@ -95,8 +107,15 @@ Entry :: struct {
 	signature:        [SIGNATURE_CAPACITY]u8, // "revoke(name: Text, grant: Text) -> Integer": bytes 32 to 126.
 	about:            [ABOUT_CAPACITY]u8, // What the entry does, in one sentence: bytes 32 to 126.
 	parameter_names:  [PARAMETER_CAPACITY][PARAMETER_NAME_CAPACITY]u8, // The name of each parameter: bytes 32 to 126.
+	act_name_length:     u8, // The bytes of `act_name` in use. 0: no element of a window acts on what the entry does.
+	setting_name_length: u8, // The bytes of `setting_name` in use. 0: the entry joins no setting row. Only on a Setting or Provider_Setting entry.
+	value_name_length:   u8, // The bytes of `value_name` in use. Only on an entry with a setting name, and then at least 1.
+	reserved_end:        u8, // 0.
+	act_name:         [ACT_NAME_CAPACITY]u8, // "settings.set:font", "strategy": bytes 32 to 126.
+	setting_name:     [SETTING_NAME_CAPACITY]u8, // "font", "strategy": bytes 32 to 126.
+	value_name:       [VALUE_NAME_CAPACITY]u8, // "spleen", "eevdf": bytes 32 to 126.
 }
-#assert(size_of(Entry) == 440)
+#assert(size_of(Entry) == 524)
 
 // The start of the memory object.
 Header :: struct {
@@ -123,7 +142,14 @@ Candidate_Kind :: enum u64 {
 	Program = 1, // The programs that run.
 	Module  = 2, // The modules of the boot image.
 	Grant   = 3, // The grants that the root service can revoke.
+	Strategy = 4, // The scheduling strategies of the kernel, as the command `strategy` takes them.
+	Setting  = 5, // The names of the settings of the machine, as the command `setting` takes them.
 }
+
+// The bit of values[3] of the answer Candidates_Ready that says that the
+// candidates are the only values that the parameter takes, and not
+// suggestions. The panel then shows a few of them as a row of buttons.
+CANDIDATES_CLOSED :: 1
 TABLE_BYTES :: ENTRIES_OFFSET + ENTRY_CAPACITY * size_of(Entry)
 TABLE_PAGES :: (TABLE_BYTES + 4095) / 4096
 #assert(size_of(Header) <= RESULT_OFFSET)
@@ -175,7 +201,7 @@ Outcome :: enum u64 {
 	Failed           = 3, // The line failed: the result area holds its error.
 	Refused          = 4, // The provider did not run the entry: the table changed, or the choice names no entry that it can run. The result area holds the sentence.
 	Edit_Opened      = 5, // The edit line of the provider holds the entry.
-	Candidates_Ready = 6, // The candidate area holds the candidates. values[1]: a Candidate_Kind. values[2]: their count.
+	Candidates_Ready = 6, // The candidate area holds the candidates. values[1]: a Candidate_Kind. values[2]: their count. values[3]: CANDIDATES_CLOSED when they are the only values of the parameter, else 0.
 	Manual_Opened    = 7, // The window of the manual shows the page.
 }
 
@@ -224,7 +250,7 @@ Problem :: enum u8 {
 	Bad_Length       = 7, // An entry: a length or a count past its field, or an empty name.
 	Bad_Byte         = 8, // An entry: a byte of a text under 32 or over 126.
 	Bad_Signature    = 9, // An entry: the signature does not start with the name.
-	Bad_Setting      = 10, // A Setting entry that names no setting or no value of it, or that has parameters; or another entry that names a setting; a Provider_Setting entry that has parameters; the flag In_Use on an entry that is no Provider_Setting.
+	Bad_Setting      = 10, // A Setting entry that names no setting or no value of it, or that has parameters; or another entry that names a setting; a Provider_Setting entry that has parameters; the flag In_Use on an entry that is no Provider_Setting; the name of a setting on another kind, or with no name of a value.
 }
 
 // The name of each problem, as a log writes it.
@@ -258,8 +284,20 @@ ENTRY_FLAGS_KNOWN :: u8(1 << u8(Entry_Flag.Destroys)) | u8(1 << u8(Entry_Flag.In
 
 // entry_problem checks one entry of a copy.
 entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
-	if entry.kind > max(Entry_Kind) || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || entry.result > max(Value_Kind) || entry.reserved != 0 || entry.reserved_more != {} {
+	if entry.kind > max(Entry_Kind) || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || entry.result > max(Value_Kind) || entry.reserved != 0 || entry.reserved_more != {} || entry.reserved_end != 0 {
 		return .Bad_Kind
+	}
+	if int(entry.act_name_length) > ACT_NAME_CAPACITY || int(entry.setting_name_length) > SETTING_NAME_CAPACITY || int(entry.value_name_length) > VALUE_NAME_CAPACITY {
+		return .Bad_Length
+	}
+	if !printable(entry.act_name[:entry.act_name_length]) || !printable(entry.setting_name[:entry.setting_name_length]) || !printable(entry.value_name[:entry.value_name_length]) {
+		return .Bad_Byte
+	}
+	// A setting row is made of Setting and Provider_Setting entries only,
+	// and each of its buttons has a name.
+	setting_kind := entry.kind == .Setting || entry.kind == .Provider_Setting
+	if entry.setting_name_length != 0 && (!setting_kind || entry.value_name_length == 0) || entry.setting_name_length == 0 && entry.value_name_length != 0 {
+		return .Bad_Setting
 	}
 	if entry.kind == .Setting {
 		if entry.parameter_count != 0 || entry.setting > u8(max(settings.Setting)) || u32(entry.setting_value) >= settings.descriptions[settings.Setting(entry.setting)].value_count {

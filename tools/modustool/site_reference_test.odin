@@ -128,11 +128,6 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 	processors, _ := site_case_of(cases, otherwise, "processors")
 	testing.expect(t, pages_named && pages.line == processors.line && len(pages.names) > 1)
 	testing.expect_value(t, site_name_cases_problem(cases, otherwise, SITE_ROOT_FILE, "grants_of", at_start, true), "")
-	budgets, budget_otherwise, budgets_problem := site_name_switch_read(root_text, SITE_ROOT_FILE, "things_of")
-	testing.expect_value(t, budgets_problem, "")
-	testing.expect(t, len(budgets) > 0 && strings.has_prefix(budget_otherwise.value, "{pages = "))
-	testing.expect(t, len(budget_otherwise.fields) == 3 && budget_otherwise.fields[0].name == "pages", "a record is read as its fields")
-	testing.expect_value(t, site_name_cases_problem(budgets, budget_otherwise, SITE_ROOT_FILE, "things_of", nil, false), "")
 }
 
 // The reader of the cases of the root service reads the tree of the parser:

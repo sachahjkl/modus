@@ -2041,3 +2041,83 @@ text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
 		testing.expect(t, int(record.x) >= 32 && int(record.x + record.width) <= 32 + 320, "no record passes the field")
 	}
 }
+
+// The act names of a frame: the first element that names one keeps it, a
+// name that is empty or too long is counted and kept nowhere, and a frame
+// keeps display.ACT_NAME_SET_CAPACITY names at most. The window layer sends
+// the set only when it differs from the set that the compositor has.
+@(test)
+the_act_names_of_a_frame :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	state: Interface_State
+	input: Input
+	frame := frame_begin(&table, &state, &input)
+	button(&frame, {0, 0, 96, 24}, identity("vector"), "vector")
+	element_act_name(&frame, identity("vector"), "settings.set:font")
+	button(&frame, {104, 0, 96, 24}, identity("spleen"), "spleen")
+	element_act_name(&frame, identity("spleen"), "settings.set:font")
+	element_act_name(&frame, identity("spleen"), "")
+	element_act_name(&frame, identity("spleen"), "settings.set:a_name_of_33_bytes__")
+	#assert(len("settings.set:a_name_of_33_bytes__") == display.ACT_NAME_CAPACITY + 1)
+	testing.expect_value(t, frame.act_name_count, 1)
+	testing.expect_value(t, frame.act_names[0].element, identity("vector"))
+	testing.expect_value(t, frame.act_names_dropped, 2)
+	names := [?]string{"strategy", "b", "c", "d", "e", "f"}
+	for name in names {
+		element_act_name(&frame, identity(name), name)
+	}
+	testing.expect_value(t, frame.act_name_count, display.ACT_NAME_SET_CAPACITY)
+	testing.expect_value(t, frame.act_names_dropped, 3)
+	testing.expect_value(t, act_name_text(&frame.act_names[1]), "strategy")
+	testing.expect_value(t, frame.act_names[1].hash, display.act_name_hash("strategy"))
+	// The window layer: a set that the compositor does not have differs;
+	// the same set in the same order does not.
+	drawing: Window_Drawing
+	testing.expect(t, act_names_differ(&drawing, &frame))
+	for &name, index in frame.act_names[:frame.act_name_count] {
+		drawing.act_names_sent[index] = name.hash
+	}
+	drawing.act_names_sent_count = frame.act_name_count
+	drawing.act_names_sent_once = true
+	testing.expect(t, !act_names_differ(&drawing, &frame))
+	drawing.act_names_sent[2] = 1
+	testing.expect(t, act_names_differ(&drawing, &frame))
+	frame_end(&frame)
+	testing.expect_value(t, state.act_name_count, display.ACT_NAME_SET_CAPACITY)
+	// A frame with no act name leaves the state with none: go to finds no
+	// element of a frame that is gone.
+	empty := frame_begin(&table, &state, &input)
+	frame_end(&empty)
+	testing.expect_value(t, state.act_name_count, 0)
+}
+
+// Go to: the element of the last frame that named an act name takes the
+// focus by its hash, and the next frame shows it. A hash that no element
+// named changes nothing.
+@(test)
+the_focus_by_an_act_name :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	state: Interface_State
+	input: Input
+	build :: proc(table: ^Draw_Table, state: ^Interface_State, input: ^Input) -> (round_robin, eevdf: Element_Result) {
+		frame := frame_begin(table, state, input)
+		round_robin = button(&frame, {0, 0, 96, 24}, identity("round robin"), "round robin")
+		eevdf = button(&frame, {104, 0, 96, 24}, identity("eevdf"), "eevdf")
+		element_act_name(&frame, identity("eevdf"), "strategy")
+		frame_end(&frame)
+		return
+	}
+	state.focus = identity("round robin")
+	build(&table, &state, &input)
+	name, found := focus_by_act_name(&state, display.act_name_hash("grid fit"))
+	testing.expect(t, !found && name == "")
+	testing.expect_value(t, state.focus, identity("round robin"))
+	name, found = focus_by_act_name(&state, display.act_name_hash("strategy"))
+	testing.expect(t, found)
+	testing.expect_value(t, name, "strategy")
+	testing.expect_value(t, state.focus, identity("eevdf"))
+	round_robin, eevdf := build(&table, &state, &input)
+	testing.expect(t, eevdf.focused && !round_robin.focused)
+}

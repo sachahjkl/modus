@@ -78,6 +78,10 @@ import "modus:support/random"
 import "modus:support/system"
 import "base:intrinsics"
 
+// It starts fault and its child, and 3 threads under contention; the two
+// pictures of its window.
+MODULE_BUDGET :: system.Budget_Request{pages = 3072, programs = 3, threads = 4}
+
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [1024]interface.Draw_Record
 text_now, text_before: [16384]u8

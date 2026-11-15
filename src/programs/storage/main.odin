@@ -36,6 +36,14 @@ import tree "modus:support/storage_tree"
 import "modus:support/principals"
 import "modus:support/system"
 
+// About 34 MB of tables: the count of names of each block of the disk, the
+// changes of one commit (8 MB: each block of the disk), the leaves of one
+// version index, the versions of one object for versions(), the nodes of
+// the trees of one commit and of one read, the walks of the trees, the
+// pending blocks of the ranges (4 MB), and the object nodes that one commit
+// copies (7 MB).
+MODULE_BUDGET :: system.Budget_Request{pages = 10240, programs = 1, threads = 1}
+
 ERROR_ACTS_FOR_PRINCIPAL :: answers.ERROR_ACTS_FOR_PRINCIPAL
 ERROR_PLACE :: answers.ERROR_PLACE
 

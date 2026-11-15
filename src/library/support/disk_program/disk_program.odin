@@ -15,6 +15,12 @@
 //   digits.
 // - `Read`, `read_begin`, `read_step`: the rules of the answers of the
 //   storage service while the root service reads a file.
+// - `Grant_Table`, `start_file`, `table_allow`, `table_disallow`,
+//   `table_move`, `grant_by_command`, `table_encode`, `table_decode`: the
+//   disk grant table of a principal, its nickname rule, and its persisted
+//   form (grant_table.odin).
+// - `PROGRAMS_BUDGET`, `LARGEST_BUDGET` (budget.odin): the one budget that
+//   pays all disk programs, and the most that one of them gets.
 //
 // See [disk program](term:disk-program).
 package disk_program

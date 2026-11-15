@@ -120,6 +120,15 @@ import "modus:contract/ring"
 import "modus:support/random"
 import "modus:support/system"
 
+// Threads: 12 spinners, two threads that wake each other, one that sleeps,
+// a changer, a thread that starts threads; later, with its first thread,
+// the 15 threads of the four programs of the shares, or 8 spinners of its
+// own. Programs: itself and those four. Pages: its own 2048, and for the
+// four programs 4 x 512 and a stack and a thread area (19 pages) for each
+// of their 15 threads: 2333; and 1024 more for the second picture of its
+// window of 976 x 704.
+MODULE_BUDGET :: system.Budget_Request{pages = 5632, programs = 5, threads = 24}
+
 STRATEGY_COUNT :: 3
 @(rodata)
 strategies := [STRATEGY_COUNT]op.Strategy{.Round_Robin, .Fair, .Eevdf}
@@ -1651,9 +1660,16 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		x := TILE_X + index * (TILE_WIDTH + MARGIN)
 		color := strategy_color(index)
 		// A tile is a button of the package: the pointer, or Tab and Enter.
-		tile := interface.element_interact(frame, interface.identity_with(interface.identity("strategy"), index), {x, TILE_Y, TILE_WIDTH, TILE_HEIGHT}, .Button)
+		tile_identity := interface.identity_with(interface.identity("strategy"), index)
+		tile := interface.element_interact(frame, tile_identity, {x, TILE_Y, TILE_WIDTH, TILE_HEIGHT}, .Button)
 		if tile.activated {
 			choose(index)
+		}
+		if index == max(in_use, 0) {
+			// The palette sets the strategy with the command strategy, and
+			// its entries have this act name: go to puts the focus on the
+			// tile of the strategy in use.
+			interface.element_act_name(frame, tile_identity, "strategy")
 		}
 		label := system.format(line[:], u64(index + 1), "  ", op.STRATEGY_NAMES[strategies[index]])
 		if index == in_use {

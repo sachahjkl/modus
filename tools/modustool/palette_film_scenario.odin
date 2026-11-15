@@ -170,18 +170,18 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 
-	// Scene 8: the prefix of the settings. The font of the whole desktop
-	// changes behind the open panel, and the value in use has the mark.
-	// After the first choice the choice stays on its entry, so one arrow
-	// down from "spleen" is "vector" in each order of the two rows.
+	// Scene 8: the prefix of the settings. The font is one setting row,
+	// with a button for each value and the value in use marked. Right
+	// chooses spleen, and the font of the whole desktop changes behind the
+	// open panel; Left chooses vector again on the same row.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Film_Type, text = ":font"},
-	{kind = .Wait, text = " for \":font\": set font to vector (setting), set font to spleen (setting)"},
+	{kind = .Wait, text = " for \":font\": font (setting)"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
-	{kind = .Key, text = "down"},
-	{kind = .Wait, text = "compositor: the palette chooses set font to spleen (setting)"},
+	{kind = .Key, text = "right"},
+	{kind = .Wait, text = "compositor: the palette chooses the value spleen of font"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette sends set font to spleen to the console", any_order = true},
@@ -189,8 +189,8 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the settings changed: font spleen", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: set font to spleen"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
-	{kind = .Key, text = "down"},
-	{kind = .Wait, text = "compositor: the palette chooses set font to vector (setting)"},
+	{kind = .Key, text = "left"},
+	{kind = .Wait, text = "compositor: the palette chooses the value vector of font"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "console: the palette runs setting(\"font\", \"vector\")"},
@@ -201,7 +201,48 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 
-	// Scene 9: a command that destroys asks for a second Enter, on a row
+	// Scene 9: a field with a few closed values is a row of buttons in the
+	// band. The command strategy takes one of three names: the form shows
+	// them as buttons, Right moves the choice, and Escape leaves with no
+	// change: the program scheduler that serves it does not run here.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	// The prefix of the commands: "strategy" alone lists the setting row of
+	// the strategy first.
+	{kind = .Film_Type, text = ">strategy"},
+	{kind = .Wait, text = " for \">strategy\": strategy (command)"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = " candidates for the field 0, as a row of buttons"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
+	{kind = .Key, text = "right"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
+	{kind = .Key, text = "right"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+
+	// Scene 10: go to. The window of settings, open since the start of the
+	// film, names the act of each of its rows. The band of ":grid" then
+	// offers Shift with Enter, which raises the window of settings and puts
+	// the focus on the row of the grid fit.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Film_Type, text = ":grid"},
+	{kind = .Wait, text = " for \":grid\": grid fit (setting)"},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
+	{kind = .Key, text = "shift-ret"},
+	{kind = .Wait, text = "compositor: the palette goes to grid fit in the window settings, now in front", any_order = true},
+	{kind = .Wait, text = "interface: settings: the focus is on the element of settings.set:grid_fit", any_order = true},
+	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
+
+	// Scene 11: a command that destroys asks for a second Enter, on a row
 	// that says the act in full. Escape goes back, and nothing stops.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},

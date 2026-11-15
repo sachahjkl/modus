@@ -49,6 +49,10 @@ import "modus:support/interface"
 import "modus:support/random"
 import "modus:support/system"
 
+// A table of 65536 readings in a memory object (640 pages), and two call
+// hosts (sample, hostile_exports) with their threads.
+MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 3, threads = 3}
+
 // The records of sample, as this program declares them: the layout is the
 // description (a program in C declares the same struct).
 Reading :: struct {

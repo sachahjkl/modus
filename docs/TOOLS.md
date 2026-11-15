@@ -640,7 +640,7 @@ modustool run
 > start_from_disk("my_program", "<the 64 digits that the command printed>")
 ```
 
-`modustool run` starts the machine with `build/data_disk.img`. The command writes no disk over a file that exists: a data disk holds the stores of a principal. The module runs with no grant and with the least budget, and its name is no name of a module of the boot image (`MODULE_CONTRACT.md`, "A program from a disk"). The test part `disk_programs` builds a copy of the program `visitor` outside the sources under the name `outsider`, puts its file on the disk, and starts it in the machine.
+`modustool run` starts the machine with `build/data_disk.img`. The command writes no disk over a file that exists: a data disk holds the stores of a principal. The module runs with no grant and with the budget that it asks for, up to the largest budget of a disk program, paid by the one budget of the disk programs (`MODULE_CONTRACT.md`, "The budget that a module asks for"), and its name is no name of a module of the boot image (`MODULE_CONTRACT.md`, "A program from a disk"). The test part `disk_programs` builds a copy of the program `visitor` outside the sources under the name `outsider`, puts its file on the disk, and starts it in the machine.
 
 **What is not built.**
 
@@ -702,7 +702,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `principals` | The two machines of the principals |
 | `hierarchy` | The machines of the hierarchy of storage |
 | `ranges` | The machines of the ranges of storage |
-| `disk_programs` | The machine of the disk programs: a program that the boot image does not hold starts from the store `programs` ("The disk of the disk programs") |
+| `disk_programs` | The two machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart ("The disk of the disk programs") |
 | `power` | The loss of power: of the storage, of the settings, of the ranges |
 | `trusted_boot` | The volumes of the trusted boot; `trusted_boot tpm` adds the two machines with a software TPM |
 
@@ -731,11 +731,21 @@ The module of the test is `visitor`: a row of the module table of the tool with 
 
 | Entry | Its bytes | What the machine checks |
 |---|---|---|
-| `visitor` | The module file | The root service starts it; the program writes that its context holds the log, a window and its budget, and no handle of a grant |
+| `visitor` | The module file | The root service starts it; the program writes that its context holds the log, a window and its budget, and no handle of a grant; with the grant store, it counts its visits in the store of its nickname |
 | `changed` | The module file with one byte changed | The line names the hash of the module file: the root service refuses the bytes, and the log holds their hash |
 | `notes` | The module file | The grant table of the root service gives the name `notes` a store: the root service refuses the name before any read |
 
 The scenario also asks for a name with no entry. It starts the storage service before the first line that reads the store, so no step depends on the time of the open of the disk.
+
+Then the scenario checks the disk grant table of principal 0 (`MODULE_CONTRACT.md`, "The grants of a disk program"):
+
+1. `allow("visitor", "root_ring")` is refused: no command gives that grant.
+2. `allow("visitor", "store")` gives the store to the file of `visitor` that runs.
+3. `start_from_disk("visitor", <the hash of changed>)` is refused before any read: the nickname names another file.
+4. `start_from_disk("visitor", "")` starts the file of the row with the store `disk-visitor`; the program writes its visit 1 there and reads it again.
+5. Two calls of `nickname_move` point the nickname to another file and back; the log says "root: the file ... will get the data of visitor" before each change. The next start has the store, and the visit 2.
+
+A second machine starts on the same disk. The table of principal 0 did not last: `start_from_disk("visitor", "")` is refused. After a start by the hash and a new `allow`, the program finds the visit 3 in the store of its nickname.
 
 Host tests check the writer with the code of the open of the storage service (`src/library/support/storage_mount`): no block of the image is wrong, the counts of the store are the counts of what it names, each object gives its bytes, each entry has the hash that its block tree gives, and a file with no hole has the BLAKE3 hash of its bytes.
 

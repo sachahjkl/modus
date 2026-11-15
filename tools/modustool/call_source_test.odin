@@ -59,7 +59,7 @@ debugger_scenario_names_the_line_of_debug_target :: proc(t: ^testing.T) {
 	if !testing.expect(t, read, DEBUG_TARGET_SOURCE_FILE + " is read") {
 		return
 	}
-	testing.expect_value(t, DEBUG_TARGET_LINE_OF_THE_STORE, "79")
-	store, store_found := source_line_of_content(string(content), 79)
+	testing.expect_value(t, DEBUG_TARGET_LINE_OF_THE_STORE, "82")
+	store, store_found := source_line_of_content(string(content), 82)
 	testing.expect(t, store_found && store == DEBUG_TARGET_TEXT_OF_THE_STORE, store)
 }

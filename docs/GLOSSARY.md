@@ -190,7 +190,7 @@ A disk program is a program whose module file is an object of the store `program
 
 A disk program adds a program to a machine with no new boot image. The principal names it by its name and by the hash of its file: `start_from_disk("visitor", "5f0c…")`. The root service reads the object, computes the BLAKE3 hash of the bytes, and starts them only when that hash is the hash of the command: the storage service carries the bytes and does not choose them. The store is the store `programs` of the principal of the caller, and each entry of its root tree is one module file, named after its program.
 
-A disk program has no row in the tables of the root service. It receives the log and a window, no grant, and the budget of a program that no table names. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image, by hash.
+A disk program has no row in the tables by name of the root service. It receives the log and a window, the grants of its nickname in the disk grant table and no other grant, and the budget that its file asks for, up to the largest budget of a disk program, paid by the one budget of all disk programs. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image, by hash.
 
 A disk program is not a package: it has no signer, no version number and no statement of the grants that it asks for. It is not installed: nothing of the machine changes when its file is written.
 
@@ -1773,6 +1773,42 @@ Time does not return, so it does not move as pages do. A limit holds for the bud
 
 Do not use: quota, cap, bandwidth, rate limit.
 
+### Budget request
+
+A budget request is the pages, the programs and the threads that a module asks for its program: the table `Budget` of its file (`module.Budget_Request`).
+
+The source states it as the constant `MODULE_BUDGET`, with the reasons in its comment, and the build writes the table, so the hash of the module names it. It is never a grant: the starter decides, by its least budget and its largest budget, and can widen or limit it with a budget exception. A part that is 0, or a file with no table, asks for the least budget. Processor time and log records are not in it: they are limits that the starter sets.
+
+Example: `MODULE_BUDGET :: system.Budget_Request{pages = 4096, programs = 1, threads = 2}` asks for 16 MiB, no child, and two threads.
+
+The design: `src/md/features/module_budget_request.md`; the guide: `docs/MODULE_CONTRACT.md`, "The budget that a module asks for".
+
+Do not use: budget grant, resource manifest, reservation.
+
+### Least budget
+
+The least budget is the budget that a starter gives to a module that asks for nothing, and for each part of a budget request that is 0.
+
+The least budget of the root service is 2048 pages, one program and one thread (`LEAST_BUDGET` in `src/programs/root/budgets.odin`). A module whose request is smaller gets its smaller request: the least budget fills a part that the module does not state, it is no floor.
+
+Do not use: default budget, minimum budget.
+
+### Largest budget
+
+The largest budget is the most that a starter gives to one program for each part of a budget request.
+
+A part above it starts the program with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service is 16384 pages, 8 programs and 32 threads for a program of the boot image (`LARGEST_BUDGET` in `src/programs/root/budgets.odin`). A disk program, and a module of another project, has a smaller one, 8192 pages, one program and 4 threads, and one budget of the root service pays all of them together (`src/library/support/disk_program/budget.odin`).
+
+Do not use: maximum budget, cap, ceiling.
+
+### Budget exception
+
+A budget exception is a row of a starter that gives one program, by its name, another largest budget or other limits in time, with the reason beside it.
+
+A row with a larger amount widens a request, a row with a smaller amount limits it. The root service has two (`budget_exceptions` in `src/programs/root/budgets.odin`). The name of a disk program never selects a row: a name gives nothing.
+
+Do not use: budget override, special case.
+
 ### Period
 
 The period is the 100 ms in which the kernel applies the processor limit of a budget.
@@ -1820,6 +1856,32 @@ A recorded grant is not a start grant, which says what the root service gives a 
 The design: `docs/ARCHITECTURE.md`, "U2. Root service".
 
 Do not use: permission, access right, token.
+
+### Nickname
+
+A nickname is the name that the principal gives a disk program: the name of the entry of its module file in the store `programs`.
+
+The principal chooses the nickname, and the file never does. The root service names a disk program by its nickname in the log, in `grants` and in `stop`, and the log writes the hash of the file beside it. In the disk grant table a nickname names one file: two hashes never share a nickname. A nickname with a grant has letters, digits, `-` and `_` only. The store of a disk program is attached to its nickname, not to its hash, so a new version of the program under the same nickname keeps its data.
+
+A nickname is not the name of a module of the boot image, and it gives no grant by itself: the root service refuses a nickname that its tables by name know.
+
+Example: `allow("visitor", "store")`, then `start_from_disk("visitor", "")`.
+
+The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk program".
+
+Do not use: alias, pet name, display name.
+
+### Disk grant table
+
+A disk grant table is the table of the root service that binds each nickname of one principal to the hash of one module file, with the grants of that file.
+
+The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The persisted form has a tag of keyed BLAKE2b under a key that the passphrase of the principal gives; the table of principal 0, which has no passphrase, lasts until the machine stops.
+
+A disk grant table is not the grant table of the root service (`grants_of`), which gives the programs of the boot image their grants by their names, and which a disk program never reaches.
+
+The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk program".
+
+Do not use: permission table, access list, manifest.
 
 ### Guest
 
@@ -3799,7 +3861,7 @@ A surface is a memory object that one program draws into and the compositor show
 
 A surface keeps the pixels out of the kernel and out of the rings: the program writes pixels in its own memory, and the compositor reads the same memory. No pixel goes through a ring or through the kernel.
 
-A program opens a surface with `display.open(ctx, width, height, title)`. This needs the grant of the display, a ring to the compositor in its context; without it the call fails with `No_Grant`. A width or a height is 1 to 2048 pixels (`SURFACE_LIMIT`). The call makes a memory object for two pictures, maps it, gives the compositor a handle with **Read** only through the ring, and sends `Surface_Create`. Then the program draws a picture and sends `Present` with the rectangle that changed. The compositor sends the input of the window back as completion records of the same ring: keys, pointer events, and `Settings_Changed`.
+A program opens a surface with `display.open(ctx, width, height, title)`. This needs the grant of the display, a ring to the compositor in its context; without it the call fails with `No_Grant`. A width or a height is 1 to 2048 pixels (`SURFACE_LIMIT`). The call makes a memory object for two pictures, maps it, gives the compositor a handle with **Read** only through the ring, and sends `Surface_Create`. Then the program draws a picture and sends `Present` with the rectangle that changed, and its window layer sends `Act_Names` when the set of its act names changes. The compositor sends the input of the window back as completion records of the same ring: keys, pointer events, `Settings_Changed`, and `Go_To` when the palette goes to an element of the window.
 
 A surface is not a framebuffer: the framebuffer is the memory of the screen that the firmware gave, and only the compositor writes it. A program cannot write another program's surface or the screen.
 
@@ -4027,11 +4089,35 @@ The design: `docs/DESIGN.md`, "Palette".
 
 Do not use: dialog, prompt, argument box.
 
+### Field control
+
+A field control is the form in which the palette shows one field of a palette form, chosen from what the field is: a typed text, a typed Integer, a list of candidates, or a row of buttons.
+
+The field chooses its control, so no command needs a form of its own and a provider gives data only. One table of the code gives it (`palette.field_control`): the field that has the caret and at most 6 candidates that the provider says are closed, the only values of the parameter, is a row of buttons; other candidates are the list under the band, with the icon of their kind; a field with no candidate is typed, as a Text or as an Integer. Example: the field of `strategy(name: )` is a row of three buttons, `round_robin`, `fair`, `eevdf`.
+
+A field control is not an element of the interface package: the palette draws it in its own panel, and a program cannot give the palette one.
+
+The design: `src/md/features/palette.md`, "The form of an entry, from its descriptions".
+
+Do not use: widget, input type.
+
+### Setting row
+
+A setting row is one row of the palette that holds every value of one setting: the name of the setting, then one button for each value, with a line under the value in use.
+
+The row lets a principal see the values of a setting together and set one with one key. The palette provider writes one palette entry for each value, with the name of its setting and the name of its value; the palette joins the entries of one setting that follow each other in the palette table, at most 6, into one row. Left and Right choose a value, Enter sets it: the panel sends the entry of that value, so the provider sees no row. The scheduling strategy is a setting row too. Example: `font  [vector] spleen`, with the line under the font in use.
+
+A setting row is not a palette form: it has no field and no typed value.
+
+The design: `src/md/features/palette.md`, "The form of an entry, from its descriptions".
+
+Do not use: radio group, toggle, option row.
+
 ### Palette table
 
 The palette table is the memory object where the palette provider writes its entries, and which the compositor maps read-only.
 
-The table carries data and no text of a line. It has a header with a change count, a result area, and at most 256 entries: for each one a kind, the flag "destroys", the flag "in use" for the scheduling strategy that the machine uses now, the names and the kinds of its parameters, the kind of its result, a name, a signature and a help sentence; and a candidate area, where the provider writes the values that one parameter can take. The provider adds 1 to the change count before a change and 1 after it. The compositor copies the table and checks each count, each length, each kind and each byte of the copy before it uses one of them: a table that fails is no table. One ring goes with the table: the compositor names the chosen entry by the change count, its index and the hash of its name, and the provider answers with a result as runs of text in the result area. The arguments of a palette form go on the ring as typed values. The contract is `src/library/contract/palette_table`.
+The table carries data and no text of a line. It has a header with a change count, a result area, and at most 256 entries: for each one a kind, the flag "destroys", the flag "in use" for the scheduling strategy that the machine uses now, the names and the kinds of its parameters, the kind of its result, a name, a signature, a help sentence, an act name, and for a setting the name of its setting row and of its value; and a candidate area, where the provider writes the values that one parameter can take, and says whether they are its only values. The provider adds 1 to the change count before a change and 1 after it. The compositor copies the table and checks each count, each length, each kind and each byte of the copy before it uses one of them: a table that fails is no table. One ring goes with the table: the compositor names the chosen entry by the change count, its index and the hash of its name, and the provider answers with a result as runs of text in the result area. The arguments of a palette form go on the ring as typed values. The contract is `src/library/contract/palette_table`.
 
 The palette table is not a call region: the compositor calls nothing in the provider, and waits for no answer in its loop.
 
@@ -4166,6 +4252,18 @@ An element identity is not a handle: it names nothing in the kernel and gives no
 The design: `docs/INTERFACE.md`, "4. Input and focus".
 
 Do not use: id, key, handle (reserved for the kernel).
+
+### Act name
+
+An act name is a text of at most 32 bytes that names what an element of a window or a palette entry acts on, such as `settings.set:font`.
+
+An act name lets the palette go to the element of a window that does what an entry does. A program names an element with `element_act_name(frame, element, "settings.set:font")` when it builds it; the window layer sends the set of the act names of its frame to the compositor in one record, as hashes, when the set changes. The palette provider writes the act name of each entry in the palette table. When an open window names the act name of the chosen entry, the input band offers "shift enter: go to": the compositor brings that window to the front, and the window layer gives the focus to the element. Example: the window `settings` names the button of the font in use `settings.set:font`, and so do the entries of the font.
+
+An act name is not an element identity: many frames and many programs can use one act name, and it names no element alone. It is not a place of the storage service, and it names no rectangle: a window cannot point at another window with it.
+
+The design: `docs/INTERFACE.md`, "4.2 Act names".
+
+Do not use: action, anchor, target.
 
 ### Interface state
 

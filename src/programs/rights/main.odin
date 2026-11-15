@@ -42,6 +42,10 @@ import "modus:support/interface"
 import op "modus:contract/operation"
 import "modus:support/system"
 
+// The amounts that the root service gave it by its name before its module
+// stated a request: no part is counted yet.
+MODULE_BUDGET :: system.Budget_Request{pages = 2048, programs = 1, threads = 2}
+
 // The window is built with the interface package (docs/INTERFACE.md).
 records_now, records_before: [512]interface.Draw_Record
 text_now, text_before: [8192]u8
