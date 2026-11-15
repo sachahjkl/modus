@@ -34,6 +34,11 @@ scenario_ranges_first := [?]Step {
 	{kind = .Wait, text = "ranges: a read at the end gives no byte, and a read past the end is refused: as it must"},
 	{kind = .Wait, text = "ranges: a place of another store, a place of no connection, and a commit with no pending change are refused: as it must"},
 	{kind = .Wait, text = "ranges: a commit after another change of the object is refused, and its pending changes are dropped: as it must"},
+	// The same object under two names (docs/STORAGE.md, "4.7 The same object
+	// one time"): 256 blocks of data, 4 object nodes of level 1, the root.
+	{kind = .Wait, text = "ranges: the same object of 1 MiB under two names holds 261 blocks of the store, one object's worth; the second commit wrote 0 blocks of its block tree: as it must"},
+	{kind = .Wait, text = "ranges: a change of one block of the second name wrote 3 blocks of its block tree; the first name reads its bytes as before: as it must"},
+	{kind = .Wait, text = "ranges: the removal of the second name frees its own blocks only, the first name reads its 1 MiB, and the second name written again takes no block: as it must"},
 	{kind = .Wait, text = "ranges: loop, 50 commits of 4 range writes, in "},
 	{kind = .Wait, text = "ranges: loop, 100 commits of 4 range writes, in "},
 	{kind = .Wait, text = "ranges: loop, 150 commits of 4 range writes, in "},
@@ -50,9 +55,10 @@ scenario_ranges_second := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"ranges\")"},
-	{kind = .Wait, text = "ranges: a store with 4 objects: the run after the remount"},
+	{kind = .Wait, text = "ranges: a store with 6 objects: the run after the remount"},
 	{kind = .Wait, text = "ranges: after the remount: the sparse object of 8589934592 bytes reads its 3 blocks and its 1000 writes, byte for byte: as it must"},
 	{kind = .Wait, text = "ranges: after the remount: the small object, the object of the cut and the object of the loop: as it must"},
+	{kind = .Wait, text = "ranges: after the remount: the same object of 1 MiB under a third name took no block: the open found it by its hash: as it must"},
 	{kind = .Wait, text = "ranges: done, 0 wrong"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},

@@ -387,6 +387,7 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 		opened.references = {}
 		opened.owner = {}
 		opened.store_versions = {}
+		storage_mount.hash_index_reset(&opened)
 		mark(0, true)
 		mark(1, true)
 		result.generation = 1
@@ -1205,6 +1206,15 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		} else {
 			opened.owner[number] = owner
 		}
+	}
+	// The hash index follows the entries that the commit changed, after the
+	// owners: a root of the index is a block of its store. While the store
+	// has a writable share of a tree open, a new root is hidden: never a
+	// candidate, so the holder cannot plant bytes that a later write of the
+	// maker would find (docs/STORAGE.md, "4.7 The same object one time").
+	hidden := writable_tree_share_open(system.name_of(root.stores[plan.store_index].name[:]))
+	for &item in plan.entries[:plan.entry_count] {
+		storage_mount.hash_index_entry_change(&opened, item.before, item.entry, item.gone, hidden)
 	}
 	for item in later[:later_count] {
 		cache_put(item.pointer, item.bytes)
