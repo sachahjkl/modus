@@ -765,8 +765,8 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-14. Decided by: the owner.
 - Decision: a module states the budget that it asks for. The starter of a program accepts the request, limits it or widens it, by its own constraints; a module never grants itself a budget. The flat table of the root service, one case with fixed amounts for each program, goes: it does not hold when a module of another project runs.
 - Words: "pour l'histoire des budgets \"demandés\" par un module, qu'un invoqueur peut accepter, limiter ou élargir, selon ses contraintes, est une bonne idée effectivement. cette liste statique plate que tu maintenais n'était pas gérable, surtout quand on voudra lancer des modules \"étrangers\", ça ne scale pas"
-- State: decided, not built. The entry of `ROADMAP.md`: "A module states the budget that it asks for."
-- Where: `ROADMAP.md`; `src/md/features/module_budget_request.md`.
+- State: the first layer is built. Each program states its request as a constant of its source, the tool writes it as a table of the module file, and the root service accepts it up to a largest budget, with a row of exceptions that each name a reason. The disk programs are paid from one budget that the root service makes once, so they cannot take the room of the programs of the boot image. Left: the tool counts the parts that it knows (the pages of the module, of the threads, of the pictures of a window).
+- Where: `MODULE_CONTRACT.md`, "The budget that a module asks for"; `src/md/features/module_budget_request.md`.
 
 ## 4. Memory
 
@@ -1379,7 +1379,7 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ### D-256 A disk program is named by the hash of its file, and gets no grant
 - 2026-11-14. Decided by: the coordinator, under the objective of the owner to do the whole roadmap.
-- Decision: `start_from_disk(name, hash)` starts a program from the store `programs` of the principal of the caller. The name only finds the entry; the hash of the command is the identity. The root service reads the bytes into its own memory, computes their hash and compares it with the hash of the command: it does not trust the storage service, and it never waits for it without a bound. A disk program gets the log, a window, the least budget and no grant. A name of the grant table, of a module of the boot image or of a system program is refused before any read: a name gives nothing. Its imports come from the boot image, by their hash. Refused: a name in a tree that gives the hash (the storage service would then choose what runs); a grant that the file states.
+- Decision: `start_from_disk(name, hash)` starts a program from the store `programs` of the principal of the caller. The name only finds the entry; the hash of the command is the identity. The root service reads the bytes into its own memory, computes their hash and compares it with the hash of the command: it does not trust the storage service, and it never waits for it without a bound. A disk program gets the log, a window and no grant; its budget is its request, up to the largest budget of a disk program, paid from the one budget of the disk programs (D-254). A name of the grant table, of a module of the boot image or of a system program is refused before any read: a name gives nothing. Its imports come from the boot image, by their hash. Refused: a name in a tree that gives the hash (the storage service would then choose what runs); a grant that the file states.
 - Words: "tout tout faire"
 - State: done. Left: grants for a disk program; a disk program without the tool; a disk program that is a service.
 - Where: `MODULE_CONTRACT.md`, "A program from a disk"; `TOOLS.md`, "The disk of the disk programs"; `src/md/features/programs_from_a_disk.md`; `FIRST_MILESTONE.md`, choice 756.
