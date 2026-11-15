@@ -881,6 +881,42 @@ events_end :: proc "contextless" (machine: Handle, error: ^errors.Error_Record =
 	return status
 }
 
+// One exit of a guest processor: the results of `Guest_Run`
+// (`op.Guest_Exit_Kind` says what `a`, `b` and `c` hold).
+Guest_Exit :: struct {
+	kind:          op.Guest_Exit_Kind,
+	a, b, c:       u64,
+	next:          u64, // The address after the instruction of the exit, for a port, `hlt` and `cpuid`.
+	code:          u64, // The exit code of the processor.
+	information:   u64, // The first exit information of the processor.
+}
+
+// guest_run runs the guest processor of a program on this thread until an
+// exit that the kernel does not handle itself (docs/ARCHITECTURE.md, "A
+// guest"). `program` is a program handle with **Control** of a program
+// that `Program_Create` made and that no thread ran; its addresses are the
+// guest physical addresses. `registers` goes in, and holds the registers
+// of the guest after the exit: the program answers an exit by a change of
+// it before the next run. `Bad_Operation` with the error kind
+// `Unsupported`: the machine has no virtualization support that the kernel
+// uses.
+//
+// ```odin
+// registers := op.Guest_Registers{rip = 0x1000}
+// exit, status := system.guest_run(guest, &registers)
+// if exit.kind == .Port_Write {
+// 	registers.rip = exit.next
+// }
+// ```
+guest_run :: proc "contextless" (program: Handle, registers: ^op.Guest_Registers, error: ^errors.Error_Record = nil) -> (exit: Guest_Exit, status: Status) {
+	results: [7]u64
+	results, status = call_with_error(error, .Guest_Run, u64(program), u64(uintptr(registers)))
+	if status != .Ok {
+		return {}, status
+	}
+	return {kind = op.Guest_Exit_Kind(results[0]), a = results[1], b = results[2], c = results[3], next = results[4], code = results[5], information = results[6]}, .Ok
+}
+
 // event_ring gives the head and the records of the event ring of one
 // processor, in the memory object of the rings mapped at base. records is
 // the count that this program gave to events_set.

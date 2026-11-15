@@ -276,7 +276,9 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	parameters := (^Ap_Parameters)(&code[code_size - size_of(Ap_Parameters)])
 	parameters.table = u32(table)
 	parameters.cr0 = u32(control_register_0_read())
-	parameters.efer = u32(model_specific_register_read(0xC000_0080)) &~ (1 << 10) // Not the bit "long mode is active": the processor sets it.
+	// Not the bit "long mode is active": the processor sets it. Not SVM: a
+	// processor turns it on in its setup, after it checked that it has it.
+	parameters.efer = u32(model_specific_register_read(0xC000_0080) &~ (1 << 10 | EFER_SECURE_VIRTUAL_MACHINE))
 	parameters.entry = u64(uintptr(rawptr(processor_entry)))
 	first_cr4 = control_register_4_read()
 

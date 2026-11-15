@@ -26,7 +26,7 @@ The forms that the system can take, weighed against the properties:
 
 | Option | Against the properties | Chosen |
 |---|---|---|
-| A kernel operation that gives random bytes | Property 1: the kernel has 33 counted operations; this one needs no kernel: a program runs `rdrand` with no handle, and the root service can give a seed. A kernel entry for each draw is also a cost on a hot path (QUIC draws a connection ID and a nonce for each handshake) | No |
+| A kernel operation that gives random bytes | Property 1: the kernel has 34 counted operations; this one needs no kernel: a program runs `rdrand` with no handle, and the root service can give a seed. A kernel entry for each draw is also a cost on a hot path (QUIC draws a connection ID and a nonce for each handshake) | No |
 | A service `random` that answers each request | Property 5: a call for each draw. The pool of a service is one shared state for all programs | No |
 | A seed for each program at its start, and a generator in the program | Property 14 (the state is memory of the program), property 20 (no ambient access: the seed is a value of the context, which only the starter writes), property 5 (no call and no kernel entry for a draw) | Yes |
 

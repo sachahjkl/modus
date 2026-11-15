@@ -205,6 +205,26 @@ a_name_that_only_starts_like_an_allowed_procedure_is_refused :: proc(t: ^testing
 	testing.expect_value(t, len(check.refused), 1)
 }
 
+// vmrun, vmload and vmsave pass in guest_enter, and are refused in any
+// other procedure.
+@(test)
+the_entry_of_a_guest_passes_only_in_guest_enter :: proc(t: ^testing.T) {
+	inside := `
+0000000000026800 <guest_enter>:
+   26800:      	vmload	%rax
+   26803:      	vmrun	%rax
+   26806:      	vmsave	%rax
+`
+	check := vector_check_listing(listing_of_a_kernel(VECTOR_CHECK_LEAST_INSTRUCTIONS, after = inside))
+	testing.expect_value(t, len(check.refused), 0)
+	outside := `
+0000000000026900 <guest_run>:
+   26900:      	vmrun	%rax
+`
+	check = vector_check_listing(listing_of_a_kernel(VECTOR_CHECK_LEAST_INSTRUCTIONS, after = outside))
+	testing.expect_value(t, len(check.refused), 1)
+}
+
 @(test)
 an_instruction_before_any_procedure_name_is_refused :: proc(t: ^testing.T) {
 	check := vector_check_listing("   26000:      \tpxor\t%xmm0, %xmm0\n")
@@ -220,6 +240,13 @@ general_registers_that_look_like_vector_names_pass :: proc(t: ^testing.T) {
 	testing.expect(t, !instruction_uses_vector_registers("verw\t%ax"))
 	testing.expect(t, !instruction_uses_vector_registers("callq\t0xade0 <kernel::pit_wait>"))
 	testing.expect(t, !instruction_uses_vector_registers("umwait\t%ecx"))
+	// The entry of a guest: the check knows these three by name, and lets
+	// them through in guest_enter only (vector_check_listing).
+	testing.expect(t, instruction_is_virtualization("vmrun\t%rax"))
+	testing.expect(t, instruction_is_virtualization("vmload\t%rax"))
+	testing.expect(t, instruction_is_virtualization("vmsave\t%rax"))
+	testing.expect(t, !instruction_is_virtualization("vmovaps\t%xmm1, %xmm0"))
+	testing.expect(t, instruction_uses_vector_registers("vmovaps\t%xmm1, %xmm0"))
 	testing.expect(t, instruction_uses_vector_registers("kmovq\t%k7, %rax"))
 	testing.expect(t, instruction_uses_vector_registers("rep\t\tvmovdqu\t%ymm0, (%rax)"))
 }

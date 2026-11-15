@@ -179,6 +179,8 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Event_Rule", type_info_of(op.Event_Rule)},
 		{"operation", "Event_Record", type_info_of(op.Event_Record)},
 		{"operation", "Event_Ring", type_info_of(op.Event_Ring)},
+		{"operation", "Guest_Registers", type_info_of(op.Guest_Registers)},
+		{"operation", "Guest_Exit_Kind", type_info_of(op.Guest_Exit_Kind)},
 		{"operation", "Status", type_info_of(op.Status)},
 		{"operation", "Memory_Flag", type_info_of(op.Memory_Flag)},
 		{"operation", "Memory_Flags", type_info_of(op.Memory_Flags)},

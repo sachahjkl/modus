@@ -66,7 +66,7 @@ instruction_prefixes := [?]string{"rep", "repe", "repz", "repne", "repnz", "lock
 @(rodata)
 vector_mnemonic_starts := [?]string{
 	"f", // x87: fld, fstp, fninit, fnstcw, fnstsw, fnclex, fnsave, fnstenv, frstor, fxsave64, fxrstor64, fwait, and the rest; also fstsw, fstcw, fclex, finit, fsave, fstenv when the disassembler joins the wait.
-	"v", // VEX and EVEX: vmovdqu, vzeroupper, vldmxcsr, vxorps. verr and verw are let through below.
+	"v", // VEX and EVEX: vmovdqu, vzeroupper, vldmxcsr, vxorps. The words of vector_mnemonic_exceptions are let through.
 	"k", // The opmask registers of AVX-512: kmovw, kmovq.
 	"emms",
 	"ldmxcsr",
@@ -85,6 +85,49 @@ vector_mnemonic_starts := [?]string{
 // waits of WAITPKG are umwait and tpause).
 @(rodata)
 vector_mnemonics := [?]string{"wait"}
+
+// Whole mnemonics that start with "v" and use no extended state: verr and
+// verw check a selector.
+@(rodata)
+vector_mnemonic_exceptions := [?]string{"verr", "verw"}
+
+// The instructions of virtualization: they start with "v" and use no
+// extended state, and they enter a guest. The check lets them through in
+// the procedure that enters a guest only (guest_enter in
+// src/kernel/processor.asm), and refuses them anywhere else.
+@(rodata)
+virtualization_mnemonics := [?]string{"vmrun", "vmload", "vmsave"}
+GUEST_ENTRY_PROCEDURE :: "guest_enter"
+
+// instruction_mnemonic gives the mnemonic of one instruction of the
+// listing: its first word that is not a prefix.
+instruction_mnemonic :: proc(instruction: string) -> string {
+	text := instruction
+	for word in strings.fields_iterator(&text) {
+		is_prefix := false
+		for prefix in instruction_prefixes {
+			if word == prefix {
+				is_prefix = true
+			}
+		}
+		if !is_prefix {
+			return word
+		}
+	}
+	return ""
+}
+
+// instruction_is_virtualization says if one instruction enters or keeps
+// the state of a guest.
+instruction_is_virtualization :: proc(instruction: string) -> bool {
+	mnemonic := instruction_mnemonic(instruction)
+	for word in virtualization_mnemonics {
+		if mnemonic == word {
+			return true
+		}
+	}
+	return false
+}
 
 // Register names in the AT&T syntax of llvm-objdump.
 @(rodata)
@@ -105,21 +148,12 @@ allowed_procedure_index :: proc(name: string) -> int {
 // the address, in AT&T syntax) reads or changes an x87, MMX, SSE, AVX, AMX or
 // opmask register, or the state of the x87 or of SSE.
 instruction_uses_vector_registers :: proc(instruction: string) -> bool {
-	text := instruction
-	mnemonic := ""
-	for word in strings.fields_iterator(&text) {
-		is_prefix := false
-		for prefix in instruction_prefixes {
-			if word == prefix {
-				is_prefix = true
-			}
-		}
-		if !is_prefix {
-			mnemonic = word
-			break
-		}
+	mnemonic := instruction_mnemonic(instruction)
+	excepted := false
+	for exception in vector_mnemonic_exceptions {
+		excepted = excepted || mnemonic == exception
 	}
-	if mnemonic != "" && mnemonic != "verr" && mnemonic != "verw" {
+	if mnemonic != "" && !excepted {
 		for start in vector_mnemonic_starts {
 			if strings.has_prefix(mnemonic, start) {
 				return true
@@ -196,6 +230,12 @@ vector_check_listing :: proc(listing: string) -> (check: Vector_Check) {
 			continue
 		}
 		check.instructions += 1
+		if instruction_is_virtualization(instruction) {
+			if procedure != GUEST_ENTRY_PROCEDURE && !strings.has_prefix(procedure, GUEST_ENTRY_PROCEDURE + ".") {
+				append(&check.refused, Vector_Instruction{procedure = procedure, instruction = instruction})
+			}
+			continue
+		}
 		if !instruction_uses_vector_registers(instruction) {
 			continue
 		}
