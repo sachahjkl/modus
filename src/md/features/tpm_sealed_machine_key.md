@@ -28,6 +28,8 @@ The program `tpm` is the device service of the TPM. The root service starts it a
 | `Seal` | 32 secret bytes | The public area and the private area of a sealed object |
 | `Unseal` | The public area and the private area | The 32 secret bytes |
 
+Each command can also carry an authorization value, for the keys of a named principal ([tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md)). The machine key has none.
+
 The service builds each TPM command itself. No client sends a raw command: a client that sends `TPM2_PCR_Extend` changes the measure, and one that sends `TPM2_Clear` destroys every key of the TPM.
 
 ### The seal
@@ -110,7 +112,7 @@ The root service starts no TPM service when the trust record does not say `Measu
 - **The TPM service as a service with described exports.** A device service with a ring and a region is the form of the block service and of the frame service. The client needs no file of the service and no connection through the root service; the root service gives the ring at the start of `unlock`.
 - **A signed policy (`TPM2_PolicyAuthorize`)** in place of exact PCR values. Property 17 names it as the standard form against the cost of an update. It needs a key of the publisher of the system that the TPM verifies: the TPM verifies RSA and ECDSA, not Ed25519. It also lets each older system that the key signed unseal the key, until a counter of the TPM refuses an older system. Exact values keep "an older system opens nothing" now; a signed policy with a counter is the later form.
 - **A seal at each start with no command.** The recovery key would show at a start that nobody watches, and a key with no recovery is lost at the first update.
-- **A seal by the TPM and a seal under the machine passphrase in one record, each enough alone.** An attacker with a copy of the disk tries passphrases against Argon2id, and the TPM adds nothing. The TPM and the passphrase together is the later form: the passphrase is the authorization value of the sealed object, and the TPM counts the wrong tries.
+- **A seal by the TPM and a seal under the machine passphrase in one record, each enough alone.** An attacker with a copy of the disk tries passphrases against Argon2id, and the TPM adds nothing. The TPM and the passphrase together is the form of the keys of a named principal ([tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md)): the passphrase gives the authorization value of the sealed object, and the TPM counts the wrong tries.
 - **The recovery key through Argon2id.** 160 random bits need no slow derivation. A recovery key that a principal chooses would need one, and it is weaker.
 - **The recovery key on the log, or kept in a store.** The log is read by programs and by the host. A key kept on the disk opens the copy for a reader of the disk.
 - **The recovery key typed in the console.** The console keeps each line in its history and in its store.
@@ -141,9 +143,7 @@ Left:
 
 - **A pin of the form of the record in the TPM** (see "The form of the record is not pinned").
 - **An encrypted session with the TPM.** The key crosses the bus of a hardware TPM encrypted.
-
-- **The key of a named principal sealed by the TPM, with its recovery key.**
-- **The TPM and the passphrase together.** The passphrase as the authorization value of the sealed object, so the TPM counts the wrong tries.
+- **The machine passphrase and the TPM together.** The machine passphrase as the authorization value of the sealed object, so the TPM counts the wrong tries. The keys of a named principal have this form ([tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md)); the TPM service already seals with an authorization value.
 - **A seal to the measure of the next system.** A signed policy of the publisher of the system, with a counter of the TPM that refuses an older system.
 - **A change of the recovery key**, and a new one when the old one is lost while the TPM still opens the key.
 - **The seal tested with Secure Boot on.** A machine of Secure Boot with a TPM tests the seal on the real rule, with no test volume.

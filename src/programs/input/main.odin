@@ -8,10 +8,12 @@
 // the mouse). The kernel turns each interrupt into an event of the
 // program; it never reads a key itself.
 //
-// **What a reader sees.** No window: the line `input: ok` on the log, once
-// the controller is set up. Each key and each move of the mouse then
-// reaches the compositor as one record of its input ring, and the
-// compositor sends a key to the window in front.
+// **What a reader sees.** No window: the line `input: ok, the mouse has a
+// wheel` (or `no wheel`, for a mouse with no wheel) on the log, once the
+// controller is set up. Each key, each move of
+// the mouse and each turn of its wheel then reaches the compositor as one
+// record of its input ring, and the compositor sends a key to the window
+// in front.
 //
 // **The records** that it writes (`display.Input`):
 //
@@ -19,7 +21,21 @@
 //   0xE0), the character in the layout of the settings, 1 for a press or 0
 //   for a release, and the modifiers (Shift, Control).
 // - `Pointer`: the motion in x and in y, in pixels of the mouse (y grows
-//   down, as on the screen), and the three buttons.
+//   down, as on the screen), the three buttons, and the notches of the
+//   wheel (`display.WHEEL_TOWARD_THE_END` for each notch toward the
+//   principal).
+//
+// **The wheel.** A PS/2 mouse sends packets of 3 bytes and no wheel until
+// it is asked for the IntelliMouse protocol: the sample rates 200, 100 and
+// 80 in this order, then its identity (key_path.Mouse_Protocol). A mouse
+// that answers MOUSE_IDENTITY_WHEEL sends packets of 4 bytes; the fourth
+// byte is the notches, signed. A mouse that answers
+// MOUSE_IDENTITY_WHEEL_AND_BUTTONS was left in the Explorer protocol by
+// its firmware, which the default settings do not always leave: it sends
+// packets of 4 bytes too, with the notches in the low 4 bits. The service
+// reads both, with no reset of the mouse: a reset waits for a self test of
+// the mouse, and the decoder needs only the identity. A mouse that answers
+// another identity keeps packets of 3 bytes, and the system has no wheel.
 //
 // **How it starts.** The root service starts it at each boot, before the
 // compositor, with a context of its own: handle 0 is the input ring, which
@@ -96,12 +112,30 @@ SCAN_RIGHT_SHIFT :: 0x36
 SCAN_CONTROL :: 0x1D
 SCAN_EXTENDED :: 0xE0
 
+// The commands of the mouse. The identities that it answers are in
+// key_path (MOUSE_IDENTITY_WHEEL, MOUSE_IDENTITY_WHEEL_AND_BUTTONS).
+MOUSE_SET_SAMPLE_RATE :: 0xF3
+MOUSE_GET_IDENTITY :: 0xF2
+MOUSE_SET_DEFAULTS :: 0xF6
+MOUSE_ENABLE_REPORTING :: 0xF4
+// The sample rates that ask a mouse for the IntelliMouse protocol: a mouse
+// with a wheel knows this order and answers MOUSE_IDENTITY_WHEEL after it.
+@(rodata)
+mouse_wheel_rates := [3]u8{200, 100, 80}
+// The reads of the status port before a wait for the controller ends: a
+// bound on a device that does not answer, not a time.
+CONTROLLER_POLLS :: 100000
+
 output: ring.Ring
 output_memory: system.Handle
 modifiers: u32
 extended: bool
-packet: [3]u8
-packet_count: int
+// The packets of the mouse, in the protocol that its identity gave.
+mouse_decoder: key_path.Mouse_Decoder
+// The bytes of the keyboard that came while the service waited for an
+// answer of the mouse at its start: a key pressed during the start. They
+// are dropped, and their count is on the log.
+keyboard_bytes_dropped_at_start: u64
 // The packets of the mouse that found the input ring full: they go to the
 // ring, in order, before any newer record.
 pointer_backlog: key_path.Pointer_Backlog
@@ -111,7 +145,7 @@ key_records_refused: u64
 pointer_records_refused: u64
 
 controller_wait_write :: proc "contextless" () {
-	for _ in 0 ..< 100000 {
+	for _ in 0 ..< CONTROLLER_POLLS {
 		if system.port_read_8(PORT_STATUS) & STATUS_INPUT_FULL == 0 {
 			return
 		}
@@ -119,7 +153,7 @@ controller_wait_write :: proc "contextless" () {
 }
 
 controller_read :: proc "contextless" () -> u8 {
-	for _ in 0 ..< 100000 {
+	for _ in 0 ..< CONTROLLER_POLLS {
 		if system.port_read_8(PORT_STATUS) & STATUS_OUTPUT_FULL != 0 {
 			break
 		}
@@ -137,10 +171,29 @@ controller_data :: proc "contextless" (value: u8) {
 	system.port_write_8(PORT_DATA, value)
 }
 
+// mouse_answer_read reads the next byte of the mouse. A byte of the
+// keyboard that comes before it is dropped and counted: else a key pressed
+// at the start is read as the answer of the mouse, and the answer stays in
+// the controller. ok is false when the mouse did not answer.
+mouse_answer_read :: proc "contextless" () -> (value: u8, ok: bool) {
+	for _ in 0 ..< CONTROLLER_POLLS {
+		state := system.port_read_8(PORT_STATUS)
+		if state & STATUS_OUTPUT_FULL == 0 {
+			continue
+		}
+		byte_read := system.port_read_8(PORT_DATA)
+		if state & STATUS_MOUSE != 0 {
+			return byte_read, true
+		}
+		keyboard_bytes_dropped_at_start += 1
+	}
+	return 0, false
+}
+
 mouse_command :: proc "contextless" (command: u8) {
 	controller_command(0xD4) // The next data byte goes to the mouse.
 	controller_data(command)
-	controller_read() // The mouse answers 0xFA.
+	mouse_answer_read() // The mouse answers 0xFA.
 }
 
 // entry sets up the PS/2 controller and then turns each byte of the
@@ -149,7 +202,8 @@ mouse_command :: proc "contextless" (command: u8) {
 // **What it sets up**: it opens the input ring (handle 0), drops the bytes
 // that wait in the controller, enables the mouse port, turns on both
 // interrupts and the clock of the mouse, gives the mouse its default
-// settings, and asks it to send its moves. It then writes `input: ok`.
+// settings, asks it for the wheel, and asks it to send its moves. It then
+// writes `input: ok, the mouse has a wheel` (or `no wheel`).
 //
 // **The loop.** It waits for an interrupt. It then reads each byte while
 // the status port says that one waits: a byte of the mouse goes to
@@ -193,9 +247,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	configuration &~= 0x20 // The mouse clock on.
 	controller_command(0x60)
 	controller_data(configuration)
-	mouse_command(0xF6) // Default settings.
-	mouse_command(0xF4) // Send motion.
-	system.log("input: ok")
+	mouse_command(MOUSE_SET_DEFAULTS)
+	for rate in mouse_wheel_rates {
+		mouse_command(MOUSE_SET_SAMPLE_RATE)
+		mouse_command(rate)
+	}
+	mouse_command(MOUSE_GET_IDENTITY)
+	if identity, answered := mouse_answer_read(); answered {
+		mouse_decoder.protocol = key_path.mouse_protocol_of_identity(identity)
+	}
+	mouse_command(MOUSE_ENABLE_REPORTING)
+	if keyboard_bytes_dropped_at_start > 0 {
+		system.log("input: ", keyboard_bytes_dropped_at_start, " bytes of the keyboard came during the start of the mouse and are lost")
+	}
+	system.log("input: ok, the mouse has ", mouse_decoder.protocol == .Standard ? "no wheel" : "a wheel")
 
 	held_before := false // The turn before left a byte in the controller.
 	for {
@@ -254,7 +319,7 @@ pointer_backlog_send :: proc "contextless" () {
 }
 
 pointer_record :: proc "contextless" (pointer: key_path.Pointer_Packet) -> ring.Record {
-	return {kind = u32(display.Input.Pointer), values = {0 = u64(pointer.motion_x), 1 = u64(pointer.motion_y), 2 = pointer.buttons}}
+	return {kind = u32(display.Input.Pointer), values = {0 = u64(pointer.motion_x), 1 = u64(pointer.motion_y), 2 = pointer.buttons, 3 = u64(pointer.wheel)}}
 }
 
 // keyboard_byte turns one byte of the keyboard into a record `Key`. The
@@ -298,23 +363,17 @@ keyboard_byte :: proc "contextless" (value: u8) {
 	}
 }
 
-// mouse_byte keeps the bytes of a packet of 3 bytes and sends a record
-// `Pointer` when the packet is whole. A first byte with bit 3 clear is not
-// the start of a packet, and is dropped: the packets find their start
-// again after a lost byte.
+// mouse_byte gives one byte of the mouse to the decoder of its packets
+// (key_path.mouse_decoder_byte: the start of a packet, the check of the
+// fourth byte, the overflow), and sends a record `Pointer` when a packet
+// is whole.
 mouse_byte :: proc "contextless" (value: u8) {
-	if packet_count == 0 && value & 0x08 == 0 {
-		return // Not the first byte of a packet.
-	}
-	packet[packet_count] = value
-	packet_count += 1
-	if packet_count < len(packet) {
+	moved, whole := key_path.mouse_decoder_byte(&mouse_decoder, value)
+	if !whole {
 		return
 	}
-	packet_count = 0
-	motion_x := i64(packet[1]) - (packet[0] & 0x10 != 0 ? 256 : 0)
-	motion_y := i64(packet[2]) - (packet[0] & 0x20 != 0 ? 256 : 0)
-	moved := key_path.Pointer_Packet{motion_x = motion_x, motion_y = -motion_y, buttons = u64(packet[0] & 0x07)}
+	// The decoder counts the notches toward the principal.
+	moved.wheel *= display.WHEEL_TOWARD_THE_END
 	// A packet that waits goes first. With none, the ring takes this one,
 	// or it is the first one that waits.
 	if pointer_backlog.count == 0 && system.send(&output.commands, pointer_record(moved)) {

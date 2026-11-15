@@ -165,12 +165,11 @@ A film of the palette needed a change of the tool: the old step that took pictur
 
 ## State
 
-Built: the panel with the programs and the windows; the provider with the commands of the console, their arguments and their candidates; the settings; the scheduling strategy; the four prefixes; the kind icons; the pointer in a field, on a candidate and on the scroll bar; the film; the setting row; the row of buttons of a field with a few closed values; the mode in the input band; go to, with the act names of `settings` and `scheduler`; the number with its unit, for the built-in commands `buffer`, `debug_memory` and `wait_stop` (`bytes` states its unit too, and opens in the console for its Handle); the unit of an Integer parameter of an export, stated by `cryptography.hkdf_sha256_expand`, `debugger.memory`, `debugger.watch`, `debugger.wait_stop` and `storage.set_size`; the pointer on the buttons of a field.
+Built: the panel with the programs and the windows; the provider with the commands of the console, their arguments and their candidates; the settings; the scheduling strategy; the four prefixes; the kind icons; the pointer in a field, on a candidate and on the scroll bar; the film; the setting row; the row of buttons of a field with a few closed values; the mode in the input band; go to, with the act names of `settings` and `scheduler`; the number with its unit, for the built-in commands `buffer`, `debug_memory` and `wait_stop` (`bytes` states its unit too, and opens in the console for its Handle); the unit of an Integer parameter of an export, stated by `cryptography.hkdf_sha256_expand`, `debugger.memory`, `debugger.watch`, `debugger.wait_stop` and `storage.set_size`; the pointer on the buttons of a field; the wheel over the entries and the candidates, which moves the view and the choice with it ([scroll_bar.md](scroll_bar.md)).
 
 Left:
 
 - A press in the typed part of the search does not move its caret: the keys do.
-- The wheel of the pointing device does not exist in the system: the input service reads no wheel.
 - A Table result is not drawn in the panel: it opens in the console.
 - A second provider (a service that runs its own entries) waits for a real need.
 - The manual, the site and the signature that the console prints show the type of an Integer parameter with no unit: only the palette and the sentence of a failed check name it.

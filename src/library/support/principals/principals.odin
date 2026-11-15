@@ -24,9 +24,19 @@
 //   TPM, with its copy under the recovery key and its key check.
 // - `recovery_key_text`, `recovery_key_parse`, `recovery_seal_key`,
 //   `machine_key_check`: the recovery key and the key check.
+// - `Sealed_Object`, `sealed_object_encode`, `sealed_object_decode`: the
+//   four parts of a sealed object, in the two records sealed by the TPM.
+// - `Principal_Tpm_File`, `principal_tpm_file_encode`,
+//   `principal_tpm_file_decode`, `principal_record_form`: the file of a
+//   named principal whose keys the TPM seals with its passphrase, with the
+//   copy under its recovery key.
+// - `principal_authorization_value`, `principal_tpm_seal_key`,
+//   `principal_recovery_seal_key`: the keys of that file.
 //
 // See [principal](term:principal), [named principal](term:named-principal),
-// [passphrase](term:passphrase) and [recovery key](term:recovery-key).
+// [passphrase](term:passphrase), [recovery key](term:recovery-key),
+// [authorization value](term:authorization-value) and
+// [TPM secret](term:tpm-secret).
 package principals
 
 import blake2 "modus:support/cryptography/_blake2"
@@ -490,19 +500,20 @@ MACHINE_TPM_MAGIC :: "MACHINET" // The first 8 bytes of the record.
 MACHINE_TPM_FORMAT :: u32(2) // A record of another format number is refused: format 1 had no proof of its creation.
 MACHINE_TPM_PCRS :: tpm2.PCR_SET // The PCRs of the policy: PCR 7 and PCR 11, bit n for PCR n.
 MACHINE_TPM_OFFSET_PCRS :: 12 // u32: the PCRs of the policy, bit n for PCR n.
-MACHINE_TPM_OFFSET_PUBLIC_BYTES :: 16 // u16: the bytes of the public area.
-MACHINE_TPM_OFFSET_PRIVATE_BYTES :: 18 // u16: the bytes of the private area.
-MACHINE_TPM_OFFSET_CREATION_BYTES :: 20 // u16: the bytes of the creation data.
-MACHINE_TPM_OFFSET_TICKET_BYTES :: 22 // u16: the bytes of the creation ticket.
-MACHINE_TPM_OFFSET_PUBLIC :: 24 // The public area, with its size field; zero bytes after it.
+MACHINE_TPM_OFFSET_SEALED_OBJECT :: 16 // The four parts of the sealed object: SEALED_OBJECT_SIZE bytes.
+MACHINE_TPM_OFFSET_PUBLIC_BYTES :: MACHINE_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PUBLIC_BYTES // 16: u16, the bytes of the public area.
+MACHINE_TPM_OFFSET_PRIVATE_BYTES :: MACHINE_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PRIVATE_BYTES // 18.
+MACHINE_TPM_OFFSET_CREATION_BYTES :: MACHINE_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_CREATION_BYTES // 20.
+MACHINE_TPM_OFFSET_TICKET_BYTES :: MACHINE_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_TICKET_BYTES // 22.
+MACHINE_TPM_OFFSET_PUBLIC :: MACHINE_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PUBLIC // 24.
 MACHINE_TPM_PUBLIC_LIMIT :: tpm2.PUBLIC_AREA_LIMIT
-MACHINE_TPM_OFFSET_PRIVATE :: MACHINE_TPM_OFFSET_PUBLIC + MACHINE_TPM_PUBLIC_LIMIT // 152: the private area, with its size field; zero bytes after it.
+MACHINE_TPM_OFFSET_PRIVATE :: MACHINE_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PRIVATE // 152.
 MACHINE_TPM_PRIVATE_LIMIT :: tpm2.PRIVATE_AREA_LIMIT
-MACHINE_TPM_OFFSET_CREATION :: MACHINE_TPM_OFFSET_PRIVATE + MACHINE_TPM_PRIVATE_LIMIT // 408: the creation data, with its size field; zero bytes after it.
+MACHINE_TPM_OFFSET_CREATION :: MACHINE_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_CREATION // 408.
 MACHINE_TPM_CREATION_LIMIT :: tpm2.CREATION_DATA_LIMIT
-MACHINE_TPM_OFFSET_TICKET :: MACHINE_TPM_OFFSET_CREATION + MACHINE_TPM_CREATION_LIMIT // 664: the creation ticket, whose bytes are at MACHINE_TPM_OFFSET_TICKET_BYTES; zero bytes after it.
+MACHINE_TPM_OFFSET_TICKET :: MACHINE_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_TICKET // 664.
 MACHINE_TPM_TICKET_LIMIT :: tpm2.CREATION_TICKET_LIMIT // 72: a digest of 64 bytes at most.
-MACHINE_TPM_OFFSET_RECOVERY_NONCE :: MACHINE_TPM_OFFSET_TICKET + MACHINE_TPM_TICKET_LIMIT // 736.
+MACHINE_TPM_OFFSET_RECOVERY_NONCE :: MACHINE_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_SIZE // 736.
 MACHINE_TPM_OFFSET_RECOVERY_SEALED :: MACHINE_TPM_OFFSET_RECOVERY_NONCE + NONCE_SIZE // 748: the machine key sealed under the recovery key, and the tag.
 MACHINE_TPM_OFFSET_KEY_CHECK :: MACHINE_TPM_OFFSET_RECOVERY_SEALED + MACHINE_SEALED_SIZE // 796.
 MACHINE_TPM_FILE_SIZE :: MACHINE_TPM_OFFSET_KEY_CHECK + KEY_SIZE // 828.
@@ -510,17 +521,95 @@ MACHINE_TPM_FILE_SIZE :: MACHINE_TPM_OFFSET_KEY_CHECK + KEY_SIZE // 828.
 // The additional data of the recovery seal: the magic and the format.
 MACHINE_TPM_ADDITIONAL_SIZE :: MACHINE_TPM_OFFSET_PCRS
 
+// The four parts of a sealed object that the TPM service gives, as a record
+// keeps them: the two areas that TPM2_Load takes, and the creation data and
+// the creation ticket that prove that the TPM made the object under the PCR
+// values of its policy. The record of the machine key and the record of a
+// named principal sealed by the TPM keep them in the same form.
+Sealed_Object :: struct {
+	public_bytes:    int,
+	public_area:     [tpm2.PUBLIC_AREA_LIMIT]u8,
+	private_bytes:   int,
+	private_area:    [tpm2.PRIVATE_AREA_LIMIT]u8,
+	creation_bytes:  int,
+	creation_data:   [tpm2.CREATION_DATA_LIMIT]u8,
+	ticket_bytes:    int,
+	creation_ticket: [tpm2.CREATION_TICKET_LIMIT]u8,
+}
+
+// The places of the four parts in a record, from the start of the parts;
+// each number is little-endian. Each part has its place at its limit, with
+// zero bytes after it.
+SEALED_OBJECT_OFFSET_PUBLIC_BYTES :: 0 // u16: the bytes of the public area.
+SEALED_OBJECT_OFFSET_PRIVATE_BYTES :: 2 // u16: the bytes of the private area.
+SEALED_OBJECT_OFFSET_CREATION_BYTES :: 4 // u16: the bytes of the creation data.
+SEALED_OBJECT_OFFSET_TICKET_BYTES :: 6 // u16: the bytes of the creation ticket.
+SEALED_OBJECT_OFFSET_PUBLIC :: 8 // The public area, with its size field.
+SEALED_OBJECT_OFFSET_PRIVATE :: SEALED_OBJECT_OFFSET_PUBLIC + tpm2.PUBLIC_AREA_LIMIT // 136: the private area, with its size field.
+SEALED_OBJECT_OFFSET_CREATION :: SEALED_OBJECT_OFFSET_PRIVATE + tpm2.PRIVATE_AREA_LIMIT // 392: the creation data, with its size field.
+SEALED_OBJECT_OFFSET_TICKET :: SEALED_OBJECT_OFFSET_CREATION + tpm2.CREATION_DATA_LIMIT // 648: the creation ticket, whole.
+SEALED_OBJECT_SIZE :: SEALED_OBJECT_OFFSET_TICKET + tpm2.CREATION_TICKET_LIMIT // 720.
+#assert(SEALED_OBJECT_SIZE == 720)
+
+// sealed_object_encode writes the four parts at their places. The caller
+// took them from the TPM service, within their limits.
+sealed_object_encode :: proc "contextless" (object: ^Sealed_Object, out: []u8) {
+	public_bytes := clamp(object.public_bytes, 0, tpm2.PUBLIC_AREA_LIMIT)
+	private_bytes := clamp(object.private_bytes, 0, tpm2.PRIVATE_AREA_LIMIT)
+	creation_bytes := clamp(object.creation_bytes, 0, tpm2.CREATION_DATA_LIMIT)
+	ticket_bytes := clamp(object.ticket_bytes, 0, tpm2.CREATION_TICKET_LIMIT)
+	u16_put(out[SEALED_OBJECT_OFFSET_PUBLIC_BYTES:], u16(public_bytes))
+	u16_put(out[SEALED_OBJECT_OFFSET_PRIVATE_BYTES:], u16(private_bytes))
+	u16_put(out[SEALED_OBJECT_OFFSET_CREATION_BYTES:], u16(creation_bytes))
+	u16_put(out[SEALED_OBJECT_OFFSET_TICKET_BYTES:], u16(ticket_bytes))
+	copy(out[SEALED_OBJECT_OFFSET_PUBLIC:][:public_bytes], object.public_area[:public_bytes])
+	copy(out[SEALED_OBJECT_OFFSET_PRIVATE:][:private_bytes], object.private_area[:private_bytes])
+	copy(out[SEALED_OBJECT_OFFSET_CREATION:][:creation_bytes], object.creation_data[:creation_bytes])
+	copy(out[SEALED_OBJECT_OFFSET_TICKET:][:ticket_bytes], object.creation_ticket[:ticket_bytes])
+}
+
+// sealed_object_decode reads the four parts of a copy of a record: each area
+// must be a whole sized buffer of the TPM within its limit, the creation
+// data must name PCR 7 and PCR 11 with a digest, the ticket must have its
+// form, and each place has zero bytes after its part. It does not check the
+// ticket: the TPM does.
+sealed_object_decode :: proc "contextless" (parts: []u8) -> (object: Sealed_Object, ok: bool) {
+	if len(parts) != SEALED_OBJECT_SIZE {
+		return {}, false
+	}
+	public_bytes := int(u16_get(parts[SEALED_OBJECT_OFFSET_PUBLIC_BYTES:]))
+	private_bytes := int(u16_get(parts[SEALED_OBJECT_OFFSET_PRIVATE_BYTES:]))
+	creation_bytes := int(u16_get(parts[SEALED_OBJECT_OFFSET_CREATION_BYTES:]))
+	ticket_bytes := int(u16_get(parts[SEALED_OBJECT_OFFSET_TICKET_BYTES:]))
+	if public_bytes > tpm2.PUBLIC_AREA_LIMIT || private_bytes > tpm2.PRIVATE_AREA_LIMIT || creation_bytes > tpm2.CREATION_DATA_LIMIT || ticket_bytes > tpm2.CREATION_TICKET_LIMIT {
+		return {}, false
+	}
+	public_place := parts[SEALED_OBJECT_OFFSET_PUBLIC:][:tpm2.PUBLIC_AREA_LIMIT]
+	private_place := parts[SEALED_OBJECT_OFFSET_PRIVATE:][:tpm2.PRIVATE_AREA_LIMIT]
+	creation_place := parts[SEALED_OBJECT_OFFSET_CREATION:][:tpm2.CREATION_DATA_LIMIT]
+	ticket_place := parts[SEALED_OBJECT_OFFSET_TICKET:][:tpm2.CREATION_TICKET_LIMIT]
+	if !tpm2.area_fits(public_place[:public_bytes], tpm2.PUBLIC_AREA_LIMIT) || !tpm2.area_fits(private_place[:private_bytes], tpm2.PRIVATE_AREA_LIMIT) || !tpm2.ticket_fits(ticket_place[:ticket_bytes]) {
+		return {}, false
+	}
+	if _, named := tpm2.creation_data_pcr_digest(creation_place[:creation_bytes]); !named {
+		return {}, false
+	}
+	if !zero_after(public_place, public_bytes) || !zero_after(private_place, private_bytes) || !zero_after(creation_place, creation_bytes) || !zero_after(ticket_place, ticket_bytes) {
+		return {}, false
+	}
+	object.public_bytes, object.private_bytes = public_bytes, private_bytes
+	object.creation_bytes, object.ticket_bytes = creation_bytes, ticket_bytes
+	copy(object.public_area[:], public_place)
+	copy(object.private_area[:], private_place)
+	copy(object.creation_data[:], creation_place)
+	copy(object.creation_ticket[:], ticket_place)
+	return object, true
+}
+
 // The record of a machine key sealed by the TPM, decoded.
 Machine_Tpm_File :: struct {
 	pcrs:            u32, // The PCRs of the policy: tpm2.PCR_SET.
-	public_bytes:    int,
-	public_area:     [MACHINE_TPM_PUBLIC_LIMIT]u8,
-	private_bytes:   int,
-	private_area:    [MACHINE_TPM_PRIVATE_LIMIT]u8,
-	creation_bytes:  int,
-	creation_data:   [MACHINE_TPM_CREATION_LIMIT]u8,
-	ticket_bytes:    int,
-	creation_ticket: [MACHINE_TPM_TICKET_LIMIT]u8,
+	using object:    Sealed_Object,
 	recovery_nonce:  [NONCE_SIZE]u8, // The nonce of the recovery seal.
 	recovery_sealed: [MACHINE_SEALED_SIZE]u8, // The machine key sealed under the key of the recovery key, and the tag.
 	key_check:       [KEY_SIZE]u8, // machine_key_check of the machine key.
@@ -554,18 +643,7 @@ machine_tpm_file_encode :: proc "contextless" (file: ^Machine_Tpm_File, out: ^[M
 	copy(out^[MACHINE_OFFSET_MAGIC:][:8], MACHINE_TPM_MAGIC)
 	u32_put(out^[MACHINE_OFFSET_FORMAT:], MACHINE_TPM_FORMAT)
 	u32_put(out^[MACHINE_TPM_OFFSET_PCRS:], file.pcrs)
-	public_bytes := clamp(file.public_bytes, 0, MACHINE_TPM_PUBLIC_LIMIT)
-	private_bytes := clamp(file.private_bytes, 0, MACHINE_TPM_PRIVATE_LIMIT)
-	creation_bytes := clamp(file.creation_bytes, 0, MACHINE_TPM_CREATION_LIMIT)
-	ticket_bytes := clamp(file.ticket_bytes, 0, MACHINE_TPM_TICKET_LIMIT)
-	u16_put(out^[MACHINE_TPM_OFFSET_PUBLIC_BYTES:], u16(public_bytes))
-	u16_put(out^[MACHINE_TPM_OFFSET_PRIVATE_BYTES:], u16(private_bytes))
-	u16_put(out^[MACHINE_TPM_OFFSET_CREATION_BYTES:], u16(creation_bytes))
-	u16_put(out^[MACHINE_TPM_OFFSET_TICKET_BYTES:], u16(ticket_bytes))
-	copy(out^[MACHINE_TPM_OFFSET_PUBLIC:][:public_bytes], file.public_area[:public_bytes])
-	copy(out^[MACHINE_TPM_OFFSET_PRIVATE:][:private_bytes], file.private_area[:private_bytes])
-	copy(out^[MACHINE_TPM_OFFSET_CREATION:][:creation_bytes], file.creation_data[:creation_bytes])
-	copy(out^[MACHINE_TPM_OFFSET_TICKET:][:ticket_bytes], file.creation_ticket[:ticket_bytes])
+	sealed_object_encode(&file.object, out^[MACHINE_TPM_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
 	copy(out^[MACHINE_TPM_OFFSET_RECOVERY_NONCE:][:NONCE_SIZE], file.recovery_nonce[:])
 	copy(out^[MACHINE_TPM_OFFSET_RECOVERY_SEALED:][:MACHINE_SEALED_SIZE], file.recovery_sealed[:])
 	copy(out^[MACHINE_TPM_OFFSET_KEY_CHECK:][:KEY_SIZE], file.key_check[:])
@@ -592,33 +670,12 @@ machine_tpm_file_decode :: proc "contextless" (bytes: []u8) -> (file: Machine_Tp
 	if u32_get(kept[MACHINE_TPM_OFFSET_PCRS:]) != tpm2.PCR_SET {
 		return {}, {}, .Other_Parameters
 	}
-	public_bytes := int(u16_get(kept[MACHINE_TPM_OFFSET_PUBLIC_BYTES:]))
-	private_bytes := int(u16_get(kept[MACHINE_TPM_OFFSET_PRIVATE_BYTES:]))
-	creation_bytes := int(u16_get(kept[MACHINE_TPM_OFFSET_CREATION_BYTES:]))
-	ticket_bytes := int(u16_get(kept[MACHINE_TPM_OFFSET_TICKET_BYTES:]))
-	if public_bytes > MACHINE_TPM_PUBLIC_LIMIT || private_bytes > MACHINE_TPM_PRIVATE_LIMIT || creation_bytes > MACHINE_TPM_CREATION_LIMIT || ticket_bytes > MACHINE_TPM_TICKET_LIMIT {
-		return {}, {}, .Bad_Area
-	}
-	public_place := kept[MACHINE_TPM_OFFSET_PUBLIC:][:MACHINE_TPM_PUBLIC_LIMIT]
-	private_place := kept[MACHINE_TPM_OFFSET_PRIVATE:][:MACHINE_TPM_PRIVATE_LIMIT]
-	creation_place := kept[MACHINE_TPM_OFFSET_CREATION:][:MACHINE_TPM_CREATION_LIMIT]
-	ticket_place := kept[MACHINE_TPM_OFFSET_TICKET:][:MACHINE_TPM_TICKET_LIMIT]
-	if !tpm2.area_fits(public_place[:public_bytes], MACHINE_TPM_PUBLIC_LIMIT) || !tpm2.area_fits(private_place[:private_bytes], MACHINE_TPM_PRIVATE_LIMIT) || !tpm2.ticket_fits(ticket_place[:ticket_bytes]) {
-		return {}, {}, .Bad_Area
-	}
-	if _, named := tpm2.creation_data_pcr_digest(creation_place[:creation_bytes]); !named {
-		return {}, {}, .Bad_Area
-	}
-	if !zero_after(public_place, public_bytes) || !zero_after(private_place, private_bytes) || !zero_after(creation_place, creation_bytes) || !zero_after(ticket_place, ticket_bytes) {
+	object, object_ok := sealed_object_decode(kept[MACHINE_TPM_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
+	if !object_ok {
 		return {}, {}, .Bad_Area
 	}
 	file.pcrs = tpm2.PCR_SET
-	file.public_bytes, file.private_bytes = public_bytes, private_bytes
-	file.creation_bytes, file.ticket_bytes = creation_bytes, ticket_bytes
-	copy(file.public_area[:], public_place)
-	copy(file.private_area[:], private_place)
-	copy(file.creation_data[:], creation_place)
-	copy(file.creation_ticket[:], ticket_place)
+	file.object = object
 	copy(file.recovery_nonce[:], kept[MACHINE_TPM_OFFSET_RECOVERY_NONCE:][:NONCE_SIZE])
 	copy(file.recovery_sealed[:], kept[MACHINE_TPM_OFFSET_RECOVERY_SEALED:][:MACHINE_SEALED_SIZE])
 	copy(file.key_check[:], kept[MACHINE_TPM_OFFSET_KEY_CHECK:][:KEY_SIZE])
@@ -789,4 +846,214 @@ recovery_seal_key :: proc "contextless" (recovery_key: ^[RECOVERY_KEY_SIZE]u8) -
 // key, gives a key that does not pass.
 machine_key_check :: proc "contextless" (machine_key: ^[MACHINE_KEY_SIZE]u8) -> [KEY_SIZE]u8 {
 	return keyed_hash(machine_key^[:], MACHINE_KEY_CHECK_TEXT)
+}
+
+// The file of a named principal whose keys the TPM seals
+// (docs/PRINCIPALS.md, "The keys sealed by the TPM";
+// src/md/features/tpm_sealed_principal_keys.md): the object FILE_OBJECT
+// of the store of `unlock`, as the file under the passphrase alone, with its
+// own first 8 bytes. A machine has one named principal, so the object has
+// one of the two forms. Its first 124 bytes have the form of the file under
+// the passphrase alone, to the salt. Then it holds:
+//
+// - the four parts of a sealed object that the TPM service made with an
+//   authorization value: the TPM secret, 32 random bytes, which the TPM
+//   releases only while PCR 7 and PCR 11 hold the values of the seal, and
+//   only to the authorization value that the passphrase gives; the TPM
+//   counts each wrong value;
+// - the two secret keys sealed with ChaCha20-Poly1305 under the seal key,
+//   which the TPM secret and the key of the passphrase give together
+//   (principal_tpm_seal_key); the additional data is each byte before the
+//   PCRs: the name, the public keys, the parameters and the salt;
+// - the two secret keys sealed under the key of the recovery key
+//   (principal_recovery_seal_key); the additional data is each byte before
+//   the salt, so a new passphrase after a recovery keeps this copy valid.
+//
+// The offsets, in bytes; each number is little-endian.
+PRINCIPAL_TPM_MAGIC :: "PRINCIPT" // The first 8 bytes of the file.
+PRINCIPAL_TPM_FORMAT :: u32(1) // A file of another format number is refused.
+PRINCIPAL_TPM_SECRET_SIZE :: 32 // The bytes of the TPM secret: the secret that the TPM service seals.
+PRINCIPAL_TPM_PCRS :: tpm2.PCR_SET // The PCRs of the policy: PCR 7 and PCR 11, bit n for PCR n.
+PRINCIPAL_TPM_OFFSET_PCRS :: OFFSET_NONCE // 124: u32, the PCRs of the policy, bit n for PCR n.
+PRINCIPAL_TPM_OFFSET_SEALED_OBJECT :: PRINCIPAL_TPM_OFFSET_PCRS + 4 // 128: SEALED_OBJECT_SIZE bytes.
+PRINCIPAL_TPM_OFFSET_NONCE :: PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_SIZE // 848: the nonce of the seal under the seal key.
+PRINCIPAL_TPM_OFFSET_SEALED :: PRINCIPAL_TPM_OFFSET_NONCE + NONCE_SIZE // 860: the two secret keys and the tag.
+PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE :: PRINCIPAL_TPM_OFFSET_SEALED + SEALED_SIZE // 940.
+PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED :: PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE + NONCE_SIZE // 952: the two secret keys under the recovery key, and the tag.
+PRINCIPAL_TPM_FILE_SIZE :: PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED + SEALED_SIZE // 1032.
+#assert(PRINCIPAL_TPM_FILE_SIZE == 1032)
+// The bytes that each seal covers and does not seal.
+PRINCIPAL_TPM_ADDITIONAL_SIZE :: PRINCIPAL_TPM_OFFSET_PCRS // The seal under the seal key: to the salt.
+PRINCIPAL_TPM_RECOVERY_ADDITIONAL_SIZE :: OFFSET_SALT // The recovery seal: to the public keys.
+// The largest of the two forms of the file: the read of `unlock` takes
+// either one.
+PRINCIPAL_FILE_LIMIT :: max(FILE_SIZE, PRINCIPAL_TPM_FILE_SIZE)
+
+// The file of a named principal sealed by the TPM, decoded.
+Principal_Tpm_File :: struct {
+	name:               [NAME_LIMIT]u8,
+	name_length:        int,
+	signing_public_key: [PUBLIC_KEY_SIZE]u8,
+	unlock_public_key:  [PUBLIC_KEY_SIZE]u8,
+	salt:               [SALT_SIZE]u8, // The salt of Argon2id: the key of the passphrase.
+	pcrs:               u32, // The PCRs of the policy: tpm2.PCR_SET.
+	using object:       Sealed_Object, // Made with the authorization value of the passphrase.
+	nonce:              [NONCE_SIZE]u8, // The nonce of the seal under the seal key.
+	sealed:             [SEALED_SIZE]u8, // The two secret keys under the seal key, and the tag.
+	recovery_nonce:     [NONCE_SIZE]u8,
+	recovery_sealed:    [SEALED_SIZE]u8, // The two secret keys under the key of the recovery key, and the tag.
+}
+
+// principal_tpm_file_encode writes the bytes of the file. The caller
+// checked the name, and took the four parts from the TPM service.
+principal_tpm_file_encode :: proc "contextless" (file: ^Principal_Tpm_File, out: ^[PRINCIPAL_TPM_FILE_SIZE]u8) {
+	out^ = {}
+	copy(out^[OFFSET_MAGIC:][:8], PRINCIPAL_TPM_MAGIC)
+	u32_put(out^[OFFSET_FORMAT:], PRINCIPAL_TPM_FORMAT)
+	u32_put(out^[OFFSET_MEMORY:], DERIVATION_MEMORY_KIBIBYTES)
+	u32_put(out^[OFFSET_PASSES:], DERIVATION_PASSES)
+	length := clamp(file.name_length, 0, NAME_LIMIT)
+	out^[OFFSET_NAME_LENGTH] = u8(length)
+	copy(out^[OFFSET_NAME:][:length], file.name[:length])
+	copy(out^[OFFSET_SIGNING_PUBLIC_KEY:][:PUBLIC_KEY_SIZE], file.signing_public_key[:])
+	copy(out^[OFFSET_UNLOCK_PUBLIC_KEY:][:PUBLIC_KEY_SIZE], file.unlock_public_key[:])
+	copy(out^[OFFSET_SALT:][:SALT_SIZE], file.salt[:])
+	u32_put(out^[PRINCIPAL_TPM_OFFSET_PCRS:], file.pcrs)
+	sealed_object_encode(&file.object, out^[PRINCIPAL_TPM_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
+	copy(out^[PRINCIPAL_TPM_OFFSET_NONCE:][:NONCE_SIZE], file.nonce[:])
+	copy(out^[PRINCIPAL_TPM_OFFSET_SEALED:][:SEALED_SIZE], file.sealed[:])
+	copy(out^[PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE:][:NONCE_SIZE], file.recovery_nonce[:])
+	copy(out^[PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED:][:SEALED_SIZE], file.recovery_sealed[:])
+}
+
+// principal_tpm_file_decode reads a file that the store gave. It copies the
+// bytes once and checks the copy, as file_decode does, and the four parts
+// as the record of the machine key: the PCRs must be PCR 7 and PCR 11, so a
+// file cannot name a weaker policy. It does not check the seals and the
+// ticket: the TPM, the passphrase and the recovery key do.
+principal_tpm_file_decode :: proc "contextless" (bytes: []u8) -> (file: Principal_Tpm_File, kept: [PRINCIPAL_TPM_FILE_SIZE]u8, problem: File_Problem) {
+	if len(bytes) != PRINCIPAL_TPM_FILE_SIZE {
+		return {}, {}, .Wrong_Size
+	}
+	copy(kept[:], bytes)
+	if string(kept[OFFSET_MAGIC:][:8]) != PRINCIPAL_TPM_MAGIC {
+		return {}, {}, .Wrong_Magic
+	}
+	if u32_get(kept[OFFSET_FORMAT:]) != PRINCIPAL_TPM_FORMAT {
+		return {}, {}, .Wrong_Format
+	}
+	if u32_get(kept[OFFSET_MEMORY:]) != DERIVATION_MEMORY_KIBIBYTES || u32_get(kept[OFFSET_PASSES:]) != DERIVATION_PASSES || u32_get(kept[PRINCIPAL_TPM_OFFSET_PCRS:]) != tpm2.PCR_SET {
+		return {}, {}, .Other_Parameters
+	}
+	length := int(kept[OFFSET_NAME_LENGTH])
+	if length > NAME_LIMIT || name_problem(string(kept[OFFSET_NAME:][:length])) != .None {
+		return {}, {}, .Bad_Name
+	}
+	if !zero_after(kept[OFFSET_NAME:OFFSET_SIGNING_PUBLIC_KEY], length) {
+		return {}, {}, .Bytes_After_Name
+	}
+	object, object_ok := sealed_object_decode(kept[PRINCIPAL_TPM_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
+	if !object_ok {
+		return {}, {}, .Bad_Area
+	}
+	file.name_length = length
+	copy(file.name[:], kept[OFFSET_NAME:][:length])
+	copy(file.signing_public_key[:], kept[OFFSET_SIGNING_PUBLIC_KEY:][:PUBLIC_KEY_SIZE])
+	copy(file.unlock_public_key[:], kept[OFFSET_UNLOCK_PUBLIC_KEY:][:PUBLIC_KEY_SIZE])
+	copy(file.salt[:], kept[OFFSET_SALT:][:SALT_SIZE])
+	file.pcrs = tpm2.PCR_SET
+	file.object = object
+	copy(file.nonce[:], kept[PRINCIPAL_TPM_OFFSET_NONCE:][:NONCE_SIZE])
+	copy(file.sealed[:], kept[PRINCIPAL_TPM_OFFSET_SEALED:][:SEALED_SIZE])
+	copy(file.recovery_nonce[:], kept[PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE:][:NONCE_SIZE])
+	copy(file.recovery_sealed[:], kept[PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED:][:SEALED_SIZE])
+	return file, kept, .None
+}
+
+// principal_tpm_file_additional_data gives the additional data of the seal
+// under the seal key: each byte before the PCRs.
+principal_tpm_file_additional_data :: proc "contextless" (bytes: ^[PRINCIPAL_TPM_FILE_SIZE]u8) -> []u8 {
+	return bytes^[:PRINCIPAL_TPM_ADDITIONAL_SIZE]
+}
+
+// principal_tpm_file_recovery_additional_data gives the additional data of
+// the recovery seal: each byte before the salt, so that a new passphrase,
+// which has a new salt, keeps the copy under the recovery key valid.
+principal_tpm_file_recovery_additional_data :: proc "contextless" (bytes: ^[PRINCIPAL_TPM_FILE_SIZE]u8) -> []u8 {
+	return bytes^[:PRINCIPAL_TPM_RECOVERY_ADDITIONAL_SIZE]
+}
+
+// principal_tpm_file_problem_sentences gives the sentence of each problem
+// of a file sealed by the TPM, for the log of `unlock`.
+@(rodata)
+principal_tpm_file_problem_sentences := [File_Problem]string {
+	.None             = "",
+	.Wrong_Size       = "the file does not have 1032 bytes",
+	.Wrong_Magic      = "the file does not start with PRINCIPT",
+	.Wrong_Format     = "the file has another format number",
+	.Other_Parameters = "the file names other parameters of Argon2id than 19456 KiB and 2 passes, or other PCRs than PCR 7 and PCR 11",
+	.Bad_Name         = "the name in the file is not a name of a principal",
+	.Bytes_After_Name = "the file has bytes that are not zero after the name",
+	.Bad_Area         = "a part of the sealed object is not whole, or the creation data does not name PCR 7 and PCR 11, or a part has bytes that are not zero after it",
+}
+
+// The two forms of the object FILE_OBJECT, by its first 8 bytes.
+Principal_Record_Form :: enum u8 {
+	Unknown, // Neither magic: the file cannot be read.
+	Passphrase, // FILE_MAGIC: the keys under the passphrase alone.
+	Sealed_By_The_Tpm, // PRINCIPAL_TPM_MAGIC: the keys sealed by the TPM with the passphrase, and the recovery key.
+}
+
+// principal_record_form gives the form of a file of a named principal from
+// its first 8 bytes.
+principal_record_form :: proc "contextless" (bytes: []u8) -> Principal_Record_Form {
+	if len(bytes) < 8 {
+		return .Unknown
+	}
+	switch string(bytes[:8]) {
+	case FILE_MAGIC:
+		return .Passphrase
+	case PRINCIPAL_TPM_MAGIC:
+		return .Sealed_By_The_Tpm
+	}
+	return .Unknown
+}
+
+// The texts of the keyed hashes of a named principal: each use of a key has
+// a text of its own.
+PRINCIPAL_AUTHORIZATION_TEXT :: "modus authorization value of a named principal"
+PRINCIPAL_TPM_SEAL_TEXT :: "modus seal by the TPM of the keys of a named principal"
+PRINCIPAL_RECOVERY_SEAL_TEXT :: "modus recovery key of a named principal"
+
+// principal_authorization_value gives the authorization value of the
+// sealed object: keyed BLAKE2b of the key that Argon2id derives from the
+// passphrase. It crosses the interface of the TPM in clear; a reader of it
+// must still run Argon2id for each guess of the passphrase.
+principal_authorization_value :: proc "contextless" (passphrase_key: ^[KEY_SIZE]u8) -> [tpm2.AUTHORIZATION_VALUE_SIZE]u8 {
+	return keyed_hash(passphrase_key^[:], PRINCIPAL_AUTHORIZATION_TEXT)
+}
+
+// principal_tpm_seal_key gives the seal key of the secret keys: keyed
+// BLAKE2b of the TPM secret over the key of the passphrase and a text. So
+// the keys need the TPM and the passphrase together: a reader of the TPM
+// secret, on the bus of a hardware TPM, still runs Argon2id for each guess.
+principal_tpm_seal_key :: proc "contextless" (tpm_secret: ^[PRINCIPAL_TPM_SECRET_SIZE]u8, passphrase_key: ^[KEY_SIZE]u8) -> (result: [KEY_SIZE]u8) {
+	context_of_the_hash: blake2.Blake2b_Context
+	configuration := blake2.Blake2_Config {
+		size = KEY_SIZE,
+		key  = tpm_secret^[:],
+	}
+	blake2.init(&context_of_the_hash, &configuration)
+	blake2.update(&context_of_the_hash, passphrase_key^[:])
+	text: string = PRINCIPAL_TPM_SEAL_TEXT
+	blake2.update(&context_of_the_hash, transmute([]u8)text)
+	blake2.final(&context_of_the_hash, result[:])
+	return result
+}
+
+// principal_recovery_seal_key gives the key of the recovery seal of a named
+// principal: keyed BLAKE2b of the recovery key over
+// PRINCIPAL_RECOVERY_SEAL_TEXT.
+principal_recovery_seal_key :: proc "contextless" (recovery_key: ^[RECOVERY_KEY_SIZE]u8) -> [KEY_SIZE]u8 {
+	return keyed_hash(recovery_key^[:], PRINCIPAL_RECOVERY_SEAL_TEXT)
 }

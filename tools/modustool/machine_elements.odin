@@ -215,6 +215,48 @@ window_front_bring :: proc(machine: ^Machine, title: string, index: int) -> bool
 	return true
 }
 
+// window_in_front says if the window with a title is the one in front, from
+// the column order of compositor.windows() (0: in front). known is false
+// when the tool cannot read the table.
+window_in_front :: proc(machine: ^Machine, title: string) -> (front: bool, known: bool) {
+	if !machine.confirm {
+		return false, false
+	}
+	table := table_call(&machine.client, "compositor.windows()") or_return
+	rows := len(table.rows) / table.size
+	for row in 0 ..< rows {
+		if table_value(&table, row, "title") == title {
+			order := strconv.parse_int(table_value(&table, row, "order")) or_return
+			return order == 0, true
+		}
+	}
+	return false, false
+}
+
+// element_wheel turns the wheel over the element of a step Wheel. The
+// compositor gives the notches only to the window in front, so the window
+// comes to the front first when it is not there; the palette takes the
+// pointer while it is open.
+element_wheel :: proc(machine: ^Machine, owner, element: string, notches: int, index: int) -> bool {
+	if owner != PALETTE_ELEMENTS {
+		if front, known := window_in_front(machine, owner); !known || !front {
+			window_front_bring(machine, owner, index) or_return
+		}
+	}
+	x, y := element_center_wait(machine, owner, element, index) or_return
+	pointer_known_make(machine, index) or_return
+	if !pointer_move(machine, x, y) {
+		fmt.eprintfln("modustool: test failed: step %d: the pointer did not reach its place", index + 1)
+		return false
+	}
+	if !pointer_wheel(machine, notches) {
+		fmt.eprintfln("modustool: test failed: step %d: the machine did not take the %d notches of the wheel", index + 1, notches)
+		return false
+	}
+	test_passed_print("the tool turned the wheel by %d notches over the element %s of %s at %d,%d", notches, element, owner, x, y)
+	return true
+}
+
 // element_click presses the element of a step Click_Element: the window
 // comes to the front first when another window covers the element.
 element_click :: proc(machine: ^Machine, owner, element: string, index: int) -> bool {

@@ -15,6 +15,8 @@
 // - `Window_Queue`: the compositor cannot wait for a window. It keeps the
 //   records that the ring of a window refused, and it sends them in order
 //   before any newer record.
+// - `Mouse_Decoder` (mouse_packet.odin): the packets of the PS/2 mouse,
+//   with the wheel, and the start again after a lost byte.
 // - `Loss_Period`: a writer that must refuse a record writes one line in
 //   the log when the loss begins and one line, with the count, when it
 //   ends: not one line for each record.
@@ -61,11 +63,27 @@ loss_end :: proc "contextless" (period: ^Loss_Period) -> (count: u64, ended: boo
 // controller.
 POINTER_BACKLOG_CAPACITY :: 8
 
-// One packet of the mouse: a relative move and the state of the buttons.
+// One packet of the mouse: a relative move, the state of the buttons, and
+// the notches of the wheel (display.WHEEL_TOWARD_THE_END for each notch
+// toward the end of a content).
 Pointer_Packet :: struct {
 	motion_x: i64,
 	motion_y: i64,
 	buttons:  u64,
+	wheel:    i64,
+}
+
+// The most notches of the wheel that one pointer record carries, in each
+// direction. A sum of notches is cut to it: so many notches already move a
+// view to its end, and the rest would move nothing more. A value past it
+// from another program is false. The input service, the compositor and the
+// window layer cut to it, so a sum of the notches of a frame stays far
+// inside an int.
+WHEEL_NOTCHES_LIMIT :: 1 << 16
+
+// wheel_notches_add adds two counts of notches, cut to WHEEL_NOTCHES_LIMIT.
+wheel_notches_add :: proc "contextless" (first, second: i64) -> i64 {
+	return clamp(clamp(first, -WHEEL_NOTCHES_LIMIT, WHEEL_NOTCHES_LIMIT) + clamp(second, -WHEEL_NOTCHES_LIMIT, WHEEL_NOTCHES_LIMIT), -WHEEL_NOTCHES_LIMIT, WHEEL_NOTCHES_LIMIT)
 }
 
 // The packets of the mouse that found the input ring full, in order.
@@ -94,7 +112,8 @@ input_byte_can_be_read :: proc "contextless" (from_mouse: bool, ring_has_room: b
 
 // pointer_backlog_add keeps a packet that the input ring refused. A packet
 // with the buttons of the last packet joins it: the two moves become one
-// move with the same end place, and no change of a button is lost. false:
+// move with the same end place, their notches of the wheel add, and no
+// change of a button is lost. false:
 // the packet changes a button and no entry is free; the caller must not
 // read a byte of the mouse in that state (`input_byte_can_be_read`).
 pointer_backlog_add :: proc "contextless" (backlog: ^Pointer_Backlog, packet: Pointer_Packet) -> bool {
@@ -103,6 +122,7 @@ pointer_backlog_add :: proc "contextless" (backlog: ^Pointer_Backlog, packet: Po
 		if last.buttons == packet.buttons {
 			last.motion_x += packet.motion_x
 			last.motion_y += packet.motion_y
+			last.wheel = wheel_notches_add(last.wheel, packet.wheel)
 			backlog.merged += 1
 			return true
 		}
@@ -146,9 +166,16 @@ WINDOW_QUEUE_CAPACITY :: 256
 // What a record of a window is, for the counts of the refused records.
 Record_Class :: enum u8 {
 	Key, // A press or a release of a key.
-	Pointer, // A change of a button of the pointer.
+	Pointer, // A change of a button of the pointer, or notches of the wheel.
 	Other, // Another event of the window, as a change of the settings.
 }
+
+// The places of the values of a pointer record of a window
+// (display.Event_Kind.Pointer): the place, the buttons, the notches.
+POINTER_RECORD_X :: 0
+POINTER_RECORD_Y :: 1
+POINTER_RECORD_BUTTONS :: 2
+POINTER_RECORD_WHEEL :: 3
 
 // The records that wait for one window, as the compositor holds them.
 //
@@ -168,6 +195,7 @@ Window_Queue :: struct {
 	keys_delivered: u64, // The key records among them.
 	waiting_keys: int, // The key records that wait in `records`.
 	moves_merged: u64, // The moves that a newer move replaced before the window read them.
+	wheel_records_merged: u64, // The records with notches that joined the waiting record with notches before them.
 	refused:     [Record_Class]u64, // The records that found the queue full, since the window opened.
 	period_start: [Record_Class]u64, // `refused` when the loss period that is open began.
 	loss:        Loss_Period, // The records of each class together.
@@ -271,20 +299,44 @@ window_queue_put :: proc "contextless" (queue: ^Window_Queue, target: ^ring.Queu
 }
 
 // window_queue_put_pointer gives to a window a record of the pointer.
-// buttons is the state of the buttons in the record.
+// buttons is the state of the buttons in the record, and wheel its notches
+// of the wheel.
 //
 // A record that changes a button has an order, as a key: a press that the
-// window never sees is a lost action. It also holds the newest place, so
-// the move that waited before it is dropped as merged. A record with the
-// same buttons is a move: when the ring is full, it replaces the move that
-// waits. No move takes a place of the queue of the keys.
-window_queue_put_pointer :: proc "contextless" (queue: ^Window_Queue, target: ^ring.Queue, record: ring.Record, buttons: u64) -> (result: Put_Result) {
-	if buttons != queue.buttons {
+// window never sees is a lost action. A record that turns the wheel has an
+// order too: a newer move must not replace it, or the view does not move.
+// Such a record also holds the newest place, so the move that waited
+// before it is dropped as merged. A record with the same buttons and no
+// notch is a move: when the ring is full, it replaces the move that waits.
+// No move takes a place of the queue of the keys.
+//
+// Notches must not take the places of the keys and of the changes of a
+// button: a hand turns the wheel tens of times in one second. So a record
+// with notches and no change of a button joins the newest record that
+// waits, when that one has notches and the same buttons: the notches add
+// (cut to WHEEL_NOTCHES_LIMIT), and the place is the newer one. That
+// record has not reached the window, so the order does not change. A
+// window that does not read then holds at most one record with notches
+// between two keys or two changes of a button.
+window_queue_put_pointer :: proc "contextless" (queue: ^Window_Queue, target: ^ring.Queue, record: ring.Record, buttons: u64, wheel: i64 = 0) -> (result: Put_Result) {
+	if buttons != queue.buttons || wheel != 0 {
+		button_changed := buttons != queue.buttons
 		queue.buttons = buttons
 		result.wrote = window_queue_send_waiting(queue, target)
 		if queue.move_waits {
 			queue.move_waits = false
 			queue.moves_merged += 1
+		}
+		if !button_changed && queue.count > 0 {
+			newest := (queue.first + queue.count - 1) % window_queue_capacity(queue)
+			waiting := &queue.records[newest]
+			if !place_is_key(queue, newest) && waiting.kind == record.kind && waiting.values[POINTER_RECORD_BUTTONS] == buttons && waiting.values[POINTER_RECORD_WHEEL] != 0 {
+				notches := wheel_notches_add(i64(waiting.values[POINTER_RECORD_WHEEL]), wheel)
+				waiting^ = record
+				waiting.values[POINTER_RECORD_WHEEL] = u64(notches)
+				queue.wheel_records_merged += 1
+				return result
+			}
 		}
 		put := window_queue_put(queue, target, record, .Pointer)
 		result.wrote = result.wrote || put.wrote

@@ -78,7 +78,11 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 	}
 	interface.label_value_line(frame, interface.column_take(&column, 16), "presses", interface.number_text(&builder, presses))
 	interface.cell_text(frame, interface.column_take(&column, 16), "a list with a choice", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
-	listed := interface.list_with_choice(frame, interface.column_take(&column, 3 * interface.TABLE_LINE), interface.identity("list"), names[:], &choice, {chosen_hint = "enter: start"})
+	list_area := interface.column_take(&column, 3 * interface.TABLE_LINE)
+	// The element name lets a machine test put the pointer over the list,
+	// where the wheel moves its view.
+	interface.element_name(frame, list_area, "list")
+	listed := interface.list_with_choice(frame, list_area, interface.identity("list"), names[:], &choice, {chosen_hint = "enter: start"})
 	if listed.changed {
 		system.log("interface_elements: the list chooses ", names[choice])
 	}
