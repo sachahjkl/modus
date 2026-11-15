@@ -112,13 +112,17 @@ Tpm_Process :: struct {
 
 // tpm_start starts swtpm for the machine of this output, and waits until
 // its control socket exists. --terminate ends it when QEMU closes the
-// connection; tpm_stop ends it in each case.
-tpm_start :: proc(tpm: ^Tpm_Process, output: string) -> bool {
+// connection; tpm_stop ends it in each case. state is "" for a TPM with no
+// history, in the folder of the machine; else the folder of a state that
+// several machines of one test part share, as one TPM across restarts of
+// one machine: the part makes it new once.
+tpm_start :: proc(tpm: ^Tpm_Process, output: string, state: string = "") -> bool {
 	folder := tpm_folder_of(output)
 	socket := tpm_socket_of(output)
 	reset_folder(folder) or_return
+	state_folder := state != "" ? state : folder
 	log := strings.concatenate({"file=", folder, "/swtpm.log,level=20"}, context.temp_allocator)
-	process, err := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", folder}, context.temp_allocator), "--ctrl", strings.concatenate({"type=unixio,path=", socket}, context.temp_allocator), "--log", log, "--terminate"}, stdout = os.stderr, stderr = os.stderr})
+	process, err := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", state_folder}, context.temp_allocator), "--ctrl", strings.concatenate({"type=unixio,path=", socket}, context.temp_allocator), "--log", log, "--terminate"}, stdout = os.stderr, stderr = os.stderr})
 	if err != nil {
 		fmt.eprintfln("modustool: cannot start swtpm: %v. Use the development shell: nix develop", err)
 		return false

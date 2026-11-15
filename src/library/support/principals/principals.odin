@@ -19,10 +19,18 @@
 // - `Machine_File`, `machine_file_encode`, `machine_file_decode`,
 //   `machine_file_additional_data`: the record of the machine passphrase,
 //   with the sealed machine key.
+// - `Machine_Tpm_File`, `machine_tpm_file_encode`,
+//   `machine_tpm_file_decode`: the record of a machine key sealed by the
+//   TPM, with its copy under the recovery key and its key check.
+// - `recovery_key_text`, `recovery_key_parse`, `recovery_seal_key`,
+//   `machine_key_check`: the recovery key and the key check.
 //
-// See [principal](term:principal), [named principal](term:named-principal)
-// and [passphrase](term:passphrase).
+// See [principal](term:principal), [named principal](term:named-principal),
+// [passphrase](term:passphrase) and [recovery key](term:recovery-key).
 package principals
+
+import blake2 "modus:support/cryptography/_blake2"
+import "modus:support/tpm2"
 
 // Principal 0 is the machine. Its record exists at each boot, and its
 // session needs no unlock.
@@ -42,6 +50,11 @@ PASSPHRASE_LIMIT :: 128 // The most bytes of a passphrase.
 // root service gives (the store: 3).
 VALUE_MODE :: 5 // What this start of `unlock` does: a MODE_ value.
 VALUE_NAME :: 6 // 6, 7 and 8: the name, 24 bytes with zero bytes after it.
+// 1: the firmware verified the boot program (Secure Boot was on), so
+// `unlock` may seal the machine key by the TPM and seal it again after a
+// recovery. 0: it may only unseal: a seal with Secure Boot off would trust
+// a boot program that nothing verified.
+VALUE_SEAL_ALLOWED :: 13
 
 // What a start of `unlock` does, in VALUE_MODE.
 MODE_UNLOCK :: 0 // Ask for the machine passphrase if one is set, then unlock the principal of the file.
@@ -51,6 +64,9 @@ MODE_SET_MACHINE_PASSPHRASE :: 2 // Set the machine passphrase.
 // tag of the disk grant table of principal 0 already (after a lock), so
 // the machine passphrase is not asked again.
 MODE_UNLOCK_MACHINE_KEY_HELD :: 3
+// Make a machine key that the TPM service seals to the measure of the
+// system, and show its recovery key one time.
+MODE_SEAL_MACHINE_KEY :: 4
 
 // The key derivation: Argon2id (RFC 9106) with the first parameter set of
 // the OWASP password storage cheat sheet: 19 MiB, 2 passes, 1 lane. A file
@@ -114,6 +130,7 @@ File_Problem :: enum u8 {
 	Other_Parameters, // Other parameters of Argon2id than DERIVATION_MEMORY_KIBIBYTES and DERIVATION_PASSES.
 	Bad_Name, // The name breaks `name_problem`.
 	Bytes_After_Name, // A byte after the name is not zero.
+	Bad_Area, // A record sealed by the TPM: an area is not a whole sized buffer within its limit, or a byte after it is not zero.
 }
 
 // The sentence of each problem of a file, for the window of `unlock` and the
@@ -127,6 +144,7 @@ file_problem_sentences := [File_Problem]string {
 	.Other_Parameters = "the file names other parameters of Argon2id than 19456 KiB and 2 passes",
 	.Bad_Name         = "the name in the file is not a name of a principal",
 	.Bytes_After_Name = "the file has bytes that are not zero after the name",
+	.Bad_Area         = "",
 }
 
 // Why a name of a principal is refused: the result of `name_problem`.
@@ -444,4 +462,331 @@ machine_file_problem_sentences := [File_Problem]string {
 	.Other_Parameters = "the record names other parameters of Argon2id than 19456 KiB and 2 passes",
 	.Bad_Name         = "",
 	.Bytes_After_Name = "",
+	.Bad_Area         = "",
+}
+
+// The record of a machine key sealed by the TPM: the object MACHINE_OBJECT
+// in the store of `unlock`, as the record of the machine passphrase, with
+// its own first 8 bytes
+// (docs/PRINCIPALS.md, "The machine key sealed by the TPM").
+// A machine has one machine key, so the object has one of the two forms.
+// It holds:
+//
+// - the four parts of the sealed object that the TPM service gave: the two
+//   areas, from which the TPM releases the machine key only while PCR 7
+//   and PCR 11 hold the values of the seal; the creation data and the
+//   creation ticket, with which the TPM proves at each unseal that it made
+//   the object under the PCR values of its policy, so a record that another
+//   system wrote is refused (tpm2.creation_data_pcr_digest);
+// - the machine key sealed with ChaCha20-Poly1305 under the key of the
+//   recovery key (recovery_seal_key), with the magic and the format as its
+//   additional data: a new seal by the TPM changes the four parts and keeps
+//   this copy, as the recovery key is not kept;
+// - the key check (machine_key_check): the key that the TPM or the
+//   recovery key gives must have it.
+//
+// The offsets, in bytes; each number is little-endian.
+MACHINE_TPM_MAGIC :: "MACHINET" // The first 8 bytes of the record.
+MACHINE_TPM_FORMAT :: u32(2) // A record of another format number is refused: format 1 had no proof of its creation.
+MACHINE_TPM_PCRS :: tpm2.PCR_SET // The PCRs of the policy: PCR 7 and PCR 11, bit n for PCR n.
+MACHINE_TPM_OFFSET_PCRS :: 12 // u32: the PCRs of the policy, bit n for PCR n.
+MACHINE_TPM_OFFSET_PUBLIC_BYTES :: 16 // u16: the bytes of the public area.
+MACHINE_TPM_OFFSET_PRIVATE_BYTES :: 18 // u16: the bytes of the private area.
+MACHINE_TPM_OFFSET_CREATION_BYTES :: 20 // u16: the bytes of the creation data.
+MACHINE_TPM_OFFSET_TICKET_BYTES :: 22 // u16: the bytes of the creation ticket.
+MACHINE_TPM_OFFSET_PUBLIC :: 24 // The public area, with its size field; zero bytes after it.
+MACHINE_TPM_PUBLIC_LIMIT :: tpm2.PUBLIC_AREA_LIMIT
+MACHINE_TPM_OFFSET_PRIVATE :: MACHINE_TPM_OFFSET_PUBLIC + MACHINE_TPM_PUBLIC_LIMIT // 152: the private area, with its size field; zero bytes after it.
+MACHINE_TPM_PRIVATE_LIMIT :: tpm2.PRIVATE_AREA_LIMIT
+MACHINE_TPM_OFFSET_CREATION :: MACHINE_TPM_OFFSET_PRIVATE + MACHINE_TPM_PRIVATE_LIMIT // 408: the creation data, with its size field; zero bytes after it.
+MACHINE_TPM_CREATION_LIMIT :: tpm2.CREATION_DATA_LIMIT
+MACHINE_TPM_OFFSET_TICKET :: MACHINE_TPM_OFFSET_CREATION + MACHINE_TPM_CREATION_LIMIT // 664: the creation ticket, whose bytes are at MACHINE_TPM_OFFSET_TICKET_BYTES; zero bytes after it.
+MACHINE_TPM_TICKET_LIMIT :: tpm2.CREATION_TICKET_LIMIT // 72: a digest of 64 bytes at most.
+MACHINE_TPM_OFFSET_RECOVERY_NONCE :: MACHINE_TPM_OFFSET_TICKET + MACHINE_TPM_TICKET_LIMIT // 736.
+MACHINE_TPM_OFFSET_RECOVERY_SEALED :: MACHINE_TPM_OFFSET_RECOVERY_NONCE + NONCE_SIZE // 748: the machine key sealed under the recovery key, and the tag.
+MACHINE_TPM_OFFSET_KEY_CHECK :: MACHINE_TPM_OFFSET_RECOVERY_SEALED + MACHINE_SEALED_SIZE // 796.
+MACHINE_TPM_FILE_SIZE :: MACHINE_TPM_OFFSET_KEY_CHECK + KEY_SIZE // 828.
+#assert(MACHINE_TPM_FILE_SIZE == 828)
+// The additional data of the recovery seal: the magic and the format.
+MACHINE_TPM_ADDITIONAL_SIZE :: MACHINE_TPM_OFFSET_PCRS
+
+// The record of a machine key sealed by the TPM, decoded.
+Machine_Tpm_File :: struct {
+	pcrs:            u32, // The PCRs of the policy: tpm2.PCR_SET.
+	public_bytes:    int,
+	public_area:     [MACHINE_TPM_PUBLIC_LIMIT]u8,
+	private_bytes:   int,
+	private_area:    [MACHINE_TPM_PRIVATE_LIMIT]u8,
+	creation_bytes:  int,
+	creation_data:   [MACHINE_TPM_CREATION_LIMIT]u8,
+	ticket_bytes:    int,
+	creation_ticket: [MACHINE_TPM_TICKET_LIMIT]u8,
+	recovery_nonce:  [NONCE_SIZE]u8, // The nonce of the recovery seal.
+	recovery_sealed: [MACHINE_SEALED_SIZE]u8, // The machine key sealed under the key of the recovery key, and the tag.
+	key_check:       [KEY_SIZE]u8, // machine_key_check of the machine key.
+}
+
+// zero_after says if each byte of a place after its part is zero.
+@(private)
+zero_after :: proc "contextless" (place: []u8, used: int) -> bool {
+	for after in place[used:] {
+		if after != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+@(private)
+u16_put :: proc "contextless" (bytes: []u8, value: u16) {
+	bytes[0], bytes[1] = u8(value), u8(value >> 8)
+}
+
+@(private)
+u16_get :: proc "contextless" (bytes: []u8) -> u16 {
+	return u16(bytes[0]) | u16(bytes[1]) << 8
+}
+
+// machine_tpm_file_encode writes the bytes of the record. The caller took
+// the four parts from the TPM service, within their limits.
+machine_tpm_file_encode :: proc "contextless" (file: ^Machine_Tpm_File, out: ^[MACHINE_TPM_FILE_SIZE]u8) {
+	out^ = {}
+	copy(out^[MACHINE_OFFSET_MAGIC:][:8], MACHINE_TPM_MAGIC)
+	u32_put(out^[MACHINE_OFFSET_FORMAT:], MACHINE_TPM_FORMAT)
+	u32_put(out^[MACHINE_TPM_OFFSET_PCRS:], file.pcrs)
+	public_bytes := clamp(file.public_bytes, 0, MACHINE_TPM_PUBLIC_LIMIT)
+	private_bytes := clamp(file.private_bytes, 0, MACHINE_TPM_PRIVATE_LIMIT)
+	creation_bytes := clamp(file.creation_bytes, 0, MACHINE_TPM_CREATION_LIMIT)
+	ticket_bytes := clamp(file.ticket_bytes, 0, MACHINE_TPM_TICKET_LIMIT)
+	u16_put(out^[MACHINE_TPM_OFFSET_PUBLIC_BYTES:], u16(public_bytes))
+	u16_put(out^[MACHINE_TPM_OFFSET_PRIVATE_BYTES:], u16(private_bytes))
+	u16_put(out^[MACHINE_TPM_OFFSET_CREATION_BYTES:], u16(creation_bytes))
+	u16_put(out^[MACHINE_TPM_OFFSET_TICKET_BYTES:], u16(ticket_bytes))
+	copy(out^[MACHINE_TPM_OFFSET_PUBLIC:][:public_bytes], file.public_area[:public_bytes])
+	copy(out^[MACHINE_TPM_OFFSET_PRIVATE:][:private_bytes], file.private_area[:private_bytes])
+	copy(out^[MACHINE_TPM_OFFSET_CREATION:][:creation_bytes], file.creation_data[:creation_bytes])
+	copy(out^[MACHINE_TPM_OFFSET_TICKET:][:ticket_bytes], file.creation_ticket[:ticket_bytes])
+	copy(out^[MACHINE_TPM_OFFSET_RECOVERY_NONCE:][:NONCE_SIZE], file.recovery_nonce[:])
+	copy(out^[MACHINE_TPM_OFFSET_RECOVERY_SEALED:][:MACHINE_SEALED_SIZE], file.recovery_sealed[:])
+	copy(out^[MACHINE_TPM_OFFSET_KEY_CHECK:][:KEY_SIZE], file.key_check[:])
+}
+
+// machine_tpm_file_decode reads a record that the store gave. It copies the
+// bytes once and checks the copy: the store is data from the disk. Each
+// area must be a whole sized buffer of the TPM within its limit, the
+// creation data must name PCR 7 and PCR 11 with a digest, the ticket must
+// have its form, each part has zero bytes after it, and the PCRs must be
+// PCR 7 and PCR 11: a record cannot name a weaker policy. It does not
+// check the seals and the ticket: the TPM and the recovery key do.
+machine_tpm_file_decode :: proc "contextless" (bytes: []u8) -> (file: Machine_Tpm_File, kept: [MACHINE_TPM_FILE_SIZE]u8, problem: File_Problem) {
+	if len(bytes) != MACHINE_TPM_FILE_SIZE {
+		return {}, {}, .Wrong_Size
+	}
+	copy(kept[:], bytes)
+	if string(kept[MACHINE_OFFSET_MAGIC:][:8]) != MACHINE_TPM_MAGIC {
+		return {}, {}, .Wrong_Magic
+	}
+	if u32_get(kept[MACHINE_OFFSET_FORMAT:]) != MACHINE_TPM_FORMAT {
+		return {}, {}, .Wrong_Format
+	}
+	if u32_get(kept[MACHINE_TPM_OFFSET_PCRS:]) != tpm2.PCR_SET {
+		return {}, {}, .Other_Parameters
+	}
+	public_bytes := int(u16_get(kept[MACHINE_TPM_OFFSET_PUBLIC_BYTES:]))
+	private_bytes := int(u16_get(kept[MACHINE_TPM_OFFSET_PRIVATE_BYTES:]))
+	creation_bytes := int(u16_get(kept[MACHINE_TPM_OFFSET_CREATION_BYTES:]))
+	ticket_bytes := int(u16_get(kept[MACHINE_TPM_OFFSET_TICKET_BYTES:]))
+	if public_bytes > MACHINE_TPM_PUBLIC_LIMIT || private_bytes > MACHINE_TPM_PRIVATE_LIMIT || creation_bytes > MACHINE_TPM_CREATION_LIMIT || ticket_bytes > MACHINE_TPM_TICKET_LIMIT {
+		return {}, {}, .Bad_Area
+	}
+	public_place := kept[MACHINE_TPM_OFFSET_PUBLIC:][:MACHINE_TPM_PUBLIC_LIMIT]
+	private_place := kept[MACHINE_TPM_OFFSET_PRIVATE:][:MACHINE_TPM_PRIVATE_LIMIT]
+	creation_place := kept[MACHINE_TPM_OFFSET_CREATION:][:MACHINE_TPM_CREATION_LIMIT]
+	ticket_place := kept[MACHINE_TPM_OFFSET_TICKET:][:MACHINE_TPM_TICKET_LIMIT]
+	if !tpm2.area_fits(public_place[:public_bytes], MACHINE_TPM_PUBLIC_LIMIT) || !tpm2.area_fits(private_place[:private_bytes], MACHINE_TPM_PRIVATE_LIMIT) || !tpm2.ticket_fits(ticket_place[:ticket_bytes]) {
+		return {}, {}, .Bad_Area
+	}
+	if _, named := tpm2.creation_data_pcr_digest(creation_place[:creation_bytes]); !named {
+		return {}, {}, .Bad_Area
+	}
+	if !zero_after(public_place, public_bytes) || !zero_after(private_place, private_bytes) || !zero_after(creation_place, creation_bytes) || !zero_after(ticket_place, ticket_bytes) {
+		return {}, {}, .Bad_Area
+	}
+	file.pcrs = tpm2.PCR_SET
+	file.public_bytes, file.private_bytes = public_bytes, private_bytes
+	file.creation_bytes, file.ticket_bytes = creation_bytes, ticket_bytes
+	copy(file.public_area[:], public_place)
+	copy(file.private_area[:], private_place)
+	copy(file.creation_data[:], creation_place)
+	copy(file.creation_ticket[:], ticket_place)
+	copy(file.recovery_nonce[:], kept[MACHINE_TPM_OFFSET_RECOVERY_NONCE:][:NONCE_SIZE])
+	copy(file.recovery_sealed[:], kept[MACHINE_TPM_OFFSET_RECOVERY_SEALED:][:MACHINE_SEALED_SIZE])
+	copy(file.key_check[:], kept[MACHINE_TPM_OFFSET_KEY_CHECK:][:KEY_SIZE])
+	return file, kept, .None
+}
+
+// machine_tpm_file_additional_data gives the additional data of the
+// recovery seal: the magic and the format only, so that a new seal by the
+// TPM keeps the copy under the recovery key valid.
+machine_tpm_file_additional_data :: proc "contextless" (bytes: ^[MACHINE_TPM_FILE_SIZE]u8) -> []u8 {
+	return bytes^[:MACHINE_TPM_ADDITIONAL_SIZE]
+}
+
+// machine_tpm_file_problem_sentences gives the sentence of each problem of
+// a record of a machine key sealed by the TPM, for the log of `unlock`.
+@(rodata)
+machine_tpm_file_problem_sentences := [File_Problem]string {
+	.None             = "",
+	.Wrong_Size       = "the record does not have 828 bytes",
+	.Wrong_Magic      = "the record does not start with MACHINET",
+	.Wrong_Format     = "the record has another format number",
+	.Other_Parameters = "the record names other PCRs than PCR 7 and PCR 11",
+	.Bad_Name         = "",
+	.Bytes_After_Name = "",
+	.Bad_Area         = "a part of the sealed object is not whole, or the creation data does not name PCR 7 and PCR 11, or a part has bytes that are not zero after it",
+}
+
+// The two forms of the object MACHINE_OBJECT, by its first 8 bytes.
+Machine_Record_Form :: enum u8 {
+	Unknown, // Neither magic: the record cannot be read.
+	Passphrase, // MACHINE_MAGIC: the machine key under the machine passphrase.
+	Sealed_By_The_Tpm, // MACHINE_TPM_MAGIC: the machine key sealed by the TPM, with its recovery key.
+}
+
+// machine_record_form gives the form of a record of the machine from its
+// first 8 bytes.
+machine_record_form :: proc "contextless" (bytes: []u8) -> Machine_Record_Form {
+	if len(bytes) < 8 {
+		return .Unknown
+	}
+	switch string(bytes[:8]) {
+	case MACHINE_MAGIC:
+		return .Passphrase
+	case MACHINE_TPM_MAGIC:
+		return .Sealed_By_The_Tpm
+	}
+	return .Unknown
+}
+
+// The recovery key: 20 random bytes (160 bits), shown one time as 32
+// characters of base32 (RFC 4648) in 8 groups of 4, separated by '-'. It
+// opens the copy of the machine key when the TPM refuses: after an update
+// of the system, on another machine, or with no TPM. 160 random bits need
+// no slow derivation: a guess costs the attacker as much as a guess of the
+// key itself.
+RECOVERY_KEY_SIZE :: 20
+RECOVERY_SYMBOLS :: 32 // The symbols of base32 of a recovery key.
+RECOVERY_TEXT_SIZE :: RECOVERY_SYMBOLS + RECOVERY_SYMBOLS / 4 - 1 // 39: the symbols and 7 separators.
+// The texts of the two keyed hashes: each use of a key has a text of its own.
+RECOVERY_SEAL_TEXT :: "modus recovery key of the machine key"
+MACHINE_KEY_CHECK_TEXT :: "modus check of the machine key"
+BASE32_ALPHABET :: "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+// Why a typed recovery key is refused: the result of recovery_key_parse.
+Recovery_Problem :: enum u8 {
+	None, // The text gives a key.
+	Bad_Character, // A character that is not a letter, a digit 2 to 7, '-' or a space.
+	Wrong_Length, // Not 32 symbols.
+}
+
+// The sentence of each problem of a typed recovery key, for the window of
+// `unlock`.
+@(rodata)
+recovery_problem_sentences := [Recovery_Problem]string {
+	.None          = "",
+	.Bad_Character = "a recovery key has the letters A to Z and the digits 2 to 7 only",
+	.Wrong_Length  = "a recovery key has 32 letters and digits",
+}
+
+// recovery_key_text writes the recovery key as its user reads it: 8 groups
+// of 4 symbols of base32, separated by '-'.
+recovery_key_text :: proc "contextless" (key: ^[RECOVERY_KEY_SIZE]u8) -> (text: [RECOVERY_TEXT_SIZE]u8) {
+	alphabet: string = BASE32_ALPHABET
+	symbol, place := 0, 0
+	for group in 0 ..< RECOVERY_KEY_SIZE / 5 {
+		// 5 bytes give 8 symbols of 5 bits.
+		bits: u64
+		for index in 0 ..< 5 {
+			bits = bits << 8 | u64(key[group * 5 + index])
+		}
+		for shift := 35; shift >= 0; shift -= 5 {
+			if symbol > 0 && symbol % 4 == 0 {
+				text[place] = '-'
+				place += 1
+			}
+			text[place] = alphabet[int((bits >> uint(shift)) & 31)]
+			place += 1
+			symbol += 1
+		}
+	}
+	return text
+}
+
+// recovery_key_parse reads a typed recovery key: 32 symbols of base32, in
+// upper or lower case, with any '-' and spaces between them.
+recovery_key_parse :: proc "contextless" (typed: []u8) -> (key: [RECOVERY_KEY_SIZE]u8, problem: Recovery_Problem) {
+	bits: u64
+	bit_count: uint
+	symbols, written := 0, 0
+	for character in typed {
+		value: u64
+		switch character {
+		case 'A' ..= 'Z':
+			value = u64(character - 'A')
+		case 'a' ..= 'z':
+			value = u64(character - 'a')
+		case '2' ..= '7':
+			value = u64(character - '2') + 26
+		case '-', ' ':
+			continue
+		case:
+			return {}, .Bad_Character
+		}
+		if symbols == RECOVERY_SYMBOLS {
+			return {}, .Wrong_Length
+		}
+		symbols += 1
+		bits = bits << 5 | value
+		bit_count += 5
+		if bit_count >= 8 {
+			bit_count -= 8
+			key[written] = u8(bits >> bit_count)
+			written += 1
+			bits &= (u64(1) << bit_count) - 1
+		}
+	}
+	if symbols != RECOVERY_SYMBOLS {
+		return {}, .Wrong_Length
+	}
+	return key, .None
+}
+
+// keyed_hash gives keyed BLAKE2b of a key over a text: a pseudorandom
+// function, so the result reveals nothing of the key.
+@(private)
+keyed_hash :: proc "contextless" (key: []u8, text: string) -> (result: [KEY_SIZE]u8) {
+	context_of_the_hash: blake2.Blake2b_Context
+	configuration := blake2.Blake2_Config {
+		size = KEY_SIZE,
+		key  = key,
+	}
+	blake2.init(&context_of_the_hash, &configuration)
+	blake2.update(&context_of_the_hash, transmute([]u8)text)
+	blake2.final(&context_of_the_hash, result[:])
+	return result
+}
+
+// recovery_seal_key gives the key of the recovery seal: keyed BLAKE2b of
+// the recovery key over RECOVERY_SEAL_TEXT.
+recovery_seal_key :: proc "contextless" (recovery_key: ^[RECOVERY_KEY_SIZE]u8) -> [KEY_SIZE]u8 {
+	return keyed_hash(recovery_key^[:], RECOVERY_SEAL_TEXT)
+}
+
+// machine_key_check gives the key check of a machine key: keyed BLAKE2b of
+// the machine key over MACHINE_KEY_CHECK_TEXT. A key that the TPM service
+// or the recovery key gives must have the check of the record: a record
+// whose areas come from another record, or a service that gives another
+// key, gives a key that does not pass.
+machine_key_check :: proc "contextless" (machine_key: ^[MACHINE_KEY_SIZE]u8) -> [KEY_SIZE]u8 {
+	return keyed_hash(machine_key^[:], MACHINE_KEY_CHECK_TEXT)
 }

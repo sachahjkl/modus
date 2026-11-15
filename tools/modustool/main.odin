@@ -69,6 +69,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/storage_tree",
 	SOURCE_FOLDER_SUPPORT + "/storage_retention",
 	SOURCE_FOLDER_SUPPORT + "/principals",
+	SOURCE_FOLDER_SUPPORT + "/tpm2",
 	SOURCE_FOLDER_SUPPORT + "/disk_program",
 	SOURCE_FOLDER_SUPPORT + "/calendar",
 	SOURCE_FOLDER_SUPPORT + "/line_editor",
@@ -143,6 +144,12 @@ BOOT_VOLUME_STATED_HASH :: BUILD_FOLDER + "/boot_volume_stated_hash.img"
 // changed after the signature (secure_boot.odin).
 BOOT_VOLUME_SECURE_BOOT :: BUILD_FOLDER + "/boot_volume_secure_boot.img"
 BOOT_VOLUME_SECURE_BOOT_CHANGED :: BUILD_FOLDER + "/boot_volume_secure_boot_changed.img"
+// The volumes of the test of the seal by the TPM: the boot image whose
+// root service seals with no Secure Boot (BOOT_IMAGE_SEAL_TEST), and the
+// same with one byte of the module lonely changed before the description
+// was made: another system, another PCR 11.
+BOOT_VOLUME_SEAL_TEST :: BUILD_FOLDER + "/boot_volume_seal_test.img"
+BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM :: BUILD_FOLDER + "/boot_volume_seal_test_other_system.img"
 // The path where the firmware looks for the boot program of a disk.
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
 FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
@@ -693,7 +700,7 @@ test_arguments_problem :: proc(args: []string) -> string {
 	if len(args) == 0 {
 		return ""
 	}
-	if len(args) == 2 && args[0] == "trusted_boot" && args[1] == "tpm" {
+	if len(args) == 2 && (args[0] == "trusted_boot" || args[0] == "principals") && args[1] == "tpm" {
 		return ""
 	}
 	if len(args) == 1 {
@@ -705,7 +712,7 @@ test_arguments_problem :: proc(args: []string) -> string {
 	}
 	given := strings.join(args, " ", context.temp_allocator)
 	known := strings.join(test_parts[:], ", ", context.temp_allocator)
-	return fmt.tprintf("test does not know the part `%s`; the parts: %s, and `trusted_boot tpm`; with no argument, the whole test", given, known)
+	return fmt.tprintf("test does not know the part `%s`; the parts: %s, `trusted_boot tpm` and `principals tpm`; with no argument, the whole test", given, known)
 }
 
 // The machines of the parts `main`, `network` and `shortage`: one procedure
@@ -796,6 +803,11 @@ run_test :: proc(args: []string) -> int {
 	// `test principals`: the two machines of the principals only.
 	if len(args) == 1 && args[0] == "principals" {
 		return principals_tests_run() ? 0 : EXIT_FAILURE
+	}
+	// `test principals tpm`: the four machines of the machine key sealed by
+	// the TPM, with a software TPM; opt-in, as `trusted_boot tpm`.
+	if len(args) == 2 && args[0] == "principals" && args[1] == "tpm" {
+		return principals_tpm_tests_run() ? 0 : EXIT_FAILURE
 	}
 	// `test kernel_events`: the machine of the kernel events only.
 	if len(args) == 1 && args[0] == "kernel_events" {

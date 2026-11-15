@@ -55,6 +55,7 @@ Grant :: enum i64 {
 	Debugger           = 23, // A ring to the root service for Debug only: the service that debugs a program on behalf of a caller of its connections (Root_Command.Debug).
 	Palette            = 24, // The palette provider of the desktop: the entry table with Write and the ring to the compositor (Root_Command.Palette_Provide).
 	System_Part        = 25, // A part of the system that the root service starts by itself, with handles that no other grant names: the screen and the input ring (the compositor), a device (a device service), the text of another program (a terminal). No program asks for it and no caller holds it.
+	Tpm                = 26, // The ring and the region of the TPM service (modus:contract/tpm_service): seal a key to the measure of the system, and unseal it. The program that keeps the machine key (docs/PRINCIPALS.md).
 }
 
 // The name of each start grant, as the log of the root service and the
@@ -87,6 +88,7 @@ GRANT_NAMES := [Grant]string {
 	.Debugger           = "Debugger",
 	.Palette            = "Palette",
 	.System_Part        = "System_Part",
+	.Tpm                = "Tpm",
 }
 
 // grant_name gives the name of the start grant with a number, and says if

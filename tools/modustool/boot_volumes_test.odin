@@ -7,13 +7,19 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
-// The table of the boot volumes: 13 fixed volumes and one for each test of
+// The table of the boot volumes: 15 fixed volumes and one for each test of
 // the kernel on itself, each with its own name and its own files.
 @(test)
 boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 	volumes := boot_volumes()
-	testing.expect_value(t, len(volumes), 13 + len(self_tests))
-	testing.expect_value(t, len(volumes), 19)
+	testing.expect_value(t, len(volumes), 15 + len(self_tests))
+	testing.expect_value(t, len(volumes), 21)
+	// Only the two volumes of the test of the seal hold the boot image whose
+	// root service seals with no Secure Boot.
+	for volume in volumes {
+		seal_test := volume.path == BOOT_VOLUME_SEAL_TEST || volume.path == BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM
+		testing.expectf(t, (volume.image == BOOT_IMAGE_SEAL_TEST) == seal_test, "only a volume of the test of the seal holds its boot image: %s", volume.path)
+	}
 	files := make([dynamic]string, context.temp_allocator)
 	main_found := false
 	for volume in volumes {
@@ -115,6 +121,16 @@ each_test_part_has_its_boot_volumes :: proc(t: ^testing.T) {
 		found_main = found_main || path == BOOT_VOLUME
 	}
 	testing.expect(t, found_other_system && found_main, "trusted_boot tpm builds the main volume and the other system")
+	// `principals tpm` builds the two volumes of the test of the seal, and
+	// the main volume, on which the seal is refused.
+	found_other_system, found_main = false, false
+	found_seal_test := false
+	for path in boot_volumes_of_test([]string{"principals", "tpm"}) {
+		found_other_system = found_other_system || path == BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM
+		found_seal_test = found_seal_test || path == BOOT_VOLUME_SEAL_TEST
+		found_main = found_main || path == BOOT_VOLUME
+	}
+	testing.expect(t, found_other_system && found_seal_test && found_main, "principals tpm builds the main volume and the two volumes of the test of the seal")
 	for command in ([]string{"run", MEASURE_COMMAND, MEASURE_SHORTAGE_COMMAND, "screenshots", "film"}) {
 		testing.expectf(t, len(boot_volumes_of_command(command)) > 0, "the command %s names its volumes", command)
 	}
@@ -145,6 +161,8 @@ volume_constants := [?][2]string {
 	{"BOOT_VOLUME_STATED_HASH", BOOT_VOLUME_STATED_HASH},
 	{"BOOT_VOLUME_SECURE_BOOT", BOOT_VOLUME_SECURE_BOOT},
 	{"BOOT_VOLUME_SECURE_BOOT_CHANGED", BOOT_VOLUME_SECURE_BOOT_CHANGED},
+	{"BOOT_VOLUME_SEAL_TEST", BOOT_VOLUME_SEAL_TEST},
+	{"BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM", BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM},
 }
 
 // The procedures that only the whole test runs: it builds every volume.

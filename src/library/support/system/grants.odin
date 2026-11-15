@@ -241,8 +241,9 @@ Root_Command :: enum u32 {
 	Machine_Passphrase = 19,
 	// Machine_Key comes from `unlock` only; values[4] says what it reports.
 	// MACHINE_KEY_AWAITED: the machine has a machine passphrase that is not
-	// typed yet, so a change of the disk grant table of principal 0 is
-	// refused until the key comes. MACHINE_KEY_UNREADABLE: the store holds a
+	// typed yet, or a machine key sealed by the TPM that is not unsealed yet
+	// (values[5] MACHINE_KEY_SEALED_BY_THE_TPM), so a change of the disk
+	// grant table of principal 0 is refused until the key comes. MACHINE_KEY_UNREADABLE: the store holds a
 	// record of the machine passphrase that `unlock` cannot read; a change
 	// and a new machine passphrase are refused. MACHINE_KEY_OPENED and
 	// MACHINE_KEY_NEW: values[0..3] is the key of the tag of that table
@@ -286,6 +287,15 @@ Root_Command :: enum u32 {
 	// end that the service sends with values[6], and when the caller or the
 	// service stops.
 	Debug_Store = 22,
+	// Machine_Seal starts `unlock` to make a machine key that the TPM
+	// service seals to the measure of the system, with a recovery key that
+	// the window of `unlock` shows one time
+	// (docs/PRINCIPALS.md, "The machine key sealed by the TPM").
+	// The completion comes at once. A
+	// machine with a record of its machine key refuses it with `Exists`
+	// (unit `Principals`); a machine with no TPM service with `Unsupported`
+	// (unit `Principals`); while `unlock` runs, `Busy`.
+	Machine_Seal = 23,
 }
 
 // The action of a Disk_Grant command, in values[4].
@@ -297,6 +307,10 @@ MACHINE_KEY_AWAITED :: 1
 MACHINE_KEY_OPENED :: 2
 MACHINE_KEY_NEW :: 3
 MACHINE_KEY_UNREADABLE :: 4
+// values[5] of a Machine_Key command MACHINE_KEY_AWAITED: the record of the
+// machine key is sealed by the TPM, and not by a machine passphrase. Only
+// the line of the log differs.
+MACHINE_KEY_SEALED_BY_THE_TPM :: 1
 
 // The origin of the key of a Principal_Unlock command, in values[5].
 PRINCIPAL_KEY_OPENED :: 1
@@ -408,6 +422,7 @@ root_command_names := [Root_Command]string {
 	.Machine_Key = "Machine_Key",
 	.Disk_Grant_Persistence = "Disk_Grant_Persistence",
 	.Debug_Store = "Debug_Store",
+	.Machine_Seal = "Machine_Seal",
 }
 
 // root_command_name gives the name of a command of the root ring, or "an

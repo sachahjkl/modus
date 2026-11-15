@@ -36,8 +36,8 @@ The design grows in five layers, from a machine with no principal to one princip
 | Layer | What it is | State |
 |---|---|---|
 | 1 | No principal: the root service is the only source of grants. A caller acts for the principal or not (`acts_for_principal`) | Built |
-| 2 | Principal 0 is the machine: its record holds the measure of the system | Built in part: the record and the measure. Its key, the attestation key of the TPM, is not built |
-| 3 | One named principal: a passphrase unlocks its session, and the lock ends it | Built in part: the record, the unlock, the session, the stores, the lock. Not built: the seal by the TPM, the encryption of its stores, recovery |
+| 2 | Principal 0 is the machine: its record holds the measure of the system | Built in part: the record, the measure, and the machine key sealed by the TPM with its recovery key. Its attestation key in the TPM is not built |
+| 3 | One named principal: a passphrase unlocks its session, and the lock ends it | Built in part: the record, the unlock, the session, the stores, the lock. Not built: the seal of its keys by the TPM, the encryption of its stores, its recovery |
 | 4 | Several named principals on one machine | Not built: design in section 9 |
 | 5 | One principal on several machines; signed grants between principals | Not built: design in section 9 |
 
@@ -53,7 +53,7 @@ The root service makes the record of principal 0 at each boot, before the first 
 - the measure of the system: the value of PCR 11, when the boot program measured the system description into the TPM;
 - no key. The key of principal 0 is the attestation key of the TPM. It is not built: the two test machines with a software TPM are opt-in, and their answers are not reliable.
 
-Principal 0 can have a machine passphrase. It guards the machine key, which signs the disk grant table of principal 0; it makes principal 0 no person (section 5, "Principal 0 and its machine passphrase").
+Principal 0 can have a machine key, which signs the disk grant table of principal 0. A machine passphrase guards it (section 5, "Principal 0 and its machine passphrase"), or the TPM seals it to the measure of the system, with a recovery key (section 5, "The machine key sealed by the TPM"). Neither makes principal 0 a person.
 
 The log says which: "root: principal 0 is the machine: the system is measured, PCR 11 = ..." or "root: principal 0 is the machine: the system is not measured; its key, the attestation key of the TPM, is not built".
 
@@ -189,6 +189,73 @@ root: refused a machine passphrase: the record of the machine passphrase cannot 
 
 The log says each step: "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", "root: read the disk grant table of principal 0 from the store programs: 1 rows, with the tag of the machine key".
 
+### The machine key sealed by the TPM
+
+A machine with no machine passphrase can keep its disk grants across a restart with no typing: the TPM releases the machine key at each start, but only to the system whose measure it holds. A recovery key, shown one time, opens the key when the TPM refuses. The design is `src/md/features/tpm_sealed_machine_key.md`.
+
+**The TPM service.** The program `tpm` is the device service of the TPM. The root service starts it at boot when the trust record says `Measured` (`TRUSTED_BOOT.md`, "6. The measure"); with no TPM, or with a refused measure, it does not run. It seals 32 bytes to the values of PCR 7 (the state of Secure Boot) and PCR 11 (the measure of the system description), and unseals them only while those registers hold the same values. `unlock` is its one client.
+
+**The setting.** `machine_seal()` in the console asks the root service (`Machine_Seal`), which starts `unlock`. It needs Secure Boot on: the trust record says that the firmware verified the boot program. With Secure Boot off, a replaced boot program can extend PCR 11 with the hash of a correct description, so the root service refuses: "root: refused a machine key sealed by the TPM: the firmware did not verify the boot program (Secure Boot is off), so a seal would trust a boot program that nothing verified". `unlock` makes the machine key and a recovery key from its generator, asks the TPM service for the seal, seals a copy of the key under the recovery key, writes the record, and gives the root service the key of the tag of the table. Its window then shows the recovery key until Enter:
+
+```
+recovery key  MZXW-6YTB-MZXW-6YTB-MZXW-6YTB-MZXW-6YTB
+```
+
+Write it down: it is shown one time, and it is never on the disk or on the log. A machine with a record of its machine key, in either form, refuses `machine_seal()` and `machine_passphrase()`: a change is not built. A machine with no TPM service refuses `machine_seal()`.
+
+**The record.** The object `machine` of the store of `unlock`, as the record of the machine passphrase. Its first 8 bytes say its form. Each number is little-endian.
+
+| Offset | Bytes | Field |
+|---|---|---|
+| 0 | 8 | `MACHINET` |
+| 8 | 4 | The format: 2 |
+| 12 | 4 | The PCRs of the policy, bit n for PCR n: `0x880`, PCR 7 and PCR 11 |
+| 16 | 2 | The bytes of the public area |
+| 18 | 2 | The bytes of the private area |
+| 20 | 2 | The bytes of the creation data |
+| 22 | 2 | The bytes of the creation ticket |
+| 24 | 128 | The public area of the sealed object, with its size field; zero bytes after it |
+| 152 | 256 | The private area of the sealed object, with its size field; zero bytes after it |
+| 408 | 256 | The creation data of the sealed object, with its size field: the digest of PCR 7 and PCR 11 when the TPM made it; zero bytes after it |
+| 664 | 72 | The creation ticket of the sealed object: its tag, its hierarchy, and a digest of up to 64 bytes (swtpm gives one of SHA-512); zero bytes after it |
+| 736 | 12 | The nonce of the recovery seal |
+| 748 | 48 | The machine key sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key, and the tag |
+| 796 | 32 | The key check: keyed BLAKE2b of the machine key |
+
+The additional data of the recovery seal is the first 12 bytes only, so a new seal by the TPM keeps the copy valid. `machine_tpm_file_decode` refuses a record with other PCRs, a part that is not whole within its limit, a creation data that does not name PCR 7 and PCR 11, or a byte after a part that is not zero.
+
+**The proof of the creation.** Before each unseal, the TPM service has the TPM check the creation ticket (`TPM2_CertifyCreation`), and checks that the policy of the object is the policy of the PCR values of its creation data, with the attributes of a sealed object. So the TPM releases a key only from an object that it made itself while PCR 7 and PCR 11 held the values of the policy. A record that another system on this machine wrote, with an object that it made with the policy of this system, is refused:
+
+```
+tpm: refused the unseal: the policy of the object is not the policy of the PCR values of its creation, or its attributes are not the attributes of a sealed object
+unlock: the TPM service refuses the unseal: this TPM did not make the sealed object of the record under the PCR values of its policy; the record was written by another system, and only its recovery key opens it
+```
+
+**At the start.** `unlock` reads the record and asks the TPM service to unseal. When the key passes its key check, `unlock` gives the root service the key of the table, and nothing is typed:
+
+```
+tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal
+unlock: the TPM releases the machine key: the system is the system of the seal; the root service receives the key of the disk grant table only
+root: read the disk grant table of principal 0 from the store programs: 0 rows, with the tag of the machine key
+```
+
+**When the TPM refuses.** After an update of the system, on another machine, after a change of Secure Boot, or with no TPM service, the TPM does not release the key. The window of `unlock` asks for the recovery key; it takes upper or lower case, with or without `-`. Enter with nothing skips it: the machine runs, and the disk grants of principal 0 stay absent. A wrong recovery key opens nothing. The right one gives the key, and with Secure Boot on `unlock` seals it again to the system that runs, so the next start of this system needs no recovery key. With Secure Boot off it does not seal it again: an attacker who turns Secure Boot off makes the TPM refuse as an update does, and a new seal would bind the key to a boot program that nothing verified:
+
+```
+unlock: the TPM refuses the unseal: PCR 7 and PCR 11 do not hold the values of the seal: another system, another state of Secure Boot, or another machine
+unlock: the recovery key opens the machine key; the root service receives the key of the disk grant table only
+unlock: the machine key is sealed again to PCR 7 and PCR 11 of the system that runs: its next start needs no recovery key
+```
+
+**What it protects, and what it does not.**
+
+- A copy of the disk opens no table on another machine, and an older or a changed system opens none on this machine, without the recovery key.
+- Another system on this machine that writes the disk cannot make this system take a table of its own key: the proof of the creation refuses its object.
+- The form of the record is not pinned: the disk alone says whether the machine key is sealed by the TPM or under a passphrase. A system that writes the disk can replace or remove the record. This system then takes no table of another key, but the disk grants of principal 0 stay absent, and the window asks for a recovery key or a passphrase that the owner does not have. A pin in the TPM is not built (`ROADMAP.md`).
+- A replaced boot program that extends PCR 11 with a correct hash could open a key sealed with Secure Boot off; so no key is sealed with Secure Boot off.
+- The key crosses the interface of the TPM in clear at each seal and unseal: no session encrypts it. A reader of the bus of a hardware TPM gets it.
+- Each update of the system asks for the recovery key one time: no program of the system knows the measure of the next system before the update.
+
 ### The disk grant table of a named principal
 
 A named principal grants a disk program from its own session, and its grants last across a restart of the machine (`MODULE_CONTRACT.md`, "The grants of a disk program").
@@ -246,26 +313,30 @@ So two principals that run one program have two stores, and the stores of the sy
 | `Principal_Unlock` | `unlock` only | Starts the session of the principal values[4]; values[0..3] is the key of the tag of its disk grant table, values[5] its origin: 1 from the open of the file, 2 from the creation |
 | `Grants` | A program with the grant `Root_Ring` | Also gives the number (values[2]) and the name (values[3..6]) of the principal of the program |
 | `Machine_Passphrase` | A program with the grant `Root_Ring` | Starts `unlock` to set the machine passphrase |
-| `Machine_Key` | `unlock` only | values[4] 1: the machine has a passphrase, not typed yet; 4: its record cannot be read; 2 or 3: values[0..3] is the key of the tag of the disk grant table of principal 0, from the open of the record (2) or from a new passphrase (3) |
+| `Machine_Key` | `unlock` only | values[4] 1: the machine has a record of its machine key, not opened yet (values[5] 1: sealed by the TPM; 0: under a passphrase); 4: its record cannot be read; 2 or 3: values[0..3] is the key of the tag of the disk grant table of principal 0, from the open of the record (2) or from a new record (3) |
+| `Machine_Seal` | A program with the grant `Root_Ring` | Starts `unlock` to make a machine key sealed by the TPM, with a recovery key; refused with Secure Boot off (`Refused`) |
 
-A refusal is an error record with the unit `Principals`: a second named principal ("no free place: the table has its 1 named principals"), a lock with no session, a number with no record, a second machine passphrase.
+A refusal is an error record with the unit `Principals`: a second named principal ("no free place: the table has its 1 named principals"), a lock with no session, a number with no record, a second record of the machine key (`Exists`), a machine key sealed by the TPM on a machine with no TPM service (`Unsupported`).
 
-**The console:** `principal_create("name")`, `lock()`, `principals()`, `grants("name")`, and `machine_passphrase()`.
+**The console:** `principal_create("name")`, `lock()`, `principals()`, `grants("name")`, `machine_passphrase()`, and `machine_seal()`.
 
 ## 8. The tests
 
-- `odin test src/library/support/principals`: the names of the stores, a name that does not fit, the names and the passphrases, a round trip of the file, and ten hostile files; a round trip of the record of the machine, and its hostile forms.
+- `odin test src/library/support/principals`: the names of the stores, a name that does not fit, the names and the passphrases, a round trip of the file, and ten hostile files; a round trip of the record of the machine, and its hostile forms; a round trip of the record sealed by the TPM, its offsets and its hostile forms; the recovery key in base32 (the vector "fooba" of RFC 4648) and its parse; the key of the recovery seal and the key check.
+- `odin test src/library/support/tpm2`: each command of TPM 2.0 that the TPM service sends, byte for byte, and the read of the answers with their checks; the policy of PCR 7 and PCR 11 and the creation hash against digests of SHA-256 computed outside; a forged sealed object (the policy of this system, the creation data of another one), other attributes, a creation data and a ticket of another form, each refused.
+- `modustool test principals tpm`, opt-in, as `test trusted_boot tpm` (`TRUSTED_BOOT.md`, "The machines of the TPM"): six machines with one software TPM and the firmware with no Secure Boot, as the firmware with Secure Boot loses an answer of the software TPM on the test host. The first five start the test system whose root service seals with no Secure Boot, a setting of a build of the test only ("root: this system seals with no Secure Boot: a test system, never a release"; `TRUSTED_BOOT.md`, "The machines of the TPM"). The first one: `machine_seal()` seals the machine key, and the tool reads the recovery key off the screen; a second `machine_seal()` is refused. The second one, the same system: the TPM proves the creation and releases the key with no typing, and the table that the first one wrote verifies. The third one, another system (another PCR 11): the TPM refuses, a wrong recovery key opens nothing, the recovery key opens the key, and `unlock` seals it again. The fourth one, that other system again: the TPM releases the key with no typing. The fifth one, that other system on a disk that the tool writes with the record of the fourth one and one byte of its creation ticket changed: the TPM refuses the ticket (`TPM_RC_TICKET`), nothing is unsealed, and the window asks for the recovery key. The sixth one, on the disk of the first four, starts the main volume, whose root service has the rule (another PCR 11): the recovery key opens the key, `unlock` does not seal it again, and `machine_seal()` is refused. No machine test makes a forged object with the policy of this system: it needs a second system that makes objects on the same TPM; the host tests of `tpm2` refuse one.
 - `modustool test disk_programs`: the machine passphrase is set in the window of `unlock`, a table that another key signed is refused, and at the next start the passphrase gives back the grants of principal 0; a table that does not verify under the opened key is refused and kept, with no write. Then the principal alice is created: the table in her store that another key signed is refused and written over; a console of her session grants the store to the nickname `visitor`; at the next start her passphrase gives the grant back, and `visitor` finds its visit in the store of its nickname (`TOOLS.md`, "The disk of the disk programs").
 - `odin test src/library/support/cryptography/vectors`: BLAKE2b of RFC 7693 and Argon2id of RFC 9106, section 5.3; the blocks are erased after the derivation, and a supply of blocks that is too small gives `Out_Of_Memory`.
 - `modustool test principals`: two machines on one data disk. The first one: no named principal; a note of `notes` started by the console belongs to principal 0; the creation of `alice` in the window of `unlock`; `notes` from the menu has a new store, `notes.principal.1`; the grants name the principal; the console connects acting for principal 0: `storage.open_store("notes.principal.1")` is refused with `No_Grant`, and `storage.stores()` does not list that store; the lock stops `notes`; a wrong passphrase opens nothing; the right one starts the session again and `notes` finds the note and the count of alice; a revocation of the store of `notes`. The second machine, on the same disk: the passphrase starts the session, and the note of alice is there. Picture: `principals_unlock`.
 
 ## 9. Not built
 
-- **The seal by the TPM.** The TPM seals the key of the principal to the measure of the system (PCR 11), behind a PIN. With it, a copy of the disk does not allow tries without limit.
-- **The key of principal 0**: the attestation key of the TPM. The TPM seals the machine key; with a machine passphrase, the TPM and the passphrase together open it.
-- **A change and a removal of the machine passphrase.**
+- **The keys of a named principal sealed by the TPM, and its recovery key.** The TPM seals the keys of the principal to the measure of the system, with the passphrase as the authorization value of the sealed object, so a copy of the disk does not allow tries without limit; a recovery key opens a copy of the keys. Today a lost passphrase is a lost principal: no administrator can reset it. Property 21 asks for recovery from the first version of layer 3.
+- **The key of principal 0**: the attestation key of the TPM.
+- **The TPM and the machine passphrase together.** The machine passphrase as the authorization value of the sealed machine key, so that the TPM counts the wrong tries.
+- **A seal to the measure of the next system.** A signed policy of the publisher of the system, with a counter of the TPM that refuses an older system: an update then needs no recovery key.
+- **A change and a removal of the machine passphrase, and a change of the recovery key.**
 - **The encryption of the stores of a principal** with its unlock key. Today the data of a principal is on the disk in clear, as each store.
-- **Recovery.** A lost passphrase is a lost principal: no administrator can reset it. Property 21 asks for recovery from the first version of layer 3: a second device or a printed recovery key. It is not built.
 - **The desktop while locked.** The desktop stays: programs of principal 0 run and can be started. A desktop that shows only `unlock` while a named principal is locked is not built.
 - **Several named principals (layer 4).** The design: one record for each principal in the root service; one file for each in the store of `unlock`; one session at a time on the desktop, or one desktop for each session. Each principal has disjoint stores by the name of the store, and disjoint grants by the principal of each program. No kernel change.
 - **One principal on several machines (layer 5).** The design: the signing key of the principal signs the key of each machine (principal 0 of that machine, its attestation key); a grant to another principal is a record that names its public key and that the signing key signs, with a short lifetime or a revocation list; a store of the principal on another machine is opened with its unlock key, given to that machine through a grant.
