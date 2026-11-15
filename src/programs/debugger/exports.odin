@@ -4,6 +4,7 @@ import debug_object "modus:contract/debug_object"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:support/debugging"
 import "modus:support/system"
 
@@ -1047,7 +1048,7 @@ address_of_text :: proc "contextless" (text: string, argument: i64, error: ^erro
 // debugger.watch("debug_target::rounds", 8)
 // ```
 @(export, link_name = "watch")
-watch :: proc "c" (place: ^string, length: i64, result: ^[]Break_Row, error: ^errors.Error_Record) -> i64 {
+watch :: proc "c" (place: ^string, length: value_kinds.Size_In_Bytes, result: ^[]Break_Row, error: ^errors.Error_Record) -> i64 {
 	if failure := session_of_caller(error); failure != 0 {
 		return failure
 	}
@@ -1057,14 +1058,14 @@ watch :: proc "c" (place: ^string, length: i64, result: ^[]Break_Row, error: ^er
 		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(place^)), TEXT_ARGUMENT_LIMIT)
 	}
 	if length != 1 && length != 2 && length != 4 && length != 8 {
-		return errors.fail(error, ERROR_ADDRESS, .Bad_Value, .None, 2, length, 8)
+		return errors.fail(error, ERROR_ADDRESS, .Bad_Value, .None, 2, i64(length), 8)
 	}
 	address, failure := address_of_text(text, 1, error)
 	if failure != 0 {
 		return failure
 	}
 	if address % u64(length) != 0 {
-		return errors.fail(error, ERROR_ADDRESS, .Not_Multiple, .None, 1, i64(address), length, i64(address % u64(length)))
+		return errors.fail(error, ERROR_ADDRESS, .Not_Multiple, .None, 1, i64(address), i64(length), i64(address % u64(length)))
 	}
 	return break_set(.Write, address, u32(length), text, result, error)
 }
@@ -1478,7 +1479,7 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 // debugger.memory("debug_target::table", 64)
 // ```
 @(export, link_name = "memory")
-memory :: proc "c" (place: ^string, count: i64, result: ^[]Memory_Row, error: ^errors.Error_Record) -> i64 {
+memory :: proc "c" (place: ^string, count: value_kinds.Size_In_Bytes, result: ^[]Memory_Row, error: ^errors.Error_Record) -> i64 {
 	if failure := session_of_caller(error); failure != 0 {
 		return failure
 	}
@@ -1488,7 +1489,7 @@ memory :: proc "c" (place: ^string, count: i64, result: ^[]Memory_Row, error: ^e
 		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(place^)), TEXT_ARGUMENT_LIMIT)
 	}
 	if count < 1 || count > MEMORY_COUNT_LIMIT {
-		return errors.fail(error, ERROR_ADDRESS, .Bad_Value, .None, 2, count, MEMORY_COUNT_LIMIT)
+		return errors.fail(error, ERROR_ADDRESS, .Bad_Value, .None, 2, i64(count), MEMORY_COUNT_LIMIT)
 	}
 	address, failure := address_of_text(text, 1, error)
 	if failure != 0 {
@@ -1498,10 +1499,10 @@ memory :: proc "c" (place: ^string, count: i64, result: ^[]Memory_Row, error: ^e
 	copied: u64
 	status := system.Status.Bad_State
 	if has_thread {
-		copied, status = system.thread_memory_read(session.program, thread, address, memory_bytes[:count])
+		copied, status = system.thread_memory_read(session.program, thread, address, memory_bytes[:int(count)])
 	}
 	if status != .Ok || copied == 0 {
-		return errors.fail(error, ERROR_ADDRESS, .Bad_Address, .None, 1, i64(address), count)
+		return errors.fail(error, ERROR_ADDRESS, .Bad_Address, .None, 1, i64(address), i64(count))
 	}
 	digits := system.HEX_DIGITS
 	total := 0
@@ -1594,7 +1595,7 @@ events :: proc "c" (result: ^[]Event_Row, error: ^errors.Error_Record) -> i64 {
 // debugger.wait_stop(3000)
 // ```
 @(export, link_name = "wait_stop")
-wait_stop :: proc "c" (milliseconds: i64, result: ^[]Event_Row, error: ^errors.Error_Record) -> i64 {
+wait_stop :: proc "c" (milliseconds: value_kinds.Time_In_Milliseconds, result: ^[]Event_Row, error: ^errors.Error_Record) -> i64 {
 	if failure := session_of_caller(error); failure != 0 {
 		return failure
 	}

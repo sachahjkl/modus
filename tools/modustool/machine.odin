@@ -1160,6 +1160,28 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the palette goes back to the search"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// An export states the unit of a number in its description, as a
+	// built-in command states it: the third parameter of
+	// hkdf_sha256_expand is a count of bytes. The console loads the module,
+	// and the palette shows the unit of the export with no code for it.
+	// Escape leaves the form, and nothing runs.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "load(\"cryptography\")"},
+	{kind = .Wait, text = "[console]   module     cryptography"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ">hkdf_sha256_expand"},
+	{kind = .Wait, text = " for \">hkdf_sha256_expand\": hkdf_sha256_expand (export)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette asks for the arguments of hkdf_sha256_expand"},
+	{kind = .Wait, text = "compositor: the field 2 of hkdf_sha256_expand takes a number in bytes"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette goes back to the search"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "unload(\"cryptography\")"},
+	{kind = .Wait, text = "[console]   module    cryptography"},
 	// The buttons of a field take the pointer. The field of strategy is a
 	// row of three buttons in the band, from the first column of the grid
 	// after the call "strategy(name: )". Right chooses fair; a press and a
@@ -1236,6 +1258,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface: settings: the focus is on the element of settings.set:grid_fit", any_order = true},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
+	// The console came in front for the load of a module, and its window
+	// can cover the close box of plasma.
+	{kind = .Front, text = "plasma"},
 	{kind = .Close, text = "plasma"},
 	{kind = .Wait, text = "root: plasma stopped"},
 	// The scheduling strategy: the program scheduler holds the right to

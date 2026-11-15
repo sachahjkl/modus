@@ -3,6 +3,7 @@ package storage_service
 import "base:intrinsics"
 import "modus:contract/errors"
 import format "modus:contract/store"
+import "modus:contract/value_kinds"
 import answers "modus:support/storage"
 import block_tree "modus:support/storage_object"
 import "modus:support/system"
@@ -370,16 +371,16 @@ write_range :: proc "c" (place: i64, name: ^string, offset: i64, data: ^string, 
 //
 // The error kinds: those of write_range.
 @(export, link_name = "set_size")
-set_size :: proc "c" (place: i64, name: ^string, size: i64, error: ^errors.Error_Record) -> i64 {
+set_size :: proc "c" (place: i64, name: ^string, size: value_kinds.Size_In_Bytes, error: ^errors.Error_Record) -> i64 {
 	ranged, refused := ranged_of(place, name^, error, true)
 	if refused < 0 {
 		return refused
 	}
 	if size < 0 {
-		return errors.fail(error, ERROR_NAME, .Bad_Value, .Bytes, 3, size)
+		return errors.fail(error, ERROR_NAME, .Bad_Value, .Bytes, 3, i64(size))
 	}
 	if u64(size) > format.OBJECT_SIZE_LIMIT {
-		return errors.fail(error, ERROR_TOO_LARGE, .Too_Long, .Bytes, 3, size, i64(format.OBJECT_SIZE_LIMIT))
+		return errors.fail(error, ERROR_TOO_LARGE, .Too_Long, .Bytes, 3, i64(size), i64(format.OBJECT_SIZE_LIMIT))
 	}
 	if pending_refused := ranged_pending(&ranged, error); pending_refused < 0 {
 		return pending_refused
@@ -408,7 +409,7 @@ set_size :: proc "c" (place: i64, name: ^string, size: i64, error: ^errors.Error
 		pending.cut = min(pending.cut, new_size)
 	}
 	pending.size = new_size
-	return size
+	return i64(size)
 }
 
 // commit puts the pending changes of this connection on the object `name` under a place in one commit, on the disk when the call returns. The state before becomes a version. The commit hashes the blocks that changed and the object nodes above them, and the path of the last block: never the whole object. The result is one row: the generation, and the measure of the commit (the blocks of the object, the blocks changed, hashed and written); or a negative number with an error record.

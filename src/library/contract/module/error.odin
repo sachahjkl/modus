@@ -30,7 +30,7 @@ Difference :: enum u32 {
 	Missing_Export  = 1, // The module of the replacement has no export with the name.
 	Parameter_Count = 2, // expected.detail and found.detail are the counts.
 	Parameter_Type  = 3, // Parameter `parameter` has another type.
-	Parameter_Detail = 4, // Parameter `parameter`: a Handle with other rights, or another Record.
+	Parameter_Detail = 4, // Parameter `parameter`: a Handle with other rights, another Record, or an Integer in another unit.
 	Result_Type     = 5, // The result has another type.
 	Result_Detail   = 6, // A Record or Table result with another record.
 	Error_Record    = 7, // One gives an error record and the other does not, or the two records differ.
@@ -101,7 +101,8 @@ name_get :: proc "contextless" (field: ^[NAME_SIZE]u8) -> string {
 
 // functions_compare compares the description of two exports in two
 // modules: the same parameters with the same types, the same result, equal
-// records, and the same rights for each handle. The names of the
+// records, the same rights for each handle, and the same unit for each
+// Integer (value_kinds.integer_unit_detail). The names of the
 // parameters and the help are for a reader: they can differ. It gives the
 // first difference, and its two sides.
 functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u8, other_index: u32) -> (difference: Difference, parameter: u32, expected, found: Described) {

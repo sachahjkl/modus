@@ -6,6 +6,7 @@ import info "modus:contract/boot_info"
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 
 // The loader (docs/ARCHITECTURE.md, U3): it builds a program from a module
 // and its imports. It runs in user space. The kernel only creates the empty
@@ -966,6 +967,20 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 			write_part(writer, ", ")
 			write_part(writer, direction_name(value.direction))
 			write_part(writer, ")")
+		case .Integer:
+			// The unit is the meaning of the number, so a difference of it
+			// is named: "Integer in pages". A detail out of the contract
+			// comes from a hostile file and is shown as a number.
+			write_part(writer, "Integer")
+			if value.detail != 0 {
+				if integer_unit, valid := value_kinds.integer_unit_of_detail(value.detail); valid {
+					write_part(writer, " in")
+					write_part(writer, value_kinds.integer_unit_text(integer_unit))
+				} else {
+					write_part(writer, " with the detail ")
+					write_part(writer, u64(value.detail))
+				}
+			}
 		case:
 			write_parameter_type(writer, nil, value.type, value.detail, value.direction)
 		}
