@@ -297,6 +297,10 @@ program_disk_write :: proc(path: string, files: []Program_File) -> bool {
 // nickname visitor, whose next start has the store disk-visitor and counts
 // its visit there; a start of the nickname with another hash is refused
 // before any read; two moves of the nickname keep its grant and its store.
+// Then the module file service of the machine fetches the same module file
+// from the listener of the tool, through QEMU user networking, and stores
+// it under the nickname `received`; its list gives the hash of the bytes of
+// each file; the root service starts `received` by that hash.
 //
 // A second machine starts on the same disk. Principal 0 has no passphrase,
 // so its table did not last: the nickname has no row. A new grant finds
@@ -405,9 +409,13 @@ disk_programs_tests_run :: proc() -> bool {
 	append(&steps, Step{kind = .Type, text = fmt.aprintf("nickname_move(\"%s\", \"%s\")", DISK_PROGRAM_MODULE, hash)})
 	append(&steps, Step{kind = .Wait, text = fmt.aprintf("root: the file %s will get the data of %s", hash, DISK_PROGRAM_MODULE)})
 	disk_programs_store_steps(&steps, hash, 2)
+	disk_programs_network_steps(&steps, hash, changed_hash, len(module_file), len(changed_file))
 	append(&steps, Step{kind = .Type, text = "shutdown()"})
 	append(&steps, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
-	machine_test(steps[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 1), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK) or_return
+	// The listener of the tool is the web server of the module file
+	// service: QEMU gives it the address 10.0.2.100 port 80.
+	served := [?]Listener_File{{path = "/" + DISK_PROGRAM_MODULE, bytes = module_file}}
+	machine_test(steps[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 1), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK, user_network = true, served_files = served[:]) or_return
 
 	// The second machine, on the same disk.
 	again := make([dynamic]Step)
@@ -517,6 +525,43 @@ disk_programs_tests_run :: proc() -> bool {
 	append(&fourth, Step{kind = .Type, text = "shutdown()"})
 	append(&fourth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
 	return machine_test(fourth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 4), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK)
+}
+
+// The nickname under which the module file service stores the file that
+// comes over the network: a name that the disk of the tool does not hold.
+RECEIVED_NICKNAME :: "received"
+
+// disk_programs_network_steps adds the steps of the module file service:
+// the module file comes from the listener of the tool through the network
+// of the machine, under a new nickname, with no new disk. The service
+// gives the hash of the bytes that came; the list reads the bytes of each
+// file again; the root service checks the bytes at the start.
+disk_programs_network_steps :: proc(steps: ^[dynamic]Step, hash: string, changed_hash: string, module_size: int, changed_size: int) {
+	append(steps, Step{kind = .Type, text = "connect(\"programs\")"})
+	// The service writes its first line when it runs, and the root service
+	// writes its line when the connection is made: the system fixes no
+	// order.
+	append(steps, Step{kind = .Wait, text = "programs: serves the store programs of principal 0: a file from the web server 10.0.2.100 port 80, and the list of the files with the hash of their bytes", any_order = true})
+	append(steps, Step{kind = .Wait, text = "root: connected console to the service programs"})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("programs.receive(\"%s\", \"/%s\")", RECEIVED_NICKNAME, DISK_PROGRAM_MODULE)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: stored %s from /%s: %d bytes, the BLAKE3 hash of its bytes %s", RECEIVED_NICKNAME, DISK_PROGRAM_MODULE, module_size, hash)})
+	// The disk grant table is an object of the same store: the service
+	// writes no file over it.
+	append(steps, Step{kind = .Type, text = fmt.aprintf("programs.receive(\"%s\", \"/%s\")", disk_program.TABLE_OBJECT_NAME, DISK_PROGRAM_MODULE)})
+	append(steps, Step{kind = .Wait, text = "[console] error: programs.receive: "})
+	// The list, in the order of the names: grant_table has no row.
+	append(steps, Step{kind = .Type, text = "programs.list()"})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: the file changed, %d bytes, the BLAKE3 hash of its bytes %s", changed_size, changed_hash)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: the file %s, %d bytes, the BLAKE3 hash of its bytes %s", RECEIVED_NICKNAME, module_size, hash)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("programs: the file %s, %d bytes, the BLAKE3 hash of its bytes %s", DISK_PROGRAM_MODULE, module_size, hash)})
+	append(steps, Step{kind = .Wait, text = "programs: listed 5 module files of the store programs, each hash computed on its bytes"})
+	// The file that came over the network starts by its hash, with no
+	// grant: its nickname has no row.
+	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", RECEIVED_NICKNAME, hash)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with no grant", RECEIVED_NICKNAME, hash), any_order = true})
+	append(steps, Step{kind = .Wait, text = "visitor: the context holds the log, a window and the budget, and no handle of a grant: as it must"})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", RECEIVED_NICKNAME)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", RECEIVED_NICKNAME)})
 }
 
 // The machine passphrase of the test. It is a constant of the tool: a test

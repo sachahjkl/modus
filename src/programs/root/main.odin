@@ -236,6 +236,14 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "fetch":
 		// A client grant of TCP to one web server, 10.0.2.100 port 80.
 		return {.Network}
+	case "programs":
+		// The module file service: its private store is the store
+		// `programs` of its principal, as a private store has the name of
+		// its program; a client grant of TCP to one web server, 10.0.2.100
+		// port 80; and its exports for the console. It starts nothing: this
+		// service checks the hash of each file that a principal starts
+		// (docs/MODULE_CONTRACT.md, "A program from a disk").
+		return {.Store, .Network, .Serve}
 	case "quic_echo":
 		return {.Network} // A listen grant of UDP: QUIC in the program, the module cryptography through its imports.
 	case "network":
@@ -335,13 +343,18 @@ store_limit_of :: proc "contextless" (name: string) -> u64 {
 		return 12000 // 100000 empty objects in 1110 trees: about 9500 nodes, and room for the copies of a commit.
 	case "ranges":
 		return 12000 // A commit of 1000 blocks spread over an object of 8 GiB holds about 2000 blocks, with its version; the loop of range commits about 4000.
+	case "programs":
+		// The store of the module files: the limit with which this service
+		// reads it and the tool writes it, so no grant differs from the
+		// limit on the disk.
+		return disk_program.STORE_BLOCKS_LIMIT
 	}
 	return 64
 }
 
 // A service that starts when a program asks for a connection to it.
 on_demand :: proc "contextless" (name: string) -> bool {
-	return name == "storage" || name == "sample" || name == "debugger"
+	return name == "storage" || name == "sample" || name == "debugger" || name == "programs"
 }
 
 // grant_for gives what a caller receives in a service (isolated.Service_Command).
@@ -1113,6 +1126,11 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 		}
 		packed := principals.name_pack(string(unlock_name[:unlock_name_length]))
 		copy(values[principals.VALUE_NAME:][:3], packed[:])
+	}
+	if name == "programs" {
+		// The module file service serves the callers of the principal of
+		// its store only, and learns that principal here.
+		values[disk_program.SERVICE_VALUE_PRINCIPAL] = principal
 	}
 	if name == "randomness" {
 		// The facts of the seed of the system, that only this service has:

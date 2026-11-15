@@ -192,11 +192,23 @@ A disk program adds a program to a machine with no new boot image. The principal
 
 A disk program has no row in the tables by name of the root service. It receives the log and a window, the grants of its nickname in the disk grant table and no other grant, and the budget that its file asks for, up to the largest budget of a disk program, paid by the one budget of all disk programs. Its name gives it nothing: the root service refuses a name that the grant table names or that a module of the boot image has. Its imports come from the boot image, by hash.
 
-A disk program is not a package: it has no signer, no version number and no statement of the grants that it asks for. It is not installed: nothing of the machine changes when its file is written.
+A disk program is not a package: it has no signer, no version number and no statement of the grants that it asks for. It is not installed: nothing of the machine changes when its file is written. Its file comes from a disk that the modus tool writes, or from the network through the module file service.
 
 The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
 
 Do not use: installed program, side-loaded program.
+
+### Module file service
+
+The module file service is the program `programs`: it stores a module file that a web server gives in the store `programs` of its principal, and lists the files of that store with the hash of their bytes.
+
+A developer adds a program to a machine that runs with it, with no disk from the modus tool. The console connects to it and calls `programs.receive(nickname, path)`, which gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that came, then `start_from_disk(nickname, hash)`. `programs.list()` gives each file with the hash that the service computes again on its bytes. The service holds three grants: its private store, which is the store `programs` because a private store has the name of its program; a client grant of TCP to one web server; and its exports. It serves a caller that acts for the principal of the store only, and writes no file over the disk grant table.
+
+The module file service starts no program and proves nothing: the root service checks the bytes against the hash of `start_from_disk`, so the service carries the bytes as the storage service does. It is not a package manager: it reads no signature, no version and no dependency.
+
+The design: `docs/MODULE_CONTRACT.md`, "A program from a disk".
+
+Do not use: package manager, installer, downloader.
 
 ### Module space
 

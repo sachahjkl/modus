@@ -302,9 +302,28 @@ Without this rule a file named `notes` would start with the store of `notes`.
 
 **The refusals of the command**, as the kinds of its error record: `Not_Authentic` (the bytes have another hash; argument 2), `Absent` (no entry has the name; with the unit `Grants`, an empty hash and no row for the nickname), `Exists` (a module of the boot image has the name; with the unit `Grants`, the nickname names another file), `Reserved` (the grant table names it), `Busy` (another load runs), `Too_Long` (the file passes the limit, or the name has more than 23 bytes), `Malformed` (the loader refuses the file), `No_Answer` (the deadline), `Damaged` (a block of the object has a wrong check), `Refused` with the status for the rest.
 
+**The file from the network.** The module file service, the program `programs`, puts a module file in the store on a machine that runs. Its private store is the store `programs` of its principal: the root service names a private store by the name of its program. Its other grants are a client grant of TCP to one web server, 10.0.2.100 port 80 (the address that QEMU gives to a server of the host), and its exports. The console calls them through a connection:
+
+```
+> connect("programs")
+> programs.receive("visitor", "/visitor")
+5f0c…
+> programs.list()
+> start_from_disk("visitor", "5f0c…")
+```
+
+- `programs.receive(nickname, path)` sends `GET path`, takes a body of 1 to 4 MiB with a `Content-Length` before the deadline of a load (30 seconds), writes it as the object `nickname` in one commit, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that came. The nickname follows the rules of the name of a disk program: `programs` and `grant_table` are refused, so no file is written over the disk grant table. The path is 1 to 200 visible bytes that start with `/`.
+- `programs.list()` gives a row for each object of the root tree but `grant_table`: `name`, `bytes`, and `hash`, the BLAKE3 hash of its bytes, which the service reads again. An object over 4 MiB has no hash.
+
+The caller must act for the principal of the store: the root service gives the service the number of its principal (`disk_program.SERVICE_VALUE_PRINCIPAL`). The hash that the service gives is a help, not a proof: the root service checks the bytes at the start, so a changed service or a changed web server cannot make other bytes run under the hash that the principal types. The log has one line for each file stored, and one for each row of a list:
+
+```
+programs: stored visitor from /visitor: <count> bytes, the BLAKE3 hash of its bytes 5f0c…
+```
+
 **The file on the disk.** `modustool` writes a data disk that holds the store `programs` (`TOOLS.md`, "The disk of the disk programs"), and prints the hash of each file.
 
-Not built: a budget above the largest budget of a disk program; a command that stores a file that came from the network; an import from the store; a list of the entries of the store with their hashes; a disk program that is a service.
+Not built: a budget above the largest budget of a disk program; an import from the store; a remote that the principal chooses for the module file service; a disk program that is a service.
 
 ### The grants of a disk program
 
