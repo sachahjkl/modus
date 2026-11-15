@@ -1148,8 +1148,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = " for \">buffer\": buffer (command)"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette asks for the arguments of buffer"},
+	// The shot shows the unit of the empty field: no line of the log says
+	// that a typed digit is drawn, so a shot after a digit could show it or not.
 	{kind = .Wait, text = "compositor: the field 0 of buffer takes a number in pages"},
-	{kind = .Keys, text = "4"},
 	{kind = .Shot, text = "palette_unit"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette goes back to the search"},
