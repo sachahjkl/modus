@@ -7,13 +7,33 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
-// The table of the boot volumes: 13 fixed volumes and one for each test of
+// The table of the boot volumes: 15 fixed volumes and one for each test of
 // the kernel on itself, each with its own name and its own files.
 @(test)
 boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 	volumes := boot_volumes()
-	testing.expect_value(t, len(volumes), 13 + len(self_tests))
-	testing.expect_value(t, len(volumes), 19)
+	testing.expect_value(t, len(volumes), 15 + len(self_tests))
+	testing.expect_value(t, len(volumes), 21)
+	// The volumes of the TPM floors are signed for Secure Boot: only a start
+	// with the PCR 7 of Secure Boot raises a floor. The newer key differs
+	// from the newer system by its key number alone.
+	for volume in volumes {
+		if volume.path == BOOT_VOLUME_NEWER_SYSTEM || volume.path == BOOT_VOLUME_NEWER_KEY {
+			testing.expect_value(t, volume.firmware_signature, Firmware_Signature.Signed)
+			testing.expect_value(t, volume.change.security_version_raised, 1)
+			testing.expect_value(t, volume.key_number_raised, volume.path == BOOT_VOLUME_NEWER_KEY ? 1 : 0)
+		} else {
+			testing.expect_value(t, volume.change.security_version_raised, 0)
+			testing.expect_value(t, volume.key_number_raised, 0)
+		}
+		// The boot program of a raised key number holds a key file of its
+		// volume; every other holds the key file of the build.
+		if volume.key_number_raised != 0 {
+			testing.expect(t, strings.contains(boot_volume_system_key_path(volume), boot_volume_name(volume.path)), "the raised key file has the name of its volume")
+		} else {
+			testing.expect_value(t, boot_volume_system_key_path(volume), SYSTEM_KEY_FILE)
+		}
+	}
 	// The machines of the TPM start the other system with Secure Boot on:
 	// its boot program is signed, and its boot image is the main one, so
 	// its root service keeps the rule of the seal.
@@ -37,6 +57,9 @@ boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 		// its compiler, and each recorded output.
 		append(&files, boot_volume_name(volume.path), boot_volume_folder(volume), boot_volume_record_path(volume), boot_volume_dependency_file(volume), boot_volume_program_path(volume), boot_volume_object_path(volume), boot_volume_signed_program_path(volume))
 		append(&files, ..boot_volume_recorded_outputs(volume))
+		if volume.key_number_raised != 0 {
+			append(&files, boot_volume_system_key_path(volume))
+		}
 		// The kernel module that the build key names is the module of the
 		// table, or the changed copy of this volume.
 		if volume.change.kernel_changed_after_description {
@@ -67,6 +90,27 @@ boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect_value(t, stores, 1)
+}
+
+// A release ships no volume of a test: no raised key number, no raised
+// security version, no other change, no test of the kernel on itself. The
+// boot program has no setting for a test, so the release volume holds the
+// key file of the build.
+@(test)
+a_release_ships_no_volume_of_a_test :: proc(t: ^testing.T) {
+	release := release_boot_volume()
+	testing.expect_value(t, boot_volume_release_problem(release), "")
+	testing.expect_value(t, boot_volume_system_key_path(release), SYSTEM_KEY_FILE)
+	for volume in boot_volumes() {
+		tested := volume.key_number_raised != 0 || volume.change != (Image_Change{}) || volume.self_test != 0
+		testing.expectf(t, (boot_volume_release_problem(volume) != "") == tested, "the release check of %s", volume.path)
+		if volume.path == BOOT_VOLUME_NEWER_KEY || volume.path == BOOT_VOLUME_NEWER_SYSTEM {
+			testing.expect(t, boot_volume_release_problem(volume) != "")
+		}
+		for flag in boot_program_compile_command(volume) {
+			testing.expectf(t, !strings.contains(flag, "KEY_NUMBER"), "the boot program of %s has a setting of its key number: %s", volume.path, flag)
+		}
+	}
 }
 
 @(private = "file")
@@ -163,6 +207,8 @@ volume_constants := [?][2]string {
 	{"BOOT_VOLUME_STATED_HASH", BOOT_VOLUME_STATED_HASH},
 	{"BOOT_VOLUME_SECURE_BOOT", BOOT_VOLUME_SECURE_BOOT},
 	{"BOOT_VOLUME_SECURE_BOOT_CHANGED", BOOT_VOLUME_SECURE_BOOT_CHANGED},
+	{"BOOT_VOLUME_NEWER_SYSTEM", BOOT_VOLUME_NEWER_SYSTEM},
+	{"BOOT_VOLUME_NEWER_KEY", BOOT_VOLUME_NEWER_KEY},
 	{"BOOT_VOLUME_RELEASE", BOOT_VOLUME_RELEASE},
 }
 
@@ -371,7 +417,7 @@ shared_inputs_of_a_test :: proc(image_content: string) -> Boot_Volume_Shared_Inp
 	append(&built_files, Record_Output{path = BOOT_IMAGE_MEASURE, hash = hash_of_text("the image of a measure run")})
 	append(&built_files, Record_Output{path = module_path("kernel"), hash = hash_of_text("the kernel")})
 	append(&built_files, Record_Output{path = DEBUG_IMAGE, hash = hash_of_text("the debug image")})
-	append(&built_files, Record_Output{path = SYSTEM_PUBLIC_KEY_FILE, hash = hash_of_text("the public key")})
+	append(&built_files, Record_Output{path = SYSTEM_KEY_FILE, hash = hash_of_text("the public key")})
 	settings := make([]string, 1, context.temp_allocator)
 	settings[0] = "program odin: /store/odin"
 	return {settings = settings, built_files = built_files[:]}

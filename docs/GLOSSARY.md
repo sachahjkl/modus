@@ -4021,7 +4021,7 @@ Do not use: package store, repository, the Nix store.
 
 The system description is the list of hashes that defines one version of the whole system: the kernel, then each module and each resource of the boot image, with its kind, its size and its BLAKE3 hash.
 
-The system description makes the system reproducible and verifiable: two machines with the same description run the same bytes. Its file (`src/library/contract/system_description`) has a header of 16 bytes and one entry of 80 bytes for each part, in the order of the boot image, and no other byte. The signing key of the machine signs its hash (`docs/TRUSTED_BOOT.md`, "5. The signing key"). The boot program verifies the signature and each hash before it starts the kernel, and the root service checks the boot image against it again before it starts the first program. The boot image holds the description and its signature as its last two resources, which the description does not list, because a file cannot hold its own hash.
+The system description makes the system reproducible and verifiable: two machines with the same description run the same bytes. Its file (`src/library/contract/system_description`) has a header of 24 bytes, with the security version, and one entry of 80 bytes for each part, in the order of the boot image, and no other byte. The signing key of the machine signs its hash (`docs/TRUSTED_BOOT.md`, "5. The signing key"). The boot program verifies the signature and each hash before it starts the kernel, and the root service checks the boot image against it again before it starts the first program. The boot image holds the description and its signature as its last two resources, which the description does not list, because a file cannot hold its own hash.
 
 The system description is not the boot image (which carries the bytes) and not a generation of the storage service. In the model it becomes the tree of the system, signed by its publisher.
 
@@ -6048,7 +6048,7 @@ How a principal gets and uses one:
 2. `SYSTEM_SIGNING_KEY=<folder>/signing_key` before each build names the private key. The tool refuses a path inside the repository and a file that the group or the others can read.
 3. The build puts the public key in the boot program and signs the description of each boot volume. `modustool key show` prints the public key that the build uses.
 
-With no variable, the build signs with the test signing key. A lost key signs nothing new; a stolen key signs a system that the boot program accepts, and no list of revoked keys exists: make a new key and a new boot program at once.
+With no variable, the build signs with the test signing key. A lost key signs nothing new; a stolen key signs a system that the boot program accepts. Make a new key at once, with the next key number: the first start of a system signed with it raises the key floor of the TPM, and each boot program of the stolen key then refuses to start on that machine.
 
 The signing key is not a key of the TPM: the TPM measures the description, seals keys and keeps the key of the machine, and it signs nothing at the start. It is not the platform key of Secure Boot: Secure Boot verifies the boot program with the firmware signing key, an RSA key.
 
@@ -6091,7 +6091,7 @@ The boot image holds it as its last resource, `system_description_signature`, af
 boot program: the signature of the system description is wrong
 ```
 
-It is not a certificate: it names no one and has no date. The boot program accepts each description that the key signed, an older one too: no counter refuses it yet.
+It is not a certificate: it names no one and has no date. The signature of an older description verifies too: the version floor of the TPM refuses an older system, once a newer one started.
 
 The design: `docs/TRUSTED_BOOT.md`, "3. The system description".
 
@@ -6106,7 +6106,8 @@ Its fields:
 - `verifier`: `Boot_Program` (the firmware did not verify the boot program) or `Firmware_And_Boot_Program` (Secure Boot was on);
 - `key_kind` and `public_key`: the test signing key or another key, and the public key that verified the description signature;
 - `description_hash` and `entry_count`: the BLAKE3 hash and the entries of the system description;
-- `measure`, `measure_register`, `measure_value`, `measure_status`, `measure_tries`: `Measured`, `No_Tpm`, `Refused` or `Not_Read`, the register, its value read back, and the tries.
+- `measure`, `measure_register`, `measure_value`, `measure_status`, `measure_tries`: `Measured`, `No_Tpm`, `Refused` or `Not_Read`, the register, its value read back, and the tries;
+- `security_version`, `key_number`, `version_floor`, `key_floor`, their states (`Absent`, `Held`, `Foreign`, `Never_Written`, `Read_Refused`, `Not_Read`) and `floor_status`: the two numbers that the boot program compared with the TPM floors, and what it read before it raised them; `version_floor` is the version floor of its key number.
 
 The kernel copies it into the boot record. The root service takes the system description of the boot image only if its hash is `description_hash`, and puts the measure in the record of principal 0, the machine. The boot display draws its line "trust" from it: the key, what verified, and the measure.
 
@@ -6307,6 +6308,42 @@ A principal writes it to a USB key with `dd` (`docs/INSTALL.md`, "3. Write the U
 The design: `src/md/infrastructure/release_image.md`.
 
 Do not use: ISO, installer, live image.
+
+### Security version
+
+The security version is the number from 1 to 64 in the header of a system description that the version floor of the TPM compares: the boot program refuses a description whose security version is below the floor.
+
+The description signature covers it. The repository holds it as `system_description.SECURITY_VERSION`, and the build writes it into each description. The publisher of the system raises it only in the commit that fixes a flaw that a return to an older system would bring back. A release with no such fix keeps it, so a principal can go back to the release before. Example: the version 2 fixes a flaw of the version 1; after the first start of a system of the version 2, the machine refuses each system of the version 1.
+
+It is not the version of the format of the description (the field `version`), and not the number of a release.
+
+The design: `src/md/features/rollback_floors.md`; `docs/TRUSTED_BOOT.md`, "10. The TPM floors".
+
+Do not use: generation, epoch, rollback counter, release number (for this).
+
+### Key number
+
+The key number is the number from 1 to 64 that the boot program holds beside the public key of the signing key, which the key floor of the TPM compares.
+
+`resources/keys/key_numbers` gives each public key of the publisher of the system its number; the test signing key has 1, and the build refuses a key with no line. A new key after a theft or a loss gets the next number. The first start of a system of the new key raises the key floor: each boot program with a lower number then refuses to start on that machine, so the stolen key is revoked there. With Secure Boot on, nobody changes the number of a boot program without the firmware signing key.
+
+It is not a part of the key, and the description signature does not cover it: the boot program holds it, and Secure Boot covers the boot program.
+
+The design: `src/md/features/rollback_floors.md`; `docs/TRUSTED_BOOT.md`, "10. The TPM floors".
+
+Do not use: key generation, key version, key index.
+
+### TPM floor
+
+A TPM floor is an index of the TPM, a field of 64 bits that only gains bits, whose highest set bit plus one is the lowest number that the boot program accepts.
+
+There is the key floor (index `0x01806D00`), against the key number of the boot program, and one version floor for each key number n (index `0x01806D00` + n), against the security version of the system description. Each is of the type `TPM_NT_BITS`: `TPM2_NV_SetBits` adds bits and no command clears one, so the TPM itself keeps the rule "only rises". Its policy is `TPM2_PolicyPCR` of PCR 7 with Secure Boot on and of PCR 11 before the measure, so only a boot program that the certificate of the publisher verified, before its measure, raises it; no kernel and no program can. The boot program reads the key floor and the version floor of its key number through the firmware before the kernel starts, stops the start for a number below a floor, then raises both to its numbers. An absent, foreign or planted index is the floor 0, and the boot program replaces it. A clear of the TPM removes every floor.
+
+It is not a counter of the TPM (`TPM_NT_COUNTER`), whose first value is the largest that any counter of that TPM ever had, and it is not a PCR.
+
+The design: `src/md/features/rollback_floors.md`; `docs/TRUSTED_BOOT.md`, "10. The TPM floors".
+
+Do not use: rollback counter, monotonic counter, anti-rollback index.
 
 ## Project
 
