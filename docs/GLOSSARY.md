@@ -6032,7 +6032,7 @@ Do not use: slot, PCR (alone, for this register).
 
 The TPM service is the program `tpm`: the device service of the TPM of the machine, which seals 32 secret bytes to the values of PCR 7 and PCR 11 and unseals them only while those registers hold the same values.
 
-The root service starts it at boot, before `unlock`, only when the trust record says `Measured`. It gives it the page of the registers of the CRB interface of the TPM (`0xFED40000`), a ring and a region of one page; `unlock` gets the same ring and region with the start grant `Tpm`. The ring has two commands, `Seal` and `Unseal` (`src/library/contract/tpm_service`). The service builds each command of TPM 2.0 itself, so no client extends a register or clears the TPM. Each request makes the storage key from the owner hierarchy and flushes it after: the TPM keeps no object of the system.
+The root service starts it at boot, before `unlock`, only when the trust record says `Measured`. It gives it the page of the registers of the CRB interface of the TPM (`0xFED40000`), a ring and a region of one page; `unlock` gets the same ring and region with the start grant `Tpm`. The ring has two commands, `Seal` and `Unseal` (`src/library/contract/tpm_service`). The service builds each command of TPM 2.0 itself, so no client extends a register or clears the TPM. Each request makes the storage key from the owner hierarchy and flushes it after: the TPM keeps no object of the system. At its start it writes the count limits of the TPM on the log; before the first use of a passphrase, it sets the lockout authorization value when the TPM has an empty one.
 
 It is not a driver in the kernel, and the boot program does not use it: the boot program talks to the TPM through the firmware, before the kernel starts.
 
@@ -6068,13 +6068,25 @@ Do not use: backup key, reset key, PIN, recovery password.
 
 An authorization value is the secret that a sealed object needs beside its policy: the TPM compares it at each unseal, counts each wrong one, and refuses each try for a time after too many.
 
-The keys of a named principal use it. The value is keyed BLAKE2b of the key that Argon2id derives from the passphrase, so a reader of the bus of the TPM still runs Argon2id for each guess. The policy of the object is `TPM2_PolicyPCR` then `TPM2_PolicyPassword`, and its attribute `noDA` is clear. A wrong value answers `TPM_RC_AUTH_FAIL`, which the TPM counted; after too many (three on the test machines), each try answers `TPM_RC_LOCKOUT`, and the window of `unlock` asks for the recovery key. The TPM service sends `TPM2_Shutdown` after each use that is not a counted failure, so a stop of the machine after a right passphrase counts no failure. The count limits the rate of the tries only while the lockout hierarchy of the TPM has an authorization value that the attacker does not know; modus sets none yet. The machine key has none.
+The keys of a named principal use it. The value is keyed BLAKE2b of the key that Argon2id derives from the passphrase, so a reader of the bus of the TPM still runs Argon2id for each guess. The policy of the object is `TPM2_PolicyPCR` then `TPM2_PolicyPassword`, and its attribute `noDA` is clear. A wrong value answers `TPM_RC_AUTH_FAIL`, which the TPM counted; after too many (three on the test machines), each try answers `TPM_RC_LOCKOUT`, and the window of `unlock` asks for the recovery key. The TPM service sends `TPM2_Shutdown` after each use that is not a counted failure, so a stop of the machine after a right passphrase counts no failure. The count limits the rate of the tries only while the lockout hierarchy of the TPM has an authorization value that the attacker does not know: the lockout authorization value. The machine key has none.
 
 It is not the passphrase itself, and not a hash of it that is kept: nothing of it is on the disk.
 
 The design: `src/md/features/tpm_sealed_principal_keys.md`; `docs/PRINCIPALS.md`, "The keys sealed by the TPM".
 
 Do not use: PIN, password (for this), TPM password.
+
+### Lockout authorization value
+
+The lockout authorization value is the authorization value of the lockout hierarchy of the TPM: the one secret that resets the count of the wrong authorization values, changes its limits, or clears the TPM through that hierarchy.
+
+`TPM2_DictionaryAttackLockReset` and `TPM2_DictionaryAttackParameters` need it, and no PCR. A new or cleared TPM has an empty one, and then any system on the machine resets the count of the wrong passphrases of a named principal. Before the first seal or unseal with a passphrase in a run, the TPM service reads the bit `lockoutAuthSet`; when it is clear, the service sets 32 random bytes with `TPM2_HierarchyChangeAuth` and erases them. No program, file or store keeps the value: nothing in the system may reset the count. A value that is set already stays: the service cannot tell if an earlier start of this system set it or another system did. A clear of the TPM then needs the platform hierarchy, from the menu of the firmware. The TPM has one count for all the systems of the machine, so the first system that sets the value owns its reset for all.
+
+It is not the authorization value of a sealed object, and not a key of a principal. Nobody types it, and no window shows it.
+
+The design: `src/md/features/tpm_sealed_principal_keys.md`, "The lockout authorization value"; `docs/PRINCIPALS.md`, "The keys sealed by the TPM".
+
+Do not use: lockout password, lockout PIN.
 
 ### TPM secret
 

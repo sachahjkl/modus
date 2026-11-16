@@ -27,8 +27,17 @@
 // storage key from the owner hierarchy, uses it, and flushes it, with its
 // session: the TPM keeps no object of the system between two requests.
 //
+// **The lockout hierarchy.** At its start it writes the count limits of the
+// TPM on the log. Before the first request with an authorization value, it
+// sets a random lockout authorization value, which nobody keeps, when the
+// TPM has an empty one: then no system resets the count of the wrong
+// passphrases of a named principal
+// (src/md/features/tpm_sealed_principal_keys.md).
+//
 // **What a reader sees.** No window. The log has "tpm: ok, the CRB
-// interface at 0xFED40000, ...", then one line for each request: "tpm:
+// interface at 0xFED40000, ...", the count limits, a line on the lockout
+// authorization value at the first use of a passphrase, then one line for
+// each request: "tpm:
 // sealed 32 bytes to PCR 7 and PCR 11 ...", "tpm: unsealed 32 bytes ...",
 // or "tpm: the TPM refuses the unseal: PCR 7 and PCR 11 do not hold the
 // values of the seal ...".
@@ -39,8 +48,10 @@
 package tpm_device_service
 
 import "base:intrinsics"
+import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/tpm_service"
+import "modus:support/random"
 import "modus:support/system"
 import "modus:support/tpm2"
 
@@ -78,6 +89,13 @@ REQUEST_BOUND_MILLISECONDS :: 300_000
 // answer: a flush frees a slot and does no work of a key. The flushes of
 // one request (three at most) stay far below the bound of the client.
 FLUSH_BOUND_MILLISECONDS :: 10_000
+// The bound of the read of the count limits at the start, and of the check
+// of the lockout hierarchy before the first request with an authorization
+// value, each over its own commands. It only ends a wait for a TPM that
+// does not answer: neither makes a key. The request that follows has its
+// own bound after it, so the check and that request stay below the bound of
+// the client.
+LOCKOUT_CHECK_BOUND_MILLISECONDS :: 30_000
 
 // The sends of one TPM2_Unseal when the TPM asks for it again
 // (TPM_RC_RETRY): the TPM asks it at most once after its start, so a third
@@ -510,6 +528,105 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	return {status = .Ok, values = {0 = tpm2.SECRET_SIZE}}
 }
 
+// The generator of this program: it gives the lockout authorization value.
+generator: random.Generator
+
+// properties_read reads values of the properties of the TPM from the
+// property first, one for each place of values. what names them in a line
+// of the log when the TPM does not give them.
+properties_read :: proc "contextless" (first: u32, values: []u32, what: string) -> bool {
+	count := tpm2.properties_command(command_bytes[:], first, u32(len(values)))
+	answer, step := transact(count)
+	if step != 0 {
+		system.log_in("devices", .Warning, "tpm: the interface failed at TPM2_GetCapability of ", what, ": step ", step)
+		return false
+	}
+	code, problem := tpm2.properties_answer(answer, first, values)
+	if problem == .Refused {
+		system.log_in("devices", .Warning, "tpm: the TPM refused TPM2_GetCapability of ", what, " (response code ", system.Hex(u64(code)), ")")
+		return false
+	}
+	if problem != .None {
+		system.log_in("devices", .Warning, "tpm: the answer of the TPM to TPM2_GetCapability of ", what, " does not hold the properties asked, each in its place")
+		return false
+	}
+	return true
+}
+
+// count_limits_log writes the count limits of the TPM on the log at the
+// start. It reads only: it changes nothing in the TPM.
+count_limits_log :: proc "contextless" () {
+	request_deadline = system.time() + LOCKOUT_CHECK_BOUND_MILLISECONDS
+	limits: [tpm2.COUNT_LIMIT_PROPERTIES]u32
+	if properties_read(tpm2.PROPERTY_LOCKOUT_COUNTER, limits[:], "the count limits") {
+		counted := limits[tpm2.PROPERTY_LOCKOUT_COUNTER - tpm2.PROPERTY_LOCKOUT_COUNTER]
+		maximum := limits[tpm2.PROPERTY_MAXIMUM_AUTHORIZATION_FAILURES - tpm2.PROPERTY_LOCKOUT_COUNTER]
+		interval := limits[tpm2.PROPERTY_LOCKOUT_INTERVAL - tpm2.PROPERTY_LOCKOUT_COUNTER]
+		recovery := limits[tpm2.PROPERTY_LOCKOUT_RECOVERY - tpm2.PROPERTY_LOCKOUT_COUNTER]
+		system.log("tpm: the count limits of the TPM: a lockout after ", u64(maximum), " wrong authorization values, one forgiven each ", u64(interval), " seconds; ", u64(counted), " counted now; the lockout hierarchy waits ", u64(recovery), " seconds after a wrong value of its own")
+		if interval == 0 {
+			system.log_in("devices", .Warning, "tpm: the TPM limits no rate of the wrong authorization values: its lockout interval is 0")
+		}
+	}
+}
+
+// The lockout hierarchy was checked in this run: the check runs once, at
+// the first request that carries an authorization value.
+lockout_checked: bool
+
+// lockout_authorization_check sets a random lockout authorization value
+// when the lockout hierarchy has an empty one. With an empty value, another
+// system on the machine resets the count of the wrong passphrases of a
+// named principal, or changes its limits, with no PCR and no passphrase.
+// It runs only before the first request with an authorization value: a
+// boot that never seals or unseals the keys of a named principal leaves the
+// TPM as it found it, as the change is undone only by a clear. The value is
+// kept nowhere: nothing in the system may reset the count, and a kept copy
+// gives that reset to whoever reads it
+// (src/md/features/tpm_sealed_principal_keys.md, "The lockout authorization
+// value").
+lockout_authorization_check :: proc "contextless" (seeded: bool) {
+	request_deadline = system.time() + LOCKOUT_CHECK_BOUND_MILLISECONDS
+	permanent: [1]u32
+	if !properties_read(tpm2.PROPERTY_PERMANENT, permanent[:], "the state of the hierarchies") {
+		system.log_in("devices", .Warning, "tpm: the lockout hierarchy is not checked: another system can reset the count of the TPM while its value is empty")
+		return
+	}
+	if tpm2.lockout_authorization_set(permanent[0]) {
+		system.log("tpm: the lockout hierarchy has an authorization value: an earlier start of this system set it, or another system did; this service keeps no copy of it and leaves it")
+		return
+	}
+	value: [tpm2.AUTHORIZATION_VALUE_SIZE]u8
+	defer erase(value[:])
+	// The command holds the value: the buffer is erased on each path.
+	defer erase(command_bytes[:])
+	error: errors.Error_Record
+	if !seeded {
+		system.log_in("devices", .Warning, "tpm: the lockout hierarchy keeps its empty authorization value: this program has no seed, and another system can reset the count of the TPM")
+		return
+	}
+	if !random.fill_for_a_key(&generator, value[:], .Processor, &error) {
+		system.log_in("devices", .Warning, "tpm: the lockout hierarchy keeps its empty authorization value: the seed of this program is too weak for a key, and another system can reset the count of the TPM")
+		return
+	}
+	count := tpm2.lockout_authorization_change_command(command_bytes[:], value[:])
+	answer, step := transact(count)
+	if step != 0 {
+		system.log_in("devices", .Warning, "tpm: the interface failed at TPM2_HierarchyChangeAuth of the lockout hierarchy: step ", step, "; it can keep its empty authorization value until the next start")
+		return
+	}
+	code, problem := tpm2.status_answer(answer)
+	if problem == .Refused {
+		system.log_in("devices", .Warning, "tpm: the TPM refused a lockout authorization value (response code ", system.Hex(u64(code)), "): the lockout hierarchy keeps its empty one until the next start, and another system can reset the count of the TPM")
+		return
+	}
+	if problem != .None {
+		system.log_in("devices", .Warning, "tpm: the answer of the TPM to TPM2_HierarchyChangeAuth of the lockout hierarchy does not have its form: the next start reads the state of the hierarchy again")
+		return
+	}
+	system.log("tpm: the lockout hierarchy had an empty authorization value: this service set a random one and kept no copy, so no system resets the count of the TPM or changes its limits")
+}
+
 // The entry: it maps the registers and checks the interface, then serves
 // the ring until the machine stops.
 //
@@ -519,6 +636,8 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 // receives no answer, and runs as on a machine with no TPM.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// First: the call erases the seed in the context.
+	seeded := random.generator_from_context(&generator, ctx)
 	clients, ring_status := system.ring_open(ctx.handles[tpm_service.SERVICE_RING])
 	if ring_status != .Ok {
 		fail("no TPM ring")
@@ -545,10 +664,28 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the buffer of the TPM is not in the page of its registers")
 	}
 	system.log("tpm: ok, the CRB interface at ", system.Hex(u64(tpm_service.REGISTERS_ADDRESS)), ", a buffer of ", u64(buffer_size), " bytes; it seals to PCR 7 and PCR 11")
+	// Before the ring: a request of unlock waits in the ring until then.
+	count_limits_log()
 	for {
 		wait := system.wait_begin()
 		for command in system.receive(&clients.commands) {
 			outcome: Outcome
+			// The first request whose keys the TPM counts: the lockout value
+			// matters from this request on, and a boot with no such request
+			// leaves the lockout hierarchy as it found it. The check has its
+			// own bound, before the bound of the request, so both stay below
+			// the bound of the client.
+			authorization_kind: u64
+			#partial switch tpm_service.Command(command.kind) {
+			case .Seal:
+				authorization_kind = command.values[0]
+			case .Unseal:
+				authorization_kind = command.values[4]
+			}
+			if !lockout_checked && authorization_kind == tpm_service.AUTHORIZATION_VALUE {
+				lockout_checked = true
+				lockout_authorization_check(seeded)
+			}
 			request_deadline = system.time() + REQUEST_BOUND_MILLISECONDS
 			authorization_used = false
 			#partial switch tpm_service.Command(command.kind) {
