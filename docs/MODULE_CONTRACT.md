@@ -171,7 +171,7 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2536, threads = 1, 
 | Counted part | Pages |
 |---|---|
 | The module pages | The memory size of the module, and of each module that it imports at each level, each module one time, from their files |
-| The thread pages | The first thread: its stack (`op.STACK_PAGES`, 64), the page of the context and its thread area (3): 68. Each other thread of `threads`: a stack of `op.THREAD_STACK_PAGES` (16) and its thread area: 19 |
+| The thread pages | The first thread: its stack (`op.STACK_PAGES`, 64), the page of the context, its thread area (3), and the own log ring of the program (`op.OWN_LOG_PAGES`, 4), which the kernel takes from the budget at `Program_Create`: 72. Each other thread of `threads`: a stack of `op.THREAD_STACK_PAGES` (16) and its thread area: 19 |
 | The window pages | Two pictures of the width times the height times 4 bytes, in whole pages |
 
 A window of 1000 x 704 is 1375 pages. A size that the source computes is written as a literal, with an assertion of its expression beside it, so that the compiler checks the number: `WIDTH :: 774` and `#assert(WIDTH == BAR_X + BAR_WIDTH + 64)`. A module with no constant has no table: it asks for the least budget. A module that grows asks for more with no change of its source.
