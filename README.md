@@ -299,8 +299,12 @@ The tool writes `build/my_program.module` and `build/my_program.debug` in the fo
 
 ## Licences
 
+The reuse list of `docs/PROPERTIES.md` names each work of others that the system ships or copies, with its SPDX license and its license file; `modustool check` compares it with the repository. The paragraphs below say the same for a reader.
+
 The default font is Paper Mono, with its SemiBold for the titles (SIL Open Font License 1.1), as ASCII subsets in `resources/fonts/`; the other candidates are there with their licenses (`OFL.txt`, `BITSTREAM_VERA_LICENSE.txt`, and a `.license` file for each). The fallback font is Spleen 8x16 by Frederic Cambus, BSD 2-Clause. See `src/library/support/graphics/FONT_LICENSE`.
 
 The portraits of the `hall_of_fame` program are in `resources/hall_of_fame/`. `resources/hall_of_fame/CREDITS.md` gives the source, the author and the license of each one: four are under a free license (CC BY 3.0, CC BY 4.0, CC BY-SA 4.0, CC0), and one is a credited frame of a video, all rights reserved by its producers. The program shows the author and the license under each portrait.
 
 The default pointer theme, when the build has it, is "Posy's Cursor" by Michiel de Boer (Posy), http://www.michieldb.nl/other/cursors/, in the Linux port of simtrami, https://github.com/simtrami/posy-improved-cursor-linux (version 1.6, the package `posy-cursors` of nixpkgs), under CC BY-NC 4.0, https://creativecommons.org/licenses/by-nc/4.0/: non-commercial use only. The repository holds none of its files: the build fetches it and converts it (the sizes 32 and 64, no pixel changed). The program `pointers` shows the attribution. The pointer theme of the system (`resources/pointers/system.manifest`) is under the license of the repository.
+
+The cryptography of `src/library/support/cryptography` is taken from Odin's `core:crypto`, under the zlib license of Odin, with the field arithmetic of fiat-crypto under BSD 1-Clause. Each module also holds the runtime of the Odin compiler, under the same zlib license (`src/library/support/cryptography/LICENSE.odin.txt`).
