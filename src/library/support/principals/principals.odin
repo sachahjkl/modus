@@ -785,11 +785,168 @@ machine_tpm_file_problem_sentences := [File_Problem]string {
 	.Bad_Area         = "a part of the sealed object is not whole, or the creation data does not name PCR 7 and PCR 11, or a part has bytes that are not zero after it",
 }
 
-// The two forms of the object MACHINE_OBJECT, by its first 8 bytes.
+// The record of a machine key sealed by the TPM with the machine passphrase:
+// the object MACHINE_OBJECT in the store of `unlock`, with its own first 8
+// bytes (docs/PRINCIPALS.md, "The machine passphrase with the TPM";
+// src/md/features/tpm_sealed_machine_passphrase.md). A machine with the TPM
+// service and Secure Boot on gets this form when its machine passphrase is
+// set. Its first 36 bytes have the form of the record under the machine
+// passphrase alone, to the salt. Then it holds:
+//
+// - the four parts of a sealed object that the TPM service made with an
+//   authorization value: the TPM secret, which the TPM releases only while
+//   PCR 7 and PCR 11 hold the values of the seal, and only to the
+//   authorization value that the machine passphrase gives
+//   (machine_authorization_value); the TPM counts each wrong value;
+// - the machine key sealed with ChaCha20-Poly1305 under the seal key, which
+//   the TPM secret and the key of the passphrase give together
+//   (machine_tpm_passphrase_seal_key); the additional data is each byte
+//   before the PCRs;
+// - the machine key sealed under the key of the recovery key
+//   (recovery_seal_key); the additional data is each byte before the salt,
+//   so a new passphrase after a recovery keeps this copy valid.
+//
+// It has no key check: each copy opens only under its authenticated seal.
+// The offsets, in bytes; each number is little-endian.
+MACHINE_TPM_PASSPHRASE_MAGIC :: "MACHINEP" // The first 8 bytes of the record.
+MACHINE_TPM_PASSPHRASE_FORMAT :: u32(1) // A record of another format number is refused.
+MACHINE_TPM_PASSPHRASE_PCRS :: tpm2.PCR_SET // The PCRs of the policy: PCR 7 and PCR 11, bit n for PCR n.
+MACHINE_TPM_PASSPHRASE_OFFSET_PCRS :: MACHINE_OFFSET_NONCE // 36: u32, the PCRs of the policy, bit n for PCR n.
+MACHINE_TPM_PASSPHRASE_OFFSET_SEALED_OBJECT :: MACHINE_TPM_PASSPHRASE_OFFSET_PCRS + 4 // 40: SEALED_OBJECT_SIZE bytes.
+MACHINE_TPM_PASSPHRASE_OFFSET_NONCE :: MACHINE_TPM_PASSPHRASE_OFFSET_SEALED_OBJECT + SEALED_OBJECT_SIZE // 760: the nonce of the seal under the seal key.
+MACHINE_TPM_PASSPHRASE_OFFSET_SEALED :: MACHINE_TPM_PASSPHRASE_OFFSET_NONCE + NONCE_SIZE // 772: the machine key under the seal key, and the tag.
+MACHINE_TPM_PASSPHRASE_OFFSET_RECOVERY_NONCE :: MACHINE_TPM_PASSPHRASE_OFFSET_SEALED + MACHINE_SEALED_SIZE // 820.
+MACHINE_TPM_PASSPHRASE_OFFSET_RECOVERY_SEALED :: MACHINE_TPM_PASSPHRASE_OFFSET_RECOVERY_NONCE + NONCE_SIZE // 832: the machine key under the recovery key, and the tag.
+MACHINE_TPM_PASSPHRASE_FILE_SIZE :: MACHINE_TPM_PASSPHRASE_OFFSET_RECOVERY_SEALED + MACHINE_SEALED_SIZE // 880.
+#assert(MACHINE_TPM_PASSPHRASE_FILE_SIZE == 880)
+// The bytes that each seal covers and does not seal.
+MACHINE_TPM_PASSPHRASE_ADDITIONAL_SIZE :: MACHINE_TPM_PASSPHRASE_OFFSET_PCRS // The seal under the seal key: to the salt.
+MACHINE_TPM_PASSPHRASE_RECOVERY_ADDITIONAL_SIZE :: MACHINE_OFFSET_SALT // The recovery seal: the magic, the format and the parameters.
+// The largest of the three forms of the record: the read of `unlock` takes
+// each one.
+MACHINE_RECORD_LIMIT :: max(MACHINE_FILE_SIZE, MACHINE_TPM_FILE_SIZE, MACHINE_TPM_PASSPHRASE_FILE_SIZE)
+
+// The record of a machine key sealed by the TPM with the machine
+// passphrase, decoded.
+Machine_Tpm_Passphrase_File :: struct {
+	salt:            [SALT_SIZE]u8, // The salt of Argon2id: the key of the passphrase.
+	pcrs:            u32, // The PCRs of the policy: tpm2.PCR_SET.
+	using object:    Sealed_Object, // Made with the authorization value of the machine passphrase.
+	nonce:           [NONCE_SIZE]u8, // The nonce of the seal under the seal key.
+	sealed:          [MACHINE_SEALED_SIZE]u8, // The machine key under the seal key, and the tag.
+	recovery_nonce:  [NONCE_SIZE]u8,
+	recovery_sealed: [MACHINE_SEALED_SIZE]u8, // The machine key under the key of the recovery key, and the tag.
+}
+
+// machine_tpm_passphrase_file_encode writes the bytes of the record. The
+// caller took the four parts from the TPM service, within their limits.
+machine_tpm_passphrase_file_encode :: proc "contextless" (file: ^Machine_Tpm_Passphrase_File, out: ^[MACHINE_TPM_PASSPHRASE_FILE_SIZE]u8) {
+	out^ = {}
+	copy(out^[MACHINE_OFFSET_MAGIC:][:8], MACHINE_TPM_PASSPHRASE_MAGIC)
+	u32_put(out^[MACHINE_OFFSET_FORMAT:], MACHINE_TPM_PASSPHRASE_FORMAT)
+	u32_put(out^[MACHINE_OFFSET_MEMORY:], DERIVATION_MEMORY_KIBIBYTES)
+	u32_put(out^[MACHINE_OFFSET_PASSES:], DERIVATION_PASSES)
+	copy(out^[MACHINE_OFFSET_SALT:][:SALT_SIZE], file.salt[:])
+	u32_put(out^[MACHINE_TPM_PASSPHRASE_OFFSET_PCRS:], file.pcrs)
+	sealed_object_encode(&file.object, out^[MACHINE_TPM_PASSPHRASE_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
+	copy(out^[MACHINE_TPM_PASSPHRASE_OFFSET_NONCE:][:NONCE_SIZE], file.nonce[:])
+	copy(out^[MACHINE_TPM_PASSPHRASE_OFFSET_SEALED:][:MACHINE_SEALED_SIZE], file.sealed[:])
+	copy(out^[MACHINE_TPM_PASSPHRASE_OFFSET_RECOVERY_NONCE:][:NONCE_SIZE], file.recovery_nonce[:])
+	copy(out^[MACHINE_TPM_PASSPHRASE_OFFSET_RECOVERY_SEALED:][:MACHINE_SEALED_SIZE], file.recovery_sealed[:])
+}
+
+// machine_tpm_passphrase_file_decode reads a record that the store gave. It
+// copies the bytes once and checks the copy, as the other forms do: the
+// parameters of Argon2id, the PCRs, which must be PCR 7 and PCR 11 so a
+// record cannot name a weaker policy, and the four parts of the sealed
+// object. It does not check the seals and the ticket: the TPM, the machine
+// passphrase and the recovery key do.
+machine_tpm_passphrase_file_decode :: proc "contextless" (bytes: []u8) -> (file: Machine_Tpm_Passphrase_File, kept: [MACHINE_TPM_PASSPHRASE_FILE_SIZE]u8, problem: File_Problem) {
+	if len(bytes) != MACHINE_TPM_PASSPHRASE_FILE_SIZE {
+		return {}, {}, .Wrong_Size
+	}
+	copy(kept[:], bytes)
+	if string(kept[MACHINE_OFFSET_MAGIC:][:8]) != MACHINE_TPM_PASSPHRASE_MAGIC {
+		return {}, {}, .Wrong_Magic
+	}
+	if u32_get(kept[MACHINE_OFFSET_FORMAT:]) != MACHINE_TPM_PASSPHRASE_FORMAT {
+		return {}, {}, .Wrong_Format
+	}
+	if u32_get(kept[MACHINE_OFFSET_MEMORY:]) != DERIVATION_MEMORY_KIBIBYTES || u32_get(kept[MACHINE_OFFSET_PASSES:]) != DERIVATION_PASSES || u32_get(kept[MACHINE_TPM_PASSPHRASE_OFFSET_PCRS:]) != tpm2.PCR_SET {
+		return {}, {}, .Other_Parameters
+	}
+	object, object_ok := sealed_object_decode(kept[MACHINE_TPM_PASSPHRASE_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
+	if !object_ok {
+		return {}, {}, .Bad_Area
+	}
+	copy(file.salt[:], kept[MACHINE_OFFSET_SALT:][:SALT_SIZE])
+	file.pcrs = tpm2.PCR_SET
+	file.object = object
+	copy(file.nonce[:], kept[MACHINE_TPM_PASSPHRASE_OFFSET_NONCE:][:NONCE_SIZE])
+	copy(file.sealed[:], kept[MACHINE_TPM_PASSPHRASE_OFFSET_SEALED:][:MACHINE_SEALED_SIZE])
+	copy(file.recovery_nonce[:], kept[MACHINE_TPM_PASSPHRASE_OFFSET_RECOVERY_NONCE:][:NONCE_SIZE])
+	copy(file.recovery_sealed[:], kept[MACHINE_TPM_PASSPHRASE_OFFSET_RECOVERY_SEALED:][:MACHINE_SEALED_SIZE])
+	return file, kept, .None
+}
+
+// machine_tpm_passphrase_file_additional_data gives the additional data of
+// the seal under the seal key: each byte before the PCRs.
+machine_tpm_passphrase_file_additional_data :: proc "contextless" (bytes: ^[MACHINE_TPM_PASSPHRASE_FILE_SIZE]u8) -> []u8 {
+	return bytes^[:MACHINE_TPM_PASSPHRASE_ADDITIONAL_SIZE]
+}
+
+// machine_tpm_passphrase_file_recovery_additional_data gives the additional
+// data of the recovery seal: each byte before the salt, so that a new
+// passphrase, which has a new salt, keeps the copy under the recovery key
+// valid.
+machine_tpm_passphrase_file_recovery_additional_data :: proc "contextless" (bytes: ^[MACHINE_TPM_PASSPHRASE_FILE_SIZE]u8) -> []u8 {
+	return bytes^[:MACHINE_TPM_PASSPHRASE_RECOVERY_ADDITIONAL_SIZE]
+}
+
+// machine_tpm_passphrase_file_problem_sentences gives the sentence of each
+// problem of a record sealed by the TPM with the machine passphrase, for the
+// log of `unlock`.
+@(rodata)
+machine_tpm_passphrase_file_problem_sentences := [File_Problem]string {
+	.None             = "",
+	.Wrong_Size       = "the record does not have 880 bytes",
+	.Wrong_Magic      = "the record does not start with MACHINEP",
+	.Wrong_Format     = "the record has another format number",
+	.Other_Parameters = "the record names other parameters of Argon2id than 19456 KiB and 2 passes, or other PCRs than PCR 7 and PCR 11",
+	.Bad_Name         = "",
+	.Bytes_After_Name = "",
+	.Bad_Area         = "a part of the sealed object is not whole, or the creation data does not name PCR 7 and PCR 11, or a part has bytes that are not zero after it",
+}
+
+// The texts of the keyed hashes of the machine passphrase with the TPM:
+// each differs from the text of a named principal, so a value or a seal key
+// of the machine is never one of a principal, for the same passphrase too.
+MACHINE_AUTHORIZATION_TEXT :: "modus authorization value of the machine key"
+MACHINE_TPM_PASSPHRASE_SEAL_TEXT :: "modus seal by the TPM of the machine key under the machine passphrase"
+
+// machine_authorization_value gives the authorization value of the sealed
+// object of the record MACHINE_TPM_PASSPHRASE_MAGIC: keyed BLAKE2b of the
+// key that Argon2id derives from the machine passphrase. It crosses the
+// interface of the TPM in clear; a reader of it must still run Argon2id for
+// each guess of the passphrase.
+machine_authorization_value :: proc "contextless" (passphrase_key: ^[KEY_SIZE]u8) -> [tpm2.AUTHORIZATION_VALUE_SIZE]u8 {
+	return keyed_hash(passphrase_key^[:], MACHINE_AUTHORIZATION_TEXT)
+}
+
+// machine_tpm_passphrase_seal_key gives the seal key of the machine key in
+// the record MACHINE_TPM_PASSPHRASE_MAGIC: keyed BLAKE2b of the TPM secret
+// over the key of the passphrase and a text. So the key needs the TPM and
+// the passphrase together.
+machine_tpm_passphrase_seal_key :: proc "contextless" (tpm_secret: ^[TPM_SECRET_SIZE]u8, passphrase_key: ^[KEY_SIZE]u8) -> [KEY_SIZE]u8 {
+	return tpm_and_passphrase_key(tpm_secret, passphrase_key, MACHINE_TPM_PASSPHRASE_SEAL_TEXT)
+}
+
+// The three forms of the object MACHINE_OBJECT, by its first 8 bytes.
 Machine_Record_Form :: enum u8 {
-	Unknown, // Neither magic: the record cannot be read.
-	Passphrase, // MACHINE_MAGIC: the machine key under the machine passphrase.
+	Unknown, // No known magic: the record cannot be read.
+	Passphrase, // MACHINE_MAGIC: the machine key under the machine passphrase alone.
 	Sealed_By_The_Tpm, // MACHINE_TPM_MAGIC: the machine key sealed by the TPM, with its recovery key.
+	Sealed_By_The_Tpm_With_Passphrase, // MACHINE_TPM_PASSPHRASE_MAGIC: the machine key sealed by the TPM with the machine passphrase, and its recovery key.
 }
 
 // machine_record_form gives the form of a record of the machine from its
@@ -803,6 +960,8 @@ machine_record_form :: proc "contextless" (bytes: []u8) -> Machine_Record_Form {
 		return .Passphrase
 	case MACHINE_TPM_MAGIC:
 		return .Sealed_By_The_Tpm
+	case MACHINE_TPM_PASSPHRASE_MAGIC:
+		return .Sealed_By_The_Tpm_With_Passphrase
 	}
 	return .Unknown
 }
@@ -954,7 +1113,7 @@ machine_key_check :: proc "contextless" (machine_key: ^[MACHINE_KEY_SIZE]u8) -> 
 // The offsets, in bytes; each number is little-endian.
 PRINCIPAL_TPM_MAGIC :: "PRINCIPT" // The first 8 bytes of the file.
 PRINCIPAL_TPM_FORMAT :: u32(1) // A file of another format number is refused.
-PRINCIPAL_TPM_SECRET_SIZE :: 32 // The bytes of the TPM secret: the secret that the TPM service seals.
+TPM_SECRET_SIZE :: 32 // The bytes of the TPM secret: the secret that the TPM service seals with an authorization value, here and in the form MACHINE_TPM_PASSPHRASE_MAGIC.
 PRINCIPAL_TPM_PCRS :: tpm2.PCR_SET // The PCRs of the policy: PCR 7 and PCR 11, bit n for PCR n.
 PRINCIPAL_TPM_OFFSET_PCRS :: OFFSET_NONCE // 124: u32, the PCRs of the policy, bit n for PCR n.
 PRINCIPAL_TPM_OFFSET_SEALED_OBJECT :: PRINCIPAL_TPM_OFFSET_PCRS + 4 // 128: SEALED_OBJECT_SIZE bytes.
@@ -1119,7 +1278,15 @@ principal_authorization_value :: proc "contextless" (passphrase_key: ^[KEY_SIZE]
 // BLAKE2b of the TPM secret over the key of the passphrase and a text. So
 // the keys need the TPM and the passphrase together: a reader of the TPM
 // secret, on the bus of a hardware TPM, still runs Argon2id for each guess.
-principal_tpm_seal_key :: proc "contextless" (tpm_secret: ^[PRINCIPAL_TPM_SECRET_SIZE]u8, passphrase_key: ^[KEY_SIZE]u8) -> (result: [KEY_SIZE]u8) {
+principal_tpm_seal_key :: proc "contextless" (tpm_secret: ^[TPM_SECRET_SIZE]u8, passphrase_key: ^[KEY_SIZE]u8) -> [KEY_SIZE]u8 {
+	return tpm_and_passphrase_key(tpm_secret, passphrase_key, PRINCIPAL_TPM_SEAL_TEXT)
+}
+
+// tpm_and_passphrase_key gives keyed BLAKE2b of a TPM secret over the key of
+// a passphrase and a text: the seal key of a record that needs the TPM and
+// the passphrase together. Each use has its own text.
+@(private)
+tpm_and_passphrase_key :: proc "contextless" (tpm_secret: ^[TPM_SECRET_SIZE]u8, passphrase_key: ^[KEY_SIZE]u8, text: string) -> (result: [KEY_SIZE]u8) {
 	context_of_the_hash: blake2.Blake2b_Context
 	configuration := blake2.Blake2_Config {
 		size = KEY_SIZE,
@@ -1127,7 +1294,6 @@ principal_tpm_seal_key :: proc "contextless" (tpm_secret: ^[PRINCIPAL_TPM_SECRET
 	}
 	blake2.init(&context_of_the_hash, &configuration)
 	blake2.update(&context_of_the_hash, passphrase_key^[:])
-	text: string = PRINCIPAL_TPM_SEAL_TEXT
 	blake2.update(&context_of_the_hash, transmute([]u8)text)
 	blake2.final(&context_of_the_hash, result[:])
 	return result

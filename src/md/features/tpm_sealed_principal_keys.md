@@ -55,7 +55,7 @@ The TPM service reads two groups of properties of the TPM with `TPM2_GetCapabili
 - At each start, before it serves its ring: `TPM_PT_LOCKOUT_COUNTER`, `TPM_PT_MAX_AUTH_FAIL`, `TPM_PT_LOCKOUT_INTERVAL` and `TPM_PT_LOCKOUT_RECOVERY`, the count limits. It writes them on one line of the log, and a warning when the interval is 0: such a TPM limits no rate. This read changes nothing.
 - Once in a run, just before the first `Seal` or `Unseal` that carries an authorization value: `TPM_PT_PERMANENT`, whose bit `lockoutAuthSet` says if the lockout hierarchy has an authorization value.
 
-The value matters only for an object whose wrong values the TPM counts, that is, the keys of a named principal. So a boot that never seals or unseals such keys (a trial boot, a machine with the machine key only, a system with Secure Boot off that never seals) leaves the lockout hierarchy as it found it. The first guess of an attacker in `unlock` is such a request, so the check comes before it in each case.
+The value matters only for an object whose wrong values the TPM counts, that is, the keys of a named principal and the machine key under a machine passphrase ([tpm_sealed_machine_passphrase.md](tpm_sealed_machine_passphrase.md)). So a boot that never seals or unseals such keys (a trial boot, a machine with the machine key sealed by the TPM alone, a system with Secure Boot off that never seals) leaves the lockout hierarchy as it found it. The first guess of an attacker in `unlock` is such a request, so the check comes before it in each case.
 
 When the bit is clear, the service draws 32 bytes from the generator of its program, with the strength that a key needs, and sends `TPM2_HierarchyChangeAuth(TPM_RH_LOCKOUT)` with the empty value in a password session. Then it erases the bytes. From then on, `TPM2_DictionaryAttackLockReset`, `TPM2_DictionaryAttackParameters` and `TPM2_Clear` by the lockout hierarchy need a value that nobody knows. When the bit is set, the service writes one line and changes nothing.
 
@@ -126,7 +126,7 @@ The opened keys must give the public keys of the file: that check takes the plac
 
 ### The machine passphrase
 
-This work gives the TPM and the passphrase together to a named principal. The machine passphrase stays under Argon2id alone, and its record keeps its form: a machine key sealed by the TPM needs no typing, and the record of a machine passphrase is for a machine on which a passphrase is typed at each start. The machine passphrase with the TPM is the same layer on the other record; it stays a roadmap entry.
+The machine passphrase on a machine with the TPM service and Secure Boot on has the same form, in the record `MACHINEP`: the TPM seals a TPM secret with an authorization value from the machine passphrase, with a text of its own for each key ([tpm_sealed_machine_passphrase.md](tpm_sealed_machine_passphrase.md)). The two share the count of the TPM. A machine key sealed by the TPM with no passphrase keeps the form `MACHINET`, which needs no typing.
 
 ## Refused forms
 
@@ -184,7 +184,6 @@ Built: the erase of the old versions of the file ([version_erase.md](version_era
 Left:
 
 - **The file of a named principal pinned in the TPM**, so a kept old file and its old passphrase are refused.
-- **The machine passphrase and the TPM together** (see "The machine passphrase").
 - **A recovery key for a named principal on a machine with no TPM.** The form `PRINCIPL` has no copy under a recovery key.
 - **The windows of `unlock` that outlive a lock**: the recovery key of a creation or of a machine key, and the window that sets the machine passphrase. A stop at the lock loses a recovery key that nobody wrote down, so the form needs a decision.
 - **A new file under the passphrase alone opened again before its write**, so a fault of the seal cannot lose a principal that has no recovery key.

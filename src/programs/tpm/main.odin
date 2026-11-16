@@ -8,9 +8,11 @@
 // on the same system, with the same state of Secure Boot: an older system,
 // a changed system, or a copy of the disk on another machine opens nothing.
 // The program `unlock` seals the machine key with it (docs/PRINCIPALS.md,
-// "The machine key sealed by the TPM"), and the keys of a named principal,
-// with an authorization value from its passphrase whose wrong tries the
-// TPM counts (docs/PRINCIPALS.md, "The keys sealed by the TPM").
+// "The machine key sealed by the TPM"), and the keys of a named principal
+// and the machine key under a machine passphrase, with an authorization
+// value from the passphrase whose wrong tries the TPM counts
+// (docs/PRINCIPALS.md, "The keys sealed by the TPM";
+// docs/PRINCIPALS.md, "The machine passphrase with the TPM").
 //
 // **Start**: the root service starts it at boot, before `unlock`, only when
 // the boot program measured the system into the TPM. No line of the console
@@ -31,7 +33,7 @@
 // TPM on the log. Before the first request with an authorization value, it
 // sets a random lockout authorization value, which nobody keeps, when the
 // TPM has an empty one: then no system resets the count of the wrong
-// passphrases of a named principal
+// passphrases of a named principal or of the machine
 // (src/md/features/tpm_sealed_principal_keys.md).
 //
 // **What a reader sees.** No window. The log has "tpm: ok, the CRB
@@ -577,9 +579,10 @@ lockout_checked: bool
 // lockout_authorization_check sets a random lockout authorization value
 // when the lockout hierarchy has an empty one. With an empty value, another
 // system on the machine resets the count of the wrong passphrases of a
-// named principal, or changes its limits, with no PCR and no passphrase.
-// It runs only before the first request with an authorization value: a
-// boot that never seals or unseals the keys of a named principal leaves the
+// named principal or of the machine, or changes its limits, with no PCR and
+// no passphrase. It runs only before the first request with an
+// authorization value: a boot that never seals or unseals a key with a
+// passphrase leaves the
 // TPM as it found it, as the change is undone only by a clear. The value is
 // kept nowhere: nothing in the system may reset the count, and a kept copy
 // gives that reset to whoever reads it
