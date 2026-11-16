@@ -1,11 +1,12 @@
 // The boot program: a UEFI program (docs/PROPERTIES.md, "Trusted boot").
 //
-// It contains the kernel module, the boot image and the public key of the
-// signing key. It does this:
+// It contains the kernel module, the boot image, and the public key of the
+// signing key with its key number. It does this:
 //   1. reads the framebuffer of the firmware;
 //   2. verifies the system description and the hash of the kernel and of
-//      each file of the boot image, and asks the firmware to measure the
-//      description into the TPM (trust.odin);
+//      each file of the boot image, refuses an older system or a revoked
+//      key with the TPM floors and raises them, and asks the firmware to
+//      measure the description into the TPM (trust.odin);
 //   3. loads the kernel module with the loader of package module;
 //   4. builds page tables: all physical memory at DIRECT_MAP_BASE, the kernel
 //      at KERNEL_BASE, and the same physical memory at its own addresses for
@@ -82,6 +83,7 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	intrinsics.mem_copy_non_overlapping(image_copy, raw_data(boot_image), len(boot_image))
 	image_bytes := ([^]u8)(image_copy)[:len(boot_image)]
 	description := trust_check(boot, image_bytes)
+	floors_check(boot, description)
 	measure(boot, description)
 
 	// The kernel module.

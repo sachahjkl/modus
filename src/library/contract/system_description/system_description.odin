@@ -8,7 +8,7 @@
 //
 // The file, all numbers little-endian:
 //
-//   Header                       16 bytes
+//   Header                       24 bytes
 //   Entry, header.entry_count times, 80 bytes each
 //
 // and no other byte. Entry 0 is the kernel. The modules follow, then the
@@ -24,6 +24,8 @@
 // `image_check`); the root service checks the boot image again. The parts:
 //
 // - `Header`, `Entry`, `Entry_Kind`, `entries`: the file.
+// - `SECURITY_VERSION`, `security_version_of`: the number that the version
+//   floor of the TPM compares (src/md/features/rollback_floors.md).
 // - `signed_message`, `SIGNATURE_LABEL`, `TEST_PUBLIC_KEY`: the signature.
 // - `Check`, `Check_Fault`, `fault_sentences`: the result of a check.
 //
@@ -34,10 +36,22 @@ import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 
 MAGIC :: u64(0x5243534544535953) // The bytes "SYSDESCR".
-VERSION :: 1 // The version of the format. A reader refuses another.
+VERSION :: 2 // The version of the format. A reader refuses another.
 NAME_SIZE :: info.IMAGE_NAME_SIZE // The bytes of a name: the names of the boot image.
 // A bound for the reader: a boot image of today has about 90 entries.
 ENTRY_CAPACITY :: 4096
+
+// The security version of the system that this repository builds. The
+// publisher of the system raises it in the commit that fixes a flaw that a
+// return to an older system would bring back, and at no other release: a
+// principal then keeps a way back from a release whose fault is no flaw.
+// After the first start of a system, the TPM refuses each system with a
+// lower security version (src/md/features/rollback_floors.md).
+SECURITY_VERSION :: 1
+// The highest security version: the version floor of the TPM holds one bit
+// for each.
+SECURITY_VERSION_LIMIT :: info.FLOOR_LIMIT
+#assert(SECURITY_VERSION >= 1 && SECURITY_VERSION <= SECURITY_VERSION_LIMIT)
 
 PUBLIC_KEY_SIZE :: 32 // The bytes of an Ed25519 public key.
 SIGNATURE_SIZE :: 64 // The bytes of an Ed25519 signature.
@@ -69,13 +83,15 @@ Entry_Kind :: enum u32 {
 	Resource = 3, // A resource of the boot image: a file that is not a module.
 }
 
-// The first 16 bytes of the description.
+// The first 24 bytes of the description.
 Header :: struct {
-	magic:       u64, // `MAGIC`.
-	version:     u32, // `VERSION`.
-	entry_count: u32, // The entries after the header: at least 1, at most `ENTRY_CAPACITY`.
+	magic:            u64, // `MAGIC`.
+	version:          u32, // `VERSION`.
+	entry_count:      u32, // The entries after the header: at least 1, at most `ENTRY_CAPACITY`.
+	security_version: u32, // 1 to `SECURITY_VERSION_LIMIT`: the number that the version floor of the TPM compares.
+	reserved:         u32, // Zero.
 }
-#assert(size_of(Header) == 16)
+#assert(size_of(Header) == 24)
 
 // One file that the boot volume starts: the kernel, a module or a
 // resource. 80 bytes.
@@ -162,14 +178,18 @@ name_valid :: proc "contextless" (name: ^[NAME_SIZE]u8) -> bool {
 }
 
 // entries gives the entries of a description, after it checked the whole
-// format: the magic, the version, the exact size, the kernel first, the
-// modules before the resources, the names and the zero fields.
+// format: the magic, the version, the security version, the exact size, the
+// kernel first, the modules before the resources, the names and the zero
+// fields.
 entries :: proc "contextless" (description: []u8) -> (list: []Entry, valid: bool) {
 	if len(description) < size_of(Header) {
 		return nil, false
 	}
 	header := (^Header)(raw_data(description))^
 	if header.magic != MAGIC || header.version != VERSION || header.entry_count == 0 || header.entry_count > ENTRY_CAPACITY {
+		return nil, false
+	}
+	if header.security_version == 0 || header.security_version > SECURITY_VERSION_LIMIT || header.reserved != 0 {
 		return nil, false
 	}
 	if len(description) != size_of(Header) + int(header.entry_count) * size_of(Entry) {
@@ -201,6 +221,15 @@ entries :: proc "contextless" (description: []u8) -> (list: []Entry, valid: bool
 		}
 	}
 	return list, true
+}
+
+// security_version_of gives the security version of a description that
+// follows the format; valid is false for any other description.
+security_version_of :: proc "contextless" (description: []u8) -> (security_version: u64, valid: bool) {
+	if _, format_valid := entries(description); !format_valid {
+		return 0, false
+	}
+	return u64((^Header)(raw_data(description)).security_version), true
 }
 
 // signed_message gives the bytes that the signing key signs for a

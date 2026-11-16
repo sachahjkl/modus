@@ -6,7 +6,9 @@ import "core:strconv"
 import "core:strings"
 
 // Two rules of the system that a reader had to trust, as checks
-// (docs/TOOLS.md, "The rules that a check holds").
+// (docs/TOOLS.md, "The rules that a check holds"). The third rule of that
+// section, an error record from each export that fails, is in
+// export_error_record_check.odin.
 //
 // 1. The count of the kernel operations. docs/PROPERTIES.md states it, and
 //    the contract of the operations declares them: a new operation with no
@@ -242,7 +244,8 @@ allocator_check :: proc() -> bool {
 	return true
 }
 
-// The command rule-checks: the two checks alone.
+// The command rule-checks: the three checks alone. The third is in
+// export_error_record_check.odin.
 run_rule_checks :: proc(args: []string) -> int {
-	return operation_count_check() && allocator_check() ? 0 : EXIT_FAILURE
+	return operation_count_check() && allocator_check() && export_error_record_check() ? 0 : EXIT_FAILURE
 }

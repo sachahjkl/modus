@@ -1584,6 +1584,10 @@ scenario := [?]Step {
 	{kind = .Type, text = "g = grow(r, 5)"},
 	{kind = .Type, text = "g.width * g.height + keep(b) + kept()"},
 	{kind = .Wait, text = "[console] 12848"},
+	// An export that fails gives its error record, not a bare negative
+	// number: with no earlier hold in this program, look has no mapping.
+	{kind = .Type, text = "look()"},
+	{kind = .Wait, text = "[console] error: look: the call names none of the mappings (-1)"},
 	// An export with nine parameters in a direct call: the numbers 7 and 8,
 	// the label and the error record are on the stack. Each number has its
 	// own weight, so a word in the wrong place gives another sum.
@@ -2077,7 +2081,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "manual.signature(\"tally\", 1)"},
 	{kind = .Wait, text = "[console] add(amount: Integer, note: Text) -> Integer"},
 	{kind = .Type, text = "manual.show(\"nothing\")"},
-	{kind = .Wait, text = "[console] -1"},
+	{kind = .Wait, text = "[console] error: manual.show: the argument name names none of the modules (-1)"},
 	{kind = .Type, text = "manual.show(\"tally\")"},
 	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
 	{kind = .Move, text = "manual", to_x = 80, to_y = 64},
@@ -2115,6 +2119,22 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "manual: the link link page opens term:link-page"},
 	{kind = .Wait, text = "manual: the page term:link-page: Link page, "},
+	{kind = .Key, text = "backspace"},
+	{kind = .Wait, text = "manual: back to the page before"},
+	{kind = .Wait, text = "manual: manual: a program, 17 exports, "},
+	// The third link names a procedure of a support package that no
+	// module describes: it opens the page of its declaration, which the
+	// build took from the source.
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "manual: the focus is on the link the description tables to docs/MODULE_CONTRACT.md#description-tables"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "manual: the focus is on the link link page to term:link-page"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "manual: the focus is on the link system.word_wait to system.word_wait"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "manual: the link system.word_wait opens system.word_wait"},
+	{kind = .Wait, text = "manual: the page system.word_wait: system.word_wait, "},
+	{kind = .Shot, text = "manual_declaration"},
 	{kind = .Key, text = "backspace"},
 	{kind = .Wait, text = "manual: back to the page before"},
 	{kind = .Wait, text = "manual: manual: a program, 17 exports, "},

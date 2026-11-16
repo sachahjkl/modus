@@ -19,7 +19,9 @@ import "modus:support/cryptography/sha2"
 // (build_boot_image). For each boot volume, this file writes a copy of it
 // with two more resources at the end: the system description of the kernel
 // and of each file of that image, and its description signature, made with
-// the signing key. The boot program holds the public key of the same key.
+// the signing key. The boot program holds the public key of the same key,
+// with its key number from KEY_NUMBERS_FILE. The header of the description
+// holds the security version of the repository.
 //
 // The signing key is the file that SYSTEM_SIGNING_KEY names: the private
 // key of the publisher of the system, outside the repository. With no
@@ -30,8 +32,15 @@ import "modus:support/cryptography/sha2"
 
 SIGNING_KEY_VARIABLE :: "SYSTEM_SIGNING_KEY"
 TEST_SIGNING_KEY_FILE :: RESOURCE_FOLDER + "/keys/test_signing_key"
-// The public key of the build, 32 bytes, for the boot program (#load).
-SYSTEM_PUBLIC_KEY_FILE :: BUILD_FOLDER + "/system_public_key.bin"
+// The key of the build, for the boot program (#load): the public key, 32
+// bytes, then its key number as a little-endian u64.
+SYSTEM_KEY_FILE :: BUILD_FOLDER + "/system_key.bin"
+// The key number of each public key of the publisher of the system, one
+// line for each: the number, one space, the 64 hexadecimal digits of the
+// public key (src/md/features/rollback_floors.md). A new key after a theft
+// gets the next number: the key floor of the TPM then revokes each key
+// before it.
+KEY_NUMBERS_FILE :: RESOURCE_FOLDER + "/keys/key_numbers"
 SIGNING_KEY_FILE_NAME :: "signing_key"
 SIGNING_KEY_PUBLIC_SUFFIX :: ".public"
 SIGNING_KEY_SIZE :: 32
@@ -55,6 +64,10 @@ Image_Change :: struct {
 	// One bit of the description signature changes: the boot program must
 	// refuse the volume.
 	signature_changed:                 bool,
+	// The security version of the description is this step above the one of
+	// the repository: a newer system, which raises the version floor of the
+	// TPM, after which the system of the repository is refused.
+	security_version_raised:           int,
 	// One byte of the kernel module changes after the description is made:
 	// the boot program must refuse the volume at the kernel.
 	kernel_changed_after_description:  bool,
@@ -313,7 +326,12 @@ boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, cha
 	append(&files, Image_File{name = replacement_list.RESOURCE_NAME, file = replacement_rows})
 
 	description := make([dynamic]u8, context.temp_allocator)
-	header := system_description.Header{magic = system_description.MAGIC, version = system_description.VERSION, entry_count = u32(1 + len(files))}
+	header := system_description.Header {
+		magic            = system_description.MAGIC,
+		version          = system_description.VERSION,
+		entry_count      = u32(1 + len(files)),
+		security_version = u32(system_description.SECURITY_VERSION + change.security_version_raised),
+	}
 	append(&description, ..mem.ptr_to_bytes(&header))
 	kernel_entry := description_entry(system_description.KERNEL_ENTRY_NAME, .Kernel, kernel)
 	append(&description, ..mem.ptr_to_bytes(&kernel_entry))
@@ -388,20 +406,93 @@ boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, cha
 	return signed, true
 }
 
-// system_public_key_write writes the public key of the signing key of the
-// build in the file that every boot program loads. The process that leads
-// the build writes it one time, before the first boot volume is built: two
-// volume builds at the same time never write a file that a compiler of the
-// other reads.
-system_public_key_write :: proc() -> bool {
+// system_key_write writes the public key of the signing key of the build,
+// with its key number, in the file that every boot program loads. The
+// process that leads the build writes it one time, before the first boot
+// volume is built: two volume builds at the same time never write a file
+// that a compiler of the other reads.
+system_key_write :: proc() -> bool {
 	key := signing_key_read() or_return
 	// The private key leaves the memory of the tool after this one use.
 	defer ed25519.private_key_clear(&key.private_key)
-	if err := os.write_entire_file(SYSTEM_PUBLIC_KEY_FILE, key.public_key[:]); err != nil {
-		fmt.eprintfln("modustool: cannot write %s: %v", SYSTEM_PUBLIC_KEY_FILE, err)
+	key_number := key_number_read(key.public_key) or_return
+	bytes: [system_description.PUBLIC_KEY_SIZE + 8]u8
+	copy(bytes[:], key.public_key[:])
+	for index in 0 ..< 8 {
+		bytes[system_description.PUBLIC_KEY_SIZE + index] = u8(key_number >> (8 * u64(index)))
+	}
+	if err := os.write_entire_file(SYSTEM_KEY_FILE, bytes[:]); err != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", SYSTEM_KEY_FILE, err)
 		return false
 	}
 	return true
+}
+
+// key_number_read gives the key number of a public key from KEY_NUMBERS_FILE.
+// A key with no line is refused: its boot program would have no number for
+// the key floor of the TPM.
+key_number_read :: proc(public_key: [system_description.PUBLIC_KEY_SIZE]u8) -> (key_number: u64, ok: bool) {
+	data := read_file(KEY_NUMBERS_FILE) or_return
+	problem: string
+	key_number, problem = key_number_of(string(data), public_key)
+	if problem != "" {
+		digits := system_description.hexadecimal(public_key)
+		fmt.eprintfln("modustool: %s: %s (the public key %s; src/md/features/rollback_floors.md)", KEY_NUMBERS_FILE, problem, string(digits[:]))
+		return 0, false
+	}
+	return key_number, true
+}
+
+// key_number_of reads the text of the file of the key numbers and gives the
+// number of the public key. Each line is a number from 1 to 64, one space,
+// and 64 lowercase hexadecimal digits; no number and no key comes twice.
+// problem says what is wrong, or is "".
+key_number_of :: proc(text: string, public_key: [system_description.PUBLIC_KEY_SIZE]u8) -> (key_number: u64, problem: string) {
+	wanted := system_description.hexadecimal(public_key)
+	numbers_seen: [info.FLOOR_LIMIT + 1]bool
+	keys_seen := make([dynamic]string, context.temp_allocator)
+	remaining := text
+	line_number := 0
+	for line in strings.split_lines_iterator(&remaining) {
+		line_number += 1
+		space := strings.index_byte(line, ' ')
+		if space <= 0 || len(line) - space - 1 != 2 * system_description.PUBLIC_KEY_SIZE {
+			return 0, fmt.tprintf("line %d is not a number, one space and 64 hexadecimal digits", line_number)
+		}
+		number: u64
+		for character in line[:space] {
+			if character < '0' || character > '9' || number > info.FLOOR_LIMIT {
+				return 0, fmt.tprintf("line %d does not start with a key number from 1 to %d", line_number, info.FLOOR_LIMIT)
+			}
+			number = number * 10 + u64(character - '0')
+		}
+		if number == 0 || number > info.FLOOR_LIMIT {
+			return 0, fmt.tprintf("line %d does not start with a key number from 1 to %d", line_number, info.FLOOR_LIMIT)
+		}
+		digits := line[space + 1:]
+		for index in 0 ..< len(digits) {
+			if !(digits[index] >= '0' && digits[index] <= '9' || digits[index] >= 'a' && digits[index] <= 'f') {
+				return 0, fmt.tprintf("line %d does not end with 64 lowercase hexadecimal digits", line_number)
+			}
+		}
+		if numbers_seen[number] {
+			return 0, fmt.tprintf("line %d gives the key number %d a second time", line_number, number)
+		}
+		numbers_seen[number] = true
+		for earlier in keys_seen {
+			if earlier == digits {
+				return 0, fmt.tprintf("line %d gives a key a second number", line_number)
+			}
+		}
+		append(&keys_seen, digits)
+		if digits == string(wanted[:]) {
+			key_number = number
+		}
+	}
+	if key_number == 0 {
+		return 0, "no line gives the signing key of the build its key number: add the line \"<the next number> <its public key>\""
+	}
+	return key_number, ""
 }
 
 // image_stated_hash_change changes one bit of the hash that the entry of
@@ -492,6 +583,11 @@ run_key :: proc(args: []string) -> int {
 		}
 		digits := system_description.hexadecimal(key.public_key)
 		fmt.printfln("%s%s", string(digits[:]), key.is_test ? " (the test signing key: not trusted)" : "")
+		key_number, ok_number := key_number_read(key.public_key)
+		if !ok_number {
+			return EXIT_FAILURE
+		}
+		fmt.printfln("key number %d", key_number)
 		return 0
 	}
 	// The test firmware signing key of the repository: made once, then
@@ -567,6 +663,7 @@ run_key :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	fmt.printfln("modustool: wrote %s and %s; public key %s", private_path, public_path, string(public_digits[:]))
+	fmt.printfln("modustool: add the line \"<the next key number> %s\" to %s before a build with this key: the key floor of the TPM then refuses each key with a lower number (docs/TRUSTED_BOOT.md, \"10. The TPM floors\")", string(public_digits[:]), KEY_NUMBERS_FILE)
 	// The firmware signing key, for Secure Boot, in the same folder.
 	if !firmware_signing_key_new(folder, false) {
 		return EXIT_FAILURE

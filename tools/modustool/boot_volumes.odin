@@ -1,6 +1,7 @@
 package modustool
 
 import "modus:contract/blake3"
+import "modus:contract/system_description"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -38,6 +39,13 @@ Boot_Volume :: struct {
 	kernel:                     string, // The module of the table that its boot program holds as the kernel.
 	self_test:                  int, // The test of the kernel on itself, or 0.
 	change:                     Image_Change, // What a test of a refusal changes.
+	// The key number of its boot program is this step above the number of
+	// the signing key: a boot program of a newer key, which raises the key
+	// floor of the TPM, after which the key of the build is refused. Such a
+	// volume holds a key file of its own (boot_volume_system_key_path); the
+	// boot program has no setting for it, and a release refuses a volume
+	// whose step is not 0 (boot_volume_release_problem).
+	key_number_raised:          int,
 	firmware_signature:         Firmware_Signature,
 	// The build of this volume also writes the variable store of Secure
 	// Boot: every machine with Secure Boot on is in the part of this volume.
@@ -51,7 +59,7 @@ BOOT_PROGRAM_OBJECT_FILE_NAME :: "boot.obj"
 // The name of the main volume: the name of its object folder.
 MAIN_BOOT_VOLUME_NAME :: "main"
 
-// boot_volumes gives every boot volume of the build: 13 fixed ones and one
+// boot_volumes gives every boot volume of the build: 15 fixed ones and one
 // for each test of the kernel on itself. The list is new at each call: the
 // path of a self test volume is a text of the temporary memory.
 boot_volumes :: proc() -> []Boot_Volume {
@@ -83,6 +91,10 @@ boot_volumes :: proc() -> []Boot_Volume {
 	// with one byte changed.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SECURE_BOOT, image = BOOT_IMAGE, kernel = "kernel", firmware_signature = .Signed, with_secure_boot_variables = true})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SECURE_BOOT_CHANGED, image = BOOT_IMAGE, kernel = "kernel", firmware_signature = .Signed_Then_Changed})
+	// The TPM floors: a newer system, then a newer system with a newer key,
+	// each signed for Secure Boot, so that its start raises the floors.
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_NEWER_SYSTEM, image = BOOT_IMAGE, kernel = "kernel", change = {security_version_raised = 1}, firmware_signature = .Signed})
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_NEWER_KEY, image = BOOT_IMAGE, kernel = "kernel", change = {security_version_raised = 1}, key_number_raised = 1, firmware_signature = .Signed})
 	// One volume for each test of the kernel on itself.
 	for test in self_tests {
 		append(&volumes, Boot_Volume{path = fmt.tprintf(BOOT_VOLUME_SELF_TEST, test.number), image = BOOT_IMAGE, kernel = "kernel", self_test = test.number})
@@ -140,6 +152,63 @@ boot_volume_kernel_module_path :: proc(volume: Boot_Volume) -> string {
 	return module_path(volume.kernel)
 }
 
+// boot_volume_system_key_path gives the key file that the boot program of a
+// volume holds: the key file of the build, or, for a volume whose key
+// number is raised, a copy with the raised number beside its object folder
+// (boot_volume_system_key_write). The volume writes it; no other does.
+boot_volume_system_key_path :: proc(volume: Boot_Volume) -> string {
+	if volume.key_number_raised == 0 {
+		return SYSTEM_KEY_FILE
+	}
+	return join(boot_volume_folder(volume), "_system_key.bin")
+}
+
+// boot_volume_system_key_write writes the key file of a volume whose key
+// number is raised: the key file of the build with the number plus the
+// step.
+boot_volume_system_key_write :: proc(volume: Boot_Volume) -> bool {
+	if volume.key_number_raised == 0 {
+		return true
+	}
+	key := read_file(SYSTEM_KEY_FILE) or_return
+	if len(key) != system_description.PUBLIC_KEY_SIZE + 8 {
+		fmt.eprintfln("modustool: %s is not a public key with its key number", SYSTEM_KEY_FILE)
+		return false
+	}
+	raised := make([]u8, len(key), context.temp_allocator)
+	copy(raised, key)
+	key_number: u64
+	for index in 0 ..< 8 {
+		key_number |= u64(key[system_description.PUBLIC_KEY_SIZE + index]) << (8 * u64(index))
+	}
+	key_number += u64(volume.key_number_raised)
+	for index in 0 ..< 8 {
+		raised[system_description.PUBLIC_KEY_SIZE + index] = u8(key_number >> (8 * u64(index)))
+	}
+	if err := os.write_entire_file(boot_volume_system_key_path(volume), raised); err != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", boot_volume_system_key_path(volume), err)
+		return false
+	}
+	return true
+}
+
+// boot_volume_release_problem says why a volume of the table can never be a
+// release volume, or "": a volume that a test changed, with a raised
+// security version or key number, would ship numbers that no line of the
+// repository gives.
+boot_volume_release_problem :: proc(volume: Boot_Volume) -> string {
+	if volume.key_number_raised != 0 {
+		return fmt.tprintf("%s has a key number raised by %d for a test", volume.path, volume.key_number_raised)
+	}
+	if volume.change != (Image_Change{}) {
+		return fmt.tprintf("%s is a volume that a test changed: %v", volume.path, volume.change)
+	}
+	if volume.self_test != 0 {
+		return fmt.tprintf("%s runs a test of the kernel on itself", volume.path)
+	}
+	return ""
+}
+
 // boot_program_compile_command gives the command of the compiler for the
 // boot program of a volume. Each flag is an input of the build key.
 boot_program_compile_command :: proc(volume: Boot_Volume) -> []string {
@@ -166,7 +235,7 @@ boot_program_compile_command :: proc(volume: Boot_Volume) -> []string {
 		join("-export-dependencies-file:", boot_volume_dependency_file(volume)),
 		SOURCE_LIBRARY_FLAG,
 		join("-define:BOOT_IMAGE=", to_root, signed_image_path(volume.path)),
-		join("-define:SYSTEM_PUBLIC_KEY=", to_root, SYSTEM_PUBLIC_KEY_FILE),
+		join("-define:SYSTEM_KEY=", to_root, boot_volume_system_key_path(volume)),
 		fmt.tprintf("-define:SELF_TEST=%d", volume.self_test),
 		join("-define:KERNEL_MODULE=", to_root, boot_volume_kernel_module_path(volume)),
 		join("-out:", boot_volume_object_path(volume)),
@@ -245,8 +314,8 @@ file_write_with_a_hole_at_its_end :: proc(path: string, data: []u8) -> bool {
 // boot_volume_build builds one boot volume in this process: the boot image
 // of the volume with its system description and its description signature
 // (system_description.odin), the boot program that holds it, and the volume
-// file. It writes only files of this volume. The public key of the system
-// is there before: system_public_key_write.
+// file. It writes only files of this volume. The key of the system is there
+// before: system_key_write.
 boot_volume_build :: proc(volume: Boot_Volume) -> bool {
 	seconds :: proc(duration: time.Duration) -> f64 {
 		return time.duration_seconds(duration)
@@ -263,6 +332,7 @@ boot_volume_build :: proc(volume: Boot_Volume) -> bool {
 	signed_image_time := time.tick_since(step_started)
 	step_started = time.tick_now()
 	reset_folder(folder) or_return
+	boot_volume_system_key_write(volume) or_return
 	run(boot_program_compile_command(volume)) or_return
 	compile_time := time.tick_since(step_started)
 	step_started = time.tick_now()
@@ -318,7 +388,7 @@ boot_volume_build :: proc(volume: Boot_Volume) -> bool {
 // of the boot program again (repeat.odin).
 main_boot_volume_build :: proc() -> bool {
 	make_folder(BOOT_OBJECT_FOLDER) or_return
-	system_public_key_write() or_return
+	system_key_write() or_return
 	for volume in boot_volumes() {
 		if volume.path == BOOT_VOLUME {
 			return boot_volume_build(volume)
@@ -367,7 +437,7 @@ Boot_Volume_Shared_Inputs :: struct {
 // the table reads, one time for all the volumes.
 boot_volume_shared_inputs_read :: proc(volumes: []Boot_Volume) -> Boot_Volume_Shared_Inputs {
 	paths := make([dynamic]string, context.temp_allocator)
-	append(&paths, DEBUG_IMAGE, SYSTEM_PUBLIC_KEY_FILE)
+	append(&paths, DEBUG_IMAGE, SYSTEM_KEY_FILE)
 	for volume in volumes {
 		for path in ([]string{volume.image, module_path(volume.kernel)}) {
 			known := false
@@ -413,6 +483,7 @@ boot_volume_key_inputs :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_I
 	append(&settings, "the volume", volume.path, volume.image, volume.kernel)
 	append(&settings, fmt.tprintf("self test %d", volume.self_test))
 	append(&settings, fmt.tprintf("change %v", volume.change))
+	append(&settings, fmt.tprintf("key number raised %d", volume.key_number_raised))
 	append(&settings, fmt.tprintf("firmware signature %v", volume.firmware_signature))
 	append(&settings, volume.with_secure_boot_variables ? "with the variable store of Secure Boot" : "with no variable store")
 	fixed_files := make([dynamic]string, context.temp_allocator)
@@ -421,7 +492,7 @@ boot_volume_key_inputs :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_I
 		append(&fixed_files, TEST_FIRMWARE_SIGNING_KEY_FILE, TEST_FIRMWARE_CERTIFICATE_FILE)
 	}
 	built_files := make([dynamic]Record_Output, context.temp_allocator)
-	for path in ([]string{volume.image, module_path(volume.kernel), DEBUG_IMAGE, SYSTEM_PUBLIC_KEY_FILE}) {
+	for path in ([]string{volume.image, module_path(volume.kernel), DEBUG_IMAGE, SYSTEM_KEY_FILE}) {
 		found := false
 		for file in shared.built_files {
 			if file.path == path {
@@ -603,7 +674,7 @@ boot_volumes_build :: proc(needed_paths: []string) -> bool {
 	make_folder(BOOT_OBJECT_FOLDER) or_return
 	// Every boot program loads this file: it is written before the first
 	// volume process starts, and no volume process writes it.
-	system_public_key_write() or_return
+	system_key_write() or_return
 	all := boot_volumes()
 	needed := make([dynamic]Boot_Volume, context.temp_allocator)
 	if needed_paths == nil {
@@ -767,8 +838,8 @@ test_part_volumes := [?]Volumes_Of_Part {
 	// system.
 	{
 		part = "trusted_boot",
-		procedures = {"trusted_boot_tests_run", "release_image_machine_run"},
-		volumes = {BOOT_VOLUME, BOOT_VOLUME_CHANGED_MODULE, BOOT_VOLUME_WRONG_SIGNATURE, BOOT_VOLUME_OTHER_SYSTEM, BOOT_VOLUME_CHANGED_KERNEL, BOOT_VOLUME_WITHOUT_DESCRIPTION, BOOT_VOLUME_STATED_HASH, BOOT_VOLUME_SECURE_BOOT, BOOT_VOLUME_SECURE_BOOT_CHANGED},
+		procedures = {"trusted_boot_tests_run", "release_image_machine_run", "floor_tests_run"},
+		volumes = {BOOT_VOLUME, BOOT_VOLUME_CHANGED_MODULE, BOOT_VOLUME_WRONG_SIGNATURE, BOOT_VOLUME_OTHER_SYSTEM, BOOT_VOLUME_CHANGED_KERNEL, BOOT_VOLUME_WITHOUT_DESCRIPTION, BOOT_VOLUME_STATED_HASH, BOOT_VOLUME_SECURE_BOOT, BOOT_VOLUME_SECURE_BOOT_CHANGED, BOOT_VOLUME_NEWER_SYSTEM, BOOT_VOLUME_NEWER_KEY},
 	},
 }
 
