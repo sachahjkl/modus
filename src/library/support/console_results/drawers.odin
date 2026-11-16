@@ -14,11 +14,13 @@ Part :: enum u8 {
 	Label     = 1, // The name of a field, the head of a column, the place of a row of bytes.
 	Note      = 2, // What the drawer says about the result: the count of rows, the rows that are not shown.
 	Failure   = 3, // The sentence of an error.
-	Number    = 4, // An Integer.
+	Number    = 4, // An Integer that is a plain number.
 	Handle    = 5, // A handle.
 	Type      = 6, // The name of a record, or the kind of an object.
 	Status    = 7, // An error kind.
 	Operation = 8, // The operation or the export of an error.
+	Size      = 9, // An Integer field that counts a size, and its unit.
+	Time      = 10, // An Integer field that counts a time, and its unit.
 }
 
 // part_value_kind gives the value kind of a part. None: the part is not a
@@ -27,6 +29,10 @@ part_value_kind :: proc "contextless" (part: Part) -> value_kinds.Value_Kind {
 	switch part {
 	case .Number:
 		return .Number
+	case .Size:
+		return .Size
+	case .Time:
+		return .Time
 	case .Handle:
 		return .Handle
 	case .Type:
@@ -75,6 +81,24 @@ Cell :: struct {
 	text:   string, // The text of the value.
 	number: bool, // The value is a number: it is aligned at the right.
 	part:   Part, // What the value is.
+	unit:   string, // The unit of a Size or a Time, with the space before it: " pages". "" for another value.
+}
+
+// integer_part gives the part of an Integer field from the value kind that
+// its description states, and the text of its unit. A unit that is not one
+// of the contract is a plain number: a description of another party can
+// hold anything, and a guess would show a wrong unit.
+integer_part :: proc "contextless" (item: module.Field) -> (part: Part, unit: string) {
+	if item.type != .Integer || !value_kinds.integer_unit_valid(item.integer_unit) {
+		return .Number, ""
+	}
+	#partial switch item.integer_unit.kind {
+	case .Size:
+		return .Size, value_kinds.integer_unit_text(item.integer_unit)
+	case .Time:
+		return .Time, value_kinds.integer_unit_text(item.integer_unit)
+	}
+	return .Number, ""
 }
 
 // cell_of gives the text of one field of a record. The text of a number is
@@ -83,10 +107,11 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 	#partial switch item.type {
 	case .Integer:
 		value := module.field_integer(row, item)
+		part, unit := integer_part(item)
 		if item.unsigned && module.field_size(item.type, item.detail) == 8 {
-			return {text = sentence.format(buffer, u64(value)), number = true, part = .Number}
+			return {text = sentence.format(buffer, u64(value)), number = true, part = part, unit = unit}
 		}
-		return {text = sentence.format(buffer, value), number = true, part = .Number}
+		return {text = sentence.format(buffer, value), number = true, part = part, unit = unit}
 	case .Handle:
 		handle: u64
 		if u64(item.offset) <= u64(len(row)) && u64(len(row)) - u64(item.offset) >= 4 {
@@ -114,6 +139,40 @@ cell_write :: proc "contextless" (sink: ^Sink, text: string, width: int, number:
 	}
 	if !number {
 		blanks(sink, width - len(text))
+	}
+	blanks(sink, COLUMN_GAP)
+}
+
+// head_length gives the columns of the head of a column: the name, and the
+// unit in parentheses after it when the field states one. unit is the text
+// of the unit with the space before it (" pages"), or "".
+head_length :: proc "contextless" (name_length: int, unit: string) -> int {
+	if len(unit) < 2 {
+		return name_length
+	}
+	return name_length + len(" (") + len(unit) - 1 + len(")")
+}
+
+// head_write writes the head of one column, dim, aligned as its values are:
+// the name, then the unit of a Size or a Time in parentheses: "time (ms)".
+// The unit is in the head and not in each cell, because it is the same in
+// each row.
+head_write :: proc "contextless" (sink: ^Sink, name: string, unit: string, width: int, number: bool, last: bool) {
+	length := head_length(len(name), unit)
+	if number {
+		blanks(sink, width - length)
+	}
+	sink.write(sink, name, .Label)
+	if len(unit) >= 2 {
+		sink.write(sink, " (", .Label)
+		sink.write(sink, unit[1:], .Label)
+		sink.write(sink, ")", .Label)
+	}
+	if last {
+		return
+	}
+	if !number {
+		blanks(sink, width - length)
 	}
 	blanks(sink, COLUMN_GAP)
 }
@@ -150,7 +209,9 @@ draw_text :: proc "contextless" (sink: ^Sink, text: string) {
 }
 
 // draw_record draws a Record: the name of its record, then one line for
-// each field, with the name of the field and its value. file and detail
+// each field, with the name of the field and its value. A field that
+// counts a size or a time has its unit after its value: "time  120 ms".
+// file and detail
 // name the description of the record; bytes are its bytes.
 draw_record :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: []u8) {
 	sink.continuation = 0
@@ -181,6 +242,11 @@ draw_record :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: 
 		sink.write(sink, name, .Label)
 		blanks(sink, width - len(name) + COLUMN_GAP)
 		sink.write(sink, cell.text, cell.part)
+		// The unit is in the color of the value, as a value run of the log
+		// covers the number and its unit.
+		if cell.unit != "" {
+			sink.write(sink, cell.unit, cell.part)
+		}
 		sink.end_line(sink)
 	}
 	sink.continuation = 0
@@ -189,7 +255,8 @@ draw_record :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: 
 // draw_table draws a Table: a line with the names of the fields, a line for
 // each row, and the count of rows with the name of the record. Each column
 // has the least width that holds its head and its values; a number is at
-// the right of its column. No value is cut: a line wider than the window
+// the right of its column. The head of a field that counts a size or a time
+// has its unit: "time (ms)". No value is cut: a line wider than the window
 // goes on under its last column.
 //
 // row_limit: the most rows that are drawn. When the table has more, one
@@ -208,10 +275,12 @@ draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: [
 	shown := clamp(row_limit, 0, rows)
 	field_count := min(int(described.field_count), COLUMN_LIMIT)
 	items: [COLUMN_LIMIT]module.Field
+	units: [COLUMN_LIMIT]string
 	widths: [COLUMN_LIMIT]int
 	for number in 0 ..< field_count {
 		items[number], _ = module.field(file, described, u32(number))
-		widths[number] = int(items[number].name_count)
+		_, units[number] = integer_part(items[number])
+		widths[number] = head_length(int(items[number].name_count), units[number])
 	}
 	for index in 0 ..< shown {
 		row := bytes[index * size:][:size]
@@ -227,7 +296,7 @@ draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: [
 	sink.continuation = last_start <= CONTINUATION_MOST ? last_start : COLUMN_GAP
 	for number in 0 ..< field_count {
 		name := module.string_at(file, items[number].name_offset, items[number].name_count)
-		cell_write(sink, name, widths[number], items[number].type != .Text, number == field_count - 1, .Label)
+		head_write(sink, name, units[number], widths[number], items[number].type != .Text, number == field_count - 1)
 	}
 	sink.end_line(sink)
 	for index in 0 ..< shown {

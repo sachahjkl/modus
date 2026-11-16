@@ -666,7 +666,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is closed by the key super"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "memory()"},
-	{kind = .Wait, text = "free_pages_no_budget_holds  0"},
+	{kind = .Wait, text = "free_no_budget_holds  0 pages"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
@@ -1377,6 +1377,13 @@ scenario := [?]Step {
 	{kind = .Wait, text = "paint  "},
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = "[console]   interrupts"},
+	// Each field in the color of its value kind: a number, a size in pages
+	// and two times, each unit once in the head of its column.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "columns(where(programs(), \"name\", \"console\"), \"name slot resident time started\")"},
+	{kind = .Wait, text = "[console] name     slot  resident (pages)  time (ms)  started (us)"},
+	{kind = .Wait, text = "[console] 1 row of Program"},
+	{kind = .Shot, text = "console_value_kinds"},
 	{kind = .Type, text = "stop(\"paint\")"},
 	{kind = .Wait, text = "root: paint stopped"},
 	// A command is an export of a module: the console loads the module and
@@ -2956,7 +2963,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " over 512 names (512 names of 128 bytes, the least of 20 batches of 10)"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
-	{kind = .Wait, text = "free_pages_no_budget_holds  0"},
+	{kind = .Wait, text = "free_no_budget_holds  0 pages"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

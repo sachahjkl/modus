@@ -330,7 +330,7 @@ record_description_of_file :: proc(file: []u8, number: u32) -> (description: Rec
 	fields := make([]Field_Description, int(record.field_count), context.temp_allocator)
 	for &item, index in fields {
 		stored := module.field(file, record, u32(index)) or_return
-		item = {name = module.string_at(file, stored.name_offset, stored.name_count), offset = stored.offset, type = stored.type, detail = stored.detail, unsigned = stored.unsigned}
+		item = {name = module.string_at(file, stored.name_offset, stored.name_count), offset = stored.offset, type = stored.type, detail = stored.detail, unsigned = stored.unsigned, integer_unit = stored.integer_unit}
 	}
 	return {name = module.string_at(file, record.name_offset, record.name_count), size = record.size, fields = fields}, true
 }
@@ -370,8 +370,8 @@ call_form_of_export :: proc(file: []u8, export_index: u32) -> (form: Call_Form, 
 }
 
 // record_layouts_difference says how two records differ in what a call
-// depends on: the size, and the offset, the type and the size of each
-// field. "" when they are the same. The names are not compared.
+// depends on: the size, and the offset, the type, the size and the unit of
+// each field. "" when they are the same. The names are not compared.
 @(private = "file")
 record_layouts_difference :: proc(declared, described: Record_Description) -> string {
 	if declared.size != described.size {
@@ -384,6 +384,11 @@ record_layouts_difference :: proc(declared, described: Record_Description) -> st
 		other := described.fields[index]
 		if field.offset != other.offset || field.type != other.type || field.detail != other.detail || field.unsigned != other.unsigned {
 			return fmt.tprintf("the field %s of the record %s is not the field %s of %s: another offset, type, size or sign", field.name, declared.name, other.name, described.name)
+		}
+		// The unit is part of what the field means, as it is for a
+		// parameter: a reader shows the value in it.
+		if field.integer_unit != other.integer_unit {
+			return fmt.tprintf("the field %s of the record %s is %s, the field %s of %s is %s", field.name, declared.name, integer_unit_words(field.integer_unit), other.name, described.name, integer_unit_words(other.integer_unit))
 		}
 	}
 	return ""

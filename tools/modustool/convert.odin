@@ -2,6 +2,7 @@ package modustool
 
 import "modus:contract/blake3"
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:mem"
 import "core:slice"
@@ -48,11 +49,12 @@ Record_Description :: struct {
 }
 
 Field_Description :: struct {
-	name:   string,
-	offset: u32,
-	type:     module.Type,
-	detail:   u32, // An Integer: its size, 0 for 8. A Handle: the rights that the callee needs. A Text: its size in bytes.
-	unsigned: bool, // An unsigned Integer.
+	name:         string,
+	offset:       u32,
+	type:         module.Type,
+	detail:       u32, // An Integer: its size, 0 for 8. A Handle: the rights that the callee needs. A Text: its size in bytes.
+	unsigned:     bool, // An unsigned Integer.
+	integer_unit: value_kinds.Integer_Unit, // An Integer: what it counts, {} for a plain number (module.Field.integer_unit).
 }
 
 // The description of a module: what its source says to a reader, and its exports.
@@ -402,7 +404,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		append(&record_records, module.Record{name_offset = u32(len(string_bytes)), name_count = u32(len(item.name)), size = item.size, first_field = u32(len(field_records)), field_count = u32(len(item.fields))})
 		append(&string_bytes, item.name)
 		for field in item.fields {
-			append(&field_records, module.Field{name_offset = u32(len(string_bytes)), name_count = u32(len(field.name)), offset = field.offset, type = field.type, detail = field.detail, unsigned = field.unsigned})
+			append(&field_records, module.Field{name_offset = u32(len(string_bytes)), name_count = u32(len(field.name)), offset = field.offset, type = field.type, detail = field.detail, unsigned = field.unsigned, integer_unit = field.integer_unit})
 			append(&string_bytes, field.name)
 		}
 	}
