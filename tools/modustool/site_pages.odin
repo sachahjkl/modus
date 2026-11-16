@@ -753,7 +753,7 @@ site_releases_add :: proc(site: ^Site) {
 	site_roadmap_link_line(site, &b, path)
 	for changelog_release in releases {
 		number := release_number_text(changelog_release.number)
-		fmt.sbprintf(&b, "<section class=\"release\">\n<h2 id=\"%s\">%s <span class=\"date\">%s</span></h2>\n", site_release_id(number), number, changelog_release.date)
+		fmt.sbprintf(&b, "<section class=\"release\">\n<h2 id=\"%s\">%s <time class=\"date\" datetime=\"%s\">%s</time></h2>\n", site_release_id(number), number, release_moment_attribute(changelog_release), release_moment_shown(changelog_release))
 		site_news_of_release(site, &b, path, number)
 		type_index := -1
 		// Each change has an id: the band of the newest release of the

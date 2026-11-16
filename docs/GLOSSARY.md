@@ -6184,13 +6184,13 @@ Do not use: release notes (for the file), history, news.
 
 ### Release
 
-A release is one section of the changelog: a release number, a date, and the entries of its changes, in the parts Added, Changed, Deprecated, Removed, Fixed and Security.
+A release is one section of the changelog, with a release number, a release time and the entries of its changes, on one commit of `master` that carries its release tag.
 
-A release marks a state of `master` that passed its checks. `modustool changelog release` makes it: it moves the fragments of `changelog.d/` into a new section `## [<number>] - <date>`, deletes them, and writes the release number in `src/library/contract/release`. Example: `## [0.91.0] - 2026-11-12`. On the site each release has the anchor `release-<number>` and links to each news entry that names it.
+A release marks a state of `master` that passed its checks. `modustool ship` makes it: `modustool changelog release` moves the fragments of `changelog.d/` into a new section `## [<number>] - <yyyy-mm-dd hh:mm>`, deletes them, writes the release number in `src/library/contract/release` and the release link of the section; then `ship` commits, tags the commit, and pushes the commit and the tag at once. Example: `## [0.93.0] - 2026-11-15 18:48`. The parts of a section are Added, Changed, Deprecated, Removed, Fixed and Security. On the site each release has the anchor `release-<number>` and links to each news entry that names it.
 
-It is not a version: a stored object of the system has versions. It is not a git tag, and not a build: many builds come between two releases.
+It is not a version: a stored object of the system has versions. It is not a build: many builds come between two releases. Its tag is not the release: it is the name of its commit in git.
 
-The design: `docs/SITE.md`, "The pages".
+The design: `src/md/infrastructure/releases.md`; `docs/TOOLS.md`, "The release"; `docs/SITE.md`, "The pages".
 
 Do not use: version (a stored object has versions), tag, build.
 
@@ -6198,11 +6198,47 @@ Do not use: version (a stored object has versions), tag, build.
 
 The release number is the number of a release, in the form `<major>.<minor>.<patch>`.
 
-The project is before its first major release, so a release number is `0.N.0` for a release of new work and `0.N.1` for a correction after it. `RELEASE_NUMBER` in `src/library/contract/release` holds the newest one (today `"0.91.0"`); the foot of each page of the site and the page graph name it. The tool writes it; no one edits it by hand.
+The project is before its first major release, so a release number is `0.N.0` for a release of new work and `0.N.1` for a correction after it. `RELEASE_NUMBER` in `src/library/contract/release` holds the newest one, and `modustool release_number` prints it; the foot of each page of the site and the page graph name it. The tool writes it; no one edits it by hand. `modustool ship step` takes the next `0.N.0`, `modustool ship correction` the next `0.N.1`.
 
-The design: `docs/SITE.md`, "The pages".
+The design: `docs/SITE.md`, "The pages"; `src/md/infrastructure/releases.md`.
 
 Do not use: version number, version.
+
+### Release time
+
+The release time is the moment of a release, in UTC, to the minute, as its heading in the changelog writes it: `2026-11-15 18:48`.
+
+`modustool changelog release` writes the time of the clock of the host, in UTC, so two releases of one day keep their order, and two hosts in two time zones write comparable times. The releases page shows it with "UTC" after it, and the feed `releases.xml` writes it as `2026-11-15T18:48:00Z`. An old heading that has its day alone gets its time from `modustool changelog times`, from the commit of its release; a release whose commit is not known keeps its day alone, and its feed entry says `T00:00:00Z`. The newest release always has its time.
+
+It is not the date of a news entry, which is a day alone, and not the time of a build of the site.
+
+The design: `src/md/infrastructure/releases.md`.
+
+Do not use: release date (for the whole), timestamp.
+
+### Release tag
+
+A release tag is the annotated, signed git tag `v<release number>` on the commit of a release.
+
+`modustool ship` makes it with `git tag -s -a`, so it holds who released, when, and a signature that the git configuration of the publisher of the system makes. It goes to `origin` in one atomic push with the commit of the release: a tag never exists there without its commit. The release workflow starts from it. The releases before the first `ship` have no tag.
+
+It is not the release: the release is the section of the changelog, and the tag names its commit. It is not a release number: the number has no `v`.
+
+The design: `src/md/infrastructure/releases.md`.
+
+Do not use: release label, version tag (for this).
+
+### Release link
+
+A release link is the line `[<release number>]: https://github.com/sachahjkl/modus/releases/tag/v<release number>` at the end of the changelog, one for each release.
+
+Keep a Changelog defines these lines: a forge that renders Markdown then links the number of each heading to the page of its release tag. The lines are newest first, after the last release, with no empty line between them. `modustool changelog release` writes the link of a new release, `modustool changelog times` adds each missing one, and `modustool changelog check` refuses a release with no link, a link with another address, a link with no release, and links in another order.
+
+It is not a link of the site: the releases page gives each release an anchor.
+
+The design: `src/md/infrastructure/releases.md`.
+
+Do not use: reference link, footnote.
 
 ### Fragment
 

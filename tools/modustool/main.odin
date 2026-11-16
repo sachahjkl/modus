@@ -507,11 +507,20 @@ COMMANDS :: [?]Command {
 	// - `assemble`: prints the next release from the fragments, with no
 	//   change.
 	// - `release <release number>`: moves the fragments into a new release of
-	//   the changelog, with its date, and deletes them.
+	//   the changelog, with its release time in UTC and its release link, and
+	//   deletes them.
 	// - `notes <release number>`: prints the changes of one release.
+	// - `times`: gives each old heading with its day alone the time of the
+	//   commit of its release, and adds each missing release link.
 	//
 	// No one edits `CHANGELOG.md` by hand: this command writes it.
-	{name = "changelog", about = "new <type> <subject> \"<text>\" (or - and the text on the standard input) | check | assemble | release <release number> | notes <release number>: the fragments of `" + FRAGMENT_FOLDER + "` and the releases of `" + CHANGELOG_FILE + "`", run = run_changelog},
+	{name = "changelog", about = "new <type> <subject> \"<text>\" (or - and the text on the standard input) | check | assemble | release <release number> | notes <release number> | times: the fragments of `" + FRAGMENT_FOLDER + "` and the releases of `" + CHANGELOG_FILE + "`", run = run_changelog},
+	// Makes a release in one command: `changelog release`, a commit, a signed
+	// release tag, and one atomic push of both to master. It refuses a branch
+	// other than master, a tree with changes, and a master that does not hold
+	// origin/master; when origin moved, it undoes, merges and tries again with
+	// the next number (docs/TOOLS.md, "The release").
+	{name = "ship", about = "step | correction | <release number> [--dry-run]: the release in one command: the changelog, a commit, a signed release tag v<number>, one atomic push to master", run = run_ship},
 	// Works on the news entries of `news/`, the dated reports of what a
 	// reader can now see or use.
 	//

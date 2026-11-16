@@ -1,0 +1,3 @@
+type: Added
+
+**A release in one command, with a signed tag**: `modustool ship step` (or `correction`, or a release number) writes the release from the fragments, commits it, makes the annotated and signed release tag `v<release number>`, and pushes the commit and the tag to `master` in one atomic push. It refuses a branch other than `master`, a tree with changes that are not committed, and a `master` behind `origin`. When `origin` moved during the release, the push is refused and nothing goes out: `ship` undoes its commit and its tag, merges `origin/master`, and tries again with the next number, three times at most. `--dry-run` prints the number, the commands and the release, and writes nothing.
