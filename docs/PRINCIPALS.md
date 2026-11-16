@@ -459,7 +459,7 @@ A refusal is an error record with the unit `Principals`: a second named principa
 - **No window of `unlock` that outlives a lock**: today a lock leaves the window that shows the recovery key of a creation or of a machine key, and the window that sets the machine passphrase.
 - **The key of principal 0**: the attestation key of the TPM.
 - **The TPM and the machine passphrase together.** The machine passphrase as the authorization value of the sealed machine key, so that the TPM counts the wrong tries.
-- **A seal to the measure of the next system.** A signed policy of the publisher of the system, with a counter of the TPM that refuses an older system: an update then needs no recovery key.
+- **A seal to the measure of the next system.** A signed policy of the publisher of the system, with the version floor of the TPM (`TRUSTED_BOOT.md`, "10. The TPM floors") so that an older system opens nothing: an update then needs no recovery key.
 - **A change and a removal of the machine passphrase, and a change of the recovery key.**
 - **The encryption of the stores of a principal** with its unlock key. Today the data of a principal is on the disk in clear, as each store.
 - **The desktop while locked.** The desktop stays: programs of principal 0 run and can be started. A desktop that shows only `unlock` while a named principal is locked is not built.

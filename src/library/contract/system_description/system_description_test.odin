@@ -23,7 +23,7 @@ entry_of :: proc(name: string, kind: Entry_Kind, file: []u8) -> (entry: Entry) {
 @(private = "file")
 description_of :: proc(list: []Entry) -> []u8 {
 	bytes := make([]u8, size_of(Header) + len(list) * size_of(Entry), context.temp_allocator)
-	header := Header{magic = MAGIC, version = VERSION, entry_count = u32(len(list))}
+	header := Header{magic = MAGIC, version = VERSION, entry_count = u32(len(list)), security_version = SECURITY_VERSION}
 	copy(bytes, (cast([^]u8)&header)[:size_of(Header)])
 	if len(list) > 0 {
 		copy(bytes[size_of(Header):], (cast([^]u8)raw_data(list))[:len(list) * size_of(Entry)])
@@ -209,6 +209,43 @@ one_description_has_one_form :: proc(t: ^testing.T) {
 		refused(t, description, "two entries with one name")
 	}
 	refused(t, description_of(nil), "no entry")
+	{
+		description := copy_of(system.description)
+		(^Header)(raw_data(description)).security_version = 0
+		refused(t, description, "the security version 0")
+	}
+	{
+		description := copy_of(system.description)
+		(^Header)(raw_data(description)).security_version = SECURITY_VERSION_LIMIT + 1
+		refused(t, description, "a security version above the limit of the floor")
+	}
+	{
+		description := copy_of(system.description)
+		(^Header)(raw_data(description)).reserved = 1
+		refused(t, description, "a reserved field of the header that is not zero")
+	}
+	{
+		description := copy_of(system.description)
+		(^Header)(raw_data(description)).version = VERSION - 1
+		refused(t, description, "the format before the security version")
+	}
+}
+
+@(test)
+the_security_version_is_read_from_a_valid_description_only :: proc(t: ^testing.T) {
+	system := system_make()
+	security_version, valid := security_version_of(system.description)
+	testing.expect(t, valid)
+	testing.expect_value(t, security_version, u64(SECURITY_VERSION))
+	description := copy_of(system.description)
+	(^Header)(raw_data(description)).security_version = SECURITY_VERSION_LIMIT
+	security_version, valid = security_version_of(description)
+	testing.expect(t, valid)
+	testing.expect_value(t, security_version, u64(SECURITY_VERSION_LIMIT))
+	at(description, 3).name[10] = 'x' // A byte after the end of a name.
+	security_version, valid = security_version_of(description)
+	testing.expect(t, !valid)
+	testing.expect_value(t, security_version, 0)
 }
 
 @(test)

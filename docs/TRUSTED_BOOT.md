@@ -8,17 +8,18 @@ This guide says what verifies what at the start of the machine, with which key, 
 
 **Read before.** `PROPERTIES.md`, "11. Reproducible system" and "17. Trusted boot: UEFI program, Secure Boot, TPM".
 
-**The map of this guide.** "1. The claims" lists what the start proves. "2. What each layer protects, and what it does not" takes each layer in turn. "3. The system description" gives its format; "4. What a failure shows" the boot display of a refusal; "5. The signing key" its creation, use, backup, loss and theft; "6. The measure" the TPM; "7. Secure Boot" the firmware signing key; "8. The costs" and "9. Code" close.
+**The map of this guide.** "1. The claims" lists what the start proves. "2. What each layer protects, and what it does not" takes each layer in turn. "3. The system description" gives its format; "4. What a failure shows" the boot display of a refusal; "5. The signing key" its creation, use, backup, loss and theft; "6. The measure" the TPM; "7. Secure Boot" the firmware signing key; "8. The costs" and "9. Code" close; "10. The TPM floors" says how the TPM refuses an older system and a revoked key.
 
 ![A start that fails: the boot display names the changed file and its two hashes](screenshots/boot_fails_changed_module.png)
 
-The trusted boot has three layers. Each layer works without the next one.
+The trusted boot has four layers. Each layer works without the next one.
 
 | Layer | What it adds | State |
 |---|---|---|
 | 1. The signed system description | The boot program verifies a signature and every hash before the kernel starts. The root service checks the boot image again | Built |
 | 2. The measure | The firmware extends PCR 11 of the TPM with the hash of the system description, before the kernel starts | Built |
 | 3. Secure Boot | The firmware verifies the Authenticode signature of the boot program before it starts it | Built |
+| 4. The TPM floors | The boot program refuses a system description whose security version, or a boot program whose key number, is below its floor in the TPM | Built |
 
 ## 1. The claims
 
@@ -33,6 +34,8 @@ Each claim names what verifies, what it verifies, with which key, and when.
 7. Nothing verifies the boot program while Secure Boot is off. The trust record and the boot display say "verified by the boot program, which the firmware did not verify".
 8. With Secure Boot on, before it starts the boot program, the firmware verifies its Authenticode signature with the certificates in its variable `db`. The build signs the boot program with the firmware signing key, and the test machine has the certificate of that key as its only entry of `db`.
 9. The boot program reads the variable `SecureBoot` of the firmware. With the value 1, the trust record says `Firmware_And_Boot_Program`, and the boot display says "verified by: the firmware (Secure Boot), then the boot program". The value 1 means that a certificate of `db` verified the boot program: on a machine whose `db` also holds the certificates of a vendor, it can be a certificate of that vendor (section 7).
+10. When the firmware has a TPM, after claims 1 and 2 and before the measure, the boot program reads the two TPM floors through the firmware. It stops the start when the key number that it holds is below the key floor, or when the security version of the description is below the version floor (section 10).
+11. When the firmware verified the boot program, the boot program then raises each floor to its own number, before the measure. Only a boot program with the same PCR 7, the state of Secure Boot with the certificate of the publisher, and before the measure of PCR 11, can raise a floor: no kernel and no program can.
 
 ## 2. What each layer protects, and what it does not
 
@@ -48,8 +51,8 @@ It does not protect against:
 
 - **a replaced boot program.** The firmware does not verify the boot program. Anyone who can write the boot volume can replace the boot program, its public key and its checks. So the checks find a damaged or swapped file. They do not stop an attacker who can write the boot volume.
 - **a system that the test signing key signed.** Its private key is published: anyone can sign a system with it. The boot display shows "the TEST key: its private key is public" in red, and the root service writes a warning on the log.
-- **an older system that the same key signed.** The boot program accepts each description that the key signed. No counter refuses an older one.
-- **a stolen private key.** Anyone who has it can sign a system that the boot program accepts, and a replacement row that the root service accepts.
+- **an older system that the same key signed, alone.** The signature of an older description verifies. Layer 4 refuses it once a system with a higher security version started on the machine (section 10).
+- **a stolen private key.** Anyone who has it can sign a system that the boot program accepts, and a replacement row that the root service accepts. Layer 4 refuses the boot programs of that key once a system with a newer key started on the machine.
 - **the firmware, and the kernel after the start.** The checks run once, at the start. A fault of the kernel or a device that writes memory directly (DMA) is not in their scope.
 - **a changed debug image.** The debug image (`DEBUG/OBJECTS.IMG`, beside the boot program) is not in the boot image, the system description does not list it, and the boot program reads it with no check. Anyone who can write the boot volume can make a stop report show false names of procedures and lines. No code comes from it, and each reader checks the form of each debug object before it reads it (`MODULE_CONTRACT.md`, "Debug information").
 
@@ -74,7 +77,7 @@ It closes the gap of layer 1: the firmware starts only a boot program that a cer
 
 It does not protect against:
 
-- **an older boot program, or an older system, that the same keys signed.** No counter in the TPM refuses it: not built.
+- **an older boot program, or an older system, that the same keys signed.** The firmware starts it. Layer 4 makes its boot program refuse itself, after a newer system started.
 - **the other certificates of `db`.** A machine whose `db` holds the certificates of a vendor starts each boot program that the vendor signed.
 - **a change of the variables of the firmware by anyone at the machine.** The setup of the firmware can turn Secure Boot off or enrol another certificate. The machine still starts. PCR 7, where the firmware measures its Secure Boot state, is in the policy of the machine key sealed by the TPM: after such a change the TPM does not release that key, and the recovery key opens it.
 - **PCR 4.** The firmware measures the boot program there. The system does not read it.
@@ -84,10 +87,12 @@ It does not protect against:
 The system description is one file. It is the identity of one version of the whole system (`src/library/contract/system_description`). It lists each file of the system with its size and its hash, in one fixed order, so one system has exactly one description and one hash: two machines with the same hash of the description run the same bytes.
 
 ```
-Header, 16 bytes:
-  magic        u64   0x5243534544535953 (the bytes "SYSDESCR")
-  version      u32   1
-  entry_count  u32   1 to 4096
+Header, 24 bytes:
+  magic             u64   0x5243534544535953 (the bytes "SYSDESCR")
+  version           u32   2
+  entry_count       u32   1 to 4096
+  security_version  u32   1 to 64: the number that the version floor compares
+  reserved          u32   0
 Entry, 80 bytes, entry_count times:
   name         [32]u8   the name; zero bytes after it
   kind         u32      1 kernel, 2 module, 3 resource
@@ -103,6 +108,7 @@ The rules that make one system have one description, and one hash:
 - Entry 0 is the kernel module. The modules of the boot image come next, in the order of the boot image. The resources come last, in the order of the boot image.
 - A name has one byte at least, then zero bytes only. Each reserved field is zero.
 - The reader refuses a file of another size, another magic, another version, or another order of kinds.
+- The reader refuses a security version of 0 or above 64. The build writes `system_description.SECURITY_VERSION`, which the publisher of the system raises only in the commit that fixes a flaw that a return to an older system would bring back (section 10).
 - The reader refuses two entries with one name: the loader finds a module by its name.
 - A boot volume with no system description does not boot: there is no state "not signed".
 
@@ -125,6 +131,7 @@ The checks fail on the first entry that differs:
 A failed check of the boot program stops the boot. The kernel does not start.
 
 - The serial log has one line with the file and the two hashes: `boot program: console does not have the hash of the system description: expected <64 digits>, found <64 digits>`. A wrong signature gives `boot program: the signature of the system description is wrong`.
+- A refusal of a TPM floor gives `boot program: the security version 1 of the system description is below the version floor 2 of the TPM: an older system`, or `boot program: the key number 1 of this boot program is below the key floor 2 of the TPM: its key is revoked`. The boot display shows the same sentence.
 - The boot display shows the same failure in red in its head, with the first 16 digits of each hash. Its step is "the kernel module" for the kernel, else "the boot image".
 - The boot program turns off the watchdog of the firmware, so the failure stays on the screen until the machine is stopped by hand. It never returns to the firmware: the firmware does not try the next boot option.
 - With Secure Boot on, a boot program that the firmware refuses never starts. The boot manager of the firmware writes `BdsDxe: failed to load Boot<number>` on the serial console, and tries its next boot option.
@@ -160,12 +167,13 @@ The signing key is an Ed25519 key pair of the principal that signs the system. I
 5. The tool refuses to replace an existing key.
 6. To enrol the certificate in the firmware of a real machine, someone present at the machine uses the setup of the firmware: the certificate `firmware_signing_key.crt` as an entry of `db`, or as the platform key, the key exchange key and the one entry of `db`, then Secure Boot on. The steps depend on the firmware of the machine (`INSTALL.md`, "4. Start with Secure Boot").
 7. For a release, commit `release_signing_key.public` as `resources/keys/release_signing_key.public` and the certificate as `resources/keys/firmware_signing_key.crt`, and put the four values of the folder in the secrets of the repository (`secrets/README.md`).
+8. Add the line `<key number> <public key>` to `resources/keys/key_numbers`, with the next key number: the build refuses a key with no line (section 10).
 
 ### Use
 
 1. Set `SYSTEM_SIGNING_KEY=<folder>/signing_key` before each build.
-2. Run `modustool key show` to print the public key that the build uses.
-3. The build puts the public key in the boot program and signs the description of each boot volume. With the same key it signs each replacement row of the replacement list of the boot image: the root service writes a replacement of a module only for a row that verifies under this key (`MODULE_CONTRACT.md`, "Who may replace a module").
+2. Run `modustool key show` to print the public key that the build uses, and its key number.
+3. The build puts the public key and its key number in the boot program and signs the description of each boot volume. With the same key it signs each replacement row of the replacement list of the boot image: the root service writes a replacement of a module only for a row that verifies under this key (`MODULE_CONTRACT.md`, "Who may replace a module").
 
 ### Backup
 
@@ -175,12 +183,12 @@ The signing key is an Ed25519 key pair of the principal that signs the system. I
 ### Loss
 
 1. A lost private key cannot sign a new system description. The boot program of the machine still accepts the descriptions that the lost key signed.
-2. To recover, make a new key, build a new boot program with the new public key, and install it on the boot volume. With Secure Boot, the firmware signing key must also sign that boot program.
+2. To recover, make a new key, give it the next key number in `resources/keys/key_numbers`, build a new boot program with the new public key, and install it on the boot volume. Its first start raises the key floor, so the lost key is revoked too. With Secure Boot, the firmware signing key must also sign that boot program.
 3. If the firmware signing key is lost too, the firmware refuses each new boot program until someone present at the machine enrols a new certificate in the setup of the firmware.
 
 ### Theft
 
-Anyone who has the private key can sign a system that the boot program accepts. Make a new key and a new boot program at once. No list of revoked keys exists.
+Anyone who has the private key can sign a system that the boot program accepts. Make a new key at once, give it the next key number in `resources/keys/key_numbers`, and install a system signed with it. Its first start raises the key floor of the TPM: each boot program of the stolen key, and of each key before it, then refuses to start on that machine (section 10). A machine on which no system of the new key started yet still starts a system of the stolen key. On a machine where a system of the thief started, its boot program raised the version floor of the stolen key, up to 64, and the key floor up to the stolen number: the new key has a version floor of its own, so it starts. Its kernel and its programs could raise no floor: the policy needs PCR 11 before the measure. They could, with the TPM, remove the floors (section 10, "Code with the TPM"); the first start of the new key defines them again.
 
 ### The release signing key
 
@@ -212,7 +220,7 @@ Designed, not built. When `HashLogExtendEvent` fails, the boot program can send 
 
 ### The machines of the TPM
 
-The machines of the TPM run a software TPM (swtpm) behind the CRB interface of QEMU. They run in each full check: the two machines of the measure in `modustool test trusted_boot`, and the ten machines of the keys sealed by the TPM in `modustool test principals`. The TPM device is an option of a test machine, apart from its firmware.
+The machines of the TPM run a software TPM (swtpm) behind the CRB interface of QEMU. They run in each full check: the two machines of the measure and the six machines of the TPM floors in `modustool test trusted_boot`, and the ten machines of the keys sealed by the TPM in `modustool test principals`. The TPM device is an option of a test machine, apart from its firmware.
 
 **The fault that QEMU 10.2 had.** With the QEMU of Nixpkgs, about one start in four of a machine of the TPM failed. The firmware sent one of its own measures (a `TPM2_PCR_Extend`, before the boot manager), waited, cancelled the command, and then marked its TPM as absent. `HashLogExtendEvent` of the boot program then failed at once with `EFI_DEVICE_ERROR` (status `8000000000000007`), and no command reached the TPM.
 
@@ -226,7 +234,7 @@ What the test machines do:
 - **The machines of the measure use a firmware without Secure Boot**: `pkgs.OVMF.override { tpmSupport = true; }` (`OVMF_TPM_CODE`): the TPM driver, no Secure Boot, so no system management mode, and the CRB interface. Nixpkgs builds no such variant: the flake builds it from the source of EDK II, once.
 - **The machines of the keys sealed by the TPM use the firmware with Secure Boot** (`OVMF_FULL_CODE`, with the variable store in which the build enrolled the certificate of the test firmware signing key) and a software TPM. That firmware has a TPM driver and measures the state of Secure Boot into PCR 7. A seal needs the verifier `Firmware_And_Boot_Program` (`PRINCIPALS.md`, "The machine key sealed by the TPM"), and these machines run the root service of a release, so the rule of the seal holds in each of them. They start two signed volumes: the signed main volume (`secure_boot`), and the other system (`other_system`), whose boot program the build also signs. The signature changes no byte of the boot image, so the other system keeps its own PCR 11.
 - **One machine of the keys sealed by the TPM has Secure Boot off.** It starts the signed other system on `OVMF_TPM_CODE`, which starts a signed boot program too. Its PCR 11 is the PCR 11 of the last seal; only PCR 7 differs. The TPM refuses, the recovery key opens the key, `unlock` does not seal it again, and `machine_seal()` is refused, because the firmware did not verify the boot program.
-- **The machines of Secure Boot of `test trusted_boot` have no TPM device**: they test what the firmware starts, not the measure.
+- **The three machines of Secure Boot of `test trusted_boot` have no TPM device**: they test what the firmware starts, not the measure. The six machines of the TPM floors of the same part have a software TPM, and Secure Boot on in five of them (section 10).
 - **What each machine of the TPM prints**: the count of `Startup` commands, the count of abandoned commands, and the name of the command before the first cancel. A good machine has one `Startup` and no abandoned command. QEMU writes a trace of the device with the time of each line (`<machine>_qemu_tpm_trace.log`: each command that the device received, each write of the firmware to the device, a start or a cancel).
 - **The firmware with Secure Boot and a software TPM failed at each run with the QEMU that waits through io_uring**, with system management mode (`OVMFFull`) and without it. Its trace showed the same fault as the machines of the measure: a `TPM2_PCR_Extend` that swtpm answered, and a cancel of the firmware 152 s later. If a machine of the keys sealed by the TPM prints an abandoned command, read its trace first.
 - **The run.** `modustool test principals` runs them, and so does each full check (`PRINCIPALS.md`, "8. The tests").
@@ -256,6 +264,7 @@ The machines with this firmware run with four processors, as every other machine
 - **Two keys with Secure Boot**: an Ed25519 key for the description and an RSA key for the firmware.
 - **The start of the firmware with system management mode**: the tool prints the time from the start of QEMU to `boot program: started` for each machine with that firmware.
 - **The boot volume of each test**: the build signs one boot image for each boot volume, because the kernel of one test volume differs.
+- **The TPM floors**: five commands through the firmware at each start (PCR 7, then the public area and the bytes of each floor), and, at a start that raises a floor, a policy session, `TPM2_PolicyPCR`, `TPM2_NV_SetBits` and a flush, after a definition when the index is new. No measure gives their time apart yet. Each security version and each key number is one of 64 bits of its floor.
 
 ## 9. Code
 
@@ -267,9 +276,62 @@ The machines with this firmware run with four processors, as every other machine
 | The check of the root service | `src/programs/root/trust.odin` |
 | The line of the trust and the line of the check on the boot display | `src/library/support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
 | The places of the card of the boot image | `src/library/support/bootscreen/image_card` |
-| The signature, the keys, the command `key` | `tools/modustool/system_description.odin` |
-| The eleven machines of `test trusted_boot` | `tools/modustool/trusted_boot_scenario.odin` |
+| The signature, the keys, the key numbers, the command `key` | `tools/modustool/system_description.odin`, `resources/keys/key_numbers` |
+| The seventeen machines of `test trusted_boot`, and the plant of another system with swtpm alone | `tools/modustool/trusted_boot_scenario.odin` |
+| The check and the raise of the TPM floors by the boot program | `src/boot/trust.odin` (`floors_check`, `floor_raise`) |
+| The commands of the indices of the floors, the checks of their answers, the decisions | `src/library/support/tpm2` |
 | The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/modustool/secure_boot.odin` |
 | The release volume, the GPT disk, the release signature, `release`, `verify`, `key write` | `tools/modustool/release_image.odin` |
 | The Ed25519 code of the boot program | `src/library/support/cryptography/ed25519` (`docs/CRYPTOGRAPHY.md`) |
 | The TPM service, after the start | `src/programs/tpm`, `src/library/support/tpm2`, `src/library/contract/tpm_service` |
+
+## 10. The TPM floors
+
+The TPM floors make the TPM refuse an older system and a revoked key. The design and its refused forms are in `src/md/features/rollback_floors.md`.
+
+**The two numbers.**
+
+- The security version is a field of the header of the system description (section 3): 1 to 64. The description signature covers it. The publisher of the system raises `system_description.SECURITY_VERSION` only in the commit that fixes a flaw that a return to an older system would bring back. A release with no such fix keeps it, so a principal can go back to the release before.
+- The key number is a number from 1 to 64 that the boot program holds beside the public key of the signing key. `resources/keys/key_numbers` gives each public key of the publisher its number: the test signing key has 1, the signing key of the publisher 2. With Secure Boot on, nobody changes it without the firmware signing key. The boot program has no setting for it: a release refuses a test volume whose number is raised.
+
+**The floors** are indices of the TPM of the type `TPM_NT_BITS`: 64 bits, to which `TPM2_NV_SetBits` only adds bits. The floor is the place of the highest set bit plus one, or 0.
+
+| Floor | Index | It refuses |
+|---|---|---|
+| The key floor | `0x01806D00` | A boot program whose key number is below it: its signing key is revoked |
+| The version floor of the key number n | `0x01806D00` + n | A system description, with a boot program of the key number n, whose security version is below it |
+
+A system that a stolen key signed can carry the security version 64, and raise the version floor of that key to it; the version floor of the next key stays apart.
+
+Each index has the attributes `TPMA_NV_POLICYWRITE`, `TPMA_NV_AUTHREAD` with an empty authorization value, and `TPMA_NV_NO_DA`. Its policy is `TPM2_PolicyPCR` of PCR 7 at its definition and of PCR 11 before the measure (32 zero bytes). PCR 7 holds the state of Secure Boot and the certificate that verified the boot program. So only a boot program that the certificate of the publisher verified, with Secure Boot on, and before it measures the system, raises a floor. No kernel and no program can.
+
+**The check and the raise, by the boot program.** After the signature and the hashes, before the measure, through `SubmitCommand` of the firmware:
+
+1. It reads PCR 7, and computes from it the policy of a floor.
+2. It reads the public area of the key floor and of the version floor of its key number. An absent index is the floor 0. An index with other attributes or another policy is foreign: the floor 0. An index with the area of a floor that was never written is the floor 0 too: the boot program writes each floor that it defines at once, so another system planted it.
+3. It reads the 8 bytes of each index that was written. A read whose authorization the TPM refuses is the floor 0: another system planted the index with an authorization value.
+4. It stops the start when its key number is below the key floor, then when the security version is below the version floor of its key number.
+5. With Secure Boot on, it raises both floors: it removes a foreign, planted or unreadable index, defines an absent or removed one, and sets the bit of its number in a policy session.
+6. Then it measures the system into PCR 11.
+
+The log has the lines `boot program: the TPM floors: the key floor 1 (held), the version floor of the key number 1 2 (held)`, `boot program: this boot program has the key number 1, and the system description the security version 2`, then one line for each step of a raise: `boot program: the key floor: removed a foreign index: another system defined it, or PCR 7 changed`, `boot program: the key floor: defined its index`, `boot program: the version floor of the key number 1 rose from 0 to 2`, or `boot program: the key floor is 1: this boot program, with the number 1, leaves it`. With Secure Boot off: `boot program: the TPM floors stay as they are: the firmware did not verify this boot program`. The trust record keeps the numbers, the floors that the boot program read and their states (`Absent`, `Held`, `Foreign`, `Never_Written`, `Read_Refused`, `Not_Read`). A refused system runs no kernel and no program.
+
+**When the floor rises.** At the first start of a new system, after its checks and before its measure. A new release with a fault later in its start already refuses the release before it then: the way back is a new image of the publisher with the same security version.
+
+**The recovery of a machine whose floor is above every image.**
+
+1. Start an image of the publisher whose key number is at or above the key floor, and whose security version is at or above the version floor of that key number. The publisher signs one.
+2. Or clear the TPM in the menu of the firmware. The clear removes every floor and every key sealed by the TPM; the recovery keys open those keys.
+
+**What the floors do not protect against.**
+
+- **A clear of the TPM.** It removes every floor. Each signed system then starts, until the next start with Secure Boot on defines them again.
+- **Code with the TPM.** The owner hierarchy has no authorization value. So another system on the machine (with Secure Boot off, or under a vendor certificate of `db`), or the current system once a flaw gives an attacker its kernel or its TPM service, removes a floor with `TPM2_NV_UndefineSpace` or puts its own index there, then writes an older signed image with a known flaw to the boot volume. The boot program takes the floor 0, the older system starts, and its boot program defines the floors at its own, lower, numbers: the flaw stays across restarts. The floors stop a rollback by anyone who can only choose which signed volume starts, not by code that runs with the TPM. Such code cannot raise a floor: the policy needs PCR 11 before the measure.
+- **A change of PCR 7.** A change of `db` or of `dbx`, or a firmware update that resets the variables, changes PCR 7. An update of `dbx` needs no principal at the machine: any system can apply one that a KEK of the firmware signed. At the next start every floor is foreign, so each older signed system passes, and the first start with Secure Boot on defines the floors at its own numbers: an older system then makes its numbers the floors.
+- **Another software at the two handles.** The range of the owner is shared. The boot program removes any index at a handle of a floor that is not a floor that it can read, also the counter or the secret of another program that chose the same handle.
+- **A machine with no TPM, or whose firmware stopped using it.** No floor is read, and nothing is refused. Such a machine opens no key sealed by the TPM either.
+- **Secure Boot off.** PCR 7 differs, so each index looks foreign and the floor is 0, and the boot program changes no floor. A boot program that nothing verified can skip the check anyway.
+- **A boot program built before the floors.** It has no check. None was ever built with the production firmware signing key (`resources/keys/README.md`).
+- **A leaked firmware signing key.** Its holder signs a boot program with any key number. The answer is a new certificate in `db`.
+
+**The machines.** `modustool test trusted_boot` runs six machines of the floors, with one software TPM whose state they share. A newer system (`boot_volume_newer_system.img`, the security version one above the repository) defines and raises the key floor and the version floor of its key number. Then swtpm alone, as another system can, puts at the version floor an index with the area of a floor and an authorization value, never written, and at the key floor a foreign index; the next start of the newer system removes both and puts its floors back. The signed main volume is then refused for its security version. A newer system whose boot program has the key number one above (`boot_volume_newer_key.img`) raises the key floor and starts the version floor of its key. The boot program of the first machine is then refused: its key is revoked. Last, the signed main volume on the firmware with Secure Boot off, so another PCR 7: each floor is foreign, the older system starts, and its boot program changes no floor. A refused machine shows its failure, and the tool checks that its kernel never started.

@@ -137,7 +137,7 @@ release_test_files :: proc(root_text, console_text: string, resource_name: strin
 // the file that says who signed it.
 @(private = "file")
 release_test_volume_write :: proc(volume, signed_by: string, files: []Image_File, kernel_text: string) {
-	header := system_description.Header{magic = system_description.MAGIC, version = system_description.VERSION, entry_count = 1}
+	header := system_description.Header{magic = system_description.MAGIC, version = system_description.VERSION, entry_count = 1, security_version = system_description.SECURITY_VERSION}
 	kernel_entry := description_entry(system_description.KERNEL_ENTRY_NAME, .Kernel, transmute([]u8)kernel_text)
 	description := make([dynamic]u8, context.temp_allocator)
 	append(&description, ..mem.ptr_to_bytes(&header))
