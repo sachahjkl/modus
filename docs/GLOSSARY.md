@@ -2019,7 +2019,7 @@ Do not use: heap, scratch memory.
 
 A counted part is a part of a budget request that the tool computes from the files of the build: the module pages, the thread pages and the window pages.
 
-The module pages are the memory size of the module and of each module that it imports. The thread pages are a stack and a thread area for each thread: 68 pages for the first one, 19 for each other one. The window pages are the two pictures of its window. A counted part changes with a build, with no change of the source.
+The module pages are the memory size of the module and of each module that it imports. The thread pages are a stack and a thread area for each thread: 72 pages for the first one, with the context and the own log ring of the program, and 19 for each other one. The window pages are the two pictures of its window. A counted part changes with a build, with no change of the source.
 
 The design: `src/md/features/module_budget_request.md`; the guide: `docs/MODULE_CONTRACT.md`, "The budget that a module asks for".
 
