@@ -10,6 +10,13 @@
 // program adds the time of the [time page](term:time-page) to it. The bar
 // of the compositor shows the date and the time this way.
 //
+// **The time zone** (src/md/features/time_zone.md). The principal chooses
+// it with the setting `time_zone` of the program `settings`. This program
+// waits on the settings page, which it reads as each program does, and
+// copies the zone into the date page: the page then holds the whole local
+// time, and the root service, which waits on the date page, moves the next
+// edge of the rule of the day at once.
+//
 // **What a reader sees.** No window. The root service starts it at each
 // boot, before the console. The log gets `date: ok, <date> UTC, seconds
 // since 1970 <count>, from the real-time clock at the time <time> ms of the
@@ -17,11 +24,14 @@
 // correction (`date: the clock read again ... the date moved by <count>
 // ms`): after the first read, after each 30th read, and after a move of one
 // second or more. With no valid clock, the log says `the system has no
-// date` at the level error, and the bar shows the time since boot.
+// date` at the level error, and the bar shows the time since boot. At each
+// new zone: `date: the time zone of the date page is +08:00, from the
+// setting time_zone`.
 //
 // **Its grants**: **Clock**, the date page with the right Write and the two
 // ports of the clock (the one writer of the date), and **Serve**, its
-// export `now`.
+// export `now`. The settings page, read-only, as each program that is not
+// a terminal.
 //
 // ```
 // connect("date")
@@ -29,7 +39,10 @@
 // ```
 package date_service
 
+import "base:intrinsics"
 import "modus:contract/date"
+import "modus:contract/fixed_addresses"
+import "modus:contract/settings"
 import "modus:support/calendar"
 import "modus:support/system"
 
@@ -109,6 +122,34 @@ Date :: struct {
 }
 
 page: ^date.Page
+settings_page: ^settings.Page // The settings page, read-only; nil: the zone stays UTC.
+
+// zone_follow copies the time zone of the settings page into the date page
+// when the two differ, and wakes the waiters of the date page: the root
+// service then computes the rule of the day in the new local time. A read
+// that gave up gives the defaults, so it copies nothing from a page left in
+// a change (an odd count) or from a read whose count moved after it: the
+// count only grows, so the wait of the loop ends at once and the next turn
+// reads the page again.
+zone_follow :: proc "contextless" () {
+	if settings_page == nil {
+		return
+	}
+	choice := settings.read(settings_page)
+	if choice.change_count & 1 != 0 || intrinsics.atomic_load_explicit(&settings_page.change_count, .Acquire) != choice.change_count {
+		return
+	}
+	zone := i64(choice.zone_offset_minutes) * 60
+	if zone == date.zone_offset_seconds_read(page) {
+		return
+	}
+	// The line comes before the write: the lines that the new zone causes
+	// (the root service, the bar) then come after it on the log.
+	text: [settings.ZONE_TEXT_SIZE]u8
+	system.log("date: the time zone of the date page is ", settings.zone_text(text[:], choice.zone_offset_minutes), ", from the setting ", settings.TIME_ZONE_NAME)
+	date.zone_write(page, zone)
+	system.word_wake(&page.change_count, system.WAKE_ALL)
+}
 
 // now gives the date and the time of day in UTC, from the date page and the time page: the same value that each program reads with no call. All zero: the machine has no date.
 //
@@ -183,12 +224,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	page = (^date.Page)(address)
+	if .Settings_Page in fixed_addresses.ranges_mapped(&ctx.values) {
+		settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
+	}
+	zone_follow()
 	started := system.nanoseconds()
 	at_zero, seconds, edge, valid := synchronize()
 	if !valid {
 		system.log_in("date", .Error, "date: the real-time clock gives no valid date: the system has no date")
 	} else {
 		date.write(page, .Real_Time_Clock, at_zero)
+		// The first date changes the rule of the day: the root service waits
+		// on this word for it.
+		system.word_wake(&page.change_count, system.WAKE_ALL)
 		text: [32]u8
 		system.log("date: ok, ", calendar.iso_text(text[:], seconds), " UTC, seconds since 1970 ", seconds, ", from the real-time clock at the time ", edge, " ms of the system; the date of the time 0 in ", (system.nanoseconds() - started) / 1000, " us")
 	}
@@ -202,6 +250,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		wait: system.Wait
 		system.service_wait(&wait, &service)
+		// The count is read before the zone: a change of the settings
+		// page after this read ends the wait at once.
+		if settings_page != nil {
+			system.wait_word(&wait, &settings_page.change_count, intrinsics.atomic_load_explicit(&settings_page.change_count, .Acquire))
+		}
+		zone_follow()
 		system.wait_end(&wait, next)
 		system.service_run(&service)
 		if system.time() < next {
@@ -220,6 +274,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// The drift since the first read: what the time of the system lost
 			// or gained against the clock.
 			system.log("date: the clock read again at the time ", edge_now, " ms of the system: the date moved by ", corrected - before, " ms; ", corrected - first_at_zero, " ms since the start, ", corrections, corrections == 1 ? string(" read") : string(" reads"), " after the first")
+			// The first date after a clock that gave none, or a move of a
+			// second or more (a machine paused, a clock set again), can move
+			// the next edge of the rule of the day: the root service waits on
+			// this word for it. A drift of milliseconds moves no edge, so the
+			// other corrections wake nobody, and the reads that only log wake
+			// the root service for one turn that changes nothing.
+			system.word_wake(&page.change_count, system.WAKE_ALL)
 		}
 	}
 }

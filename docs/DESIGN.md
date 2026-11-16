@@ -233,7 +233,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 
 - The background is `colors.background` with the grid of points of section 3. The compositor computes it at its start, and again at each change of the appearance.
 - The bar is 32 pixels high, at the top of the screen. It has the surface of a card (`colors.card_top` to `colors.card_bottom`) and a line of 1 pixel in `colors.track` at its bottom.
-- The bar holds, from the left: the mark of the system (the heron with cells of 1 pixel, 24 by 24, at (16, 4): section 11); the button `programs`; the button `windows`; at the right, the key of the palette ("palette: super") and the clock: the date and the time of day in UTC (`src/library/contract/date`), or the time since the start of the machine while the system has no date.
+- The bar holds, from the left: the mark of the system (the heron with cells of 1 pixel, 24 by 24, at (16, 4): section 11); the button `programs`; the button `windows`; at the right, the key of the palette ("palette: super") and the clock: the local date and time of day, in the time zone of the setting `time_zone` (`src/library/contract/date`), or the time since the start of the machine while the system has no date.
 - A button is 24 pixels high, in `colors.track`. The button of an open menu is in `colors.title`, with its label in white.
 
 ### Menus

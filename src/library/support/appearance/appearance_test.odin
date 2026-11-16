@@ -85,7 +85,29 @@ the_moment_of_a_date_page :: proc(t: ^testing.T) {
 	date.write(&page, .Real_Time_Clock, DAY_START)
 	testing.expect_value(t, moment_of(&page, 5000), Moment{known = true, milliseconds = DAY_START + 5000})
 	page.zone_offset_seconds = 1 << 40
-	testing.expect_value(t, moment_of(&page, 0).zone_offset_seconds, ZONE_OFFSET_LIMIT)
+	testing.expect_value(t, moment_of(&page, 0).zone_offset_seconds, date.ZONE_OFFSET_SECONDS_LIMIT)
+	page.zone_offset_seconds = -(1 << 40)
+	testing.expect_value(t, moment_of(&page, 0).zone_offset_seconds, -date.ZONE_OFFSET_SECONDS_LIMIT)
+}
+
+// The zone that the program `date` writes is the zone of the moment, and
+// it moves the rule: 01:04 of UTC is 09:04 at +08:00, in the day, where
+// UTC is in the night. This is the case of the machine test.
+@(test)
+the_zone_of_a_date_page :: proc(t: ^testing.T) {
+	page: date.Page
+	date.write(&page, .Real_Time_Clock, DAY_START)
+	night := moment_of(&page, u64((1 * 60 + 4) * 60 * 1000))
+	testing.expect_value(t, in_force_of(.Auto, night), settings.Appearance_In_Force.Dark)
+	EIGHT_HOURS :: i64(8 * 3_600)
+	date.zone_write(&page, EIGHT_HOURS)
+	testing.expect_value(t, page.change_count, u32(4))
+	day := moment_of(&page, u64((1 * 60 + 4) * 60 * 1000))
+	testing.expect_value(t, day.zone_offset_seconds, EIGHT_HOURS)
+	testing.expect_value(t, local_second_of_day(day), (9 * 60 + 4) * i64(60))
+	testing.expect_value(t, in_force_of(.Auto, day), settings.Appearance_In_Force.Light)
+	// The next edge is 19:00 of the local time: 11:00 of UTC.
+	testing.expect_value(t, next_edge(day), at(11, 0, 0).milliseconds)
 }
 
 // The sentence of the log: what the modus tool reads.

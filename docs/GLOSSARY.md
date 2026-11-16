@@ -2491,9 +2491,17 @@ Do not use: timestamp, wall clock, epoch time, Unix time (in text).
 
 The date page is one page that the root service creates and maps read-only into each program that it starts, at its fixed range.
 
-The program `date` writes there the date of the time 0 of the system. So a program reads the date with no kernel entry: that date plus the milliseconds of the time page.
+The program `date` writes there the date of the time 0 of the system. So a program reads the date with no kernel entry: that date plus the milliseconds of the time page. The page also holds the time zone, which the program `date` copies from the settings page, so the local time is in one page.
 
 Do not use: wall-clock page, vDSO, clock page.
+
+### Time zone
+
+The time zone is the fixed offset from UTC, in minutes, that the principal chooses with the setting `time_zone`: the local time is the date of UTC and this offset.
+
+Its text is the form of ISO 8601: `+08:00`, `-03:30`, `+00:00`. It goes from `-12:00` to `+14:00` by quarters of an hour, and `+00:00`, UTC, is the default. It has no summer time: a principal in a zone with summer time changes it twice a year. The program `settings` writes it on the settings page; the program `date` copies it into the date page. The bar shows the local time, and the rule of the day of the setting `appearance` `auto` counts its hours in it. The date of the system stays in UTC: the storage service, the HTTP server and `date.now()` give UTC. It is not a named zone with rules (`Europe/Paris`): the system has no tz database. The design: `src/md/features/time_zone.md`.
+
+Do not use: timezone (one word), TZ, locale, UTC offset (for the setting).
 
 ### Back pressure
 
@@ -5271,7 +5279,7 @@ Do not use: proportional font cache.
 
 ### Setting
 
-A setting is one choice of the principal of the machine that each program follows: the font, the order of the subpixel bands, the pointer theme, the grid fit, the layout of the keyboard or the appearance.
+A setting is one choice of the principal of the machine that each program follows: the font, the order of the subpixel bands, the pointer theme, the grid fit, the layout of the keyboard, the appearance or the time zone.
 
 A setting is one value of the settings page, with 0 as its default:
 
@@ -5280,7 +5288,8 @@ A setting is one value of the settings page, with 0 as its default:
 - `pointer_theme`: `owner` or `system`;
 - `grid_fit`: `on` or `off`;
 - `keyboard_layout`: `us` or `french`;
-- `appearance`: `auto`, `dark` or `light`.
+- `appearance`: `auto`, `dark` or `light`;
+- `time_zone`: a fixed offset from UTC, `-12:00` to `+14:00`, `+00:00` by default (see "Time zone"). It is a number and not a name of a list, so it is not a member of `settings.Setting`, and the palette does not list it.
 
 The program `settings` is the one writer. It shows each setting as a row of buttons, and it exports `settings.set(name, value)` and `settings.get(name)`, so the console and `modustool call` change a setting too. A caller that does not act for the principal gets `No_Grant`. A change takes effect while programs run: the compositor sees it, draws its screen again and sends `Settings_Changed` to each window. The values survive a stop: `settings` keeps them as one record in its private store, and its boot pass writes them on the page at the start.
 
@@ -5314,7 +5323,7 @@ Do not use: Option, level-3 shift, compose key (for this).
 
 The settings page is the one page of memory that holds the current value of each setting, which each program with a surface reads.
 
-The root service creates the page at the start. The program `settings` receives it with Write; each program with a surface, each terminal and the compositor receive it read-only at a fixed address, with its address in the value 13 of their context. The page holds the choices only: a change count and one value for each setting. It holds no address, no size and no hash of a glyph cache, because a writer that chose them could point every later program at memory that it controls.
+The root service creates the page at the start. The program `settings` receives it with Write; each program with a surface, each terminal and the compositor receive it read-only at a fixed address, with its address in the value 13 of their context. The page holds the choices only: a change count, one value for each setting, and the time zone. It holds no address, no size and no hash of a glyph cache, because a writer that chose them could point every later program at memory that it controls.
 
 A write makes the change count odd while it lasts; a reader reads again until it sees one even count (`settings.read`), and after 64 reads takes the defaults. The compositor waits on the change count as a word wait. A value that the page does not know reads as 0: the worst that a writer can do to another program is to change a look.
 
