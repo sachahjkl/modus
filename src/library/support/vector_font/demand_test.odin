@@ -70,7 +70,8 @@ a_glyph_on_demand_is_the_glyph_of_the_build :: proc(t: ^testing.T) {
 }
 
 // The characters of the subset past the glyph cache are drawn; a
-// character that the font does not have, the small rho of B612 among them,
+// character that the font does not have, the capital pi and the small rho
+// of B612 among them,
 // is absent; a character whose words do not fit is refused, and gives its
 // words back.
 @(test)
@@ -96,7 +97,7 @@ the_greek_letters_and_the_refusals :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expectf(t, writer.words_used < demand_cache.WORD_CAPACITY / 4, "the subset takes %v words of %v", writer.words_used, demand_cache.WORD_CAPACITY)
-	absent := [?]rune{0x03C1, 0x0101, 0x4E00}
+	absent := [?]rune{0x03A0, 0x03C1, 0x0101, 0x4E00}
 	for character in absent {
 		_, result := demand_glyph_draw(&demand, &writer, character, memory)
 		testing.expectf(t, result == .Absent, "U+%04X is absent from the font", int(character))

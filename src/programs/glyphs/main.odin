@@ -23,9 +23,10 @@
 // `start("glyphs")` is refused.
 //
 // **What a reader sees.** The log has, at its start, `glyphs: the font
-// service drew the 48 characters of its subset of b612 into the demand
-// cache before it read a request: 48 drawn, 0 refused, 0 that the font
-// cannot draw; <n> words of 262144`. For each program, the first request with a character outside
+// service drew the <n> characters of its subset of b612 into the demand
+// cache before it read a request: <n> drawn, 0 refused, 0 that the font
+// cannot draw; <w> words of 262144`, where n is demand_cache.subset_count:
+// 47 today. For each program, the first request with a character outside
 // the subset or that does not fit the cache writes one line, and the first
 // answer that does not fit its ring writes one line; the counts go on, and
 // the stop of a program that had one writes its totals.

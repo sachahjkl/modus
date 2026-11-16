@@ -485,7 +485,7 @@ Each glyph cache of the boot image, Spleen 8x16 and the boot display stay as the
 
 ### 13.4 The first range
 
-The subset of B612 Regular holds the Greek letters U+0391 to U+03A9 and U+03B1 to U+03C9 after the characters of the glyph cache (`demand_cache.subset_ranges`, `modustool vector_fonts`): 48 characters. B612 1.008 has no small rho (U+03C1) and no Latin Extended-A. Its glyph cache does not change: the build draws the 192 characters only.
+The subset of B612 Regular holds the Greek letters that its character map has, after the characters of the glyph cache (`demand_cache.subset_ranges`, `modustool vector_fonts`): 47 characters, U+0391 to U+039F, U+03A1, U+03A3 to U+03A9, U+03B1 to U+03C0 and U+03C2 to U+03C9. B612 1.008 has no capital pi (U+03A0), no small rho (U+03C1) and no Latin Extended-A. The window `interface_font` shows each letter of the subset, and its line `interface_font: each Greek letter of the subset is drawn from the demand cache: 47 letters` is the line of the machine test. Its glyph cache does not change: the build draws the 192 characters only.
 
 ### 13.5 Who can write the demand cache
 
@@ -504,7 +504,7 @@ A glyph drawn on demand has the bytes that the build gives to the same character
 | Measure | Value |
 |---|---|
 | The demand cache | 1 150 976 bytes: 281 pages that the root service pays once |
-| The words of the 48 Greek letters, at each scale and position | under 1/4 of the 1 MiB of words (host test `the_greek_letters_and_the_refusals`) |
+| The words of the 47 Greek letters, at each scale and position | under 1/4 of the 1 MiB of words (host test `the_greek_letters_and_the_refusals`) |
 | The boot image, before and after | not measured yet: the image with and without the module `glyphs` and the wider subset |
 
 ### 13.8 What is left

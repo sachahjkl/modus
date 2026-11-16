@@ -240,16 +240,35 @@ a_frame_wants_each_character_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, reader.wanted_count, 0)
 }
 
-// The subset: the 48 Greek letters, with no small rho and no U+03A2; a
-// character of the glyph cache is not in it.
+// The subset: runs in the order of the code points, with a gap between two
+// runs, each run of Greek letters; subset_count is the count of its
+// characters, and in_subset says yes for each of them only. The letters
+// that B612 lacks (the capital pi, the small rho), U+03A2 and a character
+// of the glyph cache are not in it. That the font has each character of
+// the subset is the host test of the tool,
+// each_source_font_has_the_characters_of_a_cache.
 @(test)
 the_subset_is_the_greek_letters :: proc(t: ^testing.T) {
-	testing.expect_value(t, subset_count(), 48)
-	inside := [?]rune{0x0391, 0x03A9, 0x03B1, 0x03C0, 0x03C2, 0x03C9}
-	for character in inside {
-		testing.expectf(t, in_subset(character), "U+%04X is in the subset", int(character))
+	counted := 0
+	previous_last := rune(-1)
+	for range in subset_ranges {
+		testing.expectf(t, range.first <= range.last && range.first > previous_last + 1, "U+%04X to U+%04X: a run after the run before, with a gap", int(range.first), int(range.last))
+		testing.expectf(t, range.first >= 0x0391 && range.last <= 0x03C9, "U+%04X to U+%04X: Greek letters", int(range.first), int(range.last))
+		for character in range.first ..= range.last {
+			testing.expectf(t, in_subset(character), "U+%04X is in the subset", int(character))
+			counted += 1
+		}
+		previous_last = range.last
 	}
-	outside := [?]rune{'W', 0xE9, 0x20AC, 0x0390, 0x03A2, 0x03C1, 0x03CA, 0x4E00}
+	testing.expect_value(t, subset_count(), counted)
+	inside_counted := 0
+	for character in rune(0x0300) ..= 0x03FF {
+		if in_subset(character) {
+			inside_counted += 1
+		}
+	}
+	testing.expect_value(t, inside_counted, counted)
+	outside := [?]rune{'W', 0xE9, 0x20AC, 0x0390, 0x03A0, 0x03A2, 0x03C1, 0x03CA, 0x4E00}
 	for character in outside {
 		testing.expectf(t, !in_subset(character), "U+%04X is not in the subset", int(character))
 	}

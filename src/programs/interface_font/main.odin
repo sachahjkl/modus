@@ -24,10 +24,12 @@
 // whole subset at its start, so the first frame draws the Greek letters
 // from the demand cache. A letter that the cache does not hold yet (the
 // service did not end its start) draws the replacement glyph and is asked
-// for; the answer gives a new frame. The first frame where no letter waits
-// writes `interface_font: 29 characters past the glyph cache are drawn
-// from the demand cache, 0 absent, 0 refused`, with the counts of that
-// frame. With no valid glyph cache in the boot image, it writes
+// for; the answer gives a new frame. The window shows each letter of the
+// subset (demand_cache.subset_ranges). The first frame where no letter
+// waits writes `interface_font: each Greek letter of the subset is drawn
+// from the demand cache: <n> letters`, n the count of the subset, or `not
+// each Greek letter ...` with the counts of that frame. With no valid
+// glyph cache in the boot image, it writes
 // `interface_font: the boot image gives no valid cache of the interface
 // font`.
 //
@@ -68,12 +70,14 @@ ENLARGED_COLUMNS :: 48 // The columns of the small canvas that are enlarged: the
 // The places of the enlarged word in a pixel, in 1/64: 0, a third, two thirds.
 ENLARGED_FRACTIONS := [3]i64{0, 21, 43}
 NUMBERS := [?]string{"7", "42", "1 024", "65 536", "4 294 967 296", "100 000"}
-// Characters past the glyph cache: the font service draws them on demand.
-// No small rho: B612 does not have it.
-GREEK := [?]string {
-	"ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ",
-	"Δt = 16 ms   λ = 532 nm   θ = 45°   σ, μ, π = 3.14159",
-}
+// Characters past the glyph cache, which the font service draws: the
+// capitals and the small letters of its subset, each one, made from
+// demand_cache.subset_ranges at the start, then a line with some of them.
+// A letter that B612 lacks is in no line: the subset does not have it.
+GREEK_SMALL_FIRST :: 0x03B1 // The first small letter of the Greek alphabet.
+GREEK_SENTENCE :: "Δt = 16 ms   λ = 532 nm   θ = 45°   σ, μ, π = 3.14159"
+greek_capitals, greek_small: [LINE_LIMIT]u8
+GREEK: [3]string
 
 // The demand cache of the interface font, when the root service gave it.
 demand: display.Demand
@@ -102,6 +106,22 @@ line_draw :: proc "contextless" (canvas: graphics.Canvas, place: i64, y: int, te
 	_, width, _ = text_shaping.shape(spacing, transmute([]u8)(text[:count]), placed[:count])
 	graphics.text_proportional(canvas, place, y, placed[:count], cache, scale, color, spacing.demand)
 	return width
+}
+
+// greek_lines_make writes the line of the capitals and the line of the
+// small letters of the subset, and fills GREEK.
+greek_lines_make :: proc "contextless" () {
+	capitals, small := 0, 0
+	for range in demand_cache.subset_ranges {
+		for character in range.first ..= range.last {
+			if character < GREEK_SMALL_FIRST {
+				capitals += text_encoding.character_encode(character, greek_capitals[capitals:])
+			} else {
+				small += text_encoding.character_encode(character, greek_small[small:])
+			}
+		}
+	}
+	GREEK = {string(greek_capitals[:capitals]), string(greek_small[:small]), GREEK_SENTENCE}
 }
 
 // The characters of GREEK that no glyph cache holds, each once: the
@@ -249,7 +269,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 		return
 	}
 	greek_drawn_told = true
-	system.log("interface_font: ", drawn, " characters past the glyph cache are drawn from the demand cache, ", absent, " absent, ", waiting, " refused")
+	// The window shows each letter of the subset: the line of the test
+	// holds when each one is drawn, and names no count of its own.
+	if drawn == u64(demand_cache.subset_count()) && drawn == greek_character_count && absent == 0 && waiting == 0 {
+		system.log("interface_font: each Greek letter of the subset is drawn from the demand cache: ", drawn, " letters")
+	} else {
+		system.log_in("programs", .Warning, "interface_font: not each Greek letter of the subset is drawn from the demand cache: ", drawn, " drawn of ", u64(demand_cache.subset_count()), ", ", absent, " absent, ", waiting, " refused")
+	}
 }
 
 // measure gives the least time of one line in batches, so that a batch
@@ -298,6 +324,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	no_pair_spacing_large = {advances = regular_spacing_large.advances}
 	greek_spacing = regular_spacing
+	greek_lines_make()
 	greek_character_count = greek_characters_count()
 	demand, demand_given = display.demand_open(ctx, &regular_cache)
 	if demand_given {

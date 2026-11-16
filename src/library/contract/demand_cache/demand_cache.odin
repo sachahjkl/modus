@@ -66,16 +66,24 @@ GLYPH_COUNT :: POSITIONS_AT_SCALE_ONE + SIZE_COUNT - 1 // The glyph entries of o
 LINE_HEIGHT_AT_SCALE_ONE :: glyph_cache.CELL_HEIGHT_LIMIT / glyph_cache.SIZE_LIMIT // 16 pixels.
 
 // The characters that the subset of the interface font holds past the
-// glyph cache, in the order of the code points: the Greek letters of B612.
-// B612 1.008 has no small rho (U+03C1), so the small letters are two
-// ranges. The modus tool adds them to the subset after the characters of
-// the glyph cache (tools/modustool/vector_fonts.odin), so the glyph cache
-// of the build does not change.
+// glyph cache, in the order of the code points, as runs with no gap: the
+// Greek letters that the character map of B612 1.008 has. It lacks the
+// capital pi (U+03A0) and the small rho (U+03C1); U+03A2 is no character.
+// The modus tool adds them to the subset after the characters of the glyph
+// cache (tools/modustool/vector_fonts.odin), so the glyph cache of the
+// build does not change. Each count of the subset comes from this list
+// (subset_count).
 Character_Range :: struct {
 	first, last: rune,
 }
 @(rodata)
-subset_ranges := [?]Character_Range{{0x0391, 0x03A1}, {0x03A3, 0x03A9}, {0x03B1, 0x03C0}, {0x03C2, 0x03C9}}
+subset_ranges := [?]Character_Range {
+	{0x0391, 0x039F}, // Alpha to omicron, capitals.
+	{0x03A1, 0x03A1}, // Rho, capital.
+	{0x03A3, 0x03A9}, // Sigma to omega, capitals.
+	{0x03B1, 0x03C0}, // Alpha to pi, small.
+	{0x03C2, 0x03C9}, // Final sigma to omega, small.
+}
 
 // in_subset says if a character is one of subset_ranges. The font service
 // draws these and no other character: a character of the glyph cache, or

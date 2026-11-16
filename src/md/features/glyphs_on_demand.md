@@ -26,7 +26,7 @@ The guide of the subject is [`docs/FONTS.md`](../../../docs/FONTS.md), "13. Glyp
 
 **The font service** is the program `glyphs`, a part of the system that the root service starts after the compositor. It holds the outlines: the subset of the interface font in its module (`resources/fonts/b612.ttf`, the same file whose glyph cache the boot image carries). It is the only program that reads outlines at run time. It draws a glyph with the renderer of the build (`vector_font.demand_glyph_draw`), with the style of the glyph cache of the same font file, at each scale and each position of that cache: three positions at scale 1, one at scales 2 and 3.
 
-**The service draws its whole subset at its start.** Before it reads any request, it draws each character of `demand_cache.subset_ranges`, in the order of the code points. A request then finds each one published before, and a character outside the ranges is answered as absent with no entry (`demand_cache.in_subset`). So the entries of the cache are the same whatever the programs draw: a program reads in it which characters the subset holds, and nothing about another program. The channel of the constraint above is closed for the subset. It opens again only for a cache that fills on demand beyond a fixed subset; each later layer that does that states how it closes the channel ([`ROADMAP.md`](../../../ROADMAP.md)).
+**The service draws its whole subset at its start.** Before it reads any request, it draws each character of `demand_cache.subset_ranges`, in the order of the code points. A request then finds each one published before, and a character outside the ranges is answered as absent with no entry (`demand_cache.in_subset`). So the entries of the cache are the same whatever the programs draw: a program reads in it which characters the subset holds, and nothing about another program. The channel of the constraint above is closed for the subset. It opens again only for a cache that fills on demand beyond a fixed subset: see "The conditions of the later layers" below.
 
 **The demand cache** is one memory object that the root service creates at its start. The font service holds it with Write. Each program with a request ring maps it read-only at the fixed range `Demand_Cache`. Its format is `src/library/contract/demand_cache`:
 
@@ -46,7 +46,7 @@ An entry holds the code point, a state (`Drawn`), the generation that published 
 
 **The placed glyph of a character on demand** is `text_shaping.DEMAND_GLYPH_FIRST` plus its code point. Its advance is the advance of the entry at the scale of the spacing. It has no pair: the pairs of the font are pairs of character indexes of the glyph cache.
 
-**The table holds the subset only.** The service publishes no entry for a character outside the ranges, nor for a character that the font cannot draw. The 48 Greek letters take under a quarter of the 1 MiB of words (the host test `the_greek_letters_and_the_refusals` checks the bound). The state `Absent` of the contract is what a reader gives to an entry that its check refuses.
+**The table holds the subset only.** The service publishes no entry for a character outside the ranges, nor for a character that the font cannot draw. The 47 Greek letters take under a quarter of the 1 MiB of words (the host test `the_greek_letters_and_the_refusals` checks the bound). The state `Absent` of the contract is what a reader gives to an entry that its check refuses.
 
 **What a full cache does.** The first layer never evicts. A character that does not fit the entry table or the words is refused: the service counts it in the header, and the program keeps the replacement glyph. A program does not ask for a character again, so a full cache costs no loop of requests. With the subset of today, the cache never fills.
 
@@ -58,6 +58,14 @@ An entry holds the code point, a state (`Drawn`), the generation that published 
 
 An entry is reused only when no program can still draw it. Each program writes, in the head of its request ring, the generation of the frame that it draws (`reader_frame_begin`). The service withdraws an entry at a generation `g`: it writes a code point that is no character of a text in its place, so a search passes it and finds nothing there, then raises the generation. It reuses the words and the place of that entry only when the frame generation of each client is above `g`. A program that draws no new frame holds the reuse; the service then refuses new glyphs, counted, and never tears a glyph that a program draws. A program that stops is removed by the root service (`Client_Remove`) and holds nothing. Eviction makes a cache that fills on demand: it comes with the closure of the channel of the constraint above.
 
+## The conditions of the later layers
+
+A cache that fills on demand beyond a fixed subset tells each program which characters the others draw, in their order and at their time, across principals ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "20. No ambient access: the other holes to close", row 17). So each later layer of [`ROADMAP.md`](../../../ROADMAP.md) has a condition:
+
+- **The font of the cells on demand.** Each new subset, of Paper Mono and of its bold weight, is drawn whole at the start of the service, as the Greek letters are; or the channel is closed first.
+- **Eviction from the demand cache.** A cache whose entries come and go fills on demand. It comes with a demand cache for each session of a principal, or with another closure of the channel.
+- **More scripts on demand.** A range too large to draw whole at the start fills the cache on demand. It comes after the closure of the channel.
+
 ## Determinism and the size of the boot image
 
 - The words of a glyph on demand are the words of the build. The host test `a_glyph_on_demand_is_the_glyph_of_the_build` draws characters of the glyph cache through the on-demand path and compares each word, each box and each advance with the proportional cache that the build writes from the same file.
@@ -66,7 +74,7 @@ An entry is reused only when no program can still draw it. Each program writes, 
 
 ## The first range: the Greek letters
 
-The first range is the Greek letters of B612, U+0391 to U+03A9 and U+03B1 to U+03C9 (`demand_cache.subset_ranges`), 48 characters: B612 1.008 has no small rho, U+03C1, so a text with ρ draws the replacement glyph there. The modus tool adds them to the subset of B612 Regular, after the characters of the glyph cache, so the glyph cache of the build does not change.
+The first range is the Greek letters that the character map of B612 1.008 has (`demand_cache.subset_ranges`), 47 characters in five runs: U+0391 to U+039F, U+03A1, U+03A3 to U+03A9, U+03B1 to U+03C0, U+03C2 to U+03C9. B612 has no capital pi, U+03A0, and no small rho, U+03C1, so a text with Π or ρ draws the replacement glyph there. Each count of the subset in the code and the tests comes from that list (`demand_cache.subset_count`), and the host test of the tool checks that the font has each of its characters. The modus tool adds them to the subset of B612 Regular, after the characters of the glyph cache, so the glyph cache of the build does not change.
 
 Latin Extended-A was the first wish: B612 1.008 does not have it. Past the Latin-1 Supplement, it has Œ, œ, Š, š, Ÿ, ƒ, Greek, the dashes, the quotation marks, the arrows and mathematical signs. So a range of Latin Extended-A needs another font, or a font that the system adds for it.
 

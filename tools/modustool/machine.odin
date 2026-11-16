@@ -2850,7 +2850,7 @@ scenario := [?]Step {
 	{kind = .Launch, text = "interface_font"},
 	{kind = .Wait, text = "interface_font: one line of "},
 	{kind = .Wait, text = "interface_font: ok, ", any_order = true},
-	{kind = .Wait, text = "interface_font: 29 characters past the glyph cache are drawn from the demand cache, 0 absent, 0 refused"},
+	{kind = .Wait, text = "interface_font: each Greek letter of the subset is drawn from the demand cache: ", fails_on = "interface_font: not each Greek letter of the subset"},
 	{kind = .Shot, text = "interface_font"},
 	{kind = .Close, text = "interface_font"},
 	{kind = .Wait, text = "root: interface_font stopped"},
