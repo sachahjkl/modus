@@ -74,6 +74,11 @@ TEST_OUTPUT_TPM_LOCKOUT :: BUILD_FOLDER + "/test_output_tpm_lockout_%d.txt"
 // The largest answer to a command that the tool sends to the TPM.
 TPM_TOOL_ANSWER_LIMIT :: 256
 
+// The line of unlock at Enter on a new recovery key: no record, no file,
+// no key of a table and no session comes before it
+// (src/md/features/tpm_sealed_principal_keys.md).
+RECOVERY_KEY_ENTER_LINE :: "unlock: Enter on the recovery key: it is written down, and the record or the file that holds its copy is written now"
+
 // A recovery key that is not the recovery key of the machine: 32 symbols of
 // base32, each one A.
 WRONG_RECOVERY_KEY :: "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA"
@@ -125,13 +130,18 @@ scenario_tpm_key_seal := [?]Step {
 	{kind = .Type, text = "machine_seal()"},
 	{kind = .Wait, text = "root: the machine key is sealed by the TPM in the window of unlock"},
 	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11: a public area of ", any_order = true},
-	{kind = .Wait, text = "unlock: the machine key is sealed by the TPM to PCR 7 and PCR 11, with a copy under a recovery key, in the store of unlock", any_order = true},
-	{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store programs: 0 rows, with the tag of the machine key", any_order = true},
+	// The record waits for Enter: the root service writes no table before
+	// it.
+	{kind = .Wait, text = "unlock: the machine key is sealed by the TPM to PCR 7 and PCR 11, with a copy under a recovery key; the window shows the recovery key one time, and the record is written when it is written down", any_order = true, fails_on = "root: the disk grant table of principal 0 is written"},
 	// The recovery key, shown one time.
 	{kind = .Wait, text = "compositor: surface unlock"},
 	{kind = .Front, text = "unlock"},
 	{kind = .Screen_Text, text = "unlock", element = "recovery_key"},
 	{kind = .Key, text = "ret"},
+	// The line of Enter, in order: the table before it fails the step.
+	{kind = .Wait, text = RECOVERY_KEY_ENTER_LINE, fails_on = "root: the disk grant table of principal 0 is written"},
+	{kind = .Wait, text = "unlock: the record of the machine key sealed by the TPM is in the store of unlock: its recovery key is written down"},
+	{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store programs: 0 rows, with the tag of the machine key", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0"},
 	// A second key is refused: it would replace the key of the table.
 	{kind = .Front, text = "console"},
@@ -211,10 +221,13 @@ scenario_tpm_key_secure_boot_off := [?]Step {
 //  10. The other system again: the passphrase opens the session; a console
 //      of the session changes the passphrase (the current one first, which
 //      the TPM checks), then makes a new recovery key, which the tool reads
-//      off the screen. After a lock the passphrase before the change is
-//      refused and counted, and the changed one opens the keys. The tool
-//      serves its disk, which drops the write of zeros of the erase over
-//      the file of machine 9 (principal_change_with_a_dropped_zero_run).
+//      off the screen. The console then asks for the machine passphrase,
+//      and the lock comes while the window shows its recovery key: the
+//      root service stops `unlock`, and no record of the machine is
+//      written. After the lock the passphrase before the change is refused
+//      and counted, and the changed one opens the keys. The tool serves
+//      its disk, which drops the write of zeros of the erase over the file
+//      of machine 9 (principal_change_with_a_dropped_zero_run).
 //  11. The system of machines 7 and 8, where the TPM would refuse, as the
 //      keys are sealed to the other system: Ctrl+R asks for the recovery
 //      key with no try, and Enter with nothing goes back to the passphrase;
@@ -270,12 +283,18 @@ scenario_tpm_principal_create := [?]Step {
 	{kind = .Wait, text = TPM_LOCKOUT_SET_LINE, any_order = true, fails_on = TPM_LOCKOUT_FOUND_LINE},
 	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
 	{kind = .Wait, text = "unlock: the keys of principal \"alice\" are sealed by the TPM to PCR 7 and PCR 11 and to its passphrase, under a key of Argon2id", any_order = true},
-	{kind = .Wait, text = "unlock: principal 1 \"alice\" is created: its keys are sealed by the TPM with its passphrase, with a copy under a recovery key; the window shows the recovery key one time", any_order = true},
-	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	// The file, the record and the session wait for Enter: a stop before
+	// it leaves no principal whose recovery key nobody wrote down.
+	{kind = .Wait, text = "unlock: the keys of the new principal \"alice\" are sealed by the TPM with its passphrase, with a copy under a recovery key; the window shows the recovery key one time, and the principal is created when it is written down", any_order = true, fails_on = "root: principal 1 \"alice\" is recorded"},
 	// The recovery key, shown one time.
 	{kind = .Front, text = "unlock"},
 	{kind = .Screen_Text, text = "unlock", element = "recovery_key"},
 	{kind = .Key, text = "ret"},
+	// The line of Enter, in order: the record before it fails the step.
+	{kind = .Wait, text = RECOVERY_KEY_ENTER_LINE, fails_on = "root: principal 1 \"alice\" is recorded"},
+	{kind = .Wait, text = "root: principal 1 \"alice\" is recorded, its public key ", any_order = true},
+	{kind = .Wait, text = "unlock: principal 1 \"alice\" is created: its keys are sealed by the TPM with its passphrase, with a copy under a recovery key", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0"},
 }
 
@@ -353,8 +372,10 @@ scenario_tpm_principal_other_system := [?]Step {
 
 // Machine 10: the passphrase of machine 9 opens the session; a console of
 // the session changes the passphrase, then makes a new recovery key, which
-// the tool reads off the screen. After a lock, the passphrase before the
-// change is refused and counted, and the new one opens.
+// the tool reads off the screen, then asks for the machine passphrase, and
+// locks while the window shows its recovery key: no window of unlock
+// outlives the lock. After the lock, the passphrase before the change is
+// refused and counted, and the new one opens.
 @(private = "file")
 scenario_tpm_principal_change := [?]Step {
 	{kind = .Type, text = NEW_PRINCIPAL_PASSPHRASE},
@@ -413,12 +434,34 @@ scenario_tpm_principal_change := [?]Step {
 	{kind = .Wait, text = "root: the change in the window of unlock ends: the new recovery key is kept; the old one opens no new file", any_order = true},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	// A console of the session asks for the machine passphrase: the TPM
+	// seals the machine key with it, and the window shows the recovery key.
+	// The lock comes before Enter.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "machine_passphrase()"},
+	{kind = .Wait, text = "root: the machine passphrase is set in the window of unlock"},
+	{kind = .Wait, text = "compositor: surface unlock", any_order = true},
+	{kind = .Front, text = "unlock"},
+	{kind = .Type, text = MACHINE_PASSPHRASE},
+	{kind = .Type, text = MACHINE_PASSPHRASE},
+	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
+	{kind = .Wait, text = "unlock: the window shows the recovery key of the new machine passphrase one time; the record is written when it is written down"},
+	// The recovery key is on the screen at the lock. The read keeps no
+	// text: machine 11 types the recovery key of machine 7 and the new one
+	// of this machine, the two texts kept before.
+	{kind = .Screen_Text, text = "unlock", element = "recovery_key", shown_only = true},
 	// The lock from the console of the session, which stops with it. The
-	// passphrase before the change is wrong now: the TPM counts it.
+	// lock stops the window of unlock too: nobody at the locked machine
+	// reads the recovery key or sets the machine passphrase. No record was
+	// written before Enter, so the unlock of the lock asks for no machine
+	// passphrase. The passphrase before the change is wrong now: the TPM
+	// counts it.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "lock()"},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: "},
-	{kind = .Wait, text = "unlock: principal 1 \"alice\" is locked: its passphrase opens its session", any_order = true},
+	{kind = .Wait, text = "root: the lock stops the window of unlock, which ran for the machine passphrase that is set; unlock asks for the passphrase when it stopped", fails_on = "unlock: the machine passphrase is set"},
+	{kind = .Wait, text = "root: unlock stopped with code "},
+	{kind = .Wait, text = "unlock: principal 1 \"alice\" is locked: its passphrase opens its session", any_order = true, fails_on = "unlock: the machine has a passphrase"},
 	{kind = .Wait, text = "compositor: surface unlock", any_order = true},
 	{kind = .Front, text = "unlock"},
 	{kind = .Type, text = NEW_PRINCIPAL_PASSPHRASE},
@@ -522,12 +565,17 @@ scenario_tpm_machine_passphrase_set := [?]Step {
 	{kind = .Wait, text = TPM_LOCKOUT_SET_LINE, any_order = true, fails_on = TPM_LOCKOUT_FOUND_LINE},
 	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
 	{kind = .Wait, text = "unlock: the machine key is sealed by the TPM to PCR 7 and PCR 11 and to the machine passphrase, under a key of Argon2id, 19456 KiB and 2 passes, derived in ", any_order = true},
-	{kind = .Wait, text = "unlock: the machine passphrase is set: the TPM seals the machine key with it, with a copy under a recovery key, in the store of unlock; the window shows the recovery key one time", any_order = true},
-	{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store programs: 0 rows, with the tag of the machine key", any_order = true},
+	// The record waits for Enter: the root service writes no table before
+	// it.
+	{kind = .Wait, text = "unlock: the window shows the recovery key of the new machine passphrase one time; the record is written when it is written down", any_order = true, fails_on = "root: the disk grant table of principal 0 is written"},
 	// The recovery key, shown one time.
 	{kind = .Front, text = "unlock"},
 	{kind = .Screen_Text, text = "unlock", element = "recovery_key"},
 	{kind = .Key, text = "ret"},
+	// The line of Enter, in order: the table before it fails the step.
+	{kind = .Wait, text = RECOVERY_KEY_ENTER_LINE, fails_on = "root: the disk grant table of principal 0 is written"},
+	{kind = .Wait, text = "unlock: the machine passphrase is set: the TPM seals the machine key with it, with a copy under a recovery key, in the store of unlock"},
+	{kind = .Wait, text = "root: the disk grant table of principal 0 is written in the store programs: 0 rows, with the tag of the machine key", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0"},
 }
 
@@ -1075,7 +1123,7 @@ principals_tpm_principal_tests_run :: proc() -> bool {
 	// parts must leave the disk with the change.
 	old_parts := principal_file_parts_read() or_return
 	dropped_block := principal_change_with_a_dropped_zero_run(&old_parts) or_return
-	test_passed_print("%s", "a console of the session changed the passphrase and the recovery key; the old passphrase was refused and counted, and the new one opened the keys")
+	test_passed_print("%s", "a console of the session changed the passphrase and the recovery key; the lock stopped the window that showed the recovery key of a machine passphrase, which was not written; the old passphrase was refused and counted, and the new one opened the keys")
 	principal_file_parts_absent(&old_parts, dropped_block) or_return
 	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_recovery_with_no_try[:], scenario_tpm_principal_old_recovery_key[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 11, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "another system: Ctrl+R asked for the recovery key with no try, the recovery key before the change opened nothing, and the new one opened the keys")

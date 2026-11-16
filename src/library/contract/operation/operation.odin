@@ -340,6 +340,9 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `memory` or `program` is not a handle of its kind with its rights.
+	// - `No_Right`: also, the program maps in itself at addresses that meet a module record of the
+	//   writer `Starter` (`Module_Writer`). The error kind is `Starter_Module`. The kernel checks it before
+	//   the other mappings. An address that the kernel chooses meets no such record.
 	// - `Bad_State`: the program is stopped; or a part of the object has a protection of its own
 	//   (`Memory_Protect`): such an object has one mapping only.
 	// - `Bad_Address`: the pages are not inside the object; the address is not a multiple of 4096, is below
@@ -371,6 +374,8 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
+	// - `No_Right`: also, the program unmaps in itself a mapping that meets a module record of the writer
+	//   `Starter` (`Module_Writer`). The error kind is `Starter_Module`.
 	// - `Bad_State`: the program is stopped.
 	// - `Bad_Address`: no mapping starts at the address, or it is a thread area or the time page.
 	Memory_Size    = 5, // (memory) -> pages.
@@ -499,7 +504,10 @@ Operation :: enum u32 {
 	//     program maps it, the one other program that holds a handle to it. The kernel keeps, with the
 	//     copy, the memory object that it came through: `Handle_State` proves it to the receiver.
 	// - `handle`: the handle to give, with **Give** when the target is another program.
-	// - `rights`: the rights of the copy are the rights of `handle` that are also in `rights`.
+	// - `rights`: the rights of the copy are the rights of `handle` that are also in `rights`. A program
+	//   handle that goes to the program that it names also loses **Control** and **Give**: a program never
+	//   holds the authority of its starter over itself, so it cannot give it to a child that would change
+	//   its module records ([the writer of a module record](docs/MODULE_CONTRACT.md#the-writer-of-a-module-record)).
 	//
 	// **Results**: the number of the copy in the target program.
 	//
@@ -881,20 +889,28 @@ Operation :: enum u32 {
 	Program_Module = 26, // (program, record: Module_Record).
 	// Records a module that a loader put in a program, in the module records of the program. The kernel
 	// does not read the module: the record is what the loader asserts. The kernel names the module of the
-	// address of a fault with it, and `Inspect` gives the records (`Module_Report`).
+	// address of a fault with it, and `Inspect` gives the records (`Module_Report`). The kernel writes the
+	// writer of the record (`Module_Writer`): `Program` when the program records a module in itself,
+	// `Starter` when another program does it through the program handle. A program cannot replace or
+	// remove a record of the writer `Starter`, and cannot map or unmap where such a record is, so the
+	// record names the code that its starter put there
+	// ([the writer of a module record](docs/MODULE_CONTRACT.md#the-writer-of-a-module-record)).
 	//
 	// **Arguments**
 	//
 	// - `program`: 0 for this program, or a program handle with **Control**.
 	// - `record`: the address of a `Module_Record` that the program can read. A record with the base of a
 	//   record that exists replaces it; a record with the size 0 removes the record of its base. A program
-	//   has at most `PROGRAM_MODULE_CAPACITY` records, and no two of them share an address.
+	//   has at most `PROGRAM_MODULE_CAPACITY` records, and no two of them share an address. The kernel
+	//   does not read the field `writer`.
 	//
 	// **Results**: none.
 	//
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `program` is not a program handle with **Control**.
+	// - `No_Right`: also, the program replaces or removes in itself a record of the writer `Starter`. The
+	//   error kind is `Starter_Module`: the fix is with the holder of the program handle.
 	// - `Bad_State`: the program is stopped.
 	// - `Bad_Address`: the program cannot read the record; the module passes `USER_END`; it meets another
 	//   record; or a record of size 0 names a base that no record has.
@@ -1620,16 +1636,49 @@ Guest_Exit_Kind :: enum u64 {
 // A loader writes it with `Program_Module`; the kernel keeps at most
 // `PROGRAM_MODULE_CAPACITY` for each program and gives them in a
 // `Module_Report`, in a `Stop_Report` and in each `Stop_Frame`. The kernel
-// does not check the hash: it is what the loader asserted. A reader that
-// names a module from a stop report reads it as a claim of the starter of
-// the program. 80 bytes. See [module record](term:module-record).
+// does not check the hash: it is what the loader asserted. The kernel writes
+// `writer`: a record of the writer `Starter` is a claim of the starter of
+// the program, which the program cannot change; a record of the writer
+// `Program` is a claim of the program. 88 bytes. See
+// [module record](term:module-record).
 Module_Record :: struct {
 	base:     u64, // The address of the first byte of the module in the program.
 	size:     u64, // The bytes of addresses of the module. 0: no module.
 	hash:     [32]u8, // The hash of the module that is loaded: BLAKE3 of its file, the name of the module in the module store.
 	replaces: [32]u8, // Zero, or the hash that an import names and that a replacement changed to `hash`.
+	writer:   Module_Writer, // Who wrote the record. The kernel writes it; `Program_Module` does not read it.
 }
-#assert(size_of(Module_Record) == 80)
+#assert(size_of(Module_Record) == 88)
+
+// Who wrote a module record (`Module_Record.writer`). The kernel knows it at
+// each `Program_Module`: it compares the program of the record with the
+// program that calls.
+//
+// Example: the root service starts `imports` and writes the record of its
+// module: `Starter`. `imports` loads `agenda` in its own memory and writes
+// its record: `Program`. `imports` cannot remove the first record, nor unmap
+// or map at its addresses (`No_Right`).
+Module_Writer :: enum u64 {
+	Program = 0, // The program wrote the record for itself. It can replace or remove it.
+	Starter = 1, // Another program wrote it, through the program handle with Control: the starter, or a program to which it gave that handle. The kernel writes the record of the root service so. The program cannot change it.
+}
+
+// The most bytes of the word of a writer: the field `writer` of a row of
+// `inspect.modules()` and of `manual.running()` has this size.
+MODULE_WRITER_NAME_CAPACITY :: 8
+
+// module_writer_name gives the word of a writer in a row of a table:
+// "program" or "starter". A value out of the enumeration gives "unknown".
+// Each word fits MODULE_WRITER_NAME_CAPACITY bytes.
+module_writer_name :: proc "contextless" (writer: Module_Writer) -> string {
+	#partial switch writer {
+	case .Program:
+		return "program"
+	case .Starter:
+		return "starter"
+	}
+	return "unknown"
+}
 
 // The module records of one program: the program module, the modules that
 // it imports and the modules that it loads while it runs. `Program_Module`
@@ -1678,6 +1727,12 @@ STOP_FRAME_CAPACITY :: 16
 // Example: `address = 0x0040_1234`, `base = 0x0040_0000` is the offset
 // 0x1234 in the module of `hash`; the program `errors` finds the procedure
 // there in the debug object of that module.
+//
+// A frame has no writer (`Module_Writer`). A reader that must know whether
+// the module of a frame is a claim of the program matches `base` with the
+// record of the same base in the `Module_Report` of the program, which
+// carries the writer. `Stop_Report.module` carries the writer of the module
+// of the instruction.
 Stop_Frame :: struct {
 	address: u64, // The instruction (frame 0) or a return address. All zero: the kernel hid a value that no module holds.
 	base:    u64, // The base of the module record that holds the address. 0: no record holds it.
@@ -2690,7 +2745,9 @@ Status :: enum u32 {
 	// own. The arguments are right; the moment is wrong.
 	No_Right      = 7, // The handle names the object, but it does not have the right for this operation.
 	// The `Handle_State` of the handle gives the rights that it has. No operation adds a right: a program
-	// that needs it asks the holder of a handle with that right for a new grant.
+	// that needs it asks the holder of a handle with that right for a new grant. A program also gets it
+	// when it changes a module record of its starter in itself, or maps or unmaps over it
+	// (`Module_Writer`): only a holder of its program handle does that.
 	No_Budget     = 8, // The budget cannot pay for the operation.
 	// The budget, or a budget above it, does not hold the pages, the program slot or the thread slot that the
 	// operation takes; or for `Log`, the budget accepted all the records of its amount in this second. See

@@ -52,8 +52,8 @@ unlock_name_length: int
 // True only while unlock_start starts `unlock`: a start by name from a
 // ring or from the desktop is refused (start).
 unlock_start_asked: bool
-// The mode of the last `unlock` that started: a lock stops the `unlock` of
-// a change, which the session asked for (principal_lock).
+// The mode of the last `unlock` that started: the line of a lock that
+// stops it names what it ran for (principal_lock).
 unlock_running_mode: u64
 // The stops of `unlock` that the root service did not ask, while a
 // principal is locked, whatever their code, and its starts that failed for
@@ -66,7 +66,7 @@ unlock_running_mode: u64
 UNLOCK_RESTART_LIMIT :: 3
 unlock_failed_stops: int
 // The root service asked the stop of the `unlock` that runs (a close of
-// its window, a lock during a change): its stop does not count.
+// its window, a lock): its stop does not count.
 unlock_stop_asked: bool
 
 // The change in progress: the caller of Principal_Change waits for its
@@ -135,6 +135,14 @@ unlock_start :: proc "contextless" (mode: u64, name: string) -> system.Status {
 	}
 	return status
 }
+
+// A creation never runs during a session while the system holds one named
+// principal: it needs the record of principal 1 absent, so no session runs,
+// and the lock never stops a creation. With more places, a lock of another
+// session stops it; nothing is written before Enter, but a stop between the
+// file and its record must then be designed
+// (src/md/features/tpm_sealed_principal_keys.md).
+#assert(principals.PRINCIPAL_CAPACITY == 2)
 
 // principal_create starts `unlock` to create a named principal.
 principal_create :: proc "contextless" (name: string) -> system.Status {
@@ -235,19 +243,19 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	completion^[0] = count
 	system.log_in("programs", .Info, "root: the session of principal ", number, " \"", principal_name(number), "\" ends: ", count, " programs stopped")
 	unlock_failed_stops = 0
-	// One `unlock` runs at a time. The `unlock` of a change was asked from
-	// the session, so it stops with the session; another one (a machine
-	// passphrase that is set) runs to its end. In each case the `unlock`
-	// of the lock starts after each reap where none runs
+	// One `unlock` runs at a time. During a session only the session can
+	// have asked for it (a change, a machine passphrase, a seal of the
+	// machine key), so it stops with the session, whatever its mode: else
+	// anyone at the keyboard of the locked machine would read its recovery
+	// key or set the machine passphrase. Each window that shows a recovery
+	// key writes nothing before Enter, so the stop loses no key that
+	// nobody wrote down (src/md/features/tpm_sealed_principal_keys.md).
+	// The `unlock` of the lock starts after the reap
 	// (unlock_for_a_locked_principal).
 	if running := find("unlock"); running != nil {
-		if unlock_running_mode == principals.MODE_CHANGE_PASSPHRASE || unlock_running_mode == principals.MODE_NEW_RECOVERY_KEY {
-			unlock_stop_asked = true
-			system.call(.Program_Stop, u64(running.program), 0)
-			system.log_in("programs", .Info, "root: the lock stops the change in the window of unlock; unlock asks for the passphrase when it stopped")
-		} else {
-			system.log_in("programs", .Info, "root: unlock runs at the lock; it asks for the passphrase when it stopped")
-		}
+		unlock_stop_asked = true
+		system.call(.Program_Stop, u64(running.program), 0)
+		system.log_in("programs", .Info, "root: the lock stops the window of unlock, which ran for ", principals.mode_words(unlock_running_mode), "; unlock asks for the passphrase when it stopped")
 		return .Ok
 	}
 	unlock_start(principals.MODE_UNLOCK, "")
@@ -260,6 +268,9 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 // lost the file of a principal whose record is locked) must be bounded as
 // a fault is.
 unlock_stopped :: proc "contextless" () {
+	// A creation that stopped before it gave its record created nothing:
+	// a later `unlock` is not a creation.
+	unlock_creating = false
 	asked := unlock_stop_asked
 	unlock_stop_asked = false
 	if asked || !principal_locked() {

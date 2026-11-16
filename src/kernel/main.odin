@@ -221,7 +221,9 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	program := &programs[index]
 	taken := program_lock(index)
 	defer program_unlock(index, taken)
-	program_module(program, {base = op.PROGRAM_BASE, size = head.memory_size, hash = hash})
+	// The kernel is the starter of the root service: the record is of the
+	// writer Starter, which the root service cannot change.
+	program_module(program, {base = op.PROGRAM_BASE, size = head.memory_size, hash = hash}, by_the_program = false)
 	memory := info.physical_slice(regions[code].physical, head.memory_size, u8)
 	module.copy_segments(file, memory)
 	if module.rebase(file, memory, op.PROGRAM_BASE) != .None || module.count(file, .Imports) > 1 {

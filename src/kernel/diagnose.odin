@@ -123,18 +123,30 @@ read_overlaps :: proc "contextless" (program: ^Program, address: u64, size: u64)
 	return false
 }
 
-// read_mapping_at says if a mapping of the program starts at an address.
-// Lock: the program lock.
+// read_mapping_at gives the pages of the mapping of the program that starts
+// at an address, if one starts there. Lock: the program lock.
 @(private = "file")
-read_mapping_at :: proc "contextless" (program: ^Program, address: u64) -> bool {
+read_mapping_at :: proc "contextless" (program: ^Program, address: u64) -> (page_count: u64, found: bool) {
 	at, taken := caller_lock(program)
 	defer program_unlock(at, taken)
 	for mapping in program.mappings {
 		if mapping.page_count != 0 && mapping.address == address {
-			return true
+			return mapping.page_count, true
 		}
 	}
-	return false
+	return 0, false
+}
+
+// read_starter_module copies the module record of the writer Starter that
+// meets a range of addresses of the program. Lock: the program lock.
+@(private = "file")
+read_starter_module :: proc "contextless" (program: ^Program, address: u64, size: u64) -> (record: op.Module_Record, found: bool) {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	if item := starter_module_meeting(program, address, size); item != nil {
+		return item^, true
+	}
+	return {}, false
 }
 
 // read_own_full says which tables of the program are full: its mappings,
@@ -442,7 +454,7 @@ kind_explains :: proc "contextless" (kind: errors.Kind, status: op.Status) -> bo
 	case .Bad_Handle:
 		return kind == .Handle_Absent || kind == .Handle_Ended || kind == .Handle_Kind || kind == .No_Target || kind == .Not_Payer
 	case .No_Right:
-		return kind == .Handle_Rights
+		return kind == .Handle_Rights || kind == .Starter_Module
 	case .No_Budget:
 		return kind == .Budget || kind == .Budget_Hidden || kind == .Over_Limit
 	case .Bad_Address:
@@ -490,6 +502,9 @@ diagnose :: proc "contextless" (program_index: u32, command: ring.Record, status
 		if !explained && operation == .Handle_Give && v[0] != 0 {
 			record_set(&record, .No_Target, .None, 1, v[0], 0, 0) // A memory object that no one other program maps or holds.
 			explained = true
+		}
+		if !explained && status == .No_Right {
+			explained = starter_module_explain(&record, program, operation, v)
 		}
 	case .No_Budget:
 		explained = budget_explain(&record, program, operation, v)
@@ -1008,7 +1023,7 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 		}
 		return false
 	case .Memory_Unmap:
-		if v[0] != 0 || read_mapping_at(program, v[1]) {
+		if _, found := read_mapping_at(program, v[1]); v[0] != 0 || found {
 			return false
 		}
 		record_set(record, .Absent, .Bytes, 2, v[1], 0, 0) // No mapping starts at this address.
@@ -1021,6 +1036,61 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 	case:
 		return false
 	}
+	return true
+}
+
+// starter_module_explain names the module record of the starter that a
+// program changed in itself, or mapped or unmapped over (No_Right after the
+// handles are good). The record is read again under the program lock; it
+// names the record only when the range of the call meets it now. A handle
+// that names the caller itself, and an address that the kernel chooses,
+// give Refused: the first needs the handle read again, and the second never
+// meets such a record.
+@(private = "file")
+starter_module_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
+	address, size: u64
+	argument := 0
+	#partial switch operation {
+	case .Program_Module:
+		if v[0] != 0 {
+			return false
+		}
+		module: op.Module_Record
+		if !read_user(program, v[1], &module, size_of(module)) {
+			return false
+		}
+		// The refusal names the record of the same base: one byte finds it.
+		address, size, argument = module.base, 1, 2
+	case .Memory_Map:
+		if v[1] != 0 || v[2] == 0 {
+			return false
+		}
+		page_count, found := read_memory_pages(program, v[0])
+		if !found || v[4] >= page_count {
+			return false
+		}
+		count := v[5] == 0 ? page_count - v[4] : v[5]
+		if count > page_count - v[4] {
+			return false
+		}
+		address, size, argument = v[2], count * PAGE_SIZE, 3
+	case .Memory_Unmap:
+		if v[0] != 0 {
+			return false
+		}
+		page_count, found := read_mapping_at(program, v[1])
+		if !found {
+			return false
+		}
+		address, size, argument = v[1], page_count * PAGE_SIZE, 2
+	case:
+		return false
+	}
+	starter_record, meets := read_starter_module(program, address, size)
+	if !meets || operation == .Program_Module && starter_record.base != address {
+		return false
+	}
+	record_set(record, .Starter_Module, .Bytes, argument, address, starter_record.base, starter_record.size)
 	return true
 }
 

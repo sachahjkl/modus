@@ -194,6 +194,10 @@ The page is a fact that the root service states, not a grant: it gives no handle
 
 **How long a grant lasts.** A persisted table is the object `grant_table` of the store `programs` of its principal, next to the module files that it grants. It has a tag of keyed BLAKE2b (32 bytes) under a key that a passphrase gives. A reader of the disk who has no passphrase then cannot add a grant: a table whose tag fails is refused with a line of the log, and gives no grant. The persistence is a setting in the table: global, with an exception for each row (`disk_persistence`). The default is to persist.
 
+The table also holds the client keys of `remote` that its principal allowed, 4 at most, after the rows and under the same tag ([remote_client_keys.md](remote_client_keys.md)). They follow the global setting, with no exception of their own. So the read, the write, the states and the refusals of this section hold for them too, with one difference: a revocation of a key is never refused, as it ends a grant at once. Such a revocation starts the writes of an unwritten table again, and a revocation before a read of the run is taken out of the table that the read gives.
+
+A table of 1008 bytes is a table of the format 1, which had no client keys: the read refuses it as an older format that this system does not read, and the refusal of a change does not ask for a restore, as no version of it verifies.
+
 The name `grant_table` is kept, as the name `programs` is: no disk program has it, so the table is never read as a module file and never written over one.
 
 **Principal 0 and the machine passphrase.** Principal 0 is the machine, and a passphrase for it is optional ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Machine passphrase"):
@@ -296,7 +300,7 @@ The read and the write are states of the loop of the root service, as the load o
 - **The module file service gives the imports to the root service.** It would be a second path of bytes into the root service, beside the one load.
 - **The bytes of an import in the budget of the root service.** The budget of the root service pays for the programs of the boot image; a store that a principal fills must not take from it. The budget of all disk programs pays for the program and its imports.
 - **A loader that reads the store itself.** The loader is a library with no connection and no state of a loop: it would wait for the storage service inside the loop of the root service.
-- **The hash from the module record of the program.** The loader of the root service writes the module record of the first module, but the program can write its own module records with `Program_Module` (a program loads and unloads modules), so the record is a claim of the program. A kernel rule that seals the records of the starter makes the record true, but not the name: a disk program that may start a child names it as it likes, and gives it any module record. The monitor would then show a hash of the root service beside a program that the root service never started.
+- **The hash from the module record of the program.** The loader of the root service writes the module record of the first module, and the kernel keeps the program from a change of it ([module_record_writer.md](module_record_writer.md)). That makes the record true, but not the name: a disk program that may start a child names it as it likes, and gives it any module record. The monitor would then show a hash of the root service beside a program that the root service never started.
 - **The title of the window, with the hash added by the compositor.** The program chooses its title, and the compositor knows no hash. The nickname must come from the party that checked the bytes.
 - **A connection from the monitor to the root service, or to the compositor.** The monitor would get a ring and a command of a new kind: a new right, for a fact that one page states. The compositor learns the nickname from the record that it receives anyway.
 - **The disk program page for the compositor too.** The compositor knows a window by the handle of its ring, not by the program slot: it has nothing to match a row of the page with. The record `Client_Add` is the moment the window starts, from the same party.
@@ -344,7 +348,7 @@ Left:
 
 - **The TPM and the machine passphrase together.** `machine_seal()` gives a machine with no passphrase a machine key that the TPM releases to the measured system, with a recovery key ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md)). With a passphrase, the TPM and the passphrase together open it; that form is left.
 - **A change and a removal of the machine passphrase.** A change seals the same machine key under a new passphrase, so the table stays valid.
-- **An older table.** A counter that only grows, in the TPM, so that a restored version of the table is refused.
+- **An older table.** A counter that only grows, in the TPM, so that a restored version of the table is refused. It matters most for a client key of `remote` that a principal revoked, such as the key of a stolen device: a restore brings it back (`ROADMAP.md`, "A disk grant table that a restore cannot roll back").
 - **A second ask after a skip.** A command that asks for the machine passphrase again, with no restart and no lock.
 - **A second read after a failed read, and a write after a failed write.** For principal 0 both wait for the next start of the machine; for a named principal a failed read starts again at its next unlock, and a failed write waits for the next start of the machine.
 - **A store size from the module.** The size of the store of a nickname from the budget that the module asks for, by a policy that the principal sets.
