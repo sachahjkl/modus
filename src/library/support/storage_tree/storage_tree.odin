@@ -283,8 +283,15 @@ load :: proc "contextless" (work: ^Work, pointer: Pointer, level: int) -> int {
 		return -1
 	}
 	if is_reference(pointer) {
+		// The check comes from the disk: it is compared as a u64 before it
+		// becomes an index, as 0 or a value above 2^63 would give a negative
+		// index that the bound below does not catch.
+		if pointer.check == 0 || pointer.check > POOL_CAPACITY {
+			fail(work, .Damaged)
+			return -1
+		}
 		index := int(pointer.check - 1)
-		if index >= POOL_CAPACITY || work.pool.slots[index].state != .Dirty {
+		if work.pool.slots[index].state != .Dirty {
 			fail(work, .Damaged)
 			return -1
 		}

@@ -92,7 +92,7 @@ TABLE_COUNT :: len(Table_Kind)
 Table_Entry :: struct {
 	offset:      u64, // From the start of the file.
 	count:       u32, // The records of the table, record 0 included; bytes for the string table.
-	record_size: u32, // The bytes of one record in this file: at least the bytes that the reader needs, or the reader reads zeros.
+	record_size: u32, // The bytes of one record in this file: at least the bytes that the reader needs, or the reader reads zeros. At least 1 when the table has records: `validate` refuses records of no byte.
 }
 #assert(size_of(Table_Entry) == 16)
 

@@ -165,8 +165,11 @@ fuzz_tcp_read_listening :: proc(listening: ^Fuzz_Tcp_Side, buffer: []u8, into: ^
 // fuzz_tcp_connection_execute runs two tables in memory. A opens a
 // connection to B and writes bytes; steps of the choices run a side, drop
 // a segment, inject a segment to B near its window, write, read, or let the
-// clock pass. The bytes that B reads are always a prefix of what A wrote.
-// With no injected segment, the bytes arrive whole after the steps.
+// clock pass. With no injected segment, the bytes that B reads are always a
+// prefix of what A wrote, through losses and the reorder that a loss makes,
+// and they arrive whole after the steps. An injected segment in the window
+// is data that B rightly takes: such a run checks the bounds of each record
+// only.
 fuzz_tcp_connection_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	sides := fuzz_tcp_sides
 	a, b := &sides[0], &sides[1]
@@ -186,7 +189,9 @@ fuzz_tcp_connection_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	read_buffer: [FUZZ_TCP_BUFFER_SIZE]u8
 	injected := false
 	choices := fuzz_choices_of(input)
-	for _ in 0 ..< fuzz_choice_below(&choices, FUZZ_TCP_STEP_LIMIT) {
+	// The bound is a choice drawn again before each step: a zero choice
+	// ends the steps there. The inputs of the corpus are read this way.
+	for turn := 0; turn < fuzz_choice_below(&choices, FUZZ_TCP_STEP_LIMIT); turn += 1 {
 		if fuzz_choices_ran_out(&choices) {
 			break
 		}
@@ -244,7 +249,7 @@ fuzz_tcp_connection_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		case 6:
 			now += u64(1 + fuzz_choice_below(&choices, 200_000))
 		}
-		if len(received) > len(written) || !slice.equal(received[:], written[:len(received)]) {
+		if !injected && (len(received) > len(written) || !slice.equal(received[:], written[:len(received)])) {
 			return fuzz_broken(.Two_Readers, "B read bytes that A did not write in that order: %d read, %d written", len(received), len(written))
 		}
 	}
@@ -262,7 +267,13 @@ fuzz_tcp_connection_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		fuzz_tcp_read_listening(b, read_buffer[:], &received)
 		now += FUZZ_TCP_PUMP_TIME_STEP
 	}
-	if len(received) > len(written) || !slice.equal(received[:], written[:len(received)]) {
+	// TCP has no integrity: a segment with a sequence and an acknowledgment
+	// in the windows is data of the remote, whoever sent it (RFC 5961 makes
+	// a blind injection hard, not impossible). An injected segment in the
+	// window of B can therefore give B bytes that A never wrote, and the
+	// stream of B is then no prefix of the stream of A. Only a run with no
+	// injection holds that order.
+	if !injected && (len(received) > len(written) || !slice.equal(received[:], written[:len(received)])) {
 		return fuzz_broken(.Two_Readers, "B read bytes that A did not write in that order: %d read, %d written", len(received), len(written))
 	}
 	established := a.connections[index].state == .Established

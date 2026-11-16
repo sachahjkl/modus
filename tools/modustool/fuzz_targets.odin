@@ -52,7 +52,9 @@ fuzz_target_table := [?]Fuzz_Target {
 		input_limit = 8 << 10,
 		execute = fuzz_storage_tree_execute,
 		start = fuzz_storage_tree_start,
-		check_executions = 5_000,
+		// Up to 300 operations and a walk after each commit in one
+		// execution: a long run explores; the check keeps its part short.
+		check_executions = 2_000,
 	},
 	{
 		name = "storage_mount",
@@ -62,7 +64,9 @@ fuzz_target_table := [?]Fuzz_Target {
 		input_limit = 4 << 10,
 		execute = fuzz_storage_mount_execute,
 		start = fuzz_storage_mount_start,
-		check_executions = 2_000,
+		// Measured: about 120 executions in one second (a whole disk is
+		// written and opened two times), so 1000 cost about 8 seconds.
+		check_executions = 1_000,
 	},
 	{
 		name = "quic_datagram",
@@ -82,6 +86,8 @@ fuzz_target_table := [?]Fuzz_Target {
 		input_limit = 4 << 10,
 		execute = fuzz_quic_connection_execute,
 		start = fuzz_quic_start,
+		// Measured: about 120 executions in one second (a whole handshake
+		// each), so 1000 cost about 8 seconds.
 		check_executions = 1_000,
 	},
 	{
