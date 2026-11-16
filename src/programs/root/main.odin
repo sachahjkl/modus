@@ -83,7 +83,6 @@
 // The design: (docs/ARCHITECTURE.md, "U2. Root service").
 package root
 
-import "modus:support/bochs_display"
 import "modus:support/bootscreen"
 import "modus:support/bootscreen/collect"
 import "modus:support/display"
@@ -333,10 +332,6 @@ debugger_window_callable := [?]string{"debugger"}
 @(rodata)
 log_reader_callable := [?]string{"log"}
 
-// The handle 3 of the context of the compositor: the memory of the
-// registers of the standard VGA, when its handle 0 is the memory of two
-// screen pages (devices.odin, display_open). 0: no page flip.
-COMPOSITOR_GRANT_DISPLAY_REGISTERS :: 3
 // The values of the context of the compositor that name its own file: 0 to
 // 3 are the screen.
 COMPOSITOR_VALUE_FILE_ADDRESS :: 4
@@ -500,6 +495,7 @@ Started :: struct {
 	driver:          ^Started, // The block service that serves this program. nil: none, or it stopped.
 	is_driver:       bool, // A block service: it has the device at `device`.
 	device:          pci.Place,
+	bridge_group:    Bridge_Group, // A device behind a conventional bridge: the buses behind it, whose devices this service holds too (devices.odin). Zero: none.
 	queues:          system.Handle, // A block service: the memory of the queue of its device.
 	network:         ring.Ring, // The network service: the control ring from this service.
 	network_memory:  system.Handle,
@@ -654,11 +650,6 @@ fail :: proc "contextless" (text: string, status: system.Status) -> ! {
 	system.log_in("programs", .Error, "root: ", text, ": status ", status)
 	if compositor != 0 {
 		system.call(.Program_Stop, u64(compositor), 0) // The screen returns to this service.
-		// The compositor could leave the page 1 on the screen; the boot
-		// display is on the page 0, the framebuffer of the firmware.
-		if display_registers_address != nil {
-			bochs_display.page_show(display_registers_address, 0, display_screen_height)
-		}
 	}
 	message.count = 0
 	bootscreen.put(&message, "the start failed: ")
@@ -698,7 +689,8 @@ entropy_report: random.Entropy_Report
 // 7. starts `input` with the ports and the interrupts of the PS/2
 //    controller, then the compositor with the framebuffer, then the entropy
 //    service when the machine has an entropy device, with no wait for its
-//    bytes, then the font service with the demand cache (font_service.odin);
+//    bytes, then the font service, which draws the demand cache and ends
+//    (font_service.odin);
 // 8. starts `date`, then the console, then the settings that were kept,
 //    then the TPM service when the system is measured into a TPM, then
 //    `unlock`.
@@ -751,7 +743,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			fail("the random seed of the system is 32 zero bytes: no program can get a seed", .Bad_Operation)
 		}
 		report := &entropy_report
-		system.log("root: the random seed of the system, strength ", random.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
+		system.log("root: the random seed of the system, strength ", op.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
 	}
 	// The machine of the test of the shortage of frames: its boot image has
 	// the program shortage and no input service, so no desktop.
@@ -821,23 +813,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	{
 		grants: [op.CONTEXT_HANDLES]system.Grant
 		grants[0] = {ctx.handles[op.ROOT_FRAMEBUFFER], {.Read, .Write}}
-		// The two screen pages of the standard VGA and its registers, in
-		// place of the framebuffer of the firmware: the compositor then
-		// puts each frame on the screen by a page flip. The address of the
-		// framebuffer is in the boot record.
-		// With no boot record, the address is 0: no page flip.
-		framebuffer_address: u64
-		if _, inspect_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(&screen_data.boot)), size_of(screen_data.boot)); inspect_status == .Ok {
-			framebuffer_address = screen_data.boot.framebuffer_address
-		}
-		pages_memory, display_registers := display_open(framebuffer_address, ctx.values[op.ROOT_VALUE_WIDTH], ctx.values[op.ROOT_VALUE_HEIGHT], ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE])
-		defer if pages_memory != 0 {
-			system.close(pages_memory) // The compositor holds its own handle.
-		}
-		if pages_memory != 0 {
-			grants[0] = {pages_memory, {.Read, .Write}}
-			grants[COMPOSITOR_GRANT_DISPLAY_REGISTERS] = {display_registers, {.Read, .Write}}
-		}
 		grants[1] = {input_memory, {.Read, .Write}}
 		grants[2] = {control_memory, {.Read, .Write}}
 		grants[op.CONTEXT_LOG] = log_grant("compositor")
@@ -849,8 +824,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The compositor is also a service (src/programs/compositor/exports.odin):
 		// a service ring and its own file, as start() gives to a service.
 		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
-		// The file, two pointer themes, the settings page, five glyph caches, the date page, the fresh bytes page.
-		mappings: [12]system.Mapping
+		// The file, two pointer themes, the settings page, five glyph caches, the font outlines, the demand cache, the date page, the fresh bytes page.
+		mappings: [14]system.Mapping
 		mapping_count := 0
 		served := &started[0]
 		served^ = {}
@@ -909,8 +884,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// first place of the table of the programs. The loop below mixes its
 	// bytes when they come (entropy.odin).
 	entropy_service_start()
-	// The font service, before the programs with a surface: each one gets a
-	// request ring to it (font_service.odin).
+	// The font service draws the fixed subsets into the demand cache, which
+	// each program with a surface maps; a program that draws before it ends
+	// draws the same glyphs itself (font_service.odin).
 	font_service_start()
 	// The date: the program `date` reads the real-time clock. The programs
 	// that start before it writes the page read no date until then.
@@ -927,7 +903,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	tpm_service_start()
 	// The named principal, if one was created: `unlock` reads its file and
 	// asks for the passphrase; with no file it stops (principals.odin).
-	unlock_start(principals.MODE_UNLOCK, "")
+	unlock_start(.Unlock, "")
 	// A measure, not a check: the pages that this service can still give,
 	// now and at the lowest count that it read since its start. This
 	// service holds the budget of the free memory of the machine, and each
@@ -1347,10 +1323,11 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	if name == "unlock" {
 		// After a lock this service holds the key of the table of principal
 		// 0: unlock does not ask for the machine passphrase again.
-		values[principals.VALUE_MODE] = unlock_mode
-		if unlock_mode == principals.MODE_UNLOCK && machine_key_held() {
-			values[principals.VALUE_MODE] = principals.MODE_UNLOCK_MACHINE_KEY_HELD
+		start_mode := unlock_mode
+		if start_mode == .Unlock && machine_key_held() {
+			start_mode = .Unlock_Machine_Key_Held
 		}
+		values[principals.VALUE_MODE] = u64(start_mode)
 		packed := principals.name_pack(string(unlock_name[:unlock_name_length]))
 		copy(values[principals.VALUE_NAME:][:3], packed[:])
 	}
@@ -1373,7 +1350,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	slot.principal = principal // The name of its store carries the principal.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	// The storage file, the date page, the fresh bytes page, the settings page, five glyph caches, the file of a service, the debug image, the disk program page, the demand cache and the request ring: 14 places for the union, and the largest role uses 13.
+	// The storage file, the date page, the fresh bytes page, the settings page, five glyph caches, the file of a service, the debug image, the disk program page, the font outlines and the demand cache: 14 places for the union, and the largest role uses 13.
 	mappings: [14]system.Mapping
 	mapping_count := 0
 	// A mapping that the program cannot start without did not fit: the
@@ -1384,13 +1361,6 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	defer if store_ring != 0 {
 		system.close(store_ring)
 		system.close(store_region)
-	}
-	// The request ring to the font service: the program maps it and the
-	// font service holds it, so this service keeps no handle of it after
-	// the start (font_service.odin).
-	font_ring: system.Handle
-	defer if font_ring != 0 {
-		system.close(font_ring)
 	}
 	if .Store in role && .Acts_For_Principal not_in role {
 		storage_service: ^Started
@@ -1534,11 +1504,10 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	if .Inspect in role {
 		disk_program_page_give(mappings[:], &mapping_count, &values)
 	}
-	// A program with a surface: the settings page and the glyph cache, read-only;
-	// the demand cache, read-only, and its request ring to the font service.
+	// A program with a surface: the settings page, the glyph caches, the
+	// font outlines and the demand cache, read-only.
 	if .Terminal not_in role {
 		text_settings_give(mappings[:], &mapping_count, &values)
-		font_ring = font_requests_give(slot, name, mappings[:], &mapping_count, &values)
 	}
 	// A service: the service ring, and its own file, to read the
 	// descriptions of its exports.
@@ -2147,11 +2116,11 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	measure: bool
 	values[terminal.VALUE_COLUMNS], values[terminal.VALUE_ROWS], measure = terminal_of(system.name_of(writer.name[:]))
 	values[terminal.VALUE_MEASURE] = u64(measure)
-	// The settings page, five glyph caches and the demand cache.
+	// The settings page, five glyph caches, the font outlines and the
+	// demand cache.
 	mappings: [8]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
-	demand_cache_give(mappings[:], &mapping_count, &values)
 	// The terminal imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	load_error: module.Load_Error

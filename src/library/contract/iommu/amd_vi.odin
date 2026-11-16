@@ -52,11 +52,12 @@ AMD_REQUESTER_RANGE_CAPACITY :: 256
 
 // A range of requesters that one unit translates.
 Requester_Range :: struct {
-	first:    u16,
-	last:     u16,
-	unit:     u8,
-	aliased:  bool, // The devices of the range share a requester with another device: the source of an alias, or its target.
-	settings: u8, // The byte 3 of the entry: the messages that the unit passes for the device (amd_pass_bits).
+	first:        u16,
+	last:         u16,
+	unit:         u8,
+	aliased:      bool, // The devices of the range share a requester with another device: the source of an alias, or its target.
+	settings:     u8, // The byte 3 of the entry: the messages that the unit passes for the device (amd_pass_bits).
+	alias_target: u16, // An aliased range: the requester that the unit sees for its devices. The target of an alias names itself.
 }
 
 // A unit of AMD as the table gives it.
@@ -209,6 +210,7 @@ device_entries_read :: proc "contextless" (ivrs: ^Ivrs, entries: []u8, unit: u8)
 	range_first: u16
 	range_aliased := false
 	range_settings: u8
+	range_target: u16
 	offset := 0
 	for offset < len(entries) {
 		kind := entries[offset]
@@ -232,24 +234,24 @@ device_entries_read :: proc "contextless" (ivrs: ^Ivrs, entries: []u8, unit: u8)
 			problem = requester_range_add(ivrs, requester, requester, unit, false, settings)
 		case AMD_ENTRY_ALIAS_SELECT:
 			target := load_16(entries, offset + 5)
-			problem = requester_range_add(ivrs, target, target, unit, true, settings)
+			problem = requester_range_add(ivrs, target, target, unit, true, settings, target)
 			if problem == .None {
-				problem = requester_range_add(ivrs, requester, requester, unit, true, settings)
+				problem = requester_range_add(ivrs, requester, requester, unit, true, settings, target)
 			}
 		case AMD_ENTRY_RANGE_START, AMD_ENTRY_EXTENDED_RANGE_START, AMD_ENTRY_ALIAS_RANGE_START:
 			if range_open {
 				return .Bad_Structure
 			}
-			range_open, range_first, range_aliased, range_settings = true, requester, kind == AMD_ENTRY_ALIAS_RANGE_START, settings
+			range_open, range_first, range_aliased, range_settings, range_target = true, requester, kind == AMD_ENTRY_ALIAS_RANGE_START, settings, 0
 			if kind == AMD_ENTRY_ALIAS_RANGE_START {
-				target := load_16(entries, offset + 5)
-				problem = requester_range_add(ivrs, target, target, unit, true, settings)
+				range_target = load_16(entries, offset + 5)
+				problem = requester_range_add(ivrs, range_target, range_target, unit, true, settings, range_target)
 			}
 		case AMD_ENTRY_RANGE_END:
 			if !range_open || requester < range_first {
 				return .Bad_Structure
 			}
-			problem = requester_range_add(ivrs, range_first, requester, unit, range_aliased, range_settings)
+			problem = requester_range_add(ivrs, range_first, requester, unit, range_aliased, range_settings, range_target)
 			range_open = false
 		case AMD_ENTRY_SPECIAL:
 			if entries[offset + 7] == AMD_SPECIAL_VARIETY_INTERRUPT_CONTROLLER {
@@ -270,13 +272,13 @@ device_entries_read :: proc "contextless" (ivrs: ^Ivrs, entries: []u8, unit: u8)
 }
 
 // requester_range_add keeps one range of requesters, or makes the last
-// range longer when this one follows it with the same unit, alias and
-// settings.
+// range longer when this one follows it with the same unit, alias, alias
+// target and settings.
 @(private = "file")
-requester_range_add :: proc "contextless" (ivrs: ^Ivrs, first, last: u16, unit: u8, aliased: bool, settings: u8) -> Ivrs_Problem {
+requester_range_add :: proc "contextless" (ivrs: ^Ivrs, first, last: u16, unit: u8, aliased: bool, settings: u8, alias_target: u16 = 0) -> Ivrs_Problem {
 	if ivrs.range_count > 0 {
 		previous := &ivrs.ranges[ivrs.range_count - 1]
-		if previous.unit == unit && previous.aliased == aliased && previous.settings == settings && u32(previous.last) + 1 == u32(first) {
+		if previous.unit == unit && previous.aliased == aliased && previous.settings == settings && previous.alias_target == alias_target && u32(previous.last) + 1 == u32(first) {
 			previous.last = last
 			return .None
 		}
@@ -284,7 +286,7 @@ requester_range_add :: proc "contextless" (ivrs: ^Ivrs, first, last: u16, unit: 
 	if ivrs.range_count == AMD_REQUESTER_RANGE_CAPACITY {
 		return .Too_Many_Device_Entries
 	}
-	ivrs.ranges[ivrs.range_count] = {first = first, last = last, unit = unit, aliased = aliased, settings = settings}
+	ivrs.ranges[ivrs.range_count] = {first = first, last = last, unit = unit, aliased = aliased, settings = settings, alias_target = alias_target}
 	ivrs.range_count += 1
 	return .None
 }
@@ -304,6 +306,47 @@ amd_unit_of :: proc "contextless" (ivrs: ^Ivrs, requester: u16) -> (unit: u32, c
 		}
 	}
 	return unit, covered, aliased
+}
+
+// amd_alias_sources_behind says if every alias whose target is a shared
+// requester has its sources on buses behind the conventional bridge of that
+// requester: shared_of_bus gives, for each bus, 1 + the shared requester of
+// its devices, as the walk of the bus found it, or 0. An alias from a device
+// outside the bridge would make the unit translate the accesses of that
+// device with the domain of the group. The target itself is not a source.
+// It reads each bus of each range once: at most 256 for a range.
+amd_alias_sources_behind :: proc "contextless" (ivrs: ^Ivrs, shared: u16, shared_of_bus: ^[256]u32) -> bool {
+	for index in 0 ..< min(int(ivrs.range_count), AMD_REQUESTER_RANGE_CAPACITY) {
+		item := &ivrs.ranges[index]
+		if !item.aliased || item.alias_target != shared {
+			continue
+		}
+		for bus in u32(item.first >> 8) ..= u32(item.last >> 8) {
+			low := max(u32(item.first), bus << 8)
+			high := min(u32(item.last), bus << 8 | 0xFF)
+			if low == u32(shared) && high == u32(shared) {
+				continue // The target of the alias, alone on this bus in the range.
+			}
+			if shared_of_bus[bus] != 1 + u32(shared) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// amd_alias_agrees says if every alias that names a requester, as its
+// source or as its target, gives its accesses the requester shared: the
+// table then says what the walk of the bus found behind a conventional
+// bridge. A requester that no alias names agrees: the bus alone decides.
+amd_alias_agrees :: proc "contextless" (ivrs: ^Ivrs, requester: u16, shared: u16) -> bool {
+	for index in 0 ..< min(int(ivrs.range_count), AMD_REQUESTER_RANGE_CAPACITY) {
+		item := &ivrs.ranges[index]
+		if item.aliased && requester >= item.first && requester <= item.last && item.alias_target != shared {
+			return false
+		}
+	}
+	return true
 }
 
 // amd_pass_bits gives the bits of the third word of a device entry that

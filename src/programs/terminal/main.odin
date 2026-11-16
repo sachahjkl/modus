@@ -61,7 +61,14 @@
 // - "terminal: console shows the character N in its cells from the demand
 //   cache", once, for the first line of the text with a box-drawing
 //   character, a block element or a Greek letter of Paper Mono, which the
-//   font service drew (src/md/features/glyphs_on_demand.md).
+//   font service drew (src/md/features/glyphs_on_demand.md);
+// - "terminal: console shows the character N in its cells, drawn by this
+//   program from the font F of its fallback chain", once, for the first or
+//   the last character of the view past the glyph cache and the cell
+//   subset that a font of the chain of the cells has; and "terminal:
+//   console shows the character N in its cells as the replacement glyph:
+//   no font of its fallback chain has it", once, for the first or the
+//   last such character that no font has.
 //
 // The terminal of flood measures: it shows the rates of the program, and
 // writes one line with the lines, the records and the kernel entries of one
@@ -74,6 +81,7 @@ package terminal_program
 
 import "modus:contract/demand_cache"
 import "modus:support/display"
+import "modus:support/fallback_glyphs"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/key_path"
@@ -298,10 +306,14 @@ View :: struct {
 	// the row under it are not lines of the text. After a clear, the view
 	// can show none.
 	text_rows: u64,
-	// The first cell of a line of the text past the glyph cache that a
-	// cell face of the demand cache can hold; 0: none. The drawer says
-	// once that its cells draw it.
+	// The first cell of a line of the text past the glyph cache that the
+	// cell subset of the demand cache holds; 0: none. The drawer says once
+	// that its cells draw it.
 	demand_character: rune,
+	// The first and the last cells of the lines of the text past the glyph
+	// cache and past the cell subset; 0: none. The drawer says once which
+	// font of the fallback chain draws one, and once that one has no font.
+	fallback_first, fallback_last: rune,
 }
 
 request: Request
@@ -730,6 +742,7 @@ view_make :: proc "contextless" () {
 	}
 	view.text_rows = 0
 	view.demand_character = 0
+	view.fallback_first, view.fallback_last = 0, 0
 	top = max(top, oldest)
 	view.top = top
 	edit_color := style_color(edit_line.style)
@@ -785,8 +798,17 @@ view_make :: proc "contextless" () {
 				row[column] = {character = character, reverse = reverse, color = color}
 				// The fill of the view looks at each cell already: the
 				// drawer then looks at one character, not at the cells.
-				if view.demand_character == 0 && !graphics.cell_font_draws(character) && demand_cache.in_subset(.Cells, character) {
-					view.demand_character = character
+				if !graphics.cell_font_draws(character) {
+					if demand_cache.in_subset(.Cells, character) {
+						if view.demand_character == 0 {
+							view.demand_character = character
+						}
+					} else {
+						if view.fallback_first == 0 {
+							view.fallback_first = character
+						}
+						view.fallback_last = character
+					}
 				}
 				column += 1
 				run_place += length
@@ -1309,10 +1331,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			display.wait_events(&wait, &window)
 			system.wait_word(&wait, &activity, seen, &drawer_idle)
 			system.wait_word(&wait, system.events(), events_seen)
-			// The word subset_drawn of the demand cache, while it is 0: the
-			// font service ends this wait when it drew each cell face, and
-			// the look below makes this turn draw the whole window.
-			display.cell_demand_wait(&wait)
 			// A held arrow button of the scroll bar takes its next step at
 			// a time of the clock: the wait ends there at the latest.
 			deadline := program != 0 ? system.time() + STATE_TIME : system.WAIT_FOREVER
@@ -1402,17 +1420,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			view_move(move)
 		}
-		// The font service drew each cell face after a frame of this
-		// window: a cell that drew the replacement glyph has its glyph
-		// now, and its cell did not change, so the difference of the grids
-		// finds no damage there. The next frame of each picture is whole.
-		// It is a change as a key is: this turn draws it, or, when the
-		// compositor holds the last picture, the next turn says before its
-		// wait that it is due.
-		if display.cell_demand_completed() {
-			interface.draw_whole_window_next(&drawing)
-			dirty = true
-		}
 		// A change that this turn does not draw waits for the next picture:
 		// the start of the next turn says it, before its wait.
 		if now < next_frame {
@@ -1489,15 +1496,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			}
 		}
-		// The generation of the demand cache before the draw: the drawing
-		// module reads it again in the draw, and an entry never changes, so
-		// a cell that this program finds is a cell that the module draws.
-		display.text_demand_frame_begin()
+		// The frame of the text of this program: the glyphs past the glyph
+		// cache that it draws below, as the drawing module draws them in
+		// its own copy, from the same outlines and the same demand cache.
+		display.text_frame_begin()
 		draw(&window, request.follow)
-		if !demand_cell_told && view.demand_character != 0 && display.cell_demand_holds(view.demand_character) {
-			demand_cell_told = true
-			system.log("terminal: ", program_name, " shows the character ", u64(view.demand_character), " in its cells from the demand cache")
-		}
+		fallback_cells_tell()
 		// A frame that did not reach the compositor (a Present that the full
 		// command ring refused, a frame left out, a draw that the module
 		// refused) is still owed: the next turn draws it again, and says
@@ -1577,6 +1581,40 @@ list_scroll_send :: proc "contextless" () -> (sent: bool) {
 
 list_drag_moved: bool // The drag of the thumb of the completion list that is held now moved its view.
 demand_cell_told: bool // The line of the first cell drawn from the demand cache is on the log.
+fallback_cell_told: bool // The line of the first cell that this program drew from a font of its fallback chain is on the log.
+missing_cell_told: bool // The line of the first cell that no font of the chain has is on the log.
+
+// fallback_cells_tell says once, after a frame, where the first cells past
+// the glyph cache of the view come from: the demand cache, a font of the
+// fallback chain, or no font. The program draws the glyph of the cell as
+// the drawing module drew it, from the same outlines, and checks that it
+// has ink and stays in its cell.
+fallback_cells_tell :: proc "contextless" () {
+	if !demand_cell_told && view.demand_character != 0 {
+		if found := display.cell_fallback_of(view.demand_character); found.source == .Demand_Cache && found.rows > 0 && found.inside {
+			demand_cell_told = true
+			system.log("terminal: ", program_name, " shows the character ", u64(view.demand_character), " in its cells from the demand cache")
+		}
+	}
+	for character in ([2]rune{view.fallback_first, view.fallback_last}) {
+		if character == 0 || fallback_cell_told && missing_cell_told {
+			return
+		}
+		found := display.cell_fallback_of(character)
+		switch found.source {
+		case .Private_Cache, .Demand_Cache:
+			if !fallback_cell_told && found.rows > 0 && found.inside {
+				fallback_cell_told = true
+				system.log("terminal: ", program_name, " shows the character ", u64(character), " in its cells, drawn by this program from the font ", fallback_glyphs.outline_font_name(found.font), " of its fallback chain")
+			}
+		case .Missing:
+			if !missing_cell_told && found.font == .None {
+				missing_cell_told = true
+				system.log("terminal: ", program_name, " shows the character ", u64(character), " in its cells as the replacement glyph: no font of its fallback chain has it")
+			}
+		}
+	}
+}
 
 // pointer_shape_follow asks the compositor for the arrow while the pointer
 // is over a scroll bar of the window or holds one, and for the text shape

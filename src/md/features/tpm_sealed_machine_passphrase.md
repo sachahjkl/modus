@@ -20,7 +20,7 @@ The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The machine p
 
 ### When the form is chosen
 
-`machine_passphrase()` on a machine with no record starts `unlock` in the mode `MODE_SET_MACHINE_PASSPHRASE`, as before. The window asks for the passphrase two times. Then `unlock` chooses the form:
+`machine_passphrase()` on a machine with no record starts `unlock` in the mode `Unlock_Mode.Set_Machine_Passphrase`, as before. The window asks for the passphrase two times. Then `unlock` chooses the form:
 
 - With the TPM service and Secure Boot on: the third form of the record, `MACHINEP`, the machine key sealed by the TPM with the machine passphrase. The window then shows the recovery key until Enter, and the record is written after Enter.
 - With no TPM service, or with Secure Boot off: the form `MACHINEK`, under the machine passphrase alone, with a line of the log that says why. It has no recovery key.

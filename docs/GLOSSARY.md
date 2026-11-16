@@ -2957,8 +2957,6 @@ A device service drives its device by reads and writes of its registers. Device 
 
 The root service makes it with `Device_Create`, the kind `Memory`, a physical address (a multiple of 4096) and a count of pages. This needs the machine handle with the right **Devices**, which only the root service holds. The kernel refuses a range that meets memory that the firmware gave as free or as loaded, so device memory never reaches the memory of a program or of the kernel. The result is a memory handle with **Give**, **Read** and **Write**. The root service reads the base address registers of the device on the bus, makes one device memory object for each of them, and gives each to the device service in its context (the roles `GRANT_BAR + n` of `src/library/support/pci`). A mapping of it uses no cache, because a read of a register has an effect and must reach the device each time.
 
-The kind `Display_Memory` makes the same object over the video memory of a display, which holds its screen pages. Its mapping has the page attribute of the framebuffer of the firmware, not "no cache": a read of a pixel has no effect, and a write of each pixel to the device would make each frame slow. The kernel accepts it only for a range that holds the address of the framebuffer of the firmware, and gives it no requester for the IOMMU.
-
 Device memory is not the memory that a device reads and writes for data: that is ordinary memory made `Contiguous`, such as the data region or the memory of the queues. It pays nothing from a budget, because it is not memory.
 
 The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
@@ -2997,7 +2995,7 @@ Do not use: DMA remapper, SMMU.
 
 A remapping unit is one part of the IOMMU, with its own registers and tables, that translates the accesses of the devices that the table DMAR or IVRS gives it.
 
-A machine of Intel has several: one for its graphics device, and one that covers every other device (the flag `INCLUDE_PCI_ALL`). The table DMAR names the devices of a unit by device scopes: an endpoint, or a bridge and each bus behind it. A unit of AMD is itself a function of the bus, and the table IVRS names its devices by ranges of requesters; a device whose range is an alias sends its accesses with another requester, and gets no domain. The kernel programs at most 4 units, and gives each device the unit that names it, else the unit that covers every device. A device has its domain, its invalidations and its DMA faults on its unit. A device that no unit covers reaches all memory, and `Device_Create` of its registers writes one line that says so.
+A machine of Intel has several: one for its graphics device, and one that covers every other device (the flag `INCLUDE_PCI_ALL`). The table DMAR names the devices of a unit by device scopes: an endpoint, or a bridge and each bus behind it. A unit of AMD is itself a function of the bus, and the table IVRS names its devices by ranges of requesters; a device whose range is an alias sends its accesses with another requester, and gets no domain, unless that requester is the shared requester of a conventional bridge in front of it. The kernel programs at most 4 units, and gives each device the unit that names it, else the unit that covers every device. A device has its domain, its invalidations and its DMA faults on its unit. A device that no unit covers reaches all memory, and `Device_Create` of its registers writes one line that says so.
 
 A remapping unit is not a device domain: a unit holds the domains of many devices.
 
@@ -3009,13 +3007,25 @@ Do not use: DRHD, IOMMU unit.
 
 A device domain is the memory that one device can reach through the IOMMU: the pages that its service declared, at their device addresses.
 
-The kernel keeps one domain for each device that has a service: an entry for the requester of the device on its remapping unit (a context entry of Intel, or an entry of the device table of AMD), and page tables that map each declared page at its device address. A page is writable for the device only while the service holds a handle with **Write** to its object. The first program that declares memory to a device owns its domain; its budget pays for the tables. A declared object leaves the domain when the service closes or loses its last handle to it, or when the object ends, before its frames are free; the whole domain ends when its service stops, or when it holds neither a handle nor a mapping of the registers of the device. A device with no service has no context entry on Intel, and on AMD an entry that names an empty table with neither read nor write: an empty domain, in which each access is refused. A device that a reserved memory range names has a standing domain with its ranges instead. A device behind a conventional bridge of PCI gets no domain: every device behind that bridge gives the same requester. Example: the block service of the data disk declares its queue and the data region of the storage service, and its device reaches those pages and no other.
+The kernel keeps one domain for each device that has a service: an entry for the requester of the device on its remapping unit (a context entry of Intel, or an entry of the device table of AMD), and page tables that map each declared page at its device address. A page is writable for the device only while the service holds a handle with **Write** to its object. The first program that declares memory to a device owns its domain; its budget pays for the tables. A declared object leaves the domain when the service closes or loses its last handle to it, or when the object ends, before its frames are free; the whole domain ends when its service stops, or when it holds neither a handle nor a mapping of the registers of the device. A device with no service has no context entry on Intel, and on AMD an entry that names an empty table with neither read nor write: an empty domain, in which each access is refused. A device that a reserved memory range names has a standing domain with its ranges instead. The devices behind a conventional bridge of PCI have one domain, of their shared requester, which the kernel makes only for a service that holds the registers of each of them (see "Shared requester"). Example: the block service of the data disk declares its queue and the data region of the storage service, and its device reaches those pages and no other.
 
 A device domain is not an address space of a program, and it gives no right to a program.
 
 The design: `src/md/infrastructure/iommu.md`, "Mechanism in the kernel, policy outside".
 
 Do not use: IOMMU domain, DMA window.
+
+### Shared requester
+
+A shared requester is the one requester that a conventional bridge of PCI gives the accesses of each device behind it.
+
+A bridge from PCI Express to PCI gives its secondary bus with the device 0 and the function 0; another conventional bridge gives its own requester. Behind several conventional bridges, the one nearest to bus 0 decides. The IOMMU sees only the shared requester, so it cannot tell those devices apart: they have one device domain. The kernel makes that domain at the first declaration of a service only when the service holds the registers of each device behind the bridge, and ends it when the service no longer holds one of them; else the declaration gives `Bad_State`, with one line that names the device that it misses. A device of the group whose registers `Device_Create` makes after the domain, and that the owner does not hold, ends the domain too. The interrupt entries of the message interrupts of the group are present only while the domain lives. The root service gives every device behind a conventional bridge to the service of the first one that it starts. On AMD-Vi, the table IVRS names those devices by an alias to the shared requester, and an alias to it from a device outside the bridge leaves the group with no domain. Example: on the machine of the part `iommu_amd` of the test, the disk of the measures and an entropy device behind the bridge at 0:1C.0 both give the requester 0:1C.0, and the test device service holds both.
+
+A shared requester is not the requester of a device of PCI Express behind a root port, which keeps its own.
+
+The design: `src/md/infrastructure/iommu.md`, "The domain of a conventional bridge".
+
+Do not use: alias requester, DMA alias.
 
 ### Device address
 
@@ -4469,41 +4479,15 @@ It is a rule of the system for every window, and a program writes no code for it
 
 The compositor counts, for each window, the `Present` records that named the picture that it already read: `pictures_drawn_again` in a row of `compositor.windows()`. It is 0 for a program that keeps the rule. The rule does not stop a hostile program, which holds the right to write both pictures: such a program spoils its own window, and no other.
 
-The rule holds for the frames of the compositor too: on a display with two screen pages, the compositor writes the page that the display does not show, then a page flip shows the frame whole (`frames_on_the_shown_page` is 0 in the row of `compositor.screen()`).
-
 The design: `src/md/infrastructure/whole_frame.md`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: tear-free, double buffering, vertical synchronization.
-
-### Screen page
-
-A screen page is one whole screen in the video memory of the display: the display shows one screen page at a time.
-
-The standard VGA of the test machine has 16 MiB of video memory, and a screen of 1024 by 768 pixels takes 3 MiB, so it holds two screen pages. The page 0 is the framebuffer of the firmware. The compositor writes each frame into the page that the display does not show, then a page flip shows it. A screen page holds the frame of two frames before: the compositor keeps, for each page, the rectangles where it differs from its frame in memory, as the window layer does for the two pictures of a surface. On a display with no page flip, the compositor has one screen page, and writes the page that the display shows.
-
-A screen page is not a picture: a picture is in the memory of a surface of a program, and the compositor reads it.
-
-The design: `src/md/infrastructure/whole_frame.md`.
-
-Do not use: back buffer, front buffer, framebuffer (for the page 1).
-
-### Page flip
-
-A page flip is the one write of a display register that makes the display show another screen page.
-
-The compositor writes the first line of the page in the register `Offset_Y` of the display registers of Bochs, then reads it back: a value that differs says that the display refused the page, and the compositor goes back to one screen page with one line on the log. On the standard VGA of QEMU, the flip takes effect when the write returns, so the page that the display showed before is free at once. A real display takes the new page at its next vertical blank, which this form does not wait for. `compositor.screen()` counts the flips in `page_flips`.
-
-A page flip is not a `Present`: a `Present` names the picture of a surface that the compositor reads next; a page flip names the screen page that the display shows.
-
-The design: `src/md/infrastructure/whole_frame.md`.
-
-Do not use: buffer swap, vsync.
 
 ### Compositor
 
 The compositor is the service that owns the display: it combines the surfaces of the programs into the framebuffer and routes the input to the program that has the focus.
 
-The compositor is the one program that writes the screen. The root service gives it the framebuffer, or the two screen pages of the display with its display registers, a ring to the input service, and a ring to each program with a surface (`Client_Add`). It draws the background, the bar, each window (a title bar over the surface of its program, with a border), the two menus of the bar, the palette and the pointer. It draws again only the damage rectangles of a frame, and puts each frame on the screen by a page flip. It sends each key to the program in front, and each pointer event over a surface to the program of that surface, in the coordinates of the surface.
+The compositor is the one program that writes the screen. The root service gives it the framebuffer, a ring to the input service, and a ring to each program with a surface (`Client_Add`). It draws the background, the bar, each window (a title bar over the surface of its program, with a border), the two menus of the bar, the palette and the pointer. It draws again only the damage rectangles of a frame. It sends each key to the program in front, and each pointer event over a surface to the program of that surface, in the coordinates of the surface.
 
 In the first version, it is also the desktop shell: it starts a program from its menus or the palette by the command `Start` to the root service, and it stops a program when its window closes. It serves exports, such as `compositor.pointer()`, which the machine tests read through the remote service.
 
@@ -5224,7 +5208,7 @@ Do not use: fault (for this), bad byte, mojibake.
 
 The replacement glyph is the outline of a box that a reader draws in place of a character that the font lacks and of an invalid sequence.
 
-It is drawn by code, in each font and at each scale, so no font needs a glyph for it: the box goes from the top of a capital letter to the baseline, inside one cell. It shows that a character is there: a byte is never drawn as a glyph, and a `?` would read as a question mark. Text shaping places it as `REPLACEMENT_GLYPH`, with the advance of `0`. A character that the demand cache does not hold yet, in a frame before the font service drew its subset, draws it too, until the frame after the answer of the service; in a cell of a terminal, until the frame after the word `subset_drawn` changes.
+It is drawn by code, in each font and at each scale, so no font needs a glyph for it: the box goes from the top of a capital letter to the baseline, inside one cell. It shows that a character is there: a byte is never drawn as a glyph, and a `?` would read as a question mark. Text shaping places it as `REPLACEMENT_GLYPH`, with the advance of `0`. A character past the glyph cache that no font of its fallback chain has draws it too, and so does a character whose outline the renderer refuses, at the advance of its font.
 
 The design: `src/md/data/text_encoding.md`.
 
@@ -5234,7 +5218,7 @@ Do not use: tofu, missing glyph, question mark (for this).
 
 A font is a set of glyphs of one design, with the measures that place them side by side.
 
-The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126, the Latin-1 Supplement and the euro sign, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs on the host, and at run time only in the font service, which reads the subsets of the interface font and of the font of the cells that its module holds and draws the characters past the glyph cache into the demand cache.
+The system draws all its text from fonts. The modus tool reads each font file at the build, subsets it to the characters 32 to 126, the Latin-1 Supplement and the euro sign and the characters of its fallback scripts, and draws the first ones into a glyph cache: a program reads the cache for them. For a character past the cache, a program reads the subset itself, in the font outlines of the boot image, and draws the glyph into its private glyph cache. The parser of font files checks each read against the bytes of the file, and the font outlines come from the boot image, whose hash the root service checks.
 
 The system has three fonts:
 
@@ -5254,7 +5238,7 @@ A glyph is the form of one character in one font.
 
 The character is the number (the byte 0x30 is the character `0`); the glyph is the drawing of it. One character can have several glyphs in one font: Paper Mono has a plain zero (glyph 294) and a slashed zero (glyph 304), and a font feature chooses between them. A glyph has an outline and an advance; in a glyph cache it is a box of words of coverage.
 
-The glyph caches hold glyphs for the characters 32 to 126, the Latin-1 Supplement (U+00A0 to U+00FF) and the euro sign U+20AC only. The font service draws the Greek letters of the interface font, and the box-drawing characters, the block elements and the five Greek letters of the font of the cells, on demand, into the demand cache, for a program that reads it. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
+The glyph caches hold glyphs for the characters 32 to 126, the Latin-1 Supplement (U+00A0 to U+00FF) and the euro sign U+20AC only. A character past them takes the glyph of the first font of its fallback chain that has it: from the demand cache, which the font service drew, or drawn by the program into its private glyph cache. A character that no font of the chain has, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the fonts do not draw.
 
 The design: `docs/FONTS.md`, "5. The glyph cache".
 
@@ -5268,7 +5252,7 @@ The outline is what a TrueType font stores in its table `glyf`: points in units 
 
 A pointer shape of the theme of the system is also an outline, written in its pointer manifest: contours in layers of a paint, in units of a pixel at its first size, with up to three decimals. The same renderer draws it, with no grid fit: its level and upright edges are on whole units by design. The tool moves each contour in by 1 pixel to draw its edge.
 
-The modus tool reads outlines and draws them once into a glyph cache or a pointer theme file at the build. At run time only the font service reads outlines: the characters past the glyph cache, into the demand cache. A glyph made of glyphs (`i` and `j` in Paper Mono) is made a simple outline in the subset. Outlines of CFF (cubic curves) are not read, and the tool reads no SVG file.
+The modus tool reads outlines and draws them once into a glyph cache or a pointer theme file at the build. At run time a program reads the font outlines of the boot image for the characters past the glyph cache, and the font service for the demand cache. A glyph made of glyphs (`i` and `j` in Paper Mono) is made a simple outline in the subset. Outlines of CFF (cubic curves) are not read, and the tool reads no SVG file.
 
 The design: `docs/FONTS.md`, "4. Fixed point"; for a pointer, `docs/POINTERS.md`, "4. The manifest".
 
@@ -5318,7 +5302,7 @@ A glyph cache moves all the work of a font out of the programs. The modus tool b
 
 The format is `src/library/contract/glyph_cache`, version 4: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. Each table keys a character by its character index. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
 
-The cache has a fixed capacity and holds every glyph of its 192 characters, so it never fills on demand and never evicts. It is not an atlas of a GPU and not a cache that a program fills: no program writes it, and its address and its size never come from another program. A character past it is in the demand cache, which the font service writes.
+The cache has a fixed capacity and holds every glyph of its 192 characters, so it never fills on demand and never evicts. It is not an atlas of a GPU and not a cache that a program fills: no program writes it, and its address and its size never come from another program. A character past it comes from its fallback chain: the demand cache, which the font service writes, or the private glyph cache of the program.
 
 The design: `docs/FONTS.md`, "5. The glyph cache", and "Who can write a cache".
 
@@ -5365,9 +5349,9 @@ Do not use: proportional font cache.
 
 ### Font service
 
-The font service is the program `glyphs`: it draws the glyphs of the characters past the glyph cache into the demand cache.
+The font service is the program `glyphs`: it draws the fixed subsets past the glyph caches into the demand cache at its start, then ends.
 
-It is the only program that reads outlines at run time: the subsets of the interface font and of the two weights of the font of the cells that its module holds. At its start, before it reads a request, it draws each character of the subset of each demand face, so the demand cache holds the same entries whatever the programs draw; a character outside the subset is absent. Then it sets the word `subset_drawn` of the demand cache and wakes the programs that wait on it. It draws a glyph with the renderer of the build, at each scale and each position of the glyph cache of the same font file, so a glyph on demand has the pixels that the build would give it. The root service starts it after the compositor as a part of the system, and gives it the demand cache with Write and a control ring that names the request ring of each program. It answers each request with the generation of the demand cache and the counts of drawn, absent and refused characters, and reads the requests of each program within its budget of requests. It is not a font file and not a renderer in each program, and a program never waits for it: a character that is not ready draws the replacement glyph.
+It reads the font outlines of the boot image and draws each character of the subset of each demand face, face after face, in the order of the code points, so the demand cache holds the same entries whatever the programs draw. It draws a glyph with the renderer of the build, at each scale and each position of the glyph cache of the same font file. Then it writes, for each script of the fallback chains, how many characters the chain of the interface and the chain of the cells draw, and ends with the code 0. The root service starts it after the compositor as a part of the system, with the demand cache with Write and the font outlines read-only. Nothing goes from a program to it, and a program never waits for it: a program draws each glyph that the demand cache does not hold itself.
 
 The design: `src/md/features/glyphs_on_demand.md`.
 
@@ -5375,33 +5359,63 @@ Do not use: font server, rasterizer service, glyph daemon.
 
 ### Demand cache
 
-The demand cache is the memory where the font service writes the glyphs past the glyph caches, and which each program with a request ring, and each terminal, maps read-only.
+The demand cache is the memory where the font service writes the glyphs of the fixed subsets past the glyph caches, and which each program that gets the glyph caches maps read-only.
 
-It holds a header with a generation, the word `subset_drawn` and the hash of the font file of each demand face, a hash table of 2048 entries by face and code point, and 4 MiB of words of coverage in the form of a glyph cache (`src/library/contract/demand_cache`). The font service writes an entry, then its key, then the generation; an entry never changes after that. A program reads the generation once at the start of a frame, so the measure and the draw of the frame agree, and it copies and checks each entry before it draws a word of it. A program asks for a missing character of the interface font through its request ring, a ring of the fixed range `Glyph_Requests`; a terminal asks for nothing, and waits on the word `subset_drawn`. The demand cache is not a glyph cache: it is not in the boot image, it changes while programs read it, and a program does not validate it once.
+It holds a header with a generation and the hash of the font file of each demand face, a hash table of 2048 entries by face and code point, and 4 MiB of words of coverage in the form of a glyph cache (`src/library/contract/demand_cache`). The font service writes an entry, then its key, then the generation; an entry never changes after that. A program reads the generation once at the start of a frame, and it copies and checks each entry before it draws a word of it. Its entries are the same whatever the programs draw, so it tells no program what another draws. A glyph that it does not hold, the program draws itself into its private glyph cache, with the same bytes. The demand cache is not a glyph cache: it is not in the boot image, it changes while the font service writes it, and a program does not validate it once.
 
 The design: `src/md/features/glyphs_on_demand.md`.
 
 Do not use: atlas, shared glyph cache, dynamic cache.
 
+### Font outlines
+
+The font outlines are one resource of the boot image that holds the font files of the system, from which each program draws the glyphs past its glyph caches.
+
+The resource is `font_outlines`, in the format of `src/library/contract/font_outlines`: a header, one record for each font (its name, the BLAKE3 hash of its file, its place and its size), then the font files. The modus tool writes it from the subsets of `resources/fonts`: B612 Regular and Bold, Paper Mono and Paper Mono SemiBold, the files of the glyph caches. The root service checks its hash once and maps it read-only at the fixed range `Font_Outlines` in each program that gets the glyph caches and in the font service. A program validates its header once. The font outlines are not a glyph cache: they hold outlines, not drawn words.
+
+The design: `src/md/features/glyphs_on_demand.md`, "Layer 0: the outlines, shared and read-only".
+
+Do not use: font bundle, font pack.
+
+### Fallback chain
+
+A fallback chain is the list of fonts, in order, that give the glyph of a character past the glyph cache of a face: the first font of the list that has the character gives its glyph and its advance.
+
+The chains are data, one row for each script (`fallback_glyphs.scripts`): Greek, Cyrillic, the box-drawing characters and the block elements, and a default chain for each other character. The first font of each chain is the font of the glyph cache of the face. A glyph of another font of the chain is drawn in the frame of the first font: on its baseline, with its capitals as high. A character that no font of its chain has draws the replacement glyph, and the font service writes on the log what each chain lacks. The chain of the interface is B612 then Paper Mono; the chain of the cells is Paper Mono then B612.
+
+The design: `src/md/features/glyphs_on_demand.md`, "The fallback chain by script".
+
+Do not use: font stack, font fallback list.
+
+### Fallback face
+
+A fallback face is a glyph cache of the system that a glyph past it stands beside: B612 Regular, B612 Bold, Paper Mono with and without the grid fit, and Paper Mono SemiBold.
+
+A glyph of a face has the form, the baseline and the scale of the glyphs of that cache: a glyph of a face of cells stays in its cell, a glyph of the interface is the box of its ink at a subpixel position. A program finds the face of a glyph cache by the hash of its font file and its flags (`fallback_glyphs.face_of_cache`), so each spacing and each draw of a text finds it with no argument. Each face has its fallback chain. A fallback face is not a demand face: the demand cache has four faces, of the fixed subsets only.
+
+The design: `src/md/features/glyphs_on_demand.md`, "The fallback face".
+
+Do not use: font face (for this), font slot.
+
+### Private glyph cache
+
+The private glyph cache is the memory where a program keeps the glyphs past the glyph caches that it drew itself, which no other program reads.
+
+It holds 65 536 words of coverage (256 KiB) in runs of 32 to 4 096 words, and 1 024 entries keyed by the fallback face, the scale, the position of the pixel and the code point. A glyph is drawn at its first use in a frame and kept; a new glyph that finds no room evicts the glyphs used the longest time ago, counted in frames of the program. The budget of the program pays for it. A program that draws through the drawing module has two: the one of the module and its own. It holds no advance: the advance of a character comes from its font file at each measure. It is not the demand cache: it is not shared, so its content and its evictions tell no program what another draws.
+
+The design: `src/md/features/glyphs_on_demand.md`, "Layer 2: the private glyph cache".
+
+Do not use: glyph atlas, local cache, per-program cache.
+
 ### Demand face
 
 A demand face is one glyph cache of the boot image that the glyphs of the demand cache stand beside: a font file in one form of glyph cache.
 
-The demand cache keeps the glyphs of each face apart, because a glyph on demand must have the form, the baseline and the scale of the glyphs beside it. There are four: `Interface` (B612 Regular, proportional), `Cells` (Paper Mono with the grid fit), `Cells_Without_Grid_Fit` (Paper Mono with no grid fit) and `Cells_Bold` (Paper Mono SemiBold, scale 1). Each face has a subset: the Greek letters of B612 for `Interface`, and the box-drawing characters, the block elements and the five Greek letters of Paper Mono for the three faces of cells. A glyph of a face of cells stays in its cell, as each glyph of a cache of cells does. A program uses a face only beside the glyph cache whose font file and flags the header names. A demand face is not a font file: two faces can have one font file, as `Cells` and `Cells_Without_Grid_Fit` do.
+The demand cache keeps the glyphs of each face apart, because a glyph past the glyph cache must have the form, the baseline and the scale of the glyphs beside it. There are four: `Interface` (B612 Regular, proportional), `Cells` (Paper Mono with the grid fit), `Cells_Without_Grid_Fit` (Paper Mono with no grid fit) and `Cells_Bold` (Paper Mono SemiBold, scale 1). Each face has a subset: the Greek letters of B612 for `Interface`, and the box-drawing characters, the block elements and the five Greek letters of Paper Mono for the three faces of cells. A glyph of a face of cells stays in its cell, as each glyph of a cache of cells does. A program uses a face only beside the glyph cache whose font file and flags the header names. A demand face is not a font file: two faces can have one font file, as `Cells` and `Cells_Without_Grid_Fit` do.
 
 The design: `src/md/features/glyphs_on_demand.md`.
 
 Do not use: font slot, font index.
-
-### Budget of requests
-
-A budget of requests is the most requests of one program that the font service reads in one window of time: 32 in each window of 1000 ms.
-
-It bounds the time that one program costs the font service, which the bound of a turn does not: a program that writes its request ring with no end gets its budget, then its requests wait in its ring until the window ends. They are read then, not dropped. The answer of the request that spends the last of a window names the end of the window, each answer gives the count of the windows in which the program passed, and the log has one line for each program at its first pass. Each program has its own budget and its own count, so a hold tells it nothing of the requests of another. A program that asks only for what it draws never meets it. It is not a budget of the kernel, which pays for kernel objects, and not a budget of work of QUIC, which is a token bucket.
-
-The design: `src/md/features/glyphs_on_demand.md`; the guide: `docs/FONTS.md`, "13.2.4 The budget of requests of a program".
-
-Do not use: request quota, rate limit (for this), request budget.
 
 ### Setting
 
@@ -5835,7 +5849,7 @@ The strength is what the system claims about its seed, and no more:
 | `processor` (2) | `rdrand` | the generator of the processor, which the processor reseeds |
 | `weak` (1) | the cycle counter | 0 bits: the system does not measure the jitter |
 
-Each program knows the strength of its seed: the starter writes it in the context value 16, and `random.seed_strength(generator)` gives it. A child has the strength of its starter, because its seed comes from that stream. A program states the least strength that it accepts with `random.fill_for_a_key`: QUIC and TLS ask for `processor`, so on a machine with no `rdrand` and no `rdseed` a handshake does not start, and the caller gets the error `Seed_Too_Weak`. The system never refuses for the program: each program still starts and draws.
+Each program knows the strength of its seed: the starter writes it in the context value `CONTEXT_VALUE_SEED_STRENGTH` as a member of `Seed_Strength`, and `random.seed_strength(generator)` gives it. A value that names no member refuses the seed. A child has the strength of its starter, because its seed comes from that stream. A program states the least strength that it accepts with `random.fill_for_a_key`: QUIC and TLS ask for `processor`, so on a machine with no `rdrand` and no `rdseed` a handshake does not start, and the caller gets the error `Seed_Too_Weak`. The system never refuses for the program: each program still starts and draws.
 
 `modustool test random` runs a machine with no `rdrand` and no `rdseed`: its log and its window say "weak (the cycle counter only)" in the color of a failure.
 

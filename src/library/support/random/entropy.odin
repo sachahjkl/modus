@@ -19,25 +19,12 @@ PROCESSOR_ATTEMPTS :: 32 // Tries for one value: rdseed can be empty for a while
 JITTER_SAMPLES :: 2048 // The deltas of the cycle counter in one gathering.
 FRESH_LIMIT :: 10 * 1024 // Bytes that key_derive hashes at most: a gathering has 8320.
 
-// How strong the source of a seed is: the strongest source that gave all its
-// values at the gathering of the root service. Each program receives it with
-// its seed (`op.CONTEXT_VALUE_SEED_STRENGTH`), and `fill_for_a_key` refuses
-// a seed below the strength that the caller asks.
-Seed_Strength :: enum u8 {
-	None      = 0, // No gathering yet.
-	Weak      = 1, // The cycle counter only: no claim of entropy.
-	Processor = 2, // rdrand: the generator of the processor.
-	Entropy   = 3, // rdseed: the entropy source of the processor.
-}
-
-// The words of each strength, for the window and the log.
-@(rodata)
-seed_strength_names := [Seed_Strength]string {
-	.None      = "none",
-	.Weak      = "weak (the cycle counter only)",
-	.Processor = "processor (rdrand)",
-	.Entropy   = "entropy (rdseed)",
-}
+// How strong the source of a seed is (modus:contract/operation,
+// Seed_Strength): each program receives it with its seed
+// (`op.CONTEXT_VALUE_SEED_STRENGTH`), and `fill_for_a_key` refuses a seed
+// below the strength that the caller asks. Its words are
+// `op.seed_strength_names`.
+Seed_Strength :: op.Seed_Strength
 
 // What a gathering found: the window and the log show it.
 Entropy_Report :: struct {
@@ -300,11 +287,11 @@ report_values_write :: proc "contextless" (report: ^Entropy_Report, values: ^[op
 	values[7] = u64(report.device_bytes) | u64(report.device_reads_refused) << 32
 }
 
-// report_values_read reads a report from the values 0 to 7 of a context. A
-// strength out of the enumeration is taken as the strongest: the values come
-// from the starter.
-report_values_read :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (report: Entropy_Report) {
-	report.strength = Seed_Strength(min(values[0] & 0xFF, u64(max(Seed_Strength))))
+// report_values_read reads a report from the values 0 to 7 of a context.
+// The values come from the starter: a strength that names no member is
+// refused (ok false), and never taken for a strength.
+report_values_read :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (report: Entropy_Report, ok: bool) {
+	report.strength = op.seed_strength_of_word(values[0] & 0xFF) or_return
 	report.rdseed_present = values[0] >> 8 & 1 != 0
 	report.rdrand_present = values[0] >> 9 & 1 != 0
 	report.device_present = values[0] >> 10 & 1 != 0
@@ -316,5 +303,6 @@ report_values_read :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (r
 	report.jitter_distinct = u32(values[6])
 	report.device_bytes = u32(values[7])
 	report.device_reads_refused = u32(values[7] >> 32)
+	ok = true
 	return
 }

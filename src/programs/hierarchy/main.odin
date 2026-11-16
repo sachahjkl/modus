@@ -117,10 +117,21 @@ count_entries :: proc "contextless" (connection: ^storage.Client, place: storage
 				in_order = false
 			}
 			last_count = copy(last[:], name)
-			if row.kind == storage.ENTRY_TREE {
+			// A kind that names no entry is a fault of the service: it is
+			// counted as neither.
+			kind, kind_ok := storage.entry_kind_of_word(row.kind)
+			if !kind_ok {
+				status = .Failed
+				return
+			}
+			switch kind {
+			case .Tree:
 				trees += 1
-			} else {
+			case .Object:
 				objects += 1
+			case .None:
+				status = .Failed
+				return
 			}
 		}
 	}
@@ -136,14 +147,14 @@ name_after :: proc "contextless" (name, before: []u8) -> bool {
 }
 
 // add_names makes entries of one kind under a place, in one commit.
-add_names :: proc "contextless" (place: storage.Place, prefix: string, count: int, kind: i64) -> (storage.Status, i64) {
+add_names :: proc "contextless" (place: storage.Place, prefix: string, count: int, kind: storage.Entry_Kind) -> (storage.Status, i64) {
 	rows: [OBJECTS_IN_PART]storage.Add_Row
 	names: [OBJECTS_IN_PART * 16]u8
 	used := 0
 	for number in 0 ..< count {
 		buffer: [16]u8
 		name := number_name(buffer[:], prefix, number)
-		rows[number] = {name_offset = i64(used), name_count = i64(len(name)), kind = kind}
+		rows[number] = {name_offset = i64(used), name_count = i64(len(name)), kind = i64(kind)}
 		used += copy(names[used:], name)
 	}
 	error: errors.Error_Record
@@ -153,7 +164,7 @@ add_names :: proc "contextless" (place: storage.Place, prefix: string, count: in
 
 first_run :: proc "contextless" () {
 	start := system.time()
-	if status, _ := add_names(storage.ROOT, "tree_", TOP_TREES, storage.ENTRY_TREE); status != .Ok {
+	if status, _ := add_names(storage.ROOT, "tree_", TOP_TREES, .Tree); status != .Ok {
 		outcome(false, "the top trees: ", "status ", u64(status))
 		return
 	}
@@ -165,7 +176,7 @@ first_run :: proc "contextless" () {
 			outcome(false, "open a top tree: ", "status ", u64(status))
 			return
 		}
-		add_names(top_place, "part_", PARTS, storage.ENTRY_TREE)
+		add_names(top_place, "part_", PARTS, .Tree)
 		commits += 1
 		for part in 0 ..< PARTS {
 			part_buffer: [16]u8
@@ -174,7 +185,7 @@ first_run :: proc "contextless" () {
 				outcome(false, "open a part: ", "status ", u64(part_status))
 				return
 			}
-			if add_status, _ := add_names(part_place, "object_", OBJECTS_IN_PART, storage.ENTRY_OBJECT); add_status != .Ok {
+			if add_status, _ := add_names(part_place, "object_", OBJECTS_IN_PART, .Object); add_status != .Ok {
 				outcome(false, "add the objects of a part: ", "status ", u64(add_status))
 				return
 			}
@@ -267,7 +278,7 @@ first_run :: proc "contextless" () {
 // siblings.
 scrambled_case :: proc "contextless" () {
 	start := system.time()
-	tree_row := [1]storage.Add_Row{{name_offset = 0, name_count = 9, kind = storage.ENTRY_TREE}}
+	tree_row := [1]storage.Add_Row{{name_offset = 0, name_count = 9, kind = i64(storage.Entry_Kind.Tree)}}
 	tree_name := "scrambled"
 	_, status := storage.add(&client, storage.ROOT, tree_row[:], transmute([]u8)tree_name)
 	place, open_status := storage.open_tree(&client, storage.ROOT, "scrambled")
@@ -284,7 +295,7 @@ scrambled_case :: proc "contextless" () {
 		for row in 0 ..< count {
 			buffer: [8]u8
 			name := scrambled_name(buffer[:], ((first + row) * ADD_STEP + 17) % SCRAMBLED_NAMES)
-			rows[row] = {name_offset = i64(used), name_count = i64(len(name)), kind = storage.ENTRY_OBJECT}
+			rows[row] = {name_offset = i64(used), name_count = i64(len(name)), kind = i64(storage.Entry_Kind.Object)}
 			used += copy(names[used:], name)
 		}
 		if _, add_status := storage.add(&client, place, rows[:count], names[:used]); add_status != .Ok {

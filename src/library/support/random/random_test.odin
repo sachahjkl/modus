@@ -164,12 +164,42 @@ seed_strength_goes_with_the_seed :: proc(t: ^testing.T) {
 	for index in 0 ..< op.CONTEXT_VALUE_SEED_COUNT {
 		testing.expect_value(t, ctx.values[op.CONTEXT_VALUE_SEED + index], 0)
 	}
-	// A value over the last strength reads as the last one, not as a
-	// value out of the enumeration.
+}
+
+// A strength that names no member refuses the seed: it is never read as the
+// strongest, nor as any other strength, and the seed is erased from the
+// context all the same. The words one past the last strength, past one
+// byte, and the largest word come first; the last strength is taken last.
+@(test)
+a_seed_strength_that_names_no_member_is_refused :: proc(t: ^testing.T) {
+	seed := seed_of(3)
+	starter: Generator
+	testing.expect(t, generator_seed(&starter, &seed, .Weak))
+	refused := [?]u64{u64(max(Seed_Strength)) + 1, 0x100, max(u64)}
+	for word in refused {
+		ctx: system.Context
+		ctx.values = values_with_seed(&starter, {})
+		ctx.values[op.CONTEXT_VALUE_SEED_STRENGTH] = word
+		child: Generator
+		testing.expectf(t, !generator_from_context(&child, &ctx), "the strength %d names no member, and the seed is taken", word)
+		testing.expect(t, !child.seeded)
+		for index in 0 ..< op.CONTEXT_VALUE_SEED_COUNT {
+			testing.expect_value(t, ctx.values[op.CONTEXT_VALUE_SEED + index], 0)
+		}
+		_, word_ok := op.seed_strength_of_word(word)
+		testing.expect(t, !word_ok)
+	}
+	for strength in Seed_Strength {
+		read, read_ok := op.seed_strength_of_word(u64(strength))
+		testing.expect(t, read_ok)
+		testing.expect_value(t, read, strength)
+	}
+	ctx: system.Context
 	ctx.values = values_with_seed(&starter, {})
-	ctx.values[op.CONTEXT_VALUE_SEED_STRENGTH] = 200
+	ctx.values[op.CONTEXT_VALUE_SEED_STRENGTH] = u64(max(Seed_Strength))
+	child: Generator
 	testing.expect(t, generator_from_context(&child, &ctx))
-	testing.expect_value(t, seed_strength(&child), Seed_Strength.Entropy)
+	testing.expect_value(t, seed_strength(&child), max(Seed_Strength))
 }
 
 // A draw and a reseed leave the generator free for the next draw: the check
@@ -326,13 +356,24 @@ the_report_goes_through_the_context_values :: proc(t: ^testing.T) {
 		strength             = .Entropy,
 	}
 	values: [op.CONTEXT_VALUES]u64
+	// A strength that names no member is refused first: one past the last,
+	// and the largest value of its byte.
 	report_values_write(&sent, &values)
-	received := report_values_read(&values)
+	refused_words := [?]u64{u64(max(Seed_Strength)) + 1, 0xFF}
+	for word in refused_words {
+		values[0] = values[0] &~ 0xFF | word
+		_, refused_ok := report_values_read(&values)
+		testing.expectf(t, !refused_ok, "the strength %d names no member, and the report is taken", word)
+	}
+	report_values_write(&sent, &values)
+	received, received_ok := report_values_read(&values)
+	testing.expect(t, received_ok)
 	testing.expect(t, received == sent)
 	// With no device, the window reads "absent".
 	sent.device_present, sent.device_bytes, sent.device_reads_refused = false, 0, 0
 	report_values_write(&sent, &values)
-	received = report_values_read(&values)
+	received, received_ok = report_values_read(&values)
+	testing.expect(t, received_ok)
 	testing.expect(t, !received.device_present)
 	testing.expect_value(t, received.device_bytes, 0)
 }

@@ -1,23 +1,16 @@
-// The demand cache (src/md/features/glyphs_on_demand.md): the glyphs past
-// the glyph caches of the boot image, which the font service draws: each
-// character of the subset of each face at its start, before it reads a
-// request. The root service creates the memory; the font service (the
-// program `glyphs`) is its one writer; each program that the root service
-// gives a request ring, and each terminal, maps it read-only at ADDRESS.
+// The demand cache (src/md/features/glyphs_on_demand.md, "Layer 1: the
+// fixed subsets, shared and read-only"): the glyphs of the fixed subsets
+// past the glyph caches of the boot image,
+// which the font service draws whole at its start, in a fixed order,
+// before it ends. The root service creates the memory; the font service
+// (the program `glyphs`) is its one writer; each program that gets the
+// glyph caches maps it read-only at ADDRESS. So its entries are the same
+// whatever the programs draw. A character past it is drawn by the program
+// itself, into its private glyph cache (src/library/support/fallback_glyphs).
 //
 // A face is one glyph cache that the demand cache stands beside (Face): a
 // font file in one form. An entry is keyed by its face and its code point,
 // so the glyphs of each face stay apart.
-//
-// A program asks for the glyphs of the face Interface that it lacks
-// through its request ring at REQUESTS_ADDRESS: records of
-// CHARACTERS_PER_REQUEST code points (request_pack). The font service
-// answers each record with one completion: the generation after the glyphs
-// of the record, and the counts of drawn, absent and refused characters.
-// It reads at most REQUEST_BUDGET requests of one program in each window
-// of REQUEST_BUDGET_WINDOW_MILLISECONDS (Request_Budget). A
-// terminal asks for nothing: it waits on the word subset_drawn of the
-// header.
 //
 // The cache changes while a program reads it: the font service publishes
 // one entry after the other. So a reader copies each entry once and checks
@@ -42,11 +35,10 @@ package demand_cache
 import "base:intrinsics"
 import "modus:contract/fixed_addresses"
 import "modus:contract/glyph_cache"
-import "modus:contract/ring"
 import "modus:contract/text_encoding"
 
 MAGIC :: u64(0x444E414D45444C47) // The bytes "GLDEMAND".
-VERSION :: 2 // The version of the format. A reader refuses another.
+VERSION :: 3 // The version of the format. A reader refuses another.
 PAGE_SIZE :: 4096
 HEADER_SIZE :: 256 // The bytes of `Header`.
 ENTRY_SIZE :: 96 // The bytes of `Entry`.
@@ -69,8 +61,6 @@ PAGE_COUNT :: SIZE / PAGE_SIZE
 #assert(HEADER_SIZE <= PAGE_SIZE)
 
 ADDRESS :: fixed_addresses.DEMAND_CACHE_ADDRESS // Where a program maps the demand cache, read-only.
-REQUESTS_ADDRESS :: fixed_addresses.GLYPH_REQUESTS_ADDRESS // Where a program maps its request ring, with Write.
-REQUEST_RING_PAGES :: ring.PAGE_COUNT // The pages of a request ring: ring.CAPACITY records.
 
 // The scales and the places of the glyphs of one entry: three positions
 // at scale 1 and one at the scales 2 and 3, the most that a face has.
@@ -173,8 +163,7 @@ subset_of :: proc "contextless" (face: Face) -> []Character_Range {
 }
 
 // in_subset says if a character is in the subset of a face. The font
-// service draws these and no other character: a character of the glyph
-// cache, or of the font outside the subset, is answered as absent.
+// service draws these and no other character.
 in_subset :: proc "contextless" (face: Face, character: rune) -> bool {
 	for range in subset_of(face) {
 		if character >= range.first && character <= range.last {
@@ -202,7 +191,7 @@ Face_Header :: struct {
 
 // The first HEADER_SIZE bytes of the demand cache. The font service writes
 // it once, the magic last; then only `generation`, `entry_count`,
-// `words_used`, `refused` and `subset_drawn` change.
+// `words_used` and `refused` change.
 Header :: struct {
 	magic:            u64, // MAGIC, with release, after the other fields.
 	version:          u32, // VERSION.
@@ -211,17 +200,17 @@ Header :: struct {
 	words_used:       u64, // The words written. A reader does not use it.
 	refused:          u64, // The characters that did not fit the table or the words.
 	entry_count:      u32, // The entries published. A reader does not use it.
-	subset_drawn:     u32, // 1 when the subset of each face is published: a word that a program waits on.
+	reserved_word:    u32,
 	faces:            [Face]Face_Header,
 	reserved:         [48]u8,
 }
-#assert(size_of(Header) == HEADER_SIZE && offset_of(Header, generation) == 16 && offset_of(Header, subset_drawn) == 44 && offset_of(Header, faces) == 48)
+#assert(size_of(Header) == HEADER_SIZE && offset_of(Header, generation) == 16 && offset_of(Header, faces) == 48)
 
 // The state of an entry.
 Entry_State :: enum u32 {
 	Empty  = 0, // No character: a free place, or a character that a reader does not find yet.
 	Drawn  = 1, // The glyphs and the advances of the character.
-	Absent = 2, // No glyph: a reader draws the replacement glyph and does not ask again. find gives it for an entry that its check refuses; the font service of today publishes no such entry.
+	Absent = 2, // A wrong entry: find gives it for an entry that its check refuses, and the program draws the glyph itself. The font service publishes no such entry.
 }
 
 // One character of one face of the demand cache. The font service writes
@@ -322,23 +311,16 @@ glyph_of_entry :: proc "contextless" (face: Face, entry: ^Entry, scale, position
 	return entry.glyphs[place], true
 }
 
-// The characters that one frame can collect for a request: more are found
-// again by the next frame, after the answers to these.
-WANTED_LIMIT :: 64
-
 // Reader: the side of a program, for one face. reader_of makes it;
-// reader_frame_begin starts each frame; find gives an entry; want collects
-// the characters to ask for.
+// reader_frame_begin starts each frame; find gives an entry.
 Reader :: struct {
 	header:           ^Header,
 	entries:          [^]Entry,
 	words:            [^]u32, // WORD_CAPACITY words.
 	face:             Face, // The face of the glyph cache that this reader goes with.
-	font_hash:        [32]u8, // The hash of that glyph cache.
+	font_hash:        [32]u8, // The hash of the font file of that glyph cache.
 	flags:            u32, // The flags of that glyph cache.
 	generation_limit: u64, // The generation at the start of the frame: 0, nothing is found.
-	wanted:           [WANTED_LIMIT]rune, // The characters of this frame that the cache does not have.
-	wanted_count:     int,
 }
 
 // reader_matches says if the glyphs of a face can stand beside the glyphs
@@ -359,30 +341,30 @@ reader_matches :: proc "contextless" (face: Face, cache: ^glyph_cache.Cache) -> 
 }
 
 // reader_of makes the reader of a face of the demand cache mapped at base,
-// for the glyphs that stand beside a glyph cache. ok is false when the
-// cache has another form (reader_matches).
-reader_of :: proc "contextless" (base: uintptr, face: Face, cache: ^glyph_cache.Cache) -> (reader: Reader, ok: bool) {
-	if base == 0 || base % PAGE_SIZE != 0 || !reader_matches(face, cache) {
+// for the glyphs of a font file (its hash) drawn with the flags of a glyph
+// cache. The header names the hash and the flags of each face: a reader
+// whose hash or flags differ finds nothing (reader_frame_begin). ok is
+// false for a base that is 0 or not on a page.
+reader_of :: proc "contextless" (base: uintptr, face: Face, font_hash: [32]u8, flags: u32) -> (reader: Reader, ok: bool) {
+	if base == 0 || base % PAGE_SIZE != 0 {
 		return {}, false
 	}
 	reader.header = (^Header)(base)
 	reader.entries = ([^]Entry)(base + ENTRIES_OFFSET)
 	reader.words = ([^]u32)(base + WORDS_OFFSET)
 	reader.face = face
-	reader.font_hash = cache.header.font_hash
-	reader.flags = cache.header.flags
+	reader.font_hash = font_hash
+	reader.flags = flags
 	return reader, true
 }
 
-// reader_frame_begin starts a frame: it empties the wanted characters and
-// reads the generation once. The measure and the draw of the frame find an
-// entry only when its generation is at most that value, so a glyph that the
-// font service publishes during the frame is used from the next frame by
-// both. A cache with no magic yet, another version, or another font file
-// or flags for the face of the reader gives the limit 0: no entry is
-// found, and each character is wanted.
+// reader_frame_begin starts a frame: it reads the generation once. The
+// draws of the frame find an entry only when its generation is at most
+// that value. The measure does not read the cache: the advance of a
+// character comes from its font file. A cache with no magic yet, another
+// version, or another font file or flags for the face of the reader gives
+// the limit 0: no entry is found, and the program draws the glyph itself.
 reader_frame_begin :: proc "contextless" (reader: ^Reader) {
-	reader.wanted_count = 0
 	reader.generation_limit = 0
 	if reader.header == nil || intrinsics.atomic_load_explicit(&reader.header.magic, .Acquire) != MAGIC {
 		return
@@ -394,21 +376,10 @@ reader_frame_begin :: proc "contextless" (reader: ^Reader) {
 	reader.generation_limit = intrinsics.atomic_load_explicit(&reader.header.generation, .Acquire)
 }
 
-// subset_drawn says if the font service published the subset of each
-// face: a reader that sees it finds each character of each subset.
-subset_drawn :: proc "contextless" (reader: ^Reader) -> bool {
-	if reader.header == nil || intrinsics.atomic_load_explicit(&reader.header.magic, .Acquire) != MAGIC {
-		return false
-	}
-	return intrinsics.atomic_load_explicit(&reader.header.subset_drawn, .Acquire) != 0
-}
-
 // find gives the entry of a character of the face of the reader, copied
 // and checked. The state is Empty when the cache does not hold the
-// character at the generation of the frame: the reader draws the
-// replacement glyph and wants it. Absent: the font has no glyph, or the
-// entry is wrong; the reader draws the replacement glyph and does not ask
-// again.
+// character at the generation of the frame. Absent: the entry is wrong.
+// In both cases the program draws the glyph itself.
 find :: proc "contextless" (reader: ^Reader, character: rune) -> (entry: Entry, state: Entry_State) {
 	if reader.generation_limit == 0 || character <= 0 || character > text_encoding.CODE_POINT_LAST {
 		return {}, .Empty
@@ -434,20 +405,6 @@ find :: proc "contextless" (reader: ^Reader, character: rune) -> (entry: Entry, 
 		return copied, copied.state
 	}
 	return {}, .Empty
-}
-
-// want adds a character to the characters that the frame asks for, once.
-// A character past WANTED_LIMIT is left: the next frame finds it again.
-want :: proc "contextless" (reader: ^Reader, character: rune) {
-	for wanted in reader.wanted[:reader.wanted_count] {
-		if wanted == character {
-			return
-		}
-	}
-	if reader.wanted_count < WANTED_LIMIT {
-		reader.wanted[reader.wanted_count] = character
-		reader.wanted_count += 1
-	}
 }
 
 // Writer: the side of the font service, the one writer. It keeps its own
@@ -533,130 +490,6 @@ refusal_count :: proc "contextless" (writer: ^Writer) {
 	intrinsics.atomic_store_explicit(&writer.header.refused, writer.refused, .Relaxed)
 }
 
-// subset_drawn_set says, after the last publication of the subsets, that
-// each subset is in the cache. The font service then wakes the programs
-// that wait on the word (system.word_wake of &header.subset_drawn).
-subset_drawn_set :: proc "contextless" (writer: ^Writer) {
-	intrinsics.atomic_store_explicit(&writer.header.subset_drawn, 1, .Release)
-}
-
-// The command of a request ring: the program asks for the glyphs of up to
-// CHARACTERS_PER_REQUEST code points of the face Interface.
-Request_Kind :: enum u32 {
-	Glyphs = 1,
-}
-// The completion of a request: kind 0, the tag of the request, and the
-// values below.
-ANSWER_GENERATION :: 0 // The generation of the cache after the glyphs of the request.
-ANSWER_DRAWN :: 1 // The characters that the request added, drawn.
-ANSWER_ABSENT :: 2 // The characters that the font does not have.
-ANSWER_REFUSED :: 3 // The characters that did not fit the cache.
-ANSWER_PUBLISHED_BEFORE :: 4 // The characters that were in the cache already.
-// The time of the system, in milliseconds since boot, at which the window
-// of the budget of this program ends: written in the answer of the request
-// that spends the last request of its budget, else 0. The service reads no
-// other request of this program before that time.
-ANSWER_BUDGET_WINDOW_END :: 5
-ANSWER_BUDGET_PASSED :: 6 // The windows in which this program passed its budget, since its start: its own count only.
-
-// The budget of requests of one program: the font service reads at most
-// REQUEST_BUDGET requests of one program in each window of
-// REQUEST_BUDGET_WINDOW_MILLISECONDS. A request past it waits in the ring
-// of that program until the window ends: it is read then, not dropped. A
-// program asks for each character once, at most display.DEMAND_ASKED_LIMIT
-// characters in its life, so a program that asks only for what it draws
-// never meets the budget. The budget is the same for each program and is
-// counted for each program alone: a program learns from it nothing about
-// the requests of another.
-REQUEST_BUDGET :: ring.CAPACITY
-REQUEST_BUDGET_WINDOW_MILLISECONDS :: 1000
-
-// Request_Budget: the budget of requests of one program, kept by the font
-// service. A window starts at the first request that the service reads
-// after the end of the window before.
-Request_Budget :: struct {
-	window_end: u64, // The end of the current window, in milliseconds since boot; 0 before the first request.
-	spent:      u32, // The requests read in the current window.
-	passed:     bool, // A request waited past the budget in the current window: it is counted once.
-}
-
-// request_budget_take says if the service reads one more request of a
-// program at the time now, and counts it. last is true when this request
-// spends the last request of the window: its answer then carries the end
-// of the window (ANSWER_BUDGET_WINDOW_END).
-request_budget_take :: proc "contextless" (budget: ^Request_Budget, now: u64) -> (taken: bool, last: bool) {
-	if now >= budget.window_end {
-		budget^ = {window_end = now + REQUEST_BUDGET_WINDOW_MILLISECONDS}
-	}
-	if budget.spent >= REQUEST_BUDGET {
-		return false, false
-	}
-	budget.spent += 1
-	return true, budget.spent == REQUEST_BUDGET
-}
-
-// request_budget_held says if the budget of a program is spent at the
-// time now: the service then reads none of its requests, and does not wait
-// on its ring, until the window ends.
-request_budget_held :: proc "contextless" (budget: ^Request_Budget, now: u64) -> bool {
-	return budget.spent >= REQUEST_BUDGET && now < budget.window_end
-}
-
-// request_budget_pass notes that a request of a program waits while its
-// budget is held. first is true once in each window: the service counts
-// the windows in which a program passed its budget, not its requests.
-request_budget_pass :: proc "contextless" (budget: ^Request_Budget) -> (first: bool) {
-	if budget.passed {
-		return false
-	}
-	budget.passed = true
-	return true
-}
-
-// Two code points in each of the seven values of a record.
-CHARACTERS_PER_REQUEST :: 14
-#assert(size_of(ring.Record) == 2 * size_of(u32) + CHARACTERS_PER_REQUEST * size_of(u32))
-
-// request_pack writes the first CHARACTERS_PER_REQUEST characters of a list
-// in a request record: two code points in each value, the low half first;
-// 0 is no character. It gives the count that it wrote.
-request_pack :: proc "contextless" (characters: []rune, tag: u32) -> (record: ring.Record, count: int) {
-	record.kind = u32(Request_Kind.Glyphs)
-	record.tag = tag
-	count = min(len(characters), CHARACTERS_PER_REQUEST)
-	for character, index in characters[:count] {
-		record.values[index / 2] |= u64(u32(character)) << (32 * uint(index % 2))
-	}
-	return record, count
-}
-
-// request_unpack reads the code points of a request record, each value
-// once. A value that is no character of a text is left out: the record
-// comes from another program.
-request_unpack :: proc "contextless" (record: ring.Record, characters: ^[CHARACTERS_PER_REQUEST]rune) -> (count: int) {
-	for value in record.values {
-		for half in 0 ..< 2 {
-			character := rune(u32(value >> (32 * uint(half))))
-			if character > 0 && character <= text_encoding.CODE_POINT_LAST && text_encoding.character_in_text(character) {
-				characters[count] = character
-				count += 1
-			}
-		}
-	}
-	return count
-}
-
-// The control ring of the font service: the root service names each
-// request ring that it gives.
-Control_Kind :: enum u32 {
-	Client_Add    = 1, // values[0]: the ring in the handle table of the font service; values[1..4]: the name of the program (name_pack).
-	Client_Remove = 2, // values[0]: the ring of Client_Add. The program stopped.
-}
-
-// The handles of the context of the font service.
+// The handle of the context of the font service: an index in the fixed
+// table of its handles.
 SERVICE_GRANT_CACHE :: 0 // The demand cache, with Read and Write.
-SERVICE_GRANT_CONTROL :: 1 // The control ring from the root service.
-// The request rings that the font service serves at one time: with its
-// control ring and the event word, the words of one wait of its thread
-// (each ring two words).
-CLIENT_CAPACITY :: 28

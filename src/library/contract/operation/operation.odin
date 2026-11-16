@@ -569,13 +569,12 @@ Operation :: enum u32 {
 	//   - `Memory`: `a` the physical address, a multiple of 4096, and `b` the count of pages of the
 	//     registers of a device: a memory handle with **Give**, **Read** and **Write**, mapped with no cache.
 	//     The range meets no memory that the firmware gave as free or as loaded;
-	//   - `Display_Memory`: as `Memory`, for the video memory of a display: the range must hold the
-	//     address of the framebuffer of the firmware; the mapping has the page attribute of that
-	//     framebuffer, not "no cache", and the object has no requester for the IOMMU;
 	//   - `Message`: `a` the physical address where a memory base address register of the device starts:
 	//     a message interrupt (MSI-X) of the first processor, for that device: an interrupt handle with
 	//     **Give** and **Read**. With interrupt remapping in use, the entry of the message names that device,
-	//     and the unit refuses the message to every other device; with none, `a` is not read.
+	//     and the unit refuses the message to every other device; with none, `a` is not read. Behind a
+	//     conventional bridge, the entry names the requester that the devices there share, and it is present
+	//     only while their one domain lives (`Memory_Physical`).
 	//
 	// **Results**
 	//
@@ -583,7 +582,7 @@ Operation :: enum u32 {
 	// 2. for `Message`: the address that the device writes: the remappable form of the entry with
 	//    interrupt remapping of Intel in use, else the compatible form of the first processor; for
 	//    `Memory`: the `Device_Memory_Facts` of the device whose base address register starts at `a`
-	//    (empty with no IOMMU in use, and always empty for `Display_Memory`);
+	//    (empty with no IOMMU in use);
 	// 3. for `Message` only: the value that the device writes there: 0 in the remappable form; the
 	//    index of the entry in the interrupt table of the device with interrupt remapping of AMD in use;
 	//    else the vector.
@@ -592,9 +591,7 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Devices**.
 	// - `Bad_Address`: the ports, the line or the range of memory is out of its range.
-	// - `Bad_Operation`: `kind` is `None` or a kind that the kernel does not know; or `Display_Memory` over
-	//   a range that does not hold the framebuffer of the firmware: the error record has the kind
-	//   `Bad_Value` for `a`, with the address of that framebuffer as its limit.
+	// - `Bad_Operation`: `kind` is `None` or a kind that the kernel does not know.
 	// - `No_Slot`: no free memory object, no free message interrupt (`MESSAGE_CAPACITY`), or the handle
 	//   table of the program is full.
 	Inspect        = 14, // (machine, kind: Inspect_Kind, index, address, size) -> bytes written.
@@ -864,7 +861,8 @@ Operation :: enum u32 {
 	// (`Device_Create` says whether the unit of a device gives windows: `Device_Memory_Facts`). The pages leave the
 	// device when the program closes or loses its last handle to the object, when it holds neither a handle
 	// nor a mapping of the registers of the device, when the object ends, or when the program stops
-	// (docs/ARCHITECTURE.md, "K5. Device grant and interrupts").
+	// (docs/ARCHITECTURE.md, "K5. Device grant and interrupts"). The devices behind a conventional bridge
+	// share one domain: it lives while the caller holds the registers of each of them.
 	//
 	// **Arguments**
 	//
@@ -882,7 +880,9 @@ Operation :: enum u32 {
 	//   address width of the unit of a device; or an object that is not contiguous is `Uncommitted`, larger
 	//   than 128 MiB (`iommu.WINDOW_SIZE`), or declared to a device whose unit gives no windows.
 	// - `Bad_State`: another program declared memory to the same device, and it still holds or maps its
-	//   registers.
+	//   registers; or the device is behind a conventional bridge, and the caller does not hold the registers
+	//   of each device behind that bridge, which all share its requester and its domain (the log names the
+	//   device that it misses).
 	// - `No_Slot`: the caller holds the registers of more than 4 devices, or the 32 slots of the devices of
 	//   the kernel are in use.
 	// - `No_Budget`: the budget of the caller cannot pay for a page of the tables of the device.
@@ -2894,13 +2894,6 @@ Device_Kind :: enum u64 {
 	Interrupt = 2, // A line of the 8259: `a` from 1 to 15.
 	Memory    = 3, // The registers of a device: `a` the physical address, `b` the count of pages; mapped with no cache.
 	Message   = 4, // A message interrupt (MSI-X): the results give the address and the value that the device writes.
-	// The video memory of a display, which holds its screen pages: `a` the physical address, `b` the count of
-	// pages; the range must hold the address of the framebuffer of the firmware. The same device memory as
-	// `Memory`, with no requester for the IOMMU, and its mapping has the page attribute of the framebuffer of the
-	// firmware: the default entry of the page attribute table, so the memory type ranges (MTRR) that the
-	// firmware set decide the type. A mapping with no cache makes each write of a pixel a write to the device
-	// (src/md/infrastructure/whole_frame.md).
-	Display_Memory = 5,
 }
 
 // What `Device_Create` of the kind `Memory` says of the device whose
@@ -2910,7 +2903,7 @@ Device_Kind :: enum u64 {
 // "Device addresses"). An empty set: no IOMMU in use, or a device that gets
 // no domain.
 Device_Memory_Fact :: enum u64 {
-	Domain  = 0, // The IOMMU gives the device a device domain: it reaches only the memory that its service declares.
+	Domain  = 0, // The IOMMU gives the device a device domain: it reaches only the memory that its service declares. Behind a conventional bridge, the one domain of each device there.
 	Windows = 1, // The remapping unit of the device gives device windows: `Memory_Physical` accepts an object that is not contiguous.
 }
 Device_Memory_Facts :: bit_set[Device_Memory_Fact; u64]
@@ -3491,14 +3484,46 @@ CONTEXT_LOG :: 14 // The log of the kernel.
 CONTEXT_VALUE_SEED :: 9
 CONTEXT_VALUE_SEED_COUNT :: 4 // The values of the seed: 4 values of 8 bytes.
 // The value 16: the strength of the seed of the system, from which the seed
-// of the program comes (src/library/support/random, Seed_Strength): 1 weak (the cycle
-// counter only), 2 processor (rdrand), 3 entropy (rdseed). The starter
-// writes it with the seed.
+// of the program comes: the word of a Seed_Strength. The starter writes it
+// with the seed.
 //
 // The seed itself cannot say how it was made: the generator of the program
 // keeps this value. The handshake of `src/library/support/quic` refuses a seed weaker
 // than its least strength, and the program `randomness` shows it.
 CONTEXT_VALUE_SEED_STRENGTH :: 16
+
+// How strong the source of a seed is: the strongest source that gave all
+// its values at the gathering of the root service. Its word crosses the
+// context (CONTEXT_VALUE_SEED_STRENGTH), so each value is explicit, and the
+// order is the order of the strength: `random.fill_for_a_key` refuses a
+// seed below the strength that the caller asks.
+Seed_Strength :: enum u8 {
+	None      = 0, // No gathering yet.
+	Weak      = 1, // The cycle counter only: no claim of entropy.
+	Processor = 2, // rdrand: the generator of the processor.
+	Entropy   = 3, // rdseed: the entropy source of the processor.
+}
+
+// The words of each strength, for a window, the log and a sentence.
+@(rodata)
+seed_strength_names := [Seed_Strength]string {
+	.None      = "none",
+	.Weak      = "weak (the cycle counter only)",
+	.Processor = "processor (rdrand)",
+	.Entropy   = "entropy (rdseed)",
+}
+
+// seed_strength_of_word reads the word of a strength. A word that names no
+// strength is refused: a reader that took it for the strongest would make
+// keys from a seed that nothing measured.
+seed_strength_of_word :: proc "contextless" (word: u64) -> (strength: Seed_Strength, ok: bool) {
+	for member in Seed_Strength {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
 // The value 17: the program `settings` runs its boot pass (1): it reads the
 // settings kept in its store, writes the settings page, and stops, with no
 // window (modus:contract/settings).

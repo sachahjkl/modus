@@ -68,7 +68,7 @@ The strength of the seed is the strongest source that gave all its values. The r
 
 **A machine with no `rdrand` and no `rdseed`.** The seed comes from the cycle counter only. Each program still starts and draws. The log and the window say "weak (the cycle counter only)" in the color of a failure. `modustool test random` runs such a machine (`-cpu max,-rdrand,-rdseed`).
 
-**Each program knows the strength of its seed.** The starter writes the strength of the seed of the system in the context value 16 (`op.CONTEXT_VALUE_SEED_STRENGTH`) with the seed: 1 weak, 2 processor, 3 entropy. A child's seed comes from its starter's stream, so it has the same strength. `random.seed_strength(generator)` gives it.
+**Each program knows the strength of its seed.** The starter writes the strength of the seed of the system in the context value `op.CONTEXT_VALUE_SEED_STRENGTH` with the seed: a member of `op.Seed_Strength` (`Weak`, `Processor`, `Entropy`). A child's seed comes from its starter's stream, so it has the same strength. `random.seed_strength(generator)` gives it. A value that names no member refuses the seed: `random.generator_from_context` gives false, and the program has no generator, so each key that it asks for is refused. A reader never takes such a value for the strongest strength.
 
 **Each program chooses the least strength that it accepts.** The functions let the program state what it tolerates; a seed below that is an error of the call, not a stop.
 - `random.fill_for_a_key(generator, output, least_strength, error)` gives bytes for a key, a nonce or another secret only when the seed of the program has `least_strength` at least.
@@ -135,7 +135,7 @@ The design is in `src/md/features/fresh_bytes.md`.
 
 ## 5. What is not built
 
-- **Fresh bytes for every program.** The device services, the TPM service, the font service, `input`, a terminal and each program that another program starts get no fresh bytes page.
+- **Fresh bytes for every program.** The device services, the TPM service, `input`, a terminal and each program that another program starts get no fresh bytes page.
 - **A strength of the entropy device.** The device adds bytes and no claim.
 - **The TPM** (property 17) as a source.
 - **A measure of the jitter of the cycle counter** (as `jitterentropy` does). Without it, the claim stays 0 bits.

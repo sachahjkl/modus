@@ -584,7 +584,8 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client), 1 = nickname[0], 2 = nickname[1], 3 = nickname[2], 4 = program_page.hash_head(hash)}})
 	grants[system.GRANT_DISPLAY] = {display_memory, {.Read, .Write}}
 	// The date page, the fresh bytes page, the settings page, five glyph
-	// caches, the file of the storage service.
+	// caches, the font outlines, the demand cache, the file of the storage
+	// service.
 	mappings: [12]system.Mapping
 	mapping_count := 0
 	date_page_give(mappings[:], &mapping_count, &values)
@@ -658,10 +659,10 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		return .No_Right
 	}
-	action := record.values[4]
-	if action != system.DISK_GRANT_ALLOW && action != system.DISK_GRANT_DISALLOW {
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, 0, i64(min(action, 1 << 62)), system.DISK_GRANT_DISALLOW)
-		return .Bad_Operation
+	action, action_status, action_refusal := system.ring_member_of_word(system.Disk_Grant_Action, record.values[4], .Disk_Grant, 0)
+	if action_status != .Ok {
+		values^ = action_refusal
+		return action_status
 	}
 	number := record.values[5]
 	if number > u64(max(start_grant.Grant)) {
@@ -710,7 +711,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		return .Bad_State
 	}
 	grant_name := disk_program.disk_grant_names[grant]
-	if action == system.DISK_GRANT_DISALLOW {
+	if action == .Disallow {
 		row := disk_program.table_find(table, nickname)
 		problem := disk_program.table_disallow(table, nickname, grant)
 		if problem != .None {

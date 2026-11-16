@@ -8,7 +8,6 @@ How a program opens a surface and presents a picture is in [`docs/INTERFACE.md`]
 
 - The compositor composes a frame of the screen at any time. It must never read pixels that a program writes at that time.
 - A program that moves a large form each frame, and a program that changes one number a second, follow the same rule with the same code.
-- The display must never read a frame of the compositor that the compositor writes at that time ("The screen: two screen pages and a page flip", below).
 
 The fault that made the rule: a surface had one picture. The window layer paints a damage rectangle with the background, then draws its records. The compositor read the rectangle between the two, and the screen showed the head of a form with no body ([features/heron_program.md](../features/heron_program.md)).
 
@@ -42,43 +41,6 @@ The fault that made the rule: a surface had one picture. The window layer paints
 - A program that draws by hand in the canvas calls `display.canvas_wait` before it draws, and draws the whole canvas: the canvas holds the frame of two frames before.
 
 **The proof is two counts of the compositor.** The compositor cannot see a write. It sees which picture each `Present` names. A program that draws in the picture on the screen must name that picture again, because it has no other complete picture to name. So the compositor counts, for each window, the `Present` records that named the picture that it already showed (`pictures_drawn_again`), and the frames that it composed from a picture of the window (`frames`). The export `windows` gives both. The main test types one line in the console and waits for 0 windows with a picture drawn again.
-
-## The screen: two screen pages and a page flip
-
-The rule holds for the frame of the compositor too: the screen shows each frame of the compositor whole. The compositor composes a frame in its own memory, then puts the damage rectangles on the screen. The display reads the screen while the compositor writes it, so a frame that changed in many rectangles, or a large rectangle, could show the top of the new frame over the bottom of the frame before.
-
-**The device of the test machine.** The q35 machine of QEMU has its standard VGA at the place 1 of bus 0. The firmware sets its mode with the display registers of Bochs, and the framebuffer of the firmware is the start of its video memory, 16 MiB, in its base address register 0. The display registers are 16-bit words at 0x500 in its base address register 2. The register `Offset_Y` names the first line that the display shows. A screen of 1024 by 768 pixels is 3 MiB, so the video memory holds two [screen pages](../../../docs/GLOSSARY.md).
-
-**The chosen form: a page flip.** The compositor writes the screen page that the display does not show, then writes the line of its start in `Offset_Y`: a [page flip](../../../docs/GLOSSARY.md). The display then shows the new page in one step. The next frame goes into the other page.
-
-- **The debt of each screen page.** A screen page holds the frame of two frames before. The compositor keeps, for each page, the rectangles where it differs from its frame in memory, with the procedures of the window layer (`interface.Picture_Debts`): a frame copies its damage rectangles and the debt of the hidden page, then the shown page owes the damage of that frame. A page whose state is not known (at the start, after a refused flip) is copied whole. The rule and its tests are the ones of the pictures of a surface.
-- **The root service finds the device.** It holds the configuration of the bus. It checks the identity of the device (vendor 0x1234, device 0x1111), that the framebuffer of the firmware starts at its base address register 0, that the registers say 32 bits a pixel, the size of the screen and a line as long as the line of the framebuffer, and that the video memory holds two pages. Then it gives the compositor the memory of the two pages and the page of the display registers, in place of the framebuffer of the firmware. Else it gives the framebuffer of the firmware, as before, and no registers.
-- **The memory of the two pages keeps the cache rule of the framebuffer of the firmware.** `Device_Create` of the kind `Memory` maps registers with no cache, which is right for a register and slow for 3 MiB of pixels: on a processor of AMD the hypervisor follows that page attribute. The kind `Display_Memory` makes the same device memory with the page attribute of the framebuffer of the firmware. It is an argument of an existing operation, not a new operation.
-  - The kernel accepts it only for a range that holds the address of the framebuffer of the firmware, which the boot record gives; else `Bad_Operation`, with an error record of the kind `Bad_Value` whose limit is that address. Over registers, a cached type lets the processor read a register ahead of the program, and a read of a register has an effect. Over frames that another handle maps with no cache, two memory types for the same frames are undefined for the processor. Refused: the rule in the contract alone, which the kernel does not hold. A second display is a later decision.
-  - The object has no requester for the IOMMU. Pixels program no access of the device, and a requester would add the lines of a device that no unit covers to the log, and refuse a map into another program for no reason.
-  - The memory type is the default entry of the page attribute table, which the kernel does not program, so the memory type ranges (MTRR) of the firmware decide it, as for the framebuffer of the firmware before. Under KVM the video memory is memory of the host: the type is fast and right. On a real machine the firmware usually makes the range "no cache": right, with no gain. A firmware that leaves device memory as write-back makes the pixels stay in the processor until an eviction.
-- **The display shows the page 0 at the start.** `bochs_display.screen_pages` gives two pages only when `Offset_Y` is 0: the compositor takes the page 0 as the shown page and writes the page 1 first. A display that shows another page gives one screen page.
-- **A fence before each flip.** `page_show` runs a full memory fence before its write of `Offset_Y`. A volatile store orders no other store, and with a memory type that is not "no cache" the pixels of the page could still be in the processor when the display shows it. It costs one fence for each frame.
-- **The compositor reads `Offset_Y` back after each flip.** QEMU sets the offset to 0 when the page does not fit in the video memory. A value other than the one written is a refused flip: the compositor writes one line, shows the page 0 again, and copies each later frame into the page 0, as with no device. `frames_on_the_shown_page` in the row of `compositor.screen()` counts the frames written into the page that the display showed.
-- **A failure of the start shows the page 0.** The root service draws the failure on the framebuffer of the firmware, which is the page 0. It stops the compositor, then writes 0 in `Offset_Y`.
-
-**The proof is two counts of the compositor.** `page_flips` counts the flips, and `frames_on_the_shown_page` the frames that it wrote with no flip. The main test asks the console for the count of the rows of `compositor.screen()` whose `frames_on_the_shown_page` is not 0, and waits for 0. The compositor writes one line at its start that says which form holds.
-
-### The refused forms of the screen
-
-- **A wait for the vertical blank.** QEMU has none: the retrace bit of the VGA changes at each read of the status register, and the display of QEMU reads the video memory at the refresh time of its interface, which the machine does not know. A wait on that bit waits for nothing.
-- **The page flip of the firmware.** The graphics output protocol of UEFI has no page flip and no vertical blank, and its services end before the kernel starts.
-- **A faster copy.** It makes the cut shorter, not absent.
-- **The virtual GPU.** Its scanout of a resource is a whole picture too, but the machine has no virtio GPU, and its driver is the work of the graphics interface ([features/gpu_access.md](../features/gpu_access.md)). The standard VGA needs one write and one read of a register for each frame.
-- **A device service for the display.** The compositor owns the display, as it owns the framebuffer. A service between them adds one message at each frame for one register write.
-- **Three screen pages.** A flip on this device takes effect when the write returns (see the subtle points), so the compositor never waits for a page.
-
-### The subtle points of the screen
-
-- **A flip on this device ends when its write returns.** A register write of the device takes the lock of QEMU that the display update holds while it reads the video memory. The write waits for an update that reads, and each later update reads the new page. So the page that the display showed before is free at once. A real device latches the new start at its next vertical blank: there, the compositor must wait for that blank before it writes the old page. This form does not hold on such a device.
-- **A picture that QEMU takes can still read a page that the compositor writes.** The `screendump` of QEMU reads the shown page after an update, and the lock of QEMU can be free between the two. A flip in that time lets the picture read the page that the compositor writes next. The machine test takes a picture of a settled screen, which draws no frame.
-- **The first frame is copied whole into the page 1.** The page 0 shows the boot display of the root service until that flip.
-- **The registers page holds the other registers of the VGA too.** The compositor could change the mode of the display. It owns the display: a change harms the screen only, which it already writes.
 
 ## What a stopped or hostile program shows
 
@@ -124,14 +86,9 @@ A window of 1024 by 720 pixels is 720 pages for a picture: the second picture ad
 
 ## The state
 
-Built: two pictures for every surface, the debt of each picture, `display.canvas_wait`, the first picture after the first `Present`, the bound of a turn of the compositor, the three counts in the export `windows`, the step of the main test, the host tests of the debt rule, of the procedures of `window_frame_end` on a window in plain memory, and of the bound of a turn. The root service writes one measure when the console is started: the free pages of its budget, now and at the lowest. The two screen pages of the standard VGA, the page flip, the debt of each screen page, the read back of each flip, the kind `Display_Memory`, the two counts in the export `screen`, its step of the main test, and the host tests of the checks of the display registers and of a flip on registers in plain memory.
+Built: two pictures for every surface, the debt of each picture, `display.canvas_wait`, the first picture after the first `Present`, the bound of a turn of the compositor, the three counts in the export `windows`, the step of the main test, the host tests of the debt rule, of the procedures of `window_frame_end` on a window in plain memory, and of the bound of a turn. The root service writes one measure when the console is started: the free pages of its budget, now and at the lowest.
 
 Left:
-
-- No page flip on a display with no registers of Bochs: the virtual GPU and a real device. A real device also needs the wait for its vertical blank before the old page is written.
-- The memory type of the screen pages and of the framebuffer of the firmware: the kernel does not program the page attribute table, so the type is the type of the memory type ranges (MTRR) of the firmware, which is write-back on a firmware that leaves device memory so. The fix for the long term is an entry of the page attribute table set to write-combining on each processor at the start, which `Display_Memory` and the framebuffer of the firmware use.
-- The page tables of the two screen pages are paid by the budget of the compositor: its stated working memory is larger by 4 pages. Large pages for device memory would remove them.
-- No host test of the copy of the debt of a screen page in the compositor: the procedures of the debt have their tests in the window layer, and the copy writes the device memory.
 
 - No host test of the wait itself (`canvas_wait` while the canvas is not free, the wake of the compositor): it enters the kernel. No host test of `window_frame_end_without_present`, which reads the clock, nor of a difference or a draw that the drawing module refuses.
 - The measure of the root service is written at the end of the start. The lowest count of a whole test, with the programs that the console starts later, is not written: the log of the main test has little room for more lines.

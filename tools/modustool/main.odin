@@ -92,6 +92,10 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_MODULES + "/drawing",
 	SOURCE_FOLDER_MODULES + "/sample",
 	SOURCE_FOLDER_SUPPORT + "/system",
+	SOURCE_FOLDER_SUPPORT + "/twins",
+	SOURCE_FOLDER_SUPPORT + "/kernel_events_rounds",
+	SOURCE_FOLDER_CONTRACT + "/tpm_service",
+	SOURCE_FOLDER_SUPPORT + "/storage",
 	SOURCE_FOLDER_SUPPORT + "/bar",
 	SOURCE_FOLDER_SUPPORT + "/palette",
 	SOURCE_FOLDER_CONTRACT + "/palette_table",
@@ -104,7 +108,6 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/network",
 	SOURCE_FOLDER_SUPPORT + "/tcp",
 	SOURCE_FOLDER_SUPPORT + "/virtio",
-	SOURCE_FOLDER_SUPPORT + "/bochs_display",
 	SOURCE_FOLDER_SUPPORT + "/web",
 	SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
 	SOURCE_FOLDER_SUPPORT + "/random",
@@ -510,7 +513,7 @@ COMMANDS :: [?]Command {
 	// of the kernel operations against the properties, no call of an
 	// allocator in a source of the system, and an error record from each
 	// export that fails.
-	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, and that no export of a program or a module gives a negative number with no error record", run = run_rule_checks},
+	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a program or a module gives a negative number with no error record, and that no family of integer constants is used as a closed set of choices", run = run_rule_checks},
 	{name = "library-imports", about = "check that each import of each source file of " + SOURCE_FOLDER_KERNEL + " and of " + SOURCE_FOLDER_CONTRACT + " names a package of base:, of core: or under " + CONTRACT_IMPORT_START, run = run_library_imports},
 	// Measures how similar the code pieces of the Odin sources are, and
 	// proposes where to factor them. It reads `src/` and `tools/`, gives a
@@ -1125,9 +1128,10 @@ run_check :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	// The count of the kernel operations is the count that the properties
-	// state, no source of the system calls an allocator, and each export
-	// that fails gives an error record.
-	if !operation_count_check() || !allocator_check() || !export_error_record_check() {
+	// state, no source of the system calls an allocator, each export that
+	// fails gives an error record, and no family of integer constants is a
+	// closed set of choices.
+	if !operation_count_check() || !allocator_check() || !export_error_record_check() || !choice_constant_check() {
 		return EXIT_FAILURE
 	}
 	// The tests of the memory procedures in assembly link the form of the
@@ -1241,7 +1245,10 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		fmt.eprintfln("modustool: the boot volume %s, or the variable store of Secure Boot, was not built or kept by the build of this command: add it to the volumes of the command (boot_volumes.odin)", volume)
 		return nil, false
 	}
-	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, false) {
+	// The machine of AMD gives the disk of the measures a new size during
+	// its test (iommu_scenario.odin): it starts from a new disk of the
+	// first size.
+	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, iommu == .Amd) {
 		return nil, false
 	}
 	code_variable, variables_variable, variables_copy := "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES
@@ -1363,12 +1370,8 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-drive",
 		"if=none,id=scratch,format=raw,file=" + SCRATCH_DISK,
 	)
-	// The disk of the measures is on bus 0 on the machine of AMD: QEMU 10
-	// records the device of a page fault of AMD-Vi by its device and its
-	// function only, with no bus, so the line of a DMA fault names the
-	// device only on bus 0 (src/md/infrastructure/iommu.md, "Two vendors
-	// behind one kernel side").
-	if iommu == .Intel {
+	switch iommu {
+	case .Intel:
 		// The disk of the measures behind a root port of PCI Express, on the
 		// bus that the firmware gives the port: the kernel must give it a
 		// context table of that bus (src/md/infrastructure/iommu.md,
@@ -1380,13 +1383,30 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 			"-device",
 			fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,bus=scratch_port,addr=0x0%s", virtio_iommu),
 		)
-	} else {
-		// A virtio device of QEMU with no iommu_platform reads and writes
-		// the memory of the machine directly, past the unit, while its
-		// message interrupts still go through the unit: on the machine with
-		// the IOMMU of AMD the disk of the measures needs it as every other
-		// disk does. With no IOMMU, virtio_iommu is empty.
-		append(&list, "-device", fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x%s", pci.SCRATCH_DISK_DEVICE, virtio_iommu))
+	case .Amd:
+		// The disk of the measures and an entropy device behind a
+		// conventional bridge with no capability of PCI Express: both give
+		// their accesses the requester of the bridge, on bus 0, and the
+		// kernel gives them one domain (src/md/infrastructure/iommu.md,
+		// "Bridges"). QEMU 10 records the device of a page fault of AMD-Vi
+		// by its device and its function only, with no bus, so the line of
+		// a DMA fault names the device only on bus 0: the requester of the
+		// bridge is there (src/md/infrastructure/iommu.md, "Two vendors
+		// behind one kernel side"). With no ioevent file, QEMU takes or
+		// refuses a request of the disk before the notify of its service
+		// returns: the stop of the machine in the test then ends each read
+		// that it took.
+		append(
+			&list,
+			"-device",
+			fmt.tprintf("i82801b11-bridge,id=conventional_bridge,bus=pcie.0,addr=0x%x", pci.SCRATCH_BRIDGE_DEVICE),
+			"-device",
+			fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,ioeventfd=off,bus=conventional_bridge,addr=0x0%s", virtio_iommu),
+			"-device",
+			fmt.tprintf("virtio-rng-pci,disable-legacy=on,bus=conventional_bridge,addr=0x1%s", virtio_iommu),
+		)
+	case .None:
+		append(&list, "-device", fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x", pci.SCRATCH_DISK_DEVICE))
 	}
 	if entropy_device {
 		// The bytes come from the generator of QEMU. Two vectors give the

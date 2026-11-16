@@ -24,13 +24,13 @@
 // **What it keeps.** It allocates nothing, and it keeps no address of the
 // caller after a call. Its own data is a cache, one copy for each program
 // that imports it: the text settings of the program (the choice of the
-// font, the glyph caches that the starter of the program mapped,
-// validated at the first draw, and the faces of the demand cache beside
-// the caches of cells), and the tables of the blend of a text. It reads
-// the choice of the settings again at each draw, so a program sends it
-// nothing when a setting changes, and the generation of the demand cache
-// at each draw, so a cell past the glyph cache draws its glyph from the
-// draw after the font service published it.
+// font, the glyph caches, the font outlines and the demand cache that the
+// starter of the program mapped, validated at the first draw), its private
+// glyph cache, and the tables of the blend of a text. It reads the choice
+// of the settings again at each draw, so a program sends it nothing when a
+// setting changes. A character past the glyph caches is drawn from the
+// demand cache or into the private glyph cache of this copy, which the
+// budget of the program pays (src/md/features/glyphs_on_demand.md).
 //
 // **Pictures.** A [picture record](term:picture-record) names its pixels by
 // values: the place of its first pixel in a picture memory, and its
@@ -235,7 +235,7 @@ damage_of_draw_table_10 :: proc "c" (before: ^system.Table_To_Read(interface.Dra
 	return i64(damage.count)
 }
 
-// execute_draw_table_in_rectangles_10 draws the records of a draw table into the pixels of a canvas, in each rectangle of `rectangles`, in their order, each cut to its rectangle: the pixels are those of one draw for each rectangle, also where two rectangles overlap. With `fill_background` of the canvas not 0, each rectangle is painted with the color `background` before its records. A table of no rectangle draws nothing. The pixels are memory of the caller, written in place: no copy in a direct call. The text is drawn in the font that the settings of the program choose, from the glyph caches of the program; a character of a cell past them is drawn from the demand cache when the starter of the program mapped it, or as the replacement glyph. A Picture record of picture memory 0 copies its pixels from `picture_memory`, from its first pixel, a line each stride pixels. A Text_Grid record draws its cells from `now_text`, from its first byte, a row each `second_color` cells. A text record that names bytes past its text table, a Picture record of another picture memory or with a pixel past `picture_memory`, and a Text_Grid record with no column, with bytes that are not a whole count of rows, past its text table or at an address that is not a multiple of 4, draw nothing. The result is 0. It fails with -1 and an error record, and draws nothing: Bad_Value of `canvas` for a width or a height below 1 or a stride below the width, Too_Small of `pixels` for bytes that do not hold `stride` times `height` pixels, Bad_Address of `pixels` or of `picture_memory` for an address that is not a multiple of 4, Too_Long of `rectangles` for more than 8 rectangles, Too_Long for a table over 2^40 records or bytes.
+// execute_draw_table_in_rectangles_10 draws the records of a draw table into the pixels of a canvas, in each rectangle of `rectangles`, in their order, each cut to its rectangle: the pixels are those of one draw for each rectangle, also where two rectangles overlap. With `fill_background` of the canvas not 0, each rectangle is painted with the color `background` before its records. A table of no rectangle draws nothing. The pixels are memory of the caller, written in place: no copy in a direct call. The text is drawn in the font that the settings of the program choose, from the glyph caches of the program; a character past them is drawn from the fallback chain of its font, from the demand cache or into the private glyph cache of the program, when the starter of the program mapped the font outlines, or as the replacement glyph. A Picture record of picture memory 0 copies its pixels from `picture_memory`, from its first pixel, a line each stride pixels. A Text_Grid record draws its cells from `now_text`, from its first byte, a row each `second_color` cells. A text record that names bytes past its text table, a Picture record of another picture memory or with a pixel past `picture_memory`, and a Text_Grid record with no column, with bytes that are not a whole count of rows, past its text table or at an address that is not a multiple of 4, draw nothing. The result is 0. It fails with -1 and an error record, and draws nothing: Bad_Value of `canvas` for a width or a height below 1 or a stride below the width, Too_Small of `pixels` for bytes that do not hold `stride` times `height` pixels, Bad_Address of `pixels` or of `picture_memory` for an address that is not a multiple of 4, Too_Long of `rectangles` for more than 8 rectangles, Too_Long for a table over 2^40 records or bytes.
 @(export, link_name = "execute_draw_table_in_rectangles_10")
 execute_draw_table_in_rectangles_10 :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Canvas_Shape, rectangles: ^system.Table_To_Read(Damage_Rectangle), error: ^errors.Error_Record) -> i64 {
 	// One copy of the shape, of each count and of the rectangles: the
@@ -285,10 +285,9 @@ execute_draw_table_in_rectangles_10 :: proc "c" (now: ^system.Table_To_Read(inte
 	picture_memories := [1][]graphics.Color{([^]graphics.Color)(picture_address)[:picture_bytes / size_of(graphics.Color)]}
 	table.picture_memories = picture_memories[:]
 	program_text_load()
-	// One generation of the demand cache for each cell of this draw: an
-	// entry never changes, so a cell finds what the program found before
-	// the draw.
-	display.text_demand_frame_begin()
+	// One frame of the order of use of the private glyph cache, and one
+	// generation of the demand cache, for each glyph of this draw.
+	display.text_frame_begin()
 	if program_text.interface_font_given {
 		table.interface_font = &program_text.interface_font
 	}
