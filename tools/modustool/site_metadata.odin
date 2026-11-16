@@ -683,7 +683,7 @@ site_releases_feed :: proc(site: ^Site) -> string {
 	fmt.sbprintf(&b, "<title>Releases of %s</title>\n<subtitle>Every release of %s, newest first, with the changes of each one.</subtitle>\n", SITE_SYSTEM_NAME, SITE_SYSTEM_NAME)
 	fmt.sbprintf(&b, "<id>%s</id>\n", changelog_address)
 	if len(releases) > 0 {
-		fmt.sbprintf(&b, "<updated>%sT00:00:00Z</updated>\n", releases[0].date)
+		fmt.sbprintf(&b, "<updated>%s</updated>\n", release_moment_atom(releases[0]))
 	}
 	site_feed_author(site, &b)
 	strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
@@ -701,7 +701,8 @@ site_releases_feed :: proc(site: ^Site) -> string {
 		fmt.sbprintf(&b, "<entry>\n<title>%s %s</title>\n<id>%s#%s</id>\n", SITE_SYSTEM_NAME, number, changelog_address, anchor)
 		strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
 		site_xml_escape(&b, site_feed_page_address(site, strings.concatenate({site_section_page(.Releases), "#", anchor}, context.temp_allocator)))
-		fmt.sbprintf(&b, "\"/>\n<published>%sT00:00:00Z</published>\n<updated>%sT00:00:00Z</updated>\n", changelog_release.date, changelog_release.date)
+		moment := release_moment_atom(changelog_release)
+		fmt.sbprintf(&b, "\"/>\n<published>%s</published>\n<updated>%s</updated>\n", moment, moment)
 		if len(changelog_release.entries) > 0 {
 			strings.write_string(&b, "<summary>")
 			site_plain(&b, entry_joined(changelog_release.entries[0].lines))

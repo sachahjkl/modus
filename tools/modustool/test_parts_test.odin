@@ -3,23 +3,21 @@ package modustool
 import "core:strings"
 import "core:testing"
 
-// The whole test, each part, `trusted_boot tpm` and `principals tpm` are
-// accepted.
+// The whole test and each part are accepted.
 @(test)
 test_accepts_each_known_part :: proc(t: ^testing.T) {
 	testing.expect_value(t, test_arguments_problem(nil), "")
 	for part in test_parts {
 		testing.expectf(t, test_arguments_problem([]string{part}) == "", "the part %s is accepted", part)
 	}
-	testing.expect_value(t, test_arguments_problem([]string{"trusted_boot", "tpm"}), "")
-	testing.expect_value(t, test_arguments_problem([]string{"principals", "tpm"}), "")
 }
 
 // A word that is not a part is refused, and the refusal lists the parts:
 // the whole test in its place would pass and say nothing of the mistake.
+// The machines of the TPM run in their part: a second word is refused.
 @(test)
 test_refuses_an_unknown_part :: proc(t: ^testing.T) {
-	refused := [][]string{{"netwrok"}, {""}, {"main", "network"}, {"trusted_boot", "tmp"}, {"tcp", "tpm"}, {"trusted_boot", "tpm", "tpm"}, {"principals", "tmp"}}
+	refused := [][]string{{"netwrok"}, {""}, {"main", "network"}, {"trusted_boot", "tpm"}, {"principals", "tpm"}, {"tcp", "tpm"}}
 	for arguments in refused {
 		problem := test_arguments_problem(arguments)
 		testing.expectf(t, problem != "", "%v is refused", arguments)

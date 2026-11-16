@@ -215,7 +215,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for _ in 0 ..< BATCHES {
 			start := system.nanoseconds()
 			for index in 0 ..< BATCH {
-				graphics.character(canvas, 0, 0, sample[index % len(sample)], graphics.COLOR_TEXT)
+				graphics.character(canvas, 0, 0, rune(sample[index % len(sample)]), graphics.COLOR_TEXT)
 			}
 			least = min(least, (system.nanoseconds() - start) / BATCH)
 		}

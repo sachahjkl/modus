@@ -19,9 +19,11 @@
 package hierarchy
 
 import "modus:contract/errors"
+import format "modus:contract/store"
 import "modus:support/storage"
 import "modus:support/system"
 
+STORE_NAME :: "hierarchy" // Its private store: the root service names it after the program.
 TOP_TREES :: 100
 PARTS :: 10
 OBJECTS_IN_PART :: 100
@@ -317,6 +319,61 @@ scrambled_case :: proc "contextless" () {
 	outcome(objects == SCRAMBLED_NAMES && in_order && found_all && removed == SCRAMBLED_LEFT && left == SCRAMBLED_LEFT && left_in_order && !even_found && odd_found, "added ", i64(objects), " names in a scrambled order in ", commits, " commits, listed in order, each read back; removed ", i64(removed), " in another order, ", i64(left), " left in order, in ", system.time() - start, " ms")
 }
 
+// The bytes that the holder of a writable share of a tree writes, and that
+// the maker writes too while the share is open (docs/STORAGE.md, "4.7 The
+// same object one time"): three blocks of data under one object node.
+GUESS_BLOCKS :: 3
+GUESS_HELD :: GUESS_BLOCKS + 1
+GUESS_SIZE :: GUESS_BLOCKS * format.BLOCK_SIZE
+
+guess_bytes: [GUESS_SIZE]u8
+
+// share_and_same_bytes: while a writable share of a tree is open, the holder
+// writes bytes, and the maker writes the same bytes outside the tree. The
+// share sees the count of its own tree only: its write adds the blocks of
+// its object, the write of the maker adds nothing to it, and its removal
+// takes its blocks back. The maker writes with no lookup, so its write
+// takes its own blocks of the store. The maker removes its copy, so that
+// the counts of the first run stay. Last, the holder writes a guess that
+// stays after unshare (guess_hidden_after_unshare).
+share_and_same_bytes :: proc "contextless" (writable: ^storage.Client, maker_place: storage.Place) {
+	for &byte, index in guess_bytes {
+		byte = u8(index % 251 + 1)
+	}
+	tree_before, tree_status := storage.usage(writable)
+	_, share_write := storage.write(writable, storage.ROOT, "guess", guess_bytes[:])
+	tree_after_share, _ := storage.usage(writable)
+	store_after_share, store_status := storage.usage(&client)
+	_, maker_write := storage.write(&client, maker_place, "same_bytes", guess_bytes[:])
+	tree_after_maker, _ := storage.usage(writable)
+	store_after_maker, _ := storage.usage(&client)
+	_, share_remove := storage.remove(writable, storage.ROOT, "guess")
+	tree_after_remove, _ := storage.usage(writable)
+	_, maker_remove := storage.remove(&client, maker_place, "same_bytes")
+	_, kept_write := storage.write(writable, storage.ROOT, "kept_guess", guess_bytes[:])
+	statuses := tree_status == .Ok && store_status == .Ok && share_write == .Ok && maker_write == .Ok && share_remove == .Ok && maker_remove == .Ok && kept_write == .Ok
+	share_took := tree_after_share.blocks - tree_before.blocks
+	maker_took := store_after_maker.blocks - store_after_share.blocks
+	share_saw := tree_after_maker.blocks - tree_after_share.blocks
+	freed := tree_after_maker.blocks - tree_after_remove.blocks
+	counted := tree_before.blocks != storage.USAGE_NOT_COUNTED && tree_before.removing == 0
+	outcome(statuses && counted && share_took == GUESS_HELD && maker_took == GUESS_HELD && share_saw == 0 && freed == GUESS_HELD, "while a writable share of a tree is open, its write took ", share_took, " blocks of the count of its tree; the same bytes written by the maker outside the tree took ", maker_took, " blocks of the store and ", share_saw, " of the count of the share; the removal through the share freed ", freed, ": the share sees the count of its own tree only")
+}
+
+// guess_hidden_after_unshare: the guess that the holder wrote while its
+// share was open stays out of the hash index after unshare, so the same
+// bytes written by the maker take their own blocks. Both objects go after
+// it, so that the counts of the first run stay.
+guess_hidden_after_unshare :: proc "contextless" (share_place: storage.Place, maker_place: storage.Place) {
+	before, before_status := storage.usage(&client)
+	_, maker_write := storage.write(&client, maker_place, "same_bytes", guess_bytes[:])
+	after, _ := storage.usage(&client)
+	_, maker_remove := storage.remove(&client, maker_place, "same_bytes")
+	_, guess_remove := storage.remove(&client, share_place, "kept_guess")
+	took := after.blocks - before.blocks
+	outcome(before_status == .Ok && maker_write == .Ok && maker_remove == .Ok && guess_remove == .Ok && took == GUESS_HELD, "after unshare, the guess of the holder stays hidden: the same bytes written by the maker took ", took, " blocks")
+}
+
 // confinement: a share reaches the tree of its place and nothing outside
 // it; a read-only share changes nothing; unshare ends it.
 confinement :: proc "contextless" () {
@@ -357,7 +414,13 @@ confinement :: proc "contextless" () {
 	text: [8]u8
 	bytes, found, _ := storage.read(&client, tree_5, "written_through_a_share", text[:])
 	outcome(writable_status == .Ok && written_status == .Ok && found && string(bytes) == "kept", "a writable share writes in tree_005, and the maker reads it")
+	// A share of a tree never gets a place on the root of its store.
+	error = {}
+	_, own_status := storage.open_store(&writable, STORE_NAME, &error)
+	outcome(refused_with(own_status, &error, .No_Grant) && errors.Unit(error.unit) == .Acts_For_Principal, "a share of a tree cannot open the root of its own store")
+	share_and_same_bytes(&writable, tree_4)
 	storage.unshare(&client, writable_number)
+	guess_hidden_after_unshare(tree_5, tree_4)
 	storage.close_tree(&client, tree_3)
 	storage.close_tree(&client, tree_4)
 	storage.close_tree(&client, tree_5)

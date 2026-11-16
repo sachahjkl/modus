@@ -463,7 +463,7 @@ edit_show :: proc "contextless" () {
 		system.write_part(&writer, elapsed / 100 % 10)
 		system.write_part(&writer, " s. Escape stops an isolated call. Keys that wait: ")
 		for waiting in pending[:pending_count] {
-			shown_key: u8 = '^' // A key with no character: an arrow key, Control with a key.
+			shown_key: rune = '^' // A key with no character: an arrow key, Control with a key.
 			switch {
 			case waiting.code == display.KEY_ENTER:
 				shown_key = '|'
@@ -474,8 +474,9 @@ edit_show :: proc "contextless" () {
 			case waiting.modifiers & display.MODIFIER_CONTROL == 0 && line_editor.printable(waiting.character):
 				shown_key = waiting.character
 			}
-			character := [1]u8{shown_key}
-			system.write_part(&writer, string(character[:]))
+			character: [text_encoding.CHARACTER_BYTES_LIMIT]u8
+			length := text_encoding.character_encode(shown_key, character[:])
+			system.write_part(&writer, string(character[:length]))
 		}
 		style.tone = .Warning
 	} else {

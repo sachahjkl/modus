@@ -12,7 +12,8 @@ import format "modus:contract/store"
 // change.
 //
 // The order of the calls: work_begin, work_cut, work_resize, work_change for
-// each changed block, work_finish.
+// each changed block, then work_finish; or work_hash, then work_write or
+// work_drop, for a caller that looks up the hash before any write.
 //
 // The names: a node that the work copies names each child of the node that
 // it copies (Counter.name); a child that the work replaces in a copy loses
@@ -564,15 +565,49 @@ write_of :: proc "contextless" (work: ^Work, reference: i32, level: int) -> Poin
 
 // The result of a commit on an object.
 Finished :: struct {
-	root:     Pointer, // The root of the new state.
-	root_new: bool, // The work wrote the root: its one name is counted. Else the caller names it.
+	root:     Pointer, // The root of the new state. After work_hash with root_new: no block yet.
+	root_new: bool, // The work makes the root: its one name is counted when work_write writes it. Else the caller names it.
 	blocks:   u64, // The blocks that the new state holds.
 	hash:     blake3.Hash,
 }
 
-// work_finish computes the values of the parts that the work made, the hash
-// of the object, then writes the new blocks, each child before its parent.
+// work_finish computes the values and the hash (work_hash), then writes the
+// new blocks (work_write).
 work_finish :: proc "contextless" (work: ^Work) -> (result: Finished) {
+	result = work_hash(work)
+	if !work_failed(work) && result.root_new {
+		work_write(work, &result)
+	}
+	return result
+}
+
+// work_write writes the blocks that the work made, each child before its
+// parent, and puts the new root in the result of work_hash.
+work_write :: proc "contextless" (work: ^Work, result: ^Finished) {
+	if work_failed(work) || work.root_reference == 0 {
+		return
+	}
+	result.root = write_of(work, work.root_reference, work.levels)
+}
+
+// work_drop gives back each name that the work gave, after work_hash and
+// in place of work_write: the caller names a root of the disk with the same
+// bytes (docs/STORAGE.md, "4.7 The same object one time"). Nothing of the
+// work is written.
+work_drop :: proc "contextless" (work: ^Work) {
+	// A root that is a changed block of data (a state of one block) named
+	// nothing: only a root node holds names.
+	if work.root_reference > 0 {
+		reference_drop(work, work.root_reference, work.levels)
+	}
+	work.root_reference = 0
+	work.root = {}
+	work.root_known = true
+}
+
+// work_hash computes the values of the parts that the work made and the
+// hash of the object, and writes nothing: work_write or work_drop follows.
+work_hash :: proc "contextless" (work: ^Work) -> (result: Finished) {
 	if work_failed(work) {
 		return
 	}
@@ -618,7 +653,6 @@ work_finish :: proc "contextless" (work: ^Work) -> (result: Finished) {
 	result.hash = hash
 	result.blocks = root.blocks
 	if work.root_reference != 0 {
-		result.root = write_of(work, work.root_reference, work.levels)
 		result.root_new = true
 	} else {
 		result.root = {block = root.block, check = root.check}

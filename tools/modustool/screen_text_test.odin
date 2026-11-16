@@ -2,6 +2,7 @@ package modustool
 
 import "core:testing"
 
+import "modus:contract/glyph_cache"
 import "modus:support/graphics"
 
 // A text drawn in Spleen 8x16 into a picture of the tool is read back, and a
@@ -19,7 +20,8 @@ cells_of_spleen_are_read_back :: proc(t: ^testing.T) {
 	text := "MZXW-6YTB 27"
 	origin_x, origin_y := 20, 10
 	for character, cell in transmute([]u8)text {
-		glyph := graphics.font[int(character) - graphics.FONT_FIRST]
+		index, _ := glyph_cache.character_index(rune(character))
+		glyph := graphics.font[index]
 		for row in 0 ..< graphics.CELL_HEIGHT {
 			for column in 0 ..< graphics.CELL_WIDTH {
 				if glyph[row] & (u8(0x80) >> uint(column)) != 0 {

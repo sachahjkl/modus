@@ -80,8 +80,7 @@ Grid_Fit :: enum u32 {
 }
 
 // The layout of the keyboard: the character that the input service gives
-// for each key. A character is one byte of ASCII: a key whose character is
-// outside ASCII in a layout gives no character there.
+// for each key, as a code point (src/library/support/keyboard_layout).
 Keyboard_Layout :: enum u32 {
 	United_States = 0, // The layout of the United States: QWERTY.
 	French        = 1, // The layout of France: AZERTY.

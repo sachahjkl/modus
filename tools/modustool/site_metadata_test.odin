@@ -37,7 +37,7 @@ metadata_test_site :: proc(address: string) -> Site {
 	lines := make([]string, 1, context.temp_allocator)
 	lines[0] = "**A thing**: it works."
 	entries[0] = Changelog_Entry{type_index = 0, lines = lines}
-	releases[0] = Changelog_Release{number = Release_Number{0, 1, 0}, date = "2026-11-12", entries = entries}
+	releases[0] = Changelog_Release{number = Release_Number{0, 1, 0}, date = "2026-11-12", time_of_day = "18:48", entries = entries}
 	site.changelog.releases = releases
 	news := make([]Site_News, 1, context.temp_allocator)
 	news[0] = Site_News{entry = News_Entry{file_name = "2026-11-12-a.md", title = "A thing", date = "2026-11-12", kind = .Shown, text = "A thing works. More text."}, anchor = "news-2026-11-12-a"}
@@ -180,6 +180,9 @@ site_metadata_with_an_address :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(feed, "<link rel=\"self\" type=\"application/atom+xml\" href=\"" + TEST_ADDRESS + "/releases.xml\"/>"))
 	testing.expect(t, strings.contains(feed, "<id>" + SITE_REPOSITORY_ADDRESS + "/blob/master/" + CHANGELOG_FILE + "#release-"))
 	testing.expect(t, strings.contains(feed, "href=\"" + TEST_ADDRESS + "/releases/#release-"))
+	// The feed gives the release time, not the start of its day.
+	testing.expect(t, strings.contains(feed, "<published>2026-11-12T18:48:00Z</published>\n<updated>2026-11-12T18:48:00Z</updated>"), feed)
+	testing.expect(t, strings.contains(feed, "<updated>2026-11-12T18:48:00Z</updated>\n"), feed)
 	testing.expect(t, strings.contains(site_language_model_index(&site), "](" + TEST_ADDRESS + "/docs/guides/A/): The guide A."))
 
 	Damage :: struct {

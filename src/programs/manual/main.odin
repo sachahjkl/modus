@@ -79,6 +79,12 @@ scroll_area :: proc "contextless" () -> interface.Area {
 	return {WIDTH - SCROLL_WIDTH, 0, SCROLL_WIDTH, HEIGHT - CELL_HEIGHT - 6 - 4}
 }
 
+// text_view_area gives the place of the text, at the right of the list:
+// the wheel over it moves the text.
+text_view_area :: proc "contextless" () -> interface.Area {
+	return {LIST_WIDTH, 0, WIDTH - SCROLL_WIDTH - LIST_WIDTH, HEIGHT - CELL_HEIGHT - 6 - 4}
+}
+
 // scroll_identity gives the identity of the scroll bar of the text.
 scroll_identity :: proc "contextless" () -> interface.Element_Identity {
 	return interface.identity("the scroll bar of the text")
@@ -350,8 +356,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	draw_records(frame.table)
 	// The scroll bar of the text: the pointer on it moves the text as Page
-	// Up and Page Down do.
-	moved := interface.scroll_bar(&frame, scroll_area(), scroll_identity(), .Vertical, {total = rows(), visible = ROWS, first = first_line}, {page = ROWS - 2})
+	// Up and Page Down do, and the wheel over the text moves it too.
+	moved := interface.scroll_bar(&frame, scroll_area(), scroll_identity(), .Vertical, {total = rows(), visible = ROWS, first = first_line}, {page = ROWS - 2}, "", text_view_area())
 	interface.window_frame_end(&drawing, &frame, window)
 	if moved.changed {
 		first_line = moved.first
@@ -686,8 +692,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The scroll bar of the text takes the pointer from the input
 				// of the next frame.
 				interface.input_add(&drawing.input, event)
-				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area(), scroll_identity()) {
+				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area(), scroll_identity(), text_view_area()) {
 					changed = true
+				} else {
+					// A notch over no view moves nothing, and does not wait
+					// for a later frame.
+					drawing.input.wheel -= event.wheel
 				}
 				down := event.buttons & display.BUTTON_LEFT != 0
 				if down && !pressed && event.x >= 0 && event.x < LIST_WIDTH {

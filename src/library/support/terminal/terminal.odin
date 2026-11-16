@@ -206,7 +206,7 @@ Input_Record :: struct {
 // One key, as `key` gives it to the program.
 Key :: struct {
 	code:      u32, // The code of the key (display.KEY_*).
-	character: u8, // Its character in ASCII, or 0. A key gives no character outside ASCII yet.
+	character: rune, // Its character as a code point, or 0. A program that keeps it writes its UTF-8.
 	modifiers: u32, // The modifiers held (display.MODIFIER_*).
 }
 
@@ -544,9 +544,16 @@ key :: proc "contextless" (terminal: ^Terminal) -> (pressed: Key, ok: bool) {
 	for {
 		record := system.receive(&terminal.ring.completions) or_return
 		if Input(record.kind) == .Key {
-			return {code = record.tag, character = u8(record.values[0]), modifiers = u32(record.values[1])}, true
+			return {code = record.tag, character = key_character_of(record.values[0]), modifiers = u32(record.values[1])}, true
 		}
 	}
+}
+
+// key_character_of gives the character of a key record: its code point,
+// or 0 for a value past the last code point. A key with a control
+// character (Enter, Tab, Backspace) keeps it.
+key_character_of :: proc "contextless" (value: u64) -> rune {
+	return value <= text_encoding.CODE_POINT_LAST ? rune(value) : 0
 }
 
 // input gives the next input record: a key, or what the pointer asked of
@@ -559,7 +566,7 @@ input :: proc "contextless" (terminal: ^Terminal) -> (given: Input_Record, ok: b
 		record := system.receive(&terminal.ring.completions) or_return
 		#partial switch Input(record.kind) {
 		case .Key:
-			return {kind = .Key, key = {code = record.tag, character = u8(record.values[0]), modifiers = u32(record.values[1])}}, true
+			return {kind = .Key, key = {code = record.tag, character = key_character_of(record.values[0]), modifiers = u32(record.values[1])}}, true
 		case .List_First:
 			// The number is the number of another program: the reader
 			// cuts it to its own list.

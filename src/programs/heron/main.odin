@@ -404,7 +404,7 @@ animation_key_take :: proc "contextless" (wanted: mark.Animation) {
 }
 
 // key_take does what a key of the window asks.
-key_take :: proc "contextless" (character: u8) {
+key_take :: proc "contextless" (character: rune) {
 	switch {
 	case character >= '1' && character <= '9':
 		animation_key_take(mark.Animation(character - '1'))

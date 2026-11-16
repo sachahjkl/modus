@@ -74,6 +74,31 @@ text_without_cache_is_spleen :: proc(t: ^testing.T) {
 	testing.expect(t, first == second)
 }
 
+// A character of the Latin-1 Supplement draws its glyph of Spleen, not the
+// replacement glyph; a character past U+00FF draws the replacement glyph.
+// "été" takes three cells, one for each character.
+@(test)
+text_of_the_latin_supplement_is_drawn :: proc(t: ^testing.T) {
+	drawn, glyph, replacement: [8 * 16]Color
+	a := Canvas{pixels = raw_data(drawn[:]), width = 8, height = 16, stride = 8}
+	b := Canvas{pixels = raw_data(glyph[:]), width = 8, height = 16, stride = 8}
+	c := Canvas{pixels = raw_data(replacement[:]), width = 8, height = 16, stride = 8}
+	testing.expect_value(t, text(a, 0, 0, "é", COLOR_TEXT), CELL_WIDTH)
+	character_spleen(b, 0, 0, 'é', COLOR_TEXT)
+	character_replacement(c, 0, 0, COLOR_TEXT, 1)
+	testing.expect(t, drawn == glyph)
+	testing.expect(t, drawn != replacement)
+	drawn = {}
+	text(a, 0, 0, "ā", COLOR_TEXT) // U+0101, past the Latin-1 Supplement.
+	testing.expect(t, drawn == replacement)
+	testing.expect_value(t, text_width("été"), 3 * CELL_WIDTH)
+	for character in rune(glyph_cache.LATIN_FIRST) ..= glyph_cache.LATIN_LAST {
+		testing.expect(t, cell_font_draws(character))
+	}
+	testing.expect(t, !cell_font_draws(glyph_cache.ASCII_LAST + 1))
+	testing.expect(t, !cell_font_draws(glyph_cache.LATIN_FIRST - 1))
+}
+
 // The cost of one glyph from the glyph cache against one glyph of Spleen,
 // on the host: the same order is the target (docs/FONTS.md, "Measures").
 @(test)
@@ -96,12 +121,12 @@ glyph_draw_cost :: proc(t: ^testing.T) {
 	REPEAT :: 200_000
 	start := time.tick_now()
 	for index in 0 ..< REPEAT {
-		character_vector_reference(&cache, &state.square_root, .Red_Green_Blue, canvas, 8, 8, sample[index % len(sample)], COLOR_TEXT, 1)
+		character_vector_reference(&cache, &state.square_root, .Red_Green_Blue, canvas, 8, 8, rune(sample[index % len(sample)]), COLOR_TEXT, 1)
 	}
 	vector := time.duration_nanoseconds(time.tick_since(start)) / REPEAT
 	start = time.tick_now()
 	for index in 0 ..< REPEAT {
-		character_spleen(canvas, 8, 8, sample[index % len(sample)], COLOR_TEXT)
+		character_spleen(canvas, 8, 8, rune(sample[index % len(sample)]), COLOR_TEXT)
 	}
 	spleen := time.duration_nanoseconds(time.tick_since(start)) / REPEAT
 	fmt.printfln("graphics: one glyph on the host: from the glyph cache %v ns, Spleen 8x16 %v ns", vector, spleen)
@@ -145,8 +170,8 @@ fast_blend_is_the_reference :: proc(t: ^testing.T) {
 					for _ in 0 ..< 2 {
 						for character in 32 ..< 127 {
 							x := (character - 32) * 8 * scale % (WIDTH - 24)
-							character_vector_reference(&cache, &table, order, a, x, 0, u8(character), color, scale)
-							character_vector_with(&cache, &table, tables, order, b, x, 0, u8(character), color, scale)
+							character_vector_reference(&cache, &table, order, a, x, 0, rune(character), color, scale)
+							character_vector_with(&cache, &table, tables, order, b, x, 0, rune(character), color, scale)
 						}
 					}
 					for pixel, index in first {

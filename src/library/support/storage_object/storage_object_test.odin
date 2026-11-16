@@ -464,3 +464,96 @@ same_bytes_kept :: proc(t: ^testing.T) {
 	testing.expect_value(t, measure.hashed_blocks, u64(5 + 1)) // The values of the 5 blocks, and the last block for the hash.
 	testing.expect(t, finished.hash == blake3.hash(changed))
 }
+
+// The same bytes under a second name (docs/STORAGE.md, "4.7 The same object
+// one time"): work_hash gives the hash of the first object before any
+// write, work_drop gives back each name, and the second entry names the
+// root of the first. A change of one name copies the path of its block; a
+// removal of one name keeps the other.
+@(test)
+same_object_under_two_names :: proc(t: ^testing.T) {
+	disk := disk_make()
+	defer disk_free(disk)
+	block_count :: 2 * FANOUT - 28 // Two levels of object nodes.
+	bytes := pattern(block_count * BLOCK_SIZE)
+	first, first_finished, _, ok := commit(disk, {}, 0, u64(len(bytes)), changes_of(bytes))
+	testing.expect(t, ok)
+	testing.expect_value(t, format.object_levels(first.size), 2)
+	held := live_blocks(disk)
+	testing.expect_value(t, held, first_finished.blocks)
+
+	// The second name: the work hashes and writes nothing.
+	work := new(Work)
+	defer free(work)
+	names_before := slice.clone(disk.names[:], context.temp_allocator)
+	changes := changes_of(bytes)
+	work_begin(work, &disk.source, &disk.counter, {}, changes)
+	work_cut(work, 0)
+	work_resize(work, u64(len(bytes)))
+	for index in 0 ..< len(changes) {
+		work_change(work, index)
+	}
+	second_finished := work_hash(work)
+	testing.expect(t, !work_failed(work) && second_finished.root_new)
+	testing.expect(t, second_finished.hash == first_finished.hash, "the same bytes give the hash of the first object")
+	testing.expect_value(t, second_finished.root.block, u64(0)) // Not written yet.
+	work_drop(work)
+	testing.expect_value(t, work.measure.written, u64(0))
+	testing.expect(t, slice.equal(disk.names[:], names_before), "the drop gives back each name: no count changed")
+	testing.expect_value(t, len(disk.blocks), len(names_before))
+	disk.names[first.root.block] += 1 // The second entry names the root of the first.
+	second := first
+	testing.expect_value(t, live_blocks(disk), held)
+
+	// A change of one block of the second name: a copy of the path of that
+	// block; the first name keeps its bytes.
+	changed := slice.clone(bytes, context.temp_allocator)
+	changed[3 * BLOCK_SIZE + 5] ~= 0x5A
+	one_block := changes_of(changed)[3:4]
+	after, _, measure, changed_ok := commit(disk, second, second.size, second.size, one_block)
+	testing.expect(t, changed_ok)
+	release_state(disk, second) // No version kept: the second entry names its new root only.
+	testing.expect_value(t, measure.written, u64(1 + 2)) // The block, its node of level 1, the root.
+	testing.expect_value(t, live_blocks(disk), held + measure.written)
+	first_read, first_ok := read_whole(disk, first)
+	after_read, after_ok := read_whole(disk, after)
+	testing.expect(t, first_ok && slice.equal(first_read, bytes), "the first name reads its bytes")
+	testing.expect(t, after_ok && slice.equal(after_read, changed), "the second name reads its change")
+
+	// The removal of the second name frees its own blocks only.
+	release_state(disk, after)
+	testing.expect_value(t, live_blocks(disk), held)
+	first_read, first_ok = read_whole(disk, first)
+	testing.expect(t, first_ok && slice.equal(first_read, bytes), "the first name reads its bytes after the removal of the second")
+}
+
+// A drop after copies of nodes of a state of the disk: each name that the
+// copies gave goes back, and each block of the state before keeps its count.
+@(test)
+a_drop_after_copies :: proc(t: ^testing.T) {
+	disk := disk_make()
+	defer disk_free(disk)
+	bytes := pattern((FANOUT + 3) * BLOCK_SIZE)
+	first, _, _, ok := commit(disk, {}, 0, u64(len(bytes)), changes_of(bytes))
+	testing.expect(t, ok)
+	names_before := slice.clone(disk.names[:], context.temp_allocator)
+	changed := slice.clone(bytes, context.temp_allocator)
+	changed[2 * BLOCK_SIZE] ~= 1
+	changed[(FANOUT + 1) * BLOCK_SIZE] ~= 1
+	all_changes := changes_of(changed)
+	changes := []Change{all_changes[2], all_changes[FANOUT + 1]}
+	work := new(Work)
+	defer free(work)
+	work_begin(work, &disk.source, &disk.counter, first, changes)
+	work_cut(work, first.size)
+	work_resize(work, first.size)
+	for index in 0 ..< len(changes) {
+		work_change(work, index)
+	}
+	finished := work_hash(work)
+	testing.expect(t, !work_failed(work) && finished.root_new)
+	testing.expect(t, finished.hash == blake3.hash(changed))
+	testing.expect(t, !slice.equal(disk.names[:], names_before), "the copies of the nodes named their children")
+	work_drop(work)
+	testing.expect(t, slice.equal(disk.names[:], names_before), "the drop gives back each name")
+}

@@ -113,24 +113,23 @@ each_test_part_has_its_boot_volumes :: proc(t: ^testing.T) {
 	testing.expect(t, boot_volumes_of_test(nil) == nil, "the whole test builds every volume")
 	testing.expect(t, boot_volumes_of_test([]string{"a part with no row"}) == nil, "a part with no row builds every volume")
 	testing.expect(t, boot_volumes_of_command("a command with no row") == nil, "a command with no row builds every volume")
-	// `trusted_boot tpm` boots the volume of the other system too.
-	with_tpm := boot_volumes_of_test([]string{"trusted_boot", "tpm"})
+	// `trusted_boot` boots the volume of the other system for the measure.
 	found_other_system, found_main := false, false
-	for path in with_tpm {
+	for path in boot_volumes_of_test([]string{"trusted_boot"}) {
 		found_other_system = found_other_system || path == BOOT_VOLUME_OTHER_SYSTEM
 		found_main = found_main || path == BOOT_VOLUME
 	}
-	testing.expect(t, found_other_system && found_main, "trusted_boot tpm builds the main volume and the other system")
-	// `principals tpm` builds the two volumes of the test of the seal, and
-	// the main volume, on which the seal is refused.
+	testing.expect(t, found_other_system && found_main, "trusted_boot builds the main volume and the other system")
+	// `principals` builds the two volumes of the test of the seal, and the
+	// main volume, on which the seal is refused.
 	found_other_system, found_main = false, false
 	found_seal_test := false
-	for path in boot_volumes_of_test([]string{"principals", "tpm"}) {
+	for path in boot_volumes_of_test([]string{"principals"}) {
 		found_other_system = found_other_system || path == BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM
 		found_seal_test = found_seal_test || path == BOOT_VOLUME_SEAL_TEST
 		found_main = found_main || path == BOOT_VOLUME
 	}
-	testing.expect(t, found_other_system && found_seal_test && found_main, "principals tpm builds the main volume and the two volumes of the test of the seal")
+	testing.expect(t, found_other_system && found_seal_test && found_main, "principals builds the main volume and the two volumes of the test of the seal")
 	for command in ([]string{"run", MEASURE_COMMAND, MEASURE_SHORTAGE_COMMAND, "screenshots", "film"}) {
 		testing.expectf(t, len(boot_volumes_of_command(command)) > 0, "the command %s names its volumes", command)
 	}

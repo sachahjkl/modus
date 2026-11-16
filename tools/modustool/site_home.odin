@@ -511,7 +511,7 @@ site_release_band_write :: proc(site: ^Site, b: ^strings.Builder, from_page: str
 	strings.write_string(b, "<section class=\"card accent-boot release-band\" aria-labelledby=\"release\">\n<h2 id=\"release\">The newest release</h2>\n<p class=\"release-head\">")
 	fmt.sbprintf(b, "<span class=\"value value-%s release-number\">", value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Version])
 	site_escape(b, site.release)
-	fmt.sbprintf(b, "</span> <span class=\"release-facts\"><time datetime=\"%s\">%s</time>, <strong>%d</strong> changes</span></p>\n", newest.date, newest.date, len(newest.entries))
+	fmt.sbprintf(b, "</span> <span class=\"release-facts\"><time datetime=\"%s\">%s</time>, <strong>%d</strong> changes</span></p>\n", release_moment_attribute(newest), release_moment_shown(newest), len(newest.entries))
 	shown := min(len(newest.entries), SITE_RELEASE_BAND_CHANGE_COUNT)
 	if shown > 0 {
 		strings.write_string(b, "<ul class=\"release-changes\">\n")

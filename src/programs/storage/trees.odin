@@ -316,6 +316,54 @@ state_blocks_of :: proc "contextless" (root: Pointer, size: u64) -> u64 {
 	return blocks
 }
 
+// root_by_hash gives the root of a current object of a store whose state
+// has this hash and this size, or no block (docs/STORAGE.md, "4.7 The same
+// object one time"). The hash index gives candidates by the first 8 bytes
+// of the hash; the hash of an entry comes from the disk, so each candidate
+// is confirmed: its block tree, read and checked, must give the whole hash.
+// A damaged candidate leaves the slots, so that the key is free for a later
+// root with the same bytes. A candidate whose blocks give another hash
+// takes the key of that hash, so an entry that lies costs one
+// confirmation. A failure of the device sets plan.device.
+//
+// One key has at most one slot, so a lookup meets one candidate, or two
+// when a rekey gives a root another hash with the same 8 bytes and the same
+// size. HASH_CONFIRMATION_LIMIT only guards that case: it bounds the
+// confirmations of one lookup.
+HASH_CONFIRMATION_LIMIT :: 4
+
+root_by_hash :: proc "contextless" (store_index: int, hash: [32]u8, size: u64) -> Pointer {
+	search := storage_mount.hash_search_begin(&opened, hash, size, store_index)
+	for _ in 0 ..< HASH_CONFIRMATION_LIMIT {
+		candidate, found := storage_mount.hash_index_next(&opened, &search)
+		if !found {
+			return {}
+		}
+		if state_damaged(candidate) || size > format.OBJECT_SIZE_LIMIT {
+			storage_mount.hash_index_hide(&opened, candidate)
+			continue
+		}
+		confirmed, outcome := block_tree.state_hash(&object_source, {root = candidate, size = size}, &object_hash_room)
+		switch outcome {
+		case .Device:
+			plan.device = true
+			return {}
+		case .Wrong:
+			// A block under the root went wrong since the open: the state is
+			// damaged, as a read finds it.
+			storage_mount.damaged_under_set(&opened, candidate.block)
+			storage_mount.hash_index_hide(&opened, candidate)
+			continue
+		case .Good:
+		}
+		if confirmed == hash {
+			return candidate
+		}
+		storage_mount.hash_index_rekey(&opened, candidate, confirmed)
+	}
+	return {}
+}
+
 // current_blocks_change changes the count of the blocks of the current
 // objects of the store of the plan; a count that would go below 0 is a
 // fault of the engine.
@@ -575,7 +623,16 @@ work_failure_take :: proc "contextless" () -> (damaged: bool) {
 // keeps its block. The state before becomes a version. It gives the
 // generation of the commit, or an ERROR_ number with the error record.
 // `name_argument` is the argument of the name in the export.
-object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, kind: Change_Kind, data: []u8, given_source: State_Of_Object, error: ^errors.Error_Record, name_argument: i64, pending: ^Pending_Object = nil, measure: ^Commit_Measure = nil) -> i64 {
+// `finds_by_hash`: the connection of the caller reaches the whole store, so
+// the new state names the root of an object of the store with the same
+// bytes when one exists (docs/STORAGE.md, "4.7 The same object one time").
+// A caller that reaches one tree of the store only must not learn, from
+// its count of blocks, what bytes the rest of the store holds.
+object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, kind: Change_Kind, data: []u8, given_source: State_Of_Object, finds_by_hash: bool, error: ^errors.Error_Record, name_argument: i64, pending: ^Pending_Object = nil, measure: ^Commit_Measure = nil) -> i64 {
+	// While the store has a writable share of a tree open, no commit of it
+	// looks up a hash: the holder sees the count of blocks of the whole store
+	// (docs/STORAGE.md, "4.7 The same object one time").
+	looks_up := finds_by_hash && !writable_tree_share_open(store.name)
 	count := blocks_of(u64(len(data)))
 	if kind == .Write && count > WHOLE_WRITE_BLOCKS {
 		return errors.fail(error, ERROR_TOO_LARGE, .Too_Long, .Bytes, name_argument + 1, i64(len(data)), WHOLE_WRITE_BLOCKS * BLOCK_SIZE)
@@ -677,7 +734,9 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		for change_index in 0 ..< len(changes) {
 			block_tree.work_change(&object_work, change_index)
 		}
-		finished := block_tree.work_finish(&object_work)
+		// The values and the hash first: a root of the store with the same
+		// bytes saves each write of the block tree.
+		finished := block_tree.work_hash(&object_work)
 		if work_failure_take() {
 			plan_drop()
 			if existed {
@@ -688,23 +747,59 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		if plan_refused() {
 			return plan_refusal(error)
 		}
+		same_bytes_root: Pointer
+		if looks_up && finished.root_new {
+			same_bytes_root = root_by_hash(store_index, finished.hash, size)
+			if plan_refused() {
+				return plan_refusal(error)
+			}
+		}
 		next.size = size
-		next.pointer = finished.root
 		next.hash = finished.hash
-		new_blocks = finished.blocks
-		if !finished.root_new {
-			state_name(finished.root) // The new entry names a root of the state before.
+		if same_bytes_root.block != 0 {
+			// The work gives back each name that its copies gave, and the new
+			// entry names the found root.
+			block_tree.work_drop(&object_work)
+			next.pointer = same_bytes_root
+			state_name(same_bytes_root)
+			new_blocks = state_blocks_of(same_bytes_root, size)
+		} else {
+			block_tree.work_write(&object_work, &finished)
+			if work_failure_take() {
+				plan_drop()
+				return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, name_argument)
+			}
+			next.pointer = finished.root
+			new_blocks = finished.blocks
+			if !finished.root_new {
+				state_name(finished.root) // The new entry names a root of the state before.
+			}
+		}
+		if plan_refused() {
+			return plan_refusal(error)
 		}
 		if measure != nil {
 			work_measure := object_work.measure
 			measure^ = {object_blocks = i64(blocks_of(size)), held_blocks = i64(new_blocks), changed = i64(work_measure.changed), hashed_blocks = i64(work_measure.hashed_blocks), hashed_nodes = i64(work_measure.hashed_nodes), object_written = i64(work_measure.written)}
 		}
 	case .Restore, .Clone:
+		// No block is written: the hash index only decides which root of
+		// the same bytes the entry names, so that a version keeps no copy
+		// alive after it is thinned.
+		state_root := source.root
+		if looks_up && state_root.block != 0 {
+			if same_bytes_root := root_by_hash(store_index, source.hash, source.size); same_bytes_root.block != 0 {
+				state_root = same_bytes_root
+			}
+			if plan_refused() {
+				return plan_refusal(error)
+			}
+		}
 		next.size = source.size
-		next.pointer = source.root
+		next.pointer = state_root
 		next.hash = source.hash
 		state_name(next.pointer)
-		new_blocks = state_blocks_of(source.root, source.size)
+		new_blocks = state_blocks_of(state_root, source.size)
 	}
 	current_blocks_change(new_blocks, old_blocks)
 	if !existed {
@@ -1220,6 +1315,124 @@ entry_of :: proc "contextless" (store_index: int, path: []Entry_Name, name: Entr
 		return {}, reading_outcome(store_index)
 	}
 	return value, .Found
+}
+
+// ---------------------------------------------------------------------
+// The counts of one tree: what usage() gives through a share of a tree.
+// The counts of the store would tell the holder what the rest of the store
+// does: how many blocks a write of the maker took, and so whether it had
+// the bytes of an object already (docs/STORAGE.md, "4.7 The same object
+// one time"). The counts of its own tree tell it only what it can read.
+
+// SHARE_USAGE_READ_LIMIT is the most blocks that one count of a tree reads:
+// the nodes of its trees, the root of the block tree of each object, and
+// the version index of each object with versions. Each read goes through
+// the cache; at most 16 MiB for one call, so a holder that calls usage() in
+// a loop cannot hold the service on a large tree. A tree that needs more
+// gives the counts USAGE_NOT_COUNTED.
+SHARE_USAGE_READ_LIMIT :: 4096
+
+Tree_Usage :: struct {
+	objects:    u64, // The objects under the tree.
+	trees:      u64, // The trees under the tree.
+	versions:   u64, // The versions of its objects.
+	// The nodes of the trees under it, the blocks of the current state of
+	// each object (a block that two states share counted once for each),
+	// and the index and the leaves of the versions of each object. No block
+	// is counted one time across objects, so no count depends on what the
+	// rest of the store holds.
+	blocks:     u64,
+	reads:      u64, // The blocks read: at most SHARE_USAGE_READ_LIMIT.
+	nesting:    int, // The level of the tree that is walked.
+	over_bound: bool, // The tree needs more reads than SHARE_USAGE_READ_LIMIT.
+	failed:     bool, // A node or a block is wrong, or the device failed.
+}
+tree_usage_state: Tree_Usage
+tree_usage_walks: [NESTING_LIMIT + 1]tree.Walk
+
+// tree_usage counts the tree at a path of a store.
+tree_usage :: proc "contextless" (store_index: int, path: []Entry_Name) -> (counts: Tree_Usage, outcome: Lookup) {
+	root_node, found := tree_of(store_index, path)
+	if found != .Found {
+		return {}, found
+	}
+	tree_usage_state = {}
+	tree_usage_walk(root_node, 0)
+	return tree_usage_state, .Found
+}
+
+// tree_usage_read counts one read, or says that the bound is reached.
+tree_usage_read :: proc "contextless" () -> bool {
+	if tree_usage_state.reads >= SHARE_USAGE_READ_LIMIT {
+		tree_usage_state.over_bound = true
+		return false
+	}
+	tree_usage_state.reads += 1
+	return true
+}
+
+tree_usage_walk :: proc "contextless" (pointer: Pointer, nesting: int) {
+	if nesting > NESTING_LIMIT || pointer.block == 0 {
+		return
+	}
+	one := &tree_usage_walks[nesting]
+	one.source = &node_source
+	one.shape = tree.TREE_SHAPE
+	one.visit_node = tree_usage_node
+	one.visit_record = tree_usage_record
+	one.data = nil
+	one.nodes, one.records = 0, 0
+	before := tree_usage_state.nesting
+	tree_usage_state.nesting = nesting
+	if tree.walk_tree(one, pointer) != .None && !tree_usage_state.over_bound {
+		tree_usage_state.failed = true
+	}
+	tree_usage_state.nesting = before
+}
+
+tree_usage_node :: proc "contextless" (one: ^tree.Walk, _: Pointer) -> bool {
+	if !tree_usage_read() {
+		one.failure = .Full
+		return false
+	}
+	tree_usage_state.blocks += 1
+	return true
+}
+
+tree_usage_record :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u8) {
+	entry := (^Entry)(raw_data(value))^
+	#partial switch entry.kind {
+	case .Tree:
+		tree_usage_state.trees += 1
+		tree_usage_walk(entry.pointer, tree_usage_state.nesting + 1)
+	case .Object:
+		tree_usage_state.objects += 1
+		if entry.pointer.block != 0 && entry.size <= format.OBJECT_SIZE_LIMIT {
+			if !tree_usage_read() {
+				break
+			}
+			blocks, outcome := block_tree.state_blocks(&object_source, {root = entry.pointer, size = entry.size}, &object_node)
+			if outcome != .Good {
+				tree_usage_state.failed = true
+			}
+			tree_usage_state.blocks += blocks
+		}
+		if entry.versions.block != 0 {
+			if !tree_usage_read() {
+				break
+			}
+			index: Version_Index
+			if read_single(entry.versions, (^Block)(&index)) != .Good || index.leaf_count > format.VERSION_INDEX_CAPACITY {
+				tree_usage_state.failed = true
+				break
+			}
+			tree_usage_state.versions += index.version_count
+			tree_usage_state.blocks += 1 + index.leaf_count
+		}
+	}
+	if tree_usage_state.over_bound || tree_usage_state.failed {
+		one.failure = .Full
+	}
 }
 
 // lookup_refusal gives the error of a read that found no entry.

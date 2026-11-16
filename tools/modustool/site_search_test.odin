@@ -56,7 +56,7 @@ site_search_script_carries_the_rule_and_the_table :: proc(t: ^testing.T) {
 	testing.expect(t, !strings.contains(script, "/*RULE*/null"), "the rule is not in the script")
 	testing.expect(t, !strings.contains(script, "/*CASES*/null"), "the table is not in the script")
 	testing.expect(t, strings.contains(script, site_search_cases_json()))
-	testing.expect(t, strings.contains(script, "\"match\":16,\"start\":32,\"segment\":24,\"sideBySide\":16,\"gapOpen\":3,\"gapByte\":1"))
+	testing.expect(t, strings.contains(script, "\"match\":16,\"start\":32,\"segment\":24,\"sideBySide\":16,\"gapOpen\":3,\"gapCharacter\":1"))
 	testing.expect(t, strings.contains(script, "\"rows\":8"))
 	testing.expect(t, strings.contains(script, SITE_SEARCH_MATCH_SOURCE))
 	testing.expect(t, strings.contains(script, " cases pass\""), "the self test does not print its count of cases")
