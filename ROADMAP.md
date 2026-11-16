@@ -6,6 +6,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
+- **A log check of the main test that a new line does not break.** The main machine test writes about 2 050 records before it starts the program `log`, and the log keeps 2 047, so one more line of any program makes the check "0 lost" fail. The program `log` then starts before the room is spent, or the test checks that each lost record was written before the window started, so the check proves that the window loses no record and not that the boot was short.
 - **A terminal that always draws the end of an output.** On two runs of the main test, the terminal stayed on the state of a running call after the console had written the whole result: the row, the count of rows and the next line were in the log, not on the screen, with every program in a wait. The terminal now logs a lost wake of its reader or of its drawer, so the next run that shows it names the side that lost it, and a principal never sees a stale screen until the next key.
 - **The first signed release image.** The keys of the publisher of the system go into the secrets of the repository, and their public key and certificate into `resources/keys`. The next tag then publishes a disk image that a principal verifies and starts. [Design](src/md/infrastructure/release_image.md)
 - **A machine test of zeros that the disk does not keep.** The test disk drops a write of zeros of an erase of versions, and the machine test of `principals` checks the line of the storage service and the count of the row, so the report of the old bytes that stay on the disk is proved on a machine and not only read in the code. [Design](src/md/features/version_erase.md)
@@ -13,7 +14,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
-- **The time zone as a setting.** The principal sets the time zone of the machine, the bar shows the local time, and the setting `appearance` `auto` turns light at 07:00 of the local time and not of UTC. The rule of the day already reads the zone of the date page. [Design](src/md/features/appearance.md)
 - **The release image started on a real machine.** The image starts from a USB key on the UEFI firmware of a real machine, with the certificate of the publisher enrolled and Secure Boot on, and the machine key sealed by its TPM. Today the image starts in the machine test only, on the firmware of QEMU. [Design](src/md/infrastructure/release_image.md)
 - **The screen shows each frame of the compositor whole.** The compositor puts a frame on the screen in one step, by a page flip or at the vertical blank, so a window that changes many times a second never shows a cut between two of its pictures. [Design](src/md/infrastructure/whole_frame.md)
 - **An outside module imports another outside module.** The import of a module of another project names a module of the same project, and not only a module of the system. A developer then writes a library module and the programs that import it outside the repository. [Design](src/md/infrastructure/third_party_module.md)

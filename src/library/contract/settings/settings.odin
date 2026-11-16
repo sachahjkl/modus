@@ -32,6 +32,12 @@
 // store outside the change count (appearance_in_force_write), and wakes the
 // same waiters. A reader loads that word inside its loop of reads.
 //
+// The time zone (src/md/features/time_zone.md) is one more choice of the
+// page, zone_offset_minutes, outside the enumeration Setting: a zone is a
+// number of minutes, not one of a list of names. The program `settings`
+// writes it with the values; the program `date` copies it into the date
+// page, where each reader of the local time reads it.
+//
 // The program `settings` keeps the values in its private store, as one
 // record (Kept_Settings) in one object: one write is one commit, so a loss
 // of power gives the old record or the new one, never a mix. At boot the
@@ -132,6 +138,73 @@ descriptions := [Setting]Description {
 	.Appearance      = {"appearance", "appearance", {"auto", "dark", "light", ""}, len(Appearance)},
 }
 
+// The time zone: a fixed offset from UTC, in minutes, with no summer time
+// (src/md/features/time_zone.md). Its name in the exports and its title in
+// the window.
+TIME_ZONE_NAME :: "time_zone"
+TIME_ZONE_TITLE :: "time zone"
+ZONE_OFFSET_MINUTES_LEAST :: i32(-12 * 60) // -12:00, the zone of the earth furthest west.
+ZONE_OFFSET_MINUTES_MOST :: i32(14 * 60) // +14:00, the zone of the earth furthest east.
+ZONE_OFFSET_MINUTES_STEP :: i32(15) // Each offset in use is a whole quarter of an hour: +05:45, +12:45.
+ZONE_TEXT_SIZE :: 6 // "+08:00": a sign, two digits of hours, a colon, two digits of minutes.
+
+// zone_offset_minutes_valid gives the zone, or the default 0 (UTC) for a
+// number outside the range or not a whole quarter of an hour.
+zone_offset_minutes_valid :: proc "contextless" (minutes: i32) -> i32 {
+	if minutes < ZONE_OFFSET_MINUTES_LEAST || minutes > ZONE_OFFSET_MINUTES_MOST || minutes % ZONE_OFFSET_MINUTES_STEP != 0 {
+		return 0
+	}
+	return minutes
+}
+
+// zone_text writes the text of a zone in the form of ISO 8601, "+08:00" or
+// "-03:30", in a buffer of ZONE_TEXT_SIZE bytes or more. Zero is "+00:00".
+// A zone that is not valid is written as 0. A shorter buffer gives "".
+zone_text :: proc "contextless" (buffer: []u8, minutes: i32) -> string {
+	if len(buffer) < ZONE_TEXT_SIZE {
+		return ""
+	}
+	value := zone_offset_minutes_valid(minutes)
+	buffer[0] = value < 0 ? '-' : '+'
+	size := value < 0 ? -value : value
+	hours, rest := size / 60, size % 60
+	buffer[1] = u8('0' + hours / 10)
+	buffer[2] = u8('0' + hours % 10)
+	buffer[3] = ':'
+	buffer[4] = u8('0' + rest / 10)
+	buffer[5] = u8('0' + rest % 10)
+	return string(buffer[:ZONE_TEXT_SIZE])
+}
+
+// zone_parse reads the text of a zone: a sign, two digits of hours, a
+// colon and two digits of minutes, from "-12:00" to "+14:00", by quarters
+// of an hour. ok is false for any other text: "+8:00", "+08", "UTC",
+// "+08:10", "+15:00".
+zone_parse :: proc "contextless" (text: string) -> (minutes: i32, ok: bool) {
+	if len(text) != ZONE_TEXT_SIZE || text[0] != '+' && text[0] != '-' || text[3] != ':' {
+		return 0, false
+	}
+	digit_places := [4]int{1, 2, 4, 5}
+	for place in digit_places {
+		if text[place] < '0' || text[place] > '9' {
+			return 0, false
+		}
+	}
+	hours := i32(text[1] - '0') * 10 + i32(text[2] - '0')
+	rest := i32(text[4] - '0') * 10 + i32(text[5] - '0')
+	if rest >= 60 {
+		return 0, false
+	}
+	minutes = hours * 60 + rest
+	if text[0] == '-' {
+		minutes = -minutes
+	}
+	if zone_offset_minutes_valid(minutes) != minutes {
+		return 0, false
+	}
+	return minutes, true
+}
+
 // The names of the appearance in force, by its number, for the log.
 appearance_in_force_names := [Appearance_In_Force]string {
 	.Dark  = "dark",
@@ -145,6 +218,7 @@ Page :: struct {
 	change_count:        u32, // Even when the page is stable. Each change adds 2.
 	appearance_in_force: u32, // Appearance_In_Force. The program `settings` and the root service write it.
 	values:              [SETTING_CAPACITY]u32, // By Setting. A reader keeps each value through `valid`.
+	zone_offset_minutes: i32, // The time zone. A reader keeps it through zone_offset_minutes_valid.
 }
 #assert(size_of(Page) <= 4096)
 
@@ -188,6 +262,7 @@ glyph_cache_open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, cache: 
 Choice :: struct {
 	values:              [Setting]u32, // The value of each setting, kept valid.
 	appearance_in_force: Appearance_In_Force, // The appearance that each program draws now.
+	zone_offset_minutes: i32, // The time zone that the principal chose, kept valid.
 	change_count:        u32, // The change count of the page at the copy.
 }
 
@@ -249,8 +324,9 @@ valid :: proc "contextless" (setting: Setting, value: u32) -> u32 {
 	return value < count ? value : 0
 }
 
-// values_differ tells whether two choices have different values, or a
-// different appearance in force. The count of changes is not compared: the
+// values_differ tells whether two choices have different values, a
+// different time zone, or a different appearance in force. The count of
+// changes is not compared: the
 // program `settings` can change the count with no end and leave the values
 // as they were, and a reader that acts on each new count then does work for
 // nothing (the compositor tells every window, and a window ring that is
@@ -261,7 +337,7 @@ values_differ :: proc "contextless" (first, second: Choice) -> bool {
 			return true
 		}
 	}
-	return first.appearance_in_force != second.appearance_in_force
+	return first.zone_offset_minutes != second.zone_offset_minutes || first.appearance_in_force != second.appearance_in_force
 }
 
 // READ_TRIES: the most reads of a page that changes, or that its writer
@@ -285,6 +361,7 @@ read :: proc "contextless" (page: ^Page) -> Choice {
 		for setting in Setting {
 			choice.values[setting] = valid(setting, intrinsics.atomic_load_explicit(&page.values[setting], .Relaxed))
 		}
+		choice.zone_offset_minutes = zone_offset_minutes_valid(intrinsics.atomic_load_explicit(&page.zone_offset_minutes, .Relaxed))
 		// One word, which the root service also stores alone: the copy is
 		// the old or the new appearance, never a mix.
 		choice.appearance_in_force = appearance_in_force_valid(intrinsics.atomic_load_explicit(&page.appearance_in_force, .Relaxed))
@@ -297,15 +374,17 @@ read :: proc "contextless" (page: ^Page) -> Choice {
 	return {change_count = before}
 }
 
-// write changes the values of the page and the appearance in force, in one
-// change. The one writer of the values is the program `settings`; it wakes
-// the waiters after (it owns the kernel calls, this package has none).
-write :: proc "contextless" (page: ^Page, values: [Setting]u32, appearance_in_force: Appearance_In_Force) {
+// write changes the values of the page, the time zone and the appearance in
+// force, in one change. The one writer of the values is the program
+// `settings`; it wakes the waiters after (it owns the kernel calls, this
+// package has none).
+write :: proc "contextless" (page: ^Page, values: [Setting]u32, zone_offset_minutes: i32, appearance_in_force: Appearance_In_Force) {
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
 	intrinsics.atomic_thread_fence(.Release)
 	for setting in Setting {
 		intrinsics.atomic_store_explicit(&page.values[setting], valid(setting, values[setting]), .Relaxed)
 	}
+	intrinsics.atomic_store_explicit(&page.zone_offset_minutes, zone_offset_minutes_valid(zone_offset_minutes), .Relaxed)
 	intrinsics.atomic_store_explicit(&page.appearance_in_force, u32(appearance_in_force), .Relaxed)
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
 }
@@ -318,45 +397,50 @@ appearance_in_force_write :: proc "contextless" (page: ^Page, appearance_in_forc
 	intrinsics.atomic_store_explicit(&page.appearance_in_force, u32(appearance_in_force), .Release)
 }
 
-// Kept_Settings: the record of the private store of `settings`, 48 bytes,
+// Kept_Settings: the record of the private store of `settings`, 56 bytes,
 // little-endian. A record with another magic or version is not used: the
-// defaults hold.
+// defaults hold. Version 2 added the time zone. The boot pass of `settings`
+// writes the defaults in place of a record of another version, so they
+// hold once.
 KEPT_MAGIC :: u64(0x53474E4954544553) // The bytes "SETTINGS".
-KEPT_VERSION :: 1
+KEPT_VERSION :: 2
 
 Kept_Settings :: struct {
-	magic:   u64,
-	version: u32,
-	count:   u32, // The values that follow: the count of Setting when it was written.
-	values:  [SETTING_CAPACITY]u32,
+	magic:               u64,
+	version:             u32,
+	count:               u32, // The values that follow: the count of Setting when it was written.
+	values:              [SETTING_CAPACITY]u32,
+	zone_offset_minutes: i32, // The time zone.
+	zero:                u32, // 0: the record has no padding byte of unknown value.
 }
-#assert(size_of(Kept_Settings) == 48)
+#assert(size_of(Kept_Settings) == 56)
 
 // kept_of makes the record of a choice.
-kept_of :: proc "contextless" (values: [Setting]u32) -> (kept: Kept_Settings) {
+kept_of :: proc "contextless" (values: [Setting]u32, zone_offset_minutes: i32) -> (kept: Kept_Settings) {
 	kept.magic, kept.version, kept.count = KEPT_MAGIC, KEPT_VERSION, len(Setting)
 	for setting in Setting {
 		kept.values[setting] = values[setting]
 	}
+	kept.zone_offset_minutes = zone_offset_minutes_valid(zone_offset_minutes)
 	return kept
 }
 
 // kept_read reads a record from its bytes: ok is false for bytes that are
-// not a record of this version. A value that a setting does not have is
-// its default.
-kept_read :: proc "contextless" (bytes: []u8) -> (values: [Setting]u32, ok: bool) {
+// not a record of this version. A value that a setting does not have, and
+// a zone that is not valid, are their defaults.
+kept_read :: proc "contextless" (bytes: []u8) -> (values: [Setting]u32, zone_offset_minutes: i32, ok: bool) {
 	if len(bytes) != size_of(Kept_Settings) {
-		return {}, false
+		return {}, 0, false
 	}
 	kept: Kept_Settings // A copy: the bytes can be at any alignment.
 	intrinsics.mem_copy_non_overlapping(&kept, raw_data(bytes), size_of(kept))
 	if kept.magic != KEPT_MAGIC || kept.version != KEPT_VERSION || kept.count > SETTING_CAPACITY {
-		return {}, false
+		return {}, 0, false
 	}
 	for setting in Setting {
 		if u32(setting) < kept.count {
 			values[setting] = valid(setting, kept.values[setting])
 		}
 	}
-	return values, true
+	return values, zone_offset_minutes_valid(kept.zone_offset_minutes), true
 }

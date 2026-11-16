@@ -736,7 +736,7 @@ kept_settings_of :: proc(contents: ^Disk_Contents) -> (text: string, found: bool
 		if item.store != "settings" || item.name != settings.KEPT_OBJECT_NAME {
 			continue
 		}
-		values, ok := settings.kept_read(item.bytes)
+		values, _, ok := settings.kept_read(item.bytes)
 		if !ok {
 			return "", true, false
 		}

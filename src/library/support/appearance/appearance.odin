@@ -9,7 +9,6 @@
 // at each edge.
 package appearance
 
-import "base:intrinsics"
 import "modus:contract/date"
 import "modus:contract/settings"
 import "modus:support/sentence"
@@ -35,15 +34,8 @@ moment_of :: proc "contextless" (page: ^date.Page, system_milliseconds: u64) -> 
 	if !known {
 		return {}
 	}
-	// The zone is one word that no program writes yet: the date is in UTC
-	// until the time zone is a setting.
-	zone := intrinsics.atomic_load_explicit(&page.zone_offset_seconds, .Relaxed)
-	return {known = true, milliseconds = milliseconds, zone_offset_seconds = clamp(zone, -ZONE_OFFSET_LIMIT, ZONE_OFFSET_LIMIT)}
+	return {known = true, milliseconds = milliseconds, zone_offset_seconds = date.zone_offset_seconds_read(page)}
 }
-
-// The largest time zone of the earth is 14 hours from UTC: a page with more
-// is cut to it, so that a sum with a date never wraps.
-ZONE_OFFSET_LIMIT :: i64(14 * 3_600)
 
 // floor_modulo gives the rest of a division that rounds toward minus
 // infinity: from 0 to divisor - 1 for a negative number too. The divisor is

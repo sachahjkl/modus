@@ -1,10 +1,17 @@
 // The settings of the system (docs/FONTS.md, "The setting"): the font of
 // the system, the order of the color stripes of the screen, the pointer
-// theme, the grid fit of the vector font, the layout of the keyboard and
-// the appearance of the desktop. The window shows each setting as a row of
-// buttons and the text of the system at its three sizes; the exports set()
-// and get() make the same changes from the console and from `modustool
-// call`.
+// theme, the grid fit of the vector font, the layout of the keyboard, the
+// appearance of the desktop and the time zone. The window shows each
+// setting as a row of buttons and the text of the system at its three
+// sizes; the exports set() and get() make the same changes from the console
+// and from `modustool call`.
+//
+// The time zone (src/md/features/time_zone.md) is a fixed offset from UTC,
+// "+08:00". This program writes it on the settings page; the program `date`
+// copies it into the date page, and the root service then moves the
+// appearance in force when the new local time asks for it. So this program
+// computes the appearance in force with the zone of the date page, never
+// with the zone that it writes.
 //
 // This program is the one writer of the values of the settings page
 // (modus:contract/settings). A change is written first to its private
@@ -62,7 +69,7 @@ import "modus:support/storage"
 import "modus:support/system"
 
 WIDTH :: 560
-HEIGHT :: 528
+HEIGHT :: 560
 
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"): the keys of the focus of the interface package.
@@ -106,13 +113,14 @@ values_text :: proc "contextless" (writer: ^system.Writer, values: [settings.Set
 	return system.written(writer)
 }
 
-// keep writes the record of the values to the private store: one object,
-// one commit. It gives false, with a log line, when the store refuses.
-keep :: proc "contextless" (values: [settings.Setting]u32) -> bool {
+// keep writes the record of the values and the zone to the private store:
+// one object, one commit. It gives false, with a log line, when the store
+// refuses.
+keep :: proc "contextless" (values: [settings.Setting]u32, zone_offset_minutes: i32) -> bool {
 	if !has_store {
 		return false
 	}
-	kept := settings.kept_of(values)
+	kept := settings.kept_of(values, zone_offset_minutes)
 	error: errors.Error_Record
 	_, status := storage.write(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, ([^]u8)(&kept)[:size_of(kept)], &error)
 	if status != .Ok {
@@ -128,7 +136,10 @@ keep :: proc "contextless" (values: [settings.Setting]u32) -> bool {
 // in_force_now gives the appearance in force of the values at this moment:
 // the setting `appearance`, with `auto` by the rule of the day over the
 // date page (src/md/features/appearance.md). It writes the sentence of the
-// rule in buffer.
+// rule in buffer. The zone is the one of the date page: the root service
+// writes the appearance of a new zone after the program `date` copies it,
+// so the page never holds the appearance of a zone that the date page does
+// not have yet.
 in_force_now :: proc "contextless" (values: [settings.Setting]u32, buffer: []u8) -> (settings.Appearance_In_Force, string) {
 	setting := settings.Appearance(settings.valid(.Appearance, values[.Appearance]))
 	moment := appearance.moment_of(date_page, system.time())
@@ -140,29 +151,37 @@ in_force_now :: proc "contextless" (values: [settings.Setting]u32, buffer: []u8)
 // write, it writes the sentence of the appearance in force on the log when
 // the setting or the appearance changes, or when `always`: the log then
 // has it before the line of the compositor that the write causes.
-page_write :: proc "contextless" (values: [settings.Setting]u32, always := false) {
+page_write :: proc "contextless" (values: [settings.Setting]u32, zone_offset_minutes: i32, always := false) {
 	before := settings.read(page)
 	sentence_buffer: [192]u8
 	in_force, sentence := in_force_now(values, sentence_buffer[:])
 	if always || before.values[.Appearance] != values[.Appearance] || before.appearance_in_force != in_force {
 		system.log("settings: ", sentence)
 	}
-	settings.write(page, values, in_force)
+	settings.write(page, values, zone_offset_minutes, in_force)
 	system.word_wake(&page.change_count, 64)
 }
 
-// change keeps the values, then writes them on the page and wakes the
-// compositor.
-change :: proc "contextless" (values: [settings.Setting]u32) -> bool {
+// change keeps the values and the zone, then writes them on the page and
+// wakes the compositor and the program `date`.
+change :: proc "contextless" (values: [settings.Setting]u32, zone_offset_minutes: i32) -> bool {
 	choice := settings.read(page)
-	if choice.values == values {
+	zone := settings.zone_offset_minutes_valid(zone_offset_minutes)
+	if choice.values == values && choice.zone_offset_minutes == zone {
 		return true
 	}
-	kept := keep(values)
-	buffer: [256]u8
-	writer := system.Writer{buffer = buffer[:]}
-	system.log("settings: ", values_text(&writer, values), kept ? "; kept in the store" : "; NOT kept: the store refused")
-	page_write(values)
+	kept := keep(values, zone)
+	kept_text := kept ? "; kept in the store" : "; NOT kept: the store refused"
+	if choice.values != values {
+		buffer: [256]u8
+		writer := system.Writer{buffer = buffer[:]}
+		system.log("settings: ", values_text(&writer, values), kept_text)
+	}
+	if choice.zone_offset_minutes != zone {
+		zone_buffer: [settings.ZONE_TEXT_SIZE]u8
+		system.log("settings: ", settings.TIME_ZONE_TITLE, " ", settings.zone_text(zone_buffer[:], zone), kept_text)
+	}
+	page_write(values, zone)
 	return kept
 }
 
@@ -194,7 +213,7 @@ setting_of :: proc "contextless" (name: string) -> (setting: settings.Setting, f
 	return {}, false
 }
 
-// set changes a setting of the system, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off"); set("keyboard_layout", "us" or "french"); set("appearance", "auto", "dark" or "light").
+// set changes a setting of the system, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off"); set("keyboard_layout", "us" or "french"); set("appearance", "auto", "dark" or "light"); set("time_zone", "+08:00").
 //
 // Every window draws again: the settings page wakes the compositor, which gives the new font, pointer theme and
 // appearance to each window. The order is the store first, then the page, so a stop of the machine between the two
@@ -202,8 +221,12 @@ setting_of :: proc "contextless" (name: string) -> (setting: settings.Setting, f
 // `appearance` `auto` gives the light appearance from 07:00 to 19:00 of the local time and the dark one at night:
 // the page holds the appearance in force, which the log says with the time that the rule read.
 //
-// - **name**: the name of a setting: `font`, `subpixel_order`, `pointer_theme`, `grid_fit`, `keyboard_layout` or
-//   `appearance`; 32 bytes at most.
+// The time zone is a fixed offset from UTC, with no summer time: a sign, the hours and the minutes, from "-12:00"
+// to "+14:00", by quarters of an hour; "+00:00", UTC, is the default. The bar then shows the local time, and the
+// rule of `auto` counts its hours in it.
+//
+// - **name**: the name of a setting: `font`, `subpixel_order`, `pointer_theme`, `grid_fit`, `keyboard_layout`,
+//   `appearance` or `time_zone`; 32 bytes at most.
 // - **value**: one of the values of that setting, as above; 32 bytes at most.
 //
 // The caller must act for the principal (**Acts_For_Principal**): the console and the host have it. The result is
@@ -228,6 +251,16 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 	if !name_ok || !value_ok {
 		return errors.fail(error, ERROR_VALUE, .Too_Long, .Bytes, name_ok ? 2 : 1, i64(max(len(name^), len(value^))), 32)
 	}
+	if wanted == settings.TIME_ZONE_NAME {
+		zone, zone_ok := settings.zone_parse(given)
+		if !zone_ok {
+			return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
+		}
+		if !change(settings.read(page).values, zone) {
+			return errors.fail(error, ERROR_STORE, .Refused, .None, 2)
+		}
+		return 1
+	}
 	setting, found := setting_of(wanted)
 	if !found {
 		return errors.fail(error, ERROR_NAME, .Absent, .None, 1)
@@ -235,9 +268,10 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 	description := &settings.descriptions[setting]
 	for value_name, index in description.value_names[:description.value_count] {
 		if value_name == given {
-			values := settings.read(page).values
+			choice := settings.read(page)
+			values := choice.values
 			values[setting] = u32(index)
-			if !change(values) {
+			if !change(values, choice.zone_offset_minutes) {
 				return errors.fail(error, ERROR_STORE, .Refused, .None, 2)
 			}
 			return 1
@@ -246,16 +280,16 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 	return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
 }
 
-// get gives the value of a setting of the system as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit"), get("keyboard_layout"), get("appearance").
+// get gives the value of a setting of the system as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit"), get("keyboard_layout"), get("appearance"), get("time_zone").
 //
 // It reads the settings page, which each program can read too: so it needs no grant, and each caller gets the
 // value.
 //
 // - **name**: the name of a setting, 32 bytes at most.
 //
-// The result is the length of the value name, and the text holds the value name. A text shorter than the value
-// gets its first bytes; the result still counts them all. The result is a negative number with an error record
-// when the call fails:
+// The result is the length of the value name, and the text holds the value name: "+08:00" for the time zone. A
+// text shorter than the value gets its first bytes; the result still counts them all. The result is a negative
+// number with an error record when the call fails:
 //
 // - `Absent` (-2): no setting has this name.
 // - `Too_Long` (-3): the name has more than 32 bytes.
@@ -265,6 +299,12 @@ get :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i
 	wanted, ok := copied(name^, name_buffer[:])
 	if !ok {
 		return errors.fail(error, ERROR_VALUE, .Too_Long, .Bytes, 1, i64(len(name^)), len(name_buffer))
+	}
+	if wanted == settings.TIME_ZONE_NAME {
+		zone_buffer: [settings.ZONE_TEXT_SIZE]u8
+		zone_name := settings.zone_text(zone_buffer[:], settings.read(page).zone_offset_minutes)
+		copy(result^, zone_name)
+		return i64(len(zone_name))
 	}
 	setting, found := setting_of(wanted)
 	if !found {
@@ -299,15 +339,16 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 	if count < 1 || count > 1000 {
 		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1, count, 1000)
 	}
-	values := settings.read(page).values
+	choice := settings.read(page)
+	values := choice.values
 	for number in 0 ..< count {
 		values[.Font] = u32(number % 2)
 		values[.Subpixel_Order] = u32(number % 3)
-		if !keep(values) {
+		if !keep(values, choice.zone_offset_minutes) {
 			return errors.fail(error, ERROR_STORE, .Refused, .None, 1, number)
 		}
 	}
-	page_write(values)
+	page_write(values, choice.zone_offset_minutes)
 	system.log("settings: kept ", u64(count), " records, one commit each")
 	return count
 }
@@ -318,6 +359,7 @@ boot_pass :: proc "contextless" () -> ! {
 	start := system.nanoseconds()
 	buffer: [64]u8
 	values: [settings.Setting]u32
+	zone_offset_minutes: i32
 	what := "no settings kept: the defaults"
 	if has_store {
 		bytes, found, status := storage.read(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, buffer[:])
@@ -326,26 +368,71 @@ boot_pass :: proc "contextless" () -> ! {
 			what = "the store gives no record (status not Ok): the defaults"
 		case !found:
 		case:
-			read, valid := settings.kept_read(bytes)
+			read, read_zone, valid := settings.kept_read(bytes)
 			if valid {
 				values = read
+				zone_offset_minutes = read_zone
 				what = "the settings kept in the store"
 			} else {
-				what = "the record of the store is not a record of this version: the defaults"
+				// A record of another version (a disk of an older system):
+				// the defaults take its place in the store, so the next boot
+				// reads a valid record and the defaults hold once, not at
+				// each boot until the next change of a setting.
+				if keep(values, zone_offset_minutes) {
+					what = "the record of the store is not a record of this version: the defaults, kept in its place"
+				} else {
+					what = "the record of the store is not a record of this version: the defaults, NOT kept: the store refused"
+				}
 			}
 		}
 	} else {
 		what = "no private store: the defaults"
 	}
-	page_write(values, always = true)
+	page_write(values, zone_offset_minutes, always = true)
 	text: [256]u8
 	writer := system.Writer{buffer = text[:]}
 	system.log("settings: the boot pass: ", what, ": ", values_text(&writer, values), "; in ", (system.nanoseconds() - start) / 1000, " us")
 	system.stop(0)
 }
 
-// draw builds the window: a row of buttons for each setting, then the text
-// of the system at its three sizes, then the facts of the glyph caches.
+// A button of the row of the time zone: its label and how far it moves the
+// zone.
+Zone_Step :: struct {
+	label:   string,
+	minutes: i32,
+}
+
+// zone_row draws the row of the time zone at (x, y): its title, then the
+// buttons that move the zone by an hour or by a quarter of an hour, with
+// the value between them. A press stops at -12:00 and at +14:00. Each
+// button is as wide as its label in the font that draws it, so no label is
+// cut.
+zone_row :: proc "contextless" (frame: ^interface.Frame, x, y: int, choice: settings.Choice) {
+	interface.draw_text(frame.table, x, y + 4, settings.TIME_ZONE_TITLE, graphics.colors.dim)
+	steps := [4]Zone_Step{{"-1 h", -60}, {"-15 min", -settings.ZONE_OFFSET_MINUTES_STEP}, {"+15 min", settings.ZONE_OFFSET_MINUTES_STEP}, {"+1 h", 60}}
+	zone_buffer: [settings.ZONE_TEXT_SIZE]u8
+	shown := settings.zone_text(zone_buffer[:], choice.zone_offset_minutes)
+	left := x + 144
+	for step, index in steps {
+		if index == len(steps) / 2 {
+			left = interface.draw_text(frame.table, left, y + 4, shown, graphics.colors.text) + 8
+		}
+		width := interface.text_measured_width(frame.table, interface.FONT_INTERFACE, step.label) + 16
+		builder: interface.Text_Builder
+		interface.text_put(&builder, settings.TIME_ZONE_NAME)
+		interface.text_put(&builder, step.label)
+		element := interface.identity(interface.text_of(&builder))
+		if interface.button(frame, {left, y, width, 24}, element, step.label).activated {
+			moved := clamp(choice.zone_offset_minutes + step.minutes, settings.ZONE_OFFSET_MINUTES_LEAST, settings.ZONE_OFFSET_MINUTES_MOST)
+			change(choice.values, moved)
+		}
+		left += width + 8
+	}
+}
+
+// draw builds the window: a row of buttons for each setting and for the
+// time zone, then the text of the system at its three sizes, then the facts
+// of the glyph caches.
 draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	choice := settings.read(page)
 	frame := interface.window_frame_begin(&drawing)
@@ -356,9 +443,10 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	interface.text_put_number(&count, u64(choice.change_count / 2))
 	// A row: a button of 24 pixels and a gap of 8. The card of the text
 	// under the rows needs 152 pixels of content, so that its line of facts
-	// is under its large number: 6 rows of 32 leave it 168 in the window.
+	// is under its large number: 7 rows of 32, the settings and the time
+	// zone, leave it 168 in the window.
 	ROW :: 32
-	rows_height := len(settings.Setting) * ROW
+	rows_height := (len(settings.Setting) + 1) * ROW
 	content := interface.card(&frame, {8, 8, WIDTH - 16, 40 + rows_height + 32}, "SETTINGS", has_store ? "kept in the store of settings" : "NOT kept: no store", graphics.colors.kernel, interface.text_of(&count))
 	for &description, setting in settings.descriptions {
 		y := content.y + int(setting) * ROW
@@ -373,7 +461,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 			if interface.button(&frame, area, element, value_name, in_use).activated {
 				values := choice.values
 				values[setting] = u32(index)
-				change(values)
+				change(values, choice.zone_offset_minutes)
 			}
 			if in_use {
 				// The palette sets this setting with the export set, and
@@ -388,6 +476,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 			}
 		}
 	}
+	zone_row(&frame, content.x, content.y + len(settings.Setting) * ROW, choice)
 	interface.draw_text(frame.table, content.x, content.y + rows_height + 8, "the console: settings.set(\"font\", \"spleen\")", graphics.colors.dim)
 
 	top := 8 + 40 + rows_height + 32 + 8
@@ -454,7 +543,8 @@ draw_with_bar :: proc "contextless" (window: ^display.Window) {
 // - **The boot pass** (the context value `VALUE_BOOT_PASS` is not 0): it
 //   reads the record of its store, writes the page, wakes the compositor,
 //   writes "settings: the boot pass: ..." with its time, and stops with the
-//   code 0. A missing or unreadable record gives the defaults.
+//   code 0. A missing or unreadable record gives the defaults. A record of
+//   another version gives the defaults, which the pass keeps in its place.
 // - **Otherwise**: it opens its window (with none, it stops with the code
 //   1) and its service, draws, and writes "settings: ok, ...". Then one loop
 //   waits on the events of the window and on the service ring, runs the
