@@ -76,14 +76,14 @@ manual_link_pages_of_a_term_and_of_a_guide :: proc(t: ^testing.T) {
 		"term:handle",
 		"term:Ring",
 		"docs/SAMPLE.md#1-the-fault-ring",
-		"manual.show", // A name: the manual opens it from the boot image.
+		"manual.show", // A name with no declaration and no reader of the sources: no page.
 		"https://example.org", // An address: shown, never a page.
 		"term:nothing",
 		"docs/SAMPLE.md#no-such-heading",
 		"docs/ABSENT.md",
 		"term:handle", // A target twice is one page.
 	}
-	pages, missing := manual_link_pages_of_targets(targets, manual_test_read)
+	pages, missing := manual_link_pages_of_targets(targets, {documents = manual_test_read})
 	page_of :: proc(pages: []manual_pages.Page_Source, target: string) -> (manual_pages.Page_Source, bool) {
 		for page in pages {
 			if page.target == target {
@@ -93,11 +93,12 @@ manual_link_pages_of_a_term_and_of_a_guide :: proc(t: ^testing.T) {
 		return {}, false
 	}
 
-	testing.expect_value(t, len(missing), 3)
-	if len(missing) == 3 {
+	testing.expect_value(t, len(missing), 4)
+	if len(missing) == 4 {
 		testing.expect_value(t, missing[0], "docs/ABSENT.md")
 		testing.expect_value(t, missing[1], "docs/SAMPLE.md#no-such-heading")
-		testing.expect_value(t, missing[2], "term:nothing")
+		testing.expect_value(t, missing[2], "manual.show")
+		testing.expect_value(t, missing[3], "term:nothing")
 	}
 	// The pages are in the order of the bytes of their targets.
 	for index in 1 ..< len(pages) {
@@ -149,7 +150,7 @@ manual_link_pages_of_a_term_and_of_a_guide :: proc(t: ^testing.T) {
 @(test)
 manual_link_pages_of_a_whole_guide :: proc(t: ^testing.T) {
 	targets := []string{"docs/SAMPLE.md"}
-	pages, missing := manual_link_pages_of_targets(targets, manual_test_read)
+	pages, missing := manual_link_pages_of_targets(targets, {documents = manual_test_read})
 	testing.expect_value(t, len(missing), 0)
 	for page in pages {
 		if page.target == "docs/SAMPLE.md" {
@@ -160,6 +161,104 @@ manual_link_pages_of_a_whole_guide :: proc(t: ^testing.T) {
 	// The guide, its two sections, the two headings of the first and the
 	// deep part.
 	testing.expect_value(t, len(pages), 6)
+}
+
+// The sources of the tests: one file of a support package, with a
+// procedure that has a comment and a constant that has none.
+@(private = "file")
+MANUAL_TEST_SOURCE_PATH :: "src/library/support/system/wait.odin"
+@(private = "file")
+MANUAL_TEST_SOURCE :: `package system
+
+// word_wait stops the thread while the word holds value.
+// Read the word **again** after the wait: see [handle](term:handle).
+word_wait :: proc "contextless" (word: ^u32, value: u32) -> u64 {
+	return 0
+}
+
+WAIT_FOREVER :: ~u64(0)
+`
+
+@(private = "file")
+manual_test_declarations :: proc(names: []string) -> (index: Site_Declaration_Index, ok: bool) {
+	index = site_declaration_index_make()
+	found, parsed := site_declarations_of_file(MANUAL_TEST_SOURCE_PATH, MANUAL_TEST_SOURCE)
+	if !parsed {
+		return index, false
+	}
+	for declaration in found {
+		site_declaration_add(&index, declaration)
+	}
+	return index, true
+}
+
+@(test)
+manual_link_pages_of_a_declaration :: proc(t: ^testing.T) {
+	targets := []string {
+		"system.word_wait",
+		"system.WAIT_FOREVER",
+		"word_wait()", // The same declaration by another target: a page of its own target.
+		"system.word_wake", // No declaration has the name: no page.
+		"other.word_wait", // No package of the name: no page.
+	}
+	pages, missing := manual_link_pages_of_targets(targets, {documents = manual_test_read, declarations = manual_test_declarations})
+	page_of :: proc(pages: []manual_pages.Page_Source, target: string) -> (manual_pages.Page_Source, bool) {
+		for page in pages {
+			if page.target == target {
+				return page, true
+			}
+		}
+		return {}, false
+	}
+	testing.expect_value(t, len(pages), 3)
+	testing.expect_value(t, len(missing), 2)
+	if len(missing) == 2 {
+		testing.expect_value(t, missing[0], "other.word_wait")
+		testing.expect_value(t, missing[1], "system.word_wake")
+	}
+
+	wait, found := page_of(pages, "system.word_wait")
+	testing.expect(t, found)
+	testing.expect_value(t, wait.title, "system.word_wait")
+	// The kind, the file and the line; the one line of Odin in a block; the
+	// comment as its author wrote it. The link of the comment stays: the
+	// tool walks no link of a declaration.
+	testing.expect(t, strings.has_prefix(wait.text, "A procedure of `" + MANUAL_TEST_SOURCE_PATH + "`, line 5.\n\n```odin\nword_wait :: proc \"contextless\" ("))
+	testing.expect(t, strings.contains(wait.text, "-> u64\n```\n\n"))
+	testing.expect(t, strings.has_suffix(wait.text, "\n```\n\nword_wait stops the thread while the word holds value.\nRead the word **again** after the wait: see [handle](term:handle)."))
+	_, term_found := page_of(pages, "term:handle")
+	testing.expect(t, !term_found)
+
+	called, called_found := page_of(pages, "word_wait()")
+	testing.expect(t, called_found)
+	testing.expect_value(t, called.title, "system.word_wait")
+	testing.expect_value(t, called.text, wait.text)
+
+	constant, constant_found := page_of(pages, "system.WAIT_FOREVER")
+	testing.expect(t, constant_found)
+	testing.expect(t, strings.has_prefix(constant.text, "A constant of `" + MANUAL_TEST_SOURCE_PATH + "`, line 9.\n\n```odin\nWAIT_FOREVER :: "))
+	testing.expect(t, strings.has_suffix(constant.text, "\n```\n\nIt has no comment in its source."))
+
+	// The pages make a valid file, and the manual finds each one by the
+	// target of its link.
+	buffer := make([]u8, manual_pages.encoded_size(pages), context.temp_allocator)
+	testing.expect(t, manual_pages.encode(pages, buffer))
+	read, problem := manual_pages.validate(buffer)
+	testing.expect_value(t, problem, manual_pages.Problem.None)
+	index, in_file := manual_pages.find(read, "system.word_wait")
+	testing.expect(t, in_file)
+	testing.expect_value(t, manual_pages.title_of(read, index), "system.word_wait")
+	testing.expect_value(t, manual_pages.link_target_kind("system.word_wait"), manual_pages.Link_Target_Kind.Name)
+}
+
+@(test)
+manual_name_with_no_module_is_not_described :: proc(t: ^testing.T) {
+	// A module file that is not valid describes nothing, even with the
+	// name of the target.
+	modules := []Manual_Module_File{{name = "system", file = []u8{1, 2, 3}}}
+	testing.expect(t, !manual_name_described(modules, "system"))
+	testing.expect(t, !manual_name_described(modules, "system.word_wait"))
+	testing.expect(t, !manual_name_described(nil, "information.Module"))
 }
 
 @(test)

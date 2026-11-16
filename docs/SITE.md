@@ -1618,9 +1618,9 @@ The owner asked for it on 2026-11-12, of a paragraph of a guide with code spans 
 - its name, its package (the name after `package`), its folder, its file and its line;
 - its kind, from its value: a mutable declaration is a global variable; a procedure literal or a group of procedures is a procedure; a type expression (`struct`, `enum`, `union`, `bit_set`, `distinct`, an array, a pointer...) is a type; a name with a capital and lowercase letters given another name is an alias of a type; any other value is a constant;
 - its one line of Odin: the text of the declaration up to the body of a procedure, or up to the first `{` of another value, which becomes `{...}`; its tokens with no comment and single spaces; the line is whole, and it wraps in the card;
-- the first sentence of its comment (the comment above it, or the comment of its line).
+- the first sentence of its comment (the comment above it, or the comment of its line), and the whole comment in its Markdown.
 
-The tree of the parser of each file lives in an arena of its own, freed before the next file. A file that the parser refuses is counted, and the command names the first one; it does not stop: the build of the system checks its sources.
+The tree of the parser of each file lives in an arena of its own, freed before the next file. `modustool build` reads the same index for the names that the modules of the boot image link, and parses only the files whose text holds one of them (`site_declaration_index_fill`): the program `manual` shows the page of such a declaration (`MODULE_CONTRACT.md`, "The links of a page of the manual"). A file that the parser refuses is counted, and the command names the first one; it does not stop: the build of the system checks its sources.
 
 ### What a code span names
 
