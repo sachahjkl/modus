@@ -1,0 +1,27 @@
+# The check of each push: `nix flake check`, the checks of the flake (the
+# hooks, and `modustool check` in an empty folder, with the machine
+# tests). Each step calls the tool, Nix or an action; the workflow holds no
+# logic of its own.
+name: check
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push of the same branch makes an older check useless.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      # Each action is pinned by the commit of its version.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - run: nix flake check

@@ -23,6 +23,8 @@ Each claim names the program that shows it, and its picture below.
 
 The Nix flake supplies every tool. `nix develop`, then `modustool run`, builds the system and starts it in a virtual machine. In the machine, type `help()` in the console, or open the menu of the programs with the button "programs" of the bar. The section "Use" lists the other commands.
 
+To start the system on a real machine, write the disk image of a release to a USB key: [`docs/INSTALL.md`](docs/INSTALL.md).
+
 [`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. `modustool release_number` prints the newest release. [`ROADMAP.md`](ROADMAP.md) lists the planned work: what is in work now, what comes next, and what comes later.
 
 ## Pictures
@@ -205,6 +207,7 @@ The guides below give the details. `docs/DEMONSTRATIONS.md` says what the test s
 | `docs/DESIGN.md` | The design rules: how a program of the system looks. The boot display is the model |
 | `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the Posy theme |
 | `docs/TRUSTED_BOOT.md` | The trusted boot: what verifies what at the start, with which key; the signing key; the measure; what each layer does not protect |
+| `docs/INSTALL.md` | The disk image of a release: its files, their verification with the tool or with OpenSSL, the write to a USB key, and the start with Secure Boot on or off |
 | `docs/DEMONSTRATIONS.md` | For each of the 21 properties: what the machine test shows, the picture, and what no test shows yet |
 | `docs/PRINCIPALS.md` | The principals: the machine, a named principal, its unlock and its lock, the session of each program, the store of a principal, and what is not built |
 | `docs/CONSOLE.md` | The line of the console: the caret, the completion list, the history and its search, the colors of the code |
@@ -266,8 +269,10 @@ modustool run
 | `repeat` | `repeat <module> <count>`: build one module again and again, and count the distinct modules, LLVM IR files and objects; `repeat all <count>`: every module and the boot program, one row each. Each distinct result is kept in `build/different_builds/` |
 | `check` | `odin check -vet` and `odin test` of the host code, then `test` |
 | `site` | Write the site of the system in `build/site/`: one page from the documents, the pictures and the logs of the last machine tests (`docs/SITE.md`) |
+| `release` | `release image`: with the keys of the publisher only, build the release volume and write the compressed GPT disk image, `SHA256SUMS.txt` and its release signature in `dist/`; `release tag-check <tag>`: check that a tag names the release number (`docs/INSTALL.md`) |
+| `verify` | `verify <image> SHA256SUMS.txt`: check the release signature of the checksum list, then the SHA-256 of the image |
 
-`nix flake check` runs the formatting hooks and `check`.
+`nix flake check` runs the formatting hooks and `check`. The check workflow runs it at each push; the release workflow publishes the files of a release at each tag `v<release number>`.
 
 In the machine, type `help()` in the console. The button "programs" of the bar opens the menu that starts programs.
 

@@ -162,6 +162,7 @@ volume_constants := [?][2]string {
 	{"BOOT_VOLUME_SECURE_BOOT_CHANGED", BOOT_VOLUME_SECURE_BOOT_CHANGED},
 	{"BOOT_VOLUME_SEAL_TEST", BOOT_VOLUME_SEAL_TEST},
 	{"BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM", BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM},
+	{"BOOT_VOLUME_RELEASE", BOOT_VOLUME_RELEASE},
 }
 
 // The procedures that only the whole test runs: it builds every volume.
@@ -170,10 +171,11 @@ whole_test_procedures := [?]string{"run_test", "self_tests_run", "persistence_ru
 
 // The procedures that name a volume and start no machine from it by that
 // name: the table of the volumes, the build of the main volume for the
-// checks of two builds, the refusal of a volume that is not ready, and the
-// comparison of the machine test.
+// checks of two builds, the refusal of a volume that is not ready, the
+// comparison of the machine test, and the release volume, which only the
+// release command builds and no machine starts.
 @(private = "file")
-procedures_that_start_no_machine := [?]string{"boot_volumes", "main_boot_volume_build", "machine_command", "machine_test"}
+procedures_that_start_no_machine := [?]string{"boot_volumes", "main_boot_volume_build", "machine_command", "machine_test", "release_boot_volume"}
 
 // One volume constant in the body of one procedure of the tool.
 @(private = "file")

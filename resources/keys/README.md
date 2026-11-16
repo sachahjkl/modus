@@ -10,3 +10,12 @@
 - The signing key of a real machine is a file outside the repository: `modustool key new <folder>` writes one (`docs/TRUSTED_BOOT.md`, "The signing key").
 
 The format of the two Ed25519 files: 64 hexadecimal digits, then an end of line. The firmware key files are PEM.
+
+## The public files of the publisher
+
+Two files here are not test keys. Neither holds a private key. The publisher of the system commits them once, from the key folder (`secrets/README.md`):
+
+- `release_signing_key.public`: the public key of the release signing key, 32 bytes in base64url with no padding. `modustool verify` and a reader verify the files of a release with it.
+- `firmware_signing_key.crt`: the certificate of the firmware signing key of the publisher, PEM. A principal enrols it in the firmware for Secure Boot (`docs/INSTALL.md`, "4. Start with Secure Boot").
+
+`modustool release image` refuses a key folder whose release signing key or certificate differs from these files. Until they are committed, no release publishes an image. The release command refuses the test keys of this folder.
