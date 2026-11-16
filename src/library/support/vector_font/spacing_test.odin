@@ -56,8 +56,8 @@ the_advances_and_the_pairs_of_b612 :: proc(t: ^testing.T) {
 		// the Latin-1 Supplement come after them in the subset.
 		ascii_pairs := 0
 		for index in 0 ..< table.count {
-			left := read_u16(table.pairs, index * KERN_PAIR_SIZE) or_else -1
-			right := read_u16(table.pairs, index * KERN_PAIR_SIZE + 2) or_else -1
+			left := read_u16(table.pairs, index * KERN_PAIR_SIZE + KERN_PAIR_LEFT_PLACE) or_else -1
+			right := read_u16(table.pairs, index * KERN_PAIR_SIZE + KERN_PAIR_RIGHT_PLACE) or_else -1
 			if left >= 1 && left <= glyph_cache.ASCII_COUNT && right >= 1 && right <= glyph_cache.ASCII_COUNT {
 				ascii_pairs += 1
 			}
@@ -69,9 +69,9 @@ the_advances_and_the_pairs_of_b612 :: proc(t: ^testing.T) {
 		}
 		// Each pair that the table has is found by the search.
 		for index in 0 ..< table.count {
-			left := read_u16(table.pairs, index * KERN_PAIR_SIZE) or_else -1
-			right := read_u16(table.pairs, index * KERN_PAIR_SIZE + 2) or_else -1
-			value := read_i16(table.pairs, index * KERN_PAIR_SIZE + 4) or_else 0
+			left := read_u16(table.pairs, index * KERN_PAIR_SIZE + KERN_PAIR_LEFT_PLACE) or_else -1
+			right := read_u16(table.pairs, index * KERN_PAIR_SIZE + KERN_PAIR_RIGHT_PLACE) or_else -1
+			value := read_i16(table.pairs, index * KERN_PAIR_SIZE + KERN_PAIR_ADJUSTMENT_PLACE) or_else 0
 			testing.expect(t, value != 0 && pair_adjustment(&table, left, right) == value)
 		}
 	}
@@ -99,24 +99,37 @@ a_damaged_pair_table :: proc(t: ^testing.T) {
 	testing.expect(t, good.kern.length > KERN_HEADER_SIZE + KERN_SUBTABLE_HEADER_SIZE + 2 * KERN_PAIR_SIZE)
 	file := make([]u8, len(b612_regular))
 	defer delete(file)
+	// Each place comes from the layout of the table, by the names of the
+	// reader, and each damaged value from the file itself: the damages hit
+	// the same fields whatever glyphs and pairs the subset holds.
 	at := good.kern.offset
-	first_pair := at + KERN_HEADER_SIZE + KERN_SUBTABLE_HEADER_SIZE
+	subtable := at + KERN_HEADER_SIZE
+	first_pair := subtable + KERN_SUBTABLE_HEADER_SIZE
+	pair_count := int(read_u16(b612_regular, subtable + KERN_SUBTABLE_PAIR_COUNT_PLACE) or_else 0)
+	testing.expect(t, pair_count >= 2 && good.glyph_count <= 0xFFFF)
+	// The glyph after the last glyph of the font: the first number that is
+	// no glyph.
+	past_the_glyphs := [2]u8{u8(good.glyph_count >> 8), u8(good.glyph_count)}
+	// More pairs than the table holds: the count that ends one pair past it.
+	too_many := (good.kern.length - KERN_HEADER_SIZE - KERN_SUBTABLE_HEADER_SIZE) / KERN_PAIR_SIZE + 1
+	testing.expect(t, too_many > pair_count && too_many <= 0xFFFF)
+	too_many_pairs := [2]u8{u8(too_many >> 8), u8(too_many)}
 	Damage :: struct {
 		offset: int,
 		bytes:  [2]u8,
 		kind:   Font_Problem,
 	}
 	damages := [?]Damage {
-		{at, {0x00, 0x01}, .Unknown_Format}, // The version 1 of the kern table of Apple.
-		{at + 2, {0x00, 0x00}, .Unknown_Format}, // No subtable.
-		{at + KERN_HEADER_SIZE, {0x00, 0x01}, .Unknown_Format}, // The version of the subtable.
-		{at + KERN_HEADER_SIZE + 4, {0x02, 0x01}, .Unknown_Format}, // Format 2.
-		{at + KERN_HEADER_SIZE + 4, {0x00, 0x03}, .Unknown_Format}, // Minimum values.
-		{at + KERN_HEADER_SIZE + 4, {0x00, 0x05}, .Unknown_Format}, // Cross-stream.
-		{at + KERN_HEADER_SIZE + 4, {0x00, 0x00}, .Unknown_Format}, // Vertical.
-		{at + KERN_HEADER_SIZE + 6, {0xFF, 0xFF}, .Too_Short}, // More pairs than the table holds.
-		{first_pair + 2, {0x00, 0xC8}, .Unknown_Format}, // A right glyph of 200: the subset has 96.
-		{first_pair, {0xFF, 0xFF}, .Unknown_Format}, // A left glyph of 65535, which also breaks the order.
+		{at + KERN_VERSION_PLACE, {0x00, 0x01}, .Unknown_Format}, // The version 1 of the kern table of Apple.
+		{at + KERN_SUBTABLE_COUNT_PLACE, {0x00, 0x00}, .Unknown_Format}, // No subtable.
+		{subtable + KERN_SUBTABLE_VERSION_PLACE, {0x00, 0x01}, .Unknown_Format}, // The version of the subtable.
+		{subtable + KERN_SUBTABLE_COVERAGE_PLACE, {0x02, 0x01}, .Unknown_Format}, // Format 2.
+		{subtable + KERN_SUBTABLE_COVERAGE_PLACE, {0x00, 0x03}, .Unknown_Format}, // Minimum values.
+		{subtable + KERN_SUBTABLE_COVERAGE_PLACE, {0x00, 0x05}, .Unknown_Format}, // Cross-stream.
+		{subtable + KERN_SUBTABLE_COVERAGE_PLACE, {0x00, 0x00}, .Unknown_Format}, // Vertical.
+		{subtable + KERN_SUBTABLE_PAIR_COUNT_PLACE, too_many_pairs, .Too_Short}, // More pairs than the table holds.
+		{first_pair + KERN_PAIR_RIGHT_PLACE, past_the_glyphs, .Unknown_Format}, // A right glyph past the glyphs of the font.
+		{first_pair + KERN_PAIR_LEFT_PLACE, {0xFF, 0xFF}, .Unknown_Format}, // A left glyph of 65535: past the glyphs, and it breaks the order.
 	}
 	for damage in damages {
 		copy(file, b612_regular)

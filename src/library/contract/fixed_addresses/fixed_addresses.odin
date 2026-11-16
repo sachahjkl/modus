@@ -117,6 +117,14 @@ Fixed_Range :: enum u8 {
 	// the hash of each disk program that runs, by its program slot. The
 	// root service maps it in each program that it starts with the right
 	// Inspect of the machine, as the monitor.
+	Demand_Cache, // The demand cache, read-only (modus:contract/demand_cache).
+	// The glyphs past the glyph caches that the font service drew. The
+	// root service maps it in each program with a request ring; the font
+	// service is its one writer.
+	Glyph_Requests, // The request ring of the program to the font service (modus:contract/demand_cache), with Write.
+	// The root service creates one ring for each program of the boot image
+	// that it starts with a ring to the compositor, maps it here, and gives
+	// it to the font service.
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
 
@@ -156,6 +164,8 @@ INTERFACE_GLYPH_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_G
 INTERFACE_GLYPH_CACHE_BOLD_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_Glyph_Cache_Bold)
 DEBUG_IMAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Debug_Image)
 DISK_PROGRAM_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Disk_Program_Page)
+DEMAND_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Demand_Cache)
+GLYPH_REQUESTS_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Glyph_Requests)
 
 // The addresses of one range.
 Address_Range :: struct {

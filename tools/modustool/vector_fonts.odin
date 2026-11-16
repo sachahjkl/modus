@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "modus:contract/demand_cache"
 import "modus:contract/glyph_cache"
 import "modus:support/vector_font"
 
@@ -15,7 +16,10 @@ import "modus:support/vector_font"
 // 32 to 126, the Latin-1 Supplement and the added characters,
 // glyph_cache.character_index) and
 // the glyph .notdef, each glyph a simple glyph with no hinting
-// instructions. A font that lacks one of them is refused. The
+// instructions. A font that lacks one of them is refused. The subset of
+// the regular weight of the interface font also holds the characters that
+// the font service draws on demand (demand_characters_of), after the
+// others, so its glyph cache does not change. The
 // subsets are in the repository, as the output of the command "font" is:
 // a build does not need the build inputs. The command also writes
 // build/fonts/candidates.png, the picture of the choice, from the same
@@ -178,6 +182,7 @@ Subset_Report :: struct {
 
 // The glyphs of a subset: .notdef, then the characters of a glyph cache in
 // the order of their character index: the glyph of the index i is i + 1.
+// The characters on demand of a subset, if it has some, come after these.
 SUBSET_GLYPHS :: 1 + glyph_cache.CHARACTER_COUNT
 
 // subset_character gives the character of a glyph of a subset, past
@@ -185,6 +190,25 @@ SUBSET_GLYPHS :: 1 + glyph_cache.CHARACTER_COUNT
 subset_character :: proc(glyph: int) -> rune {
 	character, _ := glyph_cache.character_of_index(glyph - 1)
 	return character
+}
+
+// demand_characters_of gives the characters past the glyph cache that the
+// subset of a font holds for the font service
+// (src/md/features/glyphs_on_demand.md), in the order of the code points:
+// the ranges of demand_cache.subset_ranges for the regular weight of the
+// interface font, none for each other font. Their glyphs come after the
+// glyphs of the characters of the cache.
+demand_characters_of :: proc(name: string) -> []rune {
+	if name != INTERFACE_VECTOR_FONT {
+		return nil
+	}
+	characters := make([dynamic]rune, context.temp_allocator)
+	for range in demand_cache.subset_ranges {
+		for character in range.first ..= range.last {
+			append(&characters, character)
+		}
+	}
+	return characters[:]
 }
 
 // A character of the subset that the font lacks, drawn with the glyph of
@@ -255,18 +279,26 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 		}
 		kern, report.pairs = kern_table_write(&font, &pair_table)
 	}
-	// The glyphs, each as a simple glyph.
+	// The glyphs, each as a simple glyph: .notdef, the characters of a
+	// glyph cache, then the characters on demand.
+	demand_characters := demand_characters_of(candidate.name)
+	glyph_count := SUBSET_GLYPHS + len(demand_characters)
 	glyphs := make([dynamic]u8, context.temp_allocator)
-	offsets: [SUBSET_GLYPHS + 1]u32
-	advances: [SUBSET_GLYPHS]u16
-	left_sides: [SUBSET_GLYPHS]i16
+	offsets := make([]u32, glyph_count + 1, context.temp_allocator)
+	advances := make([]u16, glyph_count, context.temp_allocator)
+	left_sides := make([]i16, glyph_count, context.temp_allocator)
 	box := [4]i32{max(i32), max(i32), min(i32), min(i32)}
 	most_points, most_contours := 0, 0
 	outline := vector_font.Outline{points = memory.points[:], contour_ends = memory.contours[:]}
-	for index in 0 ..< SUBSET_GLYPHS {
+	for index in 0 ..< glyph_count {
 		glyph := 0
 		if index > 0 {
-			character := subset_character(index)
+			character: rune
+			if index < SUBSET_GLYPHS {
+				character = subset_character(index)
+			} else {
+				character = demand_characters[index - SUBSET_GLYPHS]
+			}
 			taken_from: rune
 			glyph, taken_from, problem = subset_glyph_of(&font, character)
 			if problem != .None {
@@ -307,13 +339,13 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 			most_contours = max(most_contours, outline.contour_count)
 		}
 	}
-	offsets[SUBSET_GLYPHS] = u32(len(glyphs))
+	offsets[glyph_count] = u32(len(glyphs))
 	tables := make([dynamic]Subset_Table, context.temp_allocator)
 	// OS/2: the table of the source, as it is.
 	if font.os2.length > 0 {
 		append(&tables, Subset_Table{"OS/2", slice.clone(source[font.os2.offset:][:font.os2.length], context.temp_allocator)})
 	}
-	append(&tables, Subset_Table{"cmap", character_map_write()})
+	append(&tables, Subset_Table{"cmap", character_map_write(demand_characters)})
 	append(&tables, Subset_Table{"glyf", glyphs[:]})
 	head := slice.clone(source[font.head.offset:][:54], context.temp_allocator)
 	put_u32(head, 8, 0) // checkSumAdjustment, set at the end.
@@ -325,10 +357,10 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 	append(&tables, Subset_Table{"head", head})
 	hhea := slice.clone(source[font.hhea.offset:][:36], context.temp_allocator)
 	put_u16(hhea, 10, slice.max(advances[:])) // advanceWidthMax.
-	put_u16(hhea, 34, SUBSET_GLYPHS)
+	put_u16(hhea, 34, u16(glyph_count))
 	append(&tables, Subset_Table{"hhea", hhea})
-	metrics := make([]u8, 4 * SUBSET_GLYPHS, context.temp_allocator)
-	for index in 0 ..< SUBSET_GLYPHS {
+	metrics := make([]u8, 4 * glyph_count, context.temp_allocator)
+	for index in 0 ..< glyph_count {
 		put_u16(metrics, 4 * index, advances[index])
 		put_u16(metrics, 4 * index + 2, u16(left_sides[index]))
 	}
@@ -336,14 +368,14 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 	if len(kern) > 0 {
 		append(&tables, Subset_Table{"kern", kern})
 	}
-	loca := make([]u8, 4 * (SUBSET_GLYPHS + 1), context.temp_allocator)
+	loca := make([]u8, 4 * (glyph_count + 1), context.temp_allocator)
 	for offset, index in offsets {
 		put_u32(loca, 4 * index, offset)
 	}
 	append(&tables, Subset_Table{"loca", loca})
 	maxp := make([]u8, 32, context.temp_allocator)
 	put_u32(maxp, 0, 0x00010000)
-	put_u16(maxp, 4, SUBSET_GLYPHS)
+	put_u16(maxp, 4, u16(glyph_count))
 	put_u16(maxp, 6, u16(most_points))
 	put_u16(maxp, 8, u16(most_contours))
 	put_u16(maxp, 14, 2) // maxZones.
@@ -364,9 +396,17 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 	for character in glyph_cache.added_characters {
 		fmt.sbprintf(&added, " U+%04X", int(character))
 	}
+	on_demand := strings.builder_make(context.temp_allocator)
+	if len(demand_characters) > 0 {
+		fmt.sbprint(&on_demand, "the characters that the font service draws on demand,")
+		for range in demand_cache.subset_ranges {
+			fmt.sbprintf(&on_demand, " U+%04X to U+%04X", int(range.first), int(range.last))
+		}
+		fmt.sbprint(&on_demand, ",\n")
+	}
 	report.license_text = fmt.aprintf(
-		"%s\n\nThis file is a subset of %s, made by \"modustool vector_fonts\" (docs/FONTS.md):\nthe characters 32 to 126, the characters U+00A0 to U+00FF, the characters%s\nand the glyph .notdef, each glyph a simple glyph\n(%d glyphs made of glyphs were made simple), no hinting instructions, no\nOpenType layout tables%s. The subset carries the name \"%s\".\nLicense of the source: %s.\n\nThe text of the license in the source font file:\n\n%s\n\nURL of the license: %s\nThe full text of the license: %s, in this folder.\n",
-		copyright, candidate.name, strings.to_string(added), report.composites, strings.concatenate({proportional ? fmt.tprintf("; the %d pair adjustments of its table kern between\nthese characters", report.pairs) : "", report.zero_glyph != 0 ? fmt.tprintf(";\nthe character 0 is the glyph %d of the source, the slashed zero of its\nfeature zero", report.zero_glyph) : ""}, context.temp_allocator), candidate.family, candidate.license, license, license_place, candidate.license_file,
+		"%s\n\nThis file is a subset of %s, made by \"modustool vector_fonts\" (docs/FONTS.md):\nthe characters 32 to 126, the characters U+00A0 to U+00FF, the characters%s\n%sand the glyph .notdef, each glyph a simple glyph\n(%d glyphs made of glyphs were made simple), no hinting instructions, no\nOpenType layout tables%s. The subset carries the name \"%s\".\nLicense of the source: %s.\n\nThe text of the license in the source font file:\n\n%s\n\nURL of the license: %s\nThe full text of the license: %s, in this folder.\n",
+		copyright, candidate.name, strings.to_string(added), strings.to_string(on_demand), report.composites, strings.concatenate({proportional ? fmt.tprintf("; the %d pair adjustments of its table kern between\nthese characters", report.pairs) : "", report.zero_glyph != 0 ? fmt.tprintf(";\nthe character 0 is the glyph %d of the source, the slashed zero of its\nfeature zero", report.zero_glyph) : ""}, context.temp_allocator), candidate.family, candidate.license, license, license_place, candidate.license_file,
 		allocator = context.temp_allocator,
 	)
 	return subset, report, true
@@ -463,11 +503,12 @@ simple_glyph_write :: proc(out: ^[dynamic]u8, outline: ^vector_font.Outline) -> 
 // character_map_write gives a cmap with one subtable of format 4: the
 // characters 32 to 126 are the glyphs 1 to 95, the characters U+00A0 to
 // U+00FF the glyphs 96 to 191, each added character a segment of its own
-// with the glyph of its character index plus 1, and the last segment ends
-// at 0xFFFF, as the format needs. The segments are in the order of their
-// characters, because the list of the added characters is.
+// with the glyph of its character index plus 1, each run of the characters
+// on demand a segment whose glyphs follow SUBSET_GLYPHS, and the last
+// segment ends at 0xFFFF, as the format needs. The segments are sorted by
+// their characters, as the format needs.
 @(private = "file")
-character_map_write :: proc() -> []u8 {
+character_map_write :: proc(demand_characters: []rune) -> []u8 {
 	// The glyph of a character of a segment is the character plus delta.
 	Character_Map_Segment :: struct {
 		first, last: u16,
@@ -479,6 +520,20 @@ character_map_write :: proc() -> []u8 {
 	for character, offset in glyph_cache.added_characters {
 		append(&segments, Character_Map_Segment{first = u16(character), last = u16(character), delta = 1 + glyph_cache.ADDED_FIRST_INDEX + offset - int(character)})
 	}
+	// The characters on demand: one segment for each run of code points
+	// that follow each other, as their glyphs do.
+	for character, offset in demand_characters {
+		glyph := SUBSET_GLYPHS + offset
+		last := len(segments) - 1
+		if offset > 0 && character == demand_characters[offset - 1] + 1 {
+			segments[last].last = u16(character)
+		} else {
+			append(&segments, Character_Map_Segment{first = u16(character), last = u16(character), delta = glyph - int(character)})
+		}
+	}
+	slice.sort_by(segments[:], proc(a, b: Character_Map_Segment) -> bool {
+		return a.first < b.first
+	})
 	// The last one maps 0xFFFF to the glyph 0.
 	append(&segments, Character_Map_Segment{first = 0xFFFF, last = 0xFFFF, delta = 1})
 	count := len(segments)

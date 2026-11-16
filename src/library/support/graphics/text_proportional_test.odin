@@ -1,7 +1,9 @@
 #+build !freestanding
 package graphics
 
+import "modus:contract/demand_cache"
 import "modus:contract/glyph_cache"
+import "core:mem"
 import "core:testing"
 import "modus:support/text_shaping"
 import "modus:support/vector_font"
@@ -25,6 +27,76 @@ b612_cache_of :: proc(t: ^testing.T) -> (cache: glyph_cache.Cache, memory: []u64
 	cache, refused = glyph_cache.validate(file[:size])
 	testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
 	return cache, memory
+}
+
+// A text whose glyphs come from the demand cache draws the pixels of the
+// same text from the glyph cache, at each third of a pixel: the font
+// service draws with the renderer of the build. A glyph that the frame does
+// not see yet draws the replacement glyph.
+@(test)
+a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
+	cache, memory := b612_cache_of(t)
+	defer delete(memory)
+	render := new(vector_font.Render_Memory)
+	defer free(render)
+	demand_font, problem := vector_font.demand_font_open(#load("../../../../resources/fonts/b612.ttf"), true, render)
+	testing.expect_value(t, problem, vector_font.Font_Problem.None)
+	bytes, allocation := mem.alloc_bytes(demand_cache.SIZE, demand_cache.PAGE_SIZE)
+	testing.expect(t, allocation == nil)
+	defer mem.free_bytes(bytes)
+	base := uintptr(raw_data(bytes))
+	writer := demand_cache.writer_open(base, cache.header.font_hash, vector_font.RENDERER_VERSION, demand_font.flags)
+	reader, matches := demand_cache.reader_of(base, &cache)
+	testing.expect(t, matches)
+	TEXT :: "Rag To é"
+	for character in TEXT {
+		place, search := demand_cache.place_find(&writer, character)
+		if search != .Free {
+			continue
+		}
+		entry, result := vector_font.demand_glyph_draw(&demand_font, &writer, character, render)
+		testing.expect_value(t, result, vector_font.Demand_Result.Drawn)
+		demand_cache.publish(&writer, place, character, entry)
+	}
+	demand_cache.reader_frame_begin(&reader)
+	spacing, _ := text_shaping.spacing_of(&cache, 1)
+	placed: [16]text_shaping.Placed_Glyph
+	count, _, _ := text_shaping.shape(&spacing, transmute([]u8)string(TEXT), placed[:])
+	// The same places, each glyph from the demand cache.
+	on_demand := placed
+	index := 0
+	for character in TEXT {
+		on_demand[index].glyph = text_shaping.DEMAND_GLYPH_FIRST + u32(character)
+		index += 1
+	}
+	square_root: [4096]u8
+	square_root_table_fill(&square_root)
+	tables := new(Blend_Tables)
+	defer free(tables)
+	WIDTH :: 96
+	HEIGHT :: 16
+	built_pixels, demand_pixels: [WIDTH * HEIGHT]Color
+	built := Canvas{pixels = raw_data(built_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	drawn := Canvas{pixels = raw_data(demand_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	for fraction in ([3]i64{0, 21, 43}) {
+		clear(built, DARK_CARD_BOTTOM)
+		clear(drawn, DARK_CARD_BOTTOM)
+		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 2 * glyph_cache.SUBPIXEL + fraction, 0, placed[:count], 1, DARK_TEXT)
+		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 2 * glyph_cache.SUBPIXEL + fraction, 0, on_demand[:count], 1, DARK_TEXT, &reader)
+		testing.expectf(t, built_pixels == demand_pixels, "the place %v/64: the pixels of the glyph cache", fraction)
+	}
+	// A frame that began before the publication: the replacement glyph, as
+	// a glyph that no font draws.
+	reader.generation_limit = 1
+	replaced := on_demand
+	for &glyph in replaced[1:count] {
+		glyph.glyph = text_shaping.REPLACEMENT_GLYPH
+	}
+	clear(built, DARK_CARD_BOTTOM)
+	clear(drawn, DARK_CARD_BOTTOM)
+	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 0, 0, replaced[:count], 1, DARK_TEXT, &reader)
+	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, on_demand[:count], 1, DARK_TEXT, &reader)
+	testing.expect(t, built_pixels == demand_pixels)
 }
 
 // A valid cache of a proportional font is not a font of cells: the text of

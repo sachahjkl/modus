@@ -35,6 +35,8 @@ no_two_ranges_overlap :: proc(t: ^testing.T) {
 		.Interface_Glyph_Cache_Bold   = INTERFACE_GLYPH_CACHE_BOLD_ADDRESS,
 		.Debug_Image                  = DEBUG_IMAGE_ADDRESS,
 		.Disk_Program_Page            = DISK_PROGRAM_PAGE_ADDRESS,
+		.Demand_Cache                 = DEMAND_CACHE_ADDRESS,
+		.Glyph_Requests               = GLYPH_REQUESTS_ADDRESS,
 	}
 	for address, name in named {
 		testing.expectf(t, address == range_of(name).address, "%v: the named address is the address of its member", name)
