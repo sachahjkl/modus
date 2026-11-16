@@ -477,8 +477,8 @@ link_begin :: proc "contextless" (text: string, span: markdown.Span) {
 	case .None:
 	case .Address:
 		// The bytes around the target are "(" and ")" when the reader
-		// found the link "[label](target)": the address is shown with
-		// them.
+		// found a link of Markdown, its label in square brackets and its
+		// target in parentheses: the address is shown with them.
 		flow.pending_address = target
 		if span.target_start > 0 && span.target_end < len(text) && text[span.target_start - 1] == '(' && text[span.target_end] == ')' {
 			flow.pending_address = text[span.target_start - 1:span.target_end + 1]
@@ -495,7 +495,8 @@ link_begin :: proc "contextless" (text: string, span: markdown.Span) {
 }
 
 // link_label gives the whole label of a link, in built, from the bytes of
-// "[label](target)" before its target: with no marks of code or bold, and
+// a link of Markdown (its label in square brackets, its target in
+// parentheses) before its target: with no marks of code or bold, and
 // a line feed as a space. A link that wraps keeps one name. It gives ""
 // when the bytes before the target are not "](", and the text of the first
 // part of the link is its label then.
