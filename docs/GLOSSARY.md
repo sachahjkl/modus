@@ -7680,6 +7680,76 @@ The design: `docs/TOOLS.md`, "The bounds of the tests".
 
 Do not use: freeze, no progress timeout, watchdog.
 
+### Fuzz target
+
+A fuzz target is a procedure of the tool that gives one fuzz input to the real code of the system on the host and checks its oracles.
+
+It calls the procedures that the system runs, from the source library `modus`, never a copy of them. A raw target gives the input as the bytes that the system reads (a module file, a datagram, a block). A generated target reads the input as choices and builds a whole value from them before it calls the code. The tool runs a target in a child process, so a fault ends the child and not the tool. `modustool fuzz list` names the targets. The design adds one target for the kernel operations, in a test machine; it is planned work of `ROADMAP.md`. It is not a host test: a host test checks the cases that its writer chose, a fuzz target checks the cases that the engine makes.
+
+The design: `src/md/infrastructure/fuzzing.md`.
+
+Do not use: fuzzer harness, fuzz driver, fuzz test.
+
+### Fuzz input
+
+A fuzz input is the bytes of one execution of a fuzz target.
+
+For a raw target, they are the bytes that the code of the system reads. For a generated target, they are a choice sequence: the generator reads its next choice from them at each decision, and reads zeros when they end. Both kinds are bytes, so one engine, one minimizer and one corpus serve both.
+
+The design: `src/md/infrastructure/fuzzing.md`.
+
+Do not use: test case (for this), seed (for this), sample.
+
+### Corpus
+
+The corpus is the set of fuzz inputs of each fuzz target that the repository keeps, one file for each input, named by the BLAKE3 hash of its bytes.
+
+It has the regression inputs, one for each fuzz finding after its fix, which stay for ever, and the reach inputs, the smallest set of inputs that gives each edge class that the long runs reached. `modustool check` runs each input of the corpus again and refuses a corpus over its bounds.
+
+The design: `src/md/infrastructure/fuzzing.md`.
+
+Do not use: seed corpus, test suite (for this).
+
+### Edge counter
+
+An edge counter is a byte that instrumented code adds one to each time it passes one edge of its control flow.
+
+`opt` of the LLVM of the build adds the counters to the IR of the packages under test, and the fuzz target reads them after each execution. An input is kept when it gives an edge a count in a class that no kept input gave. In the planned fuzzing of the kernel operations, the kernel of a test volume gets counters too, which only the tool reads, through the memory file of the machine. It is not the coverage of a glyph.
+
+The design: `src/md/infrastructure/fuzzing.md`.
+
+Do not use: coverage (for this), code coverage, bitmap.
+
+### Oracle
+
+An oracle is a condition that a fuzz target checks after each execution of a fuzz input.
+
+The oracles are, in order: no fault, an end before the hang bound, the contract of the reader, a round trip through the writer, a model that gives the same answers, and a second reader of the system that agrees.
+
+The design: `src/md/infrastructure/fuzzing.md`.
+
+Do not use: assertion (for this), checker.
+
+### Fuzz finding
+
+A fuzz finding is a fuzz input that breaks an oracle, with its signature: the oracle and the place of the fault.
+
+Two inputs with one signature are one fuzz finding. The tool minimizes each one while its signature stays. After its fix, its input enters the corpus as a regression input, and a host test names the expected answer when it is more than "no fault".
+
+The design: `src/md/infrastructure/fuzzing.md`.
+
+Do not use: crash (for every finding), bug report.
+
+### Operation sequence
+
+An operation sequence is the fuzz input of the kernel operations: a list of command records whose arguments follow the forms of `OPERATIONS`, which a child program runs in a test machine.
+
+The fuzzing of the kernel operations is planned work of `ROADMAP.md`. A handle argument names the result of an earlier command of the sequence by its place, so the sequence does not depend on the values of the handles of one run. An address that an operation reads as a record gets the bytes of that record.
+
+The design: `src/md/infrastructure/fuzzing.md`.
+
+Do not use: syscall program, call trace.
+
 ### Tagline
 
 The tagline is the one line under the name in the head of the home of the site: the first sentence of the first paragraph of `README.md`.

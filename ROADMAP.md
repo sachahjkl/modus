@@ -6,6 +6,9 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
+- **Fuzzing of the kernel operations.** A test machine runs operation sequences that the tool builds from the forms of the 35 kernel operations, guided by the edge counters of a test kernel, with the checks of the kernel as oracles. A fault of the kernel that a sequence finds is confirmed on the kernel that ships. [Design](src/md/infrastructure/fuzzing.md)
+- **Fuzzing of the other readers of the system.** The remote protocol, the records between programs, the disk grant table, the system description, the fonts, the pointer theme and the tables of the firmware get their fuzz targets, with their corpus in each check. [Design](src/md/infrastructure/fuzzing.md)
+
 - **The first signed release image.** The keys of the publisher of the system go into the secrets of the repository, and their public key and certificate into `resources/keys`. The next tag then publishes a disk image that a principal verifies and starts. [Design](src/md/infrastructure/release_image.md)
 
 ## Later

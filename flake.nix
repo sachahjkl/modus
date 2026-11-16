@@ -98,7 +98,10 @@
     # openssl also makes the firmware signing key ("modustool key new").
     # zstd: compresses the release image ("modustool release image") and
     # decompresses it for its machine of "test trusted_boot".
-    buildTools = [odin llvm pkgs.llvmPackages.lld pkgs.nasm qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware pkgs.zstd];
+    # clang of LLVM 18, the one that the Odin compiler links with: it links
+    # the instrumented child of the fuzzing from the objects that llc made,
+    # with the flags that the compiler prints (src/md/infrastructure/fuzzing.md).
+    buildTools = [odin llvm pkgs.llvmPackages.lld pkgs.llvmPackages_18.clang pkgs.nasm qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware pkgs.zstd];
 
     # The pointer theme of the owner (docs/POINTERS.md): "Posy's Cursor", the
     # package of nixpkgs, pinned by flake.lock. Its license is CC-BY-NC-4.0,
