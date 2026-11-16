@@ -79,12 +79,14 @@ WRONG_RECOVERY_KEY :: "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA"
 
 // The steps of the start of a machine of the TPM, to the desktop: the
 // boot program measures the system, and the root service starts the TPM
-// service.
+// service. The root service starts the TPM service and the compositor
+// shows the console in no fixed order, so the three waits after the
+// measure each search from the measure line.
 @(private = "file")
 tpm_key_start := [?]Step {
 	{kind = .Wait, text = "boot program: started", seconds = TPM_MACHINE_FIRST_WAIT_SECONDS},
 	{kind = .Wait, text = MEASURE_LINE, fails_on = MEASURE_REFUSED_LINE, seconds = TPM_MACHINE_STEP_SECONDS},
-	{kind = .Wait, text = "root: started tpm for the TPM at ", seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = "root: started tpm for the TPM at ", any_order = true, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Wait, text = "tpm: ok, the CRB interface at ", any_order = true, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Wait, text = "compositor: surface console", any_order = true, seconds = TPM_MACHINE_STEP_SECONDS},
 }
