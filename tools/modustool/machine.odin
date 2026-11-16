@@ -1245,7 +1245,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
-	{kind = .Wait, text = "compositor: the window settings gave 5 act names", any_order = true},
+	{kind = .Wait, text = "compositor: the window settings gave 6 act names", any_order = true},
 	{kind = .Wait, text = "settings: ok, ", any_order = true},
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},

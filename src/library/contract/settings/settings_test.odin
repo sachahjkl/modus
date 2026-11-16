@@ -57,7 +57,7 @@ a_glyph_cache_that_is_not_mapped :: proc(t: ^testing.T) {
 // value changed makes them differ, for each setting.
 @(test)
 values_differ_compares_the_values_only :: proc(t: ^testing.T) {
-	first := Choice{values = {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 0, .Grid_Fit = 1, .Keyboard_Layout = 1}, change_count = 2}
+	first := Choice{values = {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 0, .Grid_Fit = 1, .Keyboard_Layout = 1, .Appearance = u32(Appearance.Auto)}, change_count = 2}
 	second := first
 	second.change_count = 1_000_002
 	testing.expect(t, !values_differ(first, second))
@@ -81,7 +81,9 @@ values_differ_compares_the_values_only :: proc(t: ^testing.T) {
 @(test)
 the_appearance_in_force_alone :: proc(t: ^testing.T) {
 	page: Page
-	write(&page, {.Appearance = u32(Appearance.Auto)}, .Dark)
+	values: [Setting]u32
+	values[.Appearance] = u32(Appearance.Auto)
+	write(&page, values, .Dark)
 	before := read(&page)
 	appearance_in_force_write(&page, .Light)
 	after := read(&page)
