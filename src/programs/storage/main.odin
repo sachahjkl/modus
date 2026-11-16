@@ -344,7 +344,7 @@ named_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_R
 // - `Empty`, `Too_Long` or `Bad_Byte` (-3, the name has 1 to 64 bytes, no zero byte, no byte '/', and is not "." or "..");
 // - `Too_Long` (-4, the data has more bytes than the call region holds: write a larger object by ranges);
 // - `Full` (-5, no place for one more store, or no free block; with the unit Commit_Blocks, the commit changes more blocks than one commit can);
-// - `Device` (-6);
+// - `Device` (-6; unit Dropped_Writes: the read back after the commit found blocks with other bytes, found their count: the disk did not keep the commit, and the object keeps its state before);
 // - `Damaged` (-8, unit Stores: a node of a tree of the store has a wrong check; unit Counts: the counts of the store are not trusted after a fault of the service).
 @(export, link_name = "write")
 write :: proc "c" (place: i64, name: ^string, data: ^string, error: ^errors.Error_Record) -> i64 {
@@ -760,16 +760,19 @@ usage :: proc "c" (result: ^[]Usage) -> i64 {
 	return 1
 }
 
-// stores gives the stores that the caller may name, one line for each, with its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for a principal sees them: the stores of that principal.
+// stores gives the generation of the disk, its blocks in use, and the commits, the commits that a read back refused, the commits whose root write or read back failed on the device (not taken: the next open decides), the blocks written (those of refused commits too) and the blocks read back with the time of those reads since the start of the service (a measure of the cost of the read back of each commit), then the stores that the caller may name, one line for each, with its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for a principal sees them: the stores of that principal. The result is the count of bytes of the text, or a negative number with an error record.
+//
+// **Error kinds**
+//
+// - `No_Grant` (-10, unit Acts_For_Principal: the caller does not act for a principal).
 @(export, link_name = "stores")
-stores :: proc "c" (result: ^[]u8) -> i64 {
+stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
-	writer := system.Writer{buffer = result^}
 	if !caller.acts_for_principal {
-		system.write_part(&writer, "no grant to see the stores")
-		return i64(writer.count + writer.dropped)
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	parts := [?]system.Part{"generation ", root.generation, ", ", opened.in_use_count, " of ", root.disk_blocks, " blocks in use, ", commits, " commits and ", blocks_written, " blocks written since the start"}
+	writer := system.Writer{buffer = result^}
+	parts := [?]system.Part{"generation ", root.generation, ", ", opened.in_use_count, " of ", root.disk_blocks, " blocks in use, ", commits, " commits, ", commits_refused, " commits refused, ", commits_undecided, " commits for the next open to decide, ", blocks_written, " blocks written and ", blocks_read_back, " blocks read back in ", read_back_nanoseconds / 1000, " microseconds since the start"}
 	for part in parts {
 		system.write_part(&writer, part)
 	}
@@ -1079,12 +1082,12 @@ compare_blocks: [2]Block // The two blocks of data that compare reads.
 Erase_Measure :: struct {
 	generation: i64, // The generation of the root that the erase wrote last; 0 when the object had no version.
 	versions:   i64, // The versions that the erase ended.
-	zeroed:     i64, // The blocks written with zero bytes: each block that the end of the versions freed.
+	zeroed:     i64, // The blocks that the end of the versions freed and that read back as zero bytes after their write.
 	kept:       i64, // The blocks of the versions that another state still names: they keep their bytes.
 	damaged:    i64, // The version indexes, leaves and states with a wrong block that the erase ended without zeros over their bytes.
 }
 
-// erase_versions ends each version of the object `name` under a place, in one commit, and then writes zero bytes over each block that no other state, version or entry names after that commit: the data and the object nodes of the versions, their index and their leaves, and the tree nodes that the commit replaced. The current version stays, with its generation. A block that another state still names keeps its bytes, and the row counts it. Before the zeros, the service reads back the blocks of the commit, past its cache, then writes the root of the commit again with the next generation, so that no root on the disk names a block of zeros. A loss of power leaves the versions or none of them. The disk device can keep old copies of a block that the service does not see (src/md/features/version_erase.md). Only a program with the grant Versions_Erase may call it, on its own store: a program without it, a share, a place of another store and a connection that reads only are refused. An object with no version makes no commit. The result is one row: the generation of the last root, the versions ended, the blocks written with zeros, the blocks kept because another state names them, and the damaged parts of the versions that were ended without zeros; or a negative number with an error record.
+// erase_versions ends each version of the object `name` under a place, in one commit, and then writes zero bytes over each block that no other state, version or entry names after that commit: the data and the object nodes of the versions, their index and their leaves, and the tree nodes that the commit replaced. The current version stays, with its generation. A block that another state still names keeps its bytes, and the row counts it. Before the zeros, the commit reads back its blocks and its root, past the cache of the service, then the service writes the root of the commit again with the next generation and reads it back, so that no root on the disk names a block of zeros; after the zeros it reads them back. A loss of power leaves the versions or none of them. The disk device can keep old copies of a block that the service does not see (src/md/features/version_erase.md). Only a program with the grant Versions_Erase may call it, on its own store: a program without it, a share, a place of another store and a connection that reads only are refused. An object with no version makes no commit. The result is one row: the generation of the last root, the versions ended, the blocks written with zeros, the blocks kept because another state names them, and the damaged parts of the versions that were ended without zeros; or a negative number with an error record.
 //
 // **Error kinds**
 //
@@ -1092,7 +1095,7 @@ Erase_Measure :: struct {
 // - `Absent` (-12, unit Places: the place is not a place of this connection; -7, unit Places: its tree was removed or renamed; -7, unit Objects: no such object, or the name is a tree);
 // - `Empty`, `Too_Long` or `Bad_Byte` (-3, the name);
 // - `Full` (-5, unit Commit_Blocks: the versions free more blocks than one commit can);
-// - `Device` (-6: a write failed, or a block of the commit of the end read back with other bytes; after that commit the versions are gone, and some blocks can hold their old bytes);
+// - `Device` (-6: unit Dropped_Writes, the read back of the commit of the end found blocks with other bytes, and the versions stay; with no unit, a write or a read failed, or the read back of the second root found other bytes, and after the commit of the end the versions are gone and some blocks can hold their old bytes; the log says which). The row counts as zeroed only the blocks that read back as zeros; a block that the disk did not write with zeros keeps its old bytes, and the log says it;
 // - `Damaged` (-8, unit Stores or Counts, as for write).
 @(export, link_name = "erase_versions")
 erase_versions :: proc "c" (place: i64, name: ^string, result: ^[]Erase_Measure, error: ^errors.Error_Record) -> i64 {

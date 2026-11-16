@@ -604,7 +604,7 @@ scenario_network := [?]Step {
 	{kind = .Close, text = "inspect"},
 	{kind = .Wait, text = "root: inspect stopped with code 0"},
 	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the principal (-3)"},
-	{kind = .Call, text = "storage.stores()", expected = "no grant to see the stores"},
+	{kind = .Call, text = "storage.stores()", outcome = .Failed, expected = "error: storage.stores: the caller has no grant for this: to act for the principal (-10)"},
 	{kind = .Call, text = "manual.modules()", expected = " rows of Module"},
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	{kind = .Front, text = "remote"},
@@ -1394,6 +1394,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: square_root: the argument value has -4; it must have at least 0 (-1)"},
 	{kind = .Type, text = "number(\"41\") + fibonacci(10)"},
 	{kind = .Wait, text = "[console] 96"},
+	// Above 2^40 the search refuses with a record, not with the answer 0.
+	{kind = .Type, text = "next_prime(1099511627777)"},
+	{kind = .Wait, text = "[console] error: next_prime: the argument from has the value 1099511627777, which the call refuses; it takes at most 1099511627776 (-1)"},
 	{kind = .Type, text = "next_prime(\"x\")"},
 	{kind = .Wait, text = "error: next_prime: argument 1 is Integer, not Text"},
 	{kind = .Type, text = "clear()"},
@@ -2082,6 +2085,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] add(amount: Integer, note: Text) -> Integer"},
 	{kind = .Type, text = "manual.show(\"nothing\")"},
 	{kind = .Wait, text = "[console] error: manual.show: the argument name names none of the modules (-1)"},
+	// A name or a number that names nothing gives an error record, not an
+	// empty text: the caller tells a failure from an empty answer.
+	{kind = .Type, text = "manual.about(\"nothing\")"},
+	{kind = .Wait, text = "[console] error: manual.about: the argument name names none of the modules (-1)"},
+	{kind = .Type, text = "manual.signature(\"tally\", 9)"},
+	{kind = .Wait, text = "[console] error: manual.signature: the argument export has the value 9, which the call refuses; it takes at most 5 (-2)"},
 	{kind = .Type, text = "manual.show(\"tally\")"},
 	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
 	{kind = .Move, text = "manual", to_x = 80, to_y = 64},
@@ -2327,6 +2336,31 @@ scenario := [?]Step {
 	// the first records have a run of the kind size.
 	{kind = .Call, text = "log.value_runs(0)", expected = "  size"},
 	{kind = .Front, text = "console"},
+	// The log scope: log_reader has a connection to the log service that
+	// does not act for the principal. It reads the log from the own number
+	// 0 and receives its own records only: the records of its program slot
+	// with its program serial, numbered among its own records. The second
+	// run reads none of the records of the first one, which the ring still
+	// keeps: same name, same texts, often the same slot, another serial.
+	// The remote service acts for the principal and still reads the whole
+	// log: the record of the root service about log_reader, and the record
+	// of log_reader.
+	{kind = .Type, text = "start(\"log_reader\")"},
+	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
+	{kind = .Wait, text = "[log_reader] log_reader: its own records: 1 rows from the own number 0, its first record, in the slot "},
+	{kind = .Wait, text = ", lost 0: no row of another program or of an earlier run: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the value runs: 1 rows, each of a record of this program, with the run of its value 42: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: ok"},
+	{kind = .Wait, text = "root: log_reader stopped with code 0"},
+	{kind = .Type, text = "start(\"log_reader\")"},
+	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
+	{kind = .Wait, text = "[log_reader] log_reader: its own records: 1 rows from the own number 0, its first record, in the slot "},
+	{kind = .Wait, text = ", lost 0: no row of another program or of an earlier run: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the value runs: 1 rows, each of a record of this program, with the run of its value 42: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: ok"},
+	{kind = .Wait, text = "root: log_reader stopped with code 0"},
+	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: started log_reader", any_order = true},
+	{kind = .Record, program = "log_reader", level = "info", text = "log_reader: the record that this program reads back, with the value 42"},
 	// The refusals of the console come after the check of the log, which
 	// needs each record since the boot (" 0 lost"): the lines before it stay
 	// few.
@@ -2891,6 +2925,7 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"bgr\")", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr, pointer theme system, grid fit off, keyboard layout us; "},
 	{kind = .Call, text = "settings.get(\"subpixel_order\")", expected = "bgr"},
+	{kind = .Call, text = "settings.get(\"colour\")", outcome = .Failed, expected = "error: settings.get: the argument name names nothing that exists (-2)"},
 	{kind = .Call, text = "settings.set(\"font\", \"comic\")", outcome = .Failed, expected = "(-3)"},
 	{kind = .Call, text = "settings.set(\"colour\", \"red\")", outcome = .Failed, expected = "(-2)"},
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"rgb\")", expected = "1"},

@@ -77,6 +77,10 @@ import op "modus:contract/operation"
 // a thread"). A program, and the holder of a thread handle, only narrow
 // the set; the machine handle writes any set and the limit of the set,
 // which a new thread gets from the thread that creates it.
+//
+// The three commands of the thread counters act on the calling thread: a
+// start and a read through the machine handle with the right Counters
+// only, a stop with no handle (thread_counters.odin).
 
 // thread_control runs the operation Thread_Control. The caller holds the
 // program lock of the program of the calling thread, and the control lock
@@ -92,6 +96,9 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	}
 	if op.thread_control_names_a_program(command) {
 		return program_schedule_control(caller_program, command, v, results)
+	}
+	if op.thread_control_counts_the_caller(command) {
+		return thread_counters_control(caller_index, caller_program, command, v, results)
 	}
 	target_index: u32
 	owner := caller_program_index
@@ -302,6 +309,10 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	case .Read_Program_Schedule, .Write_Program_Schedule:
 		// They name a program, not a thread: program_schedule_control runs
 		// them before a thread is named.
+		return .Bad_Operation
+	case .Start_Counters, .Read_Counters, .Stop_Counters:
+		// They act on the calling thread: thread_counters_control runs them
+		// before a thread is named.
 		return .Bad_Operation
 	case .Read_Memory:
 		// The bytes of the program of the thread (breakpoints.odin). The
