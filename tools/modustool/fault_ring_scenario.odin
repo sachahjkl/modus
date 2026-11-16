@@ -91,11 +91,13 @@ scenario_fault_ring := [?]Step {
 	// A held trap at the stub of int3 is dropped by the kernel: the line
 	// shows what this processor did.
 	{kind = .Wait, text = "fault_ring: mov ss, then int3, with the trap flag: on this processor the machine went on; one breakpoint record after the int3, and each other record is a debug trap of this program, in its code: as it must"},
-	{kind = .Wait, text = "fault_ring: the entries and the debug trap: the child stopped with the code 000000000000203f: as it must"},
+	// The trap of the first int1 is at an int1: the kernel keeps it.
+	{kind = .Wait, text = "fault_ring: two int1 in a row: two debug records, at the address of the first plus 1 and plus 2: as it must"},
+	{kind = .Wait, text = "fault_ring: the entries and the debug trap: the child stopped with the code 000000000000207f: as it must"},
 	// Two outcomes are right, by what the processor does: the line names
 	// the one of this processor, and the last line counts the case.
 	{kind = .Wait, text = "fault_ring: mov ss, then int1, with the trap flag: the machine went on and the child gave back every page and every thread; on this processor "},
-	{kind = .Wait, text = "fault_ring: ok, 35 cases: each fault was repaired, or stopped its program with the report of today, each control of a thread held, and each child gave back every page and every thread"},
+	{kind = .Wait, text = "fault_ring: ok, 36 cases: each fault was repaired, or stopped its program with the report of today, each control of a thread held, and each child gave back every page and every thread"},
 	{kind = .Front, text = "fault_ring"},
 	{kind = .Shot, text = "fault_ring"},
 	{kind = .Front, text = "console"},

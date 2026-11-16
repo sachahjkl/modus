@@ -151,7 +151,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 
 ![The return to a program: five children give the kernel a thread that the processor would refuse at its return, or flags that it must not keep; the kernel stops each one as its own fault, and the machine goes on](docs/screenshots/return_fault.png)
 
-![The fault ring: a fault of a thread becomes a record for a handler thread of the program, which commits the page or gives Write back and lets the thread go on, lets it go on after a breakpoint, or stops the program with the report of a divide error; then a thread stopped, its registers read and written, and resumed; 35 cases, in child programs](docs/screenshots/fault_ring.png)
+![The fault ring: a fault of a thread becomes a record for a handler thread of the program, which commits the page or gives Write back and lets the thread go on, lets it go on after a breakpoint, or stops the program with the report of a divide error; then a thread stopped, its registers read and written, and resumed; 36 cases, in child programs](docs/screenshots/fault_ring.png)
 
 ![The hall of fame: the people whose work inspired modus, each on a card with a portrait and its credit, or with no picture](docs/screenshots/hall_of_fame.png)
 

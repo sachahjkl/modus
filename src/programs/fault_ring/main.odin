@@ -6,7 +6,7 @@
 // a stack that grows, a debugger that steps a thread) with no code in the
 // kernel that knows its policy. This program checks each rule of that
 // mechanism, and of the [thread control](term:thread-control) that a
-// handler uses, against a real fault: 35 cases, each in a child program,
+// handler uses, against a real fault: 36 cases, each in a child program,
 // each with a result that the program checks.
 //
 // **What a reader sees.** Start it from the menu of the programs, or with
@@ -14,8 +14,8 @@
 // case, which turns right or wrong as its child stops. The log has one
 // line for each child: `fault_ring: <case>: the child stopped with the
 // code <code>, the address <address>: as it must`, or `: WRONG`. The last
-// line is `fault_ring: ok, 35 cases: ...`, or `fault_ring: failed: <count>
-// cases of 35`. Case 3 shows the time of one repaired fault, as a measure.
+// line is `fault_ring: ok, 36 cases: ...`, or `fault_ring: failed: <count>
+// cases of 36`. Case 3 shows the time of one repaired fault, as a measure.
 //
 // **Why each case runs in a child.** Several cases end in a stop of the
 // program: a fault of the handler, a full ring, a handler that ends. A
@@ -32,7 +32,7 @@
 // one thread of its own that spins while a child tries to name it.
 //
 // **What it does not prove.** The cases of the debug trap run on the
-// processor of the test only: case 35 accepts two outcomes, and its line
+// processor of the test only: case 36 accepts two outcomes, and its line
 // says which one the processor gave. The cases use one processor model,
 // under QEMU.
 //
@@ -104,8 +104,8 @@
 //      write, is accepted after it, and the thread goes on.
 //  28. In its own child: no call names a thread of another program without
 //      a handle; the thread of the parent keeps running.
-// The entries to the gates and the debug trap (cases 29 to 34, one child
-// whose handler takes Debug, Breakpoint and General_Protection; case 35 in
+// The entries to the gates and the debug trap (cases 29 to 35, one child
+// whose handler takes Debug, Breakpoint and General_Protection; case 36 in
 // its own child):
 //  29. int 3 in two bytes (CD 03): a breakpoint, at the address + 2.
 //  30. int 14 (CD 0E): a protection fault with the error code 0x72, never a
@@ -121,7 +121,11 @@
 //  34. mov ss, then int3, with the trap flag: one breakpoint record, and
 //      each other record is a debug trap in the code; a held trap at the
 //      stub of int3 is dropped by the kernel.
-//  35. mov ss, then int1, with the trap flag: either debug records in the
+//  35. Two int1 in a row (F1 F1): two debug records, at the first + 1 and
+//      + 2. The kernel drops a debug exception with no status at an int1
+//      that a hypervisor gave again before it ran; the trap of the first
+//      int1 is at an int1 too, and must stay.
+//  36. mov ss, then int1, with the trap flag: either debug records in the
 //      code, or, on a processor that gives the held trap at the stub of
 //      int1, a stop of the child with the code of a debug exception and the
 //      instruction address 0. The line says which.
@@ -201,6 +205,7 @@ foreign _ {
 	two_byte_breakpoint :: proc "c" () ---
 	interrupt_fourteen :: proc "c" () ---
 	icebp :: proc "c" () ---
+	two_int1 :: proc "c" () ---
 	single_step_six :: proc "c" () ---
 	mov_ss_then_syscall :: proc "c" () ---
 	mov_ss_then_int3 :: proc "c" () ---
@@ -212,6 +217,7 @@ foreign _ {
 	two_byte_breakpoint_instruction: u8
 	interrupt_fourteen_instruction: u8
 	icebp_instruction: u8
+	two_int1_first: u8
 	single_step_first: u8
 	single_step_end: u8
 	mov_ss_then_syscall_end: u8
@@ -251,8 +257,8 @@ BREAKPOINT_ALL :: 0x3
 CONTROLS_CODE :: 0x1000
 CONTROLS_ALL :: 0xFF
 DEBUG_ENTRIES_CODE :: 0x2000
-DEBUG_ENTRIES_ALL :: 0x3F
-// The child of case 35 stops with this code, plus 1 when each record is a
+DEBUG_ENTRIES_ALL :: 0x7F
+// The child of case 36 stops with this code, plus 1 when each record is a
 // debug trap in its code, unless the kernel stops it first.
 DEBUG_FRAME_LOST_CODE :: 0x4000
 FOREIGN_THREAD_CODE :: 0x3000
@@ -332,9 +338,9 @@ Case :: struct {
 FIRST_CONTROL_ROW :: 19
 FOREIGN_THREAD_ROW :: 27
 FIRST_ENTRY_ROW :: 28
-DEBUG_FRAME_LOST_ROW :: 34
+DEBUG_FRAME_LOST_ROW :: 35
 
-cases := [35]Case {
+cases := [36]Case {
 	{name = "a read of a page that is not committed", role = .Repairs, bit = 1},
 	{name = "a write to a read-only page", role = .Repairs, bit = 2},
 	{name = "a stack that grows by 64 pages", role = .Repairs, bit = 4},
@@ -369,6 +375,7 @@ cases := [35]Case {
 	{name = "the trap flag set with popfq", role = .Debug_Entries, bit = 0x08},
 	{name = "mov ss, then syscall, with the trap flag", role = .Debug_Entries, bit = 0x10},
 	{name = "mov ss, then int3, with the trap flag", role = .Debug_Entries, bit = 0x20},
+	{name = "two int1 in a row", role = .Debug_Entries, bit = 0x40},
 	{name = "mov ss, then int1, with the trap flag", role = .Debug_Frame_Lost},
 }
 
@@ -1153,7 +1160,7 @@ child_foreign_thread :: proc "contextless" () -> ! {
 	system.stop(FOREIGN_THREAD_CODE | (refused == tried ? u32(FOREIGN_THREAD_ALL) : u32(0)))
 }
 
-// The cases 29 to 35: the entries to the gates and the debug trap. The
+// The cases 29 to 36: the entries to the gates and the debug trap. The
 // handler keeps each record, skips the two bytes of int 14, and answers
 // Resume to each record.
 entry_records: [64]op.Fault_Record
@@ -1287,10 +1294,26 @@ child_debug_entries :: proc "contextless" () -> ! {
 		bits |= 0x20
 	}
 	entry_line("mov ss, then int3, with the trap flag", "on this processor the machine went on; one breakpoint record after the int3, and each other record is a debug trap of this program, in its code", right)
+
+	// 35. Two int1 in a row: the trap of the first is at an address that
+	// holds an int1, which the kernel must not drop.
+	start = intrinsics.atomic_load(&entry_record_count)
+	two_int1()
+	records = entry_records_since(start)
+	right = len(records) == 2 && intrinsics.atomic_load(&entry_handler_failures) == 0
+	for record, index in records {
+		if record.kind != .Debug || record.error_code != 0 || record.instruction != address_of(&two_int1_first) + u64(index) + 1 {
+			right = false
+		}
+	}
+	if right {
+		bits |= 0x40
+	}
+	entry_line("two int1 in a row", "two debug records, at the address of the first plus 1 and plus 2", right)
 	system.stop(DEBUG_ENTRIES_CODE | bits)
 }
 
-// Case 35, in its own child: on a processor that gives the held trap at the
+// Case 36, in its own child: on a processor that gives the held trap at the
 // first instruction of the stub of int1, the kernel stops this program, and
 // the child stops before its own stop below.
 child_debug_frame_lost :: proc "contextless" () -> ! {
@@ -1582,7 +1605,7 @@ case_log :: proc "contextless" (item: ^Case, code: u32, address: u64) {
 //    one for case 28, while a thread of its own spins and must keep
 //    running.
 // 4. It runs one child for the entries to the gates and the debug trap
-//    (cases 29 to 34), and one for case 35.
+//    (cases 29 to 35), and one for case 36.
 // 5. It writes the summary line, then draws the window each second.
 //
 // **The stop**: with no random seed, no window or no boot image, the
@@ -1698,7 +1721,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	draw(&window)
 
 	// The entries to the gates and the debug trap: one child for the cases
-	// 29 to 34.
+	// 29 to 35.
 	code, _, left, ran, _ = child_run(.Debug_Entries, "the entries and the debug trap")
 	for &item in cases[FIRST_ENTRY_ROW:DEBUG_FRAME_LOST_ROW] {
 		item.ran = true
@@ -1707,7 +1730,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("fault_ring: the entries and the debug trap: the child stopped with the code ", system.Hex(u64(code)), code == DEBUG_ENTRIES_CODE | DEBUG_ENTRIES_ALL && !left ? string(": as it must") : string(": WRONG"))
 	draw(&window)
 
-	// Case 35: two outcomes, by what the processor does; each one is right,
+	// Case 36: two outcomes, by what the processor does; each one is right,
 	// and the line says which one this processor gave.
 	lost_case := &cases[DEBUG_FRAME_LOST_ROW]
 	lost_report: op.Stop_Report

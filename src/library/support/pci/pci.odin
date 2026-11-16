@@ -84,7 +84,8 @@ Bar :: struct {
 
 // bars reads the memory of the six base address registers. A register of
 // ports gives no memory. The size comes from the bits that the device keeps
-// at 0; the memory of the device is off during the read.
+// at 0; the memory of the device is off during the read, so it is only for
+// a device that nothing uses yet. A device in use: bar_address.
 bars :: proc "contextless" (place: Place) -> (result: [BAR_COUNT]Bar) {
 	command := read_16(place, OFFSET_COMMAND)
 	write_16(place, OFFSET_COMMAND, command &~ COMMAND_MEMORY)
@@ -117,6 +118,27 @@ bars :: proc "contextless" (place: Place) -> (result: [BAR_COUNT]Bar) {
 		}
 	}
 	return result
+}
+
+// bar_address reads the address of the memory of one base address register
+// and writes nothing: the memory of the device stays on. 0: a register of
+// ports, or no address. It gives no size: a size needs a write of all ones
+// with the memory of the device off, which a device in use cannot take
+// (src/md/infrastructure/whole_frame.md).
+bar_address :: proc "contextless" (place: Place, index: int) -> u64 {
+	if index < 0 || index >= BAR_COUNT {
+		return 0
+	}
+	offset := u32(OFFSET_BAR + 4 * index)
+	low := read_32(place, offset)
+	if low & 1 != 0 {
+		return 0 // Ports.
+	}
+	address := u64(low &~ 0xF)
+	if low >> 1 & 3 == 2 && index + 1 < BAR_COUNT {
+		address |= u64(read_32(place, offset + 4)) << 32
+	}
+	return address
 }
 
 // capability gives the offset of the first capability of a kind in a copy

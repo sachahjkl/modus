@@ -70,6 +70,17 @@ icebp_instruction:
 	db 0xF1
 	ret
 
+; two_int1(): two int1 in a row (F1 F1): two debug traps, at
+; two_int1_first + 1 and at two_int1_first + 2. The trap of the first comes
+; at an address that holds the byte F1: the kernel must not take it for an
+; int1 that a hypervisor gave again before it ran.
+global two_int1
+global two_int1_first
+two_int1:
+two_int1_first:
+	db 0xF1, 0xF1
+	ret
+
 ; single_step_six(): sets the trap flag with popfq. The flag acts from the
 ; instruction after popfq: a debug trap after each of the six instructions
 ; from single_step_first to the popfq that clears it, the last one at
