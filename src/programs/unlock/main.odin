@@ -77,6 +77,9 @@
 //   for the current passphrase, then for the new one, or shows the new
 //   recovery key (docs/PRINCIPALS.md, "A change of the passphrase").
 //
+// A lock stops it, whatever its mode: no window that a session asked for
+// outlives the session (docs/PRINCIPALS.md, "4. The unlock and the lock").
+//
 // **Grants**, as the root service gives them:
 //
 // - **Store**: its private store, which holds the file "principal".
@@ -173,8 +176,22 @@ Mode :: enum {
 	New_Passphrase_Again, // The same passphrase again.
 	Change_Current, // A change that the principal asked for: its current passphrase, which proves it.
 	Change_Result, // The end of a change, shown until Enter: what changed, or why nothing changed.
+	Write_Result, // The store did not keep the record or the file whose recovery key was shown: the sentence until Enter.
+	Write_Unknown, // The store did not answer the write, and the read back failed: the record or the file may be on the disk, so its recovery key stays shown until Enter.
 	Done,
 }
+
+// The write that waits for Enter while the window shows a new recovery
+// key: nothing is written before its principal wrote the key down, so a
+// stop (a lock, a close, a fault) loses no key that nobody saw. A new
+// recovery key of a change has its own file (renewed_recovery_file).
+Pending_Write :: enum u8 {
+	None,
+	Principal_Created, // The file of a new principal sealed by the TPM, then its record and its session.
+	Machine_Passphrase_Set, // The record of a machine passphrase sealed by the TPM, then the key of the table.
+	Machine_Key_Sealed, // The record of a machine key sealed by the TPM alone, then the key of the table.
+}
+pending_write: Pending_Write
 
 mode: Mode
 // The change that the root service started this program for:
@@ -194,7 +211,8 @@ machine_tpm_passphrase_file_bytes: [principals.MACHINE_TPM_PASSPHRASE_FILE_SIZE]
 machine_refusals: u64 // The wrong machine passphrases and recovery keys since the start.
 // The machine key that a recovery key opened, until a new machine
 // passphrase seals it again by the TPM; erased then, or at Enter with
-// nothing.
+// nothing. Also a new machine key, while the window shows its recovery
+// key, until the write of its record after Enter.
 opened_machine_key: [principals.MACHINE_KEY_SIZE]u8
 
 // The TPM service: its ring and its region, when the root service gave
@@ -237,6 +255,9 @@ signing_public_key: [principals.PUBLIC_KEY_SIZE]u8
 unlock_public_key: [principals.PUBLIC_KEY_SIZE]u8
 // The secret keys that a recovery key, or the current passphrase of a
 // change, opened, until a new passphrase seals them again; erased then.
+// Also the keys of a new principal, while the window shows its recovery
+// key, until the write of its file and the start of its session after
+// Enter.
 opened_secrets: [principals.SECRET_KEYS_SIZE]u8
 // The file with the copy under a new recovery key, while the window shows
 // that key: it is written only after Enter, so a key that nobody saw never
@@ -895,9 +916,9 @@ machine_key_passes :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_
 
 // machine_seal_create makes a machine key sealed by the TPM: the key and a
 // recovery key from the generator of this program, the seal by the TPM
-// service, the copy under the recovery key, the record, and the key of the
-// table to the root service. It keeps the text of the recovery key for the
-// window, which shows it one time. It writes at most one record in a run.
+// service, the copy under the recovery key, and the record in memory. It
+// keeps the text of the recovery key for the window, which shows it one
+// time; the record is written after Enter (machine_key_sealed_commit).
 machine_seal_create :: proc "contextless" () -> bool {
 	machine_key: [principals.MACHINE_KEY_SIZE]u8
 	recovery_key: [principals.RECOVERY_KEY_SIZE]u8
@@ -937,19 +958,63 @@ machine_seal_create :: proc "contextless" () -> bool {
 		system.log("unlock: the record of the machine key sealed by the TPM does not decode: ", principals.machine_tpm_file_problem_sentences[problem])
 		return false
 	}
-	if _, status := storage.write(&client, storage.ROOT, principals.MACHINE_OBJECT, machine_tpm_file_bytes[:]); status != .Ok {
-		system.log("unlock: the store did not keep the record of the machine key: status ", u64(status))
-		return false
-	}
-	system.log("unlock: the machine key is sealed by the TPM to PCR 7 and PCR 11, with a copy under a recovery key, in the store of unlock; the window shows the recovery key one time")
+	// The record waits in memory until Enter: a stop before it (a lock, a
+	// close) leaves no record whose only recovery key nobody wrote down.
 	recovery_text = principals.recovery_key_text(&recovery_key)
-	// The record is on the disk now: this run never writes a second one, and
-	// the recovery key shows even when the root service does not take the
-	// key, as the record holds the copy under it.
-	if !machine_key_give(&machine_key, system.MACHINE_KEY_NEW) {
+	opened_machine_key = machine_key
+	pending_write = .Machine_Key_Sealed
+	system.log("unlock: the machine key is sealed by the TPM to PCR 7 and PCR 11, with a copy under a recovery key; the window shows the recovery key one time, and the record is written when it is written down")
+	return true
+}
+
+// machine_key_sealed_commit writes the record of the machine key sealed by
+// the TPM after Enter, when the recovery key is written down, and gives the
+// root service the key of the table. It writes at most one record in a run:
+// the window ends after it, whatever the result.
+machine_key_sealed_commit :: proc "contextless" () {
+	defer erase(opened_machine_key[:])
+	switch object_write(principals.MACHINE_OBJECT, machine_tpm_file_bytes[:]) {
+	case .Kept:
+		erase(recovery_text[:])
+	case .Not_Kept:
+		system.log("unlock: the store did not keep the record of the machine key; no machine key is sealed by the TPM")
+		write_failed()
+		return
+	case .Unknown:
+		write_unknown("unlock: the store gave no answer on the record of the machine key sealed by the TPM, and its read back failed: the record may be on the disk; the window shows the recovery key until Enter again, and the root service receives no key")
+		return
+	}
+	system.log("unlock: the record of the machine key sealed by the TPM is in the store of unlock: its recovery key is written down")
+	// The record holds the copy under the recovery key: a root service that
+	// does not take the key changes nothing of it.
+	if !machine_key_give(&opened_machine_key, system.MACHINE_KEY_NEW) {
 		system.log("unlock: the root service did not take the key of the new machine key; the record stays, and the TPM opens it at the next start")
 	}
-	return true
+	mode = .Done
+}
+
+// write_failed shows, until Enter, that the store did not keep a record or
+// a file whose recovery key the window showed: that key opens nothing, and
+// nothing is set.
+write_failed :: proc "contextless" () {
+	erase(recovery_text[:])
+	mode = .Write_Result
+	message, message_failed = "the store did not keep it: nothing is set; ask again", true
+}
+
+// write_unknown shows, until Enter again, that the store gave no answer on
+// a record or a file whose recovery key the window showed, and that its
+// read back failed: it may be on the disk, so its recovery key stays on the
+// screen, and the window never says that nothing is set. The root service
+// receives nothing in this run; the next start of unlock reads what the
+// disk holds.
+write_unknown :: proc "contextless" (line: string) {
+	system.log(line)
+	mode = .Write_Unknown
+	message, message_failed = "the record may be on the disk: keep this recovery key", true
+	if pending_write == .Principal_Created {
+		message = "the file may be on the disk: keep this recovery key"
+	}
 }
 
 // What the unseal at the start gave.
@@ -1138,9 +1203,9 @@ machine_tpm_passphrase_seal :: proc "contextless" (machine_key: ^[principals.MAC
 
 // machine_tpm_passphrase_create sets a machine passphrase that the TPM
 // seals the machine key with: the key and a recovery key from the generator
-// of this program, the copy under the recovery key, the seal, the record,
-// and the key of the tag to the root service. The window then shows the
-// recovery key one time. It writes at most one record in a run.
+// of this program, the copy under the recovery key, the seal, and the
+// record in memory. The window then shows the recovery key one time; the
+// record is written after Enter (machine_passphrase_commit).
 machine_tpm_passphrase_create :: proc "contextless" () {
 	machine_key: [principals.MACHINE_KEY_SIZE]u8
 	recovery_key: [principals.RECOVERY_KEY_SIZE]u8
@@ -1170,22 +1235,42 @@ machine_tpm_passphrase_create :: proc "contextless" () {
 	if !machine_tpm_passphrase_seal(&machine_key, &machine_tpm_passphrase_file, &machine_tpm_passphrase_file_bytes) {
 		return
 	}
-	if _, status := storage.write(&client, storage.ROOT, principals.MACHINE_OBJECT, machine_tpm_passphrase_file_bytes[:]); status != .Ok {
-		system.log("unlock: the store did not keep the record of the machine passphrase: status ", u64(status))
-		message, message_failed = "the store did not keep the record", true
+	// The record waits in memory until Enter: a stop before it (a lock of
+	// the session whose console asked, a close) leaves no record whose only
+	// recovery key nobody wrote down, and sets no machine passphrase.
+	recovery_text = principals.recovery_key_text(&recovery_key)
+	opened_machine_key = machine_key
+	pending_write = .Machine_Passphrase_Set
+	system.log("unlock: the window shows the recovery key of the new machine passphrase one time; the record is written when it is written down")
+	mode = .Recovery_Shown
+	message, message_failed = "write it down, then Enter: the passphrase is set then", false
+}
+
+// machine_passphrase_commit writes the record of the machine passphrase
+// sealed by the TPM after Enter, when the recovery key is written down, and
+// gives the root service the key of the table. It writes at most one record
+// in a run: the window ends after it, whatever the result.
+machine_passphrase_commit :: proc "contextless" () {
+	defer erase(opened_machine_key[:])
+	switch object_write(principals.MACHINE_OBJECT, machine_tpm_passphrase_file_bytes[:]) {
+	case .Kept:
+		erase(recovery_text[:])
+	case .Not_Kept:
+		system.log("unlock: the store did not keep the record of the machine passphrase; no machine passphrase is set")
+		write_failed()
+		return
+	case .Unknown:
+		write_unknown("unlock: the store gave no answer on the record of the machine passphrase, and its read back failed: the record may be on the disk; the window shows the recovery key until Enter again, and the root service receives no key")
 		return
 	}
 	machine_form = .Sealed_By_The_Tpm_With_Passphrase
-	system.log("unlock: the machine passphrase is set: the TPM seals the machine key with it, with a copy under a recovery key, in the store of unlock; the window shows the recovery key one time")
-	// The record is on the disk now: this run never writes a second one, and
-	// the recovery key shows even when the root service does not take the
-	// key, as the record holds the copy under it.
-	recovery_text = principals.recovery_key_text(&recovery_key)
-	if !machine_key_give(&machine_key, system.MACHINE_KEY_NEW) {
+	system.log("unlock: the machine passphrase is set: the TPM seals the machine key with it, with a copy under a recovery key, in the store of unlock")
+	// The record holds the copy under the recovery key: a root service that
+	// does not take the key changes nothing of it.
+	if !machine_key_give(&opened_machine_key, system.MACHINE_KEY_NEW) {
 		system.log("unlock: the root service did not take the key of the new machine passphrase; the record stays, and its passphrase opens it at the next start")
 	}
-	mode = .Recovery_Shown
-	message, message_failed = "write it down: it opens the machine key when the TPM refuses", false
+	mode = .Done
 }
 
 // machine_tpm_passphrase_try opens a machine key that the TPM seals with
@@ -1360,9 +1445,10 @@ principal_tpm_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE
 
 // create_sealed_by_the_tpm makes a new principal whose keys the TPM seals
 // with its passphrase: the keys and a recovery key from the generator of
-// this program, the copy under the recovery key, the seal, the file, the
-// record in the root service and the session. The window then shows the
-// recovery key one time. It writes at most one file in a run.
+// this program, the copy under the recovery key, the seal, and the file in
+// memory. The window then shows the recovery key one time; the file, the
+// record in the root service and the session come after Enter
+// (principal_created_commit).
 create_sealed_by_the_tpm :: proc "contextless" () {
 	secrets: [principals.SECRET_KEYS_SIZE]u8
 	recovery_key: [principals.RECOVERY_KEY_SIZE]u8
@@ -1401,23 +1487,50 @@ create_sealed_by_the_tpm :: proc "contextless" () {
 	if !principal_tpm_seal(&secrets, &principal_tpm_file, &principal_tpm_file_bytes) {
 		return
 	}
-	if _, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, principal_tpm_file_bytes[:]); status != .Ok {
-		system.log("unlock: the store did not keep the file of the principal: status ", u64(status))
-		message, message_failed = "the store did not keep the principal", true
+	// The file waits in memory until Enter, and the keys with it, as the
+	// session needs the key of its disk grant table: a stop before Enter
+	// leaves no principal whose only recovery key nobody wrote down.
+	recovery_text = principals.recovery_key_text(&recovery_key)
+	opened_secrets = secrets
+	pending_write = .Principal_Created
+	system.log("unlock: the keys of the new principal \"", the_name(), "\" are sealed by the TPM with its passphrase, with a copy under a recovery key; the window shows the recovery key one time, and the principal is created when it is written down")
+	mode = .Principal_Recovery_Shown
+	message, message_failed = "write it down, then Enter: the principal is created then", false
+}
+
+// principal_created_commit writes the file of a new principal sealed by
+// the TPM after Enter, when its recovery key is written down, then gives
+// the record to the root service and starts the session. It writes at most
+// one file in a run: the window ends after it, whatever the result, and
+// the keys are erased.
+principal_created_commit :: proc "contextless" () {
+	defer erase(opened_secrets[:])
+	switch principal_file_write(principal_tpm_file_bytes[:]) {
+	case .Kept:
+		erase(recovery_text[:])
+	case .Not_Kept:
+		system.log("unlock: the store did not keep the file of the principal; no principal is created")
+		write_failed()
+		return
+	case .Unknown:
+		write_unknown("unlock: the store gave no answer on the file of the new principal, and its read back failed: the file may be on the disk; the window shows the recovery key until Enter again, and the root service receives no record")
 		return
 	}
-	// The file is on the disk now: this run never writes a second one, and
-	// the recovery key shows even when the root service does not take the
-	// record, as the file holds the copy under it.
-	recovery_text = principals.recovery_key_text(&recovery_key)
-	if record_give() {
-		system.log("unlock: principal ", number, " \"", the_name(), "\" is created: its keys are sealed by the TPM with its passphrase, with a copy under a recovery key; the window shows the recovery key one time")
-		session_start(&secrets, system.PRINCIPAL_KEY_NEW)
-	} else {
+	// The file holds the copy under the recovery key: a root service that
+	// does not take the record changes nothing of it.
+	if !record_give() {
 		system.log("unlock: the root service did not take the record of the new principal; its file stays, and its passphrase opens it at the next start")
+		mode = .Done
+		return
 	}
-	mode = .Principal_Recovery_Shown
-	message, message_failed = "write it down: it opens the keys when the TPM refuses", false
+	system.log("unlock: principal ", number, " \"", the_name(), "\" is created: its keys are sealed by the TPM with its passphrase, with a copy under a recovery key")
+	session_start(&opened_secrets, system.PRINCIPAL_KEY_NEW)
+	// The keys are erased now: a session that did not start starts at the
+	// next start of unlock, which reads the file.
+	if mode != .Done {
+		system.log("unlock: the session of principal ", number, " did not start after its creation; the next start of unlock asks for its passphrase")
+		mode = .Done
+	}
 }
 
 // principal_tpm_open opens the keys of a principal whose file the TPM
@@ -1658,25 +1771,32 @@ change_end :: proc "contextless" (end: principals.Change_End, problem: principal
 	message_failed = end != .Passphrase_Changed && end != .Recovery_Key_Changed
 }
 
-// What a write of the file of the principal gave.
+// What a write of the file of the principal, or of the record of the
+// machine key, gave.
 Write_Outcome :: enum u8 {
-	Kept, // The store holds the new file.
-	Not_Kept, // The store holds the file from before.
-	Unknown, // The store did not answer, and the file could not be read back.
+	Kept, // The store holds the new object.
+	Not_Kept, // The store holds the object from before, or none.
+	Unknown, // The store did not answer, and the object could not be read back.
 }
 
-// principal_file_write writes a new file of the principal. A write whose
-// answer failed can still be on the disk: the file is read back and
-// compared, so the window never says that a secret is not kept when the
-// disk holds it.
+// principal_file_write writes a new file of the principal (object_write).
 principal_file_write :: proc "contextless" (bytes: []u8) -> Write_Outcome {
-	_, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, bytes)
+	return object_write(principals.FILE_OBJECT, bytes)
+}
+
+// object_write writes an object of the store of unlock: the file of the
+// principal or the record of the machine key. A write whose answer failed
+// can still be on the disk (a storage service that stops after its commit
+// and before its answer): the object is read back and compared, so the
+// window never says that a secret is not kept when the disk holds it.
+object_write :: proc "contextless" (object: string, bytes: []u8) -> Write_Outcome {
+	_, status := storage.write(&client, storage.ROOT, object, bytes)
 	if status == .Ok {
 		return .Kept
 	}
-	system.log("unlock: the store did not answer the write of the file of principal ", number, ": status ", u64(status), "; the file is read back")
-	buffer: [principals.PRINCIPAL_FILE_LIMIT + 1]u8
-	read, found, read_status := storage.read(&client, storage.ROOT, principals.FILE_OBJECT, buffer[:])
+	system.log("unlock: the store did not answer the write of the object \"", object, "\": status ", u64(status), "; the object is read back")
+	buffer: [max(principals.PRINCIPAL_FILE_LIMIT, principals.MACHINE_RECORD_LIMIT) + 1]u8
+	read, found, read_status := storage.read(&client, storage.ROOT, object, buffer[:])
 	if read_status != .Ok {
 		return .Unknown
 	}
@@ -1853,6 +1973,14 @@ machine_seal_sentence :: proc "contextless" () -> string {
 			form = .Sealed_By_The_Tpm_With_Passphrase
 		}
 	}
+	// A new record waits for Enter: the store holds no record yet, and the
+	// window says the form of the one that it shows the recovery key of.
+	#partial switch pending_write {
+	case .Machine_Passphrase_Set:
+		form = .Sealed_By_The_Tpm_With_Passphrase
+	case .Machine_Key_Sealed:
+		form = .Sealed_By_The_Tpm
+	}
 	switch form {
 	case .Sealed_By_The_Tpm:
 		return "sealed by the TPM to PCR 7 and 11, with a copy for recovery"
@@ -1971,6 +2099,19 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	case .Change_Result:
 		prompt = "change  "
 		enter_name, clears = "done", false
+	case .Write_Result:
+		if pending_write != .Principal_Created {
+			label, subject = "machine key  ", "principal 0"
+		}
+		prompt = "write  "
+		enter_name, clears = "done", false
+	case .Write_Unknown:
+		label = "keys sealed by the TPM  "
+		if pending_write != .Principal_Created {
+			label, subject = "machine key  ", "principal 0"
+		}
+		prompt = "recovery key  "
+		enter_name, clears = "done", false
 	}
 	x := interface.draw_text(table, 12, 12, label, graphics.colors.dim)
 	interface.draw_text(table, x, 12, subject, graphics.colors.text)
@@ -1988,14 +2129,14 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		of_the_principal_tpm = has_tpm && seal_allowed
 	}
 	#partial switch mode {
-	case .Recovery_Shown, .Principal_Recovery_Shown:
+	case .Recovery_Shown, .Principal_Recovery_Shown, .Write_Unknown:
 		// The recovery key, in the font of the cells: 39 cells of 8 pixels
 		// after a prompt of 14 cells fit in the window. Its element name
 		// gives a machine test its place.
 		shown := string(recovery_text[:])
 		interface.draw_text(table, x, 48, shown, graphics.colors.text)
 		interface.element_name(&frame, {x, 48, len(shown) * graphics.CELL_WIDTH, graphics.CELL_HEIGHT}, "recovery_key")
-	case .Change_Result, .Machine_Reseal_Result:
+	case .Change_Result, .Machine_Reseal_Result, .Write_Result:
 		// Nothing is typed: the sentence of the end is the message below.
 	case .Machine_Recovery, .Principal_Recovery:
 		// The recovery key typed is drawn: it is copied from paper, and its
@@ -2015,6 +2156,9 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		interface.draw_text(table, 12, 84, message, message_failed ? graphics.colors.failed : graphics.colors.program)
 	}
 	switch {
+	case mode == .Write_Result || mode == .Write_Unknown:
+		// The store holds no seal, or one that is not known: a sentence on
+		// a seal would say what the disk may not hold.
 	case of_the_machine:
 		interface.draw_text(table, 12, 116, machine_seal_sentence(), graphics.colors.dim)
 	case of_the_principal_tpm:
@@ -2103,17 +2247,41 @@ enter :: proc "contextless" (window: ^display.Window) {
 		draw(window)
 		principal_recovery_try()
 	case .Recovery_Shown, .Principal_Recovery_Shown:
-		// Its user wrote the recovery key down: it is erased, and never
-		// shown again. In a change, the file is written now.
+		// Its user wrote the recovery key down. The file or the record that
+		// holds the copy under it is written only now. The key is erased
+		// unless the write is not known: then it stays on the screen.
+		message, message_failed = "writing", false
+		draw(window)
 		if mode == .Principal_Recovery_Shown && change_mode == principals.MODE_NEW_RECOVERY_KEY {
-			message, message_failed = "writing the file", false
-			draw(window)
+			erase(recovery_text[:])
 			recovery_key_commit()
 		} else {
-			erase(recovery_text[:])
-			mode = .Done
+			// The line that a machine test waits for in order: nothing is
+			// written, and nothing reaches the root service, before it.
+			if pending_write != .None {
+				system.log("unlock: Enter on the recovery key: it is written down, and the record or the file that holds its copy is written now")
+			}
+			// pending_write stays: the screen of a failed write names what
+			// was not written.
+			switch pending_write {
+			case .Principal_Created:
+				principal_created_commit()
+			case .Machine_Passphrase_Set:
+				machine_passphrase_commit()
+			case .Machine_Key_Sealed:
+				machine_key_sealed_commit()
+			case .None:
+				erase(recovery_text[:])
+				mode = .Done
+			}
 		}
-	case .Change_Result:
+	case .Change_Result, .Write_Result:
+		mode = .Done
+	case .Write_Unknown:
+		// The owner read that the record may be on the disk, and kept the
+		// recovery key: it is erased now, and the next start of unlock
+		// reads what the disk holds.
+		erase(recovery_text[:])
 		mode = .Done
 	case .Machine_Reseal_Result:
 		// The owner read why the key is not sealed again: the window goes
@@ -2273,12 +2441,15 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 //   no record "machine", it asks for a passphrase two times, makes the
 //   machine key, seals it, and gives the root service the key of the tag.
 //   With the TPM service and Secure Boot on, the TPM seals the key with the
-//   passphrase, and the window shows a recovery key until Enter.
+//   passphrase, and the window shows a recovery key until Enter, before the
+//   record is written.
 // - **Seal the machine key** (`MODE_SEAL_MACHINE_KEY`): with the TPM
 //   service and no record "machine", it makes the machine key and a
-//   recovery key, has the TPM service seal the key, writes the record, gives
-//   the root service the key of the tag, and shows the recovery key until
-//   Enter.
+//   recovery key, has the TPM service seal the key, and shows the recovery
+//   key until Enter; then it writes the record and gives the root service
+//   the key of the tag. Each window that shows a new recovery key writes
+//   its record or its file only after Enter: a stop before it (a lock, a
+//   close) leaves the disk as it was.
 // - **Change the passphrase** (`MODE_CHANGE_PASSPHRASE`) or **make a new
 //   recovery key** (`MODE_NEW_RECOVERY_KEY`) of the principal whose
 //   session runs: it reads the file, asks for the current passphrase,
@@ -2354,7 +2525,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.stop(1)
 		}
 		mode = .Recovery_Shown
-		message = "write it down: it opens the machine key when the TPM refuses"
+		message = "write it down, then Enter: the record is written then"
 	case principals.MODE_CREATE_PRINCIPAL:
 		name, name_length = principals.name_unpack({ctx.values[principals.VALUE_NAME], ctx.values[principals.VALUE_NAME + 1], ctx.values[principals.VALUE_NAME + 2]})
 		if principals.name_problem(the_name()) != .None {

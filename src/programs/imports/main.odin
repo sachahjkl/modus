@@ -31,6 +31,13 @@
 // the unload of a module with its imports, and one copy of the code of
 // `calendar` for two loads.
 //
+// **The module record of its starter.** The root service wrote the module
+// record of this program. The program tries to remove it, to replace it with
+// the hash of `agenda`, to unmap its first segment and to map memory at its
+// base: the kernel refuses each change with `No_Right` and the error kind
+// `Starter_Module`. A module that the program loads itself has a record of
+// the writer `program` (src/md/features/module_record_writer.md).
+//
 // **The replacements of the machine** apply to its own import of
 // `calendar`: after `replace("calendar", "calendar_fixed")` in the console,
 // a new start of `imports` finds 29 days in February 2000 in its last row,
@@ -42,6 +49,7 @@
 package imports
 
 import "base:intrinsics"
+import "modus:contract/errors"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -69,7 +77,7 @@ LEFT :: 12
 // cases.
 ANSWER_X :: 54 * graphics.CELL_WIDTH
 WIDTH :: 976
-CASE_CAPACITY :: 12
+CASE_CAPACITY :: 13
 CASES_Y :: 12 + 3 * LINE + LINE / 2 // Under the two lines of the head and the titles of the two columns.
 // The room of the cases: each case, six lines more for the answers that
 // are sentences of two lines (docs/INTERFACE.md, "The text in a box").
@@ -77,7 +85,7 @@ CASES_HEIGHT :: CASE_CAPACITY * LINE + 6 * graphics.LINE_HEIGHT
 MEASURES_Y :: CASES_Y + CASES_HEIGHT + LINE + LINE / 2 // Under the line that counts the cases with no room.
 // A literal, because the tool counts the pictures of the window from it;
 // the assertion keeps it equal to its layout.
-HEIGHT :: 560
+HEIGHT :: 582
 #assert(HEIGHT == MEASURES_Y + 3 * LINE + 12)
 // A line of a measure is a text of at most 112 bytes in the font of the cells.
 #assert(112 * graphics.CELL_WIDTH <= WIDTH - 2 * LEFT)
@@ -211,9 +219,9 @@ measure_binds :: proc "contextless" (space: ^system.Module_Space, place: int) ->
 	return system.cycles() - start
 }
 
-// own_replaced says if the loader of this program gave it a module in place
-// of an import: the module records that the kernel keeps for it.
-own_replaced :: proc "contextless" () -> (replaced: bool, found: bool) {
+// own_modules reads the module records that the kernel keeps for this
+// program into module_report. false: no program of this name runs.
+own_modules :: proc "contextless" () -> bool {
 	report: op.System_Report
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
 	for slot in 1 ..< report.program_slots {
@@ -222,16 +230,86 @@ own_replaced :: proc "contextless" () -> (replaced: bool, found: bool) {
 		if system.name_of(program.name[:]) != "imports" || program.state == .None || program.state == .Stopped {
 			continue
 		}
-		modules := &module_report
-		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Modules), slot, u64(uintptr(modules)), size_of(modules^))
-		for item in modules.modules[:modules.count] {
-			replaced ||= item.replaces != {}
-		}
-		return replaced, true
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Modules), slot, u64(uintptr(&module_report)), size_of(module_report))
+		return true
 	}
-	return false, false
+	return false
 }
 module_report: op.Module_Report
+
+// own_replaced says if the loader of this program gave it a module in place
+// of an import: the module records that the kernel keeps for it.
+own_replaced :: proc "contextless" () -> (replaced: bool, found: bool) {
+	if !own_modules() {
+		return false, false
+	}
+	for item in module_report.modules[:min(module_report.count, op.PROGRAM_MODULE_CAPACITY)] {
+		replaced ||= item.replaces != {}
+	}
+	return replaced, true
+}
+
+// The changes of the module record of this program that the program tries:
+// a removal, a replacement with another hash, an unmap of its first segment
+// and a map at its base.
+STARTER_CHANGES :: 4
+
+// What the program finds of the module records of its starter.
+Starter_Records :: struct {
+	refused:        u64, // The changes refused with No_Right and the error kind Starter_Module.
+	program_writer: op.Module_Writer, // The writer of the record of this program.
+	program_found:  bool,
+	own_writer:     op.Module_Writer, // The writer of the record of calendar, loaded by this program.
+	own_found:      bool,
+	released:       bool, // The program removed the record of its own load.
+}
+
+// starter_records_check tries each change of the record that the root
+// service wrote for the module of this program, then loads calendar in a
+// space of its own, reads the writer of both records from the report of the
+// kernel, and unloads calendar.
+starter_records_check :: proc "contextless" () -> (found: Starter_Records) {
+	refused_by_starter_module :: proc "contextless" (refusal_status: system.Status, refusal: ^errors.Error_Record) -> u64 {
+		return refusal_status == .No_Right && errors.Kind(refusal.kind) == .Starter_Module ? 1 : 0
+	}
+	own_file := system.image_find(image, "imports")
+	head, _ := module.header(own_file)
+	error: errors.Error_Record
+	removal := op.Module_Record{base = op.PROGRAM_BASE}
+	_, status := system.call_with_error(&error, .Program_Module, 0, u64(uintptr(&removal)))
+	found.refused += refused_by_starter_module(status, &error)
+	forged := op.Module_Record{base = op.PROGRAM_BASE, size = head.memory_size, hash = hash_of("agenda")}
+	_, status = system.call_with_error(&error, .Program_Module, 0, u64(uintptr(&forged)))
+	found.refused += refused_by_starter_module(status, &error)
+	segment, _ := module.record(own_file, .Segments, 1, module.Segment)
+	_, status = system.call_with_error(&error, .Memory_Unmap, 0, op.PROGRAM_BASE + segment.memory_offset)
+	found.refused += refused_by_starter_module(status, &error)
+	if memory_object, created := system.memory_create(1); created == .Ok {
+		_, status = system.call_with_error(&error, .Memory_Map, u64(memory_object), 0, op.PROGRAM_BASE, 0, 0, 1)
+		found.refused += refused_by_starter_module(status, &error)
+		system.close(memory_object)
+	}
+
+	space := space_of(7, nil)
+	load_error: module.Load_Error
+	place, loaded := system.module_space_load(&space, system.image_find(image, "calendar"), &load_error)
+	if !loaded {
+		return found
+	}
+	own_base := space.modules[place].base
+	if own_modules() {
+		for item in module_report.modules[:min(module_report.count, op.PROGRAM_MODULE_CAPACITY)] {
+			if item.base == op.PROGRAM_BASE {
+				found.program_writer, found.program_found = item.writer, true
+			}
+			if item.base == own_base {
+				found.own_writer, found.own_found = item.writer, true
+			}
+		}
+	}
+	found.released = system.module_space_release(&space, place, &load_error)
+	return found
+}
 
 // The random generator of this program (src/library/support/random).
 program_generator: random.Generator
@@ -382,6 +460,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	own_days := days_in_month(2, 2000)
 	own, found := own_replaced()
 	note("this program: days_in_month(2, 2000)", found && own_days == (own ? 29 : 28), own_days, own ? ": the root service gave calendar_fixed" : ": calendar, no replacement")
+
+	// 9. The module record that the root service wrote for this program:
+	// the program cannot change it. Its own load is a record of its own.
+	starter := starter_records_check()
+	starter_right := starter.refused == STARTER_CHANGES && starter.program_found && starter.program_writer == .Starter && starter.own_found && starter.own_writer == .Program && starter.released
+	note("the module record of the root service", starter_right, starter.refused, " of ", u64(STARTER_CHANGES), " changes refused; calendar loaded here: ", op.module_writer_name(starter.own_writer))
+	system.log("imports: the module record of the root service: ", starter.refused, " of ", u64(STARTER_CHANGES), " changes refused with Starter_Module, writer ", op.module_writer_name(starter.program_writer), "; calendar, loaded by this program: writer ", op.module_writer_name(starter.own_writer))
 
 	wrong: u64
 	for item in cases[:case_count] {

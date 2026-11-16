@@ -180,6 +180,7 @@ Step :: struct {
 	element:    string, // For Click_Element and Wheel: the element name ("watch", "frame 0", "round_robin").
 	notches:    int, // For Wheel: the notches of the wheel, in NOTCH_TOWARD_THE_END.
 	form:       string, // For Point: the pointer form that compositor.pointer() must also report, "dark" or "light" (docs/POINTERS.md).
+	shown_only: bool, // For Screen_Text: the text must be read off the screen, and is not kept: the step proves that a window shows it, and a later step still types the texts kept before.
 }
 
 // The two clocks agree to whole seconds: the machine reads its real-time
@@ -2340,7 +2341,11 @@ scenario := [?]Step {
 	// replacements of the machine when it starts it.
 	{kind = .Launch, text = "imports"},
 	{kind = .Wait, text = "compositor: surface imports", any_order = true},
-	{kind = .Wait, text = "imports: ok, 12 cases"},
+	// A program cannot change the module record that its starter wrote:
+	// not remove it, not replace it, not unmap or map at its addresses. Its
+	// own load is a record of the writer program.
+	{kind = .Wait, text = "imports: the module record of the root service: 4 of 4 changes refused with Starter_Module, writer starter; calendar, loaded by this program: writer program"},
+	{kind = .Wait, text = "imports: ok, 13 cases"},
 	{kind = .Wait, text = "imports: a call through an import slot: "},
 	{kind = .Wait, text = "imports: the bind of agenda: "},
 	{kind = .Wait, text = "imports: two programs import calendar at two places: one copy of its code, "},
@@ -3020,9 +3025,18 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface_font: one line of "},
 	{kind = .Wait, text = "interface_font: ok, ", any_order = true},
 	{kind = .Wait, text = "interface_font: each Greek letter of the subset is drawn from the demand cache: ", fails_on = "interface_font: not each Greek letter of the subset"},
+	// Then it asks for letters of the subset with no end: the font service
+	// holds its requests past its budget until the end of the window, says
+	// it once, and answers each request after it (docs/FONTS.md, "13.
+	// Glyphs drawn on demand").
+	{kind = .Wait, text = "glyphs: interface_font passed its budget of ", fails_on = "interface_font: the requests past the budget of this program are not held as they must be: "},
+	{kind = .Wait, text = "interface_font: the requests past the budget of this program wait until the end of its window, and each one is answered: as it must", fails_on = "interface_font: the requests past the budget of this program are not held as they must be: "},
 	{kind = .Shot, text = "interface_font"},
 	{kind = .Close, text = "interface_font"},
-	{kind = .Wait, text = "root: interface_font stopped"},
+	// The stop of a program that passed its budget writes its totals: no
+	// character outside the subset, and no answer lost.
+	{kind = .Wait, text = "root: interface_font stopped", any_order = true},
+	{kind = .Wait, text = "glyphs: interface_font stopped: it asked for 0 characters outside the subset, 0 refused; 0 answers did not fit its ring; it passed its budget in "},
 	// The pointer pictures (docs/POINTERS.md): the shape that the compositor
 	// chooses for what is under the pointer, and the shape that a program
 	// asks for over its own surface. The window of pointers shows each
@@ -4306,7 +4320,9 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			element_wheel(machine, step.text, step.element, step.notches, index) or_return
 		case .Screen_Text:
 			read := screen_text_read(machine, step.text, step.element, index) or_return
-			screen_text_keep(read)
+			if !step.shown_only {
+				screen_text_keep(read)
+			}
 		case .Click, .Drag, .Launch, .Move, .Close:
 			step := step
 			moved_title: string

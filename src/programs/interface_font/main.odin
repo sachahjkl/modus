@@ -28,7 +28,12 @@
 // subset (demand_cache.interface_subset_ranges). The first frame where no letter
 // waits writes `interface_font: each Greek letter of the subset is drawn
 // from the demand cache: <n> letters`, n the count of the subset, or `not
-// each Greek letter ...` with the counts of that frame. With no valid
+// each Greek letter ...` with the counts of that frame. After that line,
+// it asks the font service for letters of the subset with no end, past
+// its budget of requests, and writes `interface_font: the requests past
+// the budget of this program wait until the end of its window, and each
+// one is answered: as it must`, or `interface_font: the requests past the
+// budget of this program are not held as they must be: ...`. With no valid
 // glyph cache in the boot image, it writes
 // `interface_font: the boot image gives no valid cache of the interface
 // font`.
@@ -39,6 +44,7 @@ package interface_font
 
 import "modus:contract/demand_cache"
 import "modus:contract/glyph_cache"
+import "modus:contract/ring"
 import "modus:contract/text_encoding"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -85,6 +91,7 @@ demand_given: bool
 greek_spacing: text_shaping.Spacing // The regular weight at scale 1, with the demand cache.
 greek_character_count: u64 // The characters of GREEK past the glyph cache, each once.
 greek_drawn_told: bool // The line of the Greek letters drawn is on the log.
+budget_case_due: bool // Each Greek letter is drawn: the case of the budget of requests runs once, after this frame.
 
 // One line of B612 drawn into a canvas of its own: the enlarged word, and
 // the measure of the time of one line.
@@ -273,9 +280,105 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// holds when each one is drawn, and names no count of its own.
 	if drawn == u64(demand_cache.subset_count(.Interface)) && drawn == greek_character_count && absent == 0 && waiting == 0 {
 		system.log("interface_font: each Greek letter of the subset is drawn from the demand cache: ", drawn, " letters")
+		budget_case_due = true
 	} else {
 		system.log_in("programs", .Warning, "interface_font: not each Greek letter of the subset is drawn from the demand cache: ", drawn, " drawn of ", u64(demand_cache.subset_count(.Interface)), ", ", absent, " absent, ", waiting, " refused")
 	}
+}
+
+// budget_case asks the font service for letters of the subset with no
+// end (docs/FONTS.md, "13.2.4 The budget of requests of a program"). The
+// service must hold the requests past the budget until the end of the
+// window that it named, then answer each request: none is dropped. A
+// window must hold no more than its budget: the answer of the first
+// request after a hold is the first of a new window, and the answer that
+// names the end of that window must be the answer number REQUEST_BUDGET
+// from it. The letters are in the cache, so the case adds no entry and no
+// other line of the service. At most a ring of requests waits for its
+// answer, so each answer fits the ring. The case keeps the loop of the
+// window from its events for at least one window: it runs after the frame
+// that the picture of the test shows.
+budget_case :: proc "contextless" (demand: ^display.Demand) {
+	FAULT :: "interface_font: the requests past the budget of this program are not held as they must be: "
+	letters: [demand_cache.CHARACTERS_PER_REQUEST]rune
+	for &letter, index in letters {
+		letter = demand_cache.interface_subset_ranges[0].first + rune(index)
+	}
+	sent, answered: u64
+	window_end: u64 // The end of the window that the last answer named.
+	passes: u64 // The count of the passes of the last answer.
+	// The answers of the window that started after a hold, from its first;
+	// counting is false outside such a window.
+	counting := false
+	window_answers: u64
+	window_first_answer_time: u64 // The time at which the first answer of that window came.
+	verified := false // One whole window after a hold had its budget of answers.
+	hang_end := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for {
+		wait := system.wait_begin()
+		if !verified {
+			pushed := false
+			for sent - answered < ring.CAPACITY {
+				record, _ := demand_cache.request_pack(letters[:], u32(sent + 1))
+				if !ring.push(&demand.requests.commands, record) {
+					break
+				}
+				sent += 1
+				pushed = true
+			}
+			if pushed {
+				system.wake_reader(&demand.requests.commands)
+			}
+		}
+		for _ in 0 ..< system.records_of_turn(&demand.requests.completions) {
+			answer := system.receive(&demand.requests.completions) or_break
+			answered += 1
+			// The same counter of milliseconds as the time of the service.
+			now := system.time()
+			if count := answer.values[demand_cache.ANSWER_BUDGET_PASSED]; count > passes {
+				// The service read this request after a hold: at or after
+				// the end of the window before, and as the first of a new
+				// window.
+				passes = count
+				if window_end == 0 || now < window_end {
+					system.log_in("programs", .Warning, FAULT, "an answer past the budget came at ", now, " ms, before the end of its window at ", window_end, " ms")
+					return
+				}
+				if !verified {
+					counting = true
+					window_answers = 0
+					window_first_answer_time = now
+				}
+			}
+			if counting {
+				window_answers += 1
+			}
+			if end := answer.values[demand_cache.ANSWER_BUDGET_WINDOW_END]; end != 0 {
+				window_end = end
+				// The window that this answer ends started with the first
+				// answer that the case counts, only if it started before
+				// that answer came. Else that window did not spend its
+				// budget, and a later hold starts the count again.
+				if counting && end - demand_cache.REQUEST_BUDGET_WINDOW_MILLISECONDS <= window_first_answer_time {
+					if window_answers != demand_cache.REQUEST_BUDGET {
+						system.log_in("programs", .Warning, FAULT, "a window had ", window_answers, " answers; its budget is ", u64(demand_cache.REQUEST_BUDGET))
+						return
+					}
+					verified = true
+				}
+				counting = false
+			}
+		}
+		if verified && answered >= sent {
+			break
+		}
+		system.wait_records(&wait, &demand.requests.completions)
+		if system.wait_end(&wait, hang_end) >= hang_end {
+			system.log_in("programs", .Warning, FAULT, "no answer before the hang bound: ", sent, " requests sent, ", answered, " answered, ", passes, " passes, a whole window counted: ", verified ? "yes" : "no")
+			return
+		}
+	}
+	system.log("interface_font: the requests past the budget of this program wait until the end of its window, and each one is answered: as it must")
 }
 
 // measure gives the least time of one line in batches, so that a batch
@@ -338,6 +441,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	draw(&window)
 	system.log("interface_font: ok, B612 Regular and Bold, ", u64(regular_cache.header.pair_count), " and ", u64(bold_cache.header.pair_count), " pairs")
 	for {
+		if budget_case_due {
+			budget_case_due = false
+			budget_case(&demand)
+		}
 		// The input of the window, and the answers of the font service:
 		// each one gives a frame, which never waits for the service.
 		list: system.Wait

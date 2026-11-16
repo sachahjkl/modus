@@ -19,6 +19,11 @@ import "base:intrinsics"
 // service to a service is made for one row and one serial (Root_Command.
 // Connect); when the serial of the row is no longer that one, the grant
 // that the connection carried ended.
+//
+// The table lasts until the machine stops. The disk grant table of each
+// principal keeps its keys across a restart (modus:support/disk_program),
+// and the root service gives each of them a row again, with a new serial,
+// after the read of that table.
 
 // The handle of the context of the remote service: the client table, one
 // page, with the right Read.
@@ -30,6 +35,11 @@ CLIENT_CAPACITY :: 8
 // The rows of one principal at most: one principal that allows many keys
 // leaves rows to the others. Remote_Client refuses one more with Full.
 CLIENT_ROWS_OF_ONE_PRINCIPAL :: CLIENT_CAPACITY / 2
+// The places that a read of the client keys of one principal names
+// (Root_Command.Remote_Client): the rows of the client table, then the keys
+// of the disk grant table of the principal, which keeps
+// CLIENT_ROWS_OF_ONE_PRINCIPAL keys at most.
+CLIENT_READ_PLACES :: CLIENT_CAPACITY + CLIENT_ROWS_OF_ONE_PRINCIPAL
 
 // One row of the client table. A row with a serial of 0 is free.
 Client :: struct {
@@ -37,6 +47,10 @@ Client :: struct {
 	principal:      u64, // The principal that allowed the key: each call of the client acts for it.
 	serial:         u64, // The grant: a new value at each allow, lock and unlock. 0: the row is free.
 	session_locked: u64, // 1 while the session of the principal is locked: the key opens no connection, and an open one ends.
+	// The other principal whose disk grant table also holds the key, plus
+	// one; 0: none. A contested row holds no grant for either principal,
+	// until one of them revokes the key.
+	contested:      u64,
 }
 
 // The client table, in one page that the root service writes.
@@ -96,10 +110,45 @@ client_find :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u
 
 // client_grant_holds says if the row at place of a copy of the table still
 // carries the grant with this serial: the same row, not freed and not
-// given again, and a session of its principal that is not locked.
+// given again, a session of its principal that is not locked, and a key
+// that no other principal holds.
 client_grant_holds :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, place: int, serial: u64) -> bool {
 	if place < 0 || place >= CLIENT_CAPACITY || serial == 0 {
 		return false
 	}
-	return clients[place].serial == serial && clients[place].session_locked == 0
+	return clients[place].serial == serial && clients[place].session_locked == 0 && clients[place].contested == 0
+}
+
+// What the root service does with a client key of the disk grant table of
+// a principal, after the read of that table or the end of a grant: the
+// result of client_restore_decision.
+Client_Restore :: enum u8 {
+	Holds, // The principal has the row of the key already.
+	Take_Row, // No row has the key: the principal takes the free row at place.
+	Contest, // Another principal has the row at place: the key holds for neither, and the row becomes contested.
+	Contested, // The row at place is contested already.
+	No_Free_Row, // No row has the key, and no row is free.
+}
+
+// client_restore_decision decides for one key of the disk grant table of
+// principal. One key acts for one principal: when another principal allowed
+// the same key, the key holds for neither of them, as a call would else act
+// for a principal that the device of the client was not given to.
+client_restore_decision :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u8, principal: u64) -> (action: Client_Restore, place: int) {
+	holder := client_find(clients, key)
+	if holder >= 0 {
+		if clients[holder].principal == principal {
+			return .Holds, holder
+		}
+		if clients[holder].contested == 0 {
+			return .Contest, holder
+		}
+		return .Contested, holder
+	}
+	for client, free in clients^ {
+		if client.serial == 0 {
+			return .Take_Row, free
+		}
+	}
+	return .No_Free_Row, -1
 }
