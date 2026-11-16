@@ -1870,6 +1870,14 @@ machine_recovery_offered :: proc "contextless" () -> bool {
 	return mode == .Machine_Unlock && machine_form == .Sealed_By_The_Tpm_With_Passphrase && has_tpm
 }
 
+// principal_recovery_offered says if the window offers the recovery key of
+// the named principal with Ctrl+R: its passphrase is asked for an unlock,
+// and the TPM seals the keys with it. A change does not offer it: the
+// recovery key is no proof of a change.
+principal_recovery_offered :: proc "contextless" () -> bool {
+	return mode == .Unlock && principals.recovery_key_offered_at_unlock(principal_form, has_tpm)
+}
+
 // machine_passphrase_back says if Enter with nothing at the recovery key of
 // the machine key goes back to the machine passphrase, as for a named
 // principal: the TPM seals the key with the passphrase and runs, so after a
@@ -2026,9 +2034,10 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	item_count := 0
 	items[item_count] = interface.action_bar_item(enter_name, 2, "Enter")
 	item_count += 1
-	// A lost machine passphrase reaches its recovery key with no wrong try:
-	// each wrong try counts in the TPM, against a named principal too.
-	if machine_recovery_offered() {
+	// A lost passphrase reaches its recovery key with no wrong try: each
+	// wrong try counts in the TPM, against the machine passphrase and each
+	// named principal together.
+	if machine_recovery_offered() || principal_recovery_offered() {
 		items[item_count] = interface.action_bar_item("recovery key", 1, "Ctrl", "r")
 		item_count += 1
 	}
@@ -2521,14 +2530,22 @@ key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Pre
 			typed_count = kept
 		}
 	case (press.modifiers & display.MODIFIER_CONTROL) != 0 && (press.character == 'r' || press.character == 'R'):
-		// Ctrl+R asks for the recovery key of the machine key with no try
-		// of the machine passphrase, which the TPM would count. It types
-		// nothing in any mode.
-		if machine_recovery_offered() {
+		// Ctrl+R asks for a recovery key with no try of the passphrase,
+		// which the TPM would count. It types nothing in any mode.
+		switch {
+		case machine_recovery_offered():
 			erase(typed[:])
 			typed_count = 0
 			system.log("unlock: the recovery key of the machine key is asked in the window: the TPM counts no try of the machine passphrase")
 			machine_recovery_ask("type the recovery key of the machine")
+		case principal_recovery_offered():
+			erase(typed[:])
+			typed_count = 0
+			// Not principal_recovery_ask: its line says that the TPM refused,
+			// and here the TPM was not asked.
+			mode = .Principal_Recovery
+			message, message_failed = "type the recovery key of the principal", false
+			system.log("unlock: the recovery key of principal ", number, " \"", the_name(), "\" is asked in the window: the TPM counts no try of its passphrase")
 		}
 	case text_encoding.character_in_text(press.character):
 		// A character whose bytes do not fit is not typed.

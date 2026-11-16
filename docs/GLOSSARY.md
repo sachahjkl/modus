@@ -6429,7 +6429,7 @@ Do not use: bound to the TPM, TPM-encrypted, locked (for this).
 
 A recovery key is a key of 20 random bytes, shown one time as 32 characters of base32 in 8 groups of 4, that opens a copy of the machine key, or of the keys of a named principal, when the TPM does not release them.
 
-The window of `unlock` shows it after `machine_seal()`, after `machine_passphrase()` on a machine where the TPM seals the machine key with the passphrase, after the creation of a named principal whose keys the TPM seals, or after `recovery_key_change()` in a session of that principal, and never again: it is not kept on the disk and never written on the log. The record holds the key, or the keys, sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key, with a text for each use. When the TPM refuses (an update of the system, another machine, no TPM, a lockout), the window asks for it; it accepts upper or lower case, with or without the `-`. After a recovery, `unlock` seals the key again to the system that runs, so the next start needs no recovery key; for a named principal and for the machine passphrase it first asks for a new passphrase, so the recovery key also replaces a lost passphrase. A new recovery key of a named principal opens the files written after it; the one before still opens the version from before that the store keeps on the same disk. Its 160 random bits need no slow derivation.
+The window of `unlock` shows it after `machine_seal()`, after `machine_passphrase()` on a machine where the TPM seals the machine key with the passphrase, after the creation of a named principal whose keys the TPM seals, or after `recovery_key_change()` in a session of that principal, and never again: it is not kept on the disk and never written on the log. The record holds the key, or the keys, sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key, with a text for each use. When the TPM refuses (an update of the system, another machine, no TPM, a lockout), the window asks for it; it accepts upper or lower case, with or without the `-`. At the prompt of the machine passphrase, or of the passphrase of a named principal, Ctrl+R asks for it at once, so a lost passphrase costs no try that the TPM counts. After a recovery, `unlock` seals the key again to the system that runs, so the next start needs no recovery key; for a named principal and for the machine passphrase it first asks for a new passphrase, so the recovery key also replaces a lost passphrase. A new recovery key of a named principal opens the files written after it; the one before still opens the version from before that the store keeps on the same disk. Its 160 random bits need no slow derivation.
 
 Example: `MZXW-6YTB-MZXW-6YTB-MZXW-6YTB-MZXW-6YTB`.
 
@@ -7575,6 +7575,16 @@ It is not a fixed time before a picture: the hang bound ends a wait for a screen
 The design: `docs/TOOLS.md`, "When the tool takes a picture".
 
 Do not use: idle screen, stable frame, quiescent.
+
+### Due picture
+
+A due picture is a picture that a program owes its window: a change waits for it while the program waits on its clock or for the compositor.
+
+A program that paces its pictures, such as a terminal, says it before such a wait with the record `Picture_Due` (`display.picture_due_set`), and its next `Present` ends it. The compositor gives it as `due` in `compositor.windows()`, and the screen is not a settled screen while a window has one. The terminal decides it at the start of each turn of its loop, so a record that came while it drew its last picture is a due picture too. It is not a picture that the compositor has and did not draw yet: that is `waits`.
+
+The design: `src/md/features/terminal_due_picture.md`.
+
+Do not use: pending frame, redraw flag, frame request.
 
 ### Hang bound
 
