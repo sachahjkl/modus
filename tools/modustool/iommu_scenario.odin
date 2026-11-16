@@ -18,7 +18,9 @@ package modustool
 // place 0 of bus 1: its accesses go through the context table of bus 1.
 // Then `net` sends its datagrams: the network device at the place 18 reads
 // their data from the datagram region of `net`, which is not contiguous,
-// through its window in the unit, with no DMA fault.
+// through its window in the unit, with no DMA fault. The machine also has
+// the entropy device at the place 19: its two reads arrive through the unit
+// with no DMA fault.
 
 TEST_OUTPUT_IOMMU :: BUILD_FOLDER + "/test_output_iommu.txt"
 
@@ -28,6 +30,11 @@ scenario_iommu := [?]Step {
 	{kind = .Wait, text = "kernel: IOMMU: translation on, 1 units, 2 buses, ", fails_on = "kernel: no IOMMU"},
 	{kind = .Wait, text = "kernel: IOMMU: interrupt remapping on: a device sends only the message interrupts that its service was given", fails_on = "kernel: IOMMU: no interrupt remapping"},
 	{kind = .Wait, text = "kernel: ok"},
+	// The entropy device writes its bytes through the unit into the queue
+	// memory that its service declared (src/md/features/entropy_device.md).
+	// Its lines come while the desktop starts, in no fixed order.
+	{kind = .Wait, text = "root: started entropy for the device at the place 19 of the bus", any_order = true},
+	{kind = .Wait, text = "root: the entropy device gave 64 bytes in 2 reads: 64 bytes mixed into the random generator of the system; refused reads: 0", fails_on = "kernel: a DMA fault of the device at bus 0, device 19, ", any_order = true},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"iommu\")"},
@@ -64,7 +71,7 @@ scenario_iommu := [?]Step {
 }
 
 iommu_tests_run :: proc() -> bool {
-	return machine_test(scenario_iommu[:], BOOT_VOLUME, TEST_OUTPUT_IOMMU, MACHINE_STOP_OK, TEST_DATA_DISK, iommu = .Intel)
+	return machine_test(scenario_iommu[:], BOOT_VOLUME, TEST_OUTPUT_IOMMU, MACHINE_STOP_OK, TEST_DATA_DISK, iommu = .Intel, entropy_device = true)
 }
 
 // The IOMMU of AMD (src/md/infrastructure/iommu.md, "Two vendors behind

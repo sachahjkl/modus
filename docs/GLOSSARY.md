@@ -5381,7 +5381,7 @@ The entropy report is the record of what the root service found when it gathered
 root: the random seed of the system, strength entropy (rdseed): rdseed present, N good values, N refused; rdrand present, N good, N refused; the cycle counter, N samples, N distinct low bytes
 ```
 
-It also gives the facts to the program `randomness` in its context values 0 to 7, which shows them in its window.
+It also gives the facts to the program `randomness` in its context values 0 to 7, which shows them in its window. With them go the facts of the entropy device: whether the machine has one, the bytes that the root service mixed in after the gathering, and the reads that it refused.
 
 The report says what the sources gave. It does not estimate the entropy of the bytes: the system does not test the output of `rdseed` or `rdrand` for quality.
 
@@ -5405,9 +5405,43 @@ Each program knows the strength of its seed: the starter writes it in the contex
 
 `modustool test random` runs a machine with no `rdrand` and no `rdseed`: its log and its window say "weak (the cycle counter only)" in the color of a failure.
 
+The entropy device does not change the strength: it adds bytes and no claim.
+
 The design: `docs/RANDOMNESS.md`, "3. The seed of the system, and what is claimed".
 
 Do not use: security level.
+
+### Entropy device
+
+The entropy device is the random device of virtio that the machine can have (`virtio-rng-pci` in QEMU): one more source of the seed of the system, never the only one.
+
+The root service looks for it at the place 19 of bus 0. When it is there, the root service starts the entropy service and mixes two reads of 32 bytes into its random generator with `random.device_bytes_mix`: the bytes go into the key with the bytes of the processor, and never replace them. A read with no byte, a read whose bytes all have one value, and a read equal to the read before add nothing: the key stays as it was, and the read counts as refused, as does a read that the entropy service answered with an error. These checks find a broken device; they do not protect against a hostile one. The mix does: the old key is always an input of the new one. The seed strength does not change. A machine with no entropy device starts with the sources of the processor, and the log says so.
+
+The design: `src/md/features/entropy_device.md`, and `docs/RANDOMNESS.md`, "3. The seed of the system, and what is claimed".
+
+Do not use: RNG device, hardware RNG, /dev/random.
+
+### Entropy service
+
+The entropy service is the program `entropy`: the device service of the entropy device, with the root service as its one client.
+
+It has the registers of the device, one message interrupt, the memory of its queue, the machine with the right Physical, a copy of the configuration of the device, and the entropy ring. The ring has one command, `Read`, of 1 to 48 bytes; its completion carries the bytes in its values, at most the count asked, whatever length the device says (`src/library/contract/entropy_service`). It answers one command at a time, and erases its buffer after each answer. It does not test the bytes: the root service refuses a read that adds nothing. Its log has `entropy: ok, a queue of <size>`.
+
+The design: `src/md/features/entropy_device.md`.
+
+Do not use: rng driver, entropy daemon.
+
+### Entropy ring
+
+The entropy ring is the ring between the entropy service and its one client, the root service: one command record is one read of the entropy device, and its completion record carries the bytes.
+
+It has the capacity of the smallest ring, 32 records (`RING_CAPACITY` of `src/library/contract/entropy_service`). The root service makes it and gives it to the service as the role 0 of its context. The one command is `Read`, with a count of 1 to 48 bytes. The completion carries the count that the device gave, at most the count asked, then the bytes in its six other values, 8 in each; so the ring needs no region. The status is `Ok`, `Bad_Command` or `Device_Error`; when it is not `Ok`, the values are an error record. The service answers one command at a time, in order.
+
+An entropy ring is not a queue of the device: the device has its own queue, which only the entropy service sees.
+
+The design: `src/md/features/entropy_device.md`.
+
+Do not use: random ring.
 
 ### Cryptography module
 

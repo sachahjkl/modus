@@ -617,7 +617,9 @@ entropy_report: random.Entropy_Report
 //    `shortage` and nothing else;
 // 6. creates the settings page, the date page and the replacement table;
 // 7. starts `input` with the ports and the interrupts of the PS/2
-//    controller, then the compositor with the framebuffer;
+//    controller, then the compositor with the framebuffer, then the entropy
+//    service when the machine has an entropy device, with no wait for its
+//    bytes;
 // 8. starts `date`, then the console, then the settings that were kept,
 //    then the TPM service when the system is measured into a TPM, then
 //    `unlock`.
@@ -627,7 +629,8 @@ entropy_report: random.Entropy_Report
 //
 // Then one loop runs for ever. It waits on the control ring of the
 // compositor (a start or a stop from the desktop), on the root ring of each
-// program, and on the answers of the network service. It checks each command
+// program, and on the answers of the network service and of the entropy
+// service, whose bytes it mixes into its generator. It checks each command
 // against the grants of the caller, runs it, and sends a completion. After
 // each pass, `reap` frees what this service held for the programs that
 // stopped. The root service never returns.
@@ -800,6 +803,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		copy(served.name[:len(served.name) - 1], "compositor")
 	}
 
+	// The entropy device, after the compositor: the compositor takes the
+	// first place of the table of the programs. The loop below mixes its
+	// bytes when they come (entropy.odin).
+	entropy_service_start()
 	// The date: the program `date` reads the real-time clock. The programs
 	// that start before it writes the page read no date until then.
 	if status = start("date"); status != .Ok {
@@ -967,6 +974,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.send(&item.requests.completions, completion)
 			}
 		}
+		// Before reap: an entropy service that answered and stopped still
+		// has its answers in the ring.
+		entropy_answers(&wait)
 		reap()
 		// After reap: a storage service that stopped ended its connections.
 		disk_load_step(&wait)
@@ -1002,7 +1012,7 @@ refusal :: proc "contextless" (command: system.Root_Command, name: string, value
 		}
 		return errors.ring_fail(kind, .No_Grant, .Root_Commands)
 	}
-	of_the_system := name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" || name == "frame"
+	of_the_system := name_is_a_system_part(name)
 	#partial switch command {
 	case .Start:
 		if status == .Bad_Operation && of_the_system {
@@ -1095,6 +1105,22 @@ refusal :: proc "contextless" (command: system.Root_Command, name: string, value
 	return errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
 }
 
+// The programs that this service starts itself, each in its own way and
+// with its own grants: a command Start does not start them, and a disk
+// program does not take one of their names.
+@(rodata)
+system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy"}
+
+// name_is_a_system_part says if a name is one of system_part_names.
+name_is_a_system_part :: proc "contextless" (name: string) -> bool {
+	for part in system_part_names {
+		if name == part {
+			return true
+		}
+	}
+	return false
+}
+
 // start starts a program that shows a surface, in the session of a
 // principal (principals.odin).
 start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) -> system.Status {
@@ -1107,7 +1133,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 			break
 		}
 	}
-	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" || name == "frame" || name == "iommu_device" || name == "tpm" {
+	if len(file) == 0 || name_is_a_system_part(name) {
 		return .Bad_Operation
 	}
 	// One `unlock` at a time, and only from unlock_start: two runs would
@@ -2153,6 +2179,7 @@ release :: proc "contextless" (item: ^Started) {
 		driver_end(item)
 	}
 	tpm_service_end(item)
+	entropy_service_end(item)
 	endpoint_close(item)
 	disk_load_forget(item)
 	if palette_provider == item {

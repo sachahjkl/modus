@@ -140,6 +140,10 @@ DATA_DISK_DEVICE :: 0x10 // The disk of the storage service.
 SCRATCH_DISK_DEVICE :: 0x11 // A disk for the measures of the block service.
 SCRATCH_BRIDGE_DEVICE :: 0x1C // The root port in front of the disk of the measures, on the machine with the IOMMU.
 NETWORK_DEVICE :: 0x12 // The network device of the frame service.
+// The entropy device of the entropy service, when the machine has one: a
+// machine with no such device still starts (src/md/features/entropy_device.md).
+ENTROPY_DEVICE :: 0x13
 VENDOR_VIRTIO :: 0x1AF4 // The vendor identifier of the virtio devices.
 DEVICE_VIRTIO_BLOCK :: 0x1042 // A virtio 1 block device with no older interface.
 DEVICE_VIRTIO_NETWORK :: 0x1041 // A virtio 1 network device with no older interface.
+DEVICE_VIRTIO_ENTROPY :: 0x1044 // A virtio 1 entropy device with no older interface.

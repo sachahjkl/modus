@@ -49,8 +49,10 @@ Entropy_Report :: struct {
 	rdrand_refused:   u32, // Refused values of rdrand: carry clear, all ones, or repeated.
 	jitter_samples:   u32, // The deltas of the cycle counter that the gathering hashed.
 	jitter_distinct:  u32, // Distinct low bytes of the deltas: a sign of life of the counter, not a measure of entropy.
-	device_bytes:     u32, // Bytes of an entropy device (virtio-rng) mixed in later.
-	strength:         Seed_Strength, // The strength of the seed.
+	device_present:   bool, // The machine has an entropy device, and its service started.
+	device_bytes:     u32, // Bytes of the entropy device that device_bytes_mix mixed in, after the gathering.
+	device_reads_refused: u32, // Reads of the entropy device that added nothing: no byte, one value only, the read before again, or a read that the entropy service refused.
+	strength:         Seed_Strength, // The strength of the seed: the entropy device does not change it.
 }
 
 // Cycles_Read reads the cycle counter.
@@ -223,21 +225,79 @@ entropy_gather :: proc "contextless" (sources: Entropy_Sources, report: ^Entropy
 	return seed
 }
 
+// The entropy device (src/md/features/entropy_device.md): the root service
+// mixes the bytes of each read of it into its generator, after the
+// gathering. The bytes add to the key and never replace it, so a device that
+// lies leaves the key as strong as the processor made it. A read that can
+// add nothing is refused and counted, and the key stays as it was.
+
+DOMAIN_DEVICE_READ :: "kernel random: a read of an entropy device, version 1" // The context of the hash of a read, which the mixer keeps to find a read that comes again.
+
+// What a mix did with one read of the entropy device.
+Device_Read_Outcome :: enum u8 {
+	Mixed     = 0, // The bytes are in the key.
+	Empty     = 1, // The read has no byte.
+	One_Value = 2, // Each byte of the read has one value: zeros, all ones, or another byte again.
+	Repeated  = 3, // The read has the bytes of the read before it.
+}
+
+// Device_Mixing is what the mixer keeps between two reads: the hash of the
+// last read, not its bytes.
+Device_Mixing :: struct {
+	last_read_hash: [SEED_SIZE]u8,
+	has_last_read:  bool,
+}
+
+// device_bytes_mix mixes the bytes of one read of the entropy device into a
+// generator (reseed), unless the read can add nothing: no byte, one value
+// only, or the bytes of the read before. A refused read leaves the key as
+// it was and counts in report.device_reads_refused; a mixed read counts its
+// bytes in report.device_bytes. The strength of the report does not change.
+device_bytes_mix :: proc "contextless" (generator: ^Generator, mixing: ^Device_Mixing, bytes: []u8, report: ^Entropy_Report) -> Device_Read_Outcome {
+	outcome := Device_Read_Outcome.Mixed
+	if len(bytes) == 0 {
+		outcome = .Empty
+	} else {
+		one_value := true
+		for byte in bytes[1:] {
+			one_value &&= byte == bytes[0]
+		}
+		hash := key_derive(DOMAIN_DEVICE_READ, nil, bytes)
+		crypto.erase_stack_below_the_caller()
+		if one_value {
+			outcome = .One_Value
+		} else if mixing.has_last_read && hash == mixing.last_read_hash {
+			outcome = .Repeated
+		}
+		mixing.last_read_hash, mixing.has_last_read = hash, true
+	}
+	if outcome != .Mixed {
+		report.device_reads_refused += 1
+		return outcome
+	}
+	reseed(generator, bytes)
+	report.device_bytes += u32(min(len(bytes), int(max(u32))))
+	return .Mixed
+}
+
 // The values of the context of a program that shows the seed of the system
 // (`randomness`): the root service writes its report in the values 0 to 7
 // (the values 9 to 12 are the seed of the program).
 REPORT_VALUES :: 8
 
 // report_values_write writes a report in the values 0 to 7 of a context.
+// Value 0: the strength in its low byte, then the presence of rdseed, of
+// rdrand and of the entropy device in the bits 8, 9 and 10. Value 7: the
+// bytes of the device in its low half, its refused reads in its high half.
 report_values_write :: proc "contextless" (report: ^Entropy_Report, values: ^[op.CONTEXT_VALUES]u64) {
-	values[0] = u64(report.strength) | u64(report.rdseed_present) << 8 | u64(report.rdrand_present) << 9
+	values[0] = u64(report.strength) | u64(report.rdseed_present) << 8 | u64(report.rdrand_present) << 9 | u64(report.device_present) << 10
 	values[1] = u64(report.rdseed_good)
 	values[2] = u64(report.rdseed_refused)
 	values[3] = u64(report.rdrand_good)
 	values[4] = u64(report.rdrand_refused)
 	values[5] = u64(report.jitter_samples)
 	values[6] = u64(report.jitter_distinct)
-	values[7] = u64(report.device_bytes)
+	values[7] = u64(report.device_bytes) | u64(report.device_reads_refused) << 32
 }
 
 // report_values_read reads a report from the values 0 to 7 of a context. A
@@ -247,6 +307,7 @@ report_values_read :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (r
 	report.strength = Seed_Strength(min(values[0] & 0xFF, u64(max(Seed_Strength))))
 	report.rdseed_present = values[0] >> 8 & 1 != 0
 	report.rdrand_present = values[0] >> 9 & 1 != 0
+	report.device_present = values[0] >> 10 & 1 != 0
 	report.rdseed_good = u32(values[1])
 	report.rdseed_refused = u32(values[2])
 	report.rdrand_good = u32(values[3])
@@ -254,5 +315,6 @@ report_values_read :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (r
 	report.jitter_samples = u32(values[5])
 	report.jitter_distinct = u32(values[6])
 	report.device_bytes = u32(values[7])
+	report.device_reads_refused = u32(values[7] >> 32)
 	return
 }
