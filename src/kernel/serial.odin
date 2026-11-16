@@ -337,8 +337,8 @@ kernel_log_lines_over: u64
 // op.LOG_RECORDS_OF_THE_KERNEL in this second, and counts it. Before the
 // first tick, each writer drains its record at once and no bound is needed.
 // A line past the bound is counted; the next line that fits is preceded by
-// one record with that count, inside the bound. So the records of the
-// kernel and of the machine in two seconds back to back fit the whole log
+// one record with that count, inside the bound. So a program that faults
+// in a loop cannot make the kernel flood the log
 // (src/md/features/log_side_channels.md). The caller holds the log lock.
 @(private = "file")
 kernel_log_fits :: proc "contextless" (records: u64) -> bool {

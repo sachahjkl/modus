@@ -538,7 +538,6 @@ budget_release :: proc "contextless" (index: u32) {
 	budgets[parent].amounts.pages += budget.amounts.pages
 	budgets[parent].amounts.programs += budget.amounts.programs
 	budgets[parent].amounts.threads += budget.amounts.threads
-	intrinsics.atomic_add(&budgets[parent].amounts.log_records, budget.amounts.log_records)
 	for &region in regions {
 		if region.page_count != 0 && region.budget == index {
 			region.budget = parent
@@ -560,8 +559,11 @@ budget_release :: proc "contextless" (index: u32) {
 		}
 	}
 	// After its programs and threads moved: the records that it wrote in
-	// this second stay spent in its parent.
+	// this second stay spent in its parent. Its amount returns after its
+	// count, so a Log of the parent meanwhile is checked against the
+	// smaller amount and never passes it.
 	budget_log_count_to_parent(index, parent)
+	intrinsics.atomic_add(&budgets[parent].amounts.log_records, budget.amounts.log_records)
 	budget^ = {ended = true, parent = parent}
 }
 
@@ -1963,6 +1965,16 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	// each interrupt between the swapgs of resume and its iretq.
 	if !from_program && frame.rip == u64(uintptr(&resume_return)) && frame.vector >= 11 && frame.vector <= 13 {
 		return_refused_by_the_processor(frame)
+	}
+	// A protection fault of the one instruction of a register trial: the
+	// processor refused the register, and the trial goes on at its refusal
+	// label, which gives false (register_trial.odin). It returns through the
+	// iretq of interrupt_common, on the stack of the trial.
+	if !from_program && frame.vector == VECTOR_PROTECTION_FAULT {
+		if refusal := register_trial_refusal_address(frame.rip); refusal != 0 {
+			frame.rip = refusal
+			return
+		}
 	}
 	// A non-maskable interrupt, a double fault and a machine check are not
 	// faults of an instruction of the program that ran: a double fault is a

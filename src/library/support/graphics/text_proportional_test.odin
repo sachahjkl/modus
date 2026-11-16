@@ -39,24 +39,26 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	defer delete(memory)
 	render := new(vector_font.Render_Memory)
 	defer free(render)
-	demand_font, problem := vector_font.demand_font_open(#load("../../../../resources/fonts/b612.ttf"), true, render)
+	demand_font, problem := vector_font.demand_font_open(#load("../../../../resources/fonts/b612.ttf"), .Interface, render)
 	testing.expect_value(t, problem, vector_font.Font_Problem.None)
 	bytes, allocation := mem.alloc_bytes(demand_cache.SIZE, demand_cache.PAGE_SIZE)
 	testing.expect(t, allocation == nil)
 	defer mem.free_bytes(bytes)
 	base := uintptr(raw_data(bytes))
-	writer := demand_cache.writer_open(base, cache.header.font_hash, vector_font.RENDERER_VERSION, demand_font.flags)
-	reader, matches := demand_cache.reader_of(base, &cache)
+	faces: [demand_cache.Face]demand_cache.Face_Header
+	faces[.Interface] = {font_hash = cache.header.font_hash, flags = demand_font.flags}
+	writer := demand_cache.writer_open(base, vector_font.RENDERER_VERSION, faces)
+	reader, matches := demand_cache.reader_of(base, .Interface, &cache)
 	testing.expect(t, matches)
 	TEXT :: "Rag To é"
 	for character in TEXT {
-		place, search := demand_cache.place_find(&writer, character)
+		place, search := demand_cache.place_find(&writer, .Interface, character)
 		if search != .Free {
 			continue
 		}
 		entry, result := vector_font.demand_glyph_draw(&demand_font, &writer, character, render)
 		testing.expect_value(t, result, vector_font.Demand_Result.Drawn)
-		demand_cache.publish(&writer, place, character, entry)
+		demand_cache.publish(&writer, place, .Interface, character, entry)
 	}
 	demand_cache.reader_frame_begin(&reader)
 	spacing, _ := text_shaping.spacing_of(&cache, 1)

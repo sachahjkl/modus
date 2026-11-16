@@ -25,7 +25,7 @@
 // from the demand cache. A letter that the cache does not hold yet (the
 // service did not end its start) draws the replacement glyph and is asked
 // for; the answer gives a new frame. The window shows each letter of the
-// subset (demand_cache.subset_ranges). The first frame where no letter
+// subset (demand_cache.interface_subset_ranges). The first frame where no letter
 // waits writes `interface_font: each Greek letter of the subset is drawn
 // from the demand cache: <n> letters`, n the count of the subset, or `not
 // each Greek letter ...` with the counts of that frame. With no valid
@@ -72,7 +72,7 @@ ENLARGED_FRACTIONS := [3]i64{0, 21, 43}
 NUMBERS := [?]string{"7", "42", "1 024", "65 536", "4 294 967 296", "100 000"}
 // Characters past the glyph cache, which the font service draws: the
 // capitals and the small letters of its subset, each one, made from
-// demand_cache.subset_ranges at the start, then a line with some of them.
+// demand_cache.interface_subset_ranges at the start, then a line with some of them.
 // A letter that B612 lacks is in no line: the subset does not have it.
 GREEK_SMALL_FIRST :: 0x03B1 // The first small letter of the Greek alphabet.
 GREEK_SENTENCE :: "Δt = 16 ms   λ = 532 nm   θ = 45°   σ, μ, π = 3.14159"
@@ -112,7 +112,7 @@ line_draw :: proc "contextless" (canvas: graphics.Canvas, place: i64, y: int, te
 // small letters of the subset, and fills GREEK.
 greek_lines_make :: proc "contextless" () {
 	capitals, small := 0, 0
-	for range in demand_cache.subset_ranges {
+	for range in demand_cache.interface_subset_ranges {
 		for character in range.first ..= range.last {
 			if character < GREEK_SMALL_FIRST {
 				capitals += text_encoding.character_encode(character, greek_capitals[capitals:])
@@ -271,10 +271,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 	greek_drawn_told = true
 	// The window shows each letter of the subset: the line of the test
 	// holds when each one is drawn, and names no count of its own.
-	if drawn == u64(demand_cache.subset_count()) && drawn == greek_character_count && absent == 0 && waiting == 0 {
+	if drawn == u64(demand_cache.subset_count(.Interface)) && drawn == greek_character_count && absent == 0 && waiting == 0 {
 		system.log("interface_font: each Greek letter of the subset is drawn from the demand cache: ", drawn, " letters")
 	} else {
-		system.log_in("programs", .Warning, "interface_font: not each Greek letter of the subset is drawn from the demand cache: ", drawn, " drawn of ", u64(demand_cache.subset_count()), ", ", absent, " absent, ", waiting, " refused")
+		system.log_in("programs", .Warning, "interface_font: not each Greek letter of the subset is drawn from the demand cache: ", drawn, " drawn of ", u64(demand_cache.subset_count(.Interface)), ", ", absent, " absent, ", waiting, " refused")
 	}
 }
 

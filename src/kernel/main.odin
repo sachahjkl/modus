@@ -203,8 +203,7 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		fail("no memory for the time page")
 	}
 	// The one budget that comes from nothing: all the free memory, all the
-	// slots, and the log records of each second of the whole machine, which
-	// the drain of the serial port always keeps.
+	// slots, and the log records of each second of the whole machine.
 	ROOT_BUDGET :: 1
 	budgets[ROOT_BUDGET] = {
 		live = true,

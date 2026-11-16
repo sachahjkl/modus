@@ -33,6 +33,22 @@ The kernel finds the set from `CPUID` at boot, once (`processor_counters.plan_of
 - **AMD**: the core counter extension (`CPUID` 0x80000001, `ECX` bit 23), and a family of Zen (0x17 or more). The select registers are 0xC0010200 + 2n, the counters 0xC0010201 + 2n. With the monitoring version 2 (`CPUID` 0x80000022, `EAX` bit 0) and 4 counters or more, the kernel turns on the counters 0 to 3 in `PerfCntrGlobalCtl` (0xC0000301) on each processor at its start.
 - **Else** no set: the machine has no thread counters.
 
+### The trial of the registers at the start of each processor
+
+`CPUID` lists the counters; it does not prove that the processor takes an access to their registers. A hypervisor can list them and refuse each `rdmsr` and `wrmsr` with a protection fault, or take the writes and keep nothing. A protection fault of the kernel stops the machine, so such a machine stopped at its boot. And a firmware can leave a counter on: then another user counts with it.
+
+So each processor, at its start and before any thread runs, takes a trial of the registers of the plan (`processor_counters.trial_steps_of_plan`, with host tests). The trial is a list of register trials ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Register trial"), in this order:
+
+1. A read of each select. A select with Enable set is on: another user (the firmware, or the hypervisor) counts with it.
+2. For each counter: a write of `TRIAL_COUNTER_VALUE` (0xABCD) to the counter, a read that must give it back, a write of 0; then a write of the select value of the plan, then a write of 0 to the select. These are the writes of the switch. The select value turns the counter on in user mode only, and the kernel runs, so nothing counts.
+3. With a global control: a read of it, and a write of it with the bits of the counters 0 to 3 added.
+
+A register trial is one `rdmsr` or `wrmsr` in an assembly procedure of `processor.asm`. `kernel_interrupt` knows the address of that one instruction: a protection fault there goes on at the refusal label of the procedure, which gives false. A protection fault of the kernel at any other address stops the machine, as before.
+
+The first step that fails ends the trial, and its register is named (`processor_counters.trial_step_outcome`): the processor refused it (`Register_Refused`), a select was on (`Counter_In_Use`), or a counter did not keep the value (`Counter_Not_Kept`). The machine then has no plan: each command of the thread counters gives `Unsupported`, as on a machine with no counters in `CPUID`. When a select is on, the kernel writes no register: the counter stays with its other user.
+
+The first processor writes its outcome in the line of the boot. Another processor whose trial fails turns the plan off for the machine and writes a line of its own: "kernel: performance counters: none that the kernel uses: on the processor 3, ...". No thread runs before every processor took its trial, so no thread ever counts on a plan that a processor refuses.
+
 ### Three commands of `Thread_Control`, on the calling thread
 
 `Start_Counters`, `Read_Counters` and `Stop_Counters` are commands of `Thread_Control`, not a new operation. They act on a state of a thread, as the other commands do, and the count of kernel operations stays.
@@ -65,7 +81,7 @@ Only the processor that runs the thread reads or writes its flag and its totals:
 
 ### A machine with no counters
 
-On a machine with no set, `Start_Counters` and `Read_Counters` give `Bad_Operation`, with the error kind `Unsupported` (the value: the operation `Thread_Control`). The line of the boot says why: "kernel: performance counters: ...: none that the kernel uses". The test machine with KVM has the set; QEMU with TCG has no counters. The tool decides which outcome a machine test checks from that boot line of the test machine, and not from the host: QEMU falls back to TCG when it cannot use KVM, and a hypervisor below the host can hide the counters that the host lists. The host only explains the outcome.
+On a machine with no set, or whose trial failed, `Start_Counters` and `Read_Counters` give `Bad_Operation`, with the error kind `Unsupported` (the value: the operation `Thread_Control`). The line of the boot says why: "kernel: performance counters: ...: none that the kernel uses". The test machine with KVM has the set; QEMU with TCG has no counters. The tool decides which outcome a machine test checks from that boot line of the test machine, and not from the host: QEMU falls back to TCG when it cannot use KVM, and a hypervisor below the host can hide the counters that the host lists. The host only explains the outcome.
 
 ## Refused forms
 
@@ -76,6 +92,11 @@ On a machine with no set, `Start_Counters` and `Read_Counters` give `Bad_Operati
 - **No grant.** Linux lets a process count its own user code with no privilege (`perf_event_paranoid` 2). Here the property makes a precise measure of shared state a grant, and the cost of the grant is one right.
 - **A list of events that the program chooses.** The four events of the table are the same questions on each vendor; a free event number would be a fact of one processor in a program.
 - **A write of the count back at each take.** It needs the full-width writes on Intel, and a counter that starts at 0 needs none.
+- **A list of hypervisors that refuse the counters.** The kernel would trust a name in `CPUID` 0x40000000, which a hypervisor writes as it wants, and a new hypervisor would stop the machine again. The trial asks the processor itself.
+- **A recovery from each protection fault of the kernel.** A fault at any address would then hide a fault of the kernel. Only the instruction of a register trial goes on, and only the kernel calls a register trial: at the start of a processor, and in its self test.
+- **A trial at the first use of a counter.** A refusal would then come in the kernel entry of a program, with a thread that already asked, and the outcome of a command would depend on the order of the programs. At the start, the plan is decided before any thread runs.
+- **A select that was on turned off.** The kernel turned off each select at the start before. A select that is on has another user: the firmware or the hypervisor counts with it, and a write of the kernel would take its counter, or mix two counts in one. Linux finds the same fault at its start, and names it.
+- **The trial on the first processor only.** A thread can run on any processor, and the switch writes the registers of the processor that takes it. A processor that refuses would stop the machine at the first switch of a thread that counts.
 - **The bits Host Only and Guest Only of AMD.** With SVM off they stop the counter on some processors; the kernel leaves both clear, so a thread that runs a guest also counts the user code of its guest. That code is code that the thread runs.
 
 ## Subtle points
@@ -85,7 +106,13 @@ On a machine with no set, `Start_Counters` and `Read_Counters` give `Bad_Operati
 - **A virtual processor.** Under KVM the counts are those of the host counters while the virtual processor runs the thread. A guest counter of KVM is a pinned event of the host: it counts in full, or not at all when the host has no free counter. The test then fails with its counts on the line: a host with other users of its counters is not a host of this test.
 - **The family check of AMD.** The event 0x64 with the mask 0x09 is the cache miss of Zen; a processor before Zen has other encodings, and the kernel gives it no set.
 - **A thread that ends while it counts.** The leave of its processor turns the selects off. A new thread in the same slot starts with the flag clear: the kernel clears each thread record at its creation.
+- **The value of the trial.** 0xABCD has bit 31 clear: on Intel with no full-width writes, a write to a counter keeps only 32 bits and extends bit 31, and the value still reads back the same.
+- **The plan written by another processor.** A processor that refuses writes the plan while the first processor waits for it to start, and the other processors wait in the scheduler with no thread. The root service starts after the last processor: its threads read the plan after it.
+- **The stack of a refusal.** The protection fault pushes its frame and runs `kernel_interrupt` on the stack of the trial. The measure of the kernel stack computes that chain, prints it as its own line, and checks it with the margin ([infrastructure/kernel_stack_depth.md](../infrastructure/kernel_stack_depth.md)).
+- **A select that the trial turned on.** A trial can fail after its write of the select value and before its write of 0, and with no plan no later code turns that select off. So after each failed trial but `Counter_In_Use`, the kernel writes 0 to each select of the plan again, as a register trial whose refusal changes nothing more. No program reads a counter (`rdpmc` is off in user mode), so a select left on is no channel, but the kernel leaves no register on that it turned on.
+- **The clear of the plan.** The kernel clears the vendor of the plan first, in its own store, then the rest. Each reader tests the vendor first, so a plan whose clear a reset cut (the first processor resets a processor that does not start in time) reads as no plan.
+- **The self test.** No test machine lists counters and refuses them: KVM gives the counters of the host, and QEMU with TCG lists none. So a self test of the kernel proves the way back from a refusal: the kernel writes an address that is not canonical (bit 63 alone) to `IA32_KERNEL_GS_BASE` through the same register trial. Intel and AMD refuse it with a protection fault, and so does KVM. QEMU with TCG takes it, and that self test then fails: the self tests need KVM. So the check of the flake (`bootTest` in `flake.nix`) has `requiredSystemFeatures = ["kvm"]`: Nix gives its sandbox `/dev/kvm`, and a builder with no KVM refuses the check, in place of a check that fails on TCG. The tool does not skip the self test on a host with no KVM: the host would then decide an outcome. The host tests prove the order of the trial and each outcome.
 
 ## State
 
-Built: the four events on Intel and on AMD Zen, the three commands on the calling thread, the right `Counters` and the start grant `Counters`, the save at the switch, the line of the boot, the host tests of the plan, and the program `counters` in the test part `kernel_events`, which counts the instructions of a loop of known length. Left: the counts of another thread with a hold (a profiler); the Intel form on a test machine; a machine whose hypervisor lists counters and refuses their registers (a protection fault at boot stops it today), and a counter that the firmware left on, which the kernel turns off where it could refuse the counters (`ROADMAP.md`).
+Built: the four events on Intel and on AMD Zen, the three commands on the calling thread, the right `Counters` and the start grant `Counters`, the save at the switch, the trial of the registers on each processor with its refusal, the line of the boot, the host tests of the plan and of the trial, the self test of a refused register, and the program `counters` in the test part `kernel_events`, which counts the instructions of a loop of known length. Left: the counts of another thread with a hold (a profiler); the Intel form on a test machine.

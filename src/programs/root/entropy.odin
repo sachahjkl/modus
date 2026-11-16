@@ -19,7 +19,7 @@ import "modus:support/system"
 // After the reads of the start, it asks for one read every
 // FRESH_BYTES_PERIOD_MILLISECONDS, mixes it into its generator the same
 // way, and writes 32 bytes of its stream in the fresh bytes page of each
-// program (src/md/features/fresh_bytes.md, fresh_bytes.odin). The period
+// program (src/md/features/fresh_bytes.md; the code is in fresh_bytes.odin). The period
 // bounds the time that a reader of one copy of the state of a program
 // keeps its stream; the device and this service pay one read and one pass
 // over the pages for each period, whatever the programs draw.

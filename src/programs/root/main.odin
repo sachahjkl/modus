@@ -2120,10 +2120,11 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	measure: bool
 	values[terminal.VALUE_COLUMNS], values[terminal.VALUE_ROWS], measure = terminal_of(system.name_of(writer.name[:]))
 	values[terminal.VALUE_MEASURE] = u64(measure)
-	// The settings page and five glyph caches.
+	// The settings page, five glyph caches and the demand cache.
 	mappings: [8]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
+	demand_cache_give(mappings[:], &mapping_count, &values)
 	// The terminal imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	load_error: module.Load_Error

@@ -611,6 +611,9 @@ text_settings_load :: proc "contextless" (ctx: ^system.Context) -> (problems: Te
 	if problems.bold.kind == .None {
 		problems.bold = graphics.text_bold_cache_use(bold)
 	}
+	// The faces of the demand cache beside the caches of cells, when the
+	// starter mapped it.
+	cell_demand_load(ctx, &bold, problems.bold.kind == .None)
 	text_settings_apply()
 	return problems, true
 }
@@ -695,7 +698,8 @@ appearance_of_choice_use :: proc "contextless" (choice: settings.Choice) -> bool
 
 // text_settings_apply gives the choice of the settings page to
 // src/library/support/graphics: the font, the order of the stripes, the
-// glyph cache of the grid fit, and the appearance in force.
+// glyph cache of the grid fit and its face of the demand cache, and the
+// appearance in force.
 text_settings_apply :: proc "contextless" () {
 	if settings_page == nil {
 		return
@@ -709,5 +713,6 @@ text_settings_apply :: proc "contextless" () {
 	} else {
 		font = .Spleen
 	}
+	cell_demand_given(grid_fit, glyph_cache_valid[grid_fit])
 	graphics.text_choice_set(font, graphics.Subpixel_Order(u8(settings.subpixel_order_of(choice))))
 }

@@ -149,7 +149,7 @@ log_send :: proc "contextless" (handle: Handle, text: []u8, runs: []value_kinds.
 }
 
 // The lines of this program that the kernel refused for its log limit, and
-// that no note has said yet: one count for each thread of the program.
+// that no note has said yet: one count for all the threads of the program.
 log_lines_refused: u64
 
 // log_call gives one line to the kernel, and never waits: a thread with a
