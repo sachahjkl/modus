@@ -172,6 +172,7 @@ Step :: struct {
 	milliseconds: int, // For Film_Hold: how long the state stays on the screen.
 	element:    string, // For Click_Element and Wheel: the element name ("watch", "frame 0", "round_robin").
 	notches:    int, // For Wheel: the notches of the wheel, in NOTCH_TOWARD_THE_END.
+	form:       string, // For Point: the pointer form that compositor.pointer() must also report, "dark" or "light" (docs/POINTERS.md).
 }
 
 // The two clocks agree to whole seconds: the machine reads its real-time
@@ -3072,8 +3073,10 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.set(\"appearance\", \"light\")", expected = "1"},
 	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; kept in the store"},
 	{kind = .Wait, text = "settings: the appearance in force is light: the setting light"},
+	{kind = .Wait, text = "compositor: the pointer form in use: light", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; the appearance in force light; "},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light"},
+	{kind = .Point, x = 116, y = 14, text = "pointing_hand", form = "light"}, // The button of the programs in the bar: the light form of the pointer.
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "desktop_light"},
 	// The console in the light appearance: a record whose values have the
@@ -3085,7 +3088,9 @@ scenario := [?]Step {
 	{kind = .Shot, text = "console_light"},
 	{kind = .Call, text = "settings.set(\"appearance\", \"dark\")", expected = "1"},
 	{kind = .Wait, text = "settings: the appearance in force is dark: the setting dark"},
+	{kind = .Wait, text = "compositor: the pointer form in use: dark", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance dark; the appearance in force dark; "},
+	{kind = .Point, x = 116, y = 14, text = "pointing_hand", form = "dark"},
 	{kind = .Call, text = "settings.set(\"appearance\", \"auto\")", expected = "1"},
 	{kind = .Appearance_Auto, text = "settings: the appearance in force is "},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; the appearance in force dark; "},
@@ -4038,7 +4043,28 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: the pointer at %d,%d has the shape \"%s\", not \"%s\"", index + 1, x, y, shape, step.text)
 				return false
 			}
-			test_passed_print("the pointer at %d,%d has the shape %s", x, y, step.text)
+			if step.form == "" {
+				test_passed_print("the pointer at %d,%d has the shape %s", x, y, step.text)
+			} else {
+				// The form follows the appearance in force at the next frame
+				// of the compositor: read it until it is the expected one.
+				form: string
+				for start := time.now(); time.since(start) < HANG_BOUND; {
+					read, ok := record_text_field(&machine.client, "compositor.pointer()", "form")
+					if ok {
+						form = read
+					}
+					if form == step.form {
+						break
+					}
+					time.sleep(CONDITION_POLL_PERIOD)
+				}
+				if form != step.form {
+					fmt.eprintfln("modustool: test failed: step %d: the pointer at %d,%d has the pointer form \"%s\", not \"%s\"", index + 1, x, y, form, step.form)
+					return false
+				}
+				test_passed_print("the pointer at %d,%d has the shape %s in the pointer form %s", x, y, step.text, step.form)
+			}
 		case .Front:
 			window_front_bring(machine, step.text, index) or_return
 		case .Click_Element:

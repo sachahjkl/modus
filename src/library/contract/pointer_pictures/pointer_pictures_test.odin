@@ -5,27 +5,36 @@ import "core:testing"
 
 // sample_file makes a valid file: the arrow at the sizes 4 and 8, one frame
 // each; wait at the size 4, three frames of 100 ms. The wait frames share
-// the pixels of the arrow at 4.
+// the pixels of the arrow at 4. With two forms, the light form has the
+// arrow and wait too, the arrow on the picture 5 of the size 4 alone.
 @(private = "file")
-sample_file :: proc() -> []u8 {
-	shapes := [?]Shape_Entry{{shape = u32(Pointer_Shape.Arrow), first_picture = 0, size_count = 2, frame_count = 1}, {shape = u32(Pointer_Shape.Wait), first_picture = 2, size_count = 1, frame_count = 3}}
+sample_file :: proc(form_count: u32 = 1) -> []u8 {
+	shape_count :: 2
+	shapes := [2 * shape_count]Shape_Entry {
+		{shape = u32(Pointer_Shape.Arrow), first_picture = 0, size_count = 2, frame_count = 1},
+		{shape = u32(Pointer_Shape.Wait), first_picture = 2, size_count = 1, frame_count = 3},
+		{shape = u32(Pointer_Shape.Arrow), first_picture = 5, size_count = 1, frame_count = 1},
+		{shape = u32(Pointer_Shape.Wait), first_picture = 2, size_count = 1, frame_count = 3},
+	}
 	pictures := [?]Picture_Entry {
 		{nominal_size = 4, width = 4, height = 4, hot_spot_x = 1, hot_spot_y = 2, pixel_offset = 0},
 		{nominal_size = 8, width = 8, height = 6, hot_spot_x = 7, hot_spot_y = 5, pixel_offset = 64},
 		{nominal_size = 4, width = 4, height = 4, delay_milliseconds = 100, pixel_offset = 0},
 		{nominal_size = 4, width = 4, height = 4, delay_milliseconds = 100, pixel_offset = 0},
 		{nominal_size = 4, width = 4, height = 4, delay_milliseconds = 100, pixel_offset = 0},
+		{nominal_size = 4, width = 4, height = 4, hot_spot_x = 3, hot_spot_y = 3, pixel_offset = 0},
 	}
+	entry_count := int(form_count) * shape_count
 	pixel_size := u64(16 * 4 + 48 * 4)
-	offset := pixel_offset_for(len(shapes), len(pictures))
+	offset := pixel_offset_for(u64(entry_count), len(pictures))
 	file := make([]u8, offset + pixel_size)
 	head := (^Header)(raw_data(file))
-	head^ = {magic = MAGIC, version = VERSION, shape_count = len(shapes), picture_count = len(pictures), pixel_offset = offset, pixel_size = pixel_size, file_size = u64(len(file))}
+	head^ = {magic = MAGIC, version = VERSION, shape_count = shape_count, picture_count = len(pictures), form_count = form_count, pixel_offset = offset, pixel_size = pixel_size, file_size = u64(len(file))}
 	copy(head.theme_name[:], "sample")
 	copy(head.license[:], "MIT")
 	copy(head.attribution[:], "made by the test")
-	copy(([^]Shape_Entry)(raw_data(file[HEADER_SIZE:]))[:len(shapes)], shapes[:])
-	copy(([^]Picture_Entry)(raw_data(file[HEADER_SIZE + len(shapes) * SHAPE_ENTRY_SIZE:]))[:len(pictures)], pictures[:])
+	copy(([^]Shape_Entry)(raw_data(file[HEADER_SIZE:]))[:entry_count], shapes[:entry_count])
+	copy(([^]Picture_Entry)(raw_data(file[HEADER_SIZE + entry_count * SHAPE_ENTRY_SIZE:]))[:len(pictures)], pictures[:])
 	pixels := ([^]u32)(raw_data(file[offset:]))[:pixel_size / 4]
 	for &pixel, index in pixels {
 		alpha := u32(index * 17 % 256)
@@ -41,32 +50,62 @@ a_sample_file_is_valid :: proc(t: ^testing.T) {
 	problem := validate(file)
 	testing.expect_value(t, problem.kind, Problem_Kind.None)
 	testing.expect_value(t, text_of(header(file).theme_name[:]), "sample")
-	testing.expect_value(t, len(shape_entries(file)), 2)
+	testing.expect_value(t, len(shape_entries(file, .Dark)), 2)
 }
 
 @(test)
 choose_gives_the_size_and_the_frame :: proc(t: ^testing.T) {
 	file := sample_file()
 	defer delete(file)
-	chosen := choose(file, .Arrow, 6, 0)
+	chosen := choose(file, .Dark, .Arrow, 6, 0)
 	testing.expect_value(t, chosen.picture.nominal_size, 8)
 	testing.expect_value(t, len(chosen.pixels), 48)
 	testing.expect_value(t, chosen.next_frame, 0)
-	chosen = choose(file, .Arrow, 100, 0) // Larger than each size: the largest.
+	chosen = choose(file, .Dark, .Arrow, 100, 0) // Larger than each size: the largest.
 	testing.expect_value(t, chosen.picture.nominal_size, 8)
-	chosen = choose(file, .Arrow, 1, 0)
+	chosen = choose(file, .Dark, .Arrow, 1, 0)
 	testing.expect_value(t, chosen.picture.nominal_size, 4)
-	chosen = choose(file, .Text, 4, 0) // Not in the theme: the arrow.
+	chosen = choose(file, .Dark, .Text, 4, 0) // Not in the theme: the arrow.
 	testing.expect_value(t, chosen.shape, Pointer_Shape.Arrow)
 	// Three frames of 100 ms: at 1250 ms the period started at 1200, frame 0;
 	// at 1399 frame 1, next at 1400.
-	chosen = choose(file, .Wait, 4, 1250)
+	chosen = choose(file, .Dark, .Wait, 4, 1250)
 	testing.expect_value(t, chosen.shape, Pointer_Shape.Wait)
 	testing.expect_value(t, chosen.next_frame, 1300)
-	chosen = choose(file, .Wait, 4, 1399)
+	chosen = choose(file, .Dark, .Wait, 4, 1399)
 	testing.expect_value(t, chosen.next_frame, 1400)
-	chosen = choose(file, .Wait, 4, 1400)
+	chosen = choose(file, .Dark, .Wait, 4, 1400)
 	testing.expect_value(t, chosen.next_frame, 1500)
+	// A theme with one form gives it for the light form too.
+	chosen = choose(file, .Light, .Arrow, 6, 0)
+	testing.expect_value(t, chosen.picture.nominal_size, 8)
+}
+
+// A file with two forms: each form has its own shape entries, and choose
+// takes the entries of the form asked.
+@(test)
+two_forms_have_their_own_pictures :: proc(t: ^testing.T) {
+	file := sample_file(len(Pointer_Form))
+	defer delete(file)
+	testing.expect_value(t, validate(file).kind, Problem_Kind.None)
+	testing.expect_value(t, len(shape_entries(file, .Light)), 2)
+	testing.expect_value(t, shape_entries(file, .Light)[0].first_picture, 5)
+	chosen := choose(file, .Light, .Arrow, 8, 0)
+	testing.expect_value(t, chosen.picture.nominal_size, 4) // The light arrow has the size 4 only.
+	testing.expect_value(t, chosen.picture.hot_spot_x, 3)
+	chosen = choose(file, .Dark, .Arrow, 8, 0)
+	testing.expect_value(t, chosen.picture.nominal_size, 8)
+	// The second form without its arrow, and a shape table that the second
+	// form makes longer than the offset says.
+	shape_at(file, 2).shape = u32(Pointer_Shape.Text)
+	testing.expect_value(t, validate(file).kind, Problem_Kind.No_Arrow)
+	shape_at(file, 2).shape = u32(Pointer_Shape.Arrow)
+	shape_at(file, 3).shape = u32(Pointer_Shape.Arrow)
+	testing.expect_value(t, validate(file).kind, Problem_Kind.Out_Of_Order)
+	one_form := sample_file()
+	defer delete(one_form)
+	head_of(one_form).form_count = len(Pointer_Form)
+	testing.expect(t, validate(one_form).kind != .None, "a second form that the shape table does not hold is refused")
 }
 
 @(test)
@@ -101,6 +140,21 @@ shape_at :: proc(file: []u8, index: int) -> ^Shape_Entry {
 	return &([^]Shape_Entry)(raw_data(file[HEADER_SIZE:]))[index]
 }
 
+// count_that_moves_the_pixels gives the smallest shape count above the
+// count of the file whose tables end past the multiple of 64 where the
+// pixels start. A count that keeps the same multiple of 64 moves no offset:
+// the validation then finds the fault in the tables that it reads, not in
+// the header.
+@(private = "file")
+count_that_moves_the_pixels :: proc(file: []u8) -> u32 {
+	head := head_of(file)
+	count := head.shape_count + 1
+	for count < SHAPE_COUNT_LIMIT && pixel_offset_for(u64(count * head.form_count), u64(head.picture_count)) == head.pixel_offset {
+		count += 1
+	}
+	return count
+}
+
 @(private = "file")
 picture_at :: proc(file: []u8, index: int) -> ^Picture_Entry {
 	return &([^]Picture_Entry)(raw_data(file[HEADER_SIZE + 2 * SHAPE_ENTRY_SIZE:]))[index]
@@ -112,11 +166,13 @@ picture_at :: proc(file: []u8, index: int) -> ^Picture_Entry {
 each_damaged_field_is_found :: proc(t: ^testing.T) {
 	damages := [?]Damage {
 		{"magic", proc(file: []u8) {head_of(file).magic += 1}, .Wrong_Magic, .Magic},
-		{"version", proc(file: []u8) {head_of(file).version = 2}, .Wrong_Version, .Version},
+		{"version", proc(file: []u8) {head_of(file).version = VERSION + 1}, .Wrong_Version, .Version},
+		{"form_count 0", proc(file: []u8) {head_of(file).form_count = 0}, .Zero, .Form_Count},
+		{"form_count too many", proc(file: []u8) {head_of(file).form_count = FORM_COUNT_LIMIT + 1}, .Too_Many, .Form_Count},
 		{"file_size", proc(file: []u8) {head_of(file).file_size -= 4}, .Wrong_Size, .File_Size},
 		{"shape_count 0", proc(file: []u8) {head_of(file).shape_count = 0}, .Zero, .Shape_Count},
 		{"shape_count too many", proc(file: []u8) {head_of(file).shape_count = 1000}, .Too_Many, .Shape_Count},
-		{"shape_count changes the offset", proc(file: []u8) {head_of(file).shape_count = 3}, .Wrong_Offset, .Pixel_Offset},
+		{"shape_count changes the offset", proc(file: []u8) {head_of(file).shape_count = count_that_moves_the_pixels(file)}, .Wrong_Offset, .Pixel_Offset},
 		{"picture_count 0", proc(file: []u8) {head_of(file).picture_count = 0}, .Zero, .Picture_Count},
 		{"picture_count too many", proc(file: []u8) {head_of(file).picture_count = 1 << 20}, .Too_Many, .Picture_Count},
 		{"pixel_offset", proc(file: []u8) {head_of(file).pixel_offset += 64}, .Wrong_Offset, .Pixel_Offset},
@@ -134,7 +190,7 @@ each_damaged_field_is_found :: proc(t: ^testing.T) {
 		{"size_count too many", proc(file: []u8) {shape_at(file, 0).size_count = 9}, .Too_Many, .Size_Count},
 		{"frame_count 0", proc(file: []u8) {shape_at(file, 1).frame_count = 0}, .Zero, .Frame_Count},
 		{"frame_count too many", proc(file: []u8) {shape_at(file, 1).frame_count = 300}, .Too_Many, .Frame_Count},
-		{"first_picture past the table", proc(file: []u8) {shape_at(file, 1).first_picture = 3}, .Out_Of_Range, .First_Picture},
+		{"first_picture past the table", proc(file: []u8) {shape_at(file, 1).first_picture = 4}, .Out_Of_Range, .First_Picture},
 		{"first_picture far past the table", proc(file: []u8) {shape_at(file, 1).first_picture = 0xFFFF_FFFF}, .Out_Of_Range, .First_Picture},
 		{"sizes not increasing", proc(file: []u8) {picture_at(file, 1).nominal_size = 4}, .Sizes_Not_Increasing, .Nominal_Size},
 		{"frames of two sizes", proc(file: []u8) {picture_at(file, 3).nominal_size = 5}, .Frames_Differ, .Nominal_Size},

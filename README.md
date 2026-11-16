@@ -143,7 +143,7 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![Errors that diagnose: each case makes an error for real, and the line under it is the sentence of the error record that the kernel, the loader, a module or a service gave; the stack trace of a fault three calls deep](docs/screenshots/errors.png)
 
-![The pointer pictures: each shape of the pointer theme of the system, at 24 and 48 pixels, with the lines of its hot spot](docs/screenshots/pointers_system.png)
+![The pointer pictures: each shape of the pointer theme of the system, in the dark form and in the light form at 24 and 48 pixels, with the lines of its hot spot](docs/screenshots/pointers_system.png)
 
 The repository holds no picture of the same window with the pointer theme Posy's Cursor (CC BY-NC 4.0): it holds no file of that theme.
 
@@ -189,7 +189,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 - `address_space` shows a program that drives its own virtual memory: 1 GiB of addresses in one mapping that pays only the pages that it commits, pages that return to the budget at once, a protection change with its shoot-down, a guard page, and large pages.
 - `scheduler` shows the scheduling strategies, which the machine changes while it runs: two threads that wake each other on a busy machine make about 80 wakes in one second under round robin and more than 300 000 under EEVDF, and the weights 1, 2 and 4 give shares of about 4, 7.5 and 13.5 %. It also writes the weight and the request of threads that run, through the machine handle, and checks that the written weights order the shares.
 - `workers` shows the lock and the word wait: four threads take tiles from one queue. Four threads add to one number: with the lock no addition is lost, with no lock millions are lost.
-- The pointer has pictures in a format of the system (`docs/POINTERS.md`): the tool converts the Xcursor theme Posy's Cursor from an input of the development shell, and a theme of the system drawn as grids of squares; each is a resource of the boot image with its hash. A release image holds the theme of the system only. The compositor chooses the shape from what is under the pointer (a title bar, a close button, a text input) and blends its picture at its hot spot; a program asks for a shape over its own surface. `pointers` shows each theme.
+- The pointer has pictures in a format of the system (`docs/POINTERS.md`): the tool converts the Xcursor theme Posy's Cursor from an input of the development shell, and a theme of the system drawn from outlines with smooth edges; each is a resource of the boot image with its hash. A release image holds the theme of the system only. The compositor chooses the shape from what is under the pointer (a title bar, a close button, a text input) and blends its picture at its hot spot; a program asks for a shape over its own surface. `pointers` shows each theme.
 - A program that faults stops alone. The system continues.
 
 The guides below give the details. `docs/DEMONSTRATIONS.md` says what the test shows of each property, and `ROADMAP.md` gives the planned work.
