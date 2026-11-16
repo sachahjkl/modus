@@ -27,7 +27,7 @@ The site also publishes two public files of the publisher of the system:
 | `release_signing_key.public`, `release_signing_key.pem` | The public key of the release signing key: base64url, and PEM for OpenSSL. The repository holds it as `resources/keys/release_signing_key.public` |
 | `firmware_signing_key.cer`, `firmware_signing_key.crt` | The certificate of the firmware signing key, in DER and in PEM: the certificate to enrol for Secure Boot. The repository holds it as `resources/keys/firmware_signing_key.crt` |
 
-The image is the system that the publisher of the system signed with their keys. It is never a volume of a test: `modustool release image` refuses the test keys and every boot image of a test.
+The image is the system that the publisher of the system signed with their keys. It is never a volume of a test: `modustool release image` refuses the test keys and every boot image of a test. Its pointer theme is the theme of the system: the image holds no Posy theme, whose license allows no public download (`POINTERS.md`, "7. The place of the Posy theme").
 
 ## 2. Verify the files
 

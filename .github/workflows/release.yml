@@ -34,6 +34,9 @@ jobs:
       - run: nix flake check
 
   # The keys exist only in this job, which cannot write to the repository.
+  # Each step runs in the shell `release` of the flake, which has no
+  # pointer theme of the owner: a release image holds the theme of the
+  # system only.
   build:
     needs: check
     runs-on: ubuntu-24.04
@@ -44,10 +47,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       # The tag must name the release number of the commit.
-      - run: nix develop -c modustool release tag-check "$GITHUB_REF_NAME"
+      - run: nix develop .#release -c modustool release tag-check "$GITHUB_REF_NAME"
       # The key folder, outside the repository, from the secrets of the
       # environment release (secrets/README.md).
-      - run: nix develop -c modustool key write "$RUNNER_TEMP/keys"
+      - run: nix develop .#release -c modustool key write "$RUNNER_TEMP/keys"
         env:
           SYSTEM_SIGNING_KEY_TEXT: ${{ secrets.SYSTEM_SIGNING_KEY }}
           FIRMWARE_SIGNING_KEY_TEXT: ${{ secrets.FIRMWARE_SIGNING_KEY }}
@@ -55,7 +58,7 @@ jobs:
           RELEASE_SIGNING_KEY_TEXT: ${{ secrets.RELEASE_SIGNING_KEY }}
       # The whole build, the release volume, and dist/: the image, the
       # checksum list and its release signature; the notes of the release.
-      - run: nix develop -c modustool release image
+      - run: nix develop .#release -c modustool release image
         env:
           SYSTEM_SIGNING_KEY: ${{ runner.temp }}/keys/signing_key
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

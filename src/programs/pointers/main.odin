@@ -7,7 +7,8 @@
 // files in the resource table, checks the hash of each one against its
 // entry (the identity of a file is the hash of its content), validates it
 // with the validation of the compositor,
-// and shows one theme at a time: two buttons change the theme. The window
+// and shows one theme at a time: a button for each theme, the theme of the
+// system first, changes the theme. The window
 // is built with the interface package; the pointer pictures are drawn into
 // the canvas directly, inside the area of each tile, because the package
 // has no record of a picture of pixels. Over a tile, the program asks the
@@ -28,8 +29,10 @@
 //   bytes of each theme. With no image it writes "pointers: no boot image"
 //   and stops with the code 1.
 //
-// **What a reader sees**: the tiles of one theme; two buttons change the
-// theme. The log has one line for each theme ("pointers: NAME: the theme,
+// **What a reader sees**: the tiles of one theme; a button for each theme
+// changes the theme, and a press writes "pointers: the theme NAME is
+// shown". A release image holds the theme of the system only, so it shows
+// one button. The log has one line for each theme ("pointers: NAME: the theme,
 // its license, N shapes, M pictures, ...; the hash and the validation in T
 // us", or "... is not valid: ..."), then "pointers: ok, N themes; ...", and
 // "pointers: the pointer is over the tile ..." when the pointer enters a
@@ -110,13 +113,18 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 	content := interface.card(frame, {8, 8, WIDTH - 16, TILES_TOP - 16}, "POINTER THEME", "resource table of the boot image", graphics.COLOR_MACHINE, interface.text_of(&count))
 	column := interface.column_of(content, 0)
 
-	// The buttons that choose the theme.
+	// The buttons that choose the theme, the last theme of the preference
+	// first: the theme of the system, which every boot image holds, keeps
+	// the first place, with or without the theme of the owner. A press
+	// writes its line even on the theme shown, so a reader and a test see
+	// the press with one theme as with two.
 	buttons := interface.column_take(&column, 24)
 	for index in 0 ..< theme_count {
 		label := themes[index].resource
-		area := interface.Area{buttons.x + index * 200, buttons.y, 192, 24}
+		place := theme_count - 1 - index
+		area := interface.Area{buttons.x + place * 200, buttons.y, 192, 24}
 		result := interface.button(frame, area, interface.identity_with(interface.identity("theme"), index), label, index == shown)
-		if result.activated && index != shown {
+		if result.activated {
 			shown = index
 			system.log("pointers: the theme ", label, " is shown")
 		}

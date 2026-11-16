@@ -438,8 +438,9 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 		row.in_boot_image = in_image(boot_image, resource)
 		if manifest_path == SITE_POSY_MANIFEST {
 			// flake.nix allows this one package of nixpkgs by its name; the
-			// repository holds no file of the theme.
-			row.version = flake.unfree_allowed != "" ? strings.concatenate({"package ", flake.unfree_allowed, ", ", nixpkgs_version, "; not redistributed: allowed by name in flake.nix, converted at each build"}, context.temp_allocator) : ""
+			// repository holds no file of the theme, and no release image
+			// holds it.
+			row.version = flake.unfree_allowed != "" ? strings.concatenate({"package ", flake.unfree_allowed, ", ", nixpkgs_version, "; not redistributed: allowed by name in flake.nix, converted at each build of the development shell, never in a release image"}, context.temp_allocator) : ""
 		}
 		append(&system_rows, row)
 	}
