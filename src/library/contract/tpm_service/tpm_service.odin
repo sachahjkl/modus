@@ -67,9 +67,10 @@ AUTHORIZATION_SIZE :: 32
 
 // The authorization of a sealed object, in values[0] of Seal and values[4]
 // of Unseal.
-AUTHORIZATION_NONE :: 0 // The object opens to the policy of PCR 7 and PCR 11 alone: the machine key.
+AUTHORIZATION_NONE :: 0 // The object opens to the policy of PCR 7 and PCR 11 alone: the machine key with no machine passphrase.
 // The object also needs the authorization value at REGION_AUTHORIZATION:
-// the keys of a named principal, whose value comes from its passphrase.
+// the keys of a named principal, whose value comes from its passphrase, and
+// the machine key under a machine passphrase, whose value comes from it.
 // The TPM counts each wrong value, and refuses each try for a time after
 // too many.
 AUTHORIZATION_VALUE :: 1
