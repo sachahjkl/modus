@@ -982,7 +982,7 @@ entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []
 	count := copy(added_rows[:], rows)
 	for &row, number in added_rows[:count] {
 		// A word that names no kind, and the kind None, are refused.
-		added_kind, kind_ok := system.member_of_word(format.Entry_Kind, transmute(u64)row.kind)
+		added_kind, kind_ok := system.member_of_word(format.Entry_Kind, u64(row.kind))
 		if !kind_ok || added_kind == .None {
 			return errors.fail(error, ERROR_NAME, .Bad_Value, .Records, 2, row.kind, i64(format.Entry_Kind.Tree), i64(number + 1))
 		}

@@ -2345,7 +2345,7 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 		// signing key of the system signed (docs/MODULE_CONTRACT.md, "Who may
 		// replace a module"); its log line gives the whole reason.
 		kind_word := errors.completion_record(completion.values).kind
-		kind, kind_ok := system.member_of_word(errors.Kind, transmute(u64)kind_word)
+		kind, kind_ok := system.member_of_word(errors.Kind, u64(kind_word))
 		if !kind_ok {
 			return fail("the root service refused the replacement of ", name, " by ", by, " with the kind ", kind_word, ", which names no kind")
 		}

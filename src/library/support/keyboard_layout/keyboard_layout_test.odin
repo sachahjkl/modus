@@ -204,7 +204,7 @@ the_dead_keys_of_the_layout_of_france :: proc(t: ^testing.T) {
 		text := strings.to_string(builder)
 		testing.expectf(t, text == item.expected, "case %v: %q, expected %q", number, text, item.expected)
 		testing.expectf(t, state.accent == item.waiting, "case %v: the accent that waits is %v", number, state.accent)
-		testing.expect_value(t, key_records_needed(&state), item.waiting != 0 ? 2 : 1)
+		testing.expect_value(t, key_records_needed(&state), item.waiting != .None ? 2 : 1)
 	}
 	// The layout of the United States has no dead key.
 	state: Dead_Key_State

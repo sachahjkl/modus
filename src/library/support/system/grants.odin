@@ -439,7 +439,14 @@ ring_member_of_word :: proc "contextless" ($Enum: typeid, word: u64, command: Ro
 	if ok {
 		return read, .Ok, {}
 	}
-	return {}, .Bad_Operation, errors.ring_fail(u32(command), .Bad_Value, .None, argument, i64(min(word, 1 << 62)), i64(max(Enum)))
+	return {}, .Bad_Operation, ring_word_refusal(command, argument, word, u64(max(Enum)))
+}
+
+// ring_word_refusal is the error record of a word that names no member. It
+// is not polymorphic, so a program that never reads such a word still uses
+// the import of its record.
+ring_word_refusal :: proc "contextless" (command: Root_Command, argument: i64, word: u64, largest: u64) -> [7]u64 {
+	return errors.ring_fail(u32(command), .Bad_Value, .None, argument, i64(min(word, 1 << 62)), i64(largest))
 }
 
 // The report of a Machine_Key command, read from its record: the state in
