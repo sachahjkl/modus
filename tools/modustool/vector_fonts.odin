@@ -12,7 +12,8 @@ import "modus:support/vector_font"
 // The command "vector_fonts" reads the font files of the candidates from
 // the build inputs of flake.nix (VECTOR_FONT_SOURCES), and writes for each
 // one a subset in resources/fonts: the characters of a glyph cache (ASCII
-// 32 to 126 and the Latin-1 Supplement, glyph_cache.character_index) and
+// 32 to 126, the Latin-1 Supplement and the added characters,
+// glyph_cache.character_index) and
 // the glyph .notdef, each glyph a simple glyph with no hinting
 // instructions. A font that lacks one of them is refused. The
 // subsets are in the repository, as the output of the command "font" is:
@@ -196,8 +197,9 @@ Equivalent_Glyph :: struct {
 // The two characters of the Latin-1 Supplement that a font can lack and
 // that have a standard equivalent of the same form: the space with no
 // break draws as the space, the soft hyphen as the hyphen. Paper Mono has
-// no soft hyphen. Each other character that a font lacks is refused: a
-// guessed form would be a wrong letter (docs/FONTS.md, "6. The font file").
+// no soft hyphen. Each other character that a font lacks is refused, the
+// euro sign too: a guessed form would be a wrong character (docs/FONTS.md,
+// "6. The font file").
 @(rodata)
 equivalent_characters := [?]Equivalent_Glyph{{character = 0xA0, taken_from = ' '}, {character = 0xAD, taken_from = '-'}}
 
@@ -358,9 +360,13 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 	put_u32(post, 12, proportional ? 0 : 1) // isFixedPitch.
 	append(&tables, Subset_Table{"post", post})
 	subset = sfnt_write(tables[:])
+	added := strings.builder_make(context.temp_allocator)
+	for character in glyph_cache.added_characters {
+		fmt.sbprintf(&added, " U+%04X", int(character))
+	}
 	report.license_text = fmt.aprintf(
-		"%s\n\nThis file is a subset of %s, made by \"modustool vector_fonts\" (docs/FONTS.md):\nthe characters 32 to 126, the characters U+00A0 to U+00FF and the glyph\n.notdef, each glyph a simple glyph\n(%d glyphs made of glyphs were made simple), no hinting instructions, no\nOpenType layout tables%s. The subset carries the name \"%s\".\nLicense of the source: %s.\n\nThe text of the license in the source font file:\n\n%s\n\nURL of the license: %s\nThe full text of the license: %s, in this folder.\n",
-		copyright, candidate.name, report.composites, strings.concatenate({proportional ? fmt.tprintf("; the %d pair adjustments of its table kern between\nthese characters", report.pairs) : "", report.zero_glyph != 0 ? fmt.tprintf(";\nthe character 0 is the glyph %d of the source, the slashed zero of its\nfeature zero", report.zero_glyph) : ""}, context.temp_allocator), candidate.family, candidate.license, license, license_place, candidate.license_file,
+		"%s\n\nThis file is a subset of %s, made by \"modustool vector_fonts\" (docs/FONTS.md):\nthe characters 32 to 126, the characters U+00A0 to U+00FF, the characters%s\nand the glyph .notdef, each glyph a simple glyph\n(%d glyphs made of glyphs were made simple), no hinting instructions, no\nOpenType layout tables%s. The subset carries the name \"%s\".\nLicense of the source: %s.\n\nThe text of the license in the source font file:\n\n%s\n\nURL of the license: %s\nThe full text of the license: %s, in this folder.\n",
+		copyright, candidate.name, strings.to_string(added), report.composites, strings.concatenate({proportional ? fmt.tprintf("; the %d pair adjustments of its table kern between\nthese characters", report.pairs) : "", report.zero_glyph != 0 ? fmt.tprintf(";\nthe character 0 is the glyph %d of the source, the slashed zero of its\nfeature zero", report.zero_glyph) : ""}, context.temp_allocator), candidate.family, candidate.license, license, license_place, candidate.license_file,
 		allocator = context.temp_allocator,
 	)
 	return subset, report, true
@@ -454,46 +460,62 @@ simple_glyph_write :: proc(out: ^[dynamic]u8, outline: ^vector_font.Outline) -> 
 	return box
 }
 
-// character_map_write gives a cmap with one subtable of format 4 and three
-// segments: the characters 32 to 126 are the glyphs 1 to 95, the
-// characters U+00A0 to U+00FF the glyphs 96 to 191, and the last segment
-// ends at 0xFFFF, as the format needs.
+// character_map_write gives a cmap with one subtable of format 4: the
+// characters 32 to 126 are the glyphs 1 to 95, the characters U+00A0 to
+// U+00FF the glyphs 96 to 191, each added character a segment of its own
+// with the glyph of its character index plus 1, and the last segment ends
+// at 0xFFFF, as the format needs. The segments are in the order of their
+// characters, because the list of the added characters is.
 @(private = "file")
 character_map_write :: proc() -> []u8 {
-	ASCII_GLYPH_DELTA :: 1 - glyph_cache.ASCII_FIRST // The glyph of a character of ASCII is the character plus this.
-	LATIN_GLYPH_DELTA :: 1 + glyph_cache.ASCII_COUNT - glyph_cache.LATIN_FIRST // The same for the Latin-1 Supplement.
+	// The glyph of a character of a segment is the character plus delta.
+	Character_Map_Segment :: struct {
+		first, last: u16,
+		delta:       int,
+	}
+	segments := make([dynamic]Character_Map_Segment, context.temp_allocator)
+	append(&segments, Character_Map_Segment{first = glyph_cache.ASCII_FIRST, last = glyph_cache.ASCII_LAST, delta = 1 - glyph_cache.ASCII_FIRST})
+	append(&segments, Character_Map_Segment{first = glyph_cache.LATIN_FIRST, last = glyph_cache.LATIN_LAST, delta = 1 + glyph_cache.ASCII_COUNT - glyph_cache.LATIN_FIRST})
+	for character, offset in glyph_cache.added_characters {
+		append(&segments, Character_Map_Segment{first = u16(character), last = u16(character), delta = 1 + glyph_cache.ADDED_FIRST_INDEX + offset - int(character)})
+	}
+	// The last one maps 0xFFFF to the glyph 0.
+	append(&segments, Character_Map_Segment{first = 0xFFFF, last = 0xFFFF, delta = 1})
+	count := len(segments)
+	power := 1
+	exponent := 0
+	for power * 2 <= count {
+		power *= 2
+		exponent += 1
+	}
 	out := make([dynamic]u8, context.temp_allocator)
 	append_u16(&out, 0)
 	append_u16(&out, 1)
 	append_u16(&out, 3) // Windows, Unicode basic plane.
 	append_u16(&out, 1)
 	append_u32(&out, 12)
-	segments :: 3
 	append_u16(&out, 4)
-	append_u16(&out, 16 + 8 * segments) // length
+	append_u16(&out, u16(16 + 8 * count)) // length
 	append_u16(&out, 0) // language
-	append_u16(&out, 2 * segments)
-	append_u16(&out, 4) // searchRange: 2 * 2^floor(log2(3)).
-	append_u16(&out, 1) // entrySelector: floor(log2(3)).
-	append_u16(&out, 2 * segments - 4) // rangeShift: 2 * segments - searchRange.
-	// The end of each segment.
-	append_u16(&out, glyph_cache.ASCII_LAST)
-	append_u16(&out, glyph_cache.LATIN_LAST)
-	append_u16(&out, 0xFFFF)
+	append_u16(&out, u16(2 * count))
+	append_u16(&out, u16(2 * power)) // searchRange: 2 * 2^floor(log2(count)).
+	append_u16(&out, u16(exponent)) // entrySelector: floor(log2(count)).
+	append_u16(&out, u16(2 * count - 2 * power)) // rangeShift: 2 * count - searchRange.
+	for segment in segments {
+		append_u16(&out, segment.last)
+	}
 	append_u16(&out, 0) // reservedPad
-	// The start of each segment.
-	append_u16(&out, glyph_cache.ASCII_FIRST)
-	append_u16(&out, glyph_cache.LATIN_FIRST)
-	append_u16(&out, 0xFFFF)
-	// The delta of each segment, modulo 65536: the last one maps 0xFFFF to
-	// the glyph 0.
-	append_u16(&out, u16(0x10000 + ASCII_GLYPH_DELTA))
-	append_u16(&out, u16(0x10000 + LATIN_GLYPH_DELTA))
-	append_u16(&out, 1)
+	for segment in segments {
+		append_u16(&out, segment.first)
+	}
+	// The delta of each segment, modulo 65536.
+	for segment in segments {
+		append_u16(&out, u16((segment.delta + 0x10000) % 0x10000))
+	}
 	// No range offset: each glyph is its character plus the delta.
-	append_u16(&out, 0)
-	append_u16(&out, 0)
-	append_u16(&out, 0)
+	for _ in segments {
+		append_u16(&out, 0)
+	}
 	return out[:]
 }
 

@@ -4,7 +4,7 @@ import "modus:contract/blake3"
 import "modus:contract/glyph_cache"
 
 #assert(int(max(Stripe_Filter)) + 1 == glyph_cache.FILTER_COUNT)
-CHARACTER_COUNT :: glyph_cache.CHARACTER_COUNT // The characters of a glyph cache: ASCII 32 to 126 and the Latin-1 Supplement.
+CHARACTER_COUNT :: glyph_cache.CHARACTER_COUNT // The characters of a glyph cache: ASCII 32 to 126, the Latin-1 Supplement and the added characters.
 
 // character_of gives the character of a character index of a cache. The
 // index is below CHARACTER_COUNT at each call.
@@ -93,8 +93,8 @@ cache_header_write :: proc "contextless" (out: []u8, font_bytes: []u8, font_name
 	return layout.words + 4 * word_count
 }
 
-// glyph_cache_build draws the characters of a glyph cache (ASCII 32 to 126
-// and the Latin-1 Supplement) of a monospace font at
+// glyph_cache_build draws the characters of a glyph cache (ASCII 32 to 126,
+// the Latin-1 Supplement and the added characters) of a monospace font at
 // the three scales of the grid and writes a glyph cache file
 // (modus:contract/glyph_cache) into the memory of the caller: one position, each
 // glyph the full width of its cell, each advance the width of the cell, no

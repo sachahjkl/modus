@@ -19,10 +19,12 @@
 // little-endian; each record has a fixed size.
 //
 // The characters of a cache are fixed: the printable characters of ASCII,
-// 32 to 126, and the Latin-1 Supplement, U+00A0 to U+00FF. Each table keys
-// a character by its character index (character_index): 0 to 94, then 95
-// to 190. A character of a text outside both ranges has no glyph, and the
-// reader draws the replacement glyph (docs/FONTS.md, "The glyph cache").
+// 32 to 126, the Latin-1 Supplement, U+00A0 to U+00FF, and the added
+// characters (added_characters): the euro sign. Each table keys a
+// character by its character index (character_index): 0 to 94, then 95 to
+// 190, then 191 for the euro sign. A character of a text outside them has
+// no glyph, and the reader draws the replacement glyph (docs/FONTS.md, "The
+// glyph cache").
 //
 //   Header         128 bytes  at 0
 //   Size_Entry     16 bytes   x size_count, at 128
@@ -40,7 +42,7 @@
 package glyph_cache
 
 MAGIC :: u64(0x5345485048594C47) // The bytes "GLYPHSES" ("GLYPH" and "SES").
-VERSION :: 3 // The version of the format. A reader refuses another.
+VERSION :: 4 // The version of the format. A reader refuses another. A change of the characters of a cache is a new version.
 HEADER_SIZE :: 128 // The bytes of `Header`.
 SIZE_ENTRY_SIZE :: 16 // The bytes of `Size_Entry`.
 GLYPH_ENTRY_SIZE :: 12 // The bytes of `Glyph_Entry`.
@@ -53,7 +55,20 @@ ASCII_LAST :: 126 // The tilde.
 LATIN_FIRST :: 0xA0 // The first character of the Latin-1 Supplement: the space with no break.
 LATIN_LAST :: 0xFF // The last one: y with a diaeresis.
 ASCII_COUNT :: ASCII_LAST - ASCII_FIRST + 1 // 95: the character index of LATIN_FIRST.
-CHARACTER_COUNT :: ASCII_COUNT + LATIN_LAST - LATIN_FIRST + 1 // 191: the characters of each cache.
+ADDED_FIRST_INDEX :: ASCII_COUNT + LATIN_LAST - LATIN_FIRST + 1 // 191: the character index of the first added character.
+// The added characters: the characters past the Latin-1 Supplement that
+// each font draws. Each one is chosen, not a range: the characters that a
+// language of the layouts needs past Latin-1 are far apart in Unicode, and
+// a range would hold thousands that the fonts of the system do not draw.
+// The list is in the order of the code points: the character map of a
+// subset needs its segments in that order, and a reader can search the
+// list by halves. A character added to the list moves the index of each
+// character after it, so each change of the list is a new VERSION.
+EURO_SIGN :: 0x20AC
+ADDED_COUNT :: 1
+@(rodata)
+added_characters := [ADDED_COUNT]rune{EURO_SIGN}
+CHARACTER_COUNT :: ADDED_FIRST_INDEX + ADDED_COUNT // 192: the characters of each cache.
 #assert(CHARACTER_COUNT <= 256) // A pair names a character index in one byte.
 CELL_WIDTH_LIMIT :: 24 // The widest cell: 8 pixels at scale 3.
 CELL_HEIGHT_LIMIT :: 48 // The tallest cell: 16 pixels at scale 3.
@@ -324,15 +339,23 @@ validate_at :: proc "contextless" (address: uintptr, span: u64) -> (cache: Cache
 }
 
 // character_index gives the index of a character in each table of a cache:
-// 0 to 94 for 32 to 126, then 95 to 190 for U+00A0 to U+00FF. found is
-// false for a character outside both ranges: a control character, and
-// each character past U+00FF.
+// 0 to 94 for 32 to 126, then 95 to 190 for U+00A0 to U+00FF, then the
+// added characters from ADDED_FIRST_INDEX, in the order of their list.
+// found is false for each other character: a control character, and each
+// character past U+00FF that the list does not name.
 character_index :: #force_inline proc "contextless" (character: rune) -> (index: int, found: bool) {
 	switch character {
 	case ASCII_FIRST ..= ASCII_LAST:
 		return int(character) - ASCII_FIRST, true
 	case LATIN_FIRST ..= LATIN_LAST:
 		return int(character) - LATIN_FIRST + ASCII_COUNT, true
+	}
+	if character > LATIN_LAST {
+		for added, offset in added_characters {
+			if added == character {
+				return ADDED_FIRST_INDEX + offset, true
+			}
+		}
 	}
 	return 0, false
 }
@@ -343,8 +366,10 @@ character_of_index :: proc "contextless" (index: int) -> (character: rune, found
 	switch {
 	case index >= 0 && index < ASCII_COUNT:
 		return rune(index + ASCII_FIRST), true
-	case index >= ASCII_COUNT && index < CHARACTER_COUNT:
+	case index >= ASCII_COUNT && index < ADDED_FIRST_INDEX:
 		return rune(index - ASCII_COUNT + LATIN_FIRST), true
+	case index >= ADDED_FIRST_INDEX && index < CHARACTER_COUNT:
+		return added_characters[index - ADDED_FIRST_INDEX], true
 	}
 	return 0, false
 }

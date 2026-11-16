@@ -51,8 +51,8 @@ characters_french := Key_Characters {
 // Scan code set 1, layout of France: the character of each key with AltGr,
 // the third level. A key that the list does not name gives no character.
 // The keys of 2 and 7 are dead keys: their entry is 0, and dead_accent_of
-// gives their accent. AltGr with e gives the euro sign on an AZERTY
-// keyboard; the fonts do not draw it, so the key gives no character.
+// gives their accent. AltGr with e gives the euro sign, as on each AZERTY
+// keyboard.
 @(rodata)
 characters_french_alt_graph := [TABLE_KEY_COUNT]rune {
 	0x04 = '#',
@@ -66,6 +66,7 @@ characters_french_alt_graph := [TABLE_KEY_COUNT]rune {
 	0x0D = '}',
 	0x0E = 8,
 	0x0F = '\t',
+	0x12 = '€',
 	0x1B = '¤',
 	0x1C = '\n',
 	0x37 = '*',
@@ -87,8 +88,8 @@ Accented_Letter :: struct {
 }
 
 // The letters that each accent of a dead key makes. A capital Y with a
-// diaeresis is outside the Latin-1 Supplement, which the fonts draw: it is
-// not here, so the dead key then gives the accent and the letter.
+// diaeresis is outside the characters that the fonts draw: it is not here,
+// so the dead key then gives the accent and the letter.
 @(rodata)
 @(private)
 circumflex_letters := [?]Accented_Letter{{'a', 'â'}, {'e', 'ê'}, {'i', 'î'}, {'o', 'ô'}, {'u', 'û'}, {'A', 'Â'}, {'E', 'Ê'}, {'I', 'Î'}, {'O', 'Ô'}, {'U', 'Û'}}
