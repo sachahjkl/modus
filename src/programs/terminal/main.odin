@@ -279,6 +279,44 @@ drawer_waits: u32
 // picture only after a change: a terminal that receives nothing draws nothing.
 activity: u32
 drawer_idle: u32
+drawer_wakes: u32 // The wakes of the drawer that the reader made after a change.
+
+// The state of the check of a lost wake: what the drawer saw at its last
+// look at the reader.
+reader_read_seen: u32 // The records that the reader had read.
+reader_stuck_seen: bool // The reader was in a wait with records in its ring.
+lost_wake_logged: [2]bool // A line of the log for each side, one time.
+
+// lost_wake_check looks, after each wait of the drawer with nothing to draw,
+// for a wake that did not come. Each side wakes the other one at each
+// change, so neither case can happen; a line of the log says which one did:
+//
+// - the drawer: its wait ended at its deadline, the reader changed the view
+//   during it, and the reader made no wake;
+// - the reader: at two looks in a row that each end a whole wait of the
+//   drawer to its deadline, the reader is in its wait, its ring holds
+//   records, and it read none between the two.
+//
+// It changes no state: the drawer draws the change at this turn anyway.
+lost_wake_check :: proc "contextless" (ended_by_time: bool, wakes_before: u32) {
+	if !ended_by_time {
+		reader_stuck_seen = false
+		return
+	}
+	if intrinsics.atomic_load(&drawer_wakes) == wakes_before && intrinsics.atomic_load(&activity) != activity_at_wait && !lost_wake_logged[0] {
+		lost_wake_logged[0] = true
+		system.log("terminal: ", program_name, ": the drawer slept to its deadline after a change of the view, and no wake came")
+	}
+	read := intrinsics.atomic_load(&source.commands.counters.read)
+	stuck := intrinsics.atomic_load(&reader_idle) != 0 && ring.count(&source.commands) != 0
+	if stuck && reader_stuck_seen && read == reader_read_seen && !lost_wake_logged[1] {
+		lost_wake_logged[1] = true
+		system.log("terminal: ", program_name, ": the reader waits with ", u64(ring.count(&source.commands)), " records in its ring, and read none since the last look")
+	}
+	reader_read_seen, reader_stuck_seen = read, stuck
+}
+
+activity_at_wait: u32 // The value of activity that the drawer waited on.
 
 line_valid :: proc "contextless" (index: u64) -> bool {
 	line := lines[index & (LINE_CAPACITY - 1)]
@@ -764,6 +802,7 @@ read :: proc "c" (parameter: rawptr) -> ! {
 		if count != 0 {
 			intrinsics.atomic_add(&activity, 1)
 			if intrinsics.atomic_load(&drawer_idle) != 0 && intrinsics.atomic_exchange(&drawer_idle, 0) != 0 {
+				intrinsics.atomic_add(&drawer_wakes, 1)
 				system.word_wake(&activity)
 			}
 		}
@@ -1164,12 +1203,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if step_due {
 				deadline = min(deadline, step_time)
 			}
+			wakes_before := intrinsics.atomic_load(&drawer_wakes)
+			activity_at_wait = drawn
 			system.wait_end(&wait, deadline)
 			now = system.time()
 			next_frame = now
 			if step_due && now >= step_time {
 				dirty = true
 			}
+			lost_wake_check(now >= deadline, wakes_before)
 		} else if picture_waits {
 			// The wait ends when the compositor has read the ring of the
 			// window, or at the next look at the program.
