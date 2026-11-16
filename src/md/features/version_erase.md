@@ -48,6 +48,16 @@ After a write whose answer is unknown, `unlock` does not erase: the store did no
 
 The host test of the open checks each of these images (`src/library/support/storage_mount`). It checks a model of the writes, built by hand in the order of the service, not the service itself. The machine test of `principals` opens the disk that the service left after an erase, on the host, and finds no wrong block and no version of the file.
 
+## The machine test of a dropped write of zeros
+
+The read back of the zeros is the one part of the erase whose report a principal reads in place of a fact: the log and the row say which old bytes stay. So a machine test makes the disk drop one write of zeros, and checks the report against the bytes of the disk.
+
+- **The machine.** Machine 10 of `modustool test principals` changes the passphrase of a named principal, and `unlock` then erases the version of its file: the file of machine 9. The tool serves the disk of that machine (`tools/modustool/network_block_device.odin`) from the image that machine 9 left, and writes the image back after it, so machines 11 and 12 run on as before.
+- **The block that the disk drops.** Before machine 10, the tool reads the file of machine 9 from the image, as for the search of its parts after the change. The disk answers Ok to the first write of a block of zero bytes over a block whose bytes hold the salt of that file, and keeps the old bytes there. The salt is 16 random bytes of that one file, so it names its block whatever the order of the writes.
+- **The lines.** The service writes "storage: the versions of principal in the store unlock are ended at the generation G, and the read back of the zeros found 1 blocks with other bytes: the disk did not keep those writes, and their old bytes stay in free blocks until a commit takes them", then its line of the erase, and `unlock` writes the row. The scenario waits for the first one, then for the line of `unlock`.
+- **The count of the row.** The disk counts the blocks of zero bytes that it kept between two `Flush` commands. At the `Flush` after the dropped write, that count is the count of the zeros of this erase that reached the disk, because the second root of the erase ends with its own `Flush` and the zeros end with theirs. The blocks written with zeros in the line of the service and in the row of `unlock` must both equal it: the row counts each zero that the disk kept, and not the dropped one.
+- **The image.** No part of the file of machine 9 is outside the dropped block. While that block is free in the root that the open takes, it still holds the salt: the old bytes that the log reported are on the disk. A commit that took the block later wrote over them, and the search then finds no part at all. The open of the image finds no wrong block and no version of the file, as after an erase with no drop.
+
 ## What a shared block means for secrecy
 
 A block that another state still names keeps its bytes: the erase ends names, and the bytes of a state that stays are not an old secret. For the file of a principal, the cases are:
@@ -85,6 +95,9 @@ A block that another state still names keeps its bytes: the erase ends names, an
 - **A read back of its own for the commit of the end.** Each commit reads back its blocks and its root before the next commit starts, so the erase uses the read back of its commit of the end. A read back that differs leaves the service in the state of the root before N, and no root of the refused commit names its blocks.
 - **A second root with no read back.** It was the form before: a root N + 1 that the disk drops leaves the root before N, which names the zeroed blocks, and the next commit writes over N. One read of one block closes it.
 - **A write of the zeros again after a read back that differs.** The disk that dropped one write of zeros can drop the next one, and the loop has no bound but a count. The versions are ended already; the log and the row say which blocks keep their bytes.
+- **In the test, a drop found by the bytes of the write.** Each write of zeros has the same bytes. Only the bytes that the block holds before the write tell the block of the old file from the tree nodes and the store block that the erase also writes with zeros.
+- **In the test, a drop of the Nth write of zeros.** QEMU fixes the order and the grouping of the writes, not the service: a count can hit a tree node, whose bytes are no secret, and the search of the image then proves nothing.
+- **In the test, a machine of its own with the console.** Only `unlock` holds the grant to erase versions, so only `unlock` erases on a machine. The change of machine 10 is the erase of a secret that the test of the parts already follows.
 
 ## Subtle points
 
@@ -95,6 +108,6 @@ A block that another state still names keeps its bytes: the erase ends names, an
 
 ## State
 
-Built: the start grant `Versions_Erase` for `unlock`, the export, the commit of the end, the read back, the second root and its read back, the zeros and their read back, the row with the kept and the damaged parts, the lines of the log, the host test of a model of the images that a loss of power leaves, the calls in `unlock`, the machine test in `modustool test principals` that searches the data disk for the bytes of the file of before a change and opens the disk on the host.
+Built: the start grant `Versions_Erase` for `unlock`, the export, the commit of the end, the read back, the second root and its read back, the zeros and their read back, the row with the kept and the damaged parts, the lines of the log, the host test of a model of the images that a loss of power leaves, the calls in `unlock`, the machine test in `modustool test principals` that searches the data disk for the bytes of the file of before a change and opens the disk on the host, with a disk that drops one write of zeros of the erase and the check of the line and of the row against the zeros that the disk kept.
 
 Left: an erase of one version by its generation; the encryption of the data of a principal, which closes the limit of the device.

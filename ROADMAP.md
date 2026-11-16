@@ -7,7 +7,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Next
 
 - **The first signed release image.** The keys of the publisher of the system go into the secrets of the repository, and their public key and certificate into `resources/keys`. The next tag then publishes a disk image that a principal verifies and starts. [Design](src/md/infrastructure/release_image.md)
-- **A machine test of zeros that the disk does not keep.** The test disk drops a write of zeros of an erase of versions, and the machine test of `principals` checks the line of the storage service and the count of the row, so the report of the old bytes that stay on the disk is proved on a machine and not only read in the code. [Design](src/md/features/version_erase.md)
 - **A guest on a machine with an Intel processor.** A program runs a guest on a machine with an Intel processor too, with the same operation and the same exit records as on AMD. [Design](src/md/features/guest.md)
 
 ## Later

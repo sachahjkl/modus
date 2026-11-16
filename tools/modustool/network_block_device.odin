@@ -4,8 +4,10 @@ import format "modus:contract/store"
 import "core:encoding/endian"
 import "core:fmt"
 import "core:net"
+import "core:strings"
 import "core:sync"
 import "core:thread"
+import block_tree "modus:support/storage_object"
 
 // A disk that the modus tool serves to QEMU with the Network Block Device
 // protocol (NBD, "fixed newstyle" handshake, simple replies), so that the
@@ -22,7 +24,9 @@ import "core:thread"
 //
 // The disk can also drop one write: it answers Ok and keeps nothing, as a
 // disk with a fault that reports none; and hide one: it answers Ok, gives
-// the bytes at a read, and never makes them durable (dropped_write.odin).
+// the bytes at a read, and never makes them durable (dropped_write.odin);
+// and drop one write of zeros of an erase of versions
+// (tpm_key_scenario.odin).
 //
 // The protocol: https://github.com/NetworkBlockDevice/nbd/blob/master/doc/proto.md
 // All numbers on the wire are big-endian.
@@ -106,6 +110,26 @@ Network_Block_Device :: struct {
 	// write became durable: the image that a loss of power at that moment
 	// leaves.
 	durable_at_hidden_root: []u8,
+	// The dropped write of zeros (src/md/features/version_erase.md): not
+	// empty, the disk answers Ok to the first write of a block of zero
+	// bytes over a block whose bytes hold these bytes, and keeps the old
+	// bytes there. Every write of zeros has the same bytes: only the bytes
+	// that the block held tell the block of a secret from a tree node.
+	zero_drop_bytes:             []u8,
+	zero_drop_state:             Zero_Drop_State,
+	zero_dropped_block:          u64, // The block that kept its old bytes.
+	zero_blocks_since_flush:     int, // The blocks of zero bytes that the disk kept since the last flush.
+	// At the flush after the dropped write of zeros: the blocks of zero
+	// bytes that the disk kept between the flush before and that flush,
+	// the zeros of that erase that reached the disk.
+	zero_blocks_kept_with_drop:  int,
+}
+
+// The states of the dropped write of zeros, in their order.
+Zero_Drop_State :: enum {
+	Armed, // No write of zeros was dropped yet.
+	Dropped, // A write of zeros was answered and not kept; no flush came after it yet.
+	Flushed, // A flush came after it, and the disk took the count of its batch.
 }
 
 // The states of the dropped root, in their order.
@@ -184,6 +208,44 @@ drop_decide :: proc(server: ^Network_Block_Device, offset: u64, bytes: []u8) -> 
 	case .Root_Written, .Root_Durable:
 	}
 	return dropped_start, hidden_start
+}
+
+// zero_drop_decide finds the blocks of zero bytes of one write: it counts
+// each one that the disk keeps, and gives the place in `bytes` of the one
+// that it does not keep, or -1. A write that the protocol does not align to
+// a block is not a write of the storage service, and is left alone. The
+// caller holds the lock, and has checked that the write is in the disk.
+zero_drop_decide :: proc(server: ^Network_Block_Device, offset: u64, bytes: []u8) -> (dropped_start: int) {
+	dropped_start = -1
+	if len(server.zero_drop_bytes) == 0 || offset < ROOT_BLOCK_PLACES * format.BLOCK_SIZE || offset % format.BLOCK_SIZE != 0 {
+		return -1
+	}
+	for start := 0; start + format.BLOCK_SIZE <= len(bytes); start += format.BLOCK_SIZE {
+		if !block_tree.is_zero(bytes[start:][:format.BLOCK_SIZE]) {
+			continue
+		}
+		held := server.current[offset + u64(start):][:format.BLOCK_SIZE]
+		if server.zero_drop_state == .Armed && strings.contains(string(held), string(server.zero_drop_bytes)) {
+			server.zero_drop_state = .Dropped
+			server.zero_dropped_block = (offset + u64(start)) / format.BLOCK_SIZE
+			dropped_start = start
+			continue
+		}
+		server.zero_blocks_since_flush += 1
+	}
+	return dropped_start
+}
+
+// zero_drop_flush ends a batch of writes at a flush. After the dropped
+// write of zeros, the count of its batch is the count of the zeros of the
+// erase that the disk kept: the erase flushes its second root before its
+// zeros and flushes again after them. The caller holds the lock.
+zero_drop_flush :: proc(server: ^Network_Block_Device) {
+	if server.zero_drop_state == .Dropped {
+		server.zero_drop_state = .Flushed
+		server.zero_blocks_kept_with_drop = server.zero_blocks_since_flush
+	}
+	server.zero_blocks_since_flush = 0
 }
 
 // disk_server_start serves an image: `image` is the disk at the start, and
@@ -402,6 +464,11 @@ disk_server_serve :: proc(server: ^Network_Block_Device, client: net.TCP_Socket)
 					dropped_length := min(format.BLOCK_SIZE, int(length) - dropped_start)
 					copy(data[dropped_start:][:dropped_length], server.current[offset + u64(dropped_start):][:dropped_length])
 				}
+				if zero_start := zero_drop_decide(server, offset, data[:length]); zero_start >= 0 {
+					// The block of zeros that the disk does not keep: its old
+					// bytes stay, in the current and in the durable image.
+					copy(data[zero_start:][:format.BLOCK_SIZE], server.current[offset + u64(zero_start):][:format.BLOCK_SIZE])
+				}
 				copy(server.current[offset:][:length], data[:length])
 				if hidden_start >= 0 {
 					// The block that a read sees and that never becomes durable:
@@ -436,6 +503,7 @@ disk_server_serve :: proc(server: ^Network_Block_Device, client: net.TCP_Socket)
 			}
 			clear(&server.pending)
 			server.flushes += 1
+			zero_drop_flush(server)
 			if server.hide_state == .Root_Written {
 				server.hide_state = .Root_Durable
 				server.durable_at_hidden_root = clone_bytes(server.durable)

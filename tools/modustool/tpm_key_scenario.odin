@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:net"
 import "core:os"
 import "core:strings"
+import "core:sync"
 import "core:time"
 import format "modus:contract/store"
 import "modus:support/principals"
@@ -211,7 +212,9 @@ scenario_tpm_key_secure_boot_off := [?]Step {
 //      of the session changes the passphrase (the current one first, which
 //      the TPM checks), then makes a new recovery key, which the tool reads
 //      off the screen. After a lock the passphrase before the change is
-//      refused and counted, and the changed one opens the keys.
+//      refused and counted, and the changed one opens the keys. The tool
+//      serves its disk, which drops the write of zeros of the erase over
+//      the file of machine 9 (principal_change_with_a_dropped_zero_run).
 //  11. The system of machines 7 and 8, where the TPM would refuse, as the
 //      keys are sealed to the other system: Ctrl+R asks for the recovery
 //      key with no try, and Enter with nothing goes back to the passphrase;
@@ -328,6 +331,18 @@ tpm_principal_recovery_and_new_passphrase := [?]Step {
 @(private = "file")
 PRINCIPAL_FILE_ERASED_LINE :: "unlock: the versions of the object \"principal\" are erased: 1 ended, "
 
+// The line of the storage service when the read back of the zeros of an
+// erase finds one block that the disk did not write, in two parts around
+// the generation of the commit of the end (src/programs/storage/trees.odin).
+@(private = "file")
+ZEROS_DROPPED_LINE_START :: "storage: the versions of " + principals.FILE_OBJECT + " in the store " + UNLOCK_STORE + " are ended at the generation "
+@(private = "file")
+ZEROS_DROPPED_LINE_END :: ", and the read back of the zeros found 1 blocks with other bytes: the disk did not keep those writes, and their old bytes stay in free blocks until a commit takes them"
+// The line of the storage service after the erase, before the count of
+// the blocks that read back as zeros.
+@(private = "file")
+STORAGE_FILE_ERASED_LINE :: "storage: the versions of " + principals.FILE_OBJECT + " in the store " + UNLOCK_STORE + " are erased: 1 version ended, "
+
 @(private = "file")
 scenario_tpm_principal_other_system := [?]Step {
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
@@ -371,6 +386,9 @@ scenario_tpm_principal_change := [?]Step {
 	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
 	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" is changed: the TPM seals its keys to PCR 7 and PCR 11 and to the new passphrase", any_order = true},
+	// The disk does not keep the write of zeros over the block of the file
+	// of machine 9: the read back of the zeros finds it.
+	{kind = .Wait, text = ZEROS_DROPPED_LINE_END, any_order = true},
 	{kind = .Wait, text = PRINCIPAL_FILE_ERASED_LINE, any_order = true},
 	// The end goes to the console that asked, and the window shows it
 	// until Enter.
@@ -593,7 +611,7 @@ scenario_tpm_machine_passphrase_after_the_new_seal := [?]Step {
 // the end, with the state of the TPM given, then prints what the log of
 // its software TPM shows.
 @(private = "file")
-tpm_key_machine_run :: proc(parts: [][]Step, volume: string, firmware: Machine_Firmware, number: int, disk: string = TEST_TPM_KEY_DISK, tpm_state: string = TPM_KEY_STATE_FOLDER) -> bool {
+tpm_key_machine_run :: proc(parts: [][]Step, volume: string, firmware: Machine_Firmware, number: int, disk: string = TEST_TPM_KEY_DISK, tpm_state: string = TPM_KEY_STATE_FOLDER, disk_server: ^Network_Block_Device = nil) -> bool {
 	// Not in the temporary allocator: the tool frees it after each step.
 	all := make([dynamic]Step)
 	defer delete(all)
@@ -613,7 +631,7 @@ tpm_key_machine_run :: proc(parts: [][]Step, volume: string, firmware: Machine_F
 	}
 	append(&all, ..tpm_key_end[:])
 	output := self_test_file(TEST_OUTPUT_TPM_KEY, number)
-	passed := machine_test(all[:], volume, output, MACHINE_STOP_OK, disk, firmware = firmware, tpm_state = tpm_state, tpm_device = true)
+	passed := machine_test(all[:], volume, output, MACHINE_STOP_OK, disk, disk_server = disk_server, firmware = firmware, tpm_state = tpm_state, tpm_device = true)
 	tpm_traffic_report(output)
 	return passed
 }
@@ -711,12 +729,91 @@ principal_file_parts_read :: proc() -> (parts: Principal_File_Parts, ok: bool) {
 	return parts, true
 }
 
+// principal_change_with_a_dropped_zero_run runs machine 10 on the disk that
+// the tool serves, from the image that machine 9 left. The disk answers Ok
+// to the first write of zeros over the block that holds the salt of the
+// file of machine 9, and keeps its old bytes
+// (src/md/features/version_erase.md). After
+// the machine, the image goes back to the disk file of the part, and the
+// count of the blocks written with zeros in the line of the storage service
+// and in the row that unlock writes must be the count of the zeros that
+// the disk kept. It gives the block that the disk did not write with zeros.
+@(private = "file")
+principal_change_with_a_dropped_zero_run :: proc(parts: ^Principal_File_Parts) -> (dropped_block: u64, ok: bool) {
+	image, read_error := os.read_entire_file(TEST_TPM_PRINCIPAL_DISK, context.allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: test failed: cannot read %s: %v", TEST_TPM_PRINCIPAL_DISK, read_error)
+		return 0, false
+	}
+	server: Network_Block_Device
+	started := disk_server_start(&server, image)
+	delete(image)
+	if !started {
+		return 0, false
+	}
+	defer disk_server_free(&server)
+	// The thread of the server reads the bytes at the first write; no
+	// machine is connected yet.
+	sync.mutex_lock(&server.lock)
+	server.zero_drop_bytes = parts.salt[:]
+	sync.mutex_unlock(&server.lock)
+	// Not in the temporary allocator: the tool frees it after each step.
+	address := fmt.aprintf("nbd://127.0.0.1:%d", server.port)
+	defer delete(address)
+	ran := tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_change[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 10, address, disk_server = &server)
+	disk_server_stop(&server)
+	if !ran {
+		return 0, false
+	}
+	sync.mutex_lock(&server.lock)
+	defer sync.mutex_unlock(&server.lock)
+	if server.zero_drop_state != .Flushed {
+		fmt.eprintfln("modustool: test failed: the disk did not drop a write of zeros over the block of the file of alice before the change, with a flush after it: the state %v", server.zero_drop_state)
+		return 0, false
+	}
+	// The machine stopped: the current image is what a disk file holds.
+	if err := os.write_entire_file(TEST_TPM_PRINCIPAL_DISK, server.current); err != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", TEST_TPM_PRINCIPAL_DISK, err)
+		return 0, false
+	}
+	output := self_test_file(TEST_OUTPUT_TPM_KEY, 10)
+	defer delete(output)
+	log_bytes, log_error := os.read_entire_file(output, context.allocator)
+	if log_error != nil {
+		fmt.eprintfln("modustool: test failed: cannot read %s: %v", output, log_error)
+		return 0, false
+	}
+	defer delete(log_bytes)
+	text := string(log_bytes)
+	// The line of the dropped zero names the object and the store of the
+	// file; the scenario waited for its end.
+	line_at := strings.index(text, ZEROS_DROPPED_LINE_START)
+	line := line_at < 0 ? "" : text[line_at:]
+	if end := strings.index_byte(line, '\n'); end >= 0 {
+		line = line[:end]
+	}
+	if !strings.contains(line, ZEROS_DROPPED_LINE_END) {
+		fmt.eprintfln("modustool: test failed: %s has no line \"%s...%s\"", output, ZEROS_DROPPED_LINE_START, ZEROS_DROPPED_LINE_END)
+		return 0, false
+	}
+	kept := i64(server.zero_blocks_kept_with_drop)
+	storage_zeroed, storage_found := number_after(text, STORAGE_FILE_ERASED_LINE)
+	unlock_zeroed, unlock_found := number_after(text, PRINCIPAL_FILE_ERASED_LINE)
+	if !storage_found || !unlock_found || storage_zeroed != kept || unlock_zeroed != kept {
+		fmt.eprintfln("modustool: test failed: the disk kept %d blocks of zeros of the erase and dropped the write of block %d; the line of the storage service counts %d blocks written with zeros (found: %v), and the row that unlock writes %d (found: %v)", kept, server.zero_dropped_block, storage_zeroed, storage_found, unlock_zeroed, unlock_found)
+		return 0, false
+	}
+	test_passed_print("the disk dropped the write of zeros over block %d, which held the file of alice before the change; the read back of the zeros found it, and the line of the storage service and the row of unlock count the %d blocks of zeros that the disk kept", server.zero_dropped_block, kept)
+	return server.zero_dropped_block, true
+}
+
 // principal_file_parts_absent searches each byte of the disk of the keys
 // of a named principal, named blocks and free blocks alike, for the secret
-// parts of a file from before a change. The erase of the versions must
-// leave none of them (src/md/features/version_erase.md).
+// parts of a file from before a change. The erase of the versions leaves
+// them only in the block whose write of zeros the disk dropped, and there
+// only while that block is free (src/md/features/version_erase.md).
 @(private = "file")
-principal_file_parts_absent :: proc(parts: ^Principal_File_Parts) -> bool {
+principal_file_parts_absent :: proc(parts: ^Principal_File_Parts, dropped_block: u64) -> bool {
 	image, read_error := os.read_entire_file(TEST_TPM_PRINCIPAL_DISK, context.allocator)
 	if read_error != nil {
 		fmt.eprintfln("modustool: test failed: cannot read %s: %v", TEST_TPM_PRINCIPAL_DISK, read_error)
@@ -728,13 +825,27 @@ principal_file_parts_absent :: proc(parts: ^Principal_File_Parts) -> bool {
 		bytes: []u8,
 	}
 	searched := [3]Searched{{"its salt", parts.salt[:]}, {"its keys under the seal key", parts.sealed[:]}, {"its keys under the recovery key", parts.recovery_sealed[:]}}
-	for item in searched {
-		if at := strings.index(string(image), string(item.bytes)); at >= 0 {
-			fmt.eprintfln("modustool: test failed: the disk holds %s from the file of alice before the change, at the byte %d (the block %d)", item.what, at, at / format.BLOCK_SIZE)
-			return false
+	text := string(image)
+	salt_in_dropped_block := false
+	for item, item_index in searched {
+		for from := 0; from < len(text); {
+			found := strings.index(text[from:], string(item.bytes))
+			if found < 0 {
+				break
+			}
+			at := from + found
+			first_block := u64(at / format.BLOCK_SIZE)
+			last_block := u64((at + len(item.bytes) - 1) / format.BLOCK_SIZE)
+			if first_block != dropped_block || last_block != dropped_block {
+				fmt.eprintfln("modustool: test failed: the disk holds %s from the file of alice before the change, at the byte %d (the block %d), outside the block %d whose write of zeros the disk dropped", item.what, at, first_block, dropped_block)
+				return false
+			}
+			if item_index == 0 {
+				salt_in_dropped_block = true
+			}
+			from = at + 1
 		}
 	}
-	test_passed_print("the disk of %d bytes holds none of the salt, the keys under the seal key and the keys under the recovery key of the file of alice before the change: the store erased its versions and wrote zeros over their blocks", len(image))
 	// The disk that the engine left opens as the storage service opens it:
 	// no root names a block of zeros, and the file has no version.
 	state := new(storage_mount.State)
@@ -749,6 +860,18 @@ principal_file_parts_absent :: proc(parts: ^Principal_File_Parts) -> bool {
 	if file == nil || file.damaged || file.versions_damaged || len(file.versions) != 0 {
 		fmt.eprintfln("modustool: test failed: after the erase, the file of alice in the store %s is absent, damaged, or has versions (%d)", UNLOCK_STORE, file == nil ? 0 : len(file.versions))
 		return false
+	}
+	// A free block keeps the bytes that the disk did not write over, as
+	// the log said; a block that a later commit took holds that commit.
+	dropped_block_free := dropped_block < u64(len(image)) / format.BLOCK_SIZE && state.references[dropped_block] == 0
+	if dropped_block_free && !salt_in_dropped_block {
+		fmt.eprintfln("modustool: test failed: the block %d is free, and does not hold the salt of the file of alice before the change: the disk wrote over it, or the test dropped the write of another block", dropped_block)
+		return false
+	}
+	if dropped_block_free {
+		test_passed_print("the disk of %d bytes holds the file of alice before the change only in the free block %d, whose write of zeros it dropped, as the log of the storage service says; the store erased its versions and wrote zeros over each other block", len(image), dropped_block)
+	} else {
+		test_passed_print("the disk of %d bytes holds none of the salt, the keys under the seal key and the keys under the recovery key of the file of alice before the change: a later commit took the block %d, whose write of zeros the disk dropped", len(image), dropped_block)
 	}
 	test_passed_print("the disk after the erase opens at the generation %d with no wrong block, and the file of alice has no version", mounted.generation)
 	return true
@@ -951,9 +1074,9 @@ principals_tpm_principal_tests_run :: proc() -> bool {
 	// The file of alice before the change, as the store holds it: its secret
 	// parts must leave the disk with the change.
 	old_parts := principal_file_parts_read() or_return
-	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_change[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 10, TEST_TPM_PRINCIPAL_DISK) or_return
+	dropped_block := principal_change_with_a_dropped_zero_run(&old_parts) or_return
 	test_passed_print("%s", "a console of the session changed the passphrase and the recovery key; the old passphrase was refused and counted, and the new one opened the keys")
-	principal_file_parts_absent(&old_parts) or_return
+	principal_file_parts_absent(&old_parts, dropped_block) or_return
 	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_recovery_with_no_try[:], scenario_tpm_principal_old_recovery_key[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 11, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "another system: Ctrl+R asked for the recovery key with no try, the recovery key before the change opened nothing, and the new one opened the keys")
 	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_lockout[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 12, TEST_TPM_PRINCIPAL_DISK) or_return
