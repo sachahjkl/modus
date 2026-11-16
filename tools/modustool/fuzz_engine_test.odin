@@ -73,8 +73,10 @@ the_engine_finds_and_minimizes_a_planted_fault :: proc(t: ^testing.T) {
 		return
 	}
 	testing.expect(t, strings.has_prefix(verdict.text, "the planted fault"))
-	// Each stage was an edge that the engine kept an input for.
-	testing.expect(t, len(engine.entries) >= 3)
+	// The engine kept at least one input: the replacement by a compared
+	// value can pass several stages in one mutation, so the count of the
+	// kept inputs is not one for each stage.
+	testing.expect(t, len(engine.entries) >= 1)
 	finding := slice.clone(engine.mutated[:])
 	defer delete(finding)
 	smallest, tried := fuzz_minimize(finding, fuzz_planted_still_found, nil, FUZZ_MINIMIZE_CANDIDATE_LIMIT)

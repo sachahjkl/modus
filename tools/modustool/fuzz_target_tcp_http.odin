@@ -295,8 +295,7 @@ fuzz_http_request_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if request.target_length < 0 || request.target_length > web.REQUEST_TARGET_LIMIT || request.field_count < 0 || request.field_count > web.REQUEST_FIELD_LIMIT {
 		return fuzz_broken(.Contract, "a field of the head is out of its limit: target %d, fields %d", request.target_length, request.field_count)
 	}
-	target := web.request_target(&request)
-	_, _ = web.path_of_absolute_target(transmute([]u8)target)
+	_ = web.request_target(&request)
 	again, again_complete := web.request_read(input[:request.head_size])
 	if !again_complete || again != request {
 		return fuzz_broken(.Two_Readers, "the head reads otherwise from its own bytes")

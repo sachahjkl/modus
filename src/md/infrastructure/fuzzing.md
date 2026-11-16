@@ -122,7 +122,7 @@ A run prints each new finding with its signature and its minimized file, the edg
 
 ### The kernel operations
 
-The kernel is fuzzed as syzkaller fuzzes a kernel: by sequences of operations whose arguments follow a description of each operation, run by a program inside a machine, guided by edge counters of the kernel. The description is the one that the system already has: `OPERATIONS` of `contract/operation/forms.odin`, which gives the form of each parameter (a handle of a kind with rights, an address, a count with its limit, flags with the known bits, a choice with its maximum).
+The kernel is fuzzed as syzkaller fuzzes a kernel: by sequences of operations whose arguments follow a description of each operation, run by a program inside a machine, guided by edge counters of the kernel. The description is the one that the system already has: `OPERATIONS` of `src/library/contract/operation/forms.odin`, which gives the form of each parameter (a handle of a kind with rights, an address, a count with its limit, flags with the known bits, a choice with its maximum).
 
 **The operation sequence.** A generated target builds a list of up to 64 command records. For each parameter, the generator chooses mostly a value that fits the form, sometimes a value at its edge, sometimes any value:
 
