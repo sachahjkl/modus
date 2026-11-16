@@ -359,11 +359,11 @@ scroll_bar_gradient_across :: proc "contextless" (table: ^Draw_Table, area: Area
 // border, the two arrow buttons, the thumb with its border, its inner line
 // and its grip. It takes no input: a bar that only shows a place (a list
 // whose owner is another program) is drawn with an empty look. colors nil
-// is the dark form, the form of each surface of the system.
+// is the form of the appearance in force of the program.
 scroll_bar_draw :: proc "contextless" (table: ^Draw_Table, area: Area, direction: Scroll_Bar_Direction, geometry: Scroll_Bar_Geometry, look: Scroll_Bar_Look = {}, colors: ^graphics.Scroll_Bar_Colors = nil, element: u32 = 0) {
 	BORDER :: graphics.SCROLL_BAR_BORDER
 	// A copy of the colors: the table is read-only data of the package.
-	used := graphics.scroll_bar_colors_dark
+	used := graphics.scroll_bar_colors_of(graphics.appearance)
 	if colors != nil {
 		used = colors^
 	}

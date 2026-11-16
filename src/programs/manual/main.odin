@@ -266,10 +266,10 @@ put_use :: proc "contextless" (call, name, description: string) {
 	put_built(USE_INDENT, COLOR_CODE, call, "(\"", name, "\")")
 	column := max(USE_INDENT + len("connect(\"\")") + len(name) + 2, 24)
 	if fits_after(description, column) {
-		put(description, column, graphics.COLOR_TEXT)
+		put(description, column, graphics.colors.text)
 		line_join()
 	} else {
-		put(description, USE_INDENT + 4, graphics.COLOR_TEXT)
+		put(description, USE_INDENT + 4, graphics.colors.text)
 	}
 }
 
@@ -289,7 +289,7 @@ page_build :: proc "contextless" () {
 	file := file_of(entry)
 	if file == nil {
 		put_built(0, COLOR_TITLE, name)
-		put("This file is not a valid module.", 0, graphics.COLOR_TEXT)
+		put("This file is not a valid module.", 0, graphics.colors.text)
 		return
 	}
 	head, _ := module.header(file)
@@ -299,16 +299,16 @@ page_build :: proc "contextless" () {
 	imports := int(max(module.count(file, .Imports), 1)) - 1
 
 	put_built(0, COLOR_TITLE, name)
-	put_paragraph(about, 0, graphics.COLOR_TEXT)
+	put_paragraph(about, 0, graphics.colors.text)
 	put("", 0, 0)
 	hash: [16]u8
 	digits := system.HEX_DIGITS
 	for b, index in entry.hash[:8] {
 		hash[2 * index], hash[2 * index + 1] = digits[b >> 4], digits[b & 0xF]
 	}
-	put_built(0, graphics.COLOR_DIM, "file      ", entry.size, " bytes, hash ", string(hash[:]), "...")
-	put_built(0, graphics.COLOR_DIM, "memory    ", head.memory_size >> 10, " KiB when loaded, ", u64(max(module.count(file, .Segments), 1) - 1), " segments, ", u64(imports), " imports")
-	put_built(0, graphics.COLOR_DIM, "exports   ", u64(exports), has_entry ? ", and an entry" : ", and no entry")
+	put_built(0, graphics.colors.dim, "file      ", entry.size, " bytes, hash ", string(hash[:]), "...")
+	put_built(0, graphics.colors.dim, "memory    ", head.memory_size >> 10, " KiB when loaded, ", u64(max(module.count(file, .Segments), 1) - 1), " segments, ", u64(imports), " imports")
+	put_built(0, graphics.colors.dim, "exports   ", u64(exports), has_entry ? ", and an entry" : ", and no entry")
 	put("", 0, 0)
 
 	put("HOW TO USE IT", 0, COLOR_HEADING)
@@ -357,7 +357,7 @@ page_build :: proc "contextless" () {
 
 	information_page(entry.hash)
 	put("DOCUMENTATION", 0, COLOR_HEADING)
-	put_markdown(text, 0, graphics.COLOR_TEXT)
+	put_markdown(text, 0, graphics.colors.text)
 	if exports == 0 {
 		return
 	}
@@ -377,7 +377,7 @@ page_build :: proc "contextless" () {
 			wanted_row = row_count
 		}
 		put(system.written(&writer), 0, COLOR_EXPORT)
-		put_markdown(module.string_at(file, function.text_offset, function.text_count), 4, graphics.COLOR_TEXT)
+		put_markdown(module.string_at(file, function.text_offset, function.text_count), 4, graphics.colors.text)
 		put("", 0, 0)
 	}
 	// The records that the exports use: the name, the size, and each field.
@@ -406,7 +406,7 @@ page_build :: proc "contextless" () {
 			system.write_part(&writer, ", at byte ")
 			system.write_part(&writer, u64(item.offset))
 			built_count += writer.count
-			put(system.written(&writer), 4, graphics.COLOR_TEXT)
+			put(system.written(&writer), 4, graphics.colors.text)
 		}
 		put("", 0, 0)
 	}
@@ -435,8 +435,8 @@ COLOR_FOCUS :: 0xFFFFFF
 
 draw_records :: proc "contextless" (frame: ^interface.Frame) {
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
-	interface.draw_rectangle(table, 0, 0, LIST_WIDTH, HEIGHT, graphics.COLOR_CARD_TOP)
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
+	interface.draw_rectangle(table, 0, 0, LIST_WIDTH, HEIGHT, graphics.colors.card_top)
 	entries := system.image_entries(image)
 	first_row := list_first_row()
 	for index in 0 ..< list_count {
@@ -456,7 +456,7 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 		if exports > 0 {
 			buffer: [8]u8
 			count := system.format(buffer[:], u64(exports))
-			interface.draw_text(table, LIST_WIDTH - 8 - len(count) * CELL_WIDTH, y, count, graphics.COLOR_DIM)
+			interface.draw_text(table, LIST_WIDTH - 8 - len(count) * CELL_WIDTH, y, count, graphics.colors.dim)
 		}
 	}
 
@@ -477,7 +477,7 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 		if .Code_Block in part.flags {
 			// An example is a block: a band from its indentation to the end
 			// of the text, on each of its rows.
-			interface.draw_rectangle(table, x - 4, y, left + TEXT_WIDTH + 4 - (x - 4), CELL_HEIGHT, graphics.COLOR_TRACK)
+			interface.draw_rectangle(table, x - 4, y, left + TEXT_WIDTH + 4 - (x - 4), CELL_HEIGHT, graphics.colors.track)
 		}
 		focused := part.link > 0 && int(part.link) == focused_link
 		if focused {
@@ -491,7 +491,7 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 		case .Opens_A_Page in part.flags:
 			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, part.color)
 		case .Underlined in part.flags:
-			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, graphics.COLOR_DIM)
+			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, graphics.colors.dim)
 		}
 		// A link names itself by its label, at its first part: a machine
 		// test presses it by that name (src/md/infrastructure/test_pointer.md).
@@ -501,11 +501,11 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 	}
 	bottom := HEIGHT - CELL_HEIGHT - 6
 	interface.draw_rectangle(table, LIST_WIDTH, bottom - 4, WIDTH - LIST_WIDTH, 1, 0x30363C)
-	hint := interface.draw_text(table, left, bottom, "up, down: module  Tab, Enter: link  Backspace: back", graphics.COLOR_DIM)
+	hint := interface.draw_text(table, left, bottom, "up, down: module  Tab, Enter: link  Backspace: back", graphics.colors.dim)
 	buffer: [64]u8
 	total := rows()
 	place := system.format(buffer[:], "rows ", u64(min(first_line + 1, total)), " to ", u64(min(first_line + ROWS, total)), " of ", u64(total))
-	interface.draw_text(table, max(hint + 16, WIDTH - MARGIN - len(place) * CELL_WIDTH), bottom, place, graphics.COLOR_DIM)
+	interface.draw_text(table, max(hint + 16, WIDTH - MARGIN - len(place) * CELL_WIDTH), bottom, place, graphics.colors.dim)
 }
 
 // The list of the modules, at the left of the window. The name of a module
@@ -544,14 +544,14 @@ list_build :: proc "contextless" () {
 		file := file_of(entry)
 		head, _ := module.header(file)
 		exports := described_exports(file)
-		color := graphics.Color(graphics.COLOR_DIM)
+		color := graphics.Color(graphics.colors.dim)
 		switch {
 		case exports > 0 && head.entry_export != 0:
 			color = COLOR_EXPORT
 		case exports > 0:
 			color = COLOR_TITLE
 		case head.entry_export != 0:
-			color = graphics.COLOR_TEXT
+			color = graphics.colors.text
 		}
 		list_row[index], list_exports[index], list_colors[index] = line, exports, color
 		line += max(interface.text_wrapped_line_count(nil, {}, system.name_of(entry.name[:]), list_name_room(exports)), 1)
@@ -639,23 +639,35 @@ page_log :: proc "contextless" () -> int {
 	return exports
 }
 
-// about gives the line that says what a module is, by name. The text is empty when the boot image has no module with this name.
+// about gives the line that says what a module is, by name.
+//
+// **Result**: the count of bytes of the line, or a negative number with an error record:
+//
+// - `Absent` (-1): no module of the boot image has this name.
+//
+// A module with no documentation gives an empty text and 0: an answer, not a failure.
 @(export, link_name = "about")
-about :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
+about :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	index := find(name^)
 	if index < 0 {
-		return 0
+		return errors.fail(error, -1, .Absent, .Modules, 1)
 	}
 	line, _ := module.documentation(file_of(&system.image_entries(image)[index]))
 	return text_result(line, result)
 }
 
-// signature gives the description of one export of a module as a text: its name, the name and the type of each parameter, and the type of the result. The exports have the numbers from 1. The text is empty when the module has no such export.
+// signature gives the description of one export of a module as a text: its name, the name and the type of each parameter, and the type of the result. The exports have the numbers from 1.
+//
+// **Result**: the count of bytes of the text, or a negative number with an error record:
+//
+// - `Absent` (-1): no module of the boot image has this name.
+// - `Bad_Value` (-2): the module has no export with this number; the record gives the count of its exports as the
+//   limit.
 @(export, link_name = "signature")
-signature :: proc "c" (name: ^string, export: i64, result: ^[]u8) -> i64 {
+signature :: proc "c" (name: ^string, export: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	index := find(name^)
-	if index < 0 || export < 1 {
-		return 0
+	if index < 0 {
+		return errors.fail(error, -1, .Absent, .Modules, 1)
 	}
 	file := file_of(&system.image_entries(image)[index])
 	head, _ := module.header(file)
@@ -675,7 +687,8 @@ signature :: proc "c" (name: ^string, export: i64, result: ^[]u8) -> i64 {
 			return text_result(system.written(&writer), result)
 		}
 	}
-	return 0
+	// The loop counted each described export: number is their count.
+	return errors.fail(error, -2, .Bad_Value, .None, 2, export, number)
 }
 
 // The entry of the manual: it opens its service and its window, then serves calls and keys until the principal

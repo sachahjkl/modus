@@ -10,51 +10,196 @@ CARD_GAP :: 8 // The space between two cards.
 CARD_MARGIN :: 16 // The margin inside a card.
 CARD_TITLE :: 40 // The height of the title of a card.
 
-// The surfaces (section 3).
-COLOR_BACKGROUND :: 0x0B1018 // Under all cards.
-COLOR_POINT :: 0x18212D // The grid of points on the background.
 POINT_SIZE :: 2 // The side of one point of the grid, in pixels.
 POINT_STEP :: 24 // The distance between two points of the grid, in pixels.
-COLOR_CARD_TOP :: 0x17212E // A card goes from this color at the top...
-COLOR_CARD_BOTTOM :: 0x111822 // ...to this color at the bottom.
-COLOR_TRACK :: 0x1C2633 // The empty part of a bar, a band or a tube.
 
-// The colors of the concepts (section 4). One color is one concept.
-COLOR_FIRMWARE :: 0x8E7CC3 // The firmware.
-COLOR_BOOT_PROGRAM :: 0xE0A040 // Also the state "starts".
-COLOR_KERNEL :: 0x4A9CF0 // The kernel.
-COLOR_PROGRAM :: 0x58D878 // Also the state "runs", and an expected answer.
-COLOR_MEMORY :: 0x38C0B0 // Memory, and the values that count it.
-COLOR_MACHINE :: 0xD070B0 // The machine and its devices.
-COLOR_NO_ENTRY :: 0xC8C058 // A module with no entry export: other modules import it.
-COLOR_RESOURCE :: 0x9AA8C8 // A resource of the boot image: a file that is not a module.
-COLOR_FAILED :: 0xF06060 // A failure: a check that did not pass, a program that stopped on a fault.
-COLOR_NOT_USABLE :: 0x4A5563 // Something that is there and cannot be used: reserved memory, a disabled control.
-COLOR_TEXT :: 0xDCE4EC // The text.
-COLOR_DIM :: 0x7C8A99 // A text of less weight: a unit, a caption.
+// The two appearances of the desktop (src/md/features/appearance.md). The
+// settings page says which one is in force; display gives it to
+// appearance_use.
+Appearance :: enum u8 {
+	Dark  = 0, // The appearance of the boot display: light text on a dark background.
+	Light = 1, // Dark text on the light background of the site.
+}
 
-// The desktop (section 9). The title bar of the window that has the focus
-// goes from COLOR_TITLE at the left to COLOR_TITLE_END at the right. The
-// title bar of another window goes from COLOR_TITLE_QUIET to
-// COLOR_TITLE_QUIET_END.
-COLOR_TITLE :: 0x3F7CC4 // The blue of the title bar before the rules.
-COLOR_TITLE_END :: 0x162C45 // graphics.shade(COLOR_TITLE, 36).
-// A chosen row of a list or a menu, with its text in white: the title blue
-// at 96 %, shade(COLOR_TITLE, 96). White has 4.67 to 1 on it; on the title
-// blue itself white has only 4.29, under the 4.5 that a text needs. A
-// matched character of a chosen row is the reverse: this blue on white.
-COLOR_CHOSEN :: 0x3C76BB
-COLOR_TITLE_QUIET :: 0x2A3442 // The left end of the title bar of a window that has not the focus.
-COLOR_TITLE_QUIET_END :: 0x161D27 // Its right end.
-// The concept "stop a program": the close button of a window, in a rich
-// red, so that the cross that closes a window is seen at once. A deep red,
-// not the coral of COLOR_FAILED: to stop a program is not a failure.
-COLOR_STOP_PROGRAM :: 0xB82232 // On the window that has the focus.
-COLOR_STOP_PROGRAM_POINTER_OVER :: 0xE0343F // The pointer is over the button.
-COLOR_STOP_PROGRAM_QUIET :: 0x4E2229 // On a window that is not in front.
-COLOR_STOP_PROGRAM_QUIET_MARK :: 0xC09098 // The x on the quiet button.
-COLOR_BLACK :: 0x000000 // Black: no surface of the design uses it as a background.
-COLOR_WHITE :: 0xFFFFFF // White: a text on `COLOR_CHOSEN`.
+// The color tokens: each named color of the rules, as one record. A drawer
+// reads a token from `colors`, the record of the appearance in force, so a
+// change of the appearance changes every color that a frame draws next.
+Color_Tokens :: struct {
+	// The surfaces (section 3).
+	background:  Color, // Under all cards.
+	point:       Color, // The grid of points on the background.
+	card_top:    Color, // A card goes from this color at the top...
+	card_bottom: Color, // ...to this color at the bottom.
+	track:       Color, // The empty part of a bar, a band or a tube; a button.
+	// The colors of the concepts (section 4). One color is one concept.
+	firmware:     Color, // The firmware.
+	boot_program: Color, // Also the state "starts".
+	kernel:       Color, // The kernel.
+	program:      Color, // Also the state "runs", and an expected answer.
+	memory:       Color, // Memory, and the values that count it.
+	machine:      Color, // The machine and its devices.
+	no_entry:     Color, // A module with no entry export: other modules import it.
+	resource:     Color, // A resource of the boot image: a file that is not a module.
+	failed:       Color, // A failure: a check that did not pass, a program that stopped on a fault.
+	not_usable:   Color, // Something that is there and cannot be used: reserved memory, a disabled control.
+	text:         Color, // The text.
+	dim:          Color, // A text of less weight: a unit, a caption.
+	text_strong:  Color, // The text that an input types, and the outline of the focus: more than the text.
+	// The desktop (section 9). The title bar of the window that has the
+	// focus goes from title at the left to title_end at the right; the
+	// title bar of another window from title_quiet to title_quiet_end.
+	title:           Color, // The blue of the title bar.
+	title_end:       Color, // shade(title, 36).
+	// A chosen row of a list or a menu, with its text in white: the title
+	// blue at 96 %, shade(title, 96). White has 4.67 to 1 on it; on the
+	// title blue itself white has only 4.29, under the 4.5 that a text
+	// needs. A matched character of a chosen row is the reverse: this blue
+	// on white.
+	chosen:          Color,
+	title_quiet:     Color, // The left end of the title bar of a window that has not the focus.
+	title_quiet_end: Color, // Its right end.
+	// The concept "stop a program": the close button of a window, in a
+	// rich red, so that the cross that closes a window is seen at once. A
+	// deep red, not the coral of `failed`: to stop a program is not a
+	// failure.
+	stop_program:              Color, // On the window that has the focus.
+	stop_program_pointer_over: Color, // The pointer is over the button.
+	stop_program_quiet:        Color, // On a window that is not in front.
+	stop_program_quiet_mark:   Color, // The x on the quiet button.
+}
+
+// The values of the dark appearance, as constants: the accents of the
+// concepts for constant tables (the colors of code and of values, the
+// mark), and what is always dark (the boot display, the mark). A window
+// reads `colors`, never these: a window that named one would stay dark in
+// the light appearance.
+DARK_BACKGROUND :: 0x0B1018
+DARK_POINT :: 0x18212D
+DARK_CARD_TOP :: 0x17212E
+DARK_CARD_BOTTOM :: 0x111822
+DARK_TRACK :: 0x1C2633
+DARK_FIRMWARE :: 0x8E7CC3
+DARK_BOOT_PROGRAM :: 0xE0A040
+DARK_KERNEL :: 0x4A9CF0
+DARK_PROGRAM :: 0x58D878
+DARK_MEMORY :: 0x38C0B0
+DARK_MACHINE :: 0xD070B0
+DARK_NO_ENTRY :: 0xC8C058
+DARK_RESOURCE :: 0x9AA8C8
+DARK_FAILED :: 0xF06060
+DARK_NOT_USABLE :: 0x4A5563
+DARK_TEXT :: 0xDCE4EC
+DARK_DIM :: 0x7C8A99
+DARK_TITLE :: 0x3F7CC4
+DARK_TITLE_END :: 0x162C45
+DARK_CHOSEN :: 0x3C76BB
+DARK_TITLE_QUIET :: 0x2A3442
+DARK_TITLE_QUIET_END :: 0x161D27
+DARK_STOP_PROGRAM :: 0xB82232
+DARK_STOP_PROGRAM_POINTER_OVER :: 0xE0343F
+DARK_STOP_PROGRAM_QUIET :: 0x4E2229
+DARK_STOP_PROGRAM_QUIET_MARK :: 0xC09098
+
+COLOR_BLACK :: 0x000000 // Black: no surface of the design uses it as a background. Not a token: the pointer is black and white in both appearances.
+COLOR_WHITE :: 0xFFFFFF // White: a text on the chosen blue, on the title blue and on the red of the close button, in both appearances.
+// The darkest color of the rules: the background of the dark appearance and
+// the text of the light one. A text on a fill of white has it in both.
+COLOR_INK :: 0x0B1018
+
+// The dark appearance: the boot display is its model.
+DARK_COLOR_TOKENS :: Color_Tokens {
+	background                = DARK_BACKGROUND,
+	point                     = DARK_POINT,
+	card_top                  = DARK_CARD_TOP,
+	card_bottom               = DARK_CARD_BOTTOM,
+	track                     = DARK_TRACK,
+	firmware                  = DARK_FIRMWARE,
+	boot_program              = DARK_BOOT_PROGRAM,
+	kernel                    = DARK_KERNEL,
+	program                   = DARK_PROGRAM,
+	memory                    = DARK_MEMORY,
+	machine                   = DARK_MACHINE,
+	no_entry                  = DARK_NO_ENTRY,
+	resource                  = DARK_RESOURCE,
+	failed                    = DARK_FAILED,
+	not_usable                = DARK_NOT_USABLE,
+	text                      = DARK_TEXT,
+	dim                       = DARK_DIM,
+	text_strong               = COLOR_WHITE,
+	title                     = DARK_TITLE,
+	title_end                 = DARK_TITLE_END,
+	chosen                    = DARK_CHOSEN,
+	title_quiet               = DARK_TITLE_QUIET,
+	title_quiet_end           = DARK_TITLE_QUIET_END,
+	stop_program              = DARK_STOP_PROGRAM,
+	stop_program_pointer_over = DARK_STOP_PROGRAM_POINTER_OVER,
+	stop_program_quiet        = DARK_STOP_PROGRAM_QUIET,
+	stop_program_quiet_mark   = DARK_STOP_PROGRAM_QUIET_MARK,
+}
+
+// The light appearance: the light form of the site. The background is the
+// light background of the mark, a card goes from white to the middle of
+// white and the background, the track is the background with 25 % of the
+// dark dim color, the text is COLOR_INK and the dim text the dark dim color
+// at 60 %. Each concept is its accent at the shade that keeps 4.5 to 1 on
+// these surfaces: the shade of its value kind on the light page of the site
+// (value_colors.odin). The blues and the reds of the desktop keep their
+// values: white keeps its contrast on them.
+LIGHT_COLOR_TOKENS :: Color_Tokens {
+	background                = 0xF4F6F8,
+	point                     = 0xDDE2E8,
+	card_top                  = 0xFFFFFF,
+	card_bottom               = 0xF9FAFB, // mix(white, background, 50 %).
+	track                     = 0xD6DBE0, // mix(background, DARK_DIM, 25 %).
+	firmware                  = 0x7566A1, // shade(DARK_FIRMWARE, 83).
+	boot_program              = 0x906729, // shade(DARK_BOOT_PROGRAM, 65).
+	kernel                    = 0x3571AF, // shade(DARK_KERNEL, 73).
+	program                   = 0x327C45, // shade(DARK_PROGRAM, 58).
+	memory                    = 0x247C71, // shade(DARK_MEMORY, 65).
+	machine                   = 0xA15688, // shade(DARK_MACHINE, 78).
+	no_entry                  = 0x6D6930, // shade(DARK_NO_ENTRY, 55).
+	resource                  = 0x5C6478, // shade(DARK_RESOURCE, 60).
+	failed                    = 0xBA4A4A, // shade(DARK_FAILED, 78).
+	not_usable                = 0xA9B2BD,
+	text                      = COLOR_INK,
+	dim                       = 0x4A525B, // shade(DARK_DIM, 60).
+	text_strong               = COLOR_BLACK,
+	title                     = DARK_TITLE,
+	title_end                 = DARK_TITLE_END,
+	chosen                    = DARK_CHOSEN,
+	title_quiet               = 0xE4E8ED,
+	title_quiet_end           = 0xD3D9E0,
+	stop_program              = DARK_STOP_PROGRAM,
+	stop_program_pointer_over = DARK_STOP_PROGRAM_POINTER_OVER,
+	stop_program_quiet        = 0xF2D5D9,
+	stop_program_quiet_mark   = 0x8E3A47,
+}
+
+// The tokens of the appearance in force in this program. Each program, and
+// each copy of the drawing module, has its own: display sets it from the
+// settings page. A program with no settings page keeps the dark appearance.
+colors := DARK_COLOR_TOKENS
+// The appearance in force in this program: the one whose tokens `colors` holds.
+appearance: Appearance
+
+// color_tokens_of gives the tokens of one appearance.
+color_tokens_of :: proc "contextless" (of: Appearance) -> Color_Tokens {
+	switch of {
+	case .Light:
+		return LIGHT_COLOR_TOKENS
+	case .Dark:
+	}
+	return DARK_COLOR_TOKENS
+}
+
+// appearance_use makes one appearance the appearance in force of this
+// program: each draw after it reads its tokens. The caller draws its whole
+// window again: a frame that kept a part of the picture before would show
+// two appearances.
+appearance_use :: proc "contextless" (of: Appearance) {
+	appearance = of
+	colors = color_tokens_of(of)
+}
 
 // mix gives a color between two colors: level 0 is the first, 255 the second.
 mix :: proc "contextless" (first, second: Color, level: u32) -> Color {

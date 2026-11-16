@@ -110,7 +110,7 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 	interface.text_put_number(&count, u64(shown + 1))
 	interface.text_put(&count, " of ")
 	interface.text_put_number(&count, u64(theme_count))
-	content := interface.card(frame, {8, 8, WIDTH - 16, TILES_TOP - 16}, "POINTER THEME", "resource table of the boot image", graphics.COLOR_MACHINE, interface.text_of(&count))
+	content := interface.card(frame, {8, 8, WIDTH - 16, TILES_TOP - 16}, "POINTER THEME", "resource table of the boot image", graphics.colors.machine, interface.text_of(&count))
 	column := interface.column_of(content, 0)
 
 	// The buttons that choose the theme, the last theme of the preference
@@ -131,12 +131,12 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 	}
 	interface.column_take(&column, 8)
 	if !theme.valid {
-		interface.label_value_line(frame, interface.column_take(&column, 16), "not valid", string(theme.problem[:theme.problem_count]), graphics.COLOR_FAILED, 128)
+		interface.label_value_line(frame, interface.column_take(&column, 16), "not valid", string(theme.problem[:theme.problem_count]), graphics.colors.failed, 128)
 		return -1
 	}
-	interface.label_value_line(frame, interface.column_take(&column, 16), "theme", pointer_pictures.text_of(head.theme_name[:]), graphics.COLOR_TEXT, 128)
+	interface.label_value_line(frame, interface.column_take(&column, 16), "theme", pointer_pictures.text_of(head.theme_name[:]), graphics.colors.text, 128)
 	interface.text_put(&builder, pointer_pictures.text_of(head.license[:]))
-	interface.label_value_line(frame, interface.column_take(&column, 16), "license", interface.text_of(&builder), graphics.COLOR_TEXT, 128)
+	interface.label_value_line(frame, interface.column_take(&column, 16), "license", interface.text_of(&builder), graphics.colors.text, 128)
 	builder = {}
 	interface.text_put_number(&builder, u64(head.shape_count))
 	interface.text_put(&builder, " shapes, ")
@@ -146,7 +146,7 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 	interface.text_put(&builder, " bytes; blake3 ")
 	hexadecimal(&builder, theme.hash[:12])
 	interface.text_put(&builder, "..., as its entry")
-	interface.label_value_line(frame, interface.column_take(&column, 16), "file", interface.text_of(&builder), graphics.COLOR_TEXT, 128)
+	interface.label_value_line(frame, interface.column_take(&column, 16), "file", interface.text_of(&builder), graphics.colors.text, 128)
 	// The attribution, in lines of at most 98 characters, cut at a space.
 	attribution := pointer_pictures.text_of(head.attribution[:])
 	first := true
@@ -161,7 +161,7 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 				cut = 98
 			}
 		}
-		interface.label_value_line(frame, interface.column_take(&column, 16), first ? "attribution" : "", attribution[:cut], graphics.COLOR_TEXT, 128)
+		interface.label_value_line(frame, interface.column_take(&column, 16), first ? "attribution" : "", attribution[:cut], graphics.colors.text, 128)
 		first = false
 		attribution = attribution[min(cut + 1, len(attribution)):]
 	}
@@ -174,12 +174,12 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 		if input.pointer_known && interface.area_contains(area, input.pointer_x, input.pointer_y) {
 			under = index
 		}
-		interface.draw_vertical_gradient(frame.table, area.x, area.y, area.width, area.height, under == index ? graphics.shade(graphics.COLOR_CARD_TOP, 140) : graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
-		interface.draw_rectangle(frame.table, area.x, area.y, area.width, 1, graphics.shade(graphics.COLOR_MACHINE, under == index ? 60 : 28))
+		interface.draw_vertical_gradient(frame.table, area.x, area.y, area.width, area.height, under == index ? graphics.shade(graphics.colors.card_top, 140) : graphics.colors.card_top, graphics.colors.card_bottom)
+		interface.draw_rectangle(frame.table, area.x, area.y, area.width, 1, graphics.shade(graphics.colors.machine, under == index ? 60 : 28))
 		// The name, on two lines when it is longer than a line: cut after
 		// an underscore.
 		name := pointer_pictures.shape_name(entry.shape)
-		name_color := graphics.Color(under == index ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+		name_color := graphics.Color(under == index ? graphics.COLOR_WHITE : graphics.colors.text)
 		if len(name) <= NAME_LIMIT {
 			interface.draw_text(frame.table, area.x + 8, area.y + 4, name, name_color)
 		} else {
@@ -198,14 +198,14 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 		interface.text_put_number(&builder, u64(first_picture.hot_spot_x))
 		interface.text_put(&builder, ",")
 		interface.text_put_number(&builder, u64(first_picture.hot_spot_y))
-		interface.draw_text(frame.table, area.x + 8, area.y + 36, interface.text_of(&builder), graphics.COLOR_BOOT_PROGRAM)
+		interface.draw_text(frame.table, area.x + 8, area.y + 36, interface.text_of(&builder), graphics.colors.boot_program)
 		if entry.frame_count > 1 {
 			builder = {}
 			interface.text_put_number(&builder, u64(entry.frame_count))
 			interface.text_put(&builder, " x ")
 			interface.text_put_number(&builder, u64(first_picture.delay_milliseconds))
 			interface.text_put(&builder, " ms")
-			interface.draw_text_right(frame.table, area.x + area.width - 8, area.y + 36, interface.text_of(&builder), graphics.COLOR_DIM)
+			interface.draw_text_right(frame.table, area.x + area.width - 8, area.y + 36, interface.text_of(&builder), graphics.colors.dim)
 		}
 		// A track behind each size, with the lines of the hot spot.
 		x := area.x + 8
@@ -215,18 +215,18 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 			if x + side > area.x + area.width - 8 {
 				break
 			}
-			interface.draw_rectangle(frame.table, x, area.y + PICTURE_TOP, side, side, graphics.COLOR_TRACK)
-			interface.draw_rectangle(frame.table, x + int(picture.hot_spot_x), area.y + PICTURE_TOP, 1, side, graphics.COLOR_BOOT_PROGRAM)
-			interface.draw_rectangle(frame.table, x, area.y + PICTURE_TOP + int(picture.hot_spot_y), side, 1, graphics.COLOR_BOOT_PROGRAM)
+			interface.draw_rectangle(frame.table, x, area.y + PICTURE_TOP, side, side, graphics.colors.track)
+			interface.draw_rectangle(frame.table, x + int(picture.hot_spot_x), area.y + PICTURE_TOP, 1, side, graphics.colors.boot_program)
+			interface.draw_rectangle(frame.table, x, area.y + PICTURE_TOP + int(picture.hot_spot_y), side, 1, graphics.colors.boot_program)
 			builder = {}
 			interface.text_put_number(&builder, u64(picture.nominal_size))
-			interface.draw_text(frame.table, x, area.y + PICTURE_TOP + side + 4, interface.text_of(&builder), graphics.COLOR_DIM)
+			interface.draw_text(frame.table, x, area.y + PICTURE_TOP + side + 4, interface.text_of(&builder), graphics.colors.dim)
 			x += side + 8
 		}
 	}
 	builder = {}
 	interface.text_put(&builder, "the lines in amber cross at the hot spot; over a tile, this program asks the compositor for its shape")
-	interface.draw_text(frame.table, 16, HEIGHT - 24, interface.text_of(&builder), graphics.COLOR_DIM)
+	interface.draw_text(frame.table, 16, HEIGHT - 24, interface.text_of(&builder), graphics.colors.dim)
 	return under
 }
 
@@ -276,7 +276,7 @@ frame_draw :: proc "contextless" (window: ^display.Window) -> u64 {
 	// it took the picture before. It holds an older frame: the whole
 	// canvas is drawn.
 	if display.canvas_wait(window) {
-		graphics.clear(window.canvas, graphics.COLOR_BACKGROUND)
+		graphics.clear(window.canvas, graphics.colors.background)
 		interface.execute(&table, window.canvas)
 		pictures_draw(window.canvas)
 		display.present(window)

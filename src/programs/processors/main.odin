@@ -237,14 +237,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The window shows the picture with a picture record: until the first
 	// rows, the picture is the background.
 	picture = {pixels = raw_data(picture_pixels[:]), width = PICTURE_WIDTH, height = PICTURE_HEIGHT, stride = PICTURE_WIDTH}
-	graphics.clear(picture, graphics.COLOR_BACKGROUND)
+	graphics.clear(picture, graphics.colors.background)
 	picture_memories[0] = picture_pixels[:]
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	drawing.now.picture_memories = picture_memories[:]
 	drawing.before.picture_memories = picture_memories[:]
 	{
 		frame := interface.window_frame_begin(&drawing, &window)
-		interface.draw_text(frame.table, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.COLOR_TEXT)
+		interface.draw_text(frame.table, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.colors.text)
 		interface.window_frame_end(&drawing, &frame, &window)
 	}
 
@@ -298,7 +298,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if done == PICTURE_HEIGHT && now >= complete_at + (logged ? PICTURE_PAUSE : 0) {
 			// A new picture: all the rows are free again.
 			phase = (phase + 1) % len(thread_counts)
-			graphics.clear(picture, graphics.COLOR_CARD_TOP)
+			graphics.clear(picture, graphics.colors.card_top)
 			for &worker in workers {
 				worker.rows = 0
 			}
@@ -321,32 +321,32 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 		frame := interface.window_frame_begin(&drawing, &window)
 		table := frame.table
-		interface.draw_text(table, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.COLOR_TEXT)
+		interface.draw_text(table, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.colors.text)
 		// The pixels change when a row is complete, and when a new picture
 		// clears them: the number of the picture and its complete rows are
 		// the generation.
 		interface.draw_picture(table, MARGIN, HEADER + MARGIN, picture, job.number * 1024 + done)
 		x := 2 * MARGIN + PICTURE_WIDTH
 		y := HEADER + MARGIN
-		interface.draw_rectangle(table, x, y, PANEL, PICTURE_HEIGHT, graphics.COLOR_CARD_TOP)
+		interface.draw_rectangle(table, x, y, PANEL, PICTURE_HEIGHT, graphics.colors.card_top)
 		x += 8
 		y += 8
-		after := interface.draw_unsigned(table, x, y, processor_count, graphics.COLOR_TEXT)
-		after = interface.draw_text(table, after, y, " processors, at one time ", graphics.COLOR_TEXT)
-		interface.draw_unsigned(table, after, y, together, graphics.COLOR_PROGRAM)
+		after := interface.draw_unsigned(table, x, y, processor_count, graphics.colors.text)
+		after = interface.draw_text(table, after, y, " processors, at one time ", graphics.colors.text)
+		interface.draw_unsigned(table, after, y, together, graphics.colors.program)
 		y += LINE + 4
 		for &processor, index in processors[:min(processor_count, PROCESSOR_ROWS)] {
-			interface.draw_unsigned(table, x, y, u64(index), graphics.COLOR_DIM)
-			interface.draw_rectangle(table, x + 20, y + 3, 80, 10, graphics.COLOR_TRACK)
+			interface.draw_unsigned(table, x, y, u64(index), graphics.colors.dim)
+			interface.draw_rectangle(table, x + 20, y + 3, 80, 10, graphics.colors.track)
 			interface.draw_rectangle(table, x + 20, y + 3, int(processor.load) * 80 / 100, 10, COLOR_BAR)
-			interface.draw_text(table, x + 108, y, system.name_of(processor.name[:]), graphics.COLOR_TEXT)
+			interface.draw_text(table, x + 108, y, system.name_of(processor.name[:]), graphics.colors.text)
 			y += LINE
 		}
 		y += 8
-		interface.draw_text(table, x, y, "threads  time of the picture", graphics.COLOR_DIM)
+		interface.draw_text(table, x, y, "threads  time of the picture", graphics.colors.dim)
 		y += LINE
 		for count, index in thread_counts {
-			color := graphics.Color(index == phase ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
+			color := graphics.Color(index == phase ? graphics.colors.text : graphics.colors.dim)
 			interface.draw_unsigned(table, x, y, u64(count), color)
 			if times[index] != 0 {
 				after = interface.draw_unsigned(table, x + 72, y, times[index], color)
@@ -356,11 +356,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			y += LINE
 		}
 		y += 8
-		interface.draw_text(table, x, y, "thread   rows of this picture", graphics.COLOR_DIM)
+		interface.draw_text(table, x, y, "thread   rows of this picture", graphics.colors.dim)
 		y += LINE
 		for &worker, index in workers {
 			interface.draw_unsigned(table, x, y, u64(index + 1), tint_color(index, 255))
-			interface.draw_unsigned(table, x + 72, y, u64(worker.rows), graphics.COLOR_TEXT)
+			interface.draw_unsigned(table, x + 72, y, u64(worker.rows), graphics.colors.text)
 			interface.draw_rectangle(table, x + 112, y + 3, int(worker.rows) * 128 / PICTURE_HEIGHT, 10, tint_color(index, 255))
 			y += LINE
 		}

@@ -1439,7 +1439,7 @@ CARD_INSIDE :: graphics.CARD_MARGIN
 strategy_shades := [STRATEGY_COUNT]u32{75, 100, 150}
 
 strategy_color :: proc "contextless" (index: int) -> graphics.Color {
-	return graphics.shade(graphics.COLOR_KERNEL, strategy_shades[index])
+	return graphics.shade(graphics.colors.kernel, strategy_shades[index])
 }
 
 // The window is built with the interface package (docs/INTERFACE.md).
@@ -1452,7 +1452,7 @@ WHOLE :: interface.Area{0, 0, WIDTH, HEIGHT}
 // bar: a full part of a bar, from 125 % of its color at the top to 78 % at
 // the bottom, on its track.
 bar :: proc "contextless" (area: interface.Area, x, y, width, height, full: int, color: graphics.Color) {
-	interface.draw_rectangle(frame_table, area.x + x, area.y + y, width, height, graphics.COLOR_TRACK)
+	interface.draw_rectangle(frame_table, area.x + x, area.y + y, width, height, graphics.colors.track)
 	interface.draw_vertical_gradient(frame_table, area.x + x, area.y + y, clamp(full, 0, width), height, graphics.shade(color, 125), graphics.shade(color, 78))
 }
 
@@ -1473,7 +1473,7 @@ large :: proc "contextless" (area: interface.Area, x, y: int, characters: string
 }
 
 card :: proc "contextless" (frame: ^interface.Frame, x, y, width, height: int, title, caption: string) -> interface.Area {
-	return interface.card(frame, {x, y, width, height}, title, caption, graphics.COLOR_KERNEL)
+	return interface.card(frame, {x, y, width, height}, title, caption, graphics.colors.kernel)
 }
 
 // The tiles of the strategies in the head: a click on one changes the strategy.
@@ -1557,19 +1557,19 @@ draw_shares :: proc "contextless" (frame: ^interface.Frame, top: int) {
 		policy_toggle()
 	}
 	if on {
-		block(inside, 0, 0, POLICY_BUTTON_WIDTH, POLICY_BUTTON_HEIGHT, graphics.shade(graphics.COLOR_PROGRAM, 120), graphics.shade(graphics.COLOR_PROGRAM, 70))
-		write(inside, 12, 4, "policy on", graphics.COLOR_BACKGROUND)
+		block(inside, 0, 0, POLICY_BUTTON_WIDTH, POLICY_BUTTON_HEIGHT, graphics.shade(graphics.colors.program, 120), graphics.shade(graphics.colors.program, 70))
+		write(inside, 12, 4, "policy on", graphics.colors.background)
 	} else {
-		fill(inside, 0, 0, POLICY_BUTTON_WIDTH, POLICY_BUTTON_HEIGHT, button.under_pointer ? graphics.shade(graphics.COLOR_TRACK, 130) : graphics.COLOR_TRACK)
-		fill(inside, 0, POLICY_BUTTON_HEIGHT - 2, POLICY_BUTTON_WIDTH, 2, graphics.COLOR_PROGRAM)
-		write(inside, 12, 4, "policy off", graphics.COLOR_TEXT)
+		fill(inside, 0, 0, POLICY_BUTTON_WIDTH, POLICY_BUTTON_HEIGHT, button.under_pointer ? graphics.shade(graphics.colors.track, 130) : graphics.colors.track)
+		fill(inside, 0, POLICY_BUTTON_HEIGHT - 2, POLICY_BUTTON_WIDTH, 2, graphics.colors.program)
+		write(inside, 12, 4, "policy off", graphics.colors.text)
 	}
 	if button.focused {
 		fill(inside, 0, 0, POLICY_BUTTON_WIDTH, 2, graphics.COLOR_WHITE)
 	}
 	about := on ? string("each program has its weight, divided between its threads that count; scheduler.share sets it") : string("each thread has the weight that its program asked; the key P, or scheduler.policy(1)")
-	write(inside, POLICY_BUTTON_WIDTH + 16, 4, about, on ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
-	write(inside, 0, 32, system.format(line[:], "round ", round.number, ": ", u64(round.count), " programs, ", round.threads, " threads, ", round.writes, " writes, ", round.duration / 1000, " us"), graphics.COLOR_DIM)
+	write(inside, POLICY_BUTTON_WIDTH + 16, 4, about, on ? graphics.colors.text : graphics.colors.dim)
+	write(inside, 0, 32, system.format(line[:], "round ", round.number, ": ", u64(round.count), " programs, ", round.threads, " threads, ", round.writes, " writes, ", round.duration / 1000, " us"), graphics.colors.dim)
 
 	// The rows that have room, and one line for the others.
 	room := max((inside.height - SHARE_ROWS_Y) / SHARE_ROW, 0)
@@ -1598,7 +1598,7 @@ draw_shares :: proc "contextless" (frame: ^interface.Frame, top: int) {
 		// The header of the last column has the room of its column and of
 		// the bar: it is written only when it fits there.
 		if column < SHARE_COLUMNS - 1 || interface.text_measured_width(frame.table, {}, share_headers[column]) <= inside.width - places[column] {
-			write(inside, places[column], SHARE_ROWS_Y - SHARE_ROW - 4, share_headers[column], graphics.COLOR_DIM)
+			write(inside, places[column], SHARE_ROWS_Y - SHARE_ROW - 4, share_headers[column], graphics.colors.dim)
 		}
 	}
 	most: u64 = 1
@@ -1608,22 +1608,22 @@ draw_shares :: proc "contextless" (frame: ^interface.Frame, top: int) {
 	for &row, index in round.rows[:rows] {
 		y := SHARE_ROWS_Y + index * SHARE_ROW
 		for column in 0 ..< SHARE_COLUMNS {
-			color := graphics.Color(graphics.COLOR_TEXT)
+			color := graphics.Color(graphics.colors.text)
 			if column == 2 && row.weight != op.WEIGHT_FULL {
-				color = graphics.COLOR_BOOT_PROGRAM
+				color = graphics.colors.boot_program
 			}
 			write(inside, places[column], y, share_cell(line[:], &row, column, round.elapsed, shown_processors), color)
 		}
 		// The bar: the program with the most processor time has the whole bar.
 		if bar_width >= 64 {
-			bar(inside, bar_x, y + 4, bar_width, 8, int(row.ran * u64(bar_width) / most), graphics.COLOR_KERNEL)
+			bar(inside, bar_x, y + 4, bar_width, 8, int(row.ran * u64(bar_width) / most), graphics.colors.kernel)
 		}
 	}
 	if round.count > rows {
-		write(inside, 0, SHARE_ROWS_Y + rows * SHARE_ROW, system.format(line[:], u64(round.count - rows), " more programs, each with less processor time in the last period"), graphics.COLOR_DIM)
+		write(inside, 0, SHARE_ROWS_Y + rows * SHARE_ROW, system.format(line[:], u64(round.count - rows), " more programs, each with less processor time in the last period"), graphics.colors.dim)
 	}
 	if round.number == 0 {
-		write(inside, 0, SHARE_ROWS_Y, "the first round runs after the checks", graphics.COLOR_DIM)
+		write(inside, 0, SHARE_ROWS_Y, "the first round runs after the checks", graphics.colors.dim)
 	}
 }
 
@@ -1654,10 +1654,10 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		}
 	}
 	name := op.STRATEGY_NAMES[report.strategy]
-	after := large(head, 0, 0, name, 2, in_use >= 0 ? strategy_color(in_use) : graphics.COLOR_DIM)
-	write(head, after + 16, 0, "in use", graphics.COLOR_DIM)
-	write(head, after + 16, 16, system.format(line[:], u64(report.strategy_changes), " changes since boot"), graphics.COLOR_DIM)
-	write(WHOLE, TILE_X, MARGIN + 12, "Strategy_Set: a key 1 2 3; the key S: the shares", graphics.COLOR_DIM)
+	after := large(head, 0, 0, name, 2, in_use >= 0 ? strategy_color(in_use) : graphics.colors.dim)
+	write(head, after + 16, 0, "in use", graphics.colors.dim)
+	write(head, after + 16, 16, system.format(line[:], u64(report.strategy_changes), " changes since boot"), graphics.colors.dim)
+	write(WHOLE, TILE_X, MARGIN + 12, "Strategy_Set: a key 1 2 3; the key S: the shares", graphics.colors.dim)
 	for index in 0 ..< STRATEGY_COUNT {
 		x := TILE_X + index * (TILE_WIDTH + MARGIN)
 		color := strategy_color(index)
@@ -1676,11 +1676,11 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		label := system.format(line[:], u64(index + 1), "  ", op.STRATEGY_NAMES[strategies[index]])
 		if index == in_use {
 			block(WHOLE, x, TILE_Y, TILE_WIDTH, TILE_HEIGHT, graphics.shade(color, 120), graphics.shade(color, 70))
-			write(WHOLE, x + 12, TILE_Y + 12, label, graphics.COLOR_BACKGROUND)
+			write(WHOLE, x + 12, TILE_Y + 12, label, graphics.colors.background)
 		} else {
-			fill(WHOLE, x, TILE_Y, TILE_WIDTH, TILE_HEIGHT, tile.under_pointer ? graphics.shade(graphics.COLOR_TRACK, 130) : graphics.COLOR_TRACK)
+			fill(WHOLE, x, TILE_Y, TILE_WIDTH, TILE_HEIGHT, tile.under_pointer ? graphics.shade(graphics.colors.track, 130) : graphics.colors.track)
 			fill(WHOLE, x, TILE_Y + TILE_HEIGHT - 2, TILE_WIDTH, 2, color)
-			write(WHOLE, x + 12, TILE_Y + 12, label, graphics.COLOR_TEXT)
+			write(WHOLE, x + 12, TILE_Y + 12, label, graphics.colors.text)
 		}
 		if tile.focused {
 			// The focus: a line of 2 pixels at the top of the tile.
@@ -1692,9 +1692,9 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 	if view_button.activated {
 		view_toggle()
 	}
-	fill(WHOLE, VIEW_BUTTON_X, TILE_Y, VIEW_BUTTON_WIDTH, TILE_HEIGHT, view_button.under_pointer ? graphics.shade(graphics.COLOR_TRACK, 130) : graphics.COLOR_TRACK)
-	fill(WHOLE, VIEW_BUTTON_X, TILE_Y + TILE_HEIGHT - 2, VIEW_BUTTON_WIDTH, 2, graphics.COLOR_PROGRAM)
-	write(WHOLE, VIEW_BUTTON_X + 8, TILE_Y + 12, view == .Strategies ? "shares" : "checks", graphics.COLOR_TEXT)
+	fill(WHOLE, VIEW_BUTTON_X, TILE_Y, VIEW_BUTTON_WIDTH, TILE_HEIGHT, view_button.under_pointer ? graphics.shade(graphics.colors.track, 130) : graphics.colors.track)
+	fill(WHOLE, VIEW_BUTTON_X, TILE_Y + TILE_HEIGHT - 2, VIEW_BUTTON_WIDTH, 2, graphics.colors.program)
+	write(WHOLE, VIEW_BUTTON_X + 8, TILE_Y + 12, view == .Strategies ? "shares" : "checks", graphics.colors.text)
 	if view_button.focused {
 		fill(WHOLE, VIEW_BUTTON_X, TILE_Y, VIEW_BUTTON_WIDTH, 2, graphics.COLOR_WHITE)
 	}
@@ -1728,15 +1728,15 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 	}
 	y := 24
 	number_row :: proc "contextless" (area: interface.Area, y: int, label: string, values: [STRATEGY_COUNT]u64, most: u64, unit: string) {
-		write(area, 0, y, label, graphics.COLOR_DIM)
+		write(area, 0, y, label, graphics.colors.dim)
 		line: [48]u8
 		for index in 0 ..< STRATEGY_COUNT {
 			x := LABEL_WIDTH + index * COLUMN_WIDTH
 			if !results[index].measured {
-				write(area, x, y, "not measured yet", graphics.COLOR_DIM)
+				write(area, x, y, "not measured yet", graphics.colors.dim)
 				continue
 			}
-			write(area, x, y, system.format(line[:], values[index], unit), graphics.COLOR_TEXT)
+			write(area, x, y, system.format(line[:], values[index], unit), graphics.colors.text)
 			if most != 0 {
 				bar(area, x, y + 18, BAR_WIDTH, 4, int(values[index] * BAR_WIDTH / most), strategy_color(index))
 			}
@@ -1761,40 +1761,40 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		y += ROW
 	}
 	// The shares of the 8 spinners: one column each, the height is the share; the line is the equal part.
-	write(inside, 0, y, "8 spinners, one weight", graphics.COLOR_DIM)
-	write(inside, 0, y + 16, "share of each", graphics.COLOR_DIM)
+	write(inside, 0, y, "8 spinners, one weight", graphics.colors.dim)
+	write(inside, 0, y + 16, "share of each", graphics.colors.dim)
 	for index in 0 ..< STRATEGY_COUNT {
 		x := LABEL_WIDTH + index * COLUMN_WIDTH
 		if !results[index].measured {
-			write(inside, x, y, "not measured yet", graphics.COLOR_DIM)
+			write(inside, x, y, "not measured yet", graphics.colors.dim)
 			continue
 		}
 		for share, spinner in results[index].shares {
 			full := int(min(share, 250) * 36 / 250) // 25 %: the full height.
-			fill(inside, x + spinner * 24, y, 16, 36, graphics.COLOR_TRACK)
+			fill(inside, x + spinner * 24, y, 16, 36, graphics.colors.track)
 			block(inside, x + spinner * 24, y + 36 - full, 16, full, graphics.shade(strategy_color(index), 125), graphics.shade(strategy_color(index), 78))
 		}
-		fill(inside, x, y + 36 - 125 * 36 / 250, 8 * 24 - 8, 1, graphics.COLOR_TEXT) // 12.5 %: the equal part.
+		fill(inside, x, y + 36 - 125 * 36 / 250, 8 * 24 - 8, 1, graphics.colors.text) // 12.5 %: the equal part.
 	}
 	y += CHART
-	write(inside, 0, y, "12 spinners, weights 1 2 4", graphics.COLOR_DIM)
-	write(inside, 0, y + 16, "share of one of each", graphics.COLOR_DIM)
+	write(inside, 0, y, "12 spinners, weights 1 2 4", graphics.colors.dim)
+	write(inside, 0, y + 16, "share of one of each", graphics.colors.dim)
 	for index in 0 ..< STRATEGY_COUNT {
 		x := LABEL_WIDTH + index * COLUMN_WIDTH
 		if !results[index].measured {
-			write(inside, x, y, "not measured yet", graphics.COLOR_DIM)
+			write(inside, x, y, "not measured yet", graphics.colors.dim)
 			continue
 		}
 		for class in 0 ..< 3 {
 			share := results[index].weighted[class]
 			full := int(min(share, 200) * 36 / 200) // 20 %: the full height.
-			fill(inside, x + class * 48, y, 40, 36, graphics.COLOR_TRACK)
+			fill(inside, x + class * 48, y, 40, 36, graphics.colors.track)
 			block(inside, x + class * 48, y + 36 - full, 40, full, graphics.shade(strategy_color(index), 125), graphics.shade(strategy_color(index), 78))
-			write(inside, x + class * 48 + 16, y + 20, class == 0 ? "1" : class == 1 ? "2" : "4", graphics.COLOR_BACKGROUND)
+			write(inside, x + class * 48 + 16, y + 20, class == 0 ? "1" : class == 1 ? "2" : "4", graphics.colors.background)
 		}
 		least := results[index].weighted_least
-		write(inside, x + 152, y + 20, system.format(line[:], least / 10, ".", least % 10, " %"), graphics.COLOR_DIM)
-		write(inside, x + 152, y + 4, "least", graphics.COLOR_DIM)
+		write(inside, x + 152, y + 20, system.format(line[:], least / 10, ".", least % 10, " %"), graphics.colors.dim)
+		write(inside, x + 152, y + 4, "least", graphics.colors.dim)
 	}
 	y += CHART
 	if measure_rows {
@@ -1806,12 +1806,12 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 	number_row(inside, y, "one pick", values(proc "contextless" (result: ^Result) -> u64 {return result.pick}), 0, " ns")
 	for index in 0 ..< STRATEGY_COUNT {
 		if results[index].measured && results[index].interrupt_preemption != 0 {
-			write(inside, LABEL_WIDTH + index * COLUMN_WIDTH + 96, y, system.format(line[:], "preempt ", results[index].interrupt_preemption, " ns"), graphics.COLOR_DIM)
+			write(inside, LABEL_WIDTH + index * COLUMN_WIDTH + 96, y, system.format(line[:], "preempt ", results[index].interrupt_preemption, " ns"), graphics.colors.dim)
 		}
 	}
 	if !measure_rows {
 		y += ROW
-		write(inside, 0, y, "wakes in one second, late wakes and work in one second are measures: run `modustool measure scheduler`", graphics.COLOR_DIM)
+		write(inside, 0, y, "wakes in one second, late wakes and work in one second are measures: run `modustool measure scheduler`", graphics.colors.dim)
 	}
 
 	// The processors: the strategy of each queue and its counts.
@@ -1821,7 +1821,7 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 	rows := card(frame, MARGIN, top, WIDTH - 2 * MARGIN, processors_height, "PROCESSORS", "Processor_Report: the run queue of each processor, since boot")
 	headers := [6]string{"processor", "strategy", "queued", "picks", "preemptions", "moves"}
 	for header, column in headers {
-		write(rows, column * 152, 0, header, graphics.COLOR_DIM)
+		write(rows, column * 152, 0, header, graphics.colors.dim)
 	}
 	for index in 0 ..< shown {
 		report_of := processor_report(index)
@@ -1832,12 +1832,12 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 				strategy_index = at
 			}
 		}
-		write(rows, 0, row_y, system.format(line[:], index), graphics.COLOR_TEXT)
-		write(rows, 152, row_y, op.STRATEGY_NAMES[report_of.strategy], strategy_index >= 0 ? strategy_color(strategy_index) : graphics.COLOR_DIM)
-		write(rows, 2 * 152, row_y, system.format(line[:], u64(report_of.queued)), graphics.COLOR_TEXT)
-		write(rows, 3 * 152, row_y, system.format(line[:], report_of.picks), graphics.COLOR_TEXT)
-		write(rows, 4 * 152, row_y, system.format(line[:], report_of.preemptions), graphics.COLOR_TEXT)
-		write(rows, 5 * 152, row_y, system.format(line[:], report_of.moves), graphics.COLOR_TEXT)
+		write(rows, 0, row_y, system.format(line[:], index), graphics.colors.text)
+		write(rows, 152, row_y, op.STRATEGY_NAMES[report_of.strategy], strategy_index >= 0 ? strategy_color(strategy_index) : graphics.colors.dim)
+		write(rows, 2 * 152, row_y, system.format(line[:], u64(report_of.queued)), graphics.colors.text)
+		write(rows, 3 * 152, row_y, system.format(line[:], report_of.picks), graphics.colors.text)
+		write(rows, 4 * 152, row_y, system.format(line[:], report_of.preemptions), graphics.colors.text)
+		write(rows, 5 * 152, row_y, system.format(line[:], report_of.moves), graphics.colors.text)
 	}
 
 	// The change under load, and the result.
@@ -1845,18 +1845,18 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 	last := card(frame, MARGIN, top, WIDTH - 2 * MARGIN, HEIGHT - top - MARGIN, "CHANGES WHILE THREADS RUN", "Strategy_Set, 100 times")
 	if stress_done {
 		text := system.format(line[:], stress_changes, " changes while ", stress_churned, " threads started and ended; one change ", change_least / 1000, " to ", change_worst / 1000, " us, middle ", change_middle / 1000, " us")
-		write(last, 0, 0, text, stress_right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
+		write(last, 0, 0, text, stress_right ? graphics.colors.text : graphics.colors.failed)
 	} else {
-		write(last, 0, 0, "not measured yet", graphics.COLOR_DIM)
+		write(last, 0, 0, "not measured yet", graphics.colors.dim)
 	}
 	status_y := 20
 	switch {
 	case !done:
-		write(last, 0, status_y, "measures in progress", graphics.COLOR_BOOT_PROGRAM)
+		write(last, 0, status_y, "measures in progress", graphics.colors.boot_program)
 	case right:
-		write(last, 0, status_y, "ok: no thread starved, each thread ran after the changes, a change needs the right Schedule", graphics.COLOR_PROGRAM)
+		write(last, 0, status_y, "ok: no thread starved, each thread ran after the changes, a change needs the right Schedule", graphics.colors.program)
 	case:
-		write(last, 0, status_y, system.format(line[:], "wrong: ", problem), graphics.COLOR_FAILED)
+		write(last, 0, status_y, system.format(line[:], "wrong: ", problem), graphics.colors.failed)
 	}
 	interface.window_frame_end(&drawing, frame, window)
 }

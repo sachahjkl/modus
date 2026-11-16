@@ -17,7 +17,8 @@
 // takes in the console. A start grant says what the role of a program
 // gives; a recorded grant says which handles the root service gave and can
 // end. Several start grants are one recorded grant (`Inspect`, `Stop`,
-// `Schedule` and `Events` are rights of the one handle `machine`), and a
+// `Schedule`, `Events` and `Counters` are rights of the one handle
+// `machine`), and a
 // start grant such as `Serve` has no recorded grant.
 //
 // **The number of a start grant** is written beside each member and does
@@ -57,7 +58,8 @@ Grant :: enum i64 {
 	System_Part        = 25, // A part of the system that the root service starts by itself, with handles that no other grant names: the screen and the input ring (the compositor), a device (a device service), the text of another program (a terminal). No program asks for it and no caller holds it.
 	Tpm                = 26, // The ring and the region of the TPM service (modus:contract/tpm_service): seal a key to the measure of the system, and unseal it. The program that keeps the machine key (docs/PRINCIPALS.md).
 	Versions_Erase     = 27, // End the versions of an object of its private store, with zeros over their blocks (isolated.CALLER_ERASES_VERSIONS): the program that keeps a secret that an earlier version must not keep (docs/STORAGE.md, "4.8 The erase of versions").
-	Remote_Clients     = 28, // The client table, read-only (modus:contract/remote, Client_Table), and a Connect for one of its rows that acts for the principal of that row: the program that takes calls from another machine (docs/PRINCIPALS.md, "The client keys of remote").
+	Counters           = 28, // The machine, with the right Counters: count the events of the processor for the code of its own threads (docs/ARCHITECTURE.md, "The counters of a thread").
+	Remote_Clients     = 29, // The client table, read-only (modus:contract/remote, Client_Table), and a Connect for one of its rows that acts for the principal of that row: the program that takes calls from another machine (docs/PRINCIPALS.md, "The client keys of remote").
 }
 
 // The name of each start grant, as the log of the root service and the
@@ -92,6 +94,7 @@ GRANT_NAMES := [Grant]string {
 	.System_Part        = "System_Part",
 	.Tpm                = "Tpm",
 	.Versions_Erase     = "Versions_Erase",
+	.Counters           = "Counters",
 	.Remote_Clients     = "Remote_Clients",
 }
 

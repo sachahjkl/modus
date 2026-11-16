@@ -547,14 +547,14 @@ the_input_band_is_flush_with_three_edges :: proc(t: ^testing.T) {
 		line_top := y + INPUT_BAND_HEIGHT - 2
 		// The top edge: each pixel of the first row is the fill of the band.
 		for column in x ..= right {
-			if pixel(screen, column, y) != graphics.COLOR_TRACK {
+			if pixel(screen, column, y) != graphics.colors.track {
 				testing.expectf(t, false, "typed %q: the top row at x %d is %06x, not the fill of the band", typed, column, u32(pixel(screen, column, y)))
 				break
 			}
 		}
 		// The left and the right edge of the band: the fill, on each row.
 		for row in y ..< line_top {
-			if pixel(screen, x, row) != graphics.COLOR_TRACK || pixel(screen, right, row) != graphics.COLOR_TRACK {
+			if pixel(screen, x, row) != graphics.colors.track || pixel(screen, right, row) != graphics.colors.track {
 				testing.expectf(t, false, "typed %q: an edge of the band at y %d is %06x and %06x, not its fill", typed, row, u32(pixel(screen, x, row)), u32(pixel(screen, right, row)))
 				break
 			}
@@ -562,7 +562,7 @@ the_input_band_is_flush_with_three_edges :: proc(t: ^testing.T) {
 		// The line of 2 pixels, from edge to edge.
 		for row in line_top ..< line_top + 2 {
 			for column in x ..= right {
-				if pixel(screen, column, row) != graphics.COLOR_TITLE {
+				if pixel(screen, column, row) != graphics.colors.title {
 					testing.expectf(t, false, "typed %q: the line under the band at %d,%d is %06x", typed, column, row, u32(pixel(screen, column, row)))
 					break
 				}
@@ -577,7 +577,7 @@ the_input_band_is_flush_with_three_edges :: proc(t: ^testing.T) {
 		// the card; with a typed part it is the chosen row. A list with
 		// more rows than the panel shows has its scroll bar between
 		// the rows and the right border: the row ends before the bar.
-		inside_color := graphics.Color(typed == "" ? graphics.COLOR_CARD_TOP : graphics.COLOR_CHOSEN)
+		inside_color := graphics.Color(typed == "" ? graphics.colors.card_top : graphics.colors.chosen)
 		bar_width := panel.list.row_count > LIST_ROWS ? interface.LIST_ROW_SCROLL_WIDTH : 0
 		testing.expect_value(t, bar_width, typed == "" ? interface.LIST_ROW_SCROLL_WIDTH : 0)
 		testing.expect_value(t, pixel(screen, x + BORDER, body_top), inside_color)
@@ -617,7 +617,7 @@ the_input_band_is_flush_with_three_edges :: proc(t: ^testing.T) {
 interface_border_color :: proc(row, height: int) -> graphics.Color {
 	records: [1]interface.Draw_Record
 	table := interface.Draw_Table{records = records[:]}
-	interface.draw_vertical_gradient(&table, 0, 0, 1, height, graphics.shade(graphics.COLOR_KERNEL, 28), graphics.shade(graphics.COLOR_KERNEL, 14))
+	interface.draw_vertical_gradient(&table, 0, 0, 1, height, graphics.shade(graphics.colors.kernel, 28), graphics.shade(graphics.colors.kernel, 14))
 	pixels := make([]graphics.Color, height, context.temp_allocator)
 	interface.execute(&table, {pixels = raw_data(pixels), width = 1, height = height, stride = 1})
 	return pixels[row]
@@ -644,7 +644,7 @@ the_caret_follows_the_typed_part :: proc(t: ^testing.T) {
 		for record in screen.table.records[:screen.table.record_count] {
 			// In the input band only: under it, a part of the icon of a
 			// window can have the same color and the same width.
-			if record.kind == .Rectangle && record.first_color == graphics.COLOR_TITLE && int(record.width) == 2 * INPUT_SCALE && int(record.y) < y + INPUT_BAND_HEIGHT - 2 {
+			if record.kind == .Rectangle && record.first_color == graphics.colors.title && int(record.width) == 2 * INPUT_SCALE && int(record.y) < y + INPUT_BAND_HEIGHT - 2 {
 				found = true
 				testing.expect_value(t, int(record.x), caret_x)
 				testing.expect_value(t, int(record.y), y + (INPUT_BAND_HEIGHT - graphics.CELL_HEIGHT * INPUT_SCALE) / 2)
@@ -672,8 +672,8 @@ the_icon_of_each_entry :: proc(t: ^testing.T) {
 	module_icon := kind_icons.cells_of_value_kind(.Module)
 	command_icon := kind_icons.cells_of_value_kind(.Command)
 	grant_icon := kind_icons.cells_of_value_kind(.Grant)
-	module_color := graphics.value_kind_color(.Module, false)
-	command_color := graphics.value_kind_color(.Command, false)
+	module_color := graphics.value_kind_color(.Module, graphics.appearance)
+	command_color := graphics.value_kind_color(.Command, graphics.appearance)
 	Expected :: struct {
 		kind:  Entry_Kind,
 		name:  string,
@@ -681,13 +681,13 @@ the_icon_of_each_entry :: proc(t: ^testing.T) {
 		color: graphics.Color,
 	}
 	expected := [?]Expected {
-		{.Window, "console", window_icon, graphics.COLOR_TITLE}, // It has the focus.
+		{.Window, "console", window_icon, graphics.colors.title}, // It has the focus.
 		{.Program, "console", module_icon, module_color}, // It has a window.
-		{.Program, "plasma", module_icon, ICON_COLOR_QUIET}, // It has no window.
-		{.Close_Window, "close console", stop_icon, ICON_COLOR_OF_STOP},
+		{.Program, "plasma", module_icon, icon_color_quiet()}, // It has no window.
+		{.Close_Window, "close console", stop_icon, icon_color_of_stop()},
 		{.Command, "memory", command_icon, command_color},
-		{.Command, "stop", command_icon, ICON_COLOR_QUIET}, // It needs arguments: the panel asks nothing yet.
-		{.Command, "shutdown", stop_icon, ICON_COLOR_OF_STOP}, // It destroys: the icon of the act, not of the kind.
+		{.Command, "stop", command_icon, icon_color_quiet()}, // It needs arguments: the panel asks nothing yet.
+		{.Command, "shutdown", stop_icon, icon_color_of_stop()}, // It destroys: the icon of the act, not of the kind.
 	}
 	for item in expected {
 		found := false
@@ -712,22 +712,22 @@ the_icon_of_each_entry :: proc(t: ^testing.T) {
 	export_entry := Entry{kind = .Export}
 	export_with_parameters := Entry{kind = .Export, flags = {.Needs_Arguments}}
 	icon, color := entry_icon(&other_window, false)
-	testing.expect(t, icon == window_icon && color == ICON_COLOR_QUIET)
+	testing.expect(t, icon == window_icon && color == icon_color_quiet())
 	icon, color = entry_icon(&setting, true)
-	testing.expect(t, icon == setting_icon && color == graphics.COLOR_TEXT)
+	testing.expect(t, icon == setting_icon && color == graphics.colors.text)
 	icon, color = entry_icon(&setting, false)
-	testing.expect(t, icon == setting_icon && color == ICON_COLOR_QUIET)
+	testing.expect(t, icon == setting_icon && color == icon_color_quiet())
 	icon, color = entry_icon(&export_entry, false)
 	testing.expect(t, icon == export_icon && color == module_color)
 	icon, color = entry_icon(&export_with_parameters, false)
-	testing.expect(t, icon == export_icon && color == ICON_COLOR_QUIET)
+	testing.expect(t, icon == export_icon && color == icon_color_quiet())
 	// The candidates of a field of a form.
 	icon, color = candidate_icon(.Program)
 	testing.expect(t, icon == module_icon && color == module_color)
 	icon, color = candidate_icon(.Module)
 	testing.expect(t, icon == module_icon && color == module_color)
 	icon, color = candidate_icon(.Grant)
-	testing.expect(t, icon == grant_icon && color == graphics.value_kind_color(.Grant, false))
+	testing.expect(t, icon == grant_icon && color == graphics.value_kind_color(.Grant, graphics.appearance))
 	icon, _ = candidate_icon(.None)
 	testing.expect(t, icon == nil)
 }
@@ -834,7 +834,7 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	panel_build(screen, panel)
 	color, found := row_fill(&screen.table, x, y)
 	testing.expect(t, found)
-	testing.expect_value(t, color, graphics.Color(graphics.COLOR_CHOSEN))
+	testing.expect_value(t, color, graphics.Color(graphics.colors.chosen))
 	testing.expect(t, has_text(&screen.table, "close plasma"))
 	// The chosen row keeps its kind; the footer says what Enter does, and
 	// counts the entries in a plain word.
@@ -849,7 +849,7 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	panel_build(screen, panel)
 	color, found = row_fill(&screen.table, x, y)
 	testing.expect(t, found)
-	testing.expect_value(t, color, graphics.Color(graphics.COLOR_STOP_PROGRAM))
+	testing.expect_value(t, color, graphics.Color(graphics.colors.stop_program))
 	testing.expect(t, has_text(&screen.table, "stop plasma: its window closes"))
 	testing.expect(t, has_text(&screen.table, KEYS_OF_CONFIRM))
 	testing.expect(t, !has_text(&screen.table, "close plasma"))

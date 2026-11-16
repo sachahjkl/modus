@@ -179,12 +179,16 @@ exports_with_a_helper_in_another_file :: proc(t: ^testing.T) {
 }
 
 // The rule holds in the programs and the modules of the repository.
+//
+// The count of the packages proves that the tree was read. The count of the
+// exports only has to be positive: it falls each time an export gets an
+// error record, so a larger fixed bound fails on a correct change.
 @(test)
 export_error_records_of_the_repository :: proc(t: ^testing.T) {
 	found, package_count, export_count, ok := exports_without_error_record_of_tree("")
 	testing.expect(t, ok)
 	testing.expect(t, package_count > 50)
-	testing.expect(t, export_count > 50)
+	testing.expect(t, export_count > 0)
 	for item in found {
 		testing.expectf(t, false, "%s:%d: the export %s gives a negative number with no error record", item.file, item.line, item.export)
 	}

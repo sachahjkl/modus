@@ -320,7 +320,7 @@ color :: proc(list: []graphics.Color, generator: ^u32, place: ^int, part_changed
 @(private = "file")
 build_proof_frame :: proc(table: ^interface.Draw_Table, seed: u32, changed: int) {
 	words := [?]string{"To", "LT", "Ty", "settings", "AVATAR", "Wave", "palette", "jj", "fill", "rings", "0O 1lI", "Monitor", "the clock", "W", "i", "{0}%e", "12:34:56"}
-	colors := [?]graphics.Color{graphics.COLOR_TEXT, graphics.COLOR_DIM, graphics.COLOR_KERNEL, graphics.COLOR_PROGRAM, graphics.COLOR_MEMORY, graphics.COLOR_FAILED, graphics.COLOR_WHITE}
+	colors := [?]graphics.Color{graphics.colors.text, graphics.colors.dim, graphics.colors.kernel, graphics.colors.program, graphics.colors.memory, graphics.colors.failed, graphics.COLOR_WHITE}
 	state := seed
 	part := 0
 	interface.draw_table_clear(table)
@@ -341,8 +341,8 @@ build_proof_frame :: proc(table: ^interface.Draw_Table, seed: u32, changed: int)
 	cell := word(words[:], &state, &part, changed)
 	interface.cell_text(&frame, {content.x, content.y + 24, content.width, interface.TABLE_LINE}, cell, color(colors[:], &state, &part, changed), pick(&state, &part, changed) % 2 == 0 ? .Left : .Right)
 	interface.bar(&frame, {content.x, content.y + 56, content.width, 8}, u64(pick(&state, &part, changed) % 101), 100, color(colors[:], &state, &part, changed))
-	interface.draw_vertical_gradient(table, 256, 8, 64, 40, color(colors[:], &state, &part, changed), graphics.COLOR_CARD_BOTTOM)
-	interface.draw_horizontal_gradient(table, 256, 56, 136, 24, graphics.COLOR_TITLE, color(colors[:], &state, &part, changed))
+	interface.draw_vertical_gradient(table, 256, 8, 64, 40, color(colors[:], &state, &part, changed), graphics.colors.card_bottom)
+	interface.draw_horizontal_gradient(table, 256, 56, 136, 24, graphics.colors.title, color(colors[:], &state, &part, changed))
 	interface.draw_folded_gap(table, 328, 8, 40 + pick(&state, &part, changed) % 16, 16)
 	interface.draw_line(table, 256 + pick(&state, &part, changed) % 100, 92, 384, 92 + pick(&state, &part, changed) % 36, 1 + pick(&state, &part, changed) % 4, color(colors[:], &state, &part, changed))
 	interface.draw_outline(table, 250, 134, 144, 60, 2, color(colors[:], &state, &part, changed))
@@ -351,7 +351,7 @@ build_proof_frame :: proc(table: ^interface.Draw_Table, seed: u32, changed: int)
 	medium := word(words[:], &state, &part, changed)
 	interface.draw_text(table, 250 + pick(&state, &part, changed) % 30, 140, medium, color(colors[:], &state, &part, changed), interface.FONT_MEDIUM)
 	bold := word(words[:], &state, &part, changed)
-	interface.draw_text(table, 300, 174, bold, graphics.COLOR_TEXT, interface.FONT_BOLD)
+	interface.draw_text(table, 300, 174, bold, graphics.colors.text, interface.FONT_BOLD)
 	interface.draw_clip(table, 0, 0, 0, 0)
 	large := word(words[:], &state, &part, changed)
 	interface.draw_text(table, 8, 140, large[:min(len(large), 5)], color(colors[:], &state, &part, changed), interface.FONT_LARGE)
@@ -359,7 +359,7 @@ build_proof_frame :: proc(table: ^interface.Draw_Table, seed: u32, changed: int)
 	first := word(words[:], &state, &part, changed)
 	interface.draw_text(table, 8 + pick(&state, &part, changed) % 5, 196, first, color(colors[:], &state, &part, changed), {kind = .Interface})
 	second := word(words[:], &state, &part, changed)
-	interface.draw_text_right(table, 240, 196, second, graphics.COLOR_TEXT, {kind = .Interface, weight = .Bold})
+	interface.draw_text_right(table, 240, 196, second, graphics.colors.text, {kind = .Interface, weight = .Bold})
 	third := word(words[:], &state, &part, changed)
 	interface.draw_text(table, 250, 204, third, color(colors[:], &state, &part, changed), {kind = .Interface, scale = 2})
 }
@@ -453,7 +453,7 @@ draw_through_the_exports :: proc(t: ^testing.T, table: ^interface.Draw_Table, pi
 		picture_memory = {bytes = ([^]u8)(raw_data(table.picture_memories[0])), count = size, capacity = size}
 	}
 	bytes := system.Bytes_To_Change{bytes = ([^]u8)(raw_data(pixels)), count = u64(len(pixels) * size_of(u32)), capacity = u64(len(pixels) * size_of(u32))}
-	shape := Canvas_Shape{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_STRIDE, fill_background = fill_background ? 1 : 0, background = i64(graphics.COLOR_BACKGROUND)}
+	shape := Canvas_Shape{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_STRIDE, fill_background = fill_background ? 1 : 0, background = i64(graphics.colors.background)}
 	refused: errors.Error_Record
 	if !one_call_for_each {
 		places := rectangles_to_read(rectangles)
@@ -538,7 +538,7 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 				export_pixels[index] = GUARD_PIXEL
 			}
 			// The whole frame.
-			graphics.clear(package_canvas, graphics.COLOR_BACKGROUND)
+			graphics.clear(package_canvas, graphics.colors.background)
 			interface.execute(&before, package_canvas)
 			whole := [1]Damage_Rectangle{{0, 0, PROOF_WIDTH, PROOF_HEIGHT}}
 			draw_through_the_exports(t, &before, export_pixels, whole[:])
@@ -573,7 +573,7 @@ the_exports_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) {
 			}
 			// The damage was enough: the canvas is the canvas of a whole
 			// frame of the table now.
-			graphics.clear(package_canvas, graphics.COLOR_BACKGROUND)
+			graphics.clear(package_canvas, graphics.colors.background)
 			interface.execute(&now, package_canvas)
 			if place := first_difference(package_pixels, export_pixels); !testing.expectf(t, place < 0, "%s, seed %v: the damage through the exports is not the whole frame at x %v, y %v", configuration.name, seed, place % PROOF_STRIDE, place / PROOF_STRIDE) {
 				return
@@ -679,7 +679,7 @@ one_call_with_the_rectangles_draws_as_one_call_for_each :: proc(t: ^testing.T) {
 				// the background, so a draw with no fill draws over pixels
 				// that differ from place to place. The pixels between two
 				// lines are guards that no draw writes.
-				graphics.clear(package_canvas, graphics.COLOR_BACKGROUND)
+				graphics.clear(package_canvas, graphics.colors.background)
 				for place in 0 ..< PROOF_STRIDE * PROOF_HEIGHT {
 					if place % PROOF_STRIDE >= PROOF_WIDTH {
 						package_pixels[place] = GUARD_PIXEL
@@ -748,7 +748,7 @@ grid_proof_table :: proc(memory: ^Grid_Proof_Tables) -> interface.Draw_Table {
 @(private = "file")
 grid_proof_cells :: proc(cells: []interface.Text_Grid_Cell, seed: u32) {
 	state := seed
-	colors := [?]graphics.Color{graphics.COLOR_TEXT, graphics.COLOR_DIM, graphics.COLOR_KERNEL, graphics.COLOR_PROGRAM, graphics.COLOR_WHITE}
+	colors := [?]graphics.Color{graphics.colors.text, graphics.colors.dim, graphics.colors.kernel, graphics.colors.program, graphics.COLOR_WHITE}
 	characters := "let x = 12; -- the line {0}%e Wave jj"
 	for &cell, index in cells {
 		row, column := index / GRID_COLUMNS, index % GRID_COLUMNS
@@ -762,7 +762,7 @@ grid_proof_cells :: proc(cells: []interface.Text_Grid_Cell, seed: u32) {
 		}
 		if row >= 3 && row < 7 && column >= 10 && column < 26 {
 			chosen := row == 4
-			cell = {character = column < 20 ? rune(characters[column % len(characters)]) : 0, filled = true, color = chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, background = chosen ? graphics.COLOR_CHOSEN : graphics.COLOR_CARD_TOP}
+			cell = {character = column < 20 ? rune(characters[column % len(characters)]) : 0, filled = true, color = chosen ? graphics.COLOR_WHITE : graphics.colors.text, background = chosen ? graphics.colors.chosen : graphics.colors.card_top}
 		}
 	}
 }
@@ -772,10 +772,10 @@ grid_proof_cells :: proc(cells: []interface.Text_Grid_Cell, seed: u32) {
 @(private = "file")
 build_grid_frame :: proc(table: ^interface.Draw_Table, cells: []interface.Text_Grid_Cell, status: string) {
 	interface.draw_table_clear(table)
-	interface.draw_rectangle(table, 0, 0, PROOF_WIDTH, 20, graphics.COLOR_CARD_TOP)
-	interface.draw_text(table, 8, 2, status, graphics.COLOR_TEXT)
+	interface.draw_rectangle(table, 0, 0, PROOF_WIDTH, 20, graphics.colors.card_top)
+	interface.draw_text(table, 8, 2, status, graphics.colors.text)
 	interface.draw_text_grid(table, 8, 24, {cells = cells, columns = GRID_COLUMNS, rows = GRID_ROWS, stride = GRID_COLUMNS})
-	interface.draw_outline(table, 8 + 10 * graphics.CELL_WIDTH - 1, 24 + 3 * graphics.CELL_HEIGHT - 1, 16 * graphics.CELL_WIDTH + 2, 4 * graphics.CELL_HEIGHT + 2, 1, graphics.COLOR_KERNEL)
+	interface.draw_outline(table, 8 + 10 * graphics.CELL_WIDTH - 1, 24 + 3 * graphics.CELL_HEIGHT - 1, 16 * graphics.CELL_WIDTH + 2, 4 * graphics.CELL_HEIGHT + 2, 1, graphics.colors.kernel)
 }
 
 @(test)
@@ -823,7 +823,7 @@ the_exports_draw_a_text_grid_as_the_package :: proc(t: ^testing.T) {
 					cells_now[index].reverse = !cells_now[index].reverse
 				}
 				if seed % 7 == 0 {
-					cells_now[index].color = graphics.COLOR_FAILED
+					cells_now[index].color = graphics.colors.failed
 				}
 			}
 			before := grid_proof_table(before_memory)
@@ -842,7 +842,7 @@ the_exports_draw_a_text_grid_as_the_package :: proc(t: ^testing.T) {
 				pixel = GUARD_PIXEL
 				export_pixels[index] = GUARD_PIXEL
 			}
-			graphics.clear(package_canvas, graphics.COLOR_BACKGROUND)
+			graphics.clear(package_canvas, graphics.colors.background)
 			interface.execute(&before, package_canvas)
 			whole := [1]Damage_Rectangle{{0, 0, PROOF_WIDTH, PROOF_HEIGHT}}
 			draw_through_the_exports(t, &before, export_pixels, whole[:])
@@ -869,7 +869,7 @@ the_exports_draw_a_text_grid_as_the_package :: proc(t: ^testing.T) {
 				return
 			}
 			// The damage was enough: the canvas is the frame now drawn whole.
-			graphics.clear(package_canvas, graphics.COLOR_BACKGROUND)
+			graphics.clear(package_canvas, graphics.colors.background)
 			interface.execute(&now, package_canvas)
 			if place := first_difference(package_pixels, export_pixels); !testing.expectf(t, place < 0, "%v, seed %v: the damage of the grid through the exports is not the whole frame at x %v, y %v", font, seed, place % PROOF_STRIDE, place / PROOF_STRIDE) {
 				return
@@ -914,9 +914,9 @@ build_screen_proof :: proc(table: ^interface.Draw_Table, surfaces: []graphics.Ca
 	for surface, index in surfaces {
 		first := table.record_count
 		x, y := 12 + index * 70 + seed % 13, 26 + index * 30 + seed % 7
-		interface.draw_horizontal_gradient(table, x, y, surface.width + 4, 20, graphics.COLOR_TITLE, graphics.COLOR_CARD_TOP)
-		interface.draw_rectangle(table, x, y + 20, 2, surface.height, graphics.COLOR_TITLE)
-		interface.draw_rectangle(table, x + surface.width + 2, y + 20, 2, surface.height, graphics.COLOR_CARD_TOP)
+		interface.draw_horizontal_gradient(table, x, y, surface.width + 4, 20, graphics.colors.title, graphics.colors.card_top)
+		interface.draw_rectangle(table, x, y + 20, 2, surface.height, graphics.colors.title)
+		interface.draw_rectangle(table, x + surface.width + 2, y + 20, 2, surface.height, graphics.colors.card_top)
 		interface.draw_text(table, x + 4, y + 2, index % 2 == 0 ? "life" : "monitor", graphics.COLOR_WHITE)
 		table.picture_memories = memories
 		if in_parts {
@@ -931,8 +931,8 @@ build_screen_proof :: proc(table: ^interface.Draw_Table, surfaces: []graphics.Ca
 		}
 	}
 	first := table.record_count
-	interface.draw_vertical_gradient(table, 0, 0, PROOF_WIDTH, 23, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
-	interface.draw_rectangle(table, 0, 23, PROOF_WIDTH, 1, graphics.COLOR_TRACK)
+	interface.draw_vertical_gradient(table, 0, 0, PROOF_WIDTH, 23, graphics.colors.card_top, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, 0, 23, PROOF_WIDTH, 1, graphics.colors.track)
 	heron := memories[len(memories) - 1]
 	table.picture_memories = memories
 	if in_parts {
@@ -941,7 +941,7 @@ build_screen_proof :: proc(table: ^interface.Draw_Table, surfaces: []graphics.Ca
 	}
 	interface.draw_picture(table, 4, 4, {pixels = raw_data(heron), width = 16, height = 16, stride = 16}, 1)
 	table.picture_memories = nil
-	interface.draw_text(table, PROOF_WIDTH - 72, 4, "12:34:56", graphics.COLOR_TEXT)
+	interface.draw_text(table, PROOF_WIDTH - 72, 4, "12:34:56", graphics.colors.text)
 	if in_parts {
 		parts[part_count] = {first = first, count = table.record_count - first, memory = heron}
 		part_count += 1
@@ -984,7 +984,7 @@ the_parts_of_a_screen_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) 
 	background_pixels := make([]u32, PROOF_STRIDE * PROOF_HEIGHT)
 	defer delete(background_pixels)
 	for &pixel, place in background_pixels {
-		pixel = u32(place % 24 < 2 ? graphics.COLOR_POINT : graphics.COLOR_BACKGROUND)
+		pixel = u32(place % 24 < 2 ? graphics.colors.point : graphics.colors.background)
 	}
 	background := graphics.Canvas{pixels = raw_data(background_pixels), width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_STRIDE}
 	package_memory := new(Proof_Tables)
@@ -1128,10 +1128,10 @@ scroll_line_cells :: proc(row: []interface.Text_Grid_Cell, number: u64) {
 	}
 	levels := [4]string{"info", "debug", "warning", "error"}
 	messages := [5]string{"the queue was full: the writer waited", "the block 81 244 has the hash", "the line left the view", "a program gave a handle", "one wake for 2048 records"}
-	column := scroll_put(row, 0, string(digits[:]), graphics.COLOR_DIM)
+	column := scroll_put(row, 0, string(digits[:]), graphics.colors.dim)
 	level := levels[number % 4]
-	column = scroll_put(row, column + 1, level, level == "error" ? graphics.COLOR_WHITE : graphics.COLOR_PROGRAM, level == "error" ? graphics.COLOR_FAILED : 0)
-	scroll_put(row, column + 1, messages[number % 5], graphics.COLOR_TEXT)
+	column = scroll_put(row, column + 1, level, level == "error" ? graphics.COLOR_WHITE : graphics.colors.program, level == "error" ? graphics.colors.failed : 0)
+	scroll_put(row, column + 1, messages[number % 5], graphics.colors.text)
 }
 
 // build_scrolling_frame builds the frame of a terminal whose first row
@@ -1144,19 +1144,19 @@ build_scrolling_frame :: proc(table: ^interface.Draw_Table, cells: []interface.T
 	state := u32(frame) * 2654435761 + 1
 	for bar in 0 ..< 12 {
 		height := next_number(&state) % 4 * 4
-		interface.draw_rectangle(table, 200 + bar * 6, 4, 5, 12 - height, graphics.COLOR_TRACK)
-		interface.draw_rectangle(table, 200 + bar * 6, 16 - height, 5, height, graphics.COLOR_PROGRAM)
+		interface.draw_rectangle(table, 200 + bar * 6, 4, 5, 12 - height, graphics.colors.track)
+		interface.draw_rectangle(table, 200 + bar * 6, 16 - height, 5, height, graphics.colors.program)
 	}
-	x := interface.draw_text(table, 8, 4, "lines ", graphics.COLOR_DIM)
-	x = interface.draw_unsigned(table, x, 4, top + 1, graphics.COLOR_TEXT)
+	x := interface.draw_text(table, 8, 4, "lines ", graphics.colors.dim)
+	x = interface.draw_unsigned(table, x, 4, top + 1, graphics.colors.text)
 	for row in 0 ..< GRID_ROWS {
 		scroll_line_cells(cells[row * GRID_COLUMNS:][:GRID_COLUMNS], top + u64(row))
 	}
 	interface.draw_text_grid(table, 8, 24, {cells = cells, columns = GRID_COLUMNS, rows = GRID_ROWS, stride = GRID_COLUMNS})
-	interface.draw_rectangle(table, 0, 24 + GRID_ROWS * graphics.CELL_HEIGHT + 2, PROOF_WIDTH, 1, graphics.COLOR_TRACK)
-	interface.draw_unsigned(table, 8, 24 + GRID_ROWS * graphics.CELL_HEIGHT + 4, top + GRID_ROWS, graphics.COLOR_TEXT)
+	interface.draw_rectangle(table, 0, 24 + GRID_ROWS * graphics.CELL_HEIGHT + 2, PROOF_WIDTH, 1, graphics.colors.track)
+	interface.draw_unsigned(table, 8, 24 + GRID_ROWS * graphics.CELL_HEIGHT + 4, top + GRID_ROWS, graphics.colors.text)
 	// The thumb of the scroll bar, at places that are not on the rows.
-	interface.draw_rectangle(table, 336 + 8, 24 + int(top * 7 % 170), 6, 13, graphics.COLOR_DIM)
+	interface.draw_rectangle(table, 336 + 8, 24 + int(top * 7 % 170), 6, 13, graphics.colors.dim)
 }
 
 @(test)
@@ -1222,7 +1222,7 @@ a_scrolling_grid_in_two_pictures_is_each_frame :: proc(t: ^testing.T) {
 			debts = {} // A new font: draw_whole_window_next.
 		}
 		// The reference: the frame drawn whole by the package.
-		graphics.clear(whole_canvas, graphics.COLOR_BACKGROUND)
+		graphics.clear(whole_canvas, graphics.colors.background)
 		interface.execute(&now, whole_canvas)
 		// The difference through the export, as frame_difference.
 		changed: interface.Damage

@@ -88,16 +88,19 @@ fibonacci :: proc "c" (index: i64) -> i64 {
 	return a
 }
 
-NEXT_PRIME_LIMIT :: 1 << 40 // Above this, the search is too slow: the result is 0.
+NEXT_PRIME_LIMIT :: 1 << 40 // Above this, the search by trial division takes too long for a call.
 
 // next_prime gives the first prime from an integer.
 //
-// The integer itself counts: next_prime(7) is 7. Below 2 the result is 2. Above 2^40 the result is 0, because the
-// search by trial division takes too long for a call.
+// The integer itself counts: next_prime(7) is 7. Below 2 the result is 2.
+//
+// **Result**: the prime, or a negative number with an error record:
+//
+// - `Bad_Value` (-1): the integer is above 2^40, because the search by trial division takes too long for a call.
 @(export, link_name = "next_prime")
-next_prime :: proc "c" (from: i64) -> i64 {
+next_prime :: proc "c" (from: i64, error: ^errors.Error_Record) -> i64 {
 	if from > NEXT_PRIME_LIMIT {
-		return 0
+		return errors.fail(error, -1, .Bad_Value, .None, 1, from, NEXT_PRIME_LIMIT)
 	}
 	search: for candidate := max(from, 2);; candidate += 1 {
 		for divisor: i64 = 2; divisor * divisor <= candidate; divisor += 1 {

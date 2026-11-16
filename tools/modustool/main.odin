@@ -75,6 +75,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/date",
 	SOURCE_FOLDER_CONTRACT + "/disk_program_page",
 	SOURCE_FOLDER_CONTRACT + "/iommu",
+	SOURCE_FOLDER_CONTRACT + "/processor_counters",
 	SOURCE_FOLDER_SUPPORT + "/storage_mount",
 	SOURCE_FOLDER_SUPPORT + "/storage_object",
 	SOURCE_FOLDER_SUPPORT + "/storage_tree",
@@ -1172,7 +1173,7 @@ Machine_Iommu :: enum {
 	Amd,
 }
 
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false) -> (command: []string, ok: bool) {
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc") -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -1243,7 +1244,10 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-device",
 		"isa-debug-exit,iobase=0xf4,iosize=0x04",
 		"-no-reboot",
-		"-rtc", "base=utc", // The real-time clock of the machine is the clock of the host, in UTC: the test of the date compares the two.
+		// The real-time clock of the machine: the clock of the host in UTC
+		// for a machine that a principal runs; a fixed hour of the night for
+		// a test machine (machine_clock.odin).
+		"-rtc", clock_argument,
 		"-net",
 		"none", // No other network device than the one below.
 		"-netdev",

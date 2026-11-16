@@ -84,7 +84,7 @@ text_speed_parts :: proc(t: ^testing.T) {
 	background_fill(canvas, .Flat)
 	spleen := speed_least(proc(canvas: Canvas, raw: rawptr) {
 		for index in 0 ..< SPEED_GLYPHS {
-			character_spleen(canvas, 8 * index, 8, rune(speed_sample[index]), COLOR_TEXT)
+			character_spleen(canvas, 8 * index, 8, rune(speed_sample[index]), DARK_TEXT)
 		}
 	}, canvas, data)
 	fmt.printfln("graphics: one glyph at scale 1 on the host: only a walk over its words %.1f ns; Spleen 8x16 %.1f ns", walk, spleen)
@@ -93,14 +93,14 @@ text_speed_parts :: proc(t: ^testing.T) {
 		reference := speed_least(proc(canvas: Canvas, raw: rawptr) {
 			data := (^Speed_Data)(raw)
 			for index in 0 ..< SPEED_GLYPHS {
-				character_vector_reference(data.cache, &data.table, .Red_Green_Blue, canvas, 8 * index, 8, rune(speed_sample[index]), COLOR_TEXT, 1)
+				character_vector_reference(data.cache, &data.table, .Red_Green_Blue, canvas, 8 * index, 8, rune(speed_sample[index]), DARK_TEXT, 1)
 			}
 		}, canvas, data, background)
 		data.tables = {}
 		fast := speed_least(proc(canvas: Canvas, raw: rawptr) {
 			data := (^Speed_Data)(raw)
 			for index in 0 ..< SPEED_GLYPHS {
-				character_vector_with(data.cache, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * index, 8, rune(speed_sample[index]), COLOR_TEXT, 1)
+				character_vector_with(data.cache, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * index, 8, rune(speed_sample[index]), DARK_TEXT, 1)
 			}
 		}, canvas, data, background)
 		fmt.printfln("graphics: one glyph at scale 1 over %v: the reference blend %.1f ns, the fast blend %.1f ns, %v tables made", background, reference, fast, data.tables.made)
@@ -111,19 +111,19 @@ text_speed_parts :: proc(t: ^testing.T) {
 		reference := speed_least(proc(canvas: Canvas, raw: rawptr) {
 			data := (^Speed_Data)(raw)
 			for index in 0 ..< SPEED_GLYPHS / 3 {
-				character_vector_reference(data.cache, &data.table, .Red_Green_Blue, canvas, 8 * data.scale * index, 0, rune(speed_sample[index]), COLOR_TEXT, data.scale)
+				character_vector_reference(data.cache, &data.table, .Red_Green_Blue, canvas, 8 * data.scale * index, 0, rune(speed_sample[index]), DARK_TEXT, data.scale)
 			}
 		}, canvas, data)
 		fast := speed_least(proc(canvas: Canvas, raw: rawptr) {
 			data := (^Speed_Data)(raw)
 			for index in 0 ..< SPEED_GLYPHS / 3 {
-				character_vector_with(data.cache, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * data.scale * index, 0, rune(speed_sample[index]), COLOR_TEXT, data.scale)
+				character_vector_with(data.cache, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * data.scale * index, 0, rune(speed_sample[index]), DARK_TEXT, data.scale)
 			}
 		}, canvas, data)
 		enlarged := speed_least(proc(canvas: Canvas, raw: rawptr) {
 			data := (^Speed_Data)(raw)
 			for index in 0 ..< SPEED_GLYPHS / 3 {
-				character_spleen_enlarged(canvas, 8 * data.scale * index, 0, rune(speed_sample[index]), COLOR_TEXT, data.scale)
+				character_spleen_enlarged(canvas, 8 * data.scale * index, 0, rune(speed_sample[index]), DARK_TEXT, data.scale)
 			}
 		}, canvas, data)
 		fmt.printfln("graphics: one glyph at scale %v over Flat: the reference blend %.1f ns, the fast blend %.1f ns, Spleen enlarged %.1f ns", scale, 3 * reference, 3 * fast, 3 * enlarged)
@@ -139,7 +139,7 @@ Speed_Data :: struct {
 
 Speed_Background :: enum {
 	Flat, // One color: the console, a flat card.
-	Card, // The card of the rules: COLOR_CARD_TOP to COLOR_CARD_BOTTOM over 400 rows.
+	Card, // The card of the rules: DARK_CARD_TOP to DARK_CARD_BOTTOM over 400 rows.
 	Across, // The title bar: a gradient from the left to the right.
 	Noise, // Each pixel of its own color: a picture.
 }
@@ -155,11 +155,11 @@ background_fill :: proc(canvas: Canvas, background: Speed_Background) {
 			pixel := &canvas.pixels[y * canvas.stride + x]
 			switch background {
 			case .Flat:
-				pixel^ = COLOR_CARD_BOTTOM
+				pixel^ = DARK_CARD_BOTTOM
 			case .Card:
-				pixel^ = mix(COLOR_CARD_TOP, COLOR_CARD_BOTTOM, u32((y + 200) * 255 / 400))
+				pixel^ = mix(DARK_CARD_TOP, DARK_CARD_BOTTOM, u32((y + 200) * 255 / 400))
 			case .Across:
-				pixel^ = mix(COLOR_TITLE, COLOR_TITLE_END, u32(x * 255 / canvas.width))
+				pixel^ = mix(DARK_TITLE, DARK_TITLE_END, u32(x * 255 / canvas.width))
 			case .Noise:
 				state = state * 1664525 + 1013904223
 				pixel^ = state >> 8

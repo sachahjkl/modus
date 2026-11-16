@@ -83,16 +83,16 @@ the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 		testing.expect(t, ok)
 		place := i64(32 * 64) + i64(next(&state) % 64)
 		for &pixel in pixels {
-			pixel = COLOR_CARD_BOTTOM
+			pixel = DARK_CARD_BOTTOM
 		}
-		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, LINE_TOP, placed[:count], 1, COLOR_TEXT)
+		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, LINE_TOP, placed[:count], 1, DARK_TEXT)
 		// The box in whole pixels: from the pixel of the origin to the pixel
 		// of the end, widened by the margin.
 		left := int(place / 64) - PROPORTIONAL_INK_MARGIN
 		right := int((place + width + 63) / 64) + PROPORTIONAL_INK_MARGIN
 		for row in 0 ..< HEIGHT {
 			for column in 0 ..< WIDTH {
-				if pixels[row * WIDTH + column] == COLOR_CARD_BOTTOM {
+				if pixels[row * WIDTH + column] == DARK_CARD_BOTTOM {
 					continue
 				}
 				if column < left || column >= right || row < LINE_TOP || row >= LINE_TOP + 16 {
@@ -119,10 +119,10 @@ a_proportional_text_outside_its_limits :: proc(t: ^testing.T) {
 	placed := [3]text_shaping.Placed_Glyph{{glyph = 'A' - glyph_cache.ASCII_FIRST, x = 0}, {glyph = glyph_cache.CHARACTER_COUNT, x = 640}, {glyph = 'W' - glyph_cache.ASCII_FIRST, x = max(i32)}}
 	places := [?]i64{-(1 << 40), 1 << 40, -64 * 70, 64 * 70}
 	for place in places {
-		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, 0, placed[:], 1, COLOR_TEXT)
+		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, 0, placed[:], 1, DARK_TEXT)
 	}
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], 4, COLOR_TEXT)
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, 0, -1000, placed[:], 1, COLOR_TEXT)
+	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], 4, DARK_TEXT)
+	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, 0, -1000, placed[:], 1, DARK_TEXT)
 	for pixel in pixels {
 		testing.expect_value(t, pixel, Color(0))
 	}

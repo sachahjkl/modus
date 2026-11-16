@@ -634,13 +634,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	builder: interface.Text_Builder
 
-	content := interface.card(&frame, {8, 8, WIDTH - 16, 152}, "WHAT THE KERNEL SAVES", "XCR0 and CPUID, read by this program with no kernel operation", graphics.COLOR_KERNEL)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, 152}, "WHAT THE KERNEL SAVES", "XCR0 and CPUID, read by this program with no kernel operation", graphics.colors.kernel)
 	column := interface.column_of(content)
 	saved := sets.saved_components(facts)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "components", components_text(&builder, saved), graphics.COLOR_TEXT, 168)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "SSE family", sets_text(&builder, usable, .Sse, .Pclmulqdq), graphics.COLOR_TEXT, 168)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "AVX family", sets_text(&builder, usable, .Avx, .Avx512_Vl), .Avx in usable ? graphics.COLOR_TEXT : graphics.COLOR_DIM, 168)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "general registers", sets_text(&builder, usable, .Popcnt, .Bmi2), graphics.COLOR_TEXT, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "components", components_text(&builder, saved), graphics.colors.text, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "SSE family", sets_text(&builder, usable, .Sse, .Pclmulqdq), graphics.colors.text, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "AVX family", sets_text(&builder, usable, .Avx, .Avx512_Vl), .Avx in usable ? graphics.colors.text : graphics.colors.dim, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "general registers", sets_text(&builder, usable, .Popcnt, .Bmi2), graphics.colors.text, 168)
 
 	// One row for each thread, one square for each register.
 	builder.count = 0
@@ -650,7 +650,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.text_put(&builder, " processors hold ")
 	interface.text_put(&builder, level_names[held_level])
 	interface.text_put(&builder, ", the x87 stack and MXCSR")
-	content = interface.card(&frame, {8, 168, WIDTH - 16, 376}, "EACH REGISTER OF EACH THREAD", interface.text_of(&builder), graphics.COLOR_PROGRAM)
+	content = interface.card(&frame, {8, 168, WIDTH - 16, 376}, "EACH REGISTER OF EACH THREAD", interface.text_of(&builder), graphics.colors.program)
 	column = interface.column_of(content)
 	// A row of 16 pixels has room for a line of text. More threads than
 	// 21 (a machine with more than 19 processors) get rows of 11 pixels
@@ -667,23 +667,23 @@ draw :: proc "contextless" (window: ^display.Window) {
 			builder.count = 0
 			interface.text_put(&builder, "thread ")
 			interface.text_put_number(&builder, u64(worker.number))
-			interface.draw_text(frame.table, row.x, row.y, interface.text_of(&builder), graphics.COLOR_DIM)
+			interface.draw_text(frame.table, row.x, row.y, interface.text_of(&builder), graphics.colors.dim)
 		}
 		done := intrinsics.atomic_load(&worker.done)
 		x := row.x + 96
 		for register in 0 ..< 32 {
-			color: graphics.Color = graphics.COLOR_NOT_USABLE
+			color: graphics.Color = graphics.colors.not_usable
 			if register < vector_count(held_level) {
-				color = worker.wrong_vectors & (1 << u32(register)) != 0 ? graphics.COLOR_FAILED : (done ? graphics.COLOR_PROGRAM : graphics.COLOR_TRACK)
+				color = worker.wrong_vectors & (1 << u32(register)) != 0 ? graphics.colors.failed : (done ? graphics.colors.program : graphics.colors.track)
 			}
 			interface.mark(&frame, x + register * (square_size + 2), row.y + 2, square_size, color)
 		}
 		x += 32 * (square_size + 2) + 8
 		others := [?]Register_Kind{.Opmask, .X87, .X87_Control, .Mxcsr}
 		for kind, place in others {
-			color: graphics.Color = graphics.COLOR_NOT_USABLE
+			color: graphics.Color = graphics.colors.not_usable
 			if kind != .Opmask || held_level >= .Avx_512 {
-				color = worker.wrong_others & (1 << u8(kind)) != 0 ? graphics.COLOR_FAILED : (done ? graphics.COLOR_PROGRAM : graphics.COLOR_TRACK)
+				color = worker.wrong_others & (1 << u8(kind)) != 0 ? graphics.colors.failed : (done ? graphics.colors.program : graphics.colors.track)
 			}
 			interface.mark(&frame, x + place * (square_size + 2), row.y + 2, square_size, color)
 		}
@@ -700,14 +700,14 @@ draw :: proc "contextless" (window: ^display.Window) {
 			interface.text_put(&builder, intrinsics.atomic_load(&worker.start_state_wrong) == 0 ? ", start state good" : ", START STATE WRONG")
 		}
 		wrong := worker.wrong_registers != 0 || worker.start_state_wrong != 0
-		interface.draw_text(frame.table, x, row.y, interface.text_of(&builder), wrong ? graphics.COLOR_FAILED : graphics.COLOR_TEXT)
+		interface.draw_text(frame.table, x, row.y, interface.text_of(&builder), wrong ? graphics.colors.failed : graphics.colors.text)
 	}
-	interface.cell_text(&frame, {content.x, content.y + content.height - LINE, content.width, LINE}, "a square: one vector register; then the opmasks, the x87 stack, the x87 control word, MXCSR", graphics.COLOR_DIM)
+	interface.cell_text(&frame, {content.x, content.y + content.height - LINE, content.width, LINE}, "a square: one vector register; then the opmasks, the x87 stack, the x87 control word, MXCSR", graphics.colors.dim)
 
 	// The value starts after the longest name of a level, "zmm0 to zmm31
 	// and k0 to k7 (16 bits)": 36 characters, in either font of the names.
 	ENTRY_VALUE_X :: 36 * graphics.CELL_WIDTH + 16
-	content = interface.card(&frame, {8, 552, WIDTH - 16, HEIGHT - 560}, "ONE EMPTY KERNEL ENTRY", "a syscall with no command and no wait, 100000 times, after the test", graphics.COLOR_MACHINE)
+	content = interface.card(&frame, {8, 552, WIDTH - 16, HEIGHT - 560}, "ONE EMPTY KERNEL ENTRY", "a syscall with no command and no wait, 100000 times, after the test", graphics.colors.machine)
 	column = interface.column_of(content)
 	for measured in Level {
 		if measured == .Avx_512_With_Wide_Opmasks {
@@ -720,10 +720,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 			interface.text_put_number(&builder, entry_nanoseconds[measured])
 			interface.text_put(&builder, " ns")
 		}
-		interface.label_value_line(&frame, interface.column_take(&column, LINE), level_names[measured], interface.text_of(&builder), entry_nanoseconds[measured] == 0 ? graphics.COLOR_DIM : graphics.COLOR_TEXT, ENTRY_VALUE_X)
+		interface.label_value_line(&frame, interface.column_take(&column, LINE), level_names[measured], interface.text_of(&builder), entry_nanoseconds[measured] == 0 ? graphics.colors.dim : graphics.colors.text, ENTRY_VALUE_X)
 	}
 	if finished {
-		interface.label_value_line(&frame, interface.column_take(&column, LINE), "result", passed ? "each register of each thread was kept" : "a register was not kept: see the log", passed ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED, ENTRY_VALUE_X)
+		interface.label_value_line(&frame, interface.column_take(&column, LINE), "result", passed ? "each register of each thread was kept" : "a register was not kept: see the log", passed ? graphics.colors.program : graphics.colors.failed, ENTRY_VALUE_X)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

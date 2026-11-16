@@ -115,7 +115,7 @@ site_value_kinds := [value_kinds.Value_Kind]Site_Value_Kind_Description {
 
 // site_value_color gives the color of the text of a kind in one form.
 site_value_color :: proc(kind: value_kinds.Value_Kind, light: bool) -> graphics.Color {
-	return graphics.value_kind_color(kind, light)
+	return graphics.value_kind_color(kind, light ? graphics.Appearance.Light : graphics.Appearance.Dark)
 }
 
 // site_value writes a value of a kind: one code element in the monospace

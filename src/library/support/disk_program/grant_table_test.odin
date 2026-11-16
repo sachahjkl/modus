@@ -113,7 +113,7 @@ nicknames_that_a_grant_refuses :: proc(t: ^testing.T) {
 the_grants_that_no_command_gives :: proc(t: ^testing.T) {
 	given, answer := grant_by_command(.Store)
 	testing.expect(t, answer == .Given && given == .Store)
-	for grant in ([]start_grant.Grant{.Root_Ring, .Connect, .Principals, .Tpm, .Debugger, .Inspect, .Stop, .Schedule, .Events, .Data_Disk, .Scratch_Disk, .Network_Device, .Acts_For_Principal, .System_Part, .Versions_Erase, .Remote_Clients}) {
+	for grant in ([]start_grant.Grant{.Root_Ring, .Connect, .Principals, .Tpm, .Debugger, .Inspect, .Stop, .Schedule, .Events, .Counters, .Data_Disk, .Scratch_Disk, .Network_Device, .Acts_For_Principal, .System_Part, .Versions_Erase, .Remote_Clients}) {
 		_, answer = grant_by_command(grant)
 		testing.expectf(t, answer == .Never, "the grant %v: %v, expected Never", grant, answer)
 	}

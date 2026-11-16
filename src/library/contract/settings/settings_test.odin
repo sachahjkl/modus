@@ -11,9 +11,11 @@ import "core:testing"
 @(test)
 a_page_left_in_a_change :: proc(t: ^testing.T) {
 	page: Page
-	write(&page, {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 1, .Grid_Fit = 1, .Keyboard_Layout = 1})
+	write(&page, {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 1, .Grid_Fit = 1, .Keyboard_Layout = 1, .Appearance = u32(Appearance.Light)}, .Light)
 	choice := read(&page)
 	testing.expect_value(t, choice.values[.Font], 1)
+	testing.expect_value(t, appearance_of(choice), Appearance.Light)
+	testing.expect_value(t, choice.appearance_in_force, Appearance_In_Force.Light)
 	testing.expect_value(t, choice.change_count, 2)
 	page.change_count = 3
 	stopped := read(&page)
@@ -55,7 +57,7 @@ a_glyph_cache_that_is_not_mapped :: proc(t: ^testing.T) {
 // value changed makes them differ, for each setting.
 @(test)
 values_differ_compares_the_values_only :: proc(t: ^testing.T) {
-	first := Choice{values = {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 0, .Grid_Fit = 1, .Keyboard_Layout = 1}, change_count = 2}
+	first := Choice{values = {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 0, .Grid_Fit = 1, .Keyboard_Layout = 1, .Appearance = u32(Appearance.Auto)}, change_count = 2}
 	second := first
 	second.change_count = 1_000_002
 	testing.expect(t, !values_differ(first, second))
@@ -66,4 +68,32 @@ values_differ_compares_the_values_only :: proc(t: ^testing.T) {
 		testing.expectf(t, values_differ(first, changed), "a change of %v", setting)
 		testing.expectf(t, values_differ(changed, first), "a change of %v, in the other order", setting)
 	}
+	// The appearance in force alone, as the root service changes it at an
+	// edge of the day: the compositor must tell the windows.
+	changed := first
+	changed.appearance_in_force = .Light
+	testing.expect(t, values_differ(first, changed))
+}
+
+// The root service changes the appearance in force alone: the values and
+// the change count stay, and a reader sees the new word. A word that the
+// enumeration does not have reads as dark.
+@(test)
+the_appearance_in_force_alone :: proc(t: ^testing.T) {
+	page: Page
+	values: [Setting]u32
+	values[.Appearance] = u32(Appearance.Auto)
+	write(&page, values, .Dark)
+	before := read(&page)
+	appearance_in_force_write(&page, .Light)
+	after := read(&page)
+	testing.expect_value(t, after.appearance_in_force, Appearance_In_Force.Light)
+	testing.expect_value(t, after.change_count, before.change_count)
+	testing.expect_value(t, after.values, before.values)
+	page.appearance_in_force = 7
+	testing.expect_value(t, read(&page).appearance_in_force, Appearance_In_Force.Dark)
+	// An all-zero page: the setting auto, dark in force.
+	empty: Page
+	testing.expect_value(t, appearance_of(read(&empty)), Appearance.Auto)
+	testing.expect_value(t, read(&empty).appearance_in_force, Appearance_In_Force.Dark)
 }

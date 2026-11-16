@@ -484,7 +484,7 @@ mark_animation_forms_width :: proc(forms: ^Mark_Forms) -> int {
 // of the form, and how the form was drawn.
 mark_animation_forms_draw :: proc(canvas: graphics.Canvas, x, y: int, animation: mark.Animation, sprites: ^Mark_Sprites, forms: ^Mark_Forms) {
 	cell := MARK_ANIMATIONS_CELL_SIZE
-	graphics.text(canvas, x, y, fmt.tprintf("the forms of the move of %s: whole cells; the standing leg and the water keep their place", mark.animation_names[animation]), graphics.COLOR_DIM)
+	graphics.text(canvas, x, y, fmt.tprintf("the forms of the move of %s: whole cells; the standing leg and the water keep their place", mark.animation_names[animation]), graphics.DARK_DIM)
 	box_x := x
 	at := 0
 	for step in forms.steps[animation] {
@@ -495,7 +495,7 @@ mark_animation_forms_draw :: proc(canvas: graphics.Canvas, x, y: int, animation:
 		}
 		drawn := &forms.drawn[step.form]
 		box_y := y + MARK_ANIMATIONS_LINE
-		graphics.fill(canvas, box_x, box_y, MARK_ANIMATIONS_FORM_BOX_WIDTH, MARK_ANIMATIONS_FORM_BOX_HEIGHT, graphics.COLOR_CARD_TOP)
+		graphics.fill(canvas, box_x, box_y, MARK_ANIMATIONS_FORM_BOX_WIDTH, MARK_ANIMATIONS_FORM_BOX_HEIGHT, graphics.DARK_CARD_TOP)
 		// The place of the natural heron in the box.
 		heron_x := box_x + mark.FORM_REACH_LEFT * cell
 		heron_y := box_y + mark.FORM_REACH_UP * cell
@@ -526,7 +526,7 @@ mark_animation_forms_draw :: proc(canvas: graphics.Canvas, x, y: int, animation:
 		}
 		for line, index in caption {
 			fmt.assertf(len(line) * MARK_ANIMATIONS_CHARACTER_WIDTH <= MARK_ANIMATIONS_FORM_BOX_WIDTH, "the text %q under a form is wider than its box", line)
-			graphics.text(canvas, box_x, box_y + MARK_ANIMATIONS_FORM_BOX_HEIGHT + 4 + index * MARK_ANIMATIONS_LINE, line, graphics.COLOR_DIM)
+			graphics.text(canvas, box_x, box_y + MARK_ANIMATIONS_FORM_BOX_HEIGHT + 4 + index * MARK_ANIMATIONS_LINE, line, graphics.DARK_DIM)
 		}
 		box_x += MARK_ANIMATIONS_FORM_BOX_WIDTH + MARK_ANIMATIONS_GAP
 	}

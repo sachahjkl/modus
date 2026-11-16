@@ -478,6 +478,7 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	debug_register_6_write(DR6_CLEAR)
 	apic_setup(cpu)
 	guest_processor_setup(cpu)
+	thread_counters_processor_setup(cpu)
 }
 
 // processor_start prepares the first processor.
@@ -533,7 +534,7 @@ processor_start :: proc "contextless" () {
 	extended_state_log()
 	return_to_program_log()
 	control_registers_log()
-	performance_counters_log()
+	thread_counters_log()
 	timer_calibrate()
 	timer_start()
 }

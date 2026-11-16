@@ -601,7 +601,7 @@ list_with_choice_scroll_bar_moves_the_choice :: proc(t: ^testing.T) {
 	testing.expect_value(t, choice, 4)
 	testing.expect(t, result.changed)
 	// The fill of the chosen line stops before the bar.
-	count, fill := records_of(&table, .Rectangle, graphics.COLOR_CHOSEN)
+	count, fill := records_of(&table, .Rectangle, graphics.colors.chosen)
 	testing.expect_value(t, count, 1)
 	testing.expect_value(t, int(fill.width), 200 - SCROLL_BAR_THICKNESS)
 	// A list whose lines fit has no bar: no record of the track.

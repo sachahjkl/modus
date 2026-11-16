@@ -195,9 +195,9 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 }
 
 bar :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, value, most: u64, color: graphics.Color) {
-	interface.draw_rectangle(table, x, y + 3, BAR_WIDTH, 10, graphics.COLOR_TRACK)
+	interface.draw_rectangle(table, x, y + 3, BAR_WIDTH, 10, graphics.colors.track)
 	interface.draw_rectangle(table, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
-	interface.draw_unsigned(table, x + BAR_WIDTH + 8, y, value, graphics.COLOR_TEXT)
+	interface.draw_unsigned(table, x + BAR_WIDTH + 8, y, value, graphics.colors.text)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
@@ -206,37 +206,37 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	measured := system.measure_run()
 	most_rate, most_entries: u64
 	for measure in measures {
 		most_rate, most_entries = max(most_rate, measured ? measure.rate : measure.received), max(most_entries, measure.entries)
 	}
 	y := 12
-	interface.draw_text(table, 12, y, measured ? "one thread writes records in a ring, one thread reads them, for one second." : "one thread writes 200000 records in a ring, one thread reads them.", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, measured ? "one thread writes records in a ring, one thread reads them, for one second." : "one thread writes 200000 records in a ring, one thread reads them.", graphics.colors.dim)
 	y += LINE
-	interface.draw_text(table, 12, y, "a queue operation does not enter the kernel. a wait does.", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, "a queue operation does not enter the kernel. a wait does.", graphics.colors.dim)
 	y += LINE + LINE / 2
-	interface.draw_text(table, 12, y, "capacity  before a wait", graphics.COLOR_DIM)
-	interface.draw_text(table, RATE_X, y, measured ? "records in one second" : "records read in order", graphics.COLOR_DIM)
-	interface.draw_text(table, ENTRIES_X, y, "kernel entries, one million records", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, "capacity  before a wait", graphics.colors.dim)
+	interface.draw_text(table, RATE_X, y, measured ? "records in one second" : "records read in order", graphics.colors.dim)
+	interface.draw_text(table, ENTRIES_X, y, "kernel entries, one million records", graphics.colors.dim)
 	y += LINE
 	for measure, index in measures {
 		if index % 2 == 0 {
-			interface.draw_rectangle(table, 6, y - 4, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
+			interface.draw_rectangle(table, 6, y - 4, WIDTH - 12, LINE, graphics.colors.card_top)
 		}
-		interface.draw_unsigned(table, 12, y, u64(measure.capacity), graphics.COLOR_TEXT)
-		interface.draw_text(table, 92, y, measure.spin ? "read counters" : "nothing", graphics.COLOR_TEXT)
+		interface.draw_unsigned(table, 12, y, u64(measure.capacity), graphics.colors.text)
+		interface.draw_text(table, 92, y, measure.spin ? "read counters" : "nothing", graphics.colors.text)
 		if measure.done {
-			bar(table, RATE_X, y, measured ? measure.rate : measure.received - measure.lost, most_rate, measure.lost == 0 ? COLOR_RATE : graphics.COLOR_FAILED)
+			bar(table, RATE_X, y, measured ? measure.rate : measure.received - measure.lost, most_rate, measure.lost == 0 ? COLOR_RATE : graphics.colors.failed)
 			bar(table, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
 		} else {
-			interface.draw_text(table, RATE_X, y, "...", graphics.COLOR_DIM)
+			interface.draw_text(table, RATE_X, y, "...", graphics.colors.dim)
 		}
 		y += LINE
 	}
 	if !measured {
-		interface.draw_text(table, 12, y + LINE / 2, "the records in one second are a measure: run `modustool measure flow`.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y + LINE / 2, "the records in one second are a measure: run `modustool measure flow`.", graphics.colors.dim)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

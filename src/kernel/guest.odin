@@ -63,8 +63,8 @@ STATE_PAGE_ATTRIBUTES :: 0x668 // The page attribute table of the guest under ne
 // non-maskable interrupt, the system management interrupt and INIT of the
 // machine (0 to 3), rdpmc (15), cpuid (18), invd (22), hlt (24), invlpga
 // (26), each port (27), each model-specific register (28) and the shutdown
-// (31). rdpmc would read the performance counters of the machine, which
-// count the work of the kernel and of other programs.
+// (31). rdpmc would read the performance counters of the processor, which
+// hold the counts of another thread.
 INTERCEPT_INSTRUCTIONS :: u32(1 << 0 | 1 << 1 | 1 << 2 | 1 << 3 | 1 << 15 | 1 << 18 | 1 << 22 | 1 << 24 | 1 << 26 | 1 << 27 | 1 << 28 | 1 << 31)
 // The second vector: vmrun (which the processor requires), vmmcall, vmload,
 // vmsave, stgi, clgi, skinit (0 to 6), icebp (8: the int1 instruction, whose

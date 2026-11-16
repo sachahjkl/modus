@@ -228,9 +228,17 @@ replacements :: proc "c" (result: ^[]information.Replacement) -> i64 {
 }
 
 // problem gives the first rule of the format that a module breaks, by name or by hash, as a sentence: the table, the record and the byte of the file. The text is empty when the module keeps each rule.
+//
+// **Result**: the count of bytes of the sentence, 0 for a module that keeps each rule, or a negative number with an
+// error record:
+//
+// - `Absent` (-1): no module of the boot image has this name or this hash.
 @(export, link_name = "problem")
-problem :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
+problem :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	found, problem := information.find(catalog(), name^)
+	if problem.kind == .No_Module {
+		return errors.fail(error, -1, .Absent, .Modules, 1)
+	}
 	if problem.kind == .None {
 		return 0
 	}
@@ -274,8 +282,8 @@ overview_build :: proc "contextless" () -> int {
 	count := min(information.modules(catalog(), module_rows[:]), len(module_rows))
 	run_count, _ := information.running(machine, catalog(), running_rows[:])
 	put_built(0, COLOR_TITLE, "ALL MODULES (", u64(count), ")")
-	put("The flat tables of each module of the boot image, read by modus:support/information.", 0, graphics.COLOR_DIM)
-	put("Sizes in bytes of memory. o: this table; up, down: the page of a module.", 0, graphics.COLOR_DIM)
+	put("The flat tables of each module of the boot image, read by modus:support/information.", 0, graphics.colors.dim)
+	put("Sizes in bytes of memory. o: this table; up, down: the page of a module.", 0, graphics.colors.dim)
 	put("", 0, 0)
 	// The column of the names has the width of the longest name of the
 	// table: no name is cut, and no name meets the number after it.
@@ -291,7 +299,7 @@ overview_build :: proc "contextless" () -> int {
 		hash, _ := information.hash_parse(string(row.hash[:]))
 		by := importer_count(hash)
 		runs := running_count(string(row.hash[:]), run_count)
-		color := graphics.Color(graphics.COLOR_TEXT)
+		color := graphics.Color(graphics.colors.text)
 		switch {
 		case row.problem[0] != 0:
 			color = 0xF07070
@@ -307,9 +315,9 @@ overview_build :: proc "contextless" () -> int {
 		run_total += runs
 	}
 	put("", 0, 0)
-	put_built(0, graphics.COLOR_DIM, padded("all", name_width), right(totals[0], 6), right(totals[1], 8), right(totals[2], 8), right(totals[3], 8), right(i64(export_total), 9), right(i64(import_total), 8), "     ", right(i64(run_total), 6))
+	put_built(0, graphics.colors.dim, padded("all", name_width), right(totals[0], 6), right(totals[1], 8), right(totals[2], 8), right(totals[3], 8), right(i64(export_total), 9), right(i64(import_total), 8), "     ", right(i64(run_total), 6))
 	put("", 0, 0)
-	put("green: a program runs it. yellow: no entry, a library. red: it breaks a rule.", 0, graphics.COLOR_DIM)
+	put("green: a program runs it. yellow: no entry, a library. red: it breaks a rule.", 0, graphics.colors.dim)
 	system.log("manual: overview: ", u64(count), " modules, ", u64(export_total), " exports, ", u64(import_total), " imports, ", u64(run_count), " modules that run in programs")
 	return count
 }
@@ -364,7 +372,7 @@ information_page :: proc "contextless" (hash: [32]u8) {
 	row: information.Module
 	information.module_row(found, &row)
 	put("SIZES", 0, COLOR_HEADING)
-	put_built(2, graphics.COLOR_TEXT, "code ", u64(row.code), ", constants ", u64(row.constants), ", data ", u64(row.data), ", zero data ", u64(row.zero), " bytes")
+	put_built(2, graphics.colors.text, "code ", u64(row.code), ", constants ", u64(row.constants), ", data ", u64(row.data), ", zero data ", u64(row.zero), " bytes")
 	put("", 0, 0)
 	count := min(information.importers(catalog(), hash, import_rows[:]), len(import_rows))
 	put_built(0, COLOR_HEADING, "IMPORTED BY (", u64(count), ")")

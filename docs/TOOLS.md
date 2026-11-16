@@ -42,7 +42,7 @@ A tool with no grant to inspect the machine reads nothing. It says so in its win
 | `locks` | machine, Inspect | `System_Report.locks` |
 | `scheduler` | machine, Inspect and Schedule | `Processor_Report`, `System_Report.strategy`, `Thread_Table_Report` (the machine number of its own threads; for the share policy, the threads of each program), `Program_Report` (the run time of each program) |
 | `manual` | machine, Inspect; boot image; replacement table | the flat tables of the modules, `Module_Report` of each slot |
-| `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)` |
+| `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)`, to each caller in its log scope ("Who reads which records") |
 | `debugger` | machine, Inspect; boot image; debug image; the commands `Debug` and `Debug_Store` of the root ring | `Program_Report`, `Module_Report` and `Thread_Table_Report` of the program that it debugs; the registers and the memory of that program through its handle with `Debug` ("The debugger"). It serves the exports of the debugger |
 | `inspect` | machine, Inspect; boot image; debug image | `Program_Report`, `Module_Report`, and the four reports below, of the program that the principal chooses. It serves `mappings()`, `threads()` and `modules()` |
 
@@ -92,9 +92,27 @@ The program `log` shows the newest records, in 30 lines: the time, the mark of t
 
 `log.records(after)` gives one row for each record: its fields, the count of its value runs (`runs`), and its text. `log.value_runs(after)` gives the value runs: the number of the record, the start and the length in bytes of its text, and the name of the kind (`size`, `time`...). Join them on `number`. The first row of `records` also says in `lost` how many records after `after` the kernel wrote over before the call read them: a reader that is slow knows what it missed.
 
+### Who reads which records
+
+The log has the records of every program, and a program sees no other program. So the log service gives each caller the records of its log scope (`GLOSSARY.md`), and the caller never maps the memory of the log:
+
+| Caller | Its log scope |
+|---|---|
+| A caller that acts for the principal: the console, `remote` | The whole log |
+| Each other caller with a connection to the log service: `log_reader` | Its own records: the records with its program slot and its program serial |
+| A program with no connection to the log service | No record through the service. Its records are on the serial port and in the whole log |
+
+The kernel writes the program slot, the program serial and the own number in each record. The root service writes the two numbers of the caller in the grant of its connection, and the caller cannot change them (`modus:contract/log_scope`). A new program in the same slot has another serial, so it does not read the records of the program before it. A record that another program wrote about a program, such as "root: started log_reader", is not one of its own records.
+
+A reader of its own records sees no number of the whole log. The number of each of its rows is the own number of the record (`GLOSSARY.md`): 0 for the first record of its program. It gives `after` in own numbers, and `lost` counts its own records that the kernel wrote over. So it receives no number or count of the records of other programs. All programs share one ring, so the records of the others still push its own records out: the count of its own records that are gone says how many records the others wrote. The log budget of each second bounds that rate. A reader whose own records are all gone receives no row, and so no `lost`. The result of the two exports counts the rows of the scope. A reader chooses the rows of a channel with `where`: a log scope never names a channel, because a channel is a name that the writer chooses. `revoke("console", "acts_for_principal")` changes the scope of the console to its own records. If a service ring has no room for the new grants, the root service refuses the revocation with `No_Slot`, changes nothing, and writes "root: refused the revocation of acts_for_principal of <program>: the service <name> has no room for the new grants; nothing changed".
+
+Each reader of the ring keeps a copy of a record only when the kernel did not start to write over it during the copy (`op.log_copy_kept`): the record under the writer of the next one counts as lost, so a copy never holds the head of one record and the text of another. A reader then copies the last 2046 records at most, one fewer than the 2047 that the ring holds.
+
+The program `log_reader` is the test: it writes one record, connects, reads the log from the own number 0, and writes "log_reader: its own records: 1 rows from the own number 0, its first record, in the slot <slot>, lost 0: no row of another program or of an earlier run: as it must". The machine test starts it two times: the second run receives none of the records of the first one. It then reads the whole log through `remote`, and finds there the record of `log_reader` and the record "root: started log_reader". The design: `src/md/features/log_reader_scope.md`.
+
 ### The console and the terminal
 
-A log record reaches the console only as the rows of these two tables. The console draws them as a table when a line asks for them. It also reads them itself for the programs that a line calls, and shows those records under the line, with each value run in the color of its value kind (`docs/CONSOLE.md`, "The log records of a line"). A program writes to its terminal apart from the log; a Text record of the terminal already carries a color for each run (`Style.color`), so a console that writes a record as runs of text, one run for each value run, needs no new form of the terminal.
+A log record reaches the console only as the rows of these two tables. The console draws them as a table when a line asks for them. It also reads them itself for the programs that a line calls, and shows those records under the line, with each value run in the color of its value kind (`docs/CONSOLE.md`, "The log records of a line"). A program writes to its terminal apart from the log; a Text record of the terminal carries a value kind for each run (`Style.value_kind`), whose color the terminal chooses in the appearance in force, so a console that writes a record as runs of text, one run for each value run, needs no new form of the terminal.
 
 ## The program `inspect`
 
@@ -174,7 +192,7 @@ What follows from the rule:
 | A service (`storage`, `monitor`, `inspect`, `log`, `settings`, `date`, `manual`, `server`, `debugger`, the compositor) | Refused: the grant Serve |
 | A program with a terminal (`flood`, a second console) | Refused: the grant Terminal |
 | A program with an endpoint of the network (`net`, `fetch`, `quic_echo`, `remote`) | Refused: the grant Network, or Connect |
-| A program that connects to services (`tables`) | Refused: the grant Connect |
+| A program that connects to services (`tables`, `log_reader`) | Refused: the grant Connect |
 | A program with a device (`disk`, `network`) | Refused: the grant Scratch_Disk or Network_Device |
 | A device service, a terminal | Refused: the grant System_Part, which the root service gives to the parts of the system that it starts by itself, and which no caller holds |
 | A program with a grant that the console does not hold (`scheduler`: Schedule; `kernel_events`: Events) | Refused: that grant |
@@ -576,7 +594,7 @@ A minus before a variable is an answer, and a procedure literal inside the body 
 modustool: src/programs/manual/main.odin:618: the export show gives a negative number with no error record: give it the last parameter error: ^errors.Error_Record, and write the record on this path with errors.fail (docs/MODULE_CONTRACT.md, "8. Errors that diagnose")
 ```
 
-What it does not see: a `return` of a variable that holds a negative number, a helper of another package, and a failure that gives 0 or an empty text. Review holds them. The design: `src/md/api/export_error_records.md`.
+What it does not see: a `return` of a variable that holds a negative number, a helper of another package, and a failure that gives 0 or an empty text. A 0 and an empty text are also answers (`tally.last()` before the first add, `roman(0)`), and the source does not tell the two apart. Review holds them. The design: `src/md/api/export_error_records.md`.
 
 **When they run.** `modustool check` runs the three after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same three conditions on the sources of the repository.
 
@@ -786,7 +804,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `return_fault` | The machine of the return to a program |
 | `fault_ring` | The machine of the fault ring |
 | `debugger` | The two machines of the debugger: the contract of the kernel, then the commands of the service `debugger` |
-| `kernel_events` | The machine of the kernel events |
+| `kernel_events` | The machine of the kernel events, then the thread counters on the same machine: `counters` counts a loop of 1 000 000 turns (at least one instruction retired for each turn, the one count that the test checks) and the same reads of 2 MiB in order and by page, as measures. After the machine, the tool reads the boot line "kernel: performance counters" of the test machine: when the kernel found no counters, it checks only that the commands gave `Unsupported`, and it writes what the host gives as the explanation (`ARCHITECTURE.md`, "The counters of a thread") |
 | `guest` | The machine of a guest: `guest_demo` runs seven bytes of 16-bit code in a guest, receives its port write of 42 to the port 0x80 as an exit record, sees its `hlt`, and gets its `int1` as an exit `Other` with the exit code 0x88 (icebp). The tool reads the host first: on a host that gives the test machine no SVM, the machine checks only that `Guest_Run` gives `Unsupported`, and the tool writes that no guest ran, and why (`ARCHITECTURE.md`, "A guest") |
 | `iommu` | The machine with the IOMMU of Intel with interrupt remapping (`intel-iommu,intremap=on`, `kernel-irqchip=split`), with the disk of the measures behind a root port of PCI Express and the entropy device: the system with translation and interrupt remapping on, the two reads of the entropy device through the unit, then the test device service `iommu_device` on that disk, whose message interrupt arrives through its entry, whose messages to entries that it was not given are refused with a line, and whose device does not reach a page that it did not declare, then `net`, whose datagram region the network device reads through a device window (`ARCHITECTURE.md`, "K5. Device grant and interrupts") |
 | `iommu_amd` | The machine with the IOMMU of AMD with interrupt remapping (`amd-iommu,dma-remap=on,intremap=on`, `kernel-irqchip=split`), with the disk of the measures on bus 0 at the place 17: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, whose message interrupt arrives through the interrupt table of its device, and whose device does not reach a page that it did not declare, with the line of the DMA fault from the event log; QEMU records no event for a refused message, so no line of a refused interrupt is waited for; then `net` through a device window |
@@ -870,6 +888,14 @@ A sixth machine starts on the same disk. The scenario skips the machine passphra
 
 Host tests check the writer with the code of the open of the storage service (`src/library/support/storage_mount`): no block of the image is wrong, the counts of the store are the counts of what it names, each object gives its bytes, each entry has the hash that its block tree gives, and a file with no hole has the BLAKE3 hash of its bytes.
 
+### The clock of a test machine
+
+The setting `appearance` is `auto` on a new disk, and `auto` follows the hour of the day (`docs/DESIGN.md`, "The appearances"). So the tool gives each test machine a real-time clock at 01:00 UTC of the day of the host (`-rtc base=`, `tools/modustool/machine_clock.odin`): each picture of a test is in the dark appearance, whatever the hour of the run, and a run has six hours before 07:00. `modustool run` gives the machine the clock of the host.
+
+The tool keeps the difference between the clock that it gave and the clock of the host. Each check of a date of the machine (the step `Date`, a call with `date_after`, the field `Date` of `server`) takes the difference off, then checks the date by order against the clock of the host.
+
+The step `Appearance_Auto` checks the line that the setting `auto` writes: "settings: the appearance in force is dark: auto, light from 07:00 to 19:00 of the local time; the local time is 01:04 with a zone of 0 s, at 1794791040 s since 1970". The tool checks the date of the line as a step `Date` does, then computes the rule of the day over that date and that zone with the procedure of the system (`src/library/support/appearance`), and the line must name the same appearance. The test does not choose the hour: it checks the rule at the hour that the machine read.
+
 ### The times of a test
 
 `modustool test` reads the monotonic clock of the host at the start and at the end of the build, of each machine and of each step. At the end of a test that ran a machine, passed or failed, it writes `build/test_times.txt` and prints a summary. Each number is a measure: no test reads one, and no time makes a test fail ("The bounds of the tests").
@@ -920,7 +946,7 @@ A build keeps the outputs of an earlier build when their inputs are the same. Th
 
 | Step | What it runs | What it gives | What it reads of an import |
 |---|---|---|---|
-| The compile step | The compiler, `llc`, the assembler and the link | The linked file, `build/modules/<name>/linked.elf` | Nothing |
+| The compile step | The compiler, `llc`, the assembler and the link | The linked file, `build/modules/<name>/linked.elf`; for a kernel, also its measure lines, `build/modules/<name>/kernel_stack.measure` ("The deepest stack of the kernel") | Nothing |
 | The conversion | The tool only: no compiler | The module file, and its debug object | The whole file: its hash goes into the import table, and the number of each export that a slot names comes from it |
 
 A source names an export of an import in a `foreign` block: a name, the parameters and the result, written by hand in the source of the importer. No file of the import stands behind it. The compiler makes a call to a symbol that is not defined, and the link leaves the symbol not defined (`ld.lld -shared`, with no file of the import on its command). So the linked file of an importer is the same for every file of its import, and the build key of the compile step holds no import. A change of the body of an export of a library compiles the library, and only converts each module that imports it.
@@ -1026,6 +1052,48 @@ A volume that a command does not need is not built and not checked. It stays wit
 **The measure.** Each `build` prints its measure, lines that start with `modustool: measure: the build`: the whole time, the time of the hash of the input files with their count and their bytes, the time of the modules with the count of the modules built, converted and kept (and in it the time of the compile steps, the time of the conversions, the checks and the writes of the records; the time of a step is the time on the clock from the start of its first process to the end of its last one, in each level, with several processes at once), then one line for each later step: the debug image, the pointer themes, the glyph caches, the link pages of the manual, the four boot images, the checks and the writes of the build records of the boot volumes, and the boot volumes in all. One line gives the count of the volumes built, kept and not needed by the command, with the count of volume processes at once; then one line for each built volume gives the whole time of its process. The last line gives the budget that each module asks for, from the table `Budget` of its file, each module one time, kept modules too: its pages, its programs and its threads (`MODULE_CONTRACT.md`, "The budget that a module asks for"). The process of a volume prints its own line, `modustool: measure: the build of the boot volume <name>`: the signed boot image, the compiler of the boot program, the assembler with the link and the firmware signature, and the volume file. Each number is a measure: nothing reads one.
 
 One whole build before the incremental build, on a host with 16 processors, read in the times of the files that it wrote: 83 s from the first LLVM IR file to the last module (84 modules, one compiler process for each processor), under 1 s for the debug image, the pointer themes and the three boot images, then 51 s for the 18 boot volumes, one after the other, 2.8 s each.
+
+### The deepest stack of the kernel
+
+Each processor has one kernel stack of 16 pages (65 536 bytes, `op.KERNEL_STACK_PAGES`), between guard pages (`GLOSSARY.md`: kernel stack, deepest chain). The compile step of each kernel module measures the deepest chain of calls on it, after the check of the vector instructions. The design is in `src/md/infrastructure/kernel_stack_depth.md`.
+
+**What the tool reads.**
+
+| What | Where it comes from |
+|---|---|
+| The frame of each compiled procedure | The section `.stack_sizes` of the linked file: `llc -stack-size-section` writes the address and the bytes of each frame. No segment holds the section, so the module file does not change |
+| The frame of each procedure of assembly that compiled code calls | The table `assembly_frames` of `kernel_stack_rules` in `tools/modustool/kernel_stack.odin`: the bytes that it pushes, read from its source |
+| The calls | The listing of `llvm-objdump -d` of the linked kernel, which the check of the vector instructions reads too: a `call` to the start of a procedure is a call, a jump to the start of another procedure is a tail call |
+| The places where the kernel starts on the stack | The table `entries` of `kernel_stack_rules`: `kernel_interrupt` from a program (the frame of 22 values and a return address above it), `kernel_interrupt` after a return that the processor refused (48 bytes more), `first_run`, `schedule_from_the_top` and `processor_entry` (a null return address) |
+
+**The rules that the listing cannot give.** Each one is a row of a table, with its reason:
+
+- A call through a register: the table of the indirect calls names its procedure and what it reaches (the self test, which reaches no procedure of the kernel).
+- A direct call into data: the table of the calls into data names the caller and the data symbol (the self test calls the array `test_code`).
+- A procedure that calls itself: the table of the recursions gives the most levels of it on one chain. `execute` has two: a command with a table of error details runs its operation under two frames of `execute`. `tables_free` of the IOMMU and `walk` of `mappings_report` have one level for each level of their table: `iommu.DOMAIN_TABLE_LEVELS_MOST` and `info.PAGE_TABLE_LEVELS`, 4 each. The overflow of the self test has none: the measure leaves it out.
+- A cycle break (`GLOSSARY.md`): a cycle through several procedures that a state of the kernel cuts. The measure takes the depth of the procedure of the row with the other procedure left out. The kernel has three:
+  - `lock_order_broken` logs, and the log takes a lock; but it starts the report of a fault first, and from then the log takes no lock. No chain below it runs `lock_take`.
+  - `queue_ready` logs only on the report of a thread outside its placement, after the start of the report of a fault; from then the log wakes no reader. No chain below it runs `word_wake`.
+  - `program_stop` marks its program Stopped first, and `thread_finish` stops only a program that is not Stopped. No chain below it runs `program_stop` again.
+- A compiled procedure that no entry reaches: a row of the table of the procedures that no code calls (the conversions of 16-bit floating point numbers that Odin adds).
+
+The measure stops the build with a line that names the procedure when a chain reaches a procedure with no frame, when a call goes to an address where no procedure starts, when a reached procedure has an indirect call or calls itself with no row, when a cycle passes through several procedures with no cycle break, and when a compiled procedure has no row and no entry reaches it.
+
+**One interrupt over the kernel.** The kernel takes an interrupt of the machine only in `idle_wait`. The measure adds, to the deepest chain to `idle_wait`, 8 bytes of alignment, the frame of the interrupt, a return address and the deepest chain of `kernel_interrupt`.
+
+**The check.** Each stack keeps a quarter of its bytes free (`STACK_LEAST_FREE_PART`). The build fails when less than 4 pages (16 384 bytes) of the kernel stack stay free after the deepest chain, the entries and the interrupt at the idle wait together. The margin is for what the listing does not show: a push of an argument outside a frame, and an indirect jump that is a tail call.
+
+**The interrupt stacks.** The gates of four vectors name an interrupt stack: the double fault (4 pages), the debug exception, the non-maskable interrupt and the machine check (2 pages each). Each other vector, the timer and the devices too, runs on the kernel stack. On the stacks of the double fault, of the non-maskable interrupt and of the machine check, `kernel_interrupt` runs the report of a stop only: the start of the report, its line, the reason of a fault of the kernel, the stop. The table `report_callees` names these callees. A name that `kernel_interrupt` does not call stops the build. Under the report the log takes no lock and wakes no reader, so the measure leaves out `lock_take` and `word_wake` there. The measure adds one fault inside the report, which the processor pushes on the same stack, and which `fault_report_begin` ends with one line. On the stack of the debug exception only the stub runs: its frame. Each interrupt stack keeps a quarter of its bytes free too, or the build fails with the chain.
+
+**The measure lines.** The step writes two lines in `build/modules/<name>/kernel_stack.measure`, and each build prints them, a kept kernel too, for `kernel` and for `kernel_without_return_check`:
+
+```
+modustool: measure: the kernel stack of kernel: the deepest chain uses ... of 65536 bytes, ... bytes free, and the build fails under 16384 bytes free: an interrupt at the idle wait over kernel_interrupt -> ... -> idle_wait (... bytes), then kernel_interrupt -> ... -> kernel::execute (2 levels) -> ...
+modustool: measure: the kernel stack of kernel: each entry: an entry from a program ... bytes, ...; an interrupt at the idle wait ... bytes; a fault of the kernel over the deepest chain ... bytes (not checked)
+modustool: measure: the interrupt stacks of kernel: the double fault ... of 16384 bytes, ... free, the build fails under 4096; the non-maskable interrupt ... of 8192 bytes, ...; the debug exception 176 of 8192 bytes, ... (the stub only); the report: kernel_interrupt -> kernel::log -> ..., then a fault inside it: kernel_interrupt -> kernel::fault_report_begin -> ...
+```
+
+The first line names the deepest chain, procedure by procedure. A fault of the kernel stops the machine, so its bound on the kernel stack is printed and not checked: if its report passes the guard page, the processor reports a double fault on its own stack, and the third line checks that stack.
 
 ### The hashes of the modules of two builds
 

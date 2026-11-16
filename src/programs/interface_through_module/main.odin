@@ -107,8 +107,6 @@ calls: u64
 package_records: [RECORD_CAPACITY]interface.Draw_Record
 package_text: [TEXT_CAPACITY]u8
 
-COLOR_MODULE :: graphics.COLOR_MEMORY
-COLOR_PACKAGE :: graphics.COLOR_KERNEL
 
 number_text :: proc "contextless" (buffer: []u8, value: u64) -> string {
 	return system.format(buffer, value)
@@ -160,23 +158,23 @@ build_through_module :: proc "contextless" (texts: ^Texts) {
 	card_area := [1]Area{{8, 8, WIDTH - 16, HEIGHT - 16}}
 	place := system.Table_To_Change(Area){records = &card_area[0], count = 1, capacity = 1}
 	title, caption := TITLE, CAPTION
-	draw_card(&drawn, &text, &place, &title, &caption, i64(graphics.COLOR_KERNEL), nil)
+	draw_card(&drawn, &text, &place, &title, &caption, i64(graphics.colors.kernel), nil)
 	calls += 2
 	sentence := "each element is one call through an import slot; the module keeps no state of this program."
 	first := to_area(line_area(0))
-	draw_cell_text(&drawn, &text, &first, &sentence, i64(graphics.COLOR_DIM), 0, nil)
+	draw_cell_text(&drawn, &text, &first, &sentence, i64(graphics.colors.dim), 0, nil)
 	headers := [4]string{"way", "one frame, ns", "", "ns per call"}
 	header_line := line_area(2)
 	for column in 0 ..< 4 {
 		cell := to_area(cell_area(header_line, column))
-		draw_cell_text(&drawn, &text, &cell, &headers[column], i64(graphics.COLOR_DIM), column >= 2 ? 1 : 0, nil)
+		draw_cell_text(&drawn, &text, &cell, &headers[column], i64(graphics.colors.dim), column >= 2 ? 1 : 0, nil)
 	}
 	calls += 5
 	names := [2]string{"through the module", "compiled in"}
 	times := [2]string{texts.module_time, texts.package_time}
 	per := [2]string{texts.per_call, ""}
 	values := [2]u64{shown.module_time, shown.package_time}
-	colors := [2]i64{i64(COLOR_MODULE), i64(COLOR_PACKAGE)}
+	colors := [2]i64{i64(graphics.colors.memory), i64(graphics.colors.kernel)}
 	for row in 0 ..< 2 {
 		line := line_area(3 + row)
 		band := Area{i64(line.x - 8), i64(line.y), i64(line.width + 16), i64(line.height)}
@@ -187,9 +185,9 @@ build_through_module :: proc "contextless" (texts: ^Texts) {
 		bar := Bar_Value{i64(bar_cell.x), i64(bar_cell.y + 8), i64(bar_cell.width), 8, i64(values[row]), i64(max(values[0], values[1])), colors[row]}
 		draw_bar(&drawn, &bar, nil)
 		cell = to_area(cell_area(line, 2))
-		draw_cell_text(&drawn, &text, &cell, &times[row], i64(graphics.COLOR_TEXT), 1, nil)
+		draw_cell_text(&drawn, &text, &cell, &times[row], i64(graphics.colors.text), 1, nil)
 		cell = to_area(cell_area(line, 3))
-		draw_cell_text(&drawn, &text, &cell, &per[row], i64(graphics.COLOR_TEXT), 1, nil)
+		draw_cell_text(&drawn, &text, &cell, &per[row], i64(graphics.colors.text), 1, nil)
 		calls += 5
 	}
 	labels := [4]string{"element calls in one frame", "the two draw tables", "code of interface_module", "damage and drawing, ns"}
@@ -197,10 +195,10 @@ build_through_module :: proc "contextless" (texts: ^Texts) {
 	details := [4]string{"", texts.records, "one copy, shared", ""}
 	for index in 0 ..< 4 {
 		line := line_area(6 + index)
-		label_line := Label_Value{i64(line.x), i64(line.y), i64(line.width), i64(line.height), 320, i64(graphics.COLOR_TEXT)}
+		label_line := Label_Value{i64(line.x), i64(line.y), i64(line.width), i64(line.height), 320, i64(graphics.colors.text)}
 		draw_label_value_line(&drawn, &text, &label_line, &labels[index], &answers[index], nil)
 		cell := Area{i64(line.x + 440), i64(line.y), i64(line.width - 440), i64(line.height)}
-		draw_cell_text(&drawn, &text, &cell, &details[index], i64(graphics.COLOR_DIM), 0, nil)
+		draw_cell_text(&drawn, &text, &cell, &details[index], i64(graphics.colors.dim), 0, nil)
 		calls += 2
 	}
 }
@@ -211,33 +209,33 @@ build_compiled_in :: proc "contextless" (texts: ^Texts, table: ^interface.Draw_T
 	input: interface.Input
 	frame := interface.frame_begin(table, &state, &input)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, TITLE, CAPTION, graphics.COLOR_KERNEL)
-	interface.cell_text(&frame, line_area(0), "each element is one call through an import slot; the module keeps no state of this program.", graphics.COLOR_DIM)
+	interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, TITLE, CAPTION, graphics.colors.kernel)
+	interface.cell_text(&frame, line_area(0), "each element is one call through an import slot; the module keeps no state of this program.", graphics.colors.dim)
 	headers := [4]string{"way", "one frame, ns", "", "ns per call"}
 	for column in 0 ..< 4 {
-		interface.cell_text(&frame, cell_area(line_area(2), column), headers[column], graphics.COLOR_DIM, column >= 2 ? .Right : .Left)
+		interface.cell_text(&frame, cell_area(line_area(2), column), headers[column], graphics.colors.dim, column >= 2 ? .Right : .Left)
 	}
 	names := [2]string{"through the module", "compiled in"}
 	times := [2]string{texts.module_time, texts.package_time}
 	per := [2]string{texts.per_call, ""}
 	values := [2]u64{shown.module_time, shown.package_time}
-	colors := [2]graphics.Color{COLOR_MODULE, COLOR_PACKAGE}
+	colors := [2]graphics.Color{graphics.colors.memory, graphics.colors.kernel}
 	for row in 0 ..< 2 {
 		line := line_area(3 + row)
 		interface.table_band(&frame, {line.x - 8, line.y, line.width + 16, line.height}, row)
 		interface.cell_text(&frame, cell_area(line, 0), names[row], colors[row])
 		bar_cell := cell_area(line, 1)
 		interface.bar(&frame, {bar_cell.x, bar_cell.y + 8, bar_cell.width, 8}, values[row], max(values[0], values[1]), colors[row])
-		interface.cell_text(&frame, cell_area(line, 2), times[row], graphics.COLOR_TEXT, .Right)
-		interface.cell_text(&frame, cell_area(line, 3), per[row], graphics.COLOR_TEXT, .Right)
+		interface.cell_text(&frame, cell_area(line, 2), times[row], graphics.colors.text, .Right)
+		interface.cell_text(&frame, cell_area(line, 3), per[row], graphics.colors.text, .Right)
 	}
 	labels := [4]string{"element calls in one frame", "the two draw tables", "code of interface_module", "damage and drawing, ns"}
 	answers := [4]string{texts.calls, texts.equal, texts.code, texts.draw_time}
 	details := [4]string{"", texts.records, "one copy, shared", ""}
 	for index in 0 ..< 4 {
 		line := line_area(6 + index)
-		interface.label_value_line(&frame, line, labels[index], answers[index], graphics.COLOR_TEXT, 320)
-		interface.cell_text(&frame, {line.x + 440, line.y, line.width - 440, line.height}, details[index], graphics.COLOR_DIM)
+		interface.label_value_line(&frame, line, labels[index], answers[index], graphics.colors.text, 320)
+		interface.cell_text(&frame, {line.x + 440, line.y, line.width - 440, line.height}, details[index], graphics.colors.dim)
 	}
 }
 
@@ -329,7 +327,7 @@ present :: proc "contextless" (window: ^display.Window) {
 		rectangles[index] = {i64(rectangle.left), i64(rectangle.top), i64(rectangle.right), i64(rectangle.bottom)}
 	}
 	places := system.Table_To_Read(Damage_Rectangle){records = &rectangles[0], count = u64(to_draw.count), capacity = interface.DAMAGE_CAPACITY}
-	shape := Canvas_Shape{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = 1, background = i64(graphics.COLOR_BACKGROUND)}
+	shape := Canvas_Shape{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = 1, background = i64(graphics.colors.background)}
 	execute_draw_table_in_rectangles_10(&now_table, &now_text, &no_pictures, &pixels, &shape, &places, nil)
 	shown.draw_time = system.nanoseconds() - start
 	// The canvas is the frame now. With nothing to present, the screen
@@ -369,13 +367,13 @@ package_pixels, module_pixels: [PROOF_WIDTH * PROOF_HEIGHT]graphics.Color
 // module refused the call: refused has its record.
 canvases_compare :: proc "contextless" (table: ^interface.Draw_Table, refused: ^errors.Error_Record) -> (different: u64, compared: bool) {
 	package_canvas := graphics.Canvas{pixels = raw_data(package_pixels[:]), width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_WIDTH}
-	graphics.clear(package_canvas, graphics.COLOR_BACKGROUND)
+	graphics.clear(package_canvas, graphics.colors.background)
 	interface.execute(table, package_canvas)
 	records := system.Table_To_Read(interface.Draw_Record){records = raw_data(table.records), count = u64(table.record_count), capacity = u64(len(table.records))}
 	bytes := system.Bytes_To_Read{bytes = raw_data(table.text), count = u64(table.text_count), capacity = u64(len(table.text))}
 	no_pictures: system.Bytes_To_Read
 	pixels := system.Bytes_To_Change{bytes = ([^]u8)(raw_data(module_pixels[:])), count = size_of(module_pixels), capacity = size_of(module_pixels)}
-	shape := Canvas_Shape{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_WIDTH, fill_background = 1, background = i64(graphics.COLOR_BACKGROUND)}
+	shape := Canvas_Shape{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_WIDTH, fill_background = 1, background = i64(graphics.colors.background)}
 	whole := [1]Damage_Rectangle{{0, 0, PROOF_WIDTH, PROOF_HEIGHT}}
 	places := system.Table_To_Read(Damage_Rectangle){records = &whole[0], count = 1, capacity = 1}
 	if execute_draw_table_in_rectangles_10(&records, &bytes, &no_pictures, &pixels, &shape, &places, refused) < 0 {

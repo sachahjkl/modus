@@ -168,14 +168,14 @@ value_buttons_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel
 	for value in 0 ..< buttons.count {
 		area := buttons.areas[value]
 		filled := chosen && value == choice
-		fill := filled ? graphics.Color(graphics.COLOR_WHITE) : graphics.Color(graphics.COLOR_TRACK)
+		fill := filled ? graphics.Color(graphics.COLOR_WHITE) : graphics.Color(graphics.colors.track)
 		in_use := value_in_use(panel, entry, value)
-		color := graphics.Color(graphics.COLOR_TEXT)
+		color := graphics.Color(graphics.colors.text)
 		switch {
 		case filled:
-			color = graphics.COLOR_BACKGROUND
+			color = graphics.COLOR_INK
 		case in_use:
-			color = graphics.COLOR_WHITE
+			color = graphics.colors.text_strong
 		}
 		interface.draw_rectangle(table, area.x, area.y, area.width, area.height, fill)
 		name := value_name(panel.list, entry, value)
@@ -189,7 +189,7 @@ value_buttons_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel
 		rest: interface.Text_Builder
 		interface.text_put(&rest, "+")
 		interface.text_put_number(&rest, u64(int(entry.value_count) - buttons.count))
-		interface.draw_text(table, buttons.rest.x, row.y + VALUE_TEXT_TOP, interface.text_of(&rest), chosen ? graphics.Color(graphics.COLOR_WHITE) : graphics.Color(graphics.COLOR_DIM), interface.FONT_INTERFACE)
+		interface.draw_text(table, buttons.rest.x, row.y + VALUE_TEXT_TOP, interface.text_of(&rest), chosen ? graphics.Color(graphics.COLOR_WHITE) : graphics.Color(graphics.colors.dim), interface.FONT_INTERFACE)
 	}
 }
 

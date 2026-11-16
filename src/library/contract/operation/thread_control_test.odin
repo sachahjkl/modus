@@ -128,9 +128,17 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 			// No thread handle takes them: they name a program, through
 			// the machine handle only.
 			testing.expect(t, thread_control_names_a_program(command))
+		case .Start_Counters, .Read_Counters, .Stop_Counters:
+			// No thread handle takes them: they act on the calling
+			// thread, through the machine handle with Counters only.
+			testing.expect(t, thread_control_counts_the_caller(command))
+			testing.expect_value(t, THREAD_COUNTERS_RIGHTS, Rights{.Counters})
 		}
 		if command != .Read_Program_Schedule && command != .Write_Program_Schedule {
 			testing.expect(t, !thread_control_names_a_program(command))
+		}
+		if command != .Start_Counters && command != .Read_Counters && command != .Stop_Counters {
+			testing.expect(t, !thread_control_counts_the_caller(command))
 		}
 		// The machine handle: the schedule and the placement only, with
 		// Schedule and Inspect for each: a read is a report of the machine,
@@ -152,13 +160,14 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 }
 
 // The program handle with Debug names a thread for each command but the
-// two of the schedule and the two of the placement.
+// two of the schedule, the two of the placement and the three of the
+// thread counters.
 @(test)
 the_commands_of_a_debug_handle :: proc(t: ^testing.T) {
 	for command in Thread_Control_Command {
 		taken := thread_control_takes_debug_handle(command)
 		#partial switch command {
-		case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule:
+		case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
 			testing.expect(t, !taken)
 		case:
 			testing.expect(t, taken)

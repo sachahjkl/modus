@@ -77,11 +77,6 @@ ANSWER_X :: 40 * graphics.CELL_WIDTH
 // lines, and the line that counts the cases with no room.
 HEIGHT :: 16 + 2 * LINE + CASE_CAPACITY * (LINE + graphics.LINE_HEIGHT) + LINE + 16
 
-// The colors of src/library/support/graphics/rules.odin: an expected answer
-// in the color of a program that runs, a wrong one in the color "failed".
-COLOR_RIGHT :: graphics.COLOR_PROGRAM
-COLOR_WRONG :: graphics.COLOR_FAILED
-
 Case :: struct {
 	text:   string,
 	answer: [240]u8, // A sentence of an error record fits.
@@ -432,15 +427,15 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	frame := interface.window_frame_begin(&drawing, window)
 	draw_table := frame.table
-	interface.draw_rectangle(draw_table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
-	interface.draw_text_wrapped(draw_table, LEFT, 16 + 4, WIDTH - 2 * LEFT, "a segment endpoint with a client grant: TCP to 10.0.2.100 port 80, and nothing else.", graphics.COLOR_DIM)
-	interface.draw_text(draw_table, LEFT, 16 + LINE + 4, "the program asks", graphics.COLOR_DIM)
-	interface.draw_text(draw_table, LEFT + ANSWER_X, 16 + LINE + 4, "the answer", graphics.COLOR_DIM)
+	interface.draw_rectangle(draw_table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
+	interface.draw_text_wrapped(draw_table, LEFT, 16 + 4, WIDTH - 2 * LEFT, "a segment endpoint with a client grant: TCP to 10.0.2.100 port 80, and nothing else.", graphics.colors.dim)
+	interface.draw_text(draw_table, LEFT, 16 + LINE + 4, "the program asks", graphics.colors.dim)
+	interface.draw_text(draw_table, LEFT + ANSWER_X, 16 + LINE + 4, "the answer", graphics.colors.dim)
 	// The cases, then one line for the count of the cases with no room.
 	column := interface.column_of({LEFT, 16 + 2 * LINE, WIDTH - 2 * LEFT, HEIGHT - 16 - 2 * LINE - LINE - 16})
 	not_shown := 0
 	for &item, index in cases[:case_count] {
-		if _, drawn := interface.case_lines(&frame, &column, index, item.text, string(item.answer[:item.count]), ANSWER_X, graphics.COLOR_DIM, item.right ? COLOR_RIGHT : COLOR_WRONG, LINE); !drawn {
+		if _, drawn := interface.case_lines(&frame, &column, index, item.text, string(item.answer[:item.count]), ANSWER_X, graphics.colors.dim, item.right ? graphics.colors.program : graphics.colors.failed, LINE); !drawn {
 			not_shown += 1
 		}
 	}
