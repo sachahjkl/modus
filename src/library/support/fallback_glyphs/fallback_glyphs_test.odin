@@ -2,6 +2,7 @@
 package fallback_glyphs
 
 import "core:mem"
+import "core:sync"
 import "core:testing"
 import "modus:contract/demand_cache"
 import "modus:contract/font_outlines"
@@ -16,6 +17,22 @@ b612_bold_file := #load("../../../../resources/fonts/b612_bold.ttf")
 paper_mono_file := #load("../../../../resources/fonts/paper_mono.ttf")
 @(private = "file")
 paper_mono_semibold_file := #load("../../../../resources/fonts/paper_mono_semibold.ttf")
+
+// The state and the private cache of the package are one per program, as
+// in the system, but the runner runs tests on several threads of one
+// process: each test holds this lock from its first line to its end.
+@(private = "file")
+test_state_lock: sync.Mutex
+
+@(private = "file", deferred_none = test_state_give)
+test_state_take :: proc() {
+	sync.mutex_lock(&test_state_lock)
+}
+
+@(private = "file")
+test_state_give :: proc() {
+	sync.mutex_unlock(&test_state_lock)
+}
 
 // The four font files of the resource of the boot image.
 @(private = "file")
@@ -55,6 +72,7 @@ outlines_open :: proc(t: ^testing.T, fonts: []font_outlines.Font_Input, demand_b
 // type.
 @(test)
 a_character_that_is_no_character_of_a_text_has_no_glyph :: proc(t: ^testing.T) {
+	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
@@ -77,6 +95,7 @@ a_character_that_is_no_character_of_a_text_has_no_glyph :: proc(t: ^testing.T) {
 // None. Nothing is drawn.
 @(test)
 a_scale_or_a_position_that_the_face_lacks_has_no_glyph :: proc(t: ^testing.T) {
+	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
@@ -116,6 +135,7 @@ a_scale_or_a_position_that_the_face_lacks_has_no_glyph :: proc(t: ^testing.T) {
 // box-drawing characters, which only Paper Mono has, have no font.
 @(test)
 a_font_that_the_outlines_lack_is_skipped :: proc(t: ^testing.T) {
+	test_state_take()
 	state = {}
 	private_cache = {}
 	testing.expect_value(t, font_of(.Interface, 0x03B1), Outline_Font.None)
@@ -144,6 +164,7 @@ a_font_that_the_outlines_lack_is_skipped :: proc(t: ^testing.T) {
 // file, so a text keeps its place.
 @(test)
 a_damaged_outline_is_missing_and_drawn_once :: proc(t: ^testing.T) {
+	test_state_take()
 	ALPHA :: rune(0x03B1)
 	damaged := make([]u8, len(b612_file))
 	defer delete(damaged)
@@ -181,6 +202,7 @@ a_damaged_outline_is_missing_and_drawn_once :: proc(t: ^testing.T) {
 // from Paper Mono.
 @(test)
 a_script_that_no_font_covers_is_named :: proc(t: ^testing.T) {
+	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
@@ -219,6 +241,7 @@ a_script_that_no_font_covers_is_named :: proc(t: ^testing.T) {
 // neighbour again, so the words are one run after each give.
 @(test)
 the_runs_of_blocks_split_and_join :: proc(t: ^testing.T) {
+	test_state_take()
 	for count in ([?]int{0, -1, WORD_CAPACITY + 1, max(int)}) {
 		_, ok := order_of_words(count)
 		testing.expectf(t, !ok, "%v words have no run", count)
@@ -261,6 +284,7 @@ the_runs_of_blocks_split_and_join :: proc(t: ^testing.T) {
 // glyphs of that frame.
 @(test)
 a_full_cache_evicts_the_oldest :: proc(t: ^testing.T) {
+	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
@@ -319,6 +343,7 @@ a_full_cache_evicts_the_oldest :: proc(t: ^testing.T) {
 // they were; the first setting again finds its glyph with no new draw.
 @(test)
 a_change_of_settings_in_the_middle_of_a_frame :: proc(t: ^testing.T) {
+	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
@@ -347,6 +372,7 @@ a_change_of_settings_in_the_middle_of_a_frame :: proc(t: ^testing.T) {
 // the last row of a letter of Paper Mono with no descender.
 @(test)
 a_fallback_glyph_stands_in_the_frame_of_the_first_font :: proc(t: ^testing.T) {
+	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
@@ -375,6 +401,7 @@ a_fallback_glyph_stands_in_the_frame_of_the_first_font :: proc(t: ^testing.T) {
 // picture does not depend on which layer drew a glyph.
 @(test)
 a_private_glyph_of_the_first_font_is_the_glyph_of_the_demand_cache :: proc(t: ^testing.T) {
+	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
@@ -425,6 +452,7 @@ a_private_glyph_of_the_first_font_is_the_glyph_of_the_demand_cache :: proc(t: ^t
 // form of no face, and a cache of the right file and form, last.
 @(test)
 the_face_of_a_glyph_cache :: proc(t: ^testing.T) {
+	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
