@@ -916,7 +916,7 @@ Do not use: thread stack (for this), system stack.
 
 The deepest chain is the chain of calls of the kernel that uses the most bytes of a kernel stack, from a place where the kernel starts on it.
 
-The tool computes it at each build from the frame of each procedure that `llc` writes and from the calls of the listing of the linked kernel, with stated rules for what the listing cannot show: the indirect calls, the bounded recursions such as the two frames of `execute`, and one interrupt over the idle wait. Each build prints it, procedure by procedure, in a measure line. It is a bound: a chain of the graph can be a chain that no input runs.
+The tool computes it at each build from the frame of each procedure that `llc` writes, from the calls of the listing of the linked kernel, and from the scan of the stack pointer, which adds the arguments that a caller pushed outside its frame. Stated rules cover what the listing cannot show: the targets of the indirect calls and of the indirect tail calls, the bounded recursions such as the two frames of `execute`, and one interrupt over the idle wait. Each build prints it, procedure by procedure, in a measure line. It is a bound: a chain of the graph can be a chain that no input runs.
 
 The design: `src/md/infrastructure/kernel_stack_depth.md`.
 
@@ -931,6 +931,16 @@ The listing of the kernel shows a cycle when a procedure can reach itself throug
 The design: `src/md/infrastructure/kernel_stack_depth.md`.
 
 Do not use: cycle exception, recursion bound (for this).
+
+### Scan of the stack pointer
+
+The scan of the stack pointer is the part of the measure of the kernel stack that follows the bytes on the stack through each compiled procedure of the listing, path by path.
+
+A `push` adds 8 bytes, a `pop` removes 8, and a `sub` or an `add` of a constant to `%rsp` adds or removes the constant. In the body of a procedure the count is its frame from `llc`. At a call the count can be larger: the arguments that `llc` pushed just before the call are outside the frame, and the measure adds them under the callee. A jump through a register where the count is 0 is an indirect tail call: no frame stays, so it leaves the procedure, and it needs a row that names its targets. Above 0 it is a branch of a table of a `switch`. Each `ret` and each tail call must find 0; a count that does not stops the build. The scan does not replace the frame from `llc`: it only adds what the frame does not hold.
+
+The design: `src/md/infrastructure/kernel_stack_depth.md`.
+
+Do not use: stack tracking, stack pointer analysis, push depth.
 
 ### Direct map
 
@@ -5162,7 +5172,7 @@ Do not use: fault (for this), bad byte, mojibake.
 
 The replacement glyph is the outline of a box that a reader draws in place of a character that the font lacks and of an invalid sequence.
 
-It is drawn by code, in each font and at each scale, so no font needs a glyph for it: the box goes from the top of a capital letter to the baseline, inside one cell. It shows that a character is there: a byte is never drawn as a glyph, and a `?` would read as a question mark. Text shaping places it as `REPLACEMENT_GLYPH`, with the advance of `0`. A character that the demand cache does not hold yet, in a frame before the font service drew its subset, draws it too, until the frame after the answer of the service.
+It is drawn by code, in each font and at each scale, so no font needs a glyph for it: the box goes from the top of a capital letter to the baseline, inside one cell. It shows that a character is there: a byte is never drawn as a glyph, and a `?` would read as a question mark. Text shaping places it as `REPLACEMENT_GLYPH`, with the advance of `0`. A character that the demand cache does not hold yet, in a frame before the font service drew its subset, draws it too, until the frame after the answer of the service; in a cell of a terminal, until the frame after the word `subset_drawn` changes.
 
 The design: `src/md/data/text_encoding.md`.
 
@@ -5172,7 +5182,7 @@ Do not use: tofu, missing glyph, question mark (for this).
 
 A font is a set of glyphs of one design, with the measures that place them side by side.
 
-The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126, the Latin-1 Supplement and the euro sign, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs on the host, and at run time only in the font service, which reads the subset of the interface font that its module holds and draws the characters past the glyph cache into the demand cache.
+The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126, the Latin-1 Supplement and the euro sign, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs on the host, and at run time only in the font service, which reads the subsets of the interface font and of the font of the cells that its module holds and draws the characters past the glyph cache into the demand cache.
 
 The system has three fonts:
 
@@ -5192,7 +5202,7 @@ A glyph is the form of one character in one font.
 
 The character is the number (the byte 0x30 is the character `0`); the glyph is the drawing of it. One character can have several glyphs in one font: Paper Mono has a plain zero (glyph 294) and a slashed zero (glyph 304), and a font feature chooses between them. A glyph has an outline and an advance; in a glyph cache it is a box of words of coverage.
 
-The glyph caches hold glyphs for the characters 32 to 126, the Latin-1 Supplement (U+00A0 to U+00FF) and the euro sign U+20AC only. The font service draws the Greek letters of the interface font on demand, into the demand cache, for a program that reads it. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
+The glyph caches hold glyphs for the characters 32 to 126, the Latin-1 Supplement (U+00A0 to U+00FF) and the euro sign U+20AC only. The font service draws the Greek letters of the interface font, and the box-drawing characters, the block elements and the five Greek letters of the font of the cells, on demand, into the demand cache, for a program that reads it. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
 
 The design: `docs/FONTS.md`, "5. The glyph cache".
 
@@ -5305,7 +5315,7 @@ Do not use: proportional font cache.
 
 The font service is the program `glyphs`: it draws the glyphs of the characters past the glyph cache into the demand cache.
 
-It is the only program that reads outlines at run time: the subset of the interface font that its module holds. At its start, before it reads a request, it draws each character of that subset, so the demand cache holds the same entries whatever the programs draw; a character outside the subset is absent. It draws a glyph with the renderer of the build, at each scale and each position of the glyph cache of the same font file, so a glyph on demand has the pixels that the build would give it. The root service starts it after the compositor as a part of the system, and gives it the demand cache with Write and a control ring that names the request ring of each program. It answers each request with the generation of the demand cache and the counts of drawn, absent and refused characters. It is not a font file and not a renderer in each program, and a program never waits for it: a character that is not ready draws the replacement glyph.
+It is the only program that reads outlines at run time: the subsets of the interface font and of the two weights of the font of the cells that its module holds. At its start, before it reads a request, it draws each character of the subset of each demand face, so the demand cache holds the same entries whatever the programs draw; a character outside the subset is absent. Then it sets the word `subset_drawn` of the demand cache and wakes the programs that wait on it. It draws a glyph with the renderer of the build, at each scale and each position of the glyph cache of the same font file, so a glyph on demand has the pixels that the build would give it. The root service starts it after the compositor as a part of the system, and gives it the demand cache with Write and a control ring that names the request ring of each program. It answers each request with the generation of the demand cache and the counts of drawn, absent and refused characters. It is not a font file and not a renderer in each program, and a program never waits for it: a character that is not ready draws the replacement glyph.
 
 The design: `src/md/features/glyphs_on_demand.md`.
 
@@ -5313,13 +5323,23 @@ Do not use: font server, rasterizer service, glyph daemon.
 
 ### Demand cache
 
-The demand cache is the memory where the font service writes the glyphs past the glyph caches, and which each program with a request ring maps read-only.
+The demand cache is the memory where the font service writes the glyphs past the glyph caches, and which each program with a request ring, and each terminal, maps read-only.
 
-It holds a header with the hash of its font file and a generation, a hash table of 1024 entries by code point, and 1 MiB of words of coverage in the form of a glyph cache (`src/library/contract/demand_cache`). The font service writes an entry, then its code point, then the generation; an entry never changes after that. A program reads the generation once at the start of a frame, so the measure and the draw of the frame agree, and it copies and checks each entry before it draws a word of it. A program asks for a missing character through its request ring, a ring of the fixed range `Glyph_Requests`. The demand cache is not a glyph cache: it is not in the boot image, it changes while programs read it, and a program does not validate it once.
+It holds a header with a generation, the word `subset_drawn` and the hash of the font file of each demand face, a hash table of 2048 entries by face and code point, and 4 MiB of words of coverage in the form of a glyph cache (`src/library/contract/demand_cache`). The font service writes an entry, then its key, then the generation; an entry never changes after that. A program reads the generation once at the start of a frame, so the measure and the draw of the frame agree, and it copies and checks each entry before it draws a word of it. A program asks for a missing character of the interface font through its request ring, a ring of the fixed range `Glyph_Requests`; a terminal asks for nothing, and waits on the word `subset_drawn`. The demand cache is not a glyph cache: it is not in the boot image, it changes while programs read it, and a program does not validate it once.
 
 The design: `src/md/features/glyphs_on_demand.md`.
 
 Do not use: atlas, shared glyph cache, dynamic cache.
+
+### Demand face
+
+A demand face is one glyph cache of the boot image that the glyphs of the demand cache stand beside: a font file in one form of glyph cache.
+
+The demand cache keeps the glyphs of each face apart, because a glyph on demand must have the form, the baseline and the scale of the glyphs beside it. There are four: `Interface` (B612 Regular, proportional), `Cells` (Paper Mono with the grid fit), `Cells_Without_Grid_Fit` (Paper Mono with no grid fit) and `Cells_Bold` (Paper Mono SemiBold, scale 1). Each face has a subset: the Greek letters of B612 for `Interface`, and the box-drawing characters, the block elements and the five Greek letters of Paper Mono for the three faces of cells. A glyph of a face of cells stays in its cell, as each glyph of a cache of cells does. A program uses a face only beside the glyph cache whose font file and flags the header names. A demand face is not a font file: two faces can have one font file, as `Cells` and `Cells_Without_Grid_Fit` do.
+
+The design: `src/md/features/glyphs_on_demand.md`.
+
+Do not use: font slot, font index.
 
 ### Setting
 

@@ -1,20 +1,24 @@
 // The font service (src/md/features/glyphs_on_demand.md): it draws the
 // glyphs of the characters past the glyph cache into the demand cache,
-// which each program that the root service gives a request ring maps
-// read-only. It is the only program that reads outlines at run time.
+// which each program that the root service gives a request ring, and each
+// terminal, maps read-only. It is the only program that reads outlines at
+// run time.
 //
 // **What it is for.** A principal reads and writes characters past the 192
 // of the glyph caches of the boot image. The boot image carries their
-// outlines only, in the subset of the interface font that this module
-// holds; this service draws each one once, for all the programs.
+// outlines only, in the subsets of the interface font and of the font of
+// the cells that this module holds; this service draws each one once, for
+// all the programs, beside each glyph cache: the faces of the demand cache
+// (demand_cache.Face).
 //
 // **The whole subset at the start.** The service draws each character of
-// demand_cache.subset_ranges at its start, before it reads any request. So
-// the demand cache holds the same entries whatever the programs draw, and
-// a program learns nothing from it about the characters of another
-// program. A request then finds each character of the subset published
-// before; a request that comes before the end of that work waits in its
-// ring, and its answer wakes the program.
+// the subset of each face at its start, before it reads any request, then
+// sets the word subset_drawn of the header and wakes the programs that
+// wait on it. So the demand cache holds the same entries whatever the
+// programs draw, and a program learns nothing from it about the characters
+// of another program. A request then finds each character of the subset
+// published before; a request that comes before the end of that work waits
+// in its ring, and its answer wakes the program.
 //
 // **Its grants**: the demand cache with Read and Write, and the control
 // ring from the root service, which names the request ring of each
@@ -22,17 +26,22 @@
 // starts it after the compositor, as a part of the system:
 // `start("glyphs")` is refused.
 //
-// **What a reader sees.** The log has, at its start, `glyphs: the font
-// service drew the <n> characters of its subset of b612 into the demand
-// cache before it read a request: <n> drawn, 0 refused, 0 that the font
-// cannot draw; <w> words of 262144`, where n is demand_cache.subset_count:
-// 47 today. For each program, the first request with a character outside
+// **What a reader sees.** The log has, at its start, one line for each
+// face: `glyphs: the face cells of the demand cache holds each of the 165
+// characters of its subset of paper_mono`, or, when a character is
+// refused or the font cannot draw it, `glyphs: the face cells of the
+// demand cache lacks characters of its subset of paper_mono: <n> drawn,
+// <r> refused, <a> that the font cannot draw`. Then one line of the
+// totals: `glyphs: the font service drew each face of its subset into the
+// demand cache before it read a request: 542 characters, <w> words of
+// 1048576`. For each program, the first request with a character outside
 // the subset or that does not fit the cache writes one line, and the first
 // answer that does not fit its ring writes one line; the counts go on, and
 // the stop of a program that had one writes its totals.
 //
-// **What it does not do**: it draws no character outside the subset, and
-// publishes no entry for it. It never evicts a glyph.
+// **What it does not do**: it draws no character outside the subset of a
+// face, and publishes no entry for it. A request names characters of the
+// face Interface only: the cells ask for nothing. It never evicts a glyph.
 package glyphs
 
 import "modus:contract/blake3"
@@ -42,15 +51,45 @@ import "modus:contract/ring"
 import "modus:support/system"
 import "modus:support/vector_font"
 
-// The render memory and the outlines of one font; the demand cache and the
-// rings are memory of other programs.
+// The render memory and the outlines of its three font files; the demand
+// cache and the rings are memory of other programs.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 192, programs = 1, threads = 1}
 
-FONT_NAME :: "b612"
-// The outlines: the subset of the interface font, the same file whose
-// glyph cache the boot image carries. The demand cache names it by its
-// hash, and a program uses it only beside the glyph cache of that hash.
-font_file := #load("../../../resources/fonts/b612.ttf")
+// The outlines of each face: the subsets of the interface font and of the
+// font of the cells, the same files whose glyph caches the boot image
+// carries. The demand cache names each one by its hash, and a program uses
+// a face only beside the glyph cache of that hash.
+interface_font_file := #load("../../../resources/fonts/b612.ttf")
+cell_font_file := #load("../../../resources/fonts/paper_mono.ttf")
+cell_bold_font_file := #load("../../../resources/fonts/paper_mono_semibold.ttf")
+
+// font_file_of gives the font file of a face.
+font_file_of :: proc "contextless" (face: demand_cache.Face) -> []u8 {
+	switch face {
+	case .Interface:
+		return interface_font_file
+	case .Cells, .Cells_Without_Grid_Fit:
+		return cell_font_file
+	case .Cells_Bold:
+		return cell_bold_font_file
+	}
+	return nil
+}
+
+// The names of a face and of its font file, for the log.
+face_name_of :: proc "contextless" (face: demand_cache.Face) -> (face_name, font_name: string) {
+	switch face {
+	case .Interface:
+		return "interface", "b612"
+	case .Cells:
+		return "cells", "paper_mono"
+	case .Cells_Without_Grid_Fit:
+		return "cells without the grid fit", "paper_mono"
+	case .Cells_Bold:
+		return "bold cells", "paper_mono_semibold"
+	}
+	return "", ""
+}
 
 // The requests of one program that one turn of the loop reads, at most:
 // the capacity of its ring. A program that writes as fast as this service
@@ -61,7 +100,7 @@ font_file := #load("../../../resources/fonts/b612.ttf")
 REQUESTS_OF_A_PROGRAM_IN_ONE_TURN :: ring.CAPACITY
 
 render_memory: vector_font.Render_Memory
-demand_font: vector_font.Demand_Font
+demand_fonts: [demand_cache.Face]vector_font.Demand_Font
 writer: demand_cache.Writer
 
 // One program: its request ring, and the counts of what it asked for.
@@ -85,14 +124,15 @@ Character_Added :: enum u8 {
 	Refused, // It does not fit the cache: no entry.
 }
 
-// character_add draws one character of the subset into the demand cache,
-// if the cache does not hold it. A character outside the subset is absent
-// with no other work: the table then holds at most the subset.
-character_add :: proc "contextless" (character: rune) -> Character_Added {
-	if !demand_cache.in_subset(character) {
+// character_add draws one character of the subset of a face into the
+// demand cache, if the cache does not hold it. A character outside the
+// subset is absent with no other work: the table then holds at most the
+// subsets.
+character_add :: proc "contextless" (face: demand_cache.Face, character: rune) -> Character_Added {
+	if !demand_cache.in_subset(face, character) {
 		return .Absent
 	}
-	place, search := demand_cache.place_find(&writer, character)
+	place, search := demand_cache.place_find(&writer, face, character)
 	switch search {
 	case .Published:
 		return .Published_Before
@@ -101,10 +141,10 @@ character_add :: proc "contextless" (character: rune) -> Character_Added {
 		return .Refused
 	case .Free:
 	}
-	entry, result := vector_font.demand_glyph_draw(&demand_font, &writer, character, &render_memory)
+	entry, result := vector_font.demand_glyph_draw(&demand_fonts[face], &writer, character, &render_memory)
 	switch result {
 	case .Drawn:
-		demand_cache.publish(&writer, place, character, entry)
+		demand_cache.publish(&writer, place, face, character, entry)
 		return .Drawn
 	case .Absent:
 		return .Absent
@@ -174,8 +214,10 @@ client_serve :: proc "contextless" (client: ^Client) {
 			count = demand_cache.request_unpack(record, &characters)
 		}
 		answer := ring.Record{kind = 0, tag = record.tag}
+		// A request names characters of the face Interface: the cells ask
+		// for nothing.
 		for character in characters[:count] {
-			switch character_add(character) {
+			switch character_add(.Interface, character) {
 			case .Published_Before:
 				answer.values[demand_cache.ANSWER_PUBLISHED_BEFORE] += 1
 			case .Drawn:
@@ -226,31 +268,49 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_in("programs", .Error, "glyphs: the control ring does not open: status ", status)
 		system.stop(1)
 	}
-	problem: vector_font.Font_Problem
-	demand_font, problem = vector_font.demand_font_open(font_file, true, &render_memory)
-	if problem != .None {
-		system.log_in("programs", .Error, "glyphs: the font ", FONT_NAME, " is refused: ", vector_font.font_problem_names[problem])
-		system.stop(1)
+	faces: [demand_cache.Face]demand_cache.Face_Header
+	for face in demand_cache.Face {
+		problem: vector_font.Font_Problem
+		demand_fonts[face], problem = vector_font.demand_font_open(font_file_of(face), face, &render_memory)
+		if problem != .None {
+			face_name, font_name := face_name_of(face)
+			system.log_in("programs", .Error, "glyphs: the font ", font_name, " of the face ", face_name, " is refused: ", vector_font.font_problem_names[problem])
+			system.stop(1)
+		}
+		faces[face] = {font_hash = blake3.hash(font_file_of(face)), flags = demand_fonts[face].flags}
 	}
-	writer = demand_cache.writer_open(uintptr(address), blake3.hash(font_file), vector_font.RENDERER_VERSION, demand_font.flags)
-	// The whole subset, in the order of the code points, before any
-	// request: the entries of the cache do not depend on what a program
-	// draws.
-	drawn, refused, absent: u64
-	for range in demand_cache.subset_ranges {
-		for character in range.first ..= range.last {
-			switch character_add(character) {
-			case .Drawn, .Published_Before:
-				drawn += 1
-			case .Refused:
-				refused += 1
-			case .Absent:
-				absent += 1
+	writer = demand_cache.writer_open(uintptr(address), vector_font.RENDERER_VERSION, faces)
+	// The whole subset of each face, face after face, in the order of the
+	// code points, before any request: the entries of the cache do not
+	// depend on what a program draws.
+	total: u64
+	for face in demand_cache.Face {
+		drawn, refused, absent: u64
+		for range in demand_cache.subset_of(face) {
+			for character in range.first ..= range.last {
+				switch character_add(face, character) {
+				case .Drawn, .Published_Before:
+					drawn += 1
+				case .Refused:
+					refused += 1
+				case .Absent:
+					absent += 1
+				}
 			}
 		}
+		total += drawn
+		face_name, font_name := face_name_of(face)
+		if refused == 0 && absent == 0 {
+			system.log_in("programs", .Info, "glyphs: the face ", face_name, " of the demand cache holds each of the ", u64(demand_cache.subset_count(face)), " characters of its subset of ", font_name)
+		} else {
+			system.log_in("programs", .Warning, "glyphs: the face ", face_name, " of the demand cache lacks characters of its subset of ", font_name, ": ", drawn, " drawn, ", refused, " refused, ", absent, " that the font cannot draw")
+		}
 	}
-	level := refused == 0 && absent == 0 ? op.Log_Level.Info : op.Log_Level.Warning
-	system.log_in("programs", level, "glyphs: the font service drew the ", u64(demand_cache.subset_count()), " characters of its subset of ", FONT_NAME, " into the demand cache before it read a request: ", drawn, " drawn, ", refused, " refused, ", absent, " that the font cannot draw; ", u64(writer.words_used), " words of ", u64(demand_cache.WORD_CAPACITY))
+	// Each program that waits for the cells wakes: each subset is in the
+	// cache.
+	demand_cache.subset_drawn_set(&writer)
+	system.word_wake(&writer.header.subset_drawn, system.WAKE_ALL)
+	system.log_in("programs", .Info, "glyphs: the font service drew each face of its subset into the demand cache before it read a request: ", total, " characters, ", u64(writer.words_used), " words of ", u64(demand_cache.WORD_CAPACITY))
 	for {
 		wait := system.wait_begin()
 		control_serve(&control)

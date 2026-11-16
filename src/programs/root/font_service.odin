@@ -14,7 +14,8 @@ import "modus:support/system"
 // compositor a request ring to it (font_requests_give says which). The program maps
 // the demand cache read-only and its request ring with Write, at their
 // fixed ranges; the font service receives the ring with a Client_Add
-// record. A program that stops is removed with Client_Remove.
+// record. A program that stops is removed with Client_Remove. A terminal
+// gets the demand cache with no ring (demand_cache_give).
 //
 // With no font service (absent from the boot image, or stopped), a program
 // gets neither range, and draws the replacement glyph for each character
@@ -168,6 +169,26 @@ font_requests_give :: proc "contextless" (item: ^Started, name: string, mappings
 	fixed_addresses.range_mapped_add(values, .Demand_Cache)
 	fixed_addresses.range_mapped_add(values, .Glyph_Requests)
 	return memory
+}
+
+// demand_cache_give adds the demand cache, read-only, to the mappings of a
+// terminal, with the bit of its range, while the font service runs. A
+// terminal draws the cells of the font of the cells past the glyph cache
+// from it, and asks for nothing: the font service draws each character of
+// a cell face at its start. So it gets no request ring and takes no place
+// of the service. The mapping uses the handle that this service keeps for
+// the cache: it adds no handle.
+demand_cache_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
+	if font_service == nil || font_service.program == 0 || demand_cache_memory == 0 {
+		return
+	}
+	if count^ + 1 > len(mappings) {
+		mapping_dropped_log("the demand cache", len(mappings))
+		return
+	}
+	mappings[count^] = {memory = demand_cache_memory, address = demand_cache.ADDRESS, first = 0, page_count = demand_cache.PAGE_COUNT, flags = {}}
+	count^ += 1
+	fixed_addresses.range_mapped_add(values, .Demand_Cache)
 }
 
 // font_service_end removes the request ring of a program that stopped, or

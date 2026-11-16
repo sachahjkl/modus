@@ -46,6 +46,13 @@ Text_State :: struct {
 	bold_cache:     glyph_cache.Cache, // The glyph cache of the bold weight.
 	// The blend tables of text over a flat color (blend.odin), 24 KiB.
 	blend_tables: Blend_Tables,
+	// The faces of the demand cache beside the two caches above
+	// (src/md/features/glyphs_on_demand.md): a cell past the glyph cache
+	// draws from them. nil: the program has none, and such a cell draws the
+	// replacement glyph. The program owns the readers and starts their
+	// frame (display.text_demand_frame_begin).
+	cell_demand:      ^demand_cache.Reader, // The face of `cache`.
+	bold_cell_demand: ^demand_cache.Reader, // The face of `bold_cache`.
 }
 
 // The text state of this program. `text_cache_set` and `text_choice_set`
@@ -123,13 +130,43 @@ text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, 
 		if at < canvas.width && at + CELL_WIDTH > 0 {
 			if cell_font_draws(character) {
 				character_vector_with(&text_state.bold_cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, at, y, character, color, 1)
-			} else {
+			} else if !character_on_demand(text_state.bold_cell_demand, canvas, at, y, character, color, 1) {
 				character_replacement(canvas, at, y, color, 1)
 			}
 		}
 		at += CELL_WIDTH
 	}
 	return at
+}
+
+// text_demand_use gives the text of cells the faces of the demand cache
+// beside its regular and its bold glyph cache: nil for none. display calls
+// it with the setting of the grid fit, between two frames.
+text_demand_use :: proc "contextless" (regular, bold: ^demand_cache.Reader) {
+	text_state.cell_demand = regular
+	text_state.bold_cell_demand = bold
+}
+
+// character_on_demand draws a character past the glyph cache in the cell
+// at (x, y) from a face of the demand cache, and gives true; false when
+// the face does not hold it at the generation of the frame: the caller
+// draws the replacement glyph. Each entry is copied and checked by
+// demand_cache.find, and the glyph of a cell face stays in its cell.
+@(private)
+character_on_demand :: proc "contextless" (demand: ^demand_cache.Reader, canvas: Canvas, x, y: int, character: rune, color: Color, scale: int) -> bool {
+	if demand == nil {
+		return false
+	}
+	entry, state := demand_cache.find(demand, character)
+	if state != .Drawn {
+		return false
+	}
+	glyph, has_glyph := demand_cache.glyph_of_entry(demand.face, &entry, scale, 0)
+	if !has_glyph {
+		return false
+	}
+	demand_glyph_draw(demand, glyph, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, x, y, color)
+	return true
 }
 
 // square_root_table_fill makes the table of the blend in linear light:
@@ -195,10 +232,13 @@ character_replacement :: proc "contextless" (canvas: Canvas, x, y: int, color: C
 }
 
 // character draws one character in the cell at (x, y), at scale 1.
-// A character that the fonts lack draws the replacement glyph.
+// A character that the fonts lack draws from the demand cache with the
+// vector font, or the replacement glyph.
 character :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: Color) {
 	if !cell_font_draws(value) {
-		character_replacement(canvas, x, y, color, 1)
+		if !text_vector_drawn() || !character_on_demand(text_state.cell_demand, canvas, x, y, value, color, 1) {
+			character_replacement(canvas, x, y, color, 1)
+		}
 		return
 	}
 	if text_vector_drawn() {
@@ -211,7 +251,10 @@ character :: proc "contextless" (canvas: Canvas, x, y: int, value: rune, color: 
 // text_scaled draws characters in cells of scale times the size of a cell:
 // 1, 2 or 3 (docs/DESIGN.md, section 5). The vector font draws each size
 // from its outline; Spleen draws each of its pixels as a square of scale
-// pixels. It gives the x after the last character.
+// pixels. A character past the glyph cache draws from the face of the
+// demand cache with the vector font, and the replacement glyph when the
+// face does not hold it or with Spleen. It gives the x after the last
+// character.
 text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color, scale_asked: int) -> int {
 	scale := clamp(scale_asked, 1, 3)
 	advance := CELL_WIDTH * scale
@@ -226,7 +269,9 @@ text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string
 		if at < canvas.width && at + advance > 0 {
 			switch {
 			case !cell_font_draws(character):
-				character_replacement(canvas, at, y, color, scale)
+				if !vector || !character_on_demand(text_state.cell_demand, canvas, at, y, character, color, scale) {
+					character_replacement(canvas, at, y, color, scale)
+				}
 			case vector:
 				character_vector(canvas, at, y, character, color, scale)
 			case scale == 1:
@@ -434,7 +479,7 @@ text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_
 			if demand != nil {
 				entry, state := demand_cache.find(demand, rune(glyph.glyph - text_shaping.DEMAND_GLYPH_FIRST))
 				if state == .Drawn {
-					if demand_glyph, has_glyph := demand_cache.glyph_of_entry(&entry, scale, position); has_glyph {
+					if demand_glyph, has_glyph := demand_cache.glyph_of_entry(demand.face, &entry, scale, position); has_glyph {
 						demand_glyph_draw(demand, demand_glyph, square_root, tables, order, canvas, int(pixel), y, color)
 						drawn = true
 					}

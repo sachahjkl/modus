@@ -16,10 +16,12 @@ import "modus:support/vector_font"
 // 32 to 126, the Latin-1 Supplement and the added characters,
 // glyph_cache.character_index) and
 // the glyph .notdef, each glyph a simple glyph with no hinting
-// instructions. A font that lacks one of them is refused. The subset of
-// the regular weight of the interface font also holds the characters that
-// the font service draws on demand (demand_characters_of), after the
-// others, so its glyph cache does not change. The
+// instructions. A font that lacks one of them is refused. The subsets of
+// the regular weight of the interface font and of the two weights of the
+// font of the cells also hold the characters that the font service draws
+// on demand (demand_characters_of), after the others, so the glyphs of
+// their glyph caches do not change; the hash of the font file in the
+// header of each cache does. The
 // subsets are in the repository, as the output of the command "font" is:
 // a build does not need the build inputs. The command also writes
 // build/fonts/candidates.png, the picture of the choice, from the same
@@ -192,18 +194,27 @@ subset_character :: proc(glyph: int) -> rune {
 	return character
 }
 
-// demand_characters_of gives the characters past the glyph cache that the
-// subset of a font holds for the font service
-// (src/md/features/glyphs_on_demand.md), in the order of the code points:
-// the ranges of demand_cache.subset_ranges for the regular weight of the
-// interface font, none for each other font. Their glyphs come after the
-// glyphs of the characters of the cache.
-demand_characters_of :: proc(name: string) -> []rune {
-	if name != INTERFACE_VECTOR_FONT {
-		return nil
+// demand_ranges_of gives the runs of the characters past the glyph cache
+// that the subset of a font holds for the font service
+// (src/md/features/glyphs_on_demand.md): the subset of the face of the
+// font, for the regular weight of the interface font and for the two
+// weights of the font of the cells; none for each other font.
+demand_ranges_of :: proc(name: string) -> []demand_cache.Character_Range {
+	switch name {
+	case INTERFACE_VECTOR_FONT:
+		return demand_cache.subset_of(.Interface)
+	case DEFAULT_VECTOR_FONT, EMPHASIS_VECTOR_FONT:
+		return demand_cache.subset_of(.Cells)
 	}
+	return nil
+}
+
+// demand_characters_of gives the characters of demand_ranges_of, in the
+// order of the code points. Their glyphs come after the glyphs of the
+// characters of the cache.
+demand_characters_of :: proc(name: string) -> []rune {
 	characters := make([dynamic]rune, context.temp_allocator)
-	for range in demand_cache.subset_ranges {
+	for range in demand_ranges_of(name) {
 		for character in range.first ..= range.last {
 			append(&characters, character)
 		}
@@ -398,8 +409,11 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 	}
 	on_demand := strings.builder_make(context.temp_allocator)
 	if len(demand_characters) > 0 {
+		// The list of the added characters goes on with the characters on
+		// demand: a comma ends it.
+		fmt.sbprint(&added, ",")
 		fmt.sbprint(&on_demand, "the characters that the font service draws on demand,")
-		for range in demand_cache.subset_ranges {
+		for range in demand_ranges_of(candidate.name) {
 			fmt.sbprintf(&on_demand, " U+%04X to U+%04X", int(range.first), int(range.last))
 		}
 		fmt.sbprint(&on_demand, ",\n")
