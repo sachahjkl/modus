@@ -70,8 +70,16 @@ Root_Command :: enum u32 {
 	// three handles of the caller: values[0] the program (right Read: its
 	// state), values[1] the call ring, values[2] the call region. values[3..7]
 	// is the hash of the file of the program: its exports are described there.
+	//
+	// values[4] not 0: the connection is for the row values[4] - 1 of the
+	// client table, whose serial is values[5] (modus:contract/remote,
+	// Client_Table). Only a program with the start grant Remote_Clients
+	// sends it. The connection acts for the principal of that row, and ends
+	// when the grant of the row ends. A row with another serial is refused
+	// with `Absent` (unit `Grants`); a row whose principal has its session
+	// locked with `Absent` (unit `Principals`).
 	Connect    = 3,
-	Disconnect = 4, // End the connection to the service with this name.
+	Disconnect = 4, // End the connection to the service with this name; with values[4] not 0, the connection for that row of the client table, as Connect names it.
 	// Grants reads the grants of the program with this name. The completion
 	// has two sets of Root_Grant (bit n: grant n): values[0] the grants that
 	// the program has, values[1] the grants that were revoked. values[2] is
@@ -317,7 +325,30 @@ Root_Command :: enum u32 {
 	// no change in progress, `Bad_State`; a value out of its enum,
 	// `Bad_Operation`.
 	Principal_Change_End = 25,
+	// Remote_Client changes the client table of the remote service
+	// (modus:contract/remote, Client_Table; docs/PRINCIPALS.md, "The client
+	// keys of remote"): values[0..3] is the Ed25519 public key of a client,
+	// values[4] the action. REMOTE_CLIENT_ALLOW gives the key a row for the
+	// principal of the caller: each call of that client then acts for it.
+	// REMOTE_CLIENT_REVOKE frees the row of the key: the root service ends
+	// each connection to a service that was made for the row, and the remote
+	// service ends the open connection of the client. REMOTE_CLIENT_READ
+	// reads the row values[5]: the completion has the key in values[0..3],
+	// the principal in values[4], and 1 in values[5] when the row is in use.
+	// The caller must act for its principal (`No_Grant`, unit
+	// `Acts_For_Principal`). A key of zeros is refused with `Bad_Value`; a
+	// key that another principal allowed with `Exists` (unit `Grants`); a
+	// full table, or a principal with remote.CLIENT_ROWS_OF_ONE_PRINCIPAL
+	// rows, with `Full` (unit `Grants`); a revocation of a key that the
+	// principal of the caller did not allow with `Absent` (unit `Grants`).
+	// The allow of a key that the principal allowed already changes nothing.
+	Remote_Client = 26,
 }
+
+// The action of a Remote_Client command, in values[4].
+REMOTE_CLIENT_ALLOW :: 1
+REMOTE_CLIENT_REVOKE :: 2
+REMOTE_CLIENT_READ :: 3
 
 // The change of a Principal_Change command, in values[4].
 PRINCIPAL_CHANGE_PASSPHRASE :: 1
@@ -450,6 +481,7 @@ root_command_names := [Root_Command]string {
 	.Machine_Seal = "Machine_Seal",
 	.Principal_Change = "Principal_Change",
 	.Principal_Change_End = "Principal_Change_End",
+	.Remote_Client = "Remote_Client",
 }
 
 // root_command_name gives the name of a command of the root ring, or "an
@@ -465,9 +497,14 @@ root_command_name :: proc "contextless" (command: i64) -> string {
 root_argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
 	switch argument {
 	case 1:
+		if Root_Command(command) == .Remote_Client {
+			return "key"
+		}
 		return "name"
 	case 2:
 		#partial switch Root_Command(command) {
+		case .Remote_Client:
+			return "action"
 		case .Revoke:
 			return "grant"
 		case .Replace:

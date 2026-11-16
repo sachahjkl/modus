@@ -111,11 +111,14 @@ draw :: proc "contextless" (window: ^display.Window) {
 			hash[2 * index + 1] = digits[connection.hash[index] & 15]
 		}
 		interface.draw_text(table, inside.x + 160, y, string(hash[:]), hash_color(connection.hash))
+		// The principal of the row of the client table that the connection
+		// is for: "principal" and up to 5 digits end before the count.
+		interface.draw_text(table, inside.x + 304, y, system.format(buffer[:], "principal ", connection.principal), graphics.COLOR_DIM)
 		interface.draw_text_right(table, inside.x + VALUE + 64, y, system.format(buffer[:], connection.count, " calls"), graphics.COLOR_TEXT)
 		shown += 1
 	}
 	if shown == 0 {
-		interface.draw_text(table, inside.x, inside.y, "none yet: a connection starts at the first call to a service", graphics.COLOR_DIM)
+		interface.draw_text(table, inside.x, inside.y, "none: a connection starts at the next call of a client to a service", graphics.COLOR_DIM)
 	}
 
 	// The last calls, the last one first.

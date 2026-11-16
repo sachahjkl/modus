@@ -255,7 +255,7 @@ stream_error_codes :: proc(t: ^testing.T) {
 	testing.expect_value(t, stream_error_name(u64(Stream_Error.Timeout)), "Timeout")
 	testing.expect_value(t, stream_error_name(u64(Stream_Error.Cancelled)), "Cancelled")
 	testing.expect_value(t, stream_error_name(0), "None")
-	testing.expect_value(t, stream_error_name(4), "")
+	testing.expect_value(t, stream_error_name(u64(max(Stream_Error)) + 1), "")
 	testing.expect_value(t, stream_error_name(max(u64)), "")
 	for code in Stream_Error {
 		testing.expect(t, STREAM_ERROR_NAMES[code] != "")

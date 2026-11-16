@@ -57,6 +57,7 @@ Grant :: enum i64 {
 	System_Part        = 25, // A part of the system that the root service starts by itself, with handles that no other grant names: the screen and the input ring (the compositor), a device (a device service), the text of another program (a terminal). No program asks for it and no caller holds it.
 	Tpm                = 26, // The ring and the region of the TPM service (modus:contract/tpm_service): seal a key to the measure of the system, and unseal it. The program that keeps the machine key (docs/PRINCIPALS.md).
 	Versions_Erase     = 27, // End the versions of an object of its private store, with zeros over their blocks (isolated.CALLER_ERASES_VERSIONS): the program that keeps a secret that an earlier version must not keep (docs/STORAGE.md, "4.8 The erase of versions").
+	Remote_Clients     = 28, // The client table, read-only (modus:contract/remote, Client_Table), and a Connect for one of its rows that acts for the principal of that row: the program that takes calls from another machine (docs/PRINCIPALS.md, "The client keys of remote").
 }
 
 // The name of each start grant, as the log of the root service and the
@@ -91,6 +92,7 @@ GRANT_NAMES := [Grant]string {
 	.System_Part        = "System_Part",
 	.Tpm                = "Tpm",
 	.Versions_Erase     = "Versions_Erase",
+	.Remote_Clients     = "Remote_Clients",
 }
 
 // grant_name gives the name of the start grant with a number, and says if

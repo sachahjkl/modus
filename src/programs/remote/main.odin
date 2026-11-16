@@ -17,16 +17,27 @@
 // it. A new start makes a new key. A seed weaker than "processor" makes no
 // key: the program says so, and listens on nothing.
 //
+// The key of the client: the handshake asks each client for its own
+// Ed25519 key, as a raw public key with its signature (mutual TLS 1.3), and
+// takes it only when the client table that the root service writes has a
+// row for it (remote.Client_Table, read-only). A key with no row is refused
+// in the handshake (access_denied), with one line of the log, before any
+// stream. Each connection is bound to its row; when the grant of the row
+// ends (a revocation, a lock of the session of its principal), the open
+// connection ends with the code Revoked.
+//
 // It holds a ring to the root service that serves Connect and Disconnect
-// only, to the services that the root service names for it. It copies the
-// bytes of a whole request in the call region of its connection to the
-// service, makes the isolated call, and writes the call answer. It does not
-// read the descriptions: the host encoded the call with them, and the
-// service checks the call region. It trusts nothing in a request
-// (remote.request_check).
+// only, to the services that the root service names for it, each for one
+// row of the client table: the root service gives that connection the
+// principal of the row. It copies the bytes of a whole request in the call
+// region of its connection to the service, makes the isolated call, and
+// writes the call answer. It does not read the descriptions: the host
+// encoded the call with them, and the service checks the call region. It
+// trusts nothing in a request (remote.request_check).
 //
 // The window shows the public key, the counts of the calls and of the
-// resets, the connections to services, and the last calls.
+// resets, the connections to services with their principals, and the last
+// calls.
 //
 // **What it is for.** A program on the host calls an export of a service of
 // the machine as the console calls it: the same descriptions, the same
@@ -38,25 +49,29 @@
 // ```
 //
 // **Start**: `start("remote")` in the console, or the bar of the desktop.
-// Read the public key in its window or on the log.
+// Read the public key in its window or on the log. Then allow the key of
+// the client from a console that acts for the principal:
+// `remote_allow("<the key of the client, 64 hexadecimal digits>")`.
 //
 // **Grants**, as the root service gives them:
 //
 // - **Network**: a listen grant of UDP on port 7100 for the address
-//   10.0.2.2 only. The program refuses any other grant: a grant that admits
-//   each address lets each machine of the network call as the principal.
+//   10.0.2.2 only. The program refuses any other grant.
+// - **Remote_Clients**: the client table, read-only: the key of each
+//   client that a principal allowed, and that principal.
 // - **Connect**: a ring to the root service for `Connect` and `Disconnect`,
 //   to the services of `callable_of`: compositor, date, debugger, inspect,
-//   log, manual, monitor, settings and storage. A call to another service fails
-//   with the refusal of the root service.
+//   log, manual, monitor, settings and storage, each for one row of the
+//   client table. A call to another service fails with the refusal of the
+//   root service.
 // - **Acts_For_Principal**: a service gives the caller what it holds for
-//   all callers, as it does for the console: the host is the principal at
-//   the keyboard.
+//   all callers of the principal of the row, as it does for a console of
+//   that principal.
 //
 // **What it proves**: a call from outside the machine passes the same
-// checks as a call from inside, and a lost datagram never runs a call two
-// times. It does not prove that the caller is who it says: the host pins the
-// key of the service, but the service admits the host by its address only.
+// checks as a call from inside, a lost datagram never runs a call two
+// times, and a call acts only for a principal that allowed the key of its
+// client.
 package remote_service
 
 import "base:intrinsics"
@@ -217,9 +232,33 @@ Record_Log :: struct {
 }
 record_logs: [CAPACITY]Record_Log
 
-// A connection to one service: the root service made it.
+// The client table that the root service writes (remote.Client_Table), and
+// the copy of its rows that this program read at the start of the pass.
+client_table: ^remote.Client_Table
+client_rows: [remote.CLIENT_CAPACITY]remote.Client
+client_table_version_seen: u32 // The version of the table before the copy of the last pass.
+
+// The row of the client table that a record is bound to: its client proved
+// the key of that row in the handshake. A call of the record acts for the
+// principal of the row, while the row keeps the serial of the binding.
+Record_Client :: struct {
+	generation: u64, // The generation of the record of the binding.
+	bound:      bool, // The record has a row, whose grant held at the last pass.
+	ended:      bool, // The grant of the row ended, or the key had no row: the connection was closed, and nothing binds it again.
+	row:        int, // The place of the row in the table.
+	serial:     u64, // The serial of the row when the record was bound: the grant.
+	principal:  u64, // The principal that allowed the key.
+	key:        [32]u8, // The key that the client proved.
+}
+record_clients: [CAPACITY]Record_Client
+
+// A connection to one service: the root service made it, for one row of
+// the client table.
 Service_Connection :: struct {
 	name:          [32]u8, // Empty: the place is free.
+	row:           int, // The row of the client table that the connection is for.
+	serial:        u64, // The serial of that row: the grant that the connection carries.
+	principal:     u64, // The principal of that row: the root service gave it to the connection.
 	program:       system.Handle, // The service, with the right Read: its state.
 	ring_memory:   system.Handle,
 	region_memory: system.Handle,
@@ -230,7 +269,9 @@ Service_Connection :: struct {
 	count:         u64, // The calls through this connection.
 }
 
-SERVICE_CONNECTION_CAPACITY :: 12 // The 9 services of callable_of("remote") in the root service, and room for more.
+// The 9 services of callable_of("remote") in the root service, for each of
+// the CAPACITY connections, each of which can have a key of another row.
+SERVICE_CONNECTION_CAPACITY :: 24
 
 service_connections: [SERVICE_CONNECTION_CAPACITY]Service_Connection
 
@@ -247,6 +288,8 @@ Counts :: struct {
 	bytes_in:    u64, // The bytes of whole requests.
 	bytes_out:   u64, // The bytes of answers.
 	sends_refused: u64, // Sends that the network service refused.
+	keys_refused: u64, // Client keys that the handshake refused: no row, or a session that is locked.
+	revoked:     u64, // Connections that this program ended because the grant of their key ended.
 }
 counts: Counts
 
@@ -544,10 +587,106 @@ call_work :: proc "contextless" (connection: ^quic.Connection, peer: quic.Remote
 	}
 }
 
+// client_key_allowed is the check of the handshake (quic.Client_Key_Check):
+// the client proved this key, and it is allowed while the client table has
+// a row for it whose grant holds. The table is read again here: a key that
+// a principal allowed a moment ago is taken. A refusal writes one line.
+client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
+	rows: [remote.CLIENT_CAPACITY]remote.Client
+	remote.client_table_read(client_table, &rows)
+	proven := key^
+	row := remote.client_find(&rows, proven)
+	if row >= 0 && remote.client_grant_holds(&rows, row, rows[row].serial) {
+		return true
+	}
+	counts.keys_refused += 1
+	if log_allowed() {
+		text: [64]u8
+		if row >= 0 {
+			system.log("remote: refused the client key ", hex_text(text[:], proven[:]), ": the session of its principal ", rows[row].principal, " is locked; the handshake ends before any call")
+		} else {
+			system.log("remote: refused the client key ", hex_text(text[:], proven[:]), ": no principal allowed it; the handshake ends before any call")
+		}
+	}
+	return false
+}
+
+// client_bind binds a record whose handshake ended to the row of the key
+// that its client proved, or ends it when no row holds that key now: the
+// row can end between the check of the handshake and this pass.
+client_bind :: proc "contextless" (connection: ^quic.Connection, client: ^Record_Client, peer: quic.Remote) {
+	key := connection.tls.client_public_key
+	row := remote.client_find(&client_rows, key)
+	text: [40]u8
+	head: [16]u8
+	if row < 0 || !remote.client_grant_holds(&client_rows, row, client_rows[row].serial) {
+		client.ended = true
+		quic.connection_close(connection, u64(remote.Stream_Error.Revoked), now_microseconds())
+		counts.revoked += 1
+		if log_allowed() {
+			system.log("remote: ", address_text(text[:], peer), ": the grant of the client key ", hex_text(head[:], key[:8]), " ended during the handshake: the connection ends with the code Revoked, before any call")
+		}
+		return
+	}
+	client.bound, client.row, client.serial, client.principal, client.key = true, row, client_rows[row].serial, client_rows[row].principal, key
+	if log_allowed() {
+		system.log("remote: ", address_text(text[:], peer), " proved the client key ", hex_text(head[:], key[:8]), ": its calls act for principal ", client.principal)
+	}
+}
+
+// client_grant_check ends the connection of a bound record whose grant
+// ended: the principal revoked the key, or locked its session. Its
+// connections to services end in service_connections_of_ended_grants.
+client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: ^Record_Client, peer: quic.Remote) {
+	if remote.client_grant_holds(&client_rows, client.row, client.serial) {
+		return
+	}
+	client.bound = false
+	client.ended = true
+	quic.connection_close(connection, u64(remote.Stream_Error.Revoked), now_microseconds())
+	counts.revoked += 1
+	text: [40]u8
+	head: [16]u8
+	if log_allowed() {
+		system.log("remote: the grant of the client key ", hex_text(head[:], client.key[:8]), " of principal ", client.principal, " ended (a revocation, or a lock of its session): the connection from ", address_text(text[:], peer), " ends with the code Revoked")
+	}
+}
+
+// service_connections_of_ended_grants ends each connection to a service
+// whose row no longer holds its serial: a revocation, a lock or an unlock
+// ended its grant. The root service ended its side already, so this
+// program tells it nothing. It runs whatever the state of the QUIC
+// connections: a grant can end while no client of its row is connected,
+// and its slot must not stay taken, or the table of connections fills.
+service_connections_of_ended_grants :: proc "contextless" () {
+	ended := 0
+	in_use := 0
+	for &item in service_connections {
+		if item.name[0] == 0 {
+			continue
+		}
+		if remote.client_grant_holds(&client_rows, item.row, item.serial) {
+			in_use += 1
+			continue
+		}
+		connection_end(&item, false)
+		ended += 1
+	}
+	if ended > 0 && log_allowed() {
+		system.log("remote: the grants of ", u64(ended), " connections to services ended (a revocation, or a lock or an unlock of a session): their slots are free; ", u64(in_use), " of ", u64(SERVICE_CONNECTION_CAPACITY), " slots in use")
+	}
+}
+
 // calls_work moves each call stream of each record, and logs each new
 // connection and each end.
 calls_work :: proc "contextless" () {
 	now := system.time()
+	// One state of the client table for the whole pass. The version is read
+	// first: the wait of the loop ends at once when the table changed after
+	// it.
+	client_table_version_seen = intrinsics.atomic_load_explicit(&client_table.version, .Acquire)
+	remote.client_table_read(client_table, &client_rows)
+	service_connections_of_ended_grants()
 	for record, place in records {
 		place_calls := calls[place * STREAMS_PER_CONNECTION:][:STREAMS_PER_CONNECTION]
 		if !record.in_use {
@@ -565,6 +704,18 @@ calls_work :: proc "contextless" () {
 			}
 		}
 		connection := &quic_connections[place]
+		client := &record_clients[place]
+		if client.generation != record.generation {
+			client^ = {generation = record.generation}
+		}
+		if connection.state == .Connected {
+			switch {
+			case !client.bound && !client.ended:
+				client_bind(connection, client, record.remote)
+			case client.bound:
+				client_grant_check(connection, client, record.remote)
+			}
+		}
 		// Each stream is read to its end, or to the reset of the host: a
 		// stream record is freed only when this program read that end
 		// (quic.stream_read), so a stream left unread would keep its record,
@@ -730,8 +881,17 @@ serve_next :: proc "contextless" () -> (served: bool, duration: u64) {
 		counts.cancelled += 1
 		return true, 0
 	}
+	client := &record_clients[place]
+	if !client.bound || client.generation != records[place].generation {
+		// The grant of the key of the client ended, and the connection
+		// ends: no call acts for a principal that no longer allows it.
+		quic.stream_reset(connection, call.identifier, u64(remote.Stream_Error.Revoked))
+		call.phase = .Discarding
+		call.phase_started_at = system.time()
+		return true, 0
+	}
 	call_started_at := system.time()
-	call.answer_length = serve(call_buffers[chosen][:], call.received)
+	call.answer_length = serve(call_buffers[chosen][:], call.received, client)
 	call_ended_at := system.time()
 	duration = call_ended_at - min(call_started_at, call_ended_at)
 	// The other calls: their streams did not move during the isolated call.
@@ -792,15 +952,16 @@ recent_add :: proc "contextless" (service: string, export: u32, answer: remote.A
 	return item
 }
 
-// connection_find gives the connection to a service, and asks the root
-// service for one when this program has none. On a failure it gives the
-// error record of the answer.
-connection_find :: proc "contextless" (name: string) -> (connection: ^Service_Connection, error: errors.Error_Record) {
+// connection_find gives the connection to a service for the row of the
+// client of a call, and asks the root service for one when this program
+// has none: the root service gives it the principal of the row. On a
+// failure it gives the error record of the answer.
+connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> (connection: ^Service_Connection, error: errors.Error_Record) {
 	free: ^Service_Connection
 	for &item in service_connections {
 		if item.name[0] == 0 {
 			free = &item
-		} else if remote.name_text(&item.name) == name {
+		} else if remote.name_text(&item.name) == name && item.row == client.row && item.serial == client.serial {
 			return &item, {}
 		}
 	}
@@ -809,7 +970,8 @@ connection_find :: proc "contextless" (name: string) -> (connection: ^Service_Co
 	}
 	packed := system.name_pack(name)
 	request_tag += 1
-	if !system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
+	// values[4] names the row from 1, as the root service takes it.
+	if !system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(client.row + 1), 5 = client.serial}}) {
 		return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(system.Status.No_Slot))
 	}
 	limit := system.time() + CONNECT_LIMIT
@@ -826,11 +988,21 @@ connection_find :: proc "contextless" (name: string) -> (connection: ^Service_Co
 				return nil, errors.error_make(.Absent, .None, remote.FIELD_SERVICE)
 			case .No_Right:
 				return nil, errors.error_make(.No_Grant, .Connection, remote.FIELD_SERVICE)
+			case .Bad_State:
+				// The root service wrote why: the grant of the row ended, or
+				// the session of its principal is locked. The field at fault
+				// is the service that the call names.
+				refused := errors.completion_record(record.values)
+				refused.argument = remote.FIELD_SERVICE
+				return nil, refused
 			case:
 				return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(status))
 			}
 			connection = free
 			connection^ = {
+				row           = client.row,
+				serial        = client.serial,
+				principal     = client.principal,
 				program       = system.Handle(record.values[0]),
 				ring_memory   = system.Handle(record.values[1]),
 				region_memory = system.Handle(record.values[2]),
@@ -845,7 +1017,7 @@ connection_find :: proc "contextless" (name: string) -> (connection: ^Service_Co
 				return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(ring_status != .Ok ? ring_status : map_status))
 			}
 			connection.region = ([^]u8)(address)[:system.memory_size(connection.region_memory) * system.PAGE_SIZE]
-			system.log("remote: connected to the service ", name)
+			system.log("remote: connected to the service ", name, ", for principal ", client.principal)
 			return connection, {}
 		}
 		wait: system.Wait
@@ -863,7 +1035,7 @@ connection_end :: proc "contextless" (connection: ^Service_Connection, tell: boo
 	if tell {
 		packed := system.name_pack(remote.name_text(&connection.name))
 		request_tag += 1
-		system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+		system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection.row + 1)}})
 	}
 	if connection.calls.head != nil {
 		system.ring_close(&connection.calls)
@@ -927,10 +1099,10 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 }
 
 // serve reads one whole request in the buffer of its stream, makes the
-// call, and writes the answer in the same buffer: the request is copied
-// into the call region before the answer is written. It gives the length
-// of the answer.
-serve :: proc "contextless" (buffer: []u8, received: int) -> int {
+// call for the principal of the row of its client, and writes the answer in
+// the same buffer: the request is copied into the call region before the
+// answer is written. It gives the length of the answer.
+serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client) -> int {
 	counts.requests += 1
 	counts.bytes_in += u64(received)
 	start := system.nanoseconds()
@@ -939,7 +1111,7 @@ serve :: proc "contextless" (buffer: []u8, received: int) -> int {
 		return refuse(buffer, error)
 	}
 	service := remote.name_text(&request.service)
-	connection, connection_error := connection_find(service)
+	connection, connection_error := connection_find(service, client)
 	if connection == nil {
 		return refuse(buffer, connection_error, service)
 	}
@@ -1008,13 +1180,15 @@ key_make :: proc "contextless" (configuration: ^quic.Connection_Configuration) -
 //    draws its window: it listens on nothing;
 // 3. writes "remote: the public key of this service: " and 64 hexadecimal
 //    digits;
-// 4. opens its datagram endpoint and the ring to the root service, and asks
-//    the network service for its grant. A grant that is not a listen grant
-//    of UDP for the host only stops it (`fail`);
+// 4. opens its datagram endpoint and the ring to the root service, maps the
+//    client table read-only, and asks the network service for its grant. A
+//    grant that is not a listen grant of UDP for the host only stops it
+//    (`fail`), and so does a missing client table;
 // 5. maps the table of the connections, the streams and their buffers,
-//    starts the QUIC server, and erases its own copy of the private key;
+//    starts the QUIC server, which asks each client for its key, and erases
+//    its own copy of the private key;
 // 6. writes "remote: listening on the UDP port 7100, for the host 10.0.2.2
-//    only: ...".
+//    only, and for the client keys that a principal allowed: ...".
 //
 // Then one loop runs for ever. Each pass gives the arrived datagrams to the
 // server, makes at most one isolated call, and draws the window at most ten
@@ -1063,6 +1237,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT]); status != .Ok {
 		fail("no ring to the root service")
 	}
+	// The client table, read-only: the root service writes it, and this
+	// program cannot give a key a row.
+	client_table_address, client_table_status := system.memory_map(ctx.handles[remote.GRANT_CLIENT_TABLE], {})
+	if client_table_status != .Ok {
+		fail("no client table: the program has no grant Remote_Clients")
+	}
+	client_table = (^remote.Client_Table)(client_table_address)
+	// The handshake asks each client for its key, and takes it only when
+	// the table allows it.
+	configuration.tls.client_key_check = client_key_allowed
 	system.send(&endpoint.commands, ring.Record{kind = u32(datagram.Command.Info), tag = CALL_TAG})
 	info: ring.Record
 	for {
@@ -1077,9 +1261,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	grant := datagram.grant_unpack(info.values[6])
 	if grant.tcp || !grant.listen || grant.address != remote.HOST_ADDRESS {
-		// The rule of who may call is the grant: a listen grant that admits
-		// each address would let any machine of the network call as the
-		// principal.
+		// The address is a second fence after the key of the client: a
+		// listen grant that admits each address would let any machine of
+		// the network start handshakes against the table.
 		fail("the grant is not a listen grant of UDP for the address of the host only")
 	}
 	listen_port = grant.port
@@ -1114,7 +1298,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log("remote: listening on the UDP port ", u64(listen_port), ", for the host 10.0.2.2 only: ", u64(CAPACITY), " connections, each with ", u64(STREAMS_PER_CONNECTION), " calls at one time")
+	system.log("remote: listening on the UDP port ", u64(listen_port), ", for the host 10.0.2.2 only, and for the client keys that a principal allowed: ", u64(CAPACITY), " connections, each with ", u64(STREAMS_PER_CONNECTION), " calls at one time")
 
 	arrived: [RECEIVE_PLACES]ring.Record
 	drawn: u64
@@ -1198,6 +1382,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if has_window {
 			display.wait_events(&wait, &window)
 		}
+		// A change of the client table: the root service wakes this word,
+		// so a revoked key ends its connection at once, and not at the next
+		// deadline of QUIC.
+		system.wait_word(&wait, &client_table.version, client_table_version_seen)
 		if system.wait_spin(&wait) {
 			continue
 		}

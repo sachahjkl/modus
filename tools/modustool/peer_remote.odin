@@ -2,8 +2,10 @@ package modustool
 
 import "modus:contract/errors"
 import "modus:contract/remote"
+import "core:crypto"
 import "core:encoding/hex"
 import "core:fmt"
+import "core:mem"
 import "core:strings"
 import "core:sys/linux"
 import "core:sync"
@@ -26,6 +28,14 @@ import cryptography_module "../../src/modules/cryptography"
 // Call_Socket_Result, the bytes of the
 // answer, and the end. The test cases of the peer (peer_remote_case) give
 // their calls to the thread of the peer directly.
+//
+// The key of the client: `remote` asks each client for its own Ed25519 key
+// in the handshake, and takes it only when a principal allowed it
+// (`remote_allow` in a console of the machine). The peer of a machine test
+// has a fixed key, which a step types as {client key}; the peer of
+// `modustool run` draws one at its start and prints it
+// (peer_remote_client_key_draw). A key that no principal allowed ends the
+// handshake with access_denied: the call fails with Client_Refused.
 //
 // The connection: one for the calls of a session, made at the first call.
 // The peer closes it and makes a new one at a call when its last packet
@@ -55,6 +65,15 @@ PEER_REMOTE_CALL_LIMIT :: HANG_BOUND
 // through the gateway, which is the peer, so the peer would see one.
 @(rodata)
 PEER_REMOTE_STRANGER := [4]u8{198, 51, 100, 7}
+// The first byte of the fixed private key of the client of a machine test;
+// each next byte is one more. The key protects nothing but the test.
+PEER_REMOTE_CLIENT_KEY_FIRST :: 0x43
+// The first byte of a private key that no principal allows: the case
+// "unknown client key".
+PEER_REMOTE_STRANGER_CLIENT_KEY_FIRST :: 0x5a
+// The mark of a step that the tool replaces with the public key of the
+// client of the peer, 64 hexadecimal digits: remote_allow("{client key}").
+CLIENT_KEY_MARK :: "{client key}"
 
 Remote_Call_State :: enum u8 {
 	Free,
@@ -72,6 +91,7 @@ Remote_Call_Outcome :: enum u32 {
 	Answer_Too_Large, // More than remote.ANSWER_LIMIT bytes: the peer reset the stream.
 	Key_Refused, // `remote` presented another key than the pinned one, or the call named another one: the reason gives both.
 	Bad_Socket_Call, // The bytes on the socket of the calls are not a header and the request that it counts.
+	Client_Refused, // `remote` refused the key of this client in the handshake (access_denied): no principal allowed it, or the session of its principal is locked. No call ran.
 }
 
 Remote_Call :: struct {
@@ -135,6 +155,9 @@ Peer_Remote :: struct {
 	// its idle bound.
 	silence_wanted:   bool,
 	stranger_answers: int, // Datagrams of `remote` to an address that its grant does not admit: there must be none.
+	client_public_key: [32]u8, // The public key of the client, which a principal allows; the private key is in configuration.tls.
+	revoked_ends:     int, // Connections that `remote` ended with the code Revoked: the grant of the key of the client ended.
+	client_refusals:  int, // Handshakes that `remote` ended with access_denied.
 	// The socket of the calls of the tool (call_socket_linux.odin).
 	listener:         linux.Fd,
 	socket_path:      string,
@@ -195,6 +218,13 @@ peer_remote_make :: proc() -> ^Peer_Remote {
 	state.configuration = {idle_timeout_milliseconds = 30_000}
 	state.configuration.tls = {role = .Client, least_seed_strength = .Processor}
 	state.configuration.tls.application_protocol_length = copy(state.configuration.tls.application_protocol[:], remote.APPLICATION_PROTOCOL)
+	// The key of the client of a machine test: a fixed pattern, which a
+	// step allows with {client key}.
+	private_key: [32]u8
+	for index in 0 ..< len(private_key) {
+		private_key[index] = u8(PEER_REMOTE_CLIENT_KEY_FIRST + index)
+	}
+	peer_remote_client_key_set(state, private_key)
 	state.next_port = PEER_REMOTE_PORT_FIRST
 	state.start = time.tick_now()
 	return state
@@ -207,6 +237,45 @@ peer_remote_free :: proc(state: ^Peer_Remote) {
 		delete(call.answer)
 	}
 	free(state)
+}
+
+// peer_remote_client_key_set gives the client of the peer a private key,
+// and computes its public key. The connection of the key before closes: the
+// next call proves the new key. The lock is not held.
+peer_remote_client_key_set :: proc(state: ^Peer_Remote, private_key: [32]u8) {
+	sync.mutex_lock(&state.lock)
+	defer sync.mutex_unlock(&state.lock)
+	state.configuration.tls.client_private_key = private_key
+	error: errors.Error_Record
+	secret := string(state.configuration.tls.client_private_key[:])
+	result := state.client_public_key[:]
+	state.cryptography.ed25519_public_key(&secret, &result, &error)
+	if state.active {
+		quic.connection_close(&state.client, u64(remote.Stream_Error.Cancelled), peer_remote_now(state))
+	}
+}
+
+// peer_remote_client_key_draw gives the client of the peer of `modustool
+// run` a key of its own, drawn from the generator of the host, and gives
+// its public key as 64 hexadecimal digits: the developer allows it in a
+// console of the machine. A key that the source of the tool fixes would be
+// a key that anyone who reads the source holds.
+peer_remote_client_key_draw :: proc(state: ^Peer_Remote) -> string {
+	private_key: [32]u8
+	crypto.rand_bytes(private_key[:])
+	peer_remote_client_key_set(state, private_key)
+	mem.zero_explicit(&private_key, size_of(private_key))
+	return hex_of(state.client_public_key[:])
+}
+
+// client_key_expand writes the public key of the client of the peer in
+// place of each CLIENT_KEY_MARK of a text of a step.
+client_key_expand :: proc(state: ^Peer_Remote, text: string) -> string {
+	sync.mutex_lock(&state.lock)
+	key := state.client_public_key
+	sync.mutex_unlock(&state.lock)
+	expanded, _ := strings.replace_all(text, CLIENT_KEY_MARK, hex_of(key[:]), context.temp_allocator)
+	return expanded
 }
 
 peer_remote_now :: proc(state: ^Peer_Remote) -> u64 {
@@ -337,6 +406,10 @@ peer_remote_end_reason :: proc(client: ^quic.Connection) -> string {
 	switch {
 	case client.closed_by_handshake_timeout:
 		return "the handshake did not end in 10 s: does the machine run the program remote, with the key that the tool pinned?"
+	case client.closed_by_peer && !client.close_is_application && client.close_error_code == quic.CRYPTO_ERROR_BASE + u64(quic.Alert.Access_Denied):
+		return "remote refused the key of this client in the handshake (access_denied): no principal allowed it, or the session of its principal is locked; allow it with remote_allow in a console of the machine"
+	case client.closed_by_peer && client.close_is_application && client.close_error_code == u64(remote.Stream_Error.Revoked):
+		return "remote ended the connection with the code Revoked: the grant of the key of this client ended; the call may have run"
 	case client.closed_by_idle_timeout:
 		return "the connection ended at its idle timeout: the call may have run"
 	case client.closed_by_peer:
@@ -464,8 +537,19 @@ peer_remote_tick :: proc(peer: ^Peer) {
 			outcome = .Key_Refused
 			reason = string(state.key_refusal[:state.key_refusal_length])
 		}
+		// The client finishes its handshake before the server checks its
+		// key, so a refused key ends a connection that the client counted
+		// as made: its calls end, and none waits for the next connection.
+		client_refused := client.closed_by_peer && !client.close_is_application && client.close_error_code == quic.CRYPTO_ERROR_BASE + u64(quic.Alert.Access_Denied)
+		if client_refused {
+			outcome = .Client_Refused
+			state.client_refusals += 1
+		}
+		if client.closed_by_peer && client.close_is_application && client.close_error_code == u64(remote.Stream_Error.Revoked) {
+			state.revoked_ends += 1
+		}
 		for &call in state.calls {
-			if call.state == .Open || (call.state == .Submitted && !state.connected) {
+			if call.state == .Open || (call.state == .Submitted && (!state.connected || client_refused)) {
 				peer_remote_call_end(&call, outcome, 0, reason)
 			}
 		}
@@ -967,6 +1051,84 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 			return false, fmt.tprintf("the first call after the silence did not open a new connection (%d connections before, %d after)", before, after)
 		}
 		return true, "the first call after the silence opened a new connection, and got its answer"
+	case "close":
+		// The peer closes its connection to `remote` and waits for its end,
+		// so that a grant that ends next ends while no client of its row is
+		// connected. The bound is on the clock of the host: it only ends a
+		// case whose connection never ends.
+		sync.mutex_lock(&state.lock)
+		if state.active {
+			quic.connection_close(&state.client, u64(remote.Stream_Error.Cancelled), peer_remote_now(state))
+		}
+		sync.mutex_unlock(&state.lock)
+		start := time.tick_now()
+		for {
+			sync.mutex_lock(&state.lock)
+			active := state.active
+			sync.mutex_unlock(&state.lock)
+			if !active {
+				break
+			}
+			if time.tick_since(start) > PEER_REMOTE_QUIET_LIMIT {
+				return false, fmt.tprintf("the connection of the peer to remote did not end in %v after its close", PEER_REMOTE_QUIET_LIMIT)
+			}
+			time.sleep(5 * time.Millisecond)
+		}
+		return true, "the peer closed its connection to remote, and the connection ended"
+	case "unknown client key":
+		// A client whose key no principal allowed: `remote` ends its
+		// handshake with access_denied, and no call runs. The key of the
+		// peer comes back after the case.
+		request, problem := remote_case_request(machine, "monitor.count(\"processors\")")
+		if problem != "" {
+			return false, problem
+		}
+		sync.mutex_lock(&state.lock)
+		allowed_key := state.configuration.tls.client_private_key
+		refusals_before := state.client_refusals
+		sync.mutex_unlock(&state.lock)
+		stranger: [32]u8
+		for index in 0 ..< len(stranger) {
+			stranger[index] = u8(PEER_REMOTE_STRANGER_CLIENT_KEY_FIRST + index)
+		}
+		peer_remote_client_key_set(state, stranger)
+		outcome := remote_case_call(state, request)
+		peer_remote_client_key_set(state, allowed_key)
+		sync.mutex_lock(&state.lock)
+		refusals := state.client_refusals - refusals_before
+		sync.mutex_unlock(&state.lock)
+		if outcome.outcome != .Client_Refused || refusals != 1 {
+			return false, fmt.tprintf("a call with a key that no principal allowed gave %v (%d refusals of the handshake), not Client_Refused: %s", outcome.outcome, refusals, outcome.reason)
+		}
+		return true, "a client key that no principal allowed: remote ended the handshake with access_denied, and no call ran"
+	case "revoked":
+		// The scenario revoked the key of the peer while its connection was
+		// open: `remote` ends that connection with the code Revoked. The
+		// bound is on the clock of the host: it only ends a case whose
+		// connection never ends.
+		start := time.tick_now()
+		for {
+			sync.mutex_lock(&state.lock)
+			revoked, active := state.revoked_ends, state.active
+			sync.mutex_unlock(&state.lock)
+			if revoked > 0 && !active {
+				break
+			}
+			if time.tick_since(start) > PEER_REMOTE_QUIET_LIMIT {
+				return false, fmt.tprintf("remote did not end the connection of the revoked key with the code Revoked in %v (%d such ends, the connection active: %v)", PEER_REMOTE_QUIET_LIMIT, revoked, active)
+			}
+			time.sleep(5 * time.Millisecond)
+		}
+		// A new connection with the same key: refused in its handshake.
+		request, problem := remote_case_request(machine, "monitor.count(\"processors\")")
+		if problem != "" {
+			return false, problem
+		}
+		outcome := remote_case_call(state, request)
+		if outcome.outcome != .Client_Refused {
+			return false, fmt.tprintf("a call with the revoked key gave %v, not Client_Refused: %s", outcome.outcome, outcome.reason)
+		}
+		return true, "remote ended the open connection of the revoked key with the code Revoked, and refused the key in the next handshake"
 	}
 	return false, fmt.tprintf("no case \"%s\" of remote", name)
 }

@@ -532,7 +532,7 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 	outcome.new_connection = transport.new_connection
 	if !answered {
 		#partial switch transport.outcome {
-		case .Key_Refused, .No_Key:
+		case .Key_Refused, .No_Key, .Client_Refused:
 			outcome.outcome = .No_Answer
 			append(&outcome.lines, fmt.tprintf("error: %s", transport.reason))
 		case .Reset:

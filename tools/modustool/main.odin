@@ -736,6 +736,10 @@ run_machine :: proc(args: []string) -> int {
 	// call`: this peer takes it.
 	peer.remote.keys_from_calls = true
 	fmt.printfln("modustool: the peer takes the calls of `modustool call` at %s (only this user reaches it)", peer.call_socket)
+	// remote takes the calls of a client whose key a principal allowed: a
+	// key drawn for this run, which the developer allows in a console.
+	client_key := peer_remote_client_key_draw(peer.remote)
+	fmt.printfln("modustool: the key of the client of remote in the peer, for this run: %s; allow it in a console of the machine: remote_allow(\"%s\")", client_key, client_key)
 	defer peer_stop(&peer)
 	command, ok := machine_command(BOOT_VOLUME, "", DATA_DISK, &peer)
 	if !ok {
