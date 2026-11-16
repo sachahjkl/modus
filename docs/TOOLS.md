@@ -652,6 +652,80 @@ modustool: docs/PROPERTIES.md: the package core:reflect of the Odin compiler (`c
 
 **What it does not prove.** It does not read a license at the source of a work: it compares the list with what the repository recorded when the work was taken. A new source of a work is a new record, in the same commit. A package that an imported package of `core:` imports in its turn is not named: it has the same license and the same license file.
 
+## The similarity finder
+
+`modustool similarity` measures how similar the code pieces of the Odin sources are, and proposes where to factor them. A code piece is a procedure, a run of two or more statements of one block, or an expression (`GLOSSARY.md`, "Code piece"). The command reads `src/` and `tools/`, groups the similar pieces in similarity families, gives each family its factoring template, and ranks the families by the syntax nodes that a factoring saves. The design: `src/md/infrastructure/similarity_finder.md`.
+
+It runs outside the build and outside `modustool check`, and it can take minutes. It never edits a source and never fails on a similarity: a human or an agent decides what to factor.
+
+**The commands.**
+
+```
+nix develop -c modustool similarity
+nix develop -c modustool similarity near src/programs/console/commands.odin:120
+nix develop -c modustool similarity pair src/programs/root/main.odin:300 src/programs/unlock/main.odin:410
+```
+
+- With no argument, it prints the report with the first 30 families of each list and the time of each phase, and writes the whole report and two tables in `build/similarity/`.
+- `near <file>:<line>` prints the procedures whose similarity score with the procedure that holds the line is 0.5 or more, at most 20, each with its template and its blanks.
+- `pair <file>:<line> <file>:<line>` prints the score of two procedures, whatever its value, with their template and each blank.
+
+**What it does not read.** The copies of the works of others that `src/library/support/cryptography/origin.manifest` names, and the sources that a command of the tool writes: `src/library/support/graphics/font.odin`, and each file whose first line starts with `// This file is the output of`. The report lists each file that it does not read, with the reason. It keeps three areas apart in each measure: the system (`src/`, no test), the tool (`tools/`, no test), and the tests (a file `_test.odin`, a scenario of the tool, a file whose first line is a build tag with `!freestanding`).
+
+**The normal form.** Before it compares, the finder removes the differences that do not change what the code does: the layout, the comments, the parentheses, the names of the locals (each one becomes the order of its declaration in its procedure), the name of an import, the direction of a comparison (`a > b` is `b < a`), a negated equality, a double negation, `x += y` (it is `x = x + y`), the order of the operands of `==`, `!=`, `&`, `|` and `~` when both are pure, a counted `for` loop (it is `for i in a..<b`), a negated condition with two branches, a boolean return (`if c { return true }; return false` is `return c`), and the arithmetic of integer literals. The order of `+`, `*`, `&&` and `||`, the names of the fields and the names of the globals stay: without the types, the syntax does not prove that they are the same behaviour.
+
+**The similarity score.** The finder anti-unifies two pieces: each node that both have stays in the template, and each place where they differ becomes a blank. The score is `2·|T| / (|A| + |B|)`: two times the nodes of the template over the sum of the sizes. It is 1 when the two are equal after the normal form (`GLOSSARY.md`, "Similarity score").
+
+**The blanks.** A blank is printed `?1`, `?2`; the same pair of arguments at two places is one blank. Its kind says how a factored procedure takes it:
+
+| Kind | Where | In the factored procedure |
+|---|---|---|
+| value | An expression that is read | A parameter |
+| type | A type, a conversion to a type | A polymorphic parameter `$T` |
+| place | An expression that is assigned or addressed | A pointer parameter |
+| procedure | The name of a called procedure | A procedure parameter |
+| not a parameter | An operator of a statement, a field name, a statement | None |
+
+A place that some members do not have is a gap, printed `?-`.
+
+**The categories.**
+
+| Category | What it is |
+|---|---|
+| utility to centralise | Equal code pieces in two or more packages |
+| local repetition | Equal code pieces in one package |
+| parametric family | One template whose blanks are all parameters |
+| repeated expression | An expression with three or more uses |
+| similar behaviour | A gap, a child that only some members have, a blank that is not a parameter, or a run that control leaves (`return`, `break`, `continue`, `defer`, `or_return`): no one call replaces the members |
+| kept apart by the rules | A member is in the kernel or in a contract package, or the template needs the host and the members are under `src/` and `tools/` |
+| platform variant | The members are in files with one name and another system suffix (`_linux`, `_other`) |
+
+A family whose members are all inside the members of a larger family, with as many uses or more, is not reported. Each member of a family covers at least 70% of its nodes with the template.
+
+**The home.** The finder proposes the home of a factored procedure: the package of the members when they are in one package; "a contract package, by a decision" when a member is in `src/kernel` or `src/library/contract`, which import no support package; else the support package that each file of the members imports, or a new support package.
+
+**The ranking.** A factoring of a family of `k` uses whose template has `|T|` nodes saves `(k - 1) · |T| - k` nodes, less one node for each value or type parameter and two for each place or procedure parameter. The finder takes the family that saves the most, marks the nodes of its members as used, counts the other families again without those nodes, and repeats. So the headline "a factoring of the ranked families saves N nodes and L lines" counts each node once.
+
+**The bound of a run.** Above a product of 1,000,000 nodes of two pieces (`SIMILARITY_WEIGHTED_ALIGNMENT_NODE_PRODUCT_MOST`), the alignment of the children weighs them by their shape only. The report counts these pairs and marks each family that holds one.
+
+**The output.**
+
+| File | What it holds |
+|---|---|
+| `build/similarity/report.txt` | The measures, the totals of each area and category, the ranked families, the families that save nothing after them, the families that no call replaces, the kept families and the stale lines of the kept list. No time: the same sources give the same bytes |
+| `build/similarity/families.tsv` | One row for each reported family: rank, category, saved nodes and lines, uses, lowest score, template nodes, blanks, gaps, home, template hash, first member, reason of a kept family |
+| `build/similarity/members.tsv` | One row for each member: template hash of its family, file, first and last line, package, area, score with the first member, coverage, arguments of the blanks |
+
+**The kept list.** A family that is similar on purpose is one line of `tools/modustool/similarity_kept.txt`: its template hash in 16 hexadecimal digits (the column `template_hash`), a space, and the reason in words.
+
+```
+3f2a9c0d41b7e6a5 the kernel keeps its own copy: it imports no support package
+```
+
+The template hash does not change when a file moves, when a local is renamed, or when an argument changes. A kept family leaves the ranking and stays in the measures. The report lists each line whose hash names no family, so the list stays true.
+
+**What it does not prove.** A score of 1 says "equal after the normal form", not "the same behaviour". A type of another package in a conversion (`pkg.T(x)`) reads as a call, and a name that `using` brings is read as a global: the report marks a family whose members hold `using`.
+
 ## A module from a source outside the repository
 
 `modustool module-build` builds an outside module (`GLOSSARY.md`, "Outside module"): a module whose source is in a folder of another project. It writes the module file and the debug object. The build is the build of a module of the system: the same two steps, in the same procedures (`MODULE_CONTRACT.md`, "The steps of one module, as implemented"). The code is `tools/modustool/outside_module.odin`.
@@ -793,6 +867,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `verify <image> <checksum list>` | Verifies the release signature of the checksum list with `resources/keys/release_signing_key.public`, then the SHA-256 of the image (`INSTALL.md`, "2. Verify the files") |
 | `font`, `vector_fonts`, `pointers`, `logo`, `portraits` | Convert a source (a font, a pointer theme, the mark, the pictures of the hall of fame) into the files of the repository. A build reads the result, never the source |
 | `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
+| `similarity`, `similarity near <file>:<line>`, `similarity pair <file>:<line> <file>:<line>` | Measures how similar the code pieces of `src/` and `tools/` are: families with their factoring template, ranked by the nodes that a factoring saves, in `build/similarity/`; or the procedures most similar to one; or the score of two procedures ("The similarity finder") |
 | `library-imports` | Checks that each import of each source file of the kernel and of the contract packages names a package of the compiler or a contract package ("The imports of the kernel and of the contract packages") |
 | `rule-checks` | Checks the count of the kernel operations against the properties, and that no source of the system calls an allocator ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
