@@ -107,6 +107,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/network",
 	SOURCE_FOLDER_SUPPORT + "/tcp",
 	SOURCE_FOLDER_SUPPORT + "/virtio",
+	SOURCE_FOLDER_SUPPORT + "/bochs_display",
 	SOURCE_FOLDER_SUPPORT + "/web",
 	SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
 	SOURCE_FOLDER_SUPPORT + "/random",
