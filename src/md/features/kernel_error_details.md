@@ -1,6 +1,6 @@
 # Error details of a kernel command
 
-A kernel command that the kernel refuses gives one error record in its completion: the first argument that is wrong. A program that names a table of error details in its command receives one error detail for each argument that the kernel finds wrong, not only the first. The guide is [`docs/MODULE_CONTRACT.md`](../../docs/MODULE_CONTRACT.md), "Kernel operations".
+A kernel command that the kernel refuses gives one error record in its completion: the first argument that is wrong. A program that names a table of error details in its command receives one error detail for each argument that the kernel finds wrong, not only the first. The guide is [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "Kernel operations".
 
 ## Purpose
 
