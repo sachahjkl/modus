@@ -19,23 +19,49 @@
 // the module.
 package hostile_exports
 
+import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:support/system"
 
+// The value of the Memory_Map command that holds the memory handle, from 1:
+// the argument that an error record of the kernel names for it.
+MEMORY_MAP_ARGUMENT_MEMORY :: 1
+
+// The result of an export that fails: the error record says why.
+ERROR :: -1
+
 // bytes_of maps a memory object for the time of one export. count is 0 when
-// the kernel refuses; then status says why.
+// the kernel refuses; then status says why, and the error record holds the
+// refusal in the words of the export: argument names the parameter of the
+// export that holds the handle. error can be nil.
 @(private)
-bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags) -> (bytes: []u8, status: system.Status) {
-	address := system.memory_map(memory, flags) or_return
+bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argument: i64 = 0, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: system.Status) {
+	refusal: errors.Error_Record
+	address: rawptr
+	address, status = system.memory_map(memory, flags, error = &refusal)
+	if status != .Ok {
+		if error != nil {
+			// The record of the kernel names an argument of Memory_Map, and
+			// the kernel operation: the caller called the export, with its
+			// own arguments.
+			error^ = refusal
+			error.operation = 0
+			error.argument = refusal.argument == MEMORY_MAP_ARGUMENT_MEMORY ? argument : 0
+			if refusal.kind == i64(errors.Kind.None) {
+				error^ = errors.error_make(.Refused, found = i64(status))
+			}
+		}
+		return nil, status
+	}
 	return ([^]u8)(address)[:system.memory_size(memory) * system.PAGE_SIZE], .Ok
 }
 
 // total adds the bytes of a memory object.
 @(private)
-total :: proc "contextless" (memory: system.Lent({.Read})) -> i64 {
-	bytes, status := bytes_of(memory.handle, {})
+total :: proc "contextless" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> i64 {
+	bytes, status := bytes_of(memory.handle, {}, 1, error)
 	if status != .Ok {
-		return -i64(status)
+		return ERROR
 	}
 	sum: i64
 	for b in bytes {
@@ -49,11 +75,12 @@ held: system.Handle
 
 // keep remembers the handle that the caller lent, for a later call of kept.
 //
-// The result is the sum of the bytes of the object, read during the call, or a negative status of the kernel.
+// The result is the sum of the bytes of the object, read during the call. When the kernel refuses the map, the
+// result is -1 with the error record of the kernel for the argument memory.
 @(export, link_name = "keep")
-keep :: proc "c" (memory: system.Lent({.Read})) -> i64 {
+keep :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> i64 {
 	held = memory.handle
-	return total(memory)
+	return total(memory, error)
 }
 
 // kept uses the handle that keep remembered. The result is the status of
@@ -72,12 +99,12 @@ view: []u8
 // hold maps a memory object that the caller lent, keeps the mapping for a
 // later call of look, and gives the first byte.
 //
-// A negative result is the status of the kernel, negated, when the map is refused.
+// When the kernel refuses the map, the result is -1 with the error record of the kernel for the argument memory.
 @(export, link_name = "hold")
-hold :: proc "c" (memory: system.Lent({.Read})) -> i64 {
-	bytes, status := bytes_of(memory.handle, {})
+hold :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> i64 {
+	bytes, status := bytes_of(memory.handle, {}, 1, error)
 	if status != .Ok {
-		return -i64(status)
+		return ERROR
 	}
 	view = bytes
 	return i64(bytes[0])
@@ -88,10 +115,13 @@ hold :: proc "c" (memory: system.Lent({.Read})) -> i64 {
 // mapping, and the program of this module stops on a page fault.
 //
 // In a direct call nothing was revoked: the mapping is still there, and the result is the first byte. With no
-// earlier hold, the result is -1.
+// earlier hold, the result is -1 with an error record: `Absent` of the mappings, for the call as a whole.
 @(export, link_name = "look")
-look :: proc "c" () -> i64 {
-	return len(view) == 0 ? -1 : i64(view[0])
+look :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	if len(view) == 0 {
+		return errors.fail(error, ERROR, .Absent, .Mappings)
+	}
+	return i64(view[0])
 }
 
 // A reading of a sensor: the record of sample, 40 bytes.

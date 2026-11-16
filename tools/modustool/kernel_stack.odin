@@ -163,6 +163,18 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		// writes the serial port only and takes no lock (log_take), and
 		// machine_stop takes none. So no lock is taken below it.
 		{"kernel::[lock.odin]::lock_order_broken", "kernel::lock_take"},
+		// queue_ready logs only when a thread enters a queue outside its
+		// placement (queue_push, a check of the test build), after
+		// fault_report_begin: from then log_record returns before its wake
+		// of the readers of the log, and the machine stops. That log is the
+		// one way from queue_ready to word_wake.
+		{"kernel::queue_ready", "kernel::word_wake"},
+		// program_stop marks its program Stopped before it finishes its
+		// threads and cleans it up. thread_finish stops the program of its
+		// thread only while that program is not Stopped, and each thread
+		// that program_stop and program_cleanup finish is of that program.
+		// So below program_stop, no chain runs program_stop again.
+		{"kernel::program_stop", "kernel::program_stop"},
 	},
 	// The conversions of 16-bit floating point numbers that Odin defines in
 	// each module: the kernel has no floating point number.

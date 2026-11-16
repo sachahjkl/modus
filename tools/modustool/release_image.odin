@@ -379,6 +379,11 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 	if !found || !description_valid || len(description_entries) == 0 || description_entries[0].hash != kernel_hash {
 		return fmt.tprintf("the system description of %s does not name the kernel module of the build", image_path)
 	}
+	// A volume of a test of the TPM floors has a raised security version:
+	// once started, it would refuse each release of the repository.
+	if security_version, _ := system_description.security_version_of(description); security_version != system_description.SECURITY_VERSION {
+		return fmt.tprintf("the system description of %s has the security version %d, and the repository %d", image_path, security_version, system_description.SECURITY_VERSION)
+	}
 	// Only a published volume: the machine test packages a volume of a
 	// development build, which may hold the theme of the owner.
 	if packaging == .Publisher_Keys_Only {
@@ -882,7 +887,11 @@ release_image_command :: proc() -> int {
 		return EXIT_FAILURE
 	}
 	volume := release_boot_volume()
-	if !make_folder(BOOT_OBJECT_FOLDER) || !system_public_key_write() || !boot_volume_build(volume) {
+	if problem := boot_volume_release_problem(volume); problem != "" {
+		fmt.eprintfln("modustool: release: %s: a release never ships it", problem)
+		return EXIT_FAILURE
+	}
+	if !make_folder(BOOT_OBJECT_FOLDER) || !system_key_write() || !boot_volume_build(volume) {
 		return EXIT_FAILURE
 	}
 	build_measure_print()

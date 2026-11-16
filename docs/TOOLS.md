@@ -557,13 +557,28 @@ modustool: src/kernel/serial.odin:12: the import "modus:support/sentence" is ref
 
 ## The rules that a check holds
 
-Two rules of the system are checked when the tool builds, not only read.
+Three rules of the system are checked when the tool builds, not only read.
 
 **The count of the kernel operations.** `PROPERTIES.md` states how many operations the kernel has, in the sentence "The kernel has <number> operations". The enumeration `Operation` of `src/library/contract/operation/operation.odin` declares them. The tool counts the members of the enumeration, without `None`, and compares the two numbers. A new operation is then refused until the property states the new count, with its reason.
 
 **No source of the system calls an allocator.** A program has no heap: its memory is a mapping that it asks the kernel for, or a variable of its module. The tool reads each source file of the kernel, of the boot program, of the programs, of the modules and of the source library that is not a test, and refuses a line that calls `make`, `new`, `new_clone`, `delete`, `free` or `free_all`, or that names `context.allocator`, `context.temp_allocator` or `[dynamic]`. A comment and the text of a string are not read. A procedure of the system whose name ends with one of these words, as `caller_grant_make`, is not a call of the built-in procedure. The compiler also gets `-default-to-nil-allocator`: with it a call of an allocator fails when the program runs; the check refuses the call before the program exists.
 
-**When they run.** `modustool check` runs both after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same two conditions on the sources of the repository.
+**Each export that fails gives an error record.** A caller reads why a call failed from the error record of the export (`MODULE_CONTRACT.md`, "8. Errors that diagnose"), never from a bare negative number. A negative result can be an answer (`number("-5")` is -5), so the check reads the forms of a failure, not the values. `export_error_record_check` (`tools/modustool/export_error_record_check.odin`) parses each source file of `src/programs` and of `src/modules` that is not a test, one folder as one package. For each export with an `i64` result, no parameter `error`, and a name other than `entry`, it refuses a `return` whose value is:
+
+- a minus before a literal, a call or a conversion, or before a constant of the package: `-1`, `-i64(status)`;
+- a constant of the package whose value is a minus before a literal: `ERROR :: -1`;
+- a `?:` or `if else` expression with such a value on one side, such a value in parentheses, or in a conversion to an integer type;
+- a call of a procedure of the same package, in any of its files, with such a `return`, at any depth.
+
+A minus before a variable is an answer, and a procedure literal inside the body is another procedure: the check reads neither. A refused `return` stops the check with its place:
+
+```
+modustool: src/programs/manual/main.odin:618: the export show gives a negative number with no error record: give it the last parameter error: ^errors.Error_Record, and write the record on this path with errors.fail (docs/MODULE_CONTRACT.md, "8. Errors that diagnose")
+```
+
+What it does not see: a `return` of a variable that holds a negative number, a helper of another package, and a failure that gives 0 or an empty text. Review holds them. The design: `src/md/api/export_error_records.md`.
+
+**When they run.** `modustool check` runs the three after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same three conditions on the sources of the repository.
 
 ## The reuse list
 
@@ -781,7 +796,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `ranges` | The machines of the ranges of storage |
 | `disk_programs` | The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant that a console of the session of the named principal alice gives survives the restart and her unlock ("The disk of the disk programs") |
 | `power` | The loss of power: of the storage, of the settings, of the ranges |
-| `trusted_boot` | The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot; then the release image: the volume of Secure Boot packaged as the files of a release, verified, decompressed and started from its GPT disk |
+| `trusted_boot` | The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot; then the release image: the volume of Secure Boot packaged as the files of a release, verified, decompressed and started from its GPT disk; then the six machines of the TPM floors, with one software TPM: a newer system raises the floors, swtpm alone plants an index with an authorization value and a foreign index, which the next start removes, the older system and the older key are then refused, and with Secure Boot off each floor is foreign |
 
 A part builds only the boot volumes that its machines boot ("The incremental build", "The volumes of a command"). Each part boots the main boot volume, `build/boot_volume.img`, with these differences:
 
@@ -789,7 +804,7 @@ A part builds only the boot volumes that its machines boot ("The incremental bui
 |---|---|
 | `shortage` | The volume of the shortage of frames only |
 | `return_fault` | The main volume, and the volume of the kernel with one check skipped |
-| `trusted_boot` | The main volume, the five volumes that the boot program must refuse, the volume of the other system, and the two volumes of Secure Boot with the variable store |
+| `trusted_boot` | The main volume, the five volumes that the boot program must refuse, the volume of the other system, the two volumes of Secure Boot with the variable store, and the two volumes of the TPM floors (the newer system and the newer key) |
 | Each other part | The main volume only |
 
 The persistence and the self tests of the kernel have no part of their own: only the whole run starts them. An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.
@@ -1030,7 +1045,10 @@ Each processor has one kernel stack of 16 pages (65 536 bytes, `op.KERNEL_STACK_
 - A call through a register: the table of the indirect calls names its procedure and what it reaches (the self test, which reaches no procedure of the kernel).
 - A direct call into data: the table of the calls into data names the caller and the data symbol (the self test calls the array `test_code`).
 - A procedure that calls itself: the table of the recursions gives the most levels of it on one chain. `execute` has two: a command with a table of error details runs its operation under two frames of `execute`. `tables_free` of the IOMMU and `walk` of `mappings_report` have one level for each level of their table: `iommu.DOMAIN_TABLE_LEVELS_MOST` and `info.PAGE_TABLE_LEVELS`, 4 each. The overflow of the self test has none: the measure leaves it out.
-- A cycle break (`GLOSSARY.md`): a cycle through several procedures that a state of the kernel cuts. `lock_order_broken` logs, and the log takes a lock; but it starts the report of a fault first, and from then the log takes no lock. The measure takes the depth of `lock_order_broken` with `lock_take` left out.
+- A cycle break (`GLOSSARY.md`): a cycle through several procedures that a state of the kernel cuts. The measure takes the depth of the procedure of the row with the other procedure left out. The kernel has three:
+  - `lock_order_broken` logs, and the log takes a lock; but it starts the report of a fault first, and from then the log takes no lock. No chain below it runs `lock_take`.
+  - `queue_ready` logs only on the report of a thread outside its placement, after the start of the report of a fault; from then the log wakes no reader. No chain below it runs `word_wake`.
+  - `program_stop` marks its program Stopped first, and `thread_finish` stops only a program that is not Stopped. No chain below it runs `program_stop` again.
 - A compiled procedure that no entry reaches: a row of the table of the procedures that no code calls (the conversions of 16-bit floating point numbers that Odin adds).
 
 The measure stops the build with a line that names the procedure when a chain reaches a procedure with no frame, when a call goes to an address where no procedure starts, when a reached procedure has an indirect call or calls itself with no row, when a cycle passes through several procedures with no cycle break, and when a compiled procedure has no row and no entry reaches it.

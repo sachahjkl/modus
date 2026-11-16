@@ -13,8 +13,9 @@
 //
 // - `Boot_Info`: the record, with `Memory_Range`, `Framebuffer` and
 //   `Boot_Trust`.
-// - `Boot_Trust`, `Verifier`, `Signing_Key_Kind`, `Measure_State`: what the
-//   boot program verified and measured (docs/TRUSTED_BOOT.md).
+// - `Boot_Trust`, `Verifier`, `Signing_Key_Kind`, `Measure_State`,
+//   `Floor_State`: what the boot program verified, measured, and read of
+//   the TPM floors (docs/TRUSTED_BOOT.md).
 // - `Self_Test`: the tests of the kernel on itself.
 // - `Image_Header`, `Image_Entry`, `image_tables`, `image_entry_bytes`: the
 //   boot image.
@@ -114,18 +115,69 @@ Boot_Info :: struct {
 // The trust record (docs/TRUSTED_BOOT.md): what the boot program verified
 // and measured before it started the kernel. The kernel copies it into the
 // boot record and does not read it. All zero: nothing was verified.
+//
+// The last seven fields are the TPM floors
+// (src/md/features/rollback_floors.md): the two numbers that the boot
+// program compared, and the two floors that it read before it raised them:
+// the key floor, and the version floor of its key number.
 Boot_Trust :: struct {
-	verifier:         Verifier, // Who verified the system description.
-	key_kind:         Signing_Key_Kind, // The kind of the key that signed it.
-	public_key:       [32]u8, // The Ed25519 public key that verified the description signature.
-	description_hash: [32]u8, // The BLAKE3 hash of the system description.
-	entry_count:      u64, // The entries of the system description, the kernel included.
-	check_cycles:     u64, // The cycles of the check of the signature and of every hash.
-	measure:          Measure_State, // What the measure into the TPM gave.
-	measure_register: u64, // The register of the TPM that the boot program extended.
-	measure_value:    [32]u8, // The value of the register in the SHA-256 bank, read back from the TPM.
-	measure_status:   u64, // The status of the firmware, or the response code of the TPM, when measure is Refused or Not_Read.
-	measure_tries:    u64, // The tries of the extension: 1 when the first one worked.
+	verifier:            Verifier, // Who verified the system description.
+	key_kind:            Signing_Key_Kind, // The kind of the key that signed it.
+	public_key:          [32]u8, // The Ed25519 public key that verified the description signature.
+	description_hash:    [32]u8, // The BLAKE3 hash of the system description.
+	entry_count:         u64, // The entries of the system description, the kernel included.
+	check_cycles:        u64, // The cycles of the check of the signature and of every hash.
+	measure:             Measure_State, // What the measure into the TPM gave.
+	measure_register:    u64, // The register of the TPM that the boot program extended.
+	measure_value:       [32]u8, // The value of the register in the SHA-256 bank, read back from the TPM.
+	measure_status:      u64, // The status of the firmware, or the response code of the TPM, when measure is Refused or Not_Read.
+	measure_tries:       u64, // The tries of the extension: 1 when the first one worked.
+	security_version:    u64, // The security version of the system description.
+	key_number:          u64, // The key number that the boot program holds beside the public key.
+	version_floor:       u64, // The lowest security version that the TPM lets start with this key number. 0: none.
+	version_floor_state: Floor_State, // What the read of the version floor of this key number found.
+	key_floor:           u64, // The lowest key number that the TPM lets start. 0: none.
+	key_floor_state:     Floor_State, // What the read of the key floor found.
+	floor_status:        u64, // The status of the firmware, or the response code of the TPM, of the first read that failed.
+}
+
+// What the boot program found at the index of a TPM floor. In each state but
+// Held, the floor is 0: the boot program refuses nothing for it. With
+// Secure Boot on, the boot program removes the index of the states Foreign,
+// Never_Written and Read_Refused, and defines its own.
+Floor_State :: enum u64 {
+	None          = 0, // The boot program did not read it: the firmware has no TPM.
+	Absent        = 1, // The TPM has no index there: no system defined the floor yet, or a clear removed it.
+	Held          = 2, // The index has the attributes and the policy of a floor of this system, and holds bits: they are the floor.
+	Foreign       = 3, // An index is there with other attributes or another policy: another system defined it, or PCR 7 changed.
+	Not_Read      = 4, // The firmware or the TPM refused a read for another reason: floor_status has the code.
+	Never_Written = 5, // The area of a floor that was never written. This system writes each floor that it defines at once, so another system planted it: it can hold an authorization value that refuses each later read.
+	Read_Refused  = 6, // The area of a floor whose read the TPM refuses for its authorization: another system planted it with an authorization value.
+}
+
+// The TPM floors: indices of the TPM in the range of the owner of the
+// registry of the TCG (0x01800000 to 0x01BFFFFF). Each is a field of 64
+// bits that only gains bits; the floor is the place of its highest set bit
+// plus one (src/md/features/rollback_floors.md). There is one key floor,
+// and one version floor for each key number: a system that a stolen key
+// signed then raises only the version floor of that key.
+KEY_FLOOR_INDEX :: u32(0x0180_6D00) // The lowest key number of a boot program.
+// The version floor of the key number n is the index VERSION_FLOOR_BASE_INDEX + n,
+// for n from 1 to FLOOR_LIMIT (version_floor_index).
+VERSION_FLOOR_BASE_INDEX :: u32(0x0180_6D00)
+// The highest number that a floor holds: one bit of the field for each. A
+// security version and a key number are 1 to FLOOR_LIMIT.
+FLOOR_LIMIT :: 64
+
+// version_floor_index gives the index of the version floor of a key
+// number from 1 to FLOOR_LIMIT; 0 for another number.
+//
+// Example: the key number 2 has its version floor at 0x01806D02.
+version_floor_index :: proc "contextless" (key_number: u64) -> u32 {
+	if key_number == 0 || key_number > FLOOR_LIMIT {
+		return 0
+	}
+	return VERSION_FLOOR_BASE_INDEX + u32(key_number)
 }
 
 // Who verified the system description. A boot program that the firmware

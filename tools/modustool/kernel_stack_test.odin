@@ -384,6 +384,35 @@ kernel_stack_measure_takes_the_stated_breaks :: proc(t: ^testing.T) {
 	testing.expectf(t, len(without_cycle_break.problems) == 1 && without_cycle_break.problems[0] == "a cycle of calls has no depth: kernel::lock_take -> kernel::lock_order_broken -> kernel::log", "%v", without_cycle_break.problems[:])
 }
 
+// A cycle break whose procedure never runs again below itself:
+// kernel_interrupt 16 + 8 + stop; stop 32 + 8 + finish; finish 48, its
+// call of stop left out: stop 88, kernel_interrupt 112, and 184 above it.
+@(test)
+kernel_stack_cycle_break_of_a_procedure_itself :: proc(t: ^testing.T) {
+	listing := "0000000000001000 <kernel_interrupt>:\n" +
+		"    1000:      \tcallq\t0x1100 <kernel::program_stop>\n" +
+		"    1005:      \tcallq\t0x1400 <idle_wait>\n" +
+		"0000000000001100 <kernel::program_stop>:\n" +
+		"    1100:      \tcallq\t0x1200 <kernel::thread_finish>\n" +
+		"0000000000001200 <kernel::thread_finish>:\n" +
+		"    1200:      \tcallq\t0x1100 <kernel::program_stop>\n" +
+		"0000000000001400 <idle_wait>:\n" +
+		"    1400:      \tretq\n"
+	stop_frames := [?]Kernel_Stack_Test_Frame{{0x1000, 16}, {0x1100, 32}, {0x1200, 48}}
+	frames, _ := kernel_stack_frames_read(kernel_stack_test_elf(stop_frames[:]))
+	rules := kernel_stack_test_break_rules(false, false)
+	rules.entries = rules.entries[:1]
+	rules.recursions = nil
+	cycle_breaks := make([]Kernel_Stack_Cycle_Break, 1, context.temp_allocator)
+	cycle_breaks[0] = {"kernel::program_stop", "kernel::program_stop"}
+	rules.cycle_breaks = cycle_breaks
+	measure := kernel_stack_measure("kernel", listing, frames, rules)
+	testing.expectf(t, len(measure.problems) == 0, "%v", measure.problems[:])
+	if len(measure.lines) == 2 {
+		testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a program 296 bytes;"), measure.lines[1])
+	}
+}
+
 // The chain below a cycle break is named through it.
 @(test)
 kernel_stack_chain_passes_a_cycle_break :: proc(t: ^testing.T) {
