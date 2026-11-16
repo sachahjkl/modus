@@ -7566,6 +7566,16 @@ The design: `docs/TOOLS.md`, "When the tool takes a picture".
 
 Do not use: idle screen, stable frame, quiescent.
 
+### Due picture
+
+A due picture is a picture that a program owes its window: a change waits for it while the program waits on its clock or for the compositor.
+
+A program that paces its pictures, such as a terminal, says it before such a wait with the record `Picture_Due` (`display.picture_due_set`), and its next `Present` ends it. The compositor gives it as `due` in `compositor.windows()`, and the screen is not a settled screen while a window has one. The terminal decides it at the start of each turn of its loop, so a record that came while it drew its last picture is a due picture too. It is not a picture that the compositor has and did not draw yet: that is `waits`.
+
+The design: `src/md/features/terminal_due_picture.md`.
+
+Do not use: pending frame, redraw flag, frame request.
+
 ### Hang bound
 
 The hang bound is the one time in a test: it ends a test that waits for ever, and checks nothing about speed.

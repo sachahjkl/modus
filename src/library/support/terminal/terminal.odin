@@ -37,8 +37,8 @@
 //
 // Who uses it: the console and each program that the root service starts
 // with a terminal (`open`, `write`, `edit`, `key`), and the program
-// `terminal` (the reading side: `List_Keeping`, `hint_form_choose`). The
-// parts:
+// `terminal` (the reading side: `List_Keeping`, `hint_form_choose`,
+// `picture_wait_choose`). The parts:
 //
 // - `Kind`, `Input`, `Style`, `Tone`, `Flag`: the records of the ring.
 // - `Terminal`, `open`, `write`, `line`, `status`, `edit`, `hint`, `key`,
@@ -47,6 +47,8 @@
 //   line of code.
 // - `List_Row`, `List_Shown`, `List_Keeping`: the completion list, as the
 //   terminal keeps it.
+// - `Picture_Wait`, `picture_wait_choose` (`picture_wait.odin`): the wait of
+//   each turn of the terminal, and its due picture.
 //
 // ```odin
 // terminal := terminal_records.open(ctx) or_return
