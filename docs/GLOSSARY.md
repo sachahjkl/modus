@@ -1076,7 +1076,7 @@ Do not use: quantum.
 
 A weight is a number from 1 to 1024 of a thread: its share of a processor against the other threads of its queue, under a strategy with weights.
 
-The weight is set when the thread is created: 0 is the weight limit of the creating thread, which is 1024, the full weight, unless it was lowered, so a program that gives no weight gets the most. A write of the thread schedule changes it while the thread lives. A program only lowers the weight of a thread that lives; only the holder of the right **Schedule** on the machine raises it. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives.
+The weight is set when the thread is created: 0 is the new-thread weight limit of the creating thread or of its program, the smaller one, which is 1024, the full weight, unless it was lowered, so a program that gives no weight gets the most. A write of the thread schedule changes it while the thread lives. A program only lowers the weight of a thread that lives; only the holder of the right **Schedule** on the machine raises it. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives.
 
 The design: `docs/SCHEDULING.md`, "Weights and requests: a field at thread creation" and "The schedule of a live thread".
 
@@ -1128,7 +1128,7 @@ Do not use: slice (for this), quantum.
 
 ### Thread schedule
 
-A thread schedule is the weight, the request and the weight limit of one thread: the values that are set for it for the scheduling strategies (`op.Thread_Schedule`).
+A thread schedule is the weight, the request, the weight limit and the new-thread weight limit of one thread: the values that are set for it for the scheduling strategies (`op.Thread_Schedule`).
 
 It is the policy of scheduling that a program holds: the program chooses the values, at a slow rate, and the kernel applies them at each tick with its own strategy. No code of a program runs when the kernel picks a thread. `Thread_Create` gives the first thread schedule; thread control reads it (`Read_Schedule`) and writes it (`Write_Schedule`) while the thread lives, also while it runs.
 
@@ -1136,7 +1136,7 @@ Who can read and write it:
 
 - a program, for its own threads, by number: its write only lowers the weight and the request;
 - the holder of a thread handle: **Inspect** reads, **Control** writes, and that write only lowers too, because a holder that can end a thread can also give it a smaller share;
-- the holder of the machine handle with **Schedule** and **Inspect**, for any thread, by its machine number. Only this holder raises a weight or a request, and only it writes the weight limit.
+- the holder of the machine handle with **Schedule** and **Inspect**, for any thread, by its machine number. Only this holder raises a weight or a request, and only it writes the two weight limits.
 
 A write that lowers leaves the place of the thread in its queue as it is. A raise starts the thread again as a new thread for its strategy: what it owed and what it was owed are gone. A program chooses the moment of its writes, so with a raise it could keep a place that it got under a small weight; with one direction only, no sequence of writes gets back what a write gave up. It is not the thread placement, which is the set of the processors that can run the thread, and not a share for a budget, which the kernel does not have.
 
@@ -1146,19 +1146,43 @@ The design: `docs/SCHEDULING.md`, "The schedule of a live thread".
 
 Do not use: scheduling parameters, scheduling attributes, priority.
 
+### Program schedule
+
+A program schedule is the new-thread weight limit of one program: the value that bounds each thread that any thread of the program creates (`op.Program_Schedule`).
+
+Only the holder of the machine handle with **Schedule** and **Inspect** reads it and writes it, with the commands `Read_Program_Schedule` and `Write_Program_Schedule` of thread control, by the slot and the serial of the program. One write closes all the threads of a program at one moment, which one write for each thread cannot do: a thread can create a thread between the read of the report and its own write. The share policy writes it before it reads the threads of a program. It is not a thread schedule, which holds the values of one thread, and not a share for a budget.
+
+Example: the share policy writes `{new_thread_weight_limit = 32}` to a program of the program weight 1024.
+
+The design: `docs/SCHEDULING.md`, "The schedule of a live thread", "The new-thread weight limit"; `src/md/features/scheduling_policy.md`.
+
+Do not use: program priority, program limit.
+
 ### Weight limit
 
 A weight limit is the most that the weight of one thread can be: a number from 1 to 1024, and 1024, the full weight, for a thread that nobody limited.
 
-It makes a lowered weight last across the creation of threads. A program only lowers the weight of a thread that lives, but a new thread starts with a weight of its own: without a limit, a program leaves a lowered weight by a new thread. Only a write of the thread schedule through the machine handle with **Schedule** and **Inspect** sets the limit; a weight above the new limit becomes the limit in the same write. A write of a program for its own thread, or through a thread handle, does not read the limit of the record; it only lowers the weight, so it never passes the limit. A new thread gets the weight limit of the thread that creates it, and the first thread of a new program gets the limit of the thread that starts it: a program does not leave a limit by a new thread. The limit is a value of each thread: a thread created just before a write of the limit keeps the old one until the holder writes it too.
+It makes a lowered weight last across the creation of threads. A program only lowers the weight of a thread that lives, but a new thread starts with a weight of its own: without a limit, a program leaves a lowered weight by a new thread. Only a write of the thread schedule through the machine handle with **Schedule** and **Inspect** sets the limit; a weight above the new limit becomes the limit in the same write. A write of a program for its own thread, or through a thread handle, does not read the limit of the record; it only lowers the weight, so it never passes the limit. A new thread gets the new-thread weight limit of the thread that creates it, or of its program when that one is smaller, as its weight limit, and the first thread of a new program gets the one of the thread that starts it: a program does not leave a limit by a new thread. The limit is a value of each thread: a thread created just before a write of the limit keeps the old one until the holder writes it too.
 
-It is not a share for a program: a program under a limit that creates more threads has more threads of that weight.
+It is not a share for a program: a program under a limit that creates more threads has more threads of that weight. It is not the new-thread weight limit, which is the limit that the thread gives to its new threads.
 
 Example: the machine handle writes `{weight_limit = 256}` for a thread; the thread then has the weight 256, its own write of the weight 1024 is refused, and a thread that it creates with the weight 0 has the weight 256.
 
 The design: `docs/SCHEDULING.md`, "The schedule of a live thread", "The weight limit".
 
 Do not use: maximum priority, weight cap, ceiling.
+
+### New-thread weight limit
+
+A new-thread weight limit is the weight limit that one thread, or all the threads of one program, give to each thread that they create: a number from 1 to 1024, and for a thread at most its weight limit.
+
+A thread has one in its thread schedule, and a program has one in its schedule of a program (`op.Program_Schedule`). A creation takes the smaller of the value of the creating thread and the value of its program; the new thread gets it as its weight limit and as its own new-thread weight limit, so the threads that the new thread creates get it too. The first thread of a program that a thread starts gets it in the same way. `Thread_Create` refuses a weight above it, and the weight 0 gives it. Only a write through the machine handle with **Schedule** and **Inspect** sets a value: 0 is the default, a value above 1024 is refused, and the value of a thread above its weight limit becomes the weight limit. A thread and a program that the holder never wrote have the full value. The share policy writes the program weight divided by 32 to each program, before it reads its threads, and to each thread: after the first round of a program, the threads that it creates between two rounds sum to under one program weight, whatever the moments of their creation. It is not the weight limit of the thread itself, which bounds its own weight.
+
+Example: the share policy writes `{new_thread_weight_limit = 32}` to a program and `{weight_limit = 1024, new_thread_weight_limit = 32}` to its one thread; that thread keeps the weight 1024, and each thread that it creates before the next round has the weight 32.
+
+The design: `docs/SCHEDULING.md`, "The schedule of a live thread", "The new-thread weight limit"; `src/md/features/scheduling_policy.md`.
+
+Do not use: child weight, inherited weight, creation weight.
 
 ### Program weight
 
@@ -1176,7 +1200,7 @@ Do not use: program priority, group weight, program share.
 
 The share policy is the rule of the program `scheduler` that gives each program one program weight, whatever its count of threads: each round, it writes to each thread the program weight divided by the count of the threads of its program that count.
 
-A thread counts when it is ready or ran since the last round. The program writes the thread schedule of each thread through the machine handle, with the rights **Schedule** and **Inspect**; the kernel has no part of the rule and applies the weights at each tick. A round runs each 100 ms. The policy never gives a thread more than its program asked, and it is off until the principal turns it on (`scheduler.policy(1)`). It is not a limit: a program alone on the machine uses each processor. It is not a strategy: a strategy is a rule of the kernel that orders the threads of a queue, and the share policy only writes the weights that a strategy reads.
+A thread counts when it is ready or ran since the last round. Each program, and each of its threads, also gets a new-thread weight limit, so a thread that the program creates between two rounds has a small part. The program writes the thread schedule of each thread through the machine handle, with the rights **Schedule** and **Inspect**; the kernel has no part of the rule and applies the weights at each tick. A round runs each 100 ms. The policy never gives a thread more than its program asked, and it is off until the principal turns it on (`scheduler.policy(1)`). It is not a limit: a program alone on the machine uses each processor. It is not a strategy: a strategy is a rule of the kernel that orders the threads of a queue, and the share policy only writes the weights that a strategy reads.
 
 Example: a program with 8 threads that compute and a program with one such thread have the same weight in all, 1024.
 
@@ -1652,7 +1676,7 @@ Do not use: siginfo, fault message.
 
 Thread control is the kernel operation `Thread_Control`: it stops a thread, reads and writes its registers and its extended state, and resumes it.
 
-No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Two more commands read and write the thread schedule of a thread that is not held, with their own rights: `Read_Schedule` and `Write_Schedule`. Two more do the same for its thread placement: `Read_Placement` and `Write_Placement`. Three more serve a debugger: `Read_Breakpoints` and `Write_Breakpoints` for the breakpoints of a held thread, and `Read_Memory` for the bytes of the program of a thread.
+No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Two more commands read and write the thread schedule of a thread that is not held, with their own rights: `Read_Schedule` and `Write_Schedule`. Two more do the same for its thread placement: `Read_Placement` and `Write_Placement`. Two more read and write the program schedule of a program, through the machine handle only: `Read_Program_Schedule` and `Write_Program_Schedule`. Three more serve a debugger: `Read_Breakpoints` and `Write_Breakpoints` for the breakpoints of a held thread, and `Read_Memory` for the bytes of the program of a thread.
 
 Who can act on a thread:
 

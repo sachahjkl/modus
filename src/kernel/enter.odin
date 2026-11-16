@@ -327,10 +327,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if to.state != .Created || program_is_guest(slot.object) {
 			return .Bad_State
 		}
-		// The first thread of the program gets the weight limit of the
-		// thread that starts it, and the limit of its placement: a program
-		// does not leave a limit by a program that it starts.
-		if _, status := thread_create(slot.object, to.budget, v[1], v[2], v[3], weight_limit = intrinsics.atomic_load(&threads[index].weight_limit), processors_limit = intrinsics.atomic_load(&threads[index].processors_limit)); status != .Ok {
+		// The first thread of the program gets the limit of a new thread of
+		// the thread that starts it, and the limit of its placement: a
+		// program does not leave a limit by a program that it starts.
+		if _, status := thread_create(slot.object, to.budget, v[1], v[2], v[3], weight_limit = creation_weight_limit(index), processors_limit = intrinsics.atomic_load(&threads[index].processors_limit)); status != .Ok {
 			return status
 		}
 		to.state = .Ready
@@ -343,12 +343,15 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
 		// A weight above the full weight would raise the share: a program
 		// would take processor time that its budget does not give. A weight
-		// above the weight limit of the calling thread would undo a limit
-		// that the holder of the machine set: the new thread gets that
-		// limit. A write of the limit at the same time comes before this
-		// read or after it: the creation is then before the write or after.
-		weight_limit := intrinsics.atomic_load(&threads[index].weight_limit)
-		if !op.thread_schedule_accepted(v[4], v[5]) || v[4] > u64(weight_limit) {
+		// above the limit of a new thread of the calling thread would undo
+		// a limit that the holder of the machine set: the new thread gets
+		// that limit. A write of the value of the thread comes before this
+		// read or after it, and a write of the value of its program holds
+		// the control lock, which this operation holds: the creation is
+		// then wholly before the write or after.
+		weight_limit := creation_weight_limit(index)
+		processor_self().thread_create_weight_limit = weight_limit
+		if _, accepted := op.thread_schedule_of_new_thread(weight_limit, v[4], v[5]); !accepted {
 			return .Bad_Operation
 		}
 		// The limit of the placement of the calling thread goes to the new

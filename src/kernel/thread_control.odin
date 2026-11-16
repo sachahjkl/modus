@@ -57,15 +57,16 @@ import op "modus:contract/operation"
 // the request. The machine handle with the right Schedule
 // names any thread of the machine by its machine number, for these two
 // commands only. It needs Inspect too, for a read as each report of the
-// machine does, and for a write because a write gives the three values of
+// machine does, and for a write because a write gives the four values of
 // the record: its holder must read the schedule to keep the values that
 // it does not change.
 //
 // Only a write through the machine handle raises a weight or a request,
 // and a raised weight starts the thread again as a new thread for its
-// strategy. Each thread has a weight limit, the full weight at first.
-// Only a write through the machine handle sets it, and a new thread gets
-// the limit of the thread that creates it, with a weight up to it. So a
+// strategy. Each thread has a weight limit and a new-thread weight limit,
+// the full weight at first. Only a write through the machine handle sets
+// them, and a new thread gets the new-thread weight limit of the thread
+// that creates it as its two limits, with a weight up to it. So a
 // weight that the holder of Schedule lowered stays lowered: the program
 // of the thread cannot write it back, and cannot leave the limit by a new
 // thread.
@@ -88,6 +89,9 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	command := op.Thread_Control_Command(v[2])
 	if command == .None || v[2] > u64(max(op.Thread_Control_Command)) {
 		return .Bad_Operation
+	}
+	if op.thread_control_names_a_program(command) {
+		return program_schedule_control(caller_program, command, v, results)
 	}
 	target_index: u32
 	owner := caller_program_index
@@ -295,6 +299,10 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		}
 		results[0] = size
 		return .Ok
+	case .Read_Program_Schedule, .Write_Program_Schedule:
+		// They name a program, not a thread: program_schedule_control runs
+		// them before a thread is named.
+		return .Bad_Operation
 	case .Read_Memory:
 		// The bytes of the program of the thread (breakpoints.odin). The
 		// thread is not held: the memory of a program changes while its
@@ -341,6 +349,8 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 				refusal, refused, most = .Request, u64(schedule.request), op.REQUEST_LIMIT
 			case by_machine && schedule.weight_limit > op.WEIGHT_FULL:
 				refusal, refused, most = .Weight_Limit, u64(schedule.weight_limit), op.WEIGHT_FULL
+			case by_machine && schedule.new_thread_weight_limit > op.WEIGHT_FULL:
+				refusal, refused, most = .New_Thread_Weight_Limit, u64(schedule.new_thread_weight_limit), op.WEIGHT_FULL
 			case:
 				write_status, write_refusal, write_most := thread_schedule_write(thread, schedule, by_machine)
 				if write_status != .Ok && write_status != .Bad_Operation {
@@ -389,6 +399,67 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	return .Bad_Operation
 }
 
+// program_schedule_control runs the two commands of the schedule of a
+// program (op.Program_Schedule). Only the machine handle with Schedule and
+// Inspect names a program: its holder already orders every thread, and a
+// read of any program is a report of the machine. `number` is the slot of
+// the program and its serial (op.program_slot_and_serial). The write holds
+// the control lock and the program lock of the program: a creation by a
+// thread of that program holds the control lock too, so it comes wholly
+// before the write or wholly after it (creation_weight_limit).
+program_schedule_control :: proc "contextless" (caller_program: ^Program, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> op.Status {
+	if v[0] == 0 {
+		return .Bad_Handle
+	}
+	named := handle_find(caller_program, v[0], .None) or_return
+	if named.kind != .Machine {
+		return .Bad_Handle
+	}
+	machine_rights, _ := op.thread_control_machine_rights(command)
+	if !(machine_rights <= named.rights) {
+		return .No_Right
+	}
+	size := u64(size_of(op.Program_Schedule))
+	if v[4] < size || !user_range(caller_program, v[3], size, command == .Read_Program_Schedule) {
+		return .Bad_Address
+	}
+	slot, serial := v[1] & 0xFFFF_FFFF, u32(v[1] >> 32)
+	if slot == 0 || slot >= PROGRAM_CAPACITY {
+		return .Bad_State
+	}
+	// A slot serves a new program only under the control lock
+	// (program_create): with it the serial names one program until the
+	// operation ends.
+	if need_control() {
+		return STATUS_RETRY
+	}
+	index := u32(slot)
+	taken := program_lock(index)
+	defer program_unlock(index, taken)
+	program := &programs[index]
+	if program.serial != serial || program.state == .None || program.state == .Stopped {
+		return .Bad_State
+	}
+	// One copy in the memory of the kernel: the value that the check
+	// accepts is the value that the program gets.
+	schedule: op.Program_Schedule
+	if command == .Read_Program_Schedule {
+		schedule.new_thread_weight_limit = program_new_thread_weight_limit(program)
+		user_copy(rawptr(uintptr(v[3])), &schedule, size)
+	} else {
+		user_copy(&schedule, rawptr(uintptr(v[3])), size)
+		after, refusal := op.program_schedule_after_write(schedule)
+		if refusal != .None {
+			cpu := processor_self()
+			cpu.thread_write_refusal, cpu.thread_write_refused_value, cpu.thread_write_refused_limit = refusal, u64(schedule.new_thread_weight_limit), op.WEIGHT_FULL
+			return .Bad_Operation
+		}
+		intrinsics.atomic_store(&program.new_thread_weight_limit, after.new_thread_weight_limit)
+	}
+	results[0] = size
+	return .Ok
+}
+
 // thread_machine_number gives the machine number of a thread: its place in
 // the thread table in the low 32 bits, and the serial of the thread in that
 // place in the high 32 bits. The serial changes for each new thread of a
@@ -404,16 +475,16 @@ thread_schedule_ends :: #force_inline proc "contextless" (thread: ^Thread) -> bo
 	return thread.state == .None || thread.state == .Stopped || intrinsics.atomic_load(&thread.stop_requested)
 }
 
-// thread_schedule_read gives the weight, the request and the weight limit
-// of a thread, all of one moment: they change together under the run lock
-// of its home. The caller holds the program lock of the thread.
+// thread_schedule_read gives the weight, the request and the two weight
+// limits of a thread, all of one moment: they change together under the
+// run lock of its home. The caller holds the program lock of the thread.
 thread_schedule_read :: proc "contextless" (thread: ^Thread) -> (schedule: op.Thread_Schedule, status: op.Status) {
 	home := run_lock(thread)
 	defer run_unlock(home)
 	if thread_schedule_ends(thread) {
 		return {}, .Bad_State
 	}
-	return op.Thread_Schedule{weight = thread.weight, request = thread.request, weight_limit = thread.weight_limit}, .Ok
+	return op.Thread_Schedule{weight = thread.weight, request = thread.request, weight_limit = thread.weight_limit, new_thread_weight_limit = thread.new_thread_weight_limit}, .Ok
 }
 
 // thread_schedule_write gives a thread a weight and a request, in any state
@@ -431,11 +502,13 @@ thread_schedule_read :: proc "contextless" (thread: ^Thread) -> (schedule: op.Th
 // with one direction only, no sequence of them gets back what a write
 // gave up.
 //
-// by_machine true: the holder of the machine writes the three values. 0
-// is the default of each: the full weight for the limit, the limit for
-// the weight, the default request. A weight above the new limit becomes
-// the limit. Only this write raises a weight, and a raised thread gets
-// the zero values of its strategy fields (strategy_weight_raised).
+// by_machine true: the holder of the machine writes the four values
+// (op.thread_schedule_after_machine_write). 0 is the default of each: the
+// full weight for the limit, the limit for the weight and for the
+// new-thread weight limit, the default request. A weight or a new-thread
+// weight limit above the new limit becomes the limit. Only this write
+// raises a weight, and a raised thread gets the zero values of its
+// strategy fields (strategy_weight_raised).
 //
 // All of it is one section of the run lock of the home of the thread
 // (run_lock reads the home again after the take): a pick, a move, a wake,
@@ -455,11 +528,11 @@ thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Threa
 	}
 	old_weight := thread.weight
 	weight_limit := thread.weight_limit
+	new_thread_weight_limit := thread.new_thread_weight_limit
 	weight, request: u32
 	if by_machine {
-		weight_limit = schedule.weight_limit == 0 ? u32(op.WEIGHT_FULL) : schedule.weight_limit
-		weight = schedule.weight == 0 ? weight_limit : min(schedule.weight, weight_limit)
-		request = schedule.request == 0 ? u32(op.REQUEST_DEFAULT) : schedule.request
+		after := op.thread_schedule_after_machine_write(schedule)
+		weight, request, weight_limit, new_thread_weight_limit = after.weight, after.request, after.weight_limit, after.new_thread_weight_limit
 	} else {
 		weight = schedule.weight == 0 ? old_weight : schedule.weight
 		request = schedule.request == 0 ? thread.request : schedule.request
@@ -479,6 +552,7 @@ thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Threa
 	intrinsics.atomic_store(&thread.weight, weight)
 	intrinsics.atomic_store(&thread.request, request)
 	intrinsics.atomic_store(&thread.weight_limit, weight_limit)
+	intrinsics.atomic_store(&thread.new_thread_weight_limit, new_thread_weight_limit)
 	if weight > old_weight {
 		strategy_weight_raised(queue, home, thread)
 	}

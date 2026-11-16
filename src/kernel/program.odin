@@ -265,11 +265,23 @@ Thread :: struct #align (64) {
 	debugs_program: u32,
 	// The most that the weight can be: 1 to op.WEIGHT_FULL. Only a write
 	// of the schedule through the machine handle changes it; a new thread
-	// gets the limit of the thread that creates it. Read at a write of the
-	// schedule and at a creation only, so it is not in the hot line.
+	// gets the limit of a new thread of its creator
+	// (creation_weight_limit). Read at a write of the schedule and at a
+	// creation only, so it is not in the hot line.
 	// Written under the run lock of home (atomic: a diagnosis reads it
 	// with no lock).
 	weight_limit: u32,
+	// The weight limit of a thread that this thread creates, and of the
+	// first thread of a program that it starts, with the value of its
+	// program as a second bound (creation_weight_limit): 1 to
+	// weight_limit. Only a write of the schedule through the machine
+	// handle changes it; a new thread gets the limit of its creation as
+	// its weight limit and as its own value. It bounds the weight of a
+	// thread that the share policy never saw (docs/SCHEDULING.md, "A share
+	// for each program"). Read at a write of the schedule and at a
+	// creation only. Written under the run lock of home (atomic: a
+	// creation and a diagnosis read it with no lock).
+	new_thread_weight_limit: u32,
 	// The placement of the thread (docs/SCHEDULING.md, "The placement of a
 	// thread"). `processors`: bit n says that the processor n can run the
 	// thread; never 0, and only processors that the machine has. Read
@@ -318,6 +330,13 @@ Program :: struct {
 	thread_areas: u32, // Bit n: thread area n is in use.
 	thread_count: u32,
 	has_ports:    bool,
+	// The new-thread weight limit of the program (op.Program_Schedule): no
+	// thread of the program creates a thread with a higher weight limit.
+	// 0 is op.WEIGHT_FULL, so a new program, whose record is zero, has the
+	// full value (program_new_thread_weight_limit). Only a write through the
+	// machine handle changes it, under the program lock (atomic: a creation
+	// reads it with no lock).
+	new_thread_weight_limit: u32,
 	run_time:     u64,
 	start_time:   u64, // Microseconds since the machine started.
 	entries:      u64,
@@ -1403,14 +1422,38 @@ thread_free :: proc "contextless" (thread: ^Thread) {
 	budgets[thread.budget].amounts.threads += 1
 }
 
+// program_new_thread_weight_limit gives the new-thread weight limit of a
+// program: the stored value, where 0 is the full weight.
+program_new_thread_weight_limit :: proc "contextless" (program: ^Program) -> u32 {
+	value := intrinsics.atomic_load(&program.new_thread_weight_limit)
+	return value == 0 ? u32(op.WEIGHT_FULL) : value
+}
+
+// creation_weight_limit gives the weight limit of a thread that the thread
+// `creator` creates, or of the first thread of a program that it starts:
+// the smaller of its own new-thread weight limit and the one of its
+// program (op.new_thread_weight_limit_of_creation). The creation and a
+// write of the value of the program both hold the control lock, so each
+// creation comes wholly before the write or wholly after it: a thread
+// created before it is in each thread report read after it, and a thread
+// created after it has the new value (docs/SCHEDULING.md, "A share for
+// each program").
+creation_weight_limit :: proc "contextless" (creator: u32) -> u32 {
+	thread := &threads[creator]
+	return op.new_thread_weight_limit_of_creation(intrinsics.atomic_load(&thread.new_thread_weight_limit), program_new_thread_weight_limit(&programs[thread.program]))
+}
+
 // thread_create adds a thread to a program. The kernel makes the thread
 // area: the thread record and the kernel ring of the thread.
 // The budget pays for the slot and for the thread area. The weight and the
 // request are checked by the caller, the weight against weight_limit too;
 // 0 gives the weight limit and the default request (docs/SCHEDULING.md).
-// weight_limit is the limit of the thread that creates this one: a
-// program does not leave a limit by a new thread, or by the first thread
-// of a program that it starts. processors_limit is the limit of the
+// weight_limit is the limit of a new thread of the thread that creates
+// this one (creation_weight_limit), which the new thread gets as its
+// weight limit and as its own new-thread weight limit
+// (op.thread_schedule_of_new_thread): a program
+// does not leave a limit by a new thread, or by the first thread of a
+// program that it starts. processors_limit is the limit of the
 // placement of that thread, for the same reason: the new thread gets it
 // as its set of processors and as its limit; 0 is every processor. The
 // caller holds the control lock.
@@ -1485,9 +1528,12 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	thread.serial = serial
 	thread.wait_serial = wait_serial
 	thread.home = home
-	thread.weight_limit = weight_limit
-	thread.weight = weight == 0 ? weight_limit : u32(weight)
-	thread.request = request == 0 ? op.REQUEST_DEFAULT : u32(request)
+	// The caller checked the values against the same limit, so ok is true.
+	schedule, _ := op.thread_schedule_of_new_thread(weight_limit, weight, request)
+	thread.weight_limit = schedule.weight_limit
+	thread.new_thread_weight_limit = schedule.new_thread_weight_limit
+	thread.weight = schedule.weight
+	thread.request = schedule.request
 	// The limit of a thread that lives is never empty and holds only
 	// processors of the machine; 0 here is the first thread of the root
 	// service, or a caller with no limit to give.
