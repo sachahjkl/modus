@@ -671,14 +671,38 @@ interface_font_of :: proc "contextless" () -> ^Interface_Font {
 	return program_interface_font_given ? &program_interface_font : nil
 }
 
+// appearance_apply gives the appearance in force of the settings page to
+// src/library/support/graphics. It gives true when the appearance changed:
+// the caller then draws its whole window, so that no picture shows two
+// appearances. With no page the program keeps the dark appearance.
+appearance_apply :: proc "contextless" () -> (changed: bool) {
+	if settings_page == nil {
+		return false
+	}
+	return appearance_of_choice_use(settings.read(settings_page))
+}
+
+// appearance_of_choice_use makes the appearance in force of a choice the
+// appearance of the graphics package, and gives true when it changed.
+@(private)
+appearance_of_choice_use :: proc "contextless" (choice: settings.Choice) -> bool {
+	wanted := choice.appearance_in_force == .Light ? graphics.Appearance.Light : graphics.Appearance.Dark
+	if wanted == graphics.appearance {
+		return false
+	}
+	graphics.appearance_use(wanted)
+	return true
+}
+
 // text_settings_apply gives the choice of the settings page to
-// src/library/support/graphics: the font, the order of the stripes, and the glyph cache
-// of the grid fit.
+// src/library/support/graphics: the font, the order of the stripes, the
+// glyph cache of the grid fit, and the appearance in force.
 text_settings_apply :: proc "contextless" () {
 	if settings_page == nil {
 		return
 	}
 	choice := settings.read(settings_page)
+	_ = appearance_of_choice_use(choice)
 	grid_fit := settings.grid_fit_of(choice)
 	font := settings.font_of(choice) == .Spleen ? graphics.Text_Font.Spleen : graphics.Text_Font.Vector
 	if glyph_cache_valid[grid_fit] {

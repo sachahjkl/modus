@@ -553,24 +553,24 @@ case_row_lines :: proc "contextless" (item: ^Case) -> (lines: int) {
 }
 
 card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, accent: graphics.Color) {
-	graphics.block(canvas, x, y, width, height, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
-	graphics.outline(canvas, x, y, width, height, 1, graphics.mix(graphics.COLOR_CARD_BOTTOM, accent, 72))
+	graphics.block(canvas, x, y, width, height, graphics.colors.card_top, graphics.colors.card_bottom)
+	graphics.outline(canvas, x, y, width, height, 1, graphics.mix(graphics.colors.card_bottom, accent, 72))
 	graphics.fill(canvas, x, y, 4, height, accent)
 	graphics.text(canvas, x + 16, y + 12, title, accent)
-	graphics.text(canvas, x + width - 16 - graphics.text_width(caption), y + 12, caption, graphics.COLOR_DIM)
+	graphics.text(canvas, x + width - 16 - graphics.text_width(caption), y + 12, caption, graphics.colors.dim)
 }
 
 // mark draws the square of an answer: the color of a program when it is
 // the expected answer, the color "failed" when it is not.
 mark :: proc "contextless" (canvas: graphics.Canvas, x, y: int, right: bool) {
-	graphics.fill(canvas, x, y + 4, 8, 8, right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
+	graphics.fill(canvas, x, y + 4, 8, 8, right ? graphics.colors.program : graphics.colors.failed)
 }
 
 draw :: proc "contextless" (canvas: graphics.Canvas) {
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.colors.background)
 	for y := 12; y < HEIGHT; y += 24 {
 		for x := 12; x < WIDTH; x += 24 {
-			graphics.fill(canvas, x, y, 2, 2, graphics.COLOR_POINT)
+			graphics.fill(canvas, x, y, 2, 2, graphics.colors.point)
 		}
 	}
 	// The cases: one row for each, one column for each way. An answer has
@@ -581,20 +581,20 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	for &item in cases[:case_count] {
 		height += row_height(case_row_lines(&item))
 	}
-	card(canvas, CARD_X, y, CARD_WIDTH, height, "one description, three ways to call", "module sample, the same arguments", graphics.COLOR_KERNEL)
+	card(canvas, CARD_X, y, CARD_WIDTH, height, "one description, three ways to call", "module sample, the same arguments", graphics.colors.kernel)
 	y += 40
-	graphics.text(canvas, NAME_X, y, "export  table", graphics.COLOR_DIM)
+	graphics.text(canvas, NAME_X, y, "export  table", graphics.colors.dim)
 	for way in Way {
-		graphics.text(canvas, ANSWER_X + int(way) * COLUMN_WIDTH, y, way_names[way], graphics.COLOR_DIM)
+		graphics.text(canvas, ANSWER_X + int(way) * COLUMN_WIDTH, y, way_names[way], graphics.colors.dim)
 	}
 	y += LINE
 	for &item in cases[:case_count] {
-		graphics.text(canvas, NAME_X, y, item.name, graphics.COLOR_TEXT)
+		graphics.text(canvas, NAME_X, y, item.name, graphics.colors.text)
 		for way in Way {
 			answer := &item.answers[way]
 			x := ANSWER_X + int(way) * COLUMN_WIDTH
 			mark(canvas, x, y, answer.right)
-			text_lines(canvas, x + 16, y, ANSWER_ROOM, answer_text(answer), answer.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
+			text_lines(canvas, x + 16, y, ANSWER_ROOM, answer_text(answer), answer.right ? graphics.colors.text : graphics.colors.failed)
 		}
 		y += row_height(case_row_lines(&item))
 	}
@@ -616,33 +616,33 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		shown += 1
 	}
 	hostile_height := CARD_HEAD + rows_height + (shown < hostile_count ? LINE : 0)
-	card(canvas, CARD_X, y, CARD_WIDTH, hostile_height, "a hostile caller, through the call host", "isolated.decode, export_serve", graphics.COLOR_FAILED)
+	card(canvas, CARD_X, y, CARD_WIDTH, hostile_height, "a hostile caller, through the call host", "isolated.decode, export_serve", graphics.colors.failed)
 	row := y + 40
 	for &item in hostile[:shown] {
 		mark(canvas, NAME_X, row, item.answer.right)
-		graphics.text(canvas, NAME_X + 16, row, item.name, graphics.COLOR_TEXT)
-		row += row_height(text_lines(canvas, HOSTILE_ANSWER_X, row, HOSTILE_ANSWER_ROOM, answer_text(&item.answer), item.answer.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED))
+		graphics.text(canvas, NAME_X + 16, row, item.name, graphics.colors.text)
+		row += row_height(text_lines(canvas, HOSTILE_ANSWER_X, row, HOSTILE_ANSWER_ROOM, answer_text(&item.answer), item.answer.right ? graphics.colors.text : graphics.colors.failed))
 	}
 	if shown < hostile_count {
 		rest_buffer: [64]u8
-		graphics.text(canvas, NAME_X, row, system.format(rest_buffer[:], "and ", u64(hostile_count - shown), " cases more: the window has no line for them"), graphics.COLOR_DIM)
+		graphics.text(canvas, NAME_X, row, system.format(rest_buffer[:], "and ", u64(hostile_count - shown), " cases more: the window has no line for them"), graphics.colors.dim)
 	}
 	// The measures.
 	y = measures_y
-	card(canvas, CARD_X, y, CARD_WIDTH, MEASURES_HEIGHT, "nanoseconds for one call of sum_values", "rows of 40 bytes, the least of several runs", graphics.COLOR_MEMORY)
+	card(canvas, CARD_X, y, CARD_WIDTH, MEASURES_HEIGHT, "nanoseconds for one call of sum_values", "rows of 40 bytes, the least of several runs", graphics.colors.memory)
 	row = y + 40
-	graphics.text(canvas, NAME_X, row, "the way", graphics.COLOR_DIM)
+	graphics.text(canvas, NAME_X, row, "the way", graphics.colors.dim)
 	sizes := SIZES
 	buffer: [24]u8
 	for size, column in sizes {
-		graphics.text(canvas, ANSWER_X + 16 + column * 160, row, system.format(buffer[:], u64(size), " rows"), graphics.COLOR_DIM)
+		graphics.text(canvas, ANSWER_X + 16 + column * 160, row, system.format(buffer[:], u64(size), " rows"), graphics.colors.dim)
 	}
 	row += LINE
 	for way in Measure_Way {
-		graphics.text(canvas, NAME_X, row, measure_names[way], graphics.COLOR_TEXT)
+		graphics.text(canvas, NAME_X, row, measure_names[way], graphics.colors.text)
 		for column in 0 ..< 3 {
 			value := measures[way][column]
-			graphics.text(canvas, ANSWER_X + 16 + column * 160, row, value == 0 ? "does not fit" : system.format(buffer[:], value), value == 0 ? graphics.COLOR_DIM : graphics.COLOR_TEXT)
+			graphics.text(canvas, ANSWER_X + 16 + column * 160, row, value == 0 ? "does not fit" : system.format(buffer[:], value), value == 0 ? graphics.colors.dim : graphics.colors.text)
 		}
 		row += LINE
 	}

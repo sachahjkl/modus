@@ -20,7 +20,7 @@ draw_damage_on_surface :: proc "contextless" (table: ^Draw_Table, canvas: graphi
 	for rectangle in rectangles {
 		area := intersection(rectangle, {0, 0, canvas.width, canvas.height})
 		if !empty(area) {
-			graphics.fill(canvas, area.left, area.top, area.right - area.left, area.bottom - area.top, graphics.COLOR_BACKGROUND)
+			graphics.fill(canvas, area.left, area.top, area.right - area.left, area.bottom - area.top, graphics.colors.background)
 		}
 		execute_in_rectangle(table, canvas, rectangle)
 	}
@@ -144,7 +144,7 @@ text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: 
 			if cell.reverse {
 				graphics.fill(canvas, left, top, graphics.CELL_WIDTH, graphics.CELL_HEIGHT, cell.color)
 				bytes := cell_character_put(run[:], 0, max(cell.character, ' '))
-				text_draw(canvas, left, top, string(run[:bytes]), graphics.COLOR_BACKGROUND, 1)
+				text_draw(canvas, left, top, string(run[:bytes]), graphics.colors.background, 1)
 				column += 1
 				continue
 			}

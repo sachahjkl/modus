@@ -319,17 +319,17 @@ draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	builder: interface.Text_Builder
-	content := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "THE MODULE", "cryptography: Odin core:crypto dev-2026-05, taken with a proof of origin", graphics.COLOR_KERNEL)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "THE MODULE", "cryptography: Odin core:crypto dev-2026-05, taken with a proof of origin", graphics.colors.kernel)
 	column := interface.column_of(content)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "BLAKE3", hash_text(&builder, module_hash[:]), graphics.COLOR_TEXT, 120)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "BLAKE3", hash_text(&builder, module_hash[:]), graphics.colors.text, 120)
 	builder.count = 0
 	interface.text_put_number(&builder, u64(module_size))
 	interface.text_put(&builder, " bytes; one call of an export: ")
 	interface.text_put_number(&builder, empty_call_nanoseconds)
 	interface.text_put(&builder, " ns")
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "size", interface.text_of(&builder), graphics.COLOR_TEXT, 120)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "size", interface.text_of(&builder), graphics.colors.text, 120)
 
-	content = interface.card(&frame, {8, 116, WIDTH - 16, 276}, "THE VECTORS", "through the exports of the module, live", graphics.COLOR_PROGRAM)
+	content = interface.card(&frame, {8, 116, WIDTH - 16, 276}, "THE VECTORS", "through the exports of the module, live", graphics.colors.program)
 	column = interface.column_of(content)
 	cells: [4]interface.Area
 	sizes := [4]interface.Size{interface.characters(20), interface.characters(22), interface.characters(8), interface.share()}
@@ -339,15 +339,15 @@ draw :: proc "contextless" (window: ^display.Window) {
 		line := interface.column_take(&column, LINE)
 		interface.table_band(&frame, {line.x - 8, line.y, line.width + 16, line.height}, index)
 		interface.row_split(line, sizes[:], cells[:], 16)
-		interface.cell_text(&frame, cells[0], vector.name, graphics.COLOR_TEXT)
-		interface.cell_text(&frame, cells[1], vector.standard, graphics.COLOR_DIM)
-		interface.cell_text(&frame, cells[2], vector.passed ? "passed" : "FAILED", vector.passed ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
+		interface.cell_text(&frame, cells[0], vector.name, graphics.colors.text)
+		interface.cell_text(&frame, cells[1], vector.standard, graphics.colors.dim)
+		interface.cell_text(&frame, cells[2], vector.passed ? "passed" : "FAILED", vector.passed ? graphics.colors.program : graphics.colors.failed)
 		if vector.checks {
-			interface.cell_text(&frame, cells[3], vector.refused ? "refused, no byte given" : "NOT refused", vector.refused ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
+			interface.cell_text(&frame, cells[3], vector.refused ? "refused, no byte given" : "NOT refused", vector.refused ? graphics.colors.program : graphics.colors.failed)
 		}
 	}
 
-	content = interface.card(&frame, {8, 400, WIDTH - 16, HEIGHT - 408}, "THE SPEEDS", "the mean of 100 calls, system.nanoseconds", graphics.COLOR_MACHINE)
+	content = interface.card(&frame, {8, 400, WIDTH - 16, HEIGHT - 408}, "THE SPEEDS", "the mean of 100 calls, system.nanoseconds", graphics.colors.machine)
 	column = interface.column_of(content)
 	most: u64 = 1
 	for speed in speeds[:speed_count] {
@@ -360,12 +360,12 @@ draw :: proc "contextless" (window: ^display.Window) {
 		line := interface.column_take(&column, LINE)
 		interface.table_band(&frame, {line.x - 8, line.y, line.width + 16, line.height}, index)
 		interface.row_split(line, speed_sizes[:], cells[:], 16)
-		interface.cell_text(&frame, cells[0], speed.name, graphics.COLOR_TEXT)
-		interface.bar(&frame, {cells[1].x, cells[1].y + 8, cells[1].width, 8}, speed.nanoseconds_of_call, most, graphics.COLOR_MACHINE)
+		interface.cell_text(&frame, cells[0], speed.name, graphics.colors.text)
+		interface.bar(&frame, {cells[1].x, cells[1].y + 8, cells[1].width, 8}, speed.nanoseconds_of_call, most, graphics.colors.machine)
 		builder.count = 0
 		interface.text_put_number(&builder, speed.nanoseconds_of_call)
 		interface.text_put(&builder, " ns")
-		interface.cell_text(&frame, cells[2], interface.text_of(&builder), graphics.COLOR_TEXT, .Right)
+		interface.cell_text(&frame, cells[2], interface.text_of(&builder), graphics.colors.text, .Right)
 		// Bytes in one second for a text to seal or hash; calls in one
 		// second for an operation on a key, whose speed is not a rate of bytes.
 		builder.count = 0
@@ -376,7 +376,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 			interface.text_put_number(&builder, 1_000_000_000 / max(speed.nanoseconds_of_call, 1))
 			interface.text_put(&builder, " calls")
 		}
-		interface.cell_text(&frame, cells[3], interface.text_of(&builder), graphics.COLOR_TEXT, .Right)
+		interface.cell_text(&frame, cells[3], interface.text_of(&builder), graphics.colors.text, .Right)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

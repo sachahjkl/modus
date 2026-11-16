@@ -79,10 +79,10 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	built := Canvas{pixels = raw_data(built_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
 	drawn := Canvas{pixels = raw_data(demand_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
 	for fraction in ([3]i64{0, 21, 43}) {
-		clear(built, COLOR_CARD_BOTTOM)
-		clear(drawn, COLOR_CARD_BOTTOM)
-		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 2 * glyph_cache.SUBPIXEL + fraction, 0, placed[:count], 1, COLOR_TEXT)
-		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 2 * glyph_cache.SUBPIXEL + fraction, 0, on_demand[:count], 1, COLOR_TEXT, &reader)
+		clear(built, DARK_CARD_BOTTOM)
+		clear(drawn, DARK_CARD_BOTTOM)
+		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 2 * glyph_cache.SUBPIXEL + fraction, 0, placed[:count], 1, DARK_TEXT)
+		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 2 * glyph_cache.SUBPIXEL + fraction, 0, on_demand[:count], 1, DARK_TEXT, &reader)
 		testing.expectf(t, built_pixels == demand_pixels, "the place %v/64: the pixels of the glyph cache", fraction)
 	}
 	// A frame that began before the publication: the replacement glyph, as
@@ -92,10 +92,10 @@ a_text_on_demand_draws_the_pixels_of_the_glyph_cache :: proc(t: ^testing.T) {
 	for &glyph in replaced[1:count] {
 		glyph.glyph = text_shaping.REPLACEMENT_GLYPH
 	}
-	clear(built, COLOR_CARD_BOTTOM)
-	clear(drawn, COLOR_CARD_BOTTOM)
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 0, 0, replaced[:count], 1, COLOR_TEXT, &reader)
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, on_demand[:count], 1, COLOR_TEXT, &reader)
+	clear(built, DARK_CARD_BOTTOM)
+	clear(drawn, DARK_CARD_BOTTOM)
+	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, built, 0, 0, replaced[:count], 1, DARK_TEXT, &reader)
+	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, on_demand[:count], 1, DARK_TEXT, &reader)
 	testing.expect(t, built_pixels == demand_pixels)
 }
 
@@ -155,16 +155,16 @@ the_ink_lies_inside_the_measured_box :: proc(t: ^testing.T) {
 		testing.expect(t, ok)
 		place := i64(32 * 64) + i64(next(&state) % 64)
 		for &pixel in pixels {
-			pixel = COLOR_CARD_BOTTOM
+			pixel = DARK_CARD_BOTTOM
 		}
-		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, LINE_TOP, placed[:count], 1, COLOR_TEXT)
+		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, LINE_TOP, placed[:count], 1, DARK_TEXT)
 		// The box in whole pixels: from the pixel of the origin to the pixel
 		// of the end, widened by the margin.
 		left := int(place / 64) - PROPORTIONAL_INK_MARGIN
 		right := int((place + width + 63) / 64) + PROPORTIONAL_INK_MARGIN
 		for row in 0 ..< HEIGHT {
 			for column in 0 ..< WIDTH {
-				if pixels[row * WIDTH + column] == COLOR_CARD_BOTTOM {
+				if pixels[row * WIDTH + column] == DARK_CARD_BOTTOM {
 					continue
 				}
 				if column < left || column >= right || row < LINE_TOP || row >= LINE_TOP + 16 {
@@ -191,10 +191,10 @@ a_proportional_text_outside_its_limits :: proc(t: ^testing.T) {
 	placed := [3]text_shaping.Placed_Glyph{{glyph = 'A' - glyph_cache.ASCII_FIRST, x = 0}, {glyph = glyph_cache.CHARACTER_COUNT, x = 640}, {glyph = 'W' - glyph_cache.ASCII_FIRST, x = max(i32)}}
 	places := [?]i64{-(1 << 40), 1 << 40, -64 * 70, 64 * 70}
 	for place in places {
-		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, 0, placed[:], 1, COLOR_TEXT)
+		text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, place, 0, placed[:], 1, DARK_TEXT)
 	}
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], 4, COLOR_TEXT)
-	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, 0, -1000, placed[:], 1, COLOR_TEXT)
+	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, 0, 0, placed[:], 4, DARK_TEXT)
+	text_proportional_with(&cache, &square_root, tables, .Red_Green_Blue, canvas, 0, -1000, placed[:], 1, DARK_TEXT)
 	for pixel in pixels {
 		testing.expect_value(t, pixel, Color(0))
 	}

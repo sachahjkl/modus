@@ -108,7 +108,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "palette_result.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "A command chosen in the palette runs as a line of the console: memory() is in the console behind the panel."},
 	{file = "palette_empty.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The palette with letters that nothing matches: it says that nothing has them in its name."},
 	{file = "palette_no_provider.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The palette after the console lost its grant palette: the count says that it has no commands, and shutdown is not found."},
-	{file = "pointers_system.png", group = .Desktop, guide = "docs/POINTERS.md", caption = "The pointer pictures: each shape of the pointer theme of the system, at 24 and 48 pixels, with the lines of its hot spot."},
+	{file = "pointers_system.png", group = .Desktop, guide = "docs/POINTERS.md", caption = "The pointer pictures: each shape of the pointer theme of the system, in the dark form and in the light form at 24 and 48 pixels, with the lines of its hot spot."},
 	{file = "pointer_text.png", group = .Desktop, guide = "docs/POINTERS.md", caption = "The pointer over the text of the console takes the shape of a text cursor."},
 
 	// The console and the terminal.
@@ -196,6 +196,10 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "font_without_grid_fit.png", group = .Interface, guide = "docs/FONTS.md", caption = "The setting of the grid fit turned off: the vector font drawn from its second glyph cache."},
 	{file = "font_candidates.png", group = .Interface, guide = "docs/FONTS.md", caption = "Six candidate fonts beside Spleen 8x16, each from a glyph cache in fixed point, and a word of each enlarged."},
 	{file = "settings.png", group = .Interface, guide = "docs/FONTS.md", caption = "The program settings: the font, the subpixel order, the pointer theme and the grid fit change while the programs run."},
+	{file = "desktop_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The light appearance: the bar, the console and the settings in the light form of the color tokens, set with settings.set(\"appearance\", \"light\")."},
+	{file = "console_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The console in the light appearance: each value kind keeps its color, in its light value."},
+	{file = "action_bar.png", group = .Interface, guide = "docs/INTERFACE.md", caption = "The action bar of a window: each key combination drawn as keycaps, then the name of its action, a thin divider between items."},
+	{file = "action_bar_more.png", group = .Interface, guide = "docs/INTERFACE.md", caption = "A narrow action bar: the items of lowest priority wait in the list of the more button, which opens upward at the right edge of the bar."},
 	{file = "keys_french.png", group = .Interface, guide = "docs/FONTS.md", caption = "The layout of France in the console: é from its key, ê from the dead key ^, € from AltGr with e, each drawn from the glyph cache with no box."},
 	{file = "settings_kept.png", group = .Interface, guide = "docs/FONTS.md", caption = "A setting kept across a restart of the machine: the next start finds the font Spleen in the store of settings."},
 

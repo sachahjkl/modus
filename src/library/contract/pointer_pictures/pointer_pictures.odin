@@ -5,7 +5,7 @@
 // language.
 //
 //   Header         512 bytes, at 0
-//   Shape_Entry    16 bytes, shape_count times, at 512
+//   Shape_Entry    16 bytes, shape_count times for each form, at 512
 //   Picture_Entry  32 bytes, picture_count times, after the shapes
 //   zero bytes to a multiple of 64
 //   pixels         4 bytes each (0xAARRGGBB, premultiplied alpha), at pixel_offset
@@ -13,12 +13,12 @@
 // A reader does not trust the file: validate checks each offset, count and
 // pixel once, and the reads after it need no check.
 //
-// See [pointer theme file](term:pointer-theme-file),
+// See [pointer theme file](term:pointer-theme-file), [pointer form](term:pointer-form),
 // [pointer picture](term:pointer-picture) and [hot spot](term:hot-spot).
 package pointer_pictures
 
 MAGIC :: u64(0x535245544E494F50) // The bytes "POINTERS".
-VERSION :: 1 // The version of the format. A reader refuses another.
+VERSION :: 2 // The version of the format. A reader refuses another.
 HEADER_SIZE :: 512 // The bytes of `Header`.
 SHAPE_ENTRY_SIZE :: 16 // The bytes of `Shape_Entry`.
 PICTURE_ENTRY_SIZE :: 32 // The bytes of `Picture_Entry`.
@@ -32,6 +32,14 @@ PICTURE_SIDE_LIMIT :: 256 // The largest width, height and nominal size.
 DELAY_LIMIT :: 60_000 // Milliseconds: the longest frame of an animation.
 SHAPE_COUNT_LIMIT :: 256 // The shapes of one file.
 PICTURE_COUNT_LIMIT :: 1 << 16 // The pictures of one file.
+FORM_COUNT_LIMIT :: len(Pointer_Form) // The forms of one file.
+
+// The forms of a theme: one set of pictures for a dark desktop, one for a
+// light desktop. A theme with one form gives it for both.
+Pointer_Form :: enum u32 {
+	Dark  = 0, // A light fill in a dark edge: on dark surfaces.
+	Light = 1, // A dark fill in a light edge: on light surfaces.
+}
 
 // The names of the pointer theme files in the resource table of the boot
 // image (modustool pointers). The compositor takes the first one that the
@@ -106,9 +114,9 @@ shape_name :: proc "contextless" (number: u32) -> string {
 Header :: struct {
 	magic:         u64, // MAGIC.
 	version:       u32, // VERSION.
-	shape_count:   u32, // The shape entries.
+	shape_count:   u32, // The shape entries of one form.
 	picture_count: u32, // The picture entries.
-	reserved:      u32, // 0.
+	form_count:    u32, // 1 or 2: the shape table holds shape_count entries for each form, the dark form first.
 	pixel_offset:  u64, // From the start of the file: the first multiple of 64 after the tables.
 	pixel_size:    u64, // Bytes of pixels, to the end of the file.
 	file_size:     u64, // The bytes of the file.
@@ -208,6 +216,7 @@ Field :: enum u32 {
 	Delay,
 	Picture_Pixels,
 	Pixel,
+	Form_Count,
 }
 
 // Problem: what validate found. Zero is no problem. index is the entry of
@@ -276,13 +285,20 @@ validate :: proc "contextless" (file: []u8) -> Problem {
 	if head.shape_count > SHAPE_COUNT_LIMIT {
 		return problem_of(.Too_Many, .Header, .Shape_Count, 0, u64(head.shape_count), SHAPE_COUNT_LIMIT)
 	}
+	if head.form_count == 0 {
+		return problem_of(.Zero, .Header, .Form_Count, 0, 0, 1)
+	}
+	if head.form_count > FORM_COUNT_LIMIT {
+		return problem_of(.Too_Many, .Header, .Form_Count, 0, u64(head.form_count), FORM_COUNT_LIMIT)
+	}
+	shape_entry_count := head.shape_count * head.form_count // At most 512: no overflow.
 	if head.picture_count == 0 {
 		return problem_of(.Zero, .Header, .Picture_Count, 0, 0, 1)
 	}
 	if head.picture_count > PICTURE_COUNT_LIMIT {
 		return problem_of(.Too_Many, .Header, .Picture_Count, 0, u64(head.picture_count), PICTURE_COUNT_LIMIT)
 	}
-	expected_offset := pixel_offset_for(u64(head.shape_count), u64(head.picture_count))
+	expected_offset := pixel_offset_for(u64(shape_entry_count), u64(head.picture_count))
 	if head.pixel_offset != expected_offset {
 		return problem_of(.Wrong_Offset, .Header, .Pixel_Offset, 0, head.pixel_offset, expected_offset)
 	}
@@ -302,17 +318,26 @@ validate :: proc "contextless" (file: []u8) -> Problem {
 		return problem
 	}
 
-	shapes := ([^]Shape_Entry)(raw_data(file[HEADER_SIZE:]))[:head.shape_count]
-	pictures := ([^]Picture_Entry)(raw_data(file[HEADER_SIZE + int(head.shape_count) * SHAPE_ENTRY_SIZE:]))[:head.picture_count]
+	shapes := ([^]Shape_Entry)(raw_data(file[HEADER_SIZE:]))[:shape_entry_count]
+	pictures := ([^]Picture_Entry)(raw_data(file[HEADER_SIZE + int(shape_entry_count) * SHAPE_ENTRY_SIZE:]))[:head.picture_count]
 	pixels := ([^]u32)(raw_data(file[head.pixel_offset:]))[:head.pixel_size / 4]
+	// Each form is a run of shape_count entries: the numbers increase in a
+	// run, and each run has the arrow.
 	has_arrow := false
 	for index in 0 ..< len(shapes) {
 		entry := shapes[index]
 		at := u64(index)
+		first_of_form := index % int(head.shape_count) == 0
+		if first_of_form && index > 0 {
+			if !has_arrow {
+				return problem_of(.No_Arrow, .Shapes, .Shape, at - u64(head.shape_count), u64(shapes[index - int(head.shape_count)].shape), 0)
+			}
+			has_arrow = false
+		}
 		if entry.shape > u32(max(Pointer_Shape)) {
 			return problem_of(.Unknown_Shape, .Shapes, .Shape, at, u64(entry.shape), u64(max(Pointer_Shape)))
 		}
-		if index > 0 && entry.shape <= shapes[index - 1].shape {
+		if !first_of_form && entry.shape <= shapes[index - 1].shape {
 			return problem_of(.Out_Of_Order, .Shapes, .Shape, at, u64(entry.shape), u64(shapes[index - 1].shape) + 1)
 		}
 		has_arrow ||= entry.shape == u32(Pointer_Shape.Arrow)
@@ -357,7 +382,8 @@ validate :: proc "contextless" (file: []u8) -> Problem {
 		}
 	}
 	if !has_arrow {
-		return problem_of(.No_Arrow, .Shapes, .Shape, 0, u64(shapes[0].shape), 0)
+		last_form := u64(len(shapes) - int(head.shape_count))
+		return problem_of(.No_Arrow, .Shapes, .Shape, last_form, u64(shapes[last_form].shape), 0)
 	}
 	for index in 0 ..< len(pictures) {
 		picture := pictures[index]
@@ -405,13 +431,22 @@ header :: proc "contextless" (file: []u8) -> ^Header {
 	return (^Header)(raw_data(file))
 }
 
-shape_entries :: proc "contextless" (file: []u8) -> []Shape_Entry {
-	return ([^]Shape_Entry)(raw_data(file[HEADER_SIZE:]))[:header(file).shape_count]
+// form_of gives the form that a theme has for the form asked: a theme with
+// one form gives it for both.
+form_of :: proc "contextless" (file: []u8, form: Pointer_Form) -> Pointer_Form {
+	return u32(form) < header(file).form_count ? form : .Dark
+}
+
+// shape_entries gives the shape entries of one form.
+shape_entries :: proc "contextless" (file: []u8, form: Pointer_Form) -> []Shape_Entry {
+	head := header(file)
+	first := int(form_of(file, form)) * int(head.shape_count)
+	return ([^]Shape_Entry)(raw_data(file[HEADER_SIZE + first * SHAPE_ENTRY_SIZE:]))[:head.shape_count]
 }
 
 picture_entries :: proc "contextless" (file: []u8) -> []Picture_Entry {
 	head := header(file)
-	return ([^]Picture_Entry)(raw_data(file[HEADER_SIZE + int(head.shape_count) * SHAPE_ENTRY_SIZE:]))[:head.picture_count]
+	return ([^]Picture_Entry)(raw_data(file[HEADER_SIZE + int(head.shape_count * head.form_count) * SHAPE_ENTRY_SIZE:]))[:head.picture_count]
 }
 
 // pixels_of gives the pixels of a picture, line after line.
@@ -429,9 +464,9 @@ text_of :: proc "contextless" (bytes: []u8) -> string {
 	return string(bytes)
 }
 
-// shape_entry_of gives the entry of a shape, if the theme has it.
-shape_entry_of :: proc "contextless" (file: []u8, shape: Pointer_Shape) -> (entry: Shape_Entry, found: bool) {
-	for candidate in shape_entries(file) {
+// shape_entry_of gives the entry of a shape in a form, if the theme has it.
+shape_entry_of :: proc "contextless" (file: []u8, form: Pointer_Form, shape: Pointer_Shape) -> (entry: Shape_Entry, found: bool) {
+	for candidate in shape_entries(file, form) {
 		if candidate.shape == u32(shape) {
 			return candidate, true
 		}
@@ -449,15 +484,16 @@ Chosen :: struct {
 	next_frame: u64,
 }
 
-// choose gives the picture of a shape for a nominal size, at a time in
-// milliseconds: the smallest size of the shape that is at least the size
-// asked, else its largest size; the frame of an animation from the time.
-choose :: proc "contextless" (file: []u8, shape: Pointer_Shape, nominal_size: u32, time_milliseconds: u64) -> Chosen {
+// choose gives the picture of a shape in a form for a nominal size, at a
+// time in milliseconds: the smallest size of the shape that is at least the
+// size asked, else its largest size; the frame of an animation from the
+// time. A theme with one form gives that form.
+choose :: proc "contextless" (file: []u8, form: Pointer_Form, shape: Pointer_Shape, nominal_size: u32, time_milliseconds: u64) -> Chosen {
 	chosen: Chosen
-	entry, found := shape_entry_of(file, shape)
+	entry, found := shape_entry_of(file, form, shape)
 	chosen.shape = shape
 	if !found {
-		entry, _ = shape_entry_of(file, .Arrow)
+		entry, _ = shape_entry_of(file, form, .Arrow)
 		chosen.shape = .Arrow
 	}
 	pictures := picture_entries(file)
@@ -526,6 +562,7 @@ FIELD_NAMES := [Field]string {
 	.Delay          = "delay_milliseconds",
 	.Picture_Pixels = "pixel_offset of the picture",
 	.Pixel          = "pixel",
+	.Form_Count     = "form_count",
 }
 
 @(rodata)

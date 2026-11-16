@@ -1256,18 +1256,18 @@ drawing: interface.Window_Drawing
 
 line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.Column, label: string, parts: ..system.Part) {
 	buffer: [96]u8
-	interface.label_value_line(frame, interface.column_take(column, 16), label, system.format(buffer[:], ..parts), graphics.COLOR_TEXT, 208)
+	interface.label_value_line(frame, interface.column_take(column, 16), label, system.format(buffer[:], ..parts), graphics.colors.text, 208)
 }
 
 build :: proc "contextless" (frame: ^interface.Frame) {
 	interface.background(frame, {0, 0, WIDTH, HEIGHT})
-	left := interface.card(frame, {8, 8, WIDTH / 2 - 12, HEIGHT - 16}, "RESERVE AND COMMIT", "Memory_Commit", graphics.COLOR_MEMORY)
+	left := interface.card(frame, {8, 8, WIDTH / 2 - 12, HEIGHT - 16}, "RESERVE AND COMMIT", "Memory_Commit", graphics.colors.memory)
 	column := interface.column_of(left, 4)
 	line(frame, &column, "arena: addresses", "1 GiB, one mapping")
 	line(frame, &column, "  frame list paid", arena_list_pages, " pages")
 	line(frame, &column, "  mapped in", arena_map_microseconds, " us")
-	interface.cell_text(frame, interface.column_take(&column, 16), "  pages committed and used in one second,", graphics.COLOR_DIM)
-	interface.cell_text(frame, interface.column_take(&column, 16), "  and kernel entries for 1000 pages:", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "  pages committed and used in one second,", graphics.colors.dim)
+	interface.cell_text(frame, interface.column_take(&column, 16), "  and kernel entries for 1000 pages:", graphics.colors.dim)
 	for batch, row in batch_sizes {
 		buffer: [48]u8
 		label := system.format(buffer[:], "  ", batch, batch == 1 ? " range" : " ranges", " / entry")
@@ -1281,10 +1281,10 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	line(frame, &column, "  committed again", recommit_zero ? "zero" : "not zero")
 	line(frame, &column, "map and unmap 100000", reuse_right ? "no page table more" : "page tables grew")
 	interface.column_take(&column, 8)
-	interface.cell_text(frame, interface.column_take(&column, 16), "refusals, each with its error record", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "refusals, each with its error record", graphics.colors.dim)
 	for &item in refusals {
-		color: graphics.Color = item.status == item.expected ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED
-		interface.cell_text(frame, interface.column_take(&column, 16), item.name, graphics.COLOR_TEXT)
+		color: graphics.Color = item.status == item.expected ? graphics.colors.program : graphics.colors.failed
+		interface.cell_text(frame, interface.column_take(&column, 16), item.name, graphics.colors.text)
 		// Two lines, cut at a space.
 		first := min(item.count, 52)
 		for first < item.count && first > 0 && item.sentence[first] != ' ' {
@@ -1293,38 +1293,38 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 		interface.cell_text(frame, interface.column_take(&column, 16), string(item.sentence[:first]), color)
 		interface.cell_text(frame, interface.column_take(&column, 16), string(item.sentence[min(first + 1, item.count):min(item.count, first + 53)]), color)
 	}
-	right_card := interface.card(frame, {WIDTH / 2 + 4, 8, WIDTH / 2 - 12, HEIGHT - 16}, "PROTECT, GUARD, LARGE PAGES", "Memory_Protect", graphics.COLOR_KERNEL)
+	right_card := interface.card(frame, {WIDTH / 2 + 4, 8, WIDTH / 2 - 12, HEIGHT - 16}, "PROTECT, GUARD, LARGE PAGES", "Memory_Protect", graphics.colors.kernel)
 	column = interface.column_of(right_card, 4)
-	interface.cell_text(frame, interface.column_take(&column, 16), "64 pages read only, then writable: the middle", graphics.COLOR_DIM)
-	interface.cell_text(frame, interface.column_take(&column, 16), "of 40 calls, least and most of 5 batches:", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "64 pages read only, then writable: the middle", graphics.colors.dim)
+	interface.cell_text(frame, interface.column_take(&column, 16), "of 40 calls, least and most of 5 batches:", graphics.colors.dim)
 	most := max(shootdown_most[0], shootdown_most[1], shootdown_most[2], 1)
 	for processors, row in ([3]u64{1, 2, 4}) {
 		buffer: [48]u8
 		line(frame, &column, system.format(buffer[:], processors, processors == 1 ? " processor" : " processors"), shootdown_least[row] == max(u64) ? u64(0) : shootdown_least[row], " to ", shootdown_most[row], " ns")
 		// The track, the spread from the least to the most, and the least.
 		area := interface.column_take(&column, 8)
-		interface.bar(frame, area, shootdown_most[row], most, graphics.shade(graphics.COLOR_KERNEL, 50))
+		interface.bar(frame, area, shootdown_most[row], most, graphics.shade(graphics.colors.kernel, 50))
 		least := shootdown_least[row] == max(u64) ? 0 : shootdown_least[row]
-		interface.bar(frame, {area.x, area.y, int(least * u64(area.width) / most), area.height}, 1, 1, graphics.COLOR_KERNEL)
+		interface.bar(frame, {area.x, area.y, int(least * u64(area.width) / most), area.height}, 1, 1, graphics.colors.kernel)
 	}
 	interface.column_take(&column, 8)
-	interface.cell_text(frame, interface.column_take(&column, 16), "a child writes down its stack into a guard page:", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "a child writes down its stack into a guard page:", graphics.colors.dim)
 	if guard_right {
 		buffer: [48]u8
-		interface.cell_text(frame, interface.column_take(&column, 16), system.format(buffer[:], "stopped: page fault at ", system.Hex(guard_address)), graphics.COLOR_PROGRAM)
+		interface.cell_text(frame, interface.column_take(&column, 16), system.format(buffer[:], "stopped: page fault at ", system.Hex(guard_address)), graphics.colors.program)
 	} else {
-		interface.cell_text(frame, interface.column_take(&column, 16), done ? "not stopped in its guard page" : "not measured yet", done ? graphics.COLOR_FAILED : graphics.COLOR_DIM)
+		interface.cell_text(frame, interface.column_take(&column, 16), done ? "not stopped in its guard page" : "not measured yet", done ? graphics.colors.failed : graphics.colors.dim)
 	}
 	interface.column_take(&column, 8)
-	interface.cell_text(frame, interface.column_take(&column, 16), "one random read over 64 MiB:", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "one random read over 64 MiB:", graphics.colors.dim)
 	slowest := max(large_nanoseconds, small_nanoseconds, 1)
 	line(frame, &column, "large pages of 2 MiB", large_nanoseconds / 10, ".", large_nanoseconds % 10, " ns")
-	interface.bar(frame, interface.column_take(&column, 8), large_nanoseconds, slowest, graphics.COLOR_MEMORY)
+	interface.bar(frame, interface.column_take(&column, 8), large_nanoseconds, slowest, graphics.colors.memory)
 	line(frame, &column, "pages of 4 KiB", small_nanoseconds / 10, ".", small_nanoseconds % 10, " ns")
-	interface.bar(frame, interface.column_take(&column, 8), small_nanoseconds, slowest, graphics.COLOR_MEMORY)
-	interface.cell_text(frame, interface.column_take(&column, 16), "(the processor of the host, under KVM)", graphics.COLOR_DIM)
+	interface.bar(frame, interface.column_take(&column, 8), small_nanoseconds, slowest, graphics.colors.memory)
+	interface.cell_text(frame, interface.column_take(&column, 16), "(the processor of the host, under KVM)", graphics.colors.dim)
 	interface.column_take(&column, 8)
-	interface.cell_text(frame, interface.column_take(&column, 16), "delegation: B commits for A with the right Commit", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "delegation: B commits for A with the right Commit", graphics.colors.dim)
 	cases_line: [64]u8
 	cases_right: u64
 	for step in 1 ..= DELEGATION_CASES {
@@ -1332,10 +1332,10 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	}
 	marks := interface.column_take(&column, 16)
 	for step in 1 ..= DELEGATION_CASES {
-		color: graphics.Color = delegation_line_counts[step] == 0 ? graphics.COLOR_TRACK : delegation_right[step] ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED
+		color: graphics.Color = delegation_line_counts[step] == 0 ? graphics.colors.track : delegation_right[step] ? graphics.colors.program : graphics.colors.failed
 		interface.mark(frame, marks.x + (step - 1) * 16, marks.y + 4, 8, color)
 	}
-	interface.cell_text(frame, {marks.x + 168, marks.y, marks.width - 168, 16}, system.format(cases_line[:], cases_right, " of 10 as expected"), graphics.COLOR_TEXT)
+	interface.cell_text(frame, {marks.x + 168, marks.y, marks.width - 168, 16}, system.format(cases_line[:], cases_right, " of 10 as expected"), graphics.colors.text)
 	edge_count: u64
 	for result in edge_case_results {
 		edge_count += result ? 1 : 0
@@ -1343,7 +1343,7 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	line(frame, &column, "edge cases", edge_count, " of ", u64(EDGE_CASES), " right")
 	interface.column_take(&column, 8)
 	status_text := done ? (right ? "ok: each check holds" : problem) : "the cases run"
-	interface.cell_text(frame, interface.column_take(&column, 16), status_text, done ? (right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED) : graphics.COLOR_BOOT_PROGRAM)
+	interface.cell_text(frame, interface.column_take(&column, 16), status_text, done ? (right ? graphics.colors.program : graphics.colors.failed) : graphics.colors.boot_program)
 }
 
 frame_draw :: proc "contextless" (window: ^display.Window) {

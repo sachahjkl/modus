@@ -359,11 +359,16 @@ signature_fit :: proc "contextless" (detail: string, cells: int, buffer: []u8) -
 // program" in its brighter form, the red of the close button under the
 // pointer. The deep red of the button is too near the surface of a card for
 // the thin parts of an icon.
-ICON_COLOR_OF_STOP :: graphics.COLOR_STOP_PROGRAM_POINTER_OVER
+icon_color_of_stop :: proc "contextless" () -> graphics.Color {
+	return graphics.colors.stop_program_pointer_over
+}
+
 // The color of the icon of an entry in its quiet state: a program with no
 // window, a window that has not the focus, a value of a setting that the
 // machine does not use, a command that the panel cannot run at once.
-ICON_COLOR_QUIET :: graphics.COLOR_DIM
+icon_color_quiet :: proc "contextless" () -> graphics.Color {
+	return graphics.colors.dim
+}
 
 // entry_icon gives the icon of an entry and its color on a row that is not
 // chosen (docs/DESIGN.md, "The icons of the kinds"). The form says what the
@@ -375,33 +380,33 @@ ICON_COLOR_QUIET :: graphics.COLOR_DIM
 // now.
 entry_icon :: proc "contextless" (entry: ^Entry, in_use: bool) -> (icon: ^kind_icons.Cells, color: graphics.Color) {
 	if entry.mark == .Destroys || entry.kind == .Close_Window {
-		return kind_icons.cells_of_desktop_kind(.Stop), ICON_COLOR_OF_STOP
+		return kind_icons.cells_of_desktop_kind(.Stop), icon_color_of_stop()
 	}
 	quiet := .Needs_Arguments in entry.flags
 	switch entry.kind {
 	case .Window:
 		icon = kind_icons.cells_of_desktop_kind(.Window)
-		color = graphics.COLOR_TITLE
+		color = graphics.colors.title
 		quiet = entry.mark != .Has_Focus
 	case .Program:
 		icon = kind_icons.cells_of_value_kind(.Module)
-		color = graphics.value_kind_color(value_kinds.Value_Kind.Module, false)
+		color = graphics.value_kind_color(value_kinds.Value_Kind.Module, graphics.appearance)
 		quiet = entry.mark != .Has_Window
 	case .Close_Window:
 	case .Command:
 		icon = kind_icons.cells_of_value_kind(.Command)
-		color = graphics.value_kind_color(value_kinds.Value_Kind.Command, false)
+		color = graphics.value_kind_color(value_kinds.Value_Kind.Command, graphics.appearance)
 	case .Export:
 		// An export is a part of a module: the color of a module.
 		icon = kind_icons.cells_of_desktop_kind(.Export)
-		color = graphics.value_kind_color(value_kinds.Value_Kind.Module, false)
+		color = graphics.value_kind_color(value_kinds.Value_Kind.Module, graphics.appearance)
 	case .Setting:
 		icon = kind_icons.cells_of_desktop_kind(.Setting)
-		color = graphics.COLOR_TEXT
+		color = graphics.colors.text
 		quiet = !in_use
 	}
 	if quiet {
-		color = ICON_COLOR_QUIET
+		color = icon_color_quiet()
 	}
 	return
 }
@@ -412,13 +417,13 @@ candidate_icon :: proc "contextless" (kind: palette_table.Candidate_Kind) -> (ic
 	switch kind {
 	case .None:
 	case .Program, .Module:
-		return kind_icons.cells_of_value_kind(.Module), graphics.value_kind_color(value_kinds.Value_Kind.Module, false)
+		return kind_icons.cells_of_value_kind(.Module), graphics.value_kind_color(value_kinds.Value_Kind.Module, graphics.appearance)
 	case .Grant:
-		return kind_icons.cells_of_value_kind(.Grant), graphics.value_kind_color(value_kinds.Value_Kind.Grant, false)
+		return kind_icons.cells_of_value_kind(.Grant), graphics.value_kind_color(value_kinds.Value_Kind.Grant, graphics.appearance)
 	case .Strategy, .Setting:
 		// A strategy is a value of a state that the provider sets, as a
 		// setting is: the icon and the color of a setting row.
-		return kind_icons.cells_of_desktop_kind(.Setting), graphics.COLOR_TEXT
+		return kind_icons.cells_of_desktop_kind(.Setting), graphics.colors.text
 	}
 	return nil, 0
 }
@@ -428,27 +433,27 @@ candidate_icon :: proc "contextless" (kind: palette_table.Candidate_Kind) -> (ic
 part_color :: proc "contextless" (part: palette_table.Run_Part) -> graphics.Color {
 	switch part {
 	case .Plain:
-		return graphics.COLOR_TEXT
+		return graphics.colors.text
 	case .Label, .Note, .End_Line:
-		return graphics.COLOR_DIM
+		return graphics.colors.dim
 	case .Failure:
-		return graphics.COLOR_FAILED
+		return graphics.colors.failed
 	case .Number:
-		return graphics.value_kind_color(value_kinds.Value_Kind.Number, false)
+		return graphics.value_kind_color(value_kinds.Value_Kind.Number, graphics.appearance)
 	case .Size:
-		return graphics.value_kind_color(value_kinds.Value_Kind.Size, false)
+		return graphics.value_kind_color(value_kinds.Value_Kind.Size, graphics.appearance)
 	case .Time:
-		return graphics.value_kind_color(value_kinds.Value_Kind.Time, false)
+		return graphics.value_kind_color(value_kinds.Value_Kind.Time, graphics.appearance)
 	case .Handle:
-		return graphics.value_kind_color(value_kinds.Value_Kind.Handle, false)
+		return graphics.value_kind_color(value_kinds.Value_Kind.Handle, graphics.appearance)
 	case .Type:
-		return graphics.value_kind_color(value_kinds.Value_Kind.Type, false)
+		return graphics.value_kind_color(value_kinds.Value_Kind.Type, graphics.appearance)
 	case .Status:
-		return graphics.value_kind_color(value_kinds.Value_Kind.Status, false)
+		return graphics.value_kind_color(value_kinds.Value_Kind.Status, graphics.appearance)
 	case .Operation:
-		return graphics.value_kind_color(value_kinds.Value_Kind.Operation, false)
+		return graphics.value_kind_color(value_kinds.Value_Kind.Operation, graphics.appearance)
 	}
-	return graphics.COLOR_TEXT
+	return graphics.colors.text
 }
 
 HEADING_RECENT :: "recent"
@@ -530,7 +535,7 @@ band_words_draw :: proc "contextless" (table: ^interface.Draw_Table, panel: ^Pan
 		text = word
 	}
 	if text != "" {
-		interface.draw_text_right(table, x + PANEL_WIDTH - TEXT_MARGIN, y + (INPUT_BAND_HEIGHT - interface.LINE) / 2, text, graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		interface.draw_text_right(table, x + PANEL_WIDTH - TEXT_MARGIN, y + (INPUT_BAND_HEIGHT - interface.LINE) / 2, text, graphics.colors.dim, interface.FONT_INTERFACE)
 	}
 	return mode_shown
 }
@@ -571,8 +576,8 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 	// band is the edge there.
 	body_top := y + INPUT_BAND_HEIGHT
 	body_height := PANEL_HEIGHT - INPUT_BAND_HEIGHT
-	interface.draw_vertical_gradient(table, x, body_top, PANEL_WIDTH, body_height, graphics.shade(graphics.COLOR_KERNEL, 28), graphics.shade(graphics.COLOR_KERNEL, 14))
-	interface.draw_vertical_gradient(table, x + BORDER, body_top, PANEL_WIDTH - 2 * BORDER, body_height - BORDER, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
+	interface.draw_vertical_gradient(table, x, body_top, PANEL_WIDTH, body_height, graphics.shade(graphics.colors.kernel, 28), graphics.shade(graphics.colors.kernel, 14))
+	interface.draw_vertical_gradient(table, x + BORDER, body_top, PANEL_WIDTH - 2 * BORDER, body_height - BORDER, graphics.colors.card_top, graphics.colors.card_bottom)
 	if list == nil {
 		return
 	}
@@ -636,7 +641,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 					// then its parameters and its result, quiet. A command
 					// that the panel cannot run is dim.
 					rows[index].name_in_cells = true
-					rows[index].name_color = .Needs_Arguments in entry.flags ? graphics.Color(graphics.COLOR_DIM) : graphics.code_class_color(.Name, false)
+					rows[index].name_color = .Needs_Arguments in entry.flags ? graphics.Color(graphics.colors.dim) : graphics.code_class_color(.Name, graphics.appearance)
 					// The room of the signature: the row, less its name and the
 					// words at its right. It is cut at the end of a parameter.
 					words_width := interface.text_measured_width(table, interface.FONT_INTERFACE, rows[index].right_text)
@@ -658,7 +663,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 		// with one name stay two things. What Enter does is in the footer.
 		options := interface.List_Rows_Options{chosen = chosen_shown, first = first, total = list.row_count}
 		if panel.state == .Confirm {
-			options.chosen_color = graphics.COLOR_STOP_PROGRAM
+			options.chosen_color = graphics.colors.stop_program
 		} else {
 			// The scroll bar takes the pointer in the search. The question
 			// of an entry that destroys keeps its row: its bar only shows.
@@ -680,7 +685,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 			interface.text_put(&empty, "nothing has \"")
 			interface.text_put(&empty, typed_text(panel))
 			interface.text_put(&empty, "\" in its name")
-			interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&empty), text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+			interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&empty), text_room), graphics.colors.dim, interface.FONT_INTERFACE)
 		}
 		// The detail line: what the chosen entry does, whole.
 		if chosen != nil {
@@ -693,7 +698,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 			} else {
 				entry_about(&about, list, chosen)
 			}
-			interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&about), text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+			interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&about), text_room), graphics.colors.dim, interface.FONT_INTERFACE)
 		}
 	}
 
@@ -724,7 +729,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 		interface.text_put(&keys, panel.form.field_count > 1 ? KEYS_OF_ARGUMENTS_MORE : KEYS_OF_ARGUMENTS)
 	}
 	keys_width := interface.text_measured_width(table, interface.FONT_INTERFACE, interface.text_of(&keys))
-	interface.draw_text_right(table, x + PANEL_WIDTH - TEXT_MARGIN, y + FOOTER_TOP + 4, interface.text_of(&keys), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	interface.draw_text_right(table, x + PANEL_WIDTH - TEXT_MARGIN, y + FOOTER_TOP + 4, interface.text_of(&keys), graphics.colors.dim, interface.FONT_INTERFACE)
 	if panel.state != .Search && panel.state != .Closed {
 		return
 	}
@@ -732,7 +737,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 	interface.text_put_number(&count, u64(list.matched_count))
 	interface.text_put(&count, " of ")
 	interface.text_put_number(&count, u64(list.entry_count))
-	after := interface.draw_text(table, x + TEXT_MARGIN, y + FOOTER_TOP + 4, interface.text_of(&count), graphics.COLOR_TEXT)
+	after := interface.draw_text(table, x + TEXT_MARGIN, y + FOOTER_TOP + 4, interface.text_of(&count), graphics.colors.text)
 	words := WORD_OF_COUNT
 	switch list.provider {
 	case .Ready:
@@ -742,7 +747,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 		words = NOTE_REFUSED_PROVIDER
 	}
 	words_room := x + PANEL_WIDTH - TEXT_MARGIN - keys_width - 16 - (after + 8)
-	interface.draw_text(table, after + 8, y + FOOTER_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, words, words_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	interface.draw_text(table, after + 8, y + FOOTER_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, words, words_room), graphics.colors.dim, interface.FONT_INTERFACE)
 }
 
 // The classes of the characters of the band of a form.
@@ -923,10 +928,10 @@ form_buttons_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, b
 		area := buttons.areas[index]
 		interface.element_name(frame, area, candidate_name(form, index))
 		chosen := index == form.candidate_choice
-		fill := graphics.Color(buttons.in_band ? graphics.COLOR_CARD_TOP : graphics.COLOR_TRACK)
-		color := graphics.Color(graphics.COLOR_TEXT)
+		fill := graphics.Color(buttons.in_band ? graphics.colors.card_top : graphics.colors.track)
+		color := graphics.Color(graphics.colors.text)
 		if chosen {
-			fill, color = graphics.COLOR_WHITE, graphics.COLOR_BACKGROUND
+			fill, color = graphics.COLOR_WHITE, graphics.COLOR_INK
 		}
 		interface.draw_rectangle(table, area.x, area.y, area.width, area.height, fill)
 		interface.draw_text(table, area.x + VALUE_BUTTON_PADDING, area.y + (area.height - interface.LINE) / 2, candidate_name(form, index), color, interface.FONT_INTERFACE)
@@ -947,11 +952,11 @@ form_band_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, x, y
 	caret, first, last := band.caret, band.first, band.last
 
 	text_height := graphics.CELL_HEIGHT * INPUT_SCALE
-	interface.draw_rectangle(table, x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT - 2, graphics.COLOR_TRACK)
-	interface.draw_rectangle(table, x, y + INPUT_BAND_HEIGHT - 2, PANEL_WIDTH, 2, graphics.COLOR_TITLE)
+	interface.draw_rectangle(table, x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT - 2, graphics.colors.track)
+	interface.draw_rectangle(table, x, y + INPUT_BAND_HEIGHT - 2, PANEL_WIDTH, 2, graphics.colors.title)
 	text_x := x + interface.TEXT_INPUT_LINE_MARGIN
 	text_y := y + (INPUT_BAND_HEIGHT - text_height) / 2
-	interface.draw_rectangle(table, text_x + (caret - first) * BAND_CELL_WIDTH, text_y, BAND_CARET_WIDTH, text_height, graphics.COLOR_TITLE)
+	interface.draw_rectangle(table, text_x + (caret - first) * BAND_CELL_WIDTH, text_y, BAND_CARET_WIDTH, text_height, graphics.colors.title)
 	font := interface.Font{scale = INPUT_SCALE}
 	// One text record for each run of one class.
 	start := first
@@ -963,17 +968,17 @@ form_band_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, x, y
 		color: graphics.Color
 		switch classes[start] {
 		case .Name:
-			color = graphics.code_class_color(.Name, false)
+			color = graphics.code_class_color(.Name, graphics.appearance)
 		case .Quiet:
-			color = graphics.code_class_color(.Punctuation, false)
+			color = graphics.code_class_color(.Punctuation, graphics.appearance)
 		case .Label:
-			color = graphics.COLOR_TEXT
+			color = graphics.colors.text
 		case .Value:
-			color = graphics.COLOR_WHITE
+			color = graphics.colors.text_strong
 		case .Size_Unit:
-			color = graphics.value_kind_color(.Size, false)
+			color = graphics.value_kind_color(.Size, graphics.appearance)
 		case .Time_Unit:
-			color = graphics.value_kind_color(.Time, false)
+			color = graphics.value_kind_color(.Time, graphics.appearance)
 		}
 		interface.draw_text(table, text_x + (start - first) * BAND_CELL_WIDTH, text_y, string(characters[start:end]), color, font)
 		start = end
@@ -1030,8 +1035,8 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 		}
 		interface.text_put(&act, "): ")
 		interface.text_put(&act, string(form.given.about[:form.given.about_length]))
-		rows[0] = {kind = .Entry, name = interface.text_of(&act), icon = kind_icons.cells_of_desktop_kind(.Stop), icon_color = ICON_COLOR_OF_STOP, right_text = entry_words(&form.entry)}
-		interface.list_of_rows(frame, list_area, rows[:1], {chosen = 0, chosen_color = graphics.COLOR_STOP_PROGRAM, total = 1})
+		rows[0] = {kind = .Entry, name = interface.text_of(&act), icon = kind_icons.cells_of_desktop_kind(.Stop), icon_color = icon_color_of_stop(), right_text = entry_words(&form.entry)}
+		interface.list_of_rows(frame, list_area, rows[:1], {chosen = 0, chosen_color = graphics.colors.stop_program, total = 1})
 		return
 	}
 	words := ""
@@ -1055,7 +1060,7 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 			form_buttons_draw(frame, form, &buttons)
 		}
 		hint_top := buttons.in_band ? y + LIST_TOP + 4 : y + LIST_TOP + ROW_HEIGHT + 4
-		interface.draw_text(table, x + TEXT_MARGIN, hint_top, interface.text_fit(table, interface.FONT_INTERFACE, WORDS_OF_BUTTONS, text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		interface.draw_text(table, x + TEXT_MARGIN, hint_top, interface.text_fit(table, interface.FONT_INTERFACE, WORDS_OF_BUTTONS, text_room), graphics.colors.dim, interface.FONT_INTERFACE)
 	} else {
 		candidates_icon, candidates_color := candidate_icon(form.candidate_kind)
 		choice := form.candidate_choice
@@ -1077,17 +1082,17 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 			interface.text_put(&prompt, ", in")
 			interface.text_put(&prompt, unit_text)
 		}
-		interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&prompt), text_room), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&prompt), text_room), graphics.colors.dim, interface.FONT_INTERFACE)
 	}
 	if message := form_message(form); message != "" {
-		interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, message, text_room), graphics.COLOR_FAILED, interface.FONT_INTERFACE)
+		interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, message, text_room), graphics.colors.failed, interface.FONT_INTERFACE)
 		return
 	}
 	// The whole signature, as code, then the help sentence.
 	signature := string(form.given.signature[:form.given.signature_length])
-	after := interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, {}, signature, text_room), graphics.code_class_color(.Punctuation, false))
+	after := interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, {}, signature, text_room), graphics.code_class_color(.Punctuation, graphics.appearance))
 	about := string(form.given.about[:form.given.about_length])
-	interface.draw_text(table, after + 16, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, about, x + TEXT_MARGIN + text_room - after - 16), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	interface.draw_text(table, after + 16, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, about, x + TEXT_MARGIN + text_room - after - 16), graphics.colors.dim, interface.FONT_INTERFACE)
 }
 
 // result_draw draws, in the place of the list, the entry that the panel
@@ -1103,9 +1108,9 @@ result_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y:
 	call: interface.Text_Builder
 	interface.text_put(&call, sent_text(panel))
 	interface.text_put(&call, "()")
-	after_call := interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + RESULT_CALL_TOP, interface.text_of(&call), graphics.code_class_color(.Name, false))
+	after_call := interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + RESULT_CALL_TOP, interface.text_of(&call), graphics.code_class_color(.Name, graphics.appearance))
 	if panel.state == .Running {
-		interface.draw_text(table, after_call + 16, y + LIST_TOP + RESULT_CALL_TOP, WORDS_OF_RUNNING, graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		interface.draw_text(table, after_call + 16, y + LIST_TOP + RESULT_CALL_TOP, WORDS_OF_RUNNING, graphics.colors.dim, interface.FONT_INTERFACE)
 		return
 	}
 	runs := result.runs[:clamp(result.count, 0, len(result.runs))]

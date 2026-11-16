@@ -35,6 +35,7 @@ Pointer :: struct {
 	menu:    [16]u8, // The menu of the bar that is open: "programs", "windows", or empty.
 	palette:  i64, // The state of the palette: 0 closed; 1 the search; 2 it asks for a second Enter; 3 it waits for its provider; 4 it shows a result; 5 it has the form of a command. Not 0: it takes the keys.
 	shape:    [32]u8, // The name of the pointer shape on the screen: "arrow", "move", "text", ... (docs/POINTERS.md).
+	form:     [8]u8, // The pointer form on the screen: "dark" or "light", from the appearance in force (docs/POINTERS.md).
 }
 
 // One row for each window, the front one first: windows().
@@ -121,6 +122,8 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   Open, it takes the keys.
 // - `shape`: the name of the pointer shape on the screen (`arrow`, `move`,
 //   `text`...; docs/POINTERS.md).
+// - `form`: the pointer form on the screen, `dark` or `light`: the form of
+//   the appearance in force.
 //
 // **Grant**: the caller must **act for the principal**. A caller without
 // it gets the error kind `No_Grant`, with the result -1: the place of the
@@ -138,6 +141,7 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 	if len(result^) > 0 {
 		result[0] = {x = i64(pointer_x), y = i64(pointer_y), buttons = i64(buttons), moves = i64(pointer_moves), keys = i64(key_records), keys_waiting = i64(keys_waiting_of_all_windows()), keys_refused = i64(key_records_refused), palette = i64(palette_panel.state)}
 		copy(result[0].shape[:len(result[0].shape) - 1], pointer_pictures.SHAPE_NAMES[pointer_shape_under()])
+		copy(result[0].form[:len(result[0].form) - 1], pointer_form_name(pointer_form))
 		#partial switch menu_open {
 		case .Programs:
 			copy(result[0].menu[:], "programs")

@@ -132,7 +132,7 @@ Text_Grid :: struct {
 //
 // A `draw_` procedure appends it to the table of the frame; the difference
 // compares it with the records of the frame before; the execution draws
-// it. Example: `draw_rectangle(table, 0, 0, 100, 24, graphics.COLOR_CARD_TOP)`
+// it. Example: `draw_rectangle(table, 0, 0, 100, 24, graphics.colors.card_top)`
 // appends `{kind = .Rectangle, x = 0, y = 0, width = 100, height = 24,
 // first_color = <the color>}`.
 Draw_Record :: struct {
@@ -279,7 +279,7 @@ draw_horizontal_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width,
 
 // draw_point_grid appends the grid of points of the background.
 draw_point_grid :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
-	record_append(table, with_place({kind = .Point_Grid, first_color = graphics.COLOR_POINT}, x, y, width, height))
+	record_append(table, with_place({kind = .Point_Grid, first_color = graphics.colors.point}, x, y, width, height))
 }
 
 // draw_folded_gap appends a part with no measure on this scale.
@@ -287,7 +287,7 @@ draw_folded_gap :: proc "contextless" (table: ^Draw_Table, x, y, width, height: 
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, with_place({kind = .Folded_Gap, first_color = graphics.COLOR_DIM, second_color = graphics.COLOR_TRACK, element = element}, x, y, width, height))
+	record_append(table, with_place({kind = .Folded_Gap, first_color = graphics.colors.dim, second_color = graphics.colors.track, element = element}, x, y, width, height))
 }
 
 // draw_picture appends the pixels of a picture of the program at (x, y).

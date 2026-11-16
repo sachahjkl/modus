@@ -187,29 +187,29 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		frame := interface.window_frame_begin(&drawing, &window)
 		table := frame.table
-		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 		y := 12
-		interface.draw_text(table, 12, y, "no object comes from nothing: a budget pays for each page,", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "no object comes from nothing: a budget pays for each page,", graphics.colors.dim)
 		y += LINE
-		interface.draw_text(table, 12, y, "each program and each thread. what ends returns to its budget.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "each program and each thread. what ends returns to its budget.", graphics.colors.dim)
 		y += LINE + LINE / 2
-		interface.draw_text(table, 12, y, "the program asks", graphics.COLOR_DIM)
-		interface.draw_text(table, ANSWER_X, y, "the kernel answers", graphics.COLOR_DIM)
-		interface.draw_text(table, BAR_X, y, "pages of the budget", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "the program asks", graphics.colors.dim)
+		interface.draw_text(table, ANSWER_X, y, "the kernel answers", graphics.colors.dim)
+		interface.draw_text(table, BAR_X, y, "pages of the budget", graphics.colors.dim)
 		y += LINE
 		for &row, index in rows[:row_count] {
 			if index % 2 == 0 {
-				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
+				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.colors.card_top)
 			}
-			interface.draw_text(table, 12, y, row.text, graphics.COLOR_TEXT)
-			color: graphics.Color = row.refused ? COLOR_REFUSED : graphics.COLOR_PROGRAM
+			interface.draw_text(table, 12, y, row.text, graphics.colors.text)
+			color: graphics.Color = row.refused ? COLOR_REFUSED : graphics.colors.program
 			if !row.correct {
 				color = COLOR_WRONG
 			}
 			interface.draw_text(table, ANSWER_X, y, string(row.buffer[:row.count]), color)
-			interface.draw_rectangle(table, BAR_X, y + 2, BAR_WIDTH, 10, graphics.COLOR_TRACK)
+			interface.draw_rectangle(table, BAR_X, y + 2, BAR_WIDTH, 10, graphics.colors.track)
 			interface.draw_rectangle(table, BAR_X, y + 2, int(row.pages * BAR_WIDTH / max(start.pages, 1)), 10, COLOR_BAR)
-			interface.draw_unsigned(table, BAR_X + BAR_WIDTH + 8, y, row.pages, graphics.COLOR_TEXT)
+			interface.draw_unsigned(table, BAR_X + BAR_WIDTH + 8, y, row.pages, graphics.colors.text)
 			y += LINE
 		}
 		interface.window_frame_end(&drawing, &frame, &window)

@@ -219,16 +219,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if !event.pressed {
 					continue
 				}
-				switch event.character {
-				case '1' ..= '0' + relay.NODE_COUNT:
-					toggle(int(event.character - '1'))
-				case 'a':
-					add(added % relay.NODE_COUNT)
-					system.log("rings: the key a adds a record: ", u64(added), " records in all")
+				// The open list of the action bar takes its keys first.
+				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
+				outcome := interface.action_bar_key(&bar, press)
+				if outcome.ran {
+					key_run(outcome.run)
+				}
+				if !outcome.taken {
+					key_run(press)
 				}
 			case .Pointer:
 				pressed := event.buttons & ~buttons
 				buttons = event.buttons
+				// The action bar takes the pointer from the input of the
+				// next frame; a press on it, or while its list is open, is
+				// not a press on a square.
+				interface.input_add(&drawing.input, event)
+				if interface.action_bar_takes_pointer(&bar, event.x, event.y) {
+					continue
+				}
 				for center, index in centers {
 					if abs(event.x - center.x) > NODE_SIZE / 2 || abs(event.y - center.y) > NODE_SIZE / 2 {
 						continue
@@ -245,9 +254,47 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		now := system.time()
 		watch()
 		frame := interface.window_frame_begin(&drawing, &window)
+		interface.action_bar_input_take(&frame, &bar)
 		draw(frame.table, now)
+		// The keys of the window, in its action bar (docs/INTERFACE.md,
+		// "4.4 The action bar"), at the right of what the pointer does.
+		// The items stand from the right edge.
+		bar_y := HEIGHT - interface.ACTION_BAR_ROW_HEIGHT
+		pointer_end := interface.draw_text(frame.table, 12, bar_y + (interface.ACTION_BAR_ROW_HEIGHT - graphics.CELL_HEIGHT) / 2, POINTER_NOTE, graphics.colors.dim)
+		bar_left := pointer_end + 16
+		items := bar_items()
+		bar_result := interface.action_bar(&frame, {bar_left, bar_y, WIDTH - bar_left, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar, {alignment = .Right})
 		interface.window_frame_end(&drawing, &frame, &window)
+		if bar_result.ran {
+			key_run(bar_result.run)
+		}
 		display.wait(&window, now + FRAME_TIME)
+	}
+}
+
+// What the pointer does on a square: a fact at the left of the action bar.
+POINTER_NOTE :: "click a square: left adds, right stops or starts"
+
+// The keys of the window. The keys 1 to 6 stop or start the program with
+// that number: a key with an argument takes no press, and a click on its
+// square does the same.
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
+	return {interface.action_bar_item("add a record", 2, "a"), interface.action_bar_item("stop or start", 1, "1-6")}
+}
+#assert(relay.NODE_COUNT == 6) // The face "1-6" names the keys of the programs.
+bar: interface.Action_Bar_State
+
+// key_run runs one key: a typed key, or the key of an item of the action
+// bar that a press ran.
+key_run :: proc "contextless" (press: interface.Key_Press) {
+	switch press.character {
+	case '1' ..= '0' + relay.NODE_COUNT:
+		toggle(int(press.character - '1'))
+	case 'a':
+		add(added % relay.NODE_COUNT)
+		system.log("rings: the key a adds a record: ", u64(added), " records in all")
 	}
 }
 
@@ -276,8 +323,11 @@ watch :: proc "contextless" () {
 }
 
 draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
-	interface.draw_text(table, 12, 8, "Each square is a program. Each line is a ring in shared memory.", graphics.COLOR_TEXT)
-	interface.draw_text(table, 12, HEIGHT - 22, "left button or a: add a record    right button or 1-6: stop or start a program", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, 8, "Each square is a program. Each line is a ring in shared memory.", graphics.colors.text)
+	// The band of the action bar, from edge to edge.
+	bar_y := HEIGHT - interface.ACTION_BAR_ROW_HEIGHT
+	interface.draw_rectangle(table, 0, bar_y, WIDTH, interface.ACTION_BAR_ROW_HEIGHT, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, 0, bar_y, WIDTH, 1, graphics.colors.track)
 
 	// The rings, under the nodes.
 	for &node, index in nodes {
@@ -294,13 +344,13 @@ draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
 			along := 256 - (NODE_SIZE / 2 + 10 + int(position) * (CELL + 3)) * 256 * 3 / (length * 2)
 			x := from.x + (to.x - from.x) * along / 256
 			y := from.y + (to.y - from.y) * along / 256
-			interface.draw_rectangle(table, x - CELL / 2 - 1, y - CELL / 2 - 1, CELL + 2, CELL + 2, graphics.COLOR_BACKGROUND)
+			interface.draw_rectangle(table, x - CELL / 2 - 1, y - CELL / 2 - 1, CELL + 2, CELL + 2, graphics.colors.background)
 			interface.draw_rectangle(table, x - CELL / 2, y - CELL / 2, CELL, CELL, graphics.Color(record.values[0]) & 0xFFFFFF)
 		}
 		// The number of records in the ring, beside the middle of the line.
 		middle_x := (from.x + to.x) / 2 + (to.y - from.y) / 7 - 20
 		middle_y := (from.y + to.y) / 2 - (to.x - from.x) / 7 - 8
-		color: graphics.Color = count == ring.CAPACITY ? COLOR_BLOCKED : graphics.COLOR_DIM
+		color: graphics.Color = count == ring.CAPACITY ? COLOR_BLOCKED : graphics.colors.dim
 		x := interface.draw_unsigned(table, middle_x, middle_y, u64(count), color)
 		interface.draw_text(table, x, middle_y, "/32", color)
 	}
@@ -309,7 +359,7 @@ draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
 		center := centers[index]
 		x, y := center.x - NODE_SIZE / 2, center.y - NODE_SIZE / 2
 		state := node.state^ // One copy: the node writes this record.
-		border: graphics.Color = graphics.COLOR_PROGRAM
+		border: graphics.Color = graphics.colors.program
 		status := "waits"
 		switch {
 		case node.program == 0:
@@ -321,8 +371,8 @@ draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
 		}
 		interface.draw_rectangle(table, x, y, NODE_SIZE, NODE_SIZE, COLOR_NODE)
 		interface.draw_outline(table, x, y, NODE_SIZE, NODE_SIZE, 2, border)
-		after := interface.draw_text(table, x + 8, y + 6, "node ", graphics.COLOR_TEXT)
-		interface.draw_unsigned(table, after, y + 6, u64(index + 1), graphics.COLOR_TEXT)
+		after := interface.draw_text(table, x + 8, y + 6, "node ", graphics.colors.text)
+		interface.draw_unsigned(table, after, y + 6, u64(index + 1), graphics.colors.text)
 		interface.draw_text(table, x + 8, y + 24, status, border)
 		if state.holding != 0 {
 			// The record, and the part of the work that is done.
@@ -332,8 +382,8 @@ draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
 			interface.draw_rectangle(table, x + 28, y + 50, NODE_SIZE - 36, 6, COLOR_RING)
 			interface.draw_rectangle(table, x + 28, y + 50, int(done * (NODE_SIZE - 36) / span), 6, graphics.Color(state.color) & 0xFFFFFF)
 		}
-		interface.draw_unsigned(table, x + 8, y + NODE_SIZE - 22, state.passed, graphics.COLOR_DIM)
-		interface.draw_unsigned(table, x + NODE_SIZE - 8 - 5 * graphics.CELL_WIDTH, y + NODE_SIZE - 22, work_times[index], graphics.COLOR_DIM, 3)
-		interface.draw_text(table, x + NODE_SIZE - 8 - 2 * graphics.CELL_WIDTH, y + NODE_SIZE - 22, "ms", graphics.COLOR_DIM)
+		interface.draw_unsigned(table, x + 8, y + NODE_SIZE - 22, state.passed, graphics.colors.dim)
+		interface.draw_unsigned(table, x + NODE_SIZE - 8 - 5 * graphics.CELL_WIDTH, y + NODE_SIZE - 22, work_times[index], graphics.colors.dim, 3)
+		interface.draw_text(table, x + NODE_SIZE - 8 - 2 * graphics.CELL_WIDTH, y + NODE_SIZE - 22, "ms", graphics.colors.dim)
 	}
 }

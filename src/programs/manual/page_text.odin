@@ -238,7 +238,7 @@ markdown_block :: proc "contextless" (data: rawptr, text: string, block: markdow
 			// The label and the period after it.
 			mark = text[block.mark_start:min(block.mark_end + 1, len(text))]
 		}
-		row_part_add({text = mark, x = i32(indent), width = i32(len(mark) * CELL_WIDTH), color = graphics.COLOR_DIM, flags = {.Row_Start, .From_Markdown}})
+		row_part_add({text = mark, x = i32(indent), width = i32(len(mark) * CELL_WIDTH), color = graphics.colors.dim, flags = {.Row_Start, .From_Markdown}})
 		flow.left = indent + (len(mark) + 1) * CELL_WIDTH
 		flow.mark_on_row = true
 		page_marks.items += 1
@@ -534,7 +534,7 @@ link_address_place :: proc "contextless" () {
 	address := flow.pending_address
 	flow.pending_address = ""
 	flow.space_before = true
-	word_place(address, {font = {}, color = graphics.COLOR_DIM, flags = {.From_Markdown}})
+	word_place(address, {font = {}, color = graphics.colors.dim, flags = {.From_Markdown}})
 }
 
 // link_resolve gives where the target of a link goes
@@ -758,10 +758,10 @@ link_page_build :: proc "contextless" (index: int) {
 		// first sentence: a line "from" would say it twice.
 	}
 	if source != "" {
-		put_built(0, graphics.COLOR_DIM, "from ", source)
+		put_built(0, graphics.colors.dim, "from ", source)
 	}
 	put("", 0, 0)
-	put_markdown(manual_pages.text_of(link_pages, index), 0, graphics.COLOR_TEXT)
+	put_markdown(manual_pages.text_of(link_pages, index), 0, graphics.colors.text)
 }
 
 // markdown_check checks the documentation texts of the page that the

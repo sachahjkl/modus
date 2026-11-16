@@ -334,30 +334,30 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		frame := interface.window_frame_begin(&drawing, &window)
 		table := frame.table
-		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 		y := 12
-		interface.draw_text(table, 12, y, "a page gets its frame at its first use; the budget paid at creation.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "a page gets its frame at its first use; the budget paid at creation.", graphics.colors.dim)
 		y += LINE
-		interface.draw_text(table, 12, y, "programs of one module map one memory object for its code.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "programs of one module map one memory object for its code.", graphics.colors.dim)
 		y += LINE + LINE / 2
-		interface.draw_text(table, 12, y, "the program does", graphics.COLOR_DIM)
-		interface.draw_text(table, ANSWER_X, y, "the kernel answers", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "the program does", graphics.colors.dim)
+		interface.draw_text(table, ANSWER_X, y, "the kernel answers", graphics.colors.dim)
 		y += LINE
 		for item, index in cases[:case_count] {
 			if index % 2 == 0 {
-				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
+				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.colors.card_top)
 			}
-			interface.draw_text(table, 12, y, item.text, graphics.COLOR_TEXT)
-			interface.draw_text(table, ANSWER_X, y, item.right ? item.answer : "another answer", item.right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
+			interface.draw_text(table, 12, y, item.text, graphics.colors.text)
+			interface.draw_text(table, ANSWER_X, y, item.right ? item.answer : "another answer", item.right ? graphics.colors.program : COLOR_WRONG)
 			y += LINE
 		}
 		y += LINE / 2
 		line: [96]u8
-		interface.draw_text(table, 12, y, system.format(line[:], "create and map 8192 pages: ", create_now, " us with the frames, ", create_first_use, " us without"), graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, system.format(line[:], "create and map 8192 pages: ", create_now, " us with the frames, ", create_first_use, " us without"), graphics.colors.dim)
 		y += LINE
-		interface.draw_text(table, 12, y, system.format(line[:], "first use of a page: ", first_use, " ns; a write to a page with its frame: ", write_present, " ns"), graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, system.format(line[:], "first use of a page: ", first_use, " ns; a write to a page with its frame: ", write_present, " ns"), graphics.colors.dim)
 		y += LINE
-		interface.draw_text(table, 12, y, system.format(line[:], "start a twin: ", start_own, " us with a copy of the module, ", start_shared, " us with the shared code"), graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, system.format(line[:], "start a twin: ", start_own, " us with a copy of the module, ", start_shared, " us with the shared code"), graphics.colors.dim)
 		interface.window_frame_end(&drawing, &frame, &window)
 		display.wait(&window)
 		for _ in display.next_event(&window) {

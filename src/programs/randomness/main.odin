@@ -80,17 +80,17 @@ hex_text :: proc "contextless" (builder: ^interface.Text_Builder, bytes: []u8) -
 strength_color :: proc "contextless" (strength: random.Seed_Strength) -> graphics.Color {
 	#partial switch strength {
 	case .Entropy:
-		return graphics.COLOR_PROGRAM
+		return graphics.colors.program
 	case .Processor:
-		return graphics.COLOR_TEXT
+		return graphics.colors.text
 	}
-	return graphics.COLOR_FAILED
+	return graphics.colors.failed
 }
 
 source_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.Column, name: string, present: bool, good, refused: u32, wanted: u32) {
 	builder: interface.Text_Builder
 	if !present {
-		interface.label_value_line(frame, interface.column_take(column, LINE), name, "absent: the processor does not have it", graphics.COLOR_DIM, 168)
+		interface.label_value_line(frame, interface.column_take(column, LINE), name, "absent: the processor does not have it", graphics.colors.dim, 168)
 		return
 	}
 	interface.text_put(&builder, "present, ")
@@ -100,7 +100,7 @@ source_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.C
 	interface.text_put(&builder, ", ")
 	interface.text_put_number(&builder, u64(refused))
 	interface.text_put(&builder, " refused")
-	interface.label_value_line(frame, interface.column_take(column, LINE), name, interface.text_of(&builder), good == wanted ? graphics.COLOR_TEXT : graphics.COLOR_FAILED, 168)
+	interface.label_value_line(frame, interface.column_take(column, LINE), name, interface.text_of(&builder), good == wanted ? graphics.colors.text : graphics.colors.failed, 168)
 }
 
 // device_line shows the entropy device: absent, or the bytes that the root
@@ -108,7 +108,7 @@ source_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.C
 // nothing.
 device_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.Column) {
 	if !report.device_present {
-		interface.label_value_line(frame, interface.column_take(column, LINE), "entropy device", "absent: the machine does not have one", graphics.COLOR_DIM, 168)
+		interface.label_value_line(frame, interface.column_take(column, LINE), "entropy device", "absent: the machine does not have one", graphics.colors.dim, 168)
 		return
 	}
 	builder: interface.Text_Builder
@@ -116,7 +116,7 @@ device_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.C
 	interface.text_put_number(&builder, u64(report.device_bytes))
 	interface.text_put(&builder, " bytes mixed after the gathering; refused reads: ")
 	interface.text_put_number(&builder, u64(report.device_reads_refused))
-	interface.label_value_line(frame, interface.column_take(column, LINE), "entropy device", interface.text_of(&builder), report.device_reads_refused == 0 ? graphics.COLOR_TEXT : graphics.COLOR_FAILED, 168)
+	interface.label_value_line(frame, interface.column_take(column, LINE), "entropy device", interface.text_of(&builder), report.device_reads_refused == 0 ? graphics.colors.text : graphics.colors.failed, 168)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
@@ -125,7 +125,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	builder: interface.Text_Builder
 
 	// The seed of the system: the facts of the root service.
-	content := interface.card(&frame, {8, 8, WIDTH - 16, 196}, "THE SEED OF THE SYSTEM", "Entropy_Report of the root service, at its start", graphics.COLOR_KERNEL)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, 196}, "THE SEED OF THE SYSTEM", "Entropy_Report of the root service, at its start", graphics.colors.kernel)
 	column := interface.column_of(content)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "strength", random.seed_strength_names[report.strength], strength_color(report.strength), 168)
 	source_line(&frame, &column, "rdseed", report.rdseed_present, report.rdseed_good, report.rdseed_refused, random.PROCESSOR_VALUES)
@@ -135,22 +135,22 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.text_put(&builder, " samples, ")
 	interface.text_put_number(&builder, u64(report.jitter_distinct))
 	interface.text_put(&builder, " distinct low bytes; counted as 0 bits")
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "cycle counter", interface.text_of(&builder), graphics.COLOR_TEXT, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "cycle counter", interface.text_of(&builder), graphics.colors.text, 168)
 	device_line(&frame, &column)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "mixed by", "BLAKE3 of each value, with its length", graphics.COLOR_TEXT, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "mixed by", "BLAKE3 of each value, with its length", graphics.colors.text, 168)
 
 	// The generator of this program.
-	content = interface.card(&frame, {8, 212, WIDTH - 16, HEIGHT - 220}, "THE GENERATOR OF THIS PROGRAM", "random.Generator: ChaCha20, fast key erasure", graphics.COLOR_PROGRAM)
+	content = interface.card(&frame, {8, 212, WIDTH - 16, HEIGHT - 220}, "THE GENERATOR OF THIS PROGRAM", "random.Generator: ChaCha20, fast key erasure", graphics.colors.program)
 	column = interface.column_of(content)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "seed", "32 bytes from its starter (the context values 9 to 12), erased after", graphics.COLOR_TEXT, 168)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "first bytes", hex_text(&builder, first_bytes[:]), graphics.COLOR_TEXT, 168)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "now", hex_text(&builder, live_bytes[:]), graphics.COLOR_PROGRAM, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "seed", "32 bytes from its starter (the context values 9 to 12), erased after", graphics.colors.text, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "first bytes", hex_text(&builder, first_bytes[:]), graphics.colors.text, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "now", hex_text(&builder, live_bytes[:]), graphics.colors.program, 168)
 	builder.count = 0
 	interface.text_put_number(&builder, program_generator.served)
 	interface.text_put(&builder, " bytes served, ")
 	interface.text_put_number(&builder, program_generator.refills)
 	interface.text_put(&builder, " refills of 832 bytes")
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "drawn", interface.text_of(&builder), graphics.COLOR_TEXT, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "drawn", interface.text_of(&builder), graphics.colors.text, 168)
 	if measured {
 		builder.count = 0
 		interface.text_put_number(&builder, megabytes_per_second_tenths / 10)
@@ -159,10 +159,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.text_put(&builder, " MB/s, 4 MiB in ")
 		interface.text_put_number(&builder, measure_microseconds)
 		interface.text_put(&builder, " us, no kernel entry")
-		interface.label_value_line(&frame, interface.column_take(&column, LINE), "speed", interface.text_of(&builder), graphics.COLOR_MACHINE, 168)
+		interface.label_value_line(&frame, interface.column_take(&column, LINE), "speed", interface.text_of(&builder), graphics.colors.machine, 168)
 	}
 	interface.column_take(&column, 8)
-	interface.cell_text(&frame, interface.column_take(&column, LINE), "1 MiB of the stream, by the high 4 bits of each byte: each bar is near 1/16", graphics.COLOR_DIM)
+	interface.cell_text(&frame, interface.column_take(&column, LINE), "1 MiB of the stream, by the high 4 bits of each byte: each bar is near 1/16", graphics.colors.dim)
 	most: u64 = 1
 	for count in byte_counts {
 		most = max(most, count)
@@ -172,10 +172,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 	for count, index in byte_counts {
 		x := bars.x + index * (bar_width + 6)
 		height := int(count * u64(bars.height - LINE) / most)
-		interface.draw_rectangle(frame.table, x, bars.y + bars.height - LINE - height, bar_width, height, graphics.COLOR_MEMORY)
+		interface.draw_rectangle(frame.table, x, bars.y + bars.height - LINE - height, bar_width, height, graphics.colors.memory)
 		digits := "0123456789abcdef"
 		digit := [1]u8{digits[index]}
-		interface.draw_text(frame.table, x + bar_width / 2 - 4, bars.y + bars.height - LINE + 4, string(digit[:]), graphics.COLOR_DIM)
+		interface.draw_text(frame.table, x + bar_width / 2 - 4, bars.y + bars.height - LINE + 4, string(digit[:]), graphics.colors.dim)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

@@ -180,25 +180,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		frame := interface.window_frame_begin(&drawing, &window)
 		table := frame.table
-		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 		y := 12
-		interface.draw_text(table, 12, y, "this program holds two handles from the root service:", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "this program holds two handles from the root service:", graphics.colors.dim)
 		y += LINE
-		x := interface.draw_text(table, 28, y, "the machine, with the right ", graphics.COLOR_TEXT)
-		interface.draw_text(table, x, y, "Inspect", graphics.COLOR_PROGRAM)
+		x := interface.draw_text(table, 28, y, "the machine, with the right ", graphics.colors.text)
+		interface.draw_text(table, x, y, "Inspect", graphics.colors.program)
 		y += LINE
-		x = interface.draw_text(table, 28, y, "the boot image, with the right ", graphics.COLOR_TEXT)
-		interface.draw_text(table, x, y, "Read", graphics.COLOR_PROGRAM)
+		x = interface.draw_text(table, 28, y, "the boot image, with the right ", graphics.colors.text)
+		interface.draw_text(table, x, y, "Read", graphics.colors.program)
 		y += LINE + LINE / 2
-		interface.draw_text(table, 12, y, "the program asks", graphics.COLOR_DIM)
-		interface.draw_text(table, ANSWER_X, y, "the kernel answers", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "the program asks", graphics.colors.dim)
+		interface.draw_text(table, ANSWER_X, y, "the kernel answers", graphics.colors.dim)
 		y += LINE
 		for attempt, index in attempts[:attempt_count] {
 			if index % 2 == 0 {
-				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
+				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.colors.card_top)
 			}
-			interface.draw_text(table, 12, y, attempt.text, graphics.COLOR_TEXT)
-			color: graphics.Color = attempt.status == .Ok ? graphics.COLOR_PROGRAM : COLOR_REFUSED
+			interface.draw_text(table, 12, y, attempt.text, graphics.colors.text)
+			color: graphics.Color = attempt.status == .Ok ? graphics.colors.program : COLOR_REFUSED
 			if attempt.status != attempt.expected {
 				color = COLOR_WRONG
 			}

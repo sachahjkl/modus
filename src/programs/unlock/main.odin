@@ -146,7 +146,7 @@ HEIGHT :: 180
 // once, so this bound only ends a wait for a service that stopped.
 ROOT_ANSWER_LIMIT :: 10_000
 
-records_now, records_before: [256]interface.Draw_Record
+records_now, records_before: [320]interface.Draw_Record
 text_now, text_before: [4096]u8
 drawing: interface.Window_Drawing
 
@@ -1546,13 +1546,14 @@ session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, 
 	mode = .Done
 }
 
-draw :: proc "contextless" (window: ^display.Window) {
+draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	if drawing.now.records == nil {
 		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	}
 	frame := interface.window_frame_begin(&drawing, window)
+	interface.action_bar_input_take(&frame, &bar)
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	// What the window asks for: the passphrase of a named principal, the
 	// machine passphrase or the recovery key of principal 0, or what it
 	// shows: a new recovery key. The widest line, the message after a new
@@ -1561,7 +1562,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 	label := "principal  "
 	subject := the_name()
 	prompt := "passphrase  "
-	hint := "enter: unlock; escape: clear"
+	// The keys of the mode, in the action bar (docs/INTERFACE.md, "4.4 The
+	// action bar"): Enter, and Escape that clears what is typed. A mode
+	// whose Enter does another thing with nothing typed says it in the
+	// name of the item.
+	enter_name := "unlock"
+	clears := true
+	note := "" // A fact at the left of the bar.
 	switch mode {
 	case .Unlock, .Done:
 	case .Create_First:
@@ -1571,46 +1578,49 @@ draw :: proc "contextless" (window: ^display.Window) {
 		prompt = "again  "
 	case .Machine_Unlock:
 		label, subject = "machine passphrase  ", "principal 0"
-		hint = "enter: unlock; enter with nothing: skip; escape: clear"
+		enter_name = "unlock; empty: skip"
 	case .Machine_Create_First:
 		label, subject = "new machine passphrase  ", "principal 0"
-		hint = "enter: set; escape: clear"
+		enter_name = "set"
 	case .Machine_Create_Again:
 		label, subject = "new machine passphrase  ", "principal 0"
 		prompt = "again  "
-		hint = "enter: set; escape: clear"
+		enter_name = "set"
 	case .Machine_Recovery:
 		label, subject = "machine key  ", "principal 0"
 		prompt = "recovery key  "
-		hint = "enter: open; enter with nothing: skip; escape: clear"
+		enter_name = "open; empty: skip"
 	case .Recovery_Shown:
 		label, subject = "machine key sealed by the TPM  ", "principal 0"
 		prompt = "recovery key  "
-		hint = "it is shown one time; enter: done"
+		enter_name, clears, note = "done", false, "it is shown one time"
 	case .Principal_Recovery:
 		prompt = "recovery key  "
-		hint = has_tpm ? "enter: open; enter with nothing: the passphrase" : "enter: open; escape: clear"
+		enter_name = "open"
+		if has_tpm {
+			enter_name, clears = "open; empty: the passphrase", false
+		}
 	case .Principal_Recovery_Shown:
 		label = "keys sealed by the TPM  "
 		prompt = "recovery key  "
-		hint = "it is shown one time; enter: done"
+		enter_name, clears, note = "done", false, "it is shown one time"
 	case .New_Passphrase_First:
 		prompt = "new passphrase  "
-		hint = change_mode == principals.MODE_CHANGE_PASSPHRASE ? "enter: seal; enter with nothing: cancel; escape: clear" : "enter: seal; escape: clear"
+		enter_name = change_mode == principals.MODE_CHANGE_PASSPHRASE ? "seal; empty: cancel" : "seal"
 	case .New_Passphrase_Again:
 		prompt = "again  "
-		hint = "enter: seal; escape: clear"
+		enter_name = "seal"
 	case .Change_Current:
 		// 54 cells of 8 pixels after a margin of 12: it fits in 520 pixels.
 		prompt = "current passphrase  "
-		hint = "enter: check; enter with nothing: cancel; escape: clear"
+		enter_name = "check; empty: cancel"
 	case .Change_Result:
 		prompt = "change  "
-		hint = "enter: done"
+		enter_name, clears = "done", false
 	}
-	x := interface.draw_text(table, 12, 12, label, graphics.COLOR_DIM)
-	interface.draw_text(table, x, 12, subject, graphics.COLOR_TEXT)
-	x = interface.draw_text(table, 12, 48, prompt, graphics.COLOR_DIM)
+	x := interface.draw_text(table, 12, 12, label, graphics.colors.dim)
+	interface.draw_text(table, x, 12, subject, graphics.colors.text)
+	x = interface.draw_text(table, 12, 48, prompt, graphics.colors.dim)
 	of_the_machine_tpm := mode == .Machine_Recovery || mode == .Recovery_Shown
 	// The keys of the named principal are sealed by the TPM when its file
 	// has that form, or when a creation will give it that form.
@@ -1626,38 +1636,49 @@ draw :: proc "contextless" (window: ^display.Window) {
 		// after a prompt of 14 cells fit in the window. Its element name
 		// gives a machine test its place.
 		shown := string(recovery_text[:])
-		interface.draw_text(table, x, 48, shown, graphics.COLOR_TEXT)
+		interface.draw_text(table, x, 48, shown, graphics.colors.text)
 		interface.element_name(&frame, {x, 48, len(shown) * graphics.CELL_WIDTH, graphics.CELL_HEIGHT}, "recovery_key")
 	case .Change_Result:
 		// Nothing is typed: the sentence of the end is the message below.
 	case .Machine_Recovery, .Principal_Recovery:
 		// The recovery key typed is drawn: it is copied from paper, and its
 		// user checks it. At most RECOVERY_TYPED_LIMIT cells: it fits.
-		end := interface.draw_text(table, x, 48, string(typed[:typed_count]), graphics.COLOR_TEXT)
-		interface.draw_rectangle(table, end + 2, 48, 2, 16, graphics.COLOR_TEXT)
+		end := interface.draw_text(table, x, 48, string(typed[:typed_count]), graphics.colors.text)
+		interface.draw_rectangle(table, end + 2, 48, 2, 16, graphics.colors.text)
 	case:
 		// One dot for each character typed: the passphrase itself is never
 		// drawn.
 		dots := text_encoding.character_count(typed[:typed_count])
 		for index in 0 ..< dots {
-			interface.draw_rectangle(table, x + 2 + index * 10, 54, 6, 6, graphics.COLOR_TEXT)
+			interface.draw_rectangle(table, x + 2 + index * 10, 54, 6, 6, graphics.colors.text)
 		}
-		interface.draw_rectangle(table, x + 2 + dots * 10, 48, 2, 16, graphics.COLOR_TEXT)
+		interface.draw_rectangle(table, x + 2 + dots * 10, 48, 2, 16, graphics.colors.text)
 	}
 	if message != "" {
-		interface.draw_text(table, 12, 84, message, message_failed ? graphics.COLOR_FAILED : graphics.COLOR_PROGRAM)
+		interface.draw_text(table, 12, 84, message, message_failed ? graphics.colors.failed : graphics.colors.program)
 	}
 	switch {
 	case of_the_machine_tpm:
-		interface.draw_text(table, 12, 116, "sealed by the TPM to PCR 7 and 11, with a copy for recovery", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, 116, "sealed by the TPM to PCR 7 and 11, with a copy for recovery", graphics.colors.dim)
 	case of_the_principal_tpm:
 		// 62 cells of 8 pixels after a margin of 12: it fits in 520 pixels.
-		interface.draw_text(table, 12, 116, "sealed by the TPM with the passphrase, with a copy for recovery", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, 116, "sealed by the TPM with the passphrase, with a copy for recovery", graphics.colors.dim)
 	case:
-		interface.draw_text(table, 12, 116, "no TPM seal: the passphrase alone protects the keys", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, 116, "no TPM seal: the passphrase alone protects the keys", graphics.colors.dim)
 	}
-	interface.draw_text(table, 12, HEIGHT - 26, hint, graphics.COLOR_DIM)
+	bar_y := HEIGHT - interface.ACTION_BAR_ROW_HEIGHT
+	interface.draw_rectangle(table, 0, bar_y, WIDTH, interface.ACTION_BAR_ROW_HEIGHT, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, 0, bar_y, WIDTH, 1, graphics.colors.track)
+	bar_left := 0
+	if note != "" {
+		bar_left = interface.draw_text(table, 12, bar_y + (interface.ACTION_BAR_ROW_HEIGHT - graphics.CELL_HEIGHT) / 2, note, graphics.colors.dim) + 16
+	}
+	items := [2]interface.Action_Bar_Item{interface.action_bar_item(enter_name, 2, "Enter"), interface.action_bar_item("clear", 1, "Esc")}
+	// The items stand from the right edge: the fact at the left changes
+	// with the mode, and the items keep their places.
+	bar_result := interface.action_bar(&frame, {bar_left, bar_y, WIDTH - bar_left, interface.ACTION_BAR_ROW_HEIGHT}, items[:clears ? 2 : 1], &bar, {alignment = .Right})
 	interface.window_frame_end(&drawing, &frame, window)
+	return bar_result
 }
 
 // enter acts on the passphrase typed.
@@ -2048,34 +2069,33 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	for mode != .Done {
-		draw(&window)
+		// A press on an item of the action bar runs its key, as the key
+		// does; the next turn draws what it changed.
+		if bar_result := draw(&window); bar_result.ran {
+			key_run(&window, bar_result.run)
+			continue
+		}
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.wait_end(&wait)
 		for event in display.next_event(&window) {
-			if event.kind != .Key || !event.pressed {
-				continue
-			}
-			switch {
-			case event.code == display.KEY_ESCAPE:
-				erase(typed[:])
-				typed_count = 0
-			case event.character == '\n':
-				enter(&window)
-			case event.character == 8:
-				// The passphrase is UTF-8: Backspace removes its last
-				// whole character, and erases its bytes.
-				if typed_count > 0 {
-					kept := text_encoding.complete_characters(typed[:typed_count - 1])
-					erase(typed[kept:typed_count])
-					typed_count = kept
+			#partial switch event.kind {
+			case .Pointer:
+				// The pointer reaches the action bar only: the next turn
+				// draws a frame with it.
+				interface.input_add(&drawing.input, event)
+			case .Key:
+				if !event.pressed {
+					continue
 				}
-			case text_encoding.character_in_text(event.character):
-				// A character whose bytes do not fit is not typed.
-				recovery := mode == .Machine_Recovery || mode == .Principal_Recovery
-				limit := recovery ? RECOVERY_TYPED_LIMIT : len(typed)
-				if typed_count < limit {
-					typed_count += text_encoding.character_encode(event.character, typed[typed_count:limit])
+				// The open list of the action bar takes its keys first.
+				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
+				outcome := interface.action_bar_key(&bar, press)
+				if outcome.ran {
+					key_run(&window, outcome.run)
+				}
+				if !outcome.taken {
+					key_run(&window, press)
 				}
 			}
 			if mode == .Done {
@@ -2085,3 +2105,33 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.stop(0)
 }
+
+// key_run runs one key: a typed key, or the key of an item of the action
+// bar that a press ran.
+key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Press) {
+	switch {
+	case press.code == display.KEY_ESCAPE:
+		erase(typed[:])
+		typed_count = 0
+	case press.character == '\n':
+		enter(window)
+	case press.character == 8:
+		// The passphrase is UTF-8: Backspace removes its last
+		// whole character, and erases its bytes.
+		if typed_count > 0 {
+			kept := text_encoding.complete_characters(typed[:typed_count - 1])
+			erase(typed[kept:typed_count])
+			typed_count = kept
+		}
+	case text_encoding.character_in_text(press.character):
+		// A character whose bytes do not fit is not typed.
+		recovery := mode == .Machine_Recovery || mode == .Principal_Recovery
+		limit := recovery ? RECOVERY_TYPED_LIMIT : len(typed)
+		if typed_count < limit {
+			typed_count += text_encoding.character_encode(press.character, typed[typed_count:limit])
+		}
+	}
+}
+
+// The state of the action bar of the window.
+bar: interface.Action_Bar_State

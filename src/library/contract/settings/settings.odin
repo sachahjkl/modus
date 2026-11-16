@@ -1,7 +1,7 @@
 // The settings of the owner (docs/FONTS.md, "The setting"): one page that
-// the root service creates. The program `settings` is its one writer; each
-// program with a surface or a terminal, and the compositor, map it with the
-// right Read only, at PAGE_ADDRESS. The bit of the range Settings_Page in
+// the root service creates. The program `settings` is the one writer of the
+// values; each program with a surface or a terminal, and the compositor,
+// map it with the right Read only, at PAGE_ADDRESS. The bit of the range Settings_Page in
 // the context value op.CONTEXT_VALUE_FIXED_RANGES_MAPPED says that it is
 // mapped (clear: the program has no page, and its text is Spleen).
 //
@@ -19,11 +19,18 @@
 // `settings` writes the page, so a field of the page can only change a
 // look: no program reads an address or a size from it.
 //
-// A change: the writer makes change_count odd, writes the values, makes it
-// even again, and wakes the threads that wait on it (the compositor). The
-// compositor then sends the display event Settings_Changed to each window,
-// and each program draws again. A reader copies the values while
-// change_count stays even and the same (read).
+// A change: the writer makes change_count odd, writes the values and the
+// appearance in force, makes it even again, and wakes the threads that
+// wait on it (the compositor, the root service). The compositor then sends
+// the display event Settings_Changed to each window, and each program draws
+// again. A reader copies the values while change_count stays even and the
+// same (read).
+//
+// The appearance in force (src/md/features/appearance.md) has a second
+// writer: with the setting `auto`, the root service writes the one word
+// appearance_in_force at each edge of the rule of the day, with one atomic
+// store outside the change count (appearance_in_force_write), and wakes the
+// same waiters. A reader loads that word inside its loop of reads.
 //
 // The program `settings` keeps the values in its private store, as one
 // record (Kept_Settings) in one object: one write is one commit, so a loss
@@ -52,6 +59,7 @@ Setting :: enum u32 {
 	Pointer_Theme  = 2, // Which pointer theme the compositor draws: `Pointer_Theme`.
 	Grid_Fit       = 3, // Whether the glyphs sit on whole pixels: `Grid_Fit`.
 	Keyboard_Layout = 4, // Which character each key of the keyboard gives: `Keyboard_Layout`.
+	Appearance      = 5, // Which appearance the desktop has, or the rule of the day: `Appearance`.
 }
 
 // The values of each setting. 0 is the default.
@@ -86,6 +94,22 @@ Keyboard_Layout :: enum u32 {
 	French        = 1, // The layout of France: AZERTY.
 }
 
+// The appearance of the desktop that the principal chose
+// (src/md/features/appearance.md).
+Appearance :: enum u32 {
+	Auto  = 0, // The rule of the day: light from 07:00 to 19:00 of the local time, dark at night.
+	Dark  = 1, // The dark appearance at each hour.
+	Light = 2, // The light appearance at each hour.
+}
+
+// The appearance that each program draws now: the word appearance_in_force
+// of the page. With the setting Dark or Light it is that value; with Auto,
+// the value of the rule at this moment.
+Appearance_In_Force :: enum u32 {
+	Dark  = 0, // The default: an all-zero page is dark.
+	Light = 1,
+}
+
 SETTING_CAPACITY :: 8 // The page and the kept record have room for 8 values.
 VALUE_NAME_CAPACITY :: 4 // The most values of one setting.
 
@@ -105,15 +129,22 @@ descriptions := [Setting]Description {
 	.Pointer_Theme  = {"pointer_theme", "pointer theme", {"owner", "system", "", ""}, len(Pointer_Theme)},
 	.Grid_Fit       = {"grid_fit", "grid fit", {"on", "off", "", ""}, len(Grid_Fit)},
 	.Keyboard_Layout = {"keyboard_layout", "keyboard layout", {"us", "french", "", ""}, len(Keyboard_Layout)},
+	.Appearance      = {"appearance", "appearance", {"auto", "dark", "light", ""}, len(Appearance)},
+}
+
+// The names of the appearance in force, by its number, for the log.
+appearance_in_force_names := [Appearance_In_Force]string {
+	.Dark  = "dark",
+	.Light = "light",
 }
 
 // The settings page: what the program `settings` writes and each program
 // with a surface reads, at PAGE_ADDRESS. A reader copies it while
 // change_count stays even and the same.
 Page :: struct {
-	change_count:                     u32, // Even when the page is stable. Each change adds 2.
-	reserved:                         u32, // 0.
-	values:                           [SETTING_CAPACITY]u32, // By Setting. A reader keeps each value through `valid`.
+	change_count:        u32, // Even when the page is stable. Each change adds 2.
+	appearance_in_force: u32, // Appearance_In_Force. The program `settings` and the root service write it.
+	values:              [SETTING_CAPACITY]u32, // By Setting. A reader keeps each value through `valid`.
 }
 #assert(size_of(Page) <= 4096)
 
@@ -155,8 +186,20 @@ glyph_cache_open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, cache: 
 
 // Choice: the values of a page, as one copy.
 Choice :: struct {
-	values:       [Setting]u32, // The value of each setting, kept valid.
-	change_count: u32, // The change count of the page at the copy.
+	values:              [Setting]u32, // The value of each setting, kept valid.
+	appearance_in_force: Appearance_In_Force, // The appearance that each program draws now.
+	change_count:        u32, // The change count of the page at the copy.
+}
+
+// appearance_of gives the setting of the appearance of a choice.
+appearance_of :: #force_inline proc "contextless" (choice: Choice) -> Appearance {
+	return Appearance(choice.values[.Appearance])
+}
+
+// appearance_in_force_valid gives the appearance in force of a word of the
+// page: Dark for a value that the enumeration does not have.
+appearance_in_force_valid :: proc "contextless" (value: u32) -> Appearance_In_Force {
+	return value == u32(Appearance_In_Force.Light) ? .Light : .Dark
 }
 
 // font_of gives the font of a choice.
@@ -200,22 +243,25 @@ valid :: proc "contextless" (setting: Setting, value: u32) -> u32 {
 		count = len(Grid_Fit)
 	case .Keyboard_Layout:
 		count = len(Keyboard_Layout)
+	case .Appearance:
+		count = len(Appearance)
 	}
 	return value < count ? value : 0
 }
 
-// values_differ tells whether two choices have different values. The count
-// of changes is not compared: the program `settings` can change the count
-// with no end and leave the values as they were, and a reader that acts on
-// each new count then does work for nothing (the compositor tells every
-// window, and a window ring that is full loses the keys of the input).
+// values_differ tells whether two choices have different values, or a
+// different appearance in force. The count of changes is not compared: the
+// program `settings` can change the count with no end and leave the values
+// as they were, and a reader that acts on each new count then does work for
+// nothing (the compositor tells every window, and a window ring that is
+// full loses the keys of the input).
 values_differ :: proc "contextless" (first, second: Choice) -> bool {
 	for setting in Setting {
 		if first.values[setting] != second.values[setting] {
 			return true
 		}
 	}
-	return false
+	return first.appearance_in_force != second.appearance_in_force
 }
 
 // READ_TRIES: the most reads of a page that changes, or that its writer
@@ -239,6 +285,9 @@ read :: proc "contextless" (page: ^Page) -> Choice {
 		for setting in Setting {
 			choice.values[setting] = valid(setting, intrinsics.atomic_load_explicit(&page.values[setting], .Relaxed))
 		}
+		// One word, which the root service also stores alone: the copy is
+		// the old or the new appearance, never a mix.
+		choice.appearance_in_force = appearance_in_force_valid(intrinsics.atomic_load_explicit(&page.appearance_in_force, .Relaxed))
 		intrinsics.atomic_thread_fence(.Acquire)
 		if intrinsics.atomic_load_explicit(&page.change_count, .Relaxed) == before {
 			choice.change_count = before
@@ -248,16 +297,25 @@ read :: proc "contextless" (page: ^Page) -> Choice {
 	return {change_count = before}
 }
 
-// write changes the values of the page. The one writer is the program
-// `settings`; it wakes the waiters after (it owns the kernel calls, this
-// package has none).
-write :: proc "contextless" (page: ^Page, values: [Setting]u32) {
+// write changes the values of the page and the appearance in force, in one
+// change. The one writer of the values is the program `settings`; it wakes
+// the waiters after (it owns the kernel calls, this package has none).
+write :: proc "contextless" (page: ^Page, values: [Setting]u32, appearance_in_force: Appearance_In_Force) {
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
 	intrinsics.atomic_thread_fence(.Release)
 	for setting in Setting {
 		intrinsics.atomic_store_explicit(&page.values[setting], valid(setting, values[setting]), .Relaxed)
 	}
+	intrinsics.atomic_store_explicit(&page.appearance_in_force, u32(appearance_in_force), .Relaxed)
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
+}
+
+// appearance_in_force_write changes the appearance in force alone, with one
+// store and no change of the count: the write of the root service at an
+// edge of the rule of the day. A reader copies the old or the new word. The
+// caller wakes the waiters of change_count after.
+appearance_in_force_write :: proc "contextless" (page: ^Page, appearance_in_force: Appearance_In_Force) {
+	intrinsics.atomic_store_explicit(&page.appearance_in_force, u32(appearance_in_force), .Release)
 }
 
 // Kept_Settings: the record of the private store of `settings`, 48 bytes,

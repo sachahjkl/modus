@@ -313,9 +313,9 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 }
 
 bar :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, value, most: u64, color: graphics.Color) {
-	interface.draw_rectangle(table, x, y + 3, BAR_WIDTH, 10, graphics.COLOR_TRACK)
+	interface.draw_rectangle(table, x, y + 3, BAR_WIDTH, 10, graphics.colors.track)
 	interface.draw_rectangle(table, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
-	interface.draw_unsigned(table, x + BAR_WIDTH + 8, y, value, graphics.COLOR_TEXT)
+	interface.draw_unsigned(table, x + BAR_WIDTH + 8, y, value, graphics.colors.text)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
@@ -324,39 +324,39 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	measured := system.measure_run()
 	most_rate, most_entries: u64
 	for measure in measures {
 		most_rate, most_entries = max(most_rate, measured ? measure.rate : measure.read), max(most_entries, measure.entries)
 	}
 	y := 12
-	interface.draw_text(table, 12, y, measured ? "several threads write records in one queue, several threads read them, for one second." : "several threads write 50000 records each in one queue, several threads read them.", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, measured ? "several threads write records in one queue, several threads read them, for one second." : "several threads write 50000 records each in one queue, several threads read them.", graphics.colors.dim)
 	y += LINE
-	interface.draw_text(table, 12, y, "one event starts the threads of a run. no record is lost, none arrives two times.", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, "one event starts the threads of a run. no record is lost, none arrives two times.", graphics.colors.dim)
 	y += LINE + LINE / 2
-	interface.draw_text(table, 12, y, "queue    writers  readers  wrong", graphics.COLOR_DIM)
-	interface.draw_text(table, RATE_X, y, measured ? "records in one second" : "records read", graphics.COLOR_DIM)
-	interface.draw_text(table, ENTRIES_X, y, ENTRIES_HEADER, graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, "queue    writers  readers  wrong", graphics.colors.dim)
+	interface.draw_text(table, RATE_X, y, measured ? "records in one second" : "records read", graphics.colors.dim)
+	interface.draw_text(table, ENTRIES_X, y, ENTRIES_HEADER, graphics.colors.dim)
 	y += LINE
 	for measure, index in measures {
 		if index % 2 == 0 {
-			interface.draw_rectangle(table, 6, y - 4, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
+			interface.draw_rectangle(table, 6, y - 4, WIDTH - 12, LINE, graphics.colors.card_top)
 		}
-		interface.draw_text(table, 12, y, measure.with_lock ? "lock" : "shared", measure.with_lock ? COLOR_LOCK : graphics.COLOR_TEXT)
-		interface.draw_unsigned(table, 84, y, u64(measure.writers), graphics.COLOR_TEXT)
-		interface.draw_unsigned(table, 156, y, u64(measure.readers), graphics.COLOR_TEXT)
+		interface.draw_text(table, 12, y, measure.with_lock ? "lock" : "shared", measure.with_lock ? COLOR_LOCK : graphics.colors.text)
+		interface.draw_unsigned(table, 84, y, u64(measure.writers), graphics.colors.text)
+		interface.draw_unsigned(table, 156, y, u64(measure.readers), graphics.colors.text)
 		if measure.done {
-			interface.draw_unsigned(table, 228, y, measure.wrong, measure.wrong == 0 ? graphics.COLOR_DIM : graphics.COLOR_FAILED)
-			bar(table, RATE_X, y, measured ? measure.rate : measure.read, most_rate, measure.wrong != 0 ? graphics.COLOR_FAILED : measure.with_lock ? COLOR_LOCK : COLOR_RATE)
+			interface.draw_unsigned(table, 228, y, measure.wrong, measure.wrong == 0 ? graphics.colors.dim : graphics.colors.failed)
+			bar(table, RATE_X, y, measured ? measure.rate : measure.read, most_rate, measure.wrong != 0 ? graphics.colors.failed : measure.with_lock ? COLOR_LOCK : COLOR_RATE)
 			bar(table, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
 		} else {
-			interface.draw_text(table, RATE_X, y, "...", graphics.COLOR_DIM)
+			interface.draw_text(table, RATE_X, y, "...", graphics.colors.dim)
 		}
 		y += LINE
 	}
 	if !measured {
-		interface.draw_text(table, 12, y + LINE / 2, "the records in one second are a measure: run `modustool measure crowd`.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y + LINE / 2, "the records in one second are a measure: run `modustool measure crowd`.", graphics.colors.dim)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

@@ -174,6 +174,7 @@ screen: graphics.Canvas // The framebuffer of the machine.
 red_first: bool
 frame: graphics.Canvas // The picture that the compositor builds, then copies to the screen.
 background: graphics.Canvas
+background_appearance: graphics.Appearance // The appearance of the pixels of `background` and of the mark of the bar.
 clients: [CLIENT_CAPACITY]Client
 order: [CLIENT_CAPACITY]int // The clients that have a surface, from back to front. The last one has focus.
 order_count: int
@@ -484,13 +485,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	red_first = ctx.values[VALUE_FORMAT] == FORMAT_RED_FIRST
 	frame = canvas_create(width, height)
 	background = canvas_create(width, height)
-	// The background of the rules: one color, and a grid of points.
-	graphics.clear(background, graphics.COLOR_BACKGROUND)
-	for y := graphics.POINT_STEP / 2; y < height; y += graphics.POINT_STEP {
-		for x := graphics.POINT_STEP / 2; x < width; x += graphics.POINT_STEP {
-			graphics.fill(background, x, y, graphics.POINT_SIZE, graphics.POINT_SIZE, graphics.COLOR_POINT)
-		}
-	}
+	// The background, the mark of the bar and the measures draw in the dark
+	// appearance: the settings are read below, and a change of the
+	// appearance draws the background and the mark again.
+	background_build()
 	pointer_x, pointer_y = width / 2, height / 2
 	bar_mark_build()
 	memory_measure()
@@ -518,7 +516,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	settings_told: settings.Choice
 	settings_told_once: bool
 	if display.settings_page != nil {
-		pointer_theme_choose(settings.pointer_theme_of(settings.read(display.settings_page)))
+		first_choice := settings.read(display.settings_page)
+		pointer_theme_choose(settings.pointer_theme_of(first_choice))
+		pointer_form_choose(pointer_form_in_force(first_choice)) // pointer_picture.odin
 	}
 
 	next_frame: u64
@@ -547,7 +547,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		palette_wait(&wait) // palette.odin
 		now := system.wait_end(&wait, deadline)
 		if display.settings_page != nil {
-			if choice := settings.read(display.settings_page); choice.change_count != settings_seen {
+			// The root service changes the appearance in force alone, with
+			// no new change count, and wakes this loop.
+			if choice := settings.read(display.settings_page); choice.change_count != settings_seen || choice.appearance_in_force != settings_told.appearance_in_force {
 				settings_seen = choice.change_count
 				if !settings_told_once || settings.values_differ(choice, settings_told) {
 					settings_told = choice
@@ -683,8 +685,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // (src/library/support/display gives it the new font before the event).
 settings_changed :: proc "contextless" (choice: settings.Choice) {
 	display.text_settings_apply()
+	// A new appearance: the background and the mark of the bar are pixels
+	// that the compositor keeps, so it draws them again; each record of the
+	// screen reads the tokens at its next frame.
+	if graphics.appearance != background_appearance {
+		background_build()
+		bar_mark_build()
+	}
 	bar_layout_update()
 	pointer_theme_choose(settings.pointer_theme_of(choice)) // pointer_picture.odin
+	pointer_form_choose(pointer_form_in_force(choice))
 	told := 0
 	for &client in clients {
 		if client.ring.head != nil {
@@ -703,6 +713,8 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 		system.write_part(&writer, " ")
 		system.write_part(&writer, description.value_names[choice.values[setting]])
 	}
+	system.write_part(&writer, "; the appearance in force ")
+	system.write_part(&writer, settings.appearance_in_force_names[choice.appearance_in_force])
 	system.log("compositor: the settings changed: ", system.written(&writer), "; ", u64(told), " windows draw again")
 }
 
@@ -1089,8 +1101,8 @@ rectangles_of_areas :: proc "contextless" (areas: []Rectangle, rectangles: []int
 frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Client, x, y: int, focus, pointer_over: bool) {
 	outer_width := client.surface.width + 2 * BORDER
 	outer_height := client.surface.height + TITLE_HEIGHT + BORDER
-	start := graphics.Color(focus ? graphics.COLOR_TITLE : graphics.COLOR_TITLE_QUIET)
-	end := graphics.Color(focus ? graphics.COLOR_TITLE_END : graphics.COLOR_TITLE_QUIET_END)
+	start := graphics.Color(focus ? graphics.colors.title : graphics.colors.title_quiet)
+	end := graphics.Color(focus ? graphics.colors.title_end : graphics.colors.title_quiet_end)
 	interface.draw_horizontal_gradient(table, x, y, outer_width, 1, graphics.shade(start, 125), graphics.shade(end, 125))
 	interface.draw_horizontal_gradient(table, x, y + 1, outer_width, TITLE_HEIGHT - 1, start, end)
 	interface.draw_horizontal_gradient(table, x, y + outer_height - BORDER, outer_width, BORDER, start, end)
@@ -1098,11 +1110,11 @@ frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Clie
 	interface.draw_rectangle(table, x + outer_width - BORDER, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, end)
 	// The title: a name, cut in its font to the room before the close button.
 	title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(client.title[:]), outer_width - CLOSE_SIZE - 16)
-	interface.draw_text(table, x + 8, y + 4, title, focus ? graphics.COLOR_WHITE : graphics.COLOR_DIM, interface.FONT_INTERFACE)
-	base := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET)
-	cross_color := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET_MARK)
+	interface.draw_text(table, x + 8, y + 4, title, focus ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_INTERFACE)
+	base := graphics.Color(graphics.colors.stop_program_quiet)
+	cross_color := graphics.Color(graphics.colors.stop_program_quiet_mark)
 	if focus || pointer_over {
-		base = pointer_over ? graphics.COLOR_STOP_PROGRAM_POINTER_OVER : graphics.COLOR_STOP_PROGRAM
+		base = pointer_over ? graphics.colors.stop_program_pointer_over : graphics.colors.stop_program
 		cross_color = graphics.COLOR_WHITE
 	}
 	close_x := x + outer_width - BORDER - CLOSE_SIZE
@@ -1124,15 +1136,15 @@ title_measure :: proc "contextless" () {
 		for _ in 0 ..< ROUNDS {
 			switch form {
 			case 0:
-				graphics.fill(frame, 0, 0, width, TITLE_HEIGHT, graphics.COLOR_TITLE)
+				graphics.fill(frame, 0, 0, width, TITLE_HEIGHT, graphics.colors.title)
 			case 1:
 				for line in 0 ..< TITLE_HEIGHT {
 					for column in 0 ..< width {
-						frame.pixels[line * frame.stride + column] = graphics.mix(graphics.COLOR_TITLE, graphics.COLOR_TITLE_END, u32(column * 255 / (width - 1)))
+						frame.pixels[line * frame.stride + column] = graphics.mix(graphics.colors.title, graphics.colors.title_end, u32(column * 255 / (width - 1)))
 					}
 				}
 			case 2:
-				graphics.gradient(title_row[:width], graphics.COLOR_TITLE, graphics.COLOR_TITLE_END, width, 0)
+				graphics.gradient(title_row[:width], graphics.colors.title, graphics.colors.title_end, width, 0)
 				graphics.copy(frame, 0, 0, {pixels = raw_data(title_row[:]), width = width, height = TITLE_HEIGHT})
 			}
 		}
@@ -1278,8 +1290,8 @@ bar_mark_picture: graphics.Canvas
 // bar_background_records appends the surface of the bar, with its corner
 // at (x, y): its gradient and the line under it.
 bar_background_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width: int) {
-	interface.draw_vertical_gradient(table, x, y, width, BAR_HEIGHT - 1, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
-	interface.draw_rectangle(table, x, y + BAR_HEIGHT - 1, width, 1, graphics.COLOR_TRACK)
+	interface.draw_vertical_gradient(table, x, y, width, BAR_HEIGHT - 1, graphics.colors.card_top, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, x, y + BAR_HEIGHT - 1, width, 1, graphics.colors.track)
 }
 
 // bar_mark_build draws the heron of the bar into its picture. A picture has
@@ -1296,8 +1308,22 @@ bar_mark_build :: proc "contextless" () {
 	whole_picture := [1]interface.Rectangle{{0, 0, bar.MARK_SIZE, bar.MARK_SIZE}}
 	screen_draw_part(&table, 0, table.record_count, nil, bar_mark_picture, whole_picture[:])
 	// The mark of the bar is a small icon, one pixel for a cell: the cells
-	// variant.
-	mark.mark_draw(bar_mark_picture, 0, 0, bar.MARK_CELL_SIZE, .Cells, false)
+	// variant. On the light bar it has the colors of the light background,
+	// as the mark of the bar of the light page of the site.
+	mark.mark_draw(bar_mark_picture, 0, 0, bar.MARK_CELL_SIZE, .Cells, graphics.appearance == .Light)
+}
+
+// background_build draws the background of the rules into its canvas: one
+// color, and a grid of points. The compositor draws it once at its start,
+// and again at each change of the appearance.
+background_build :: proc "contextless" () {
+	background_appearance = graphics.appearance
+	graphics.clear(background, graphics.colors.background)
+	for y := graphics.POINT_STEP / 2; y < background.height; y += graphics.POINT_STEP {
+		for x := graphics.POINT_STEP / 2; x < background.width; x += graphics.POINT_STEP {
+			graphics.fill(background, x, y, graphics.POINT_SIZE, graphics.POINT_SIZE, graphics.colors.point)
+		}
+	}
 }
 
 // screen_draw_part draws the records first ..< first + count of a table
@@ -1381,7 +1407,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			memory = client.surface.pixels[:client.surface.stride * client.surface.height]
 			screen_picture_append(client.x + BORDER, client.y + TITLE_HEIGHT, client.surface, memory, 0)
 		} else {
-			interface.draw_rectangle(table, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height, graphics.COLOR_BACKGROUND)
+			interface.draw_rectangle(table, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height, graphics.colors.background)
 		}
 		outer := Rectangle{client.x, client.y, client.x + client.surface.width + 2 * BORDER, client.y + client.surface.height + TITLE_HEIGHT + BORDER}
 		screen_part_end(first, memory, outer, true)
@@ -1394,8 +1420,8 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	bar_background_records(table, 0, 0, width)
 	screen_picture_append(bar.MARK_X, bar.MARK_Y, bar_mark_picture, bar_mark_pixels[:], BAR_MARK_GENERATION)
 	bar_button_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, label: string, open: bool) {
-		interface.draw_rectangle(table, x, y, width, height, open ? graphics.COLOR_CHOSEN : graphics.COLOR_TRACK)
-		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
+		interface.draw_rectangle(table, x, y, width, height, open ? graphics.colors.chosen : graphics.colors.track)
+		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 	}
 	left, top, button_width, button_height := bar.button(bar_layout)
 	bar_button_records(table, left, top, button_width, button_height, bar.LABEL, menu_open == .Programs)
@@ -1405,19 +1431,19 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	// its two parts as they are drawn.
 	hint_width := interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_NAME) + interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_KEY)
 	hint_x := width - CLOCK_WIDTH - 32 - hint_width
-	interface.draw_text(table, interface.draw_text(table, hint_x, 8, PALETTE_HINT_NAME, graphics.COLOR_DIM, interface.FONT_INTERFACE), 8, PALETTE_HINT_KEY, graphics.COLOR_TEXT, interface.FONT_INTERFACE)
+	interface.draw_text(table, interface.draw_text(table, hint_x, 8, PALETTE_HINT_NAME, graphics.colors.dim, interface.FONT_INTERFACE), 8, PALETTE_HINT_KEY, graphics.colors.text, interface.FONT_INTERFACE)
 	seconds := now / 1000
 	x := width - CLOCK_WIDTH - 16
 	if milliseconds, known := date.milliseconds_now(date_page, now); known {
 		date_text: [24]u8
-		interface.draw_text(table, x, 8, calendar.iso_text(date_text[:], milliseconds / 1000), graphics.COLOR_TEXT)
+		interface.draw_text(table, x, 8, calendar.iso_text(date_text[:], milliseconds / 1000), graphics.colors.text)
 	} else {
 		x += CLOCK_WIDTH - 8 * 8
-		x = interface.draw_unsigned(table, x, 8, seconds / 3600, graphics.COLOR_TEXT, 2)
-		x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
-		x = interface.draw_unsigned(table, x, 8, seconds / 60 % 60, graphics.COLOR_TEXT, 2)
-		x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
-		interface.draw_unsigned(table, x, 8, seconds % 60, graphics.COLOR_TEXT, 2)
+		x = interface.draw_unsigned(table, x, 8, seconds / 3600, graphics.colors.text, 2)
+		x = interface.draw_text(table, x, 8, ":", graphics.colors.dim)
+		x = interface.draw_unsigned(table, x, 8, seconds / 60 % 60, graphics.colors.text, 2)
+		x = interface.draw_text(table, x, 8, ":", graphics.colors.dim)
+		interface.draw_unsigned(table, x, 8, seconds % 60, graphics.colors.text, 2)
 	}
 
 	// The menus of the bar, as cards of the package.
@@ -1425,7 +1451,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	count: interface.Text_Builder
 	if menu_open == .Windows && order_count > 0 {
 		menu_left, menu_top, menu_width, menu_height := bar.windows_menu(bar_layout, order_count)
-		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "WINDOWS", "the client table", graphics.COLOR_KERNEL, interface.number_text(&count, u64(order_count)))
+		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "WINDOWS", "the client table", graphics.colors.kernel, interface.number_text(&count, u64(order_count)))
 		for line in 0 ..< order_count {
 			index := window_of_line(line)
 			if index < 0 {
@@ -1434,11 +1460,11 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			line_x, line_y, line_width, line_height := bar.windows_line(bar_layout, line)
 			focus := index == order[order_count - 1]
 			if line == menu_line {
-				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.COLOR_CHOSEN)
+				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.colors.chosen)
 			}
 			if focus {
 				// The window that has the focus: a square, and its title in white.
-				interface.draw_rectangle(table, line_x + 8, line_y + 8, 8, 8, line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TITLE)
+				interface.draw_rectangle(table, line_x + 8, line_y + 8, 8, 8, line == menu_line ? graphics.COLOR_WHITE : graphics.colors.title)
 			}
 			// A disk program keeps the room of its hash prefix at the end of
 			// the line: the nickname ends before it.
@@ -1447,23 +1473,23 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 				room -= bar.WINDOWS_HASH_GAP + interface.text_measured_width(table, {}, string(clients[index].hash_prefix[:]))
 			}
 			title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(clients[index].title[:]), room)
-			title_end := interface.draw_text(table, line_x + bar.WINDOWS_TITLE_X, line_y + 4, title, focus || line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
+			title_end := interface.draw_text(table, line_x + bar.WINDOWS_TITLE_X, line_y + 4, title, focus || line == menu_line ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 			if clients[index].from_disk {
 				// A value, in the font of the cells, faded: the name is the
 				// nickname, and the prefix only tells two files apart.
-				interface.draw_text(table, title_end + bar.WINDOWS_HASH_GAP, line_y + 4, string(clients[index].hash_prefix[:]), graphics.COLOR_DIM)
+				interface.draw_text(table, title_end + bar.WINDOWS_HASH_GAP, line_y + 4, string(clients[index].hash_prefix[:]), graphics.colors.dim)
 			}
 		}
 	}
 	if menu_open == .Programs {
 		menu_left, menu_top, menu_width, menu_height := bar.menu(bar_layout)
-		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "PROGRAMS", "bar.names", graphics.COLOR_KERNEL, interface.number_text(&count, len(bar.names)))
+		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "PROGRAMS", "bar.names", graphics.colors.kernel, interface.number_text(&count, len(bar.names)))
 		for name, index in bar.names {
 			line_x, line_y, line_width, line_height := bar.line(bar_layout, index)
 			if index == menu_line {
-				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.COLOR_CHOSEN)
+				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.colors.chosen)
 			}
-			interface.draw_text(table, line_x + bar.PADDING, line_y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
+			interface.draw_text(table, line_x + bar.PADDING, line_y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 		}
 	}
 	screen_part_end(bar_first, bar_mark_pixels[:], {}, false)

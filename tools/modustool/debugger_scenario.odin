@@ -315,7 +315,14 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "debugger_window: the frame 0 of the thread 0: "},
 	{kind = .Click_Element, text = "debugger_window", element = "breakpoint 0"},
 	{kind = .Wait, text = "debugger_window: removed the breakpoint 0"},
-	{kind = .Key, text = "d"},
+	// The action bar of the window: its items do not fit in one row, and
+	// the rest are behind its button "more". A press on the button opens
+	// the list over the cards; detach has the lowest priority, so it is
+	// in the list. A press on its row runs its key, d, as the key does.
+	{kind = .Click_Element, text = "debugger_window", element = "more"},
+	{kind = .Wait, text = "interface: debugger_window: the element detach at "},
+	{kind = .Shot, text = "action_bar_more"},
+	{kind = .Click_Element, text = "debugger_window", element = "detach"},
 	{kind = .Wait, text = "debugger_window: detached from debug_target"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 	{kind = .Close, text = "debugger_window"},
@@ -362,6 +369,10 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "[console] debug_target          1"},
 	{kind = .Type, text = "columns(hold(0), \"thread state\")"},
 	{kind = .Wait, text = "[console]      0  held"},
+	// The key of the client of the peer, for the calls from the host at
+	// the end: the console allows it while it still acts for principal 0.
+	{kind = .Type, text = "remote_allow(\"{client key}\")"},
+	{kind = .Wait, text = "root: principal 0 allowed the client key "},
 	{kind = .Type, text = "revoke(\"console\", \"acts_for_principal\")"},
 	{kind = .Wait, text = "root: revoked the grant acts_for_principal of console, connections changed: "},
 	{kind = .Wait, text = "root: ended the debugging of debug_target for console: the rule no longer gives the debug access, after a revocation"},
@@ -381,6 +392,9 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Remote_Key, text = "remote: the public key of this service: "},
 	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
 	{kind = .Call, text = "debugger.attach(\"debug_target\")", expected = "1 rows of Attached"},
+	// The debug access is for the principal of the row of the key of the
+	// client, which allowed it.
+	{kind = .Wait, text = "root: gave debugger the right to debug debug_target for remote, for principal 0", any_order = true},
 	{kind = .Call, text = "debugger.break_at(\"" + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_STORE + "\")", expected = "1 rows of Break_Row"},
 	{kind = .Wait, text = "debugger: the thread 0 of debug_target stopped: breakpoint 0"},
 	{kind = .Call, text = "debugger.events()", expected = "breakpoint 0"},

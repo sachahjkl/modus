@@ -1,15 +1,20 @@
 // The settings of the system (docs/FONTS.md, "The setting"): the font of
 // the system, the order of the color stripes of the screen, the pointer
-// theme and the grid fit of the vector font. The window shows each setting
-// as a row of buttons and the text of the system at its three sizes; the
-// exports set() and get() make the same changes from the console and from
-// `modustool call`.
+// theme, the grid fit of the vector font, the layout of the keyboard and
+// the appearance of the desktop. The window shows each setting as a row of
+// buttons and the text of the system at its three sizes; the exports set()
+// and get() make the same changes from the console and from `modustool
+// call`.
 //
-// This program is the one writer of the settings page (modus:contract/settings).
-// A change is written first to its private store, as one record in one
-// object (one commit), then to the page; the page wakes the compositor,
-// which gives the new font and pointer theme to each window: every program
-// draws again, with no code of its own for it.
+// This program is the one writer of the values of the settings page
+// (modus:contract/settings). A change is written first to its private
+// store, as one record in one object (one commit), then to the page, with
+// the appearance in force that the setting `appearance` gives now
+// (src/md/features/appearance.md); the page wakes the compositor, which
+// gives the new font, pointer theme and appearance to each window: every
+// program draws again, with no code of its own for it. With the setting
+// `auto`, the root service changes the appearance in force at 07:00 and at
+// 19:00: this program runs only while its window is open.
 //
 // At boot the root service starts this program for one pass with no window
 // (the context value VALUE_BOOT_PASS): it reads the record of its store,
@@ -38,12 +43,18 @@
 // and a card with the text of the system at its three sizes. The log has
 // "settings: the boot pass: ..." at boot, "settings: ok, font vector, ..."
 // when the window opens, and one line for each change, with "kept in the
-// store" or "NOT kept: the store refused".
+// store" or "NOT kept: the store refused". At the boot pass and at each
+// change of the appearance it writes why the appearance in force is what it
+// is: "settings: the appearance in force is dark: auto, light from 07:00 to
+// 19:00 of the local time; the local time is 01:04 with a zone of 0 s, at
+// 1794791040 s since 1970".
 package settings_program
 
+import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/settings"
+import "modus:support/appearance"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -51,14 +62,28 @@ import "modus:support/storage"
 import "modus:support/system"
 
 WIDTH :: 560
-HEIGHT :: 520
+HEIGHT :: 528
+
+// The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
+// action bar"): the keys of the focus of the interface package.
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [3]interface.Action_Bar_Item {
+	return {
+		interface.action_bar_item("next button", 3, "Tab"),
+		interface.action_bar_item("button before", 2, "Shift", "Tab"),
+		interface.action_bar_item("choose the value", 3, "Enter"),
+	}
+}
+bar: interface.Action_Bar_State
 
 page: ^settings.Page
+date_page: ^date.Page // The date of the rule of the day of the setting `appearance`, or nil.
 service: system.Service
 store: storage.Client
 has_store: bool
 
-records_now, records_before: [320]interface.Draw_Record
+records_now, records_before: [384]interface.Draw_Record
 text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 drawn_change: u32 = 1 // The change count of the last frame; odd: none yet.
@@ -100,6 +125,32 @@ keep :: proc "contextless" (values: [settings.Setting]u32) -> bool {
 	return true
 }
 
+// in_force_now gives the appearance in force of the values at this moment:
+// the setting `appearance`, with `auto` by the rule of the day over the
+// date page (src/md/features/appearance.md). It writes the sentence of the
+// rule in buffer.
+in_force_now :: proc "contextless" (values: [settings.Setting]u32, buffer: []u8) -> (settings.Appearance_In_Force, string) {
+	setting := settings.Appearance(settings.valid(.Appearance, values[.Appearance]))
+	moment := appearance.moment_of(date_page, system.time())
+	return appearance.in_force_of(setting, moment), appearance.sentence_write(buffer, setting, moment)
+}
+
+// page_write writes the values and their appearance in force on the page in
+// one change, and wakes the compositor and the root service. Before the
+// write, it writes the sentence of the appearance in force on the log when
+// the setting or the appearance changes, or when `always`: the log then
+// has it before the line of the compositor that the write causes.
+page_write :: proc "contextless" (values: [settings.Setting]u32, always := false) {
+	before := settings.read(page)
+	sentence_buffer: [192]u8
+	in_force, sentence := in_force_now(values, sentence_buffer[:])
+	if always || before.values[.Appearance] != values[.Appearance] || before.appearance_in_force != in_force {
+		system.log("settings: ", sentence)
+	}
+	settings.write(page, values, in_force)
+	system.word_wake(&page.change_count, 64)
+}
+
 // change keeps the values, then writes them on the page and wakes the
 // compositor.
 change :: proc "contextless" (values: [settings.Setting]u32) -> bool {
@@ -108,11 +159,10 @@ change :: proc "contextless" (values: [settings.Setting]u32) -> bool {
 		return true
 	}
 	kept := keep(values)
-	settings.write(page, values)
-	system.word_wake(&page.change_count, 64)
 	buffer: [256]u8
 	writer := system.Writer{buffer = buffer[:]}
 	system.log("settings: ", values_text(&writer, values), kept ? "; kept in the store" : "; NOT kept: the store refused")
+	page_write(values)
 	return kept
 }
 
@@ -144,13 +194,16 @@ setting_of :: proc "contextless" (name: string) -> (setting: settings.Setting, f
 	return {}, false
 }
 
-// set changes a setting of the system, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off").
+// set changes a setting of the system, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off"); set("keyboard_layout", "us" or "french"); set("appearance", "auto", "dark" or "light").
 //
-// Every window draws again: the settings page wakes the compositor, which gives the new font and pointer theme to
-// each window. The order is the store first, then the page, so a stop of the machine between the two keeps the
-// new value. A value equal to the value of the page changes nothing and returns 1.
+// Every window draws again: the settings page wakes the compositor, which gives the new font, pointer theme and
+// appearance to each window. The order is the store first, then the page, so a stop of the machine between the two
+// keeps the new value. A value equal to the value of the page changes nothing and returns 1. The setting
+// `appearance` `auto` gives the light appearance from 07:00 to 19:00 of the local time and the dark one at night:
+// the page holds the appearance in force, which the log says with the time that the rule read.
 //
-// - **name**: the name of a setting: `font`, `subpixel_order`, `pointer_theme` or `grid_fit`; 32 bytes at most.
+// - **name**: the name of a setting: `font`, `subpixel_order`, `pointer_theme`, `grid_fit`, `keyboard_layout` or
+//   `appearance`; 32 bytes at most.
 // - **value**: one of the values of that setting, as above; 32 bytes at most.
 //
 // The caller must act for the principal (**Acts_For_Principal**): the console and the host have it. The result is
@@ -193,7 +246,7 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 	return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
 }
 
-// get gives the value of a setting of the system as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit").
+// get gives the value of a setting of the system as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit"), get("keyboard_layout"), get("appearance").
 //
 // It reads the settings page, which each program can read too: so it needs no grant, and each caller gets the
 // value.
@@ -254,8 +307,7 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 			return errors.fail(error, ERROR_STORE, .Refused, .None, 1, number)
 		}
 	}
-	settings.write(page, values)
-	system.word_wake(&page.change_count, 64)
+	page_write(values)
 	system.log("settings: kept ", u64(count), " records, one commit each")
 	return count
 }
@@ -285,8 +337,7 @@ boot_pass :: proc "contextless" () -> ! {
 	} else {
 		what = "no private store: the defaults"
 	}
-	settings.write(page, values)
-	system.word_wake(&page.change_count, 64)
+	page_write(values, always = true)
 	text: [256]u8
 	writer := system.Writer{buffer = text[:]}
 	system.log("settings: the boot pass: ", what, ": ", values_text(&writer, values), "; in ", (system.nanoseconds() - start) / 1000, " us")
@@ -295,19 +346,23 @@ boot_pass :: proc "contextless" () -> ! {
 
 // draw builds the window: a row of buttons for each setting, then the text
 // of the system at its three sizes, then the facts of the glyph caches.
-draw :: proc "contextless" (window: ^display.Window) {
+draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	choice := settings.read(page)
 	frame := interface.window_frame_begin(&drawing)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
+	interface.action_bar_input_take(&frame, &bar)
 	count: interface.Text_Builder
 	interface.text_put(&count, "change ")
 	interface.text_put_number(&count, u64(choice.change_count / 2))
-	ROW :: 36
+	// A row: a button of 24 pixels and a gap of 8. The card of the text
+	// under the rows needs 152 pixels of content, so that its line of facts
+	// is under its large number: 6 rows of 32 leave it 168 in the window.
+	ROW :: 32
 	rows_height := len(settings.Setting) * ROW
-	content := interface.card(&frame, {8, 8, WIDTH - 16, 40 + rows_height + 48}, "SETTINGS", has_store ? "kept in the store of settings" : "NOT kept: no store", graphics.COLOR_KERNEL, interface.text_of(&count))
+	content := interface.card(&frame, {8, 8, WIDTH - 16, 40 + rows_height + 32}, "SETTINGS", has_store ? "kept in the store of settings" : "NOT kept: no store", graphics.colors.kernel, interface.text_of(&count))
 	for &description, setting in settings.descriptions {
 		y := content.y + int(setting) * ROW
-		interface.draw_text(frame.table, content.x, y + 4, description.title, graphics.COLOR_DIM)
+		interface.draw_text(frame.table, content.x, y + 4, description.title, graphics.colors.dim)
 		for value_name, index in description.value_names[:description.value_count] {
 			area := interface.Area{content.x + 144 + index * 104, y, 96, 24}
 			builder: interface.Text_Builder
@@ -333,23 +388,22 @@ draw :: proc "contextless" (window: ^display.Window) {
 			}
 		}
 	}
-	interface.draw_text(frame.table, content.x, content.y + rows_height + 8, "the console: settings.set(\"font\", \"spleen\")", graphics.COLOR_DIM)
-	interface.draw_text(frame.table, content.x, content.y + rows_height + 24, "keys: tab, then enter on a button", graphics.COLOR_DIM)
+	interface.draw_text(frame.table, content.x, content.y + rows_height + 8, "the console: settings.set(\"font\", \"spleen\")", graphics.colors.dim)
 
-	top := 8 + 40 + rows_height + 48 + 8
+	top := 8 + 40 + rows_height + 32 + 8
 	vector := settings.font_of(choice) == .Vector && graphics.text_vector_drawn()
-	sample := interface.card(&frame, {8, top, WIDTH - 16, HEIGHT - top - 8}, "THE TEXT OF THE SYSTEM", vector ? "the vector font, from the glyph cache" : "Spleen 8x16, the fallback", graphics.COLOR_MACHINE)
+	sample := interface.card(&frame, {8, top, WIDTH - 16, HEIGHT - top - 8 - interface.ACTION_BAR_ROW_HEIGHT}, "THE TEXT OF THE SYSTEM", vector ? "the vector font, from the glyph cache" : "Spleen 8x16, the fallback", graphics.colors.machine)
 	lines := [?]string {
 		"> print(monitor.programs())   31 programs",
 		"compositor   12.4 ms   2 418 pages   runs",
 		"{fill} [rings] gi Rb 0O 1lI  ok: 0x4F3A",
 	}
 	for line, index in lines {
-		interface.draw_text(frame.table, sample.x, sample.y + index * 16, line, graphics.COLOR_TEXT)
+		interface.draw_text(frame.table, sample.x, sample.y + index * 16, line, graphics.colors.text)
 	}
-	interface.draw_text(frame.table, sample.x, sample.y + 56, "EEVDF fair", graphics.COLOR_PROGRAM, interface.FONT_MEDIUM)
-	after := interface.large_number(&frame, sample.x, sample.y + 88, "12 345", graphics.COLOR_TEXT)
-	interface.draw_text(frame.table, after + 16, sample.y + 112, "wakes in one second", graphics.COLOR_DIM)
+	interface.draw_text(frame.table, sample.x, sample.y + 56, "EEVDF fair", graphics.colors.program, interface.FONT_MEDIUM)
+	after := interface.large_number(&frame, sample.x, sample.y + 88, "12 345", graphics.colors.text)
+	interface.draw_text(frame.table, after + 16, sample.y + 112, "wakes in one second", graphics.colors.dim)
 	// The sizes of the caches are in their headers; the hash is that of the
 	// font file, in the header of the cache that this program validated.
 	facts: interface.Text_Builder
@@ -369,7 +423,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 			interface.text_put(&facts, hex[byte & 15:][:1])
 		}
 	}
-	interface.draw_text(frame.table, sample.x, sample.y + sample.height - 16, interface.text_of(&facts), graphics.COLOR_DIM)
+	interface.draw_text(frame.table, sample.x, sample.y + sample.height - 16, interface.text_of(&facts), graphics.colors.dim)
+	items := bar_items()
+	bar_result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar)
 	interface.window_frame_end(&drawing, &frame, window)
 	if choice.change_count != drawn_change && drawn_change != 1 {
 		buffer: [256]u8
@@ -377,6 +433,16 @@ draw :: proc "contextless" (window: ^display.Window) {
 		system.log("settings: drawn with ", values_text(&writer, choice.values))
 	}
 	drawn_change = choice.change_count
+	return bar_result
+}
+
+// draw_with_bar draws a frame and, when a press on an item of the action
+// bar ran its key, a second frame that takes the key, as a typed key: the
+// focus moves, or the button with the focus is pressed.
+draw_with_bar :: proc "contextless" (window: ^display.Window) {
+	if result := draw(window); result.ran && interface.input_key_add(&drawing.input, result.run) {
+		draw(window)
+	}
 }
 
 // The entry of settings: the boot pass, or the window and the service.
@@ -402,6 +468,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	page = (^settings.Page)(address)
+	date_page = date.page_of(ctx)
 	store, has_store = storage.open(ctx)
 	if ctx.values[settings.VALUE_BOOT_PASS] != 0 {
 		boot_pass()
@@ -412,7 +479,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	service, _ = system.service_open(ctx)
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	draw(&window)
+	draw_with_bar(&window)
 	buffer: [256]u8
 	writer := system.Writer{buffer = buffer[:]}
 	system.log("settings: ok, ", values_text(&writer, settings.read(page).values))
@@ -423,7 +490,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_end(&wait)
 		system.service_run(&service)
 		if interface.window_events(&drawing, &window) {
-			draw(&window)
+			draw_with_bar(&window)
 		}
 	}
 }

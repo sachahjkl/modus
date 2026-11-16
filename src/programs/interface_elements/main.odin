@@ -22,7 +22,9 @@
 // **What a reader sees.** Start it from the menu of the programs, or with
 // `start("interface_elements")` in the console. The input can press the
 // button, choose a line of the list, and type in the text input; the
-// second card shows the cost of each frame. The log gets one line for each
+// second card shows the cost of each frame. The [action bar](term:action-bar)
+// at the bottom names the keys, and a press on an item runs its key. The
+// log gets one line for each
 // measured frame (`interface_elements: <frame>: <count> records, <count>
 // damage rectangles, ...`), the time of one whole frame, then
 // `interface_elements: ok, ...`.
@@ -38,7 +40,24 @@ import "modus:support/system"
 WIDTH :: 816
 HEIGHT :: 560
 ELEMENTS_CARD_WIDTH :: 472 // The card of the elements; the card of the frame takes the rest.
+CARDS_HEIGHT :: HEIGHT - 16 - interface.ACTION_BAR_ROW_HEIGHT // The cards stand over the action bar.
 TICK :: 100 // Milliseconds between two frames.
+
+// The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
+// action bar"). Each one is a key of the interface package: the focus,
+// the press of a button, the choice of the list.
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [5]interface.Action_Bar_Item {
+	return {
+		interface.action_bar_item("next element", 6, "Tab"),
+		interface.action_bar_item("element before", 3, "Shift", "Tab"),
+		interface.action_bar_item("press", 5, "Enter"),
+		interface.action_bar_item("line before", 4, "Up"),
+		interface.action_bar_item("line after", 4, "Down"),
+	}
+}
+bar: interface.Action_Bar_State
 
 records_now, records_before: [512]interface.Draw_Record
 text_now, text_before: [8192]u8
@@ -61,7 +80,7 @@ Part :: struct {
 }
 
 // build describes the whole window for one frame.
-build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
+build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.Action_Bar_Result {
 	builder: interface.Text_Builder
 	offset := moved ? 8 : 0
 	interface.background(frame, {0, 0, WIDTH, HEIGHT})
@@ -69,7 +88,10 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 	// The elements.
 	// The width of the card holds its three texts in the font of the cells,
 	// the widest font: the title, the caption of 23 characters and the keys.
-	content := interface.card(frame, {8 + offset, 8, ELEMENTS_CARD_WIDTH, HEIGHT - 16}, "ELEMENTS", "modus:support/interface", graphics.COLOR_KERNEL, "Tab, Enter, arrows")
+	// The keys of the window are in its action bar, not in the count of
+	// this card: one fact once on a screen.
+	interface.action_bar_input_take(frame, &bar)
+	content := interface.card(frame, {8 + offset, 8, ELEMENTS_CARD_WIDTH, CARDS_HEIGHT}, "ELEMENTS", "modus:support/interface", graphics.colors.kernel)
 	column := interface.column_of(content, 8)
 	pressed := interface.button(frame, interface.column_take(&column, 24), interface.identity("press"), "press this button")
 	if pressed.activated {
@@ -77,7 +99,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 		system.log("interface_elements: the button was pressed ", presses, " times")
 	}
 	interface.label_value_line(frame, interface.column_take(&column, 16), "presses", interface.number_text(&builder, presses))
-	interface.cell_text(frame, interface.column_take(&column, 16), "a list with a choice", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
+	interface.cell_text(frame, interface.column_take(&column, 16), "a list with a choice", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
 	list_area := interface.column_take(&column, 3 * interface.TABLE_LINE)
 	// The element name lets a machine test put the pointer over the list,
 	// where the wheel moves its view.
@@ -86,17 +108,17 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 	if listed.changed {
 		system.log("interface_elements: the list chooses ", names[choice])
 	}
-	interface.cell_text(frame, interface.column_take(&column, 16), "a text input", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
+	interface.cell_text(frame, interface.column_take(&column, 16), "a text input", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
 	typed_result := interface.text_input(frame, interface.column_take(&column, 24), interface.identity("text"), typed[:], &typed_count, "type a text")
 	if typed_result.changed {
 		system.log("interface_elements: the text is \"", string(typed[:typed_count]), "\"")
 	}
-	interface.cell_text(frame, interface.column_take(&column, 16), "bars: a value against a maximum, parts of one total", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
-	interface.bar(frame, interface.column_take(&column, 8), number % 100, 100, graphics.COLOR_PROGRAM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "bars: a value against a maximum, parts of one total", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
+	interface.bar(frame, interface.column_take(&column, 8), number % 100, 100, graphics.colors.program)
 	parts := [3]u64{number % 50 + 10, 20, 15}
-	colors := [3]graphics.Color{graphics.COLOR_KERNEL, graphics.COLOR_MEMORY, graphics.COLOR_FAILED}
+	colors := [3]graphics.Color{graphics.colors.kernel, graphics.colors.memory, graphics.colors.failed}
 	interface.bar_parts(frame, interface.column_take(&column, 8), parts[:], colors[:], 100)
-	interface.cell_text(frame, interface.column_take(&column, 16), "a table", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
+	interface.cell_text(frame, interface.column_take(&column, 16), "a table", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
 	cells: [3]interface.Area
 	sizes := [3]interface.Size{interface.share(), interface.characters(10), interface.characters(10)}
 	interface.row_split(interface.column_take(&column, 24), sizes[:], cells[:], 16)
@@ -110,16 +132,16 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 		area := interface.column_take(&column, 24)
 		interface.table_band(frame, area, index)
 		interface.row_split({area.x + 8, area.y, area.width - 16, area.height}, sizes[:], cells[:], 16)
-		interface.cell_text(frame, cells[0], line.name, graphics.COLOR_TEXT, .Left, interface.FONT_INTERFACE)
-		interface.cell_text(frame, cells[1], interface.number_text(&builder, line.records), graphics.COLOR_TEXT, .Right)
-		interface.cell_text(frame, cells[2], interface.number_text(&builder, line.records * size_of(interface.Draw_Record)), graphics.COLOR_TEXT, .Right)
+		interface.cell_text(frame, cells[0], line.name, graphics.colors.text, .Left, interface.FONT_INTERFACE)
+		interface.cell_text(frame, cells[1], interface.number_text(&builder, line.records), graphics.colors.text, .Right)
+		interface.cell_text(frame, cells[2], interface.number_text(&builder, line.records * size_of(interface.Draw_Record)), graphics.colors.text, .Right)
 	}
 
 	// The draw table of the last frame.
-	content = interface.card(frame, {ELEMENTS_CARD_WIDTH + 16 + offset, 8, WIDTH - ELEMENTS_CARD_WIDTH - 24, HEIGHT - 16}, "THE FRAME", "Draw_Table, Damage", graphics.COLOR_MACHINE)
+	content = interface.card(frame, {ELEMENTS_CARD_WIDTH + 16 + offset, 8, WIDTH - ELEMENTS_CARD_WIDTH - 24, CARDS_HEIGHT}, "THE FRAME", "Draw_Table, Damage", graphics.colors.machine)
 	column = interface.column_of(content, 8)
-	interface.large_number(frame, content.x, interface.column_take(&column, 48).y, interface.number_text(&builder, number), graphics.COLOR_MACHINE)
-	interface.cell_text(frame, interface.column_take(&column, 16), "frames", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
+	interface.large_number(frame, content.x, interface.column_take(&column, 48).y, interface.number_text(&builder, number), graphics.colors.machine)
+	interface.cell_text(frame, interface.column_take(&column, 16), "frames", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
 	facts := [?]struct {
 		name:  string,
 		value: u64,
@@ -144,25 +166,32 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 		show_damage = !show_damage
 		system.log("interface_elements: the damage is ", show_damage ? "shown" : "hidden")
 	}
-	interface.cell_text(frame, interface.column_take(&column, 16), "a frame draws only its damage", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
+	interface.cell_text(frame, interface.column_take(&column, 16), "a frame draws only its damage", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
 	// The damage of the last frame, as outlines of 2 pixels over the window.
 	// They are records: when the damage stays the same, they do not damage.
 	if show_damage {
 		for rectangle in last_damage.rectangles[:last_damage.count] {
 			width, height := rectangle.right - rectangle.left, rectangle.bottom - rectangle.top
-			interface.draw_rectangle(frame.table, rectangle.left, rectangle.top, width, 2, graphics.COLOR_MACHINE)
-			interface.draw_rectangle(frame.table, rectangle.left, rectangle.bottom - 2, width, 2, graphics.COLOR_MACHINE)
-			interface.draw_rectangle(frame.table, rectangle.left, rectangle.top, 2, height, graphics.COLOR_MACHINE)
-			interface.draw_rectangle(frame.table, rectangle.right - 2, rectangle.top, 2, height, graphics.COLOR_MACHINE)
+			interface.draw_rectangle(frame.table, rectangle.left, rectangle.top, width, 2, graphics.colors.machine)
+			interface.draw_rectangle(frame.table, rectangle.left, rectangle.bottom - 2, width, 2, graphics.colors.machine)
+			interface.draw_rectangle(frame.table, rectangle.left, rectangle.top, 2, height, graphics.colors.machine)
+			interface.draw_rectangle(frame.table, rectangle.right - 2, rectangle.top, 2, height, graphics.colors.machine)
 		}
 	}
+	// The action bar, last: its list opens over the cards.
+	items := bar_items()
+	return interface.action_bar(frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar)
 }
 
-// frame_draw builds and draws one frame.
+// frame_draw builds and draws one frame. The key of an item that a press
+// ran goes into the input of the next frame, the way of a typed key.
 frame_draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
-	build(&frame, frames)
+	bar_result := build(&frame, frames)
 	interface.window_frame_end(&drawing, &frame, window)
+	if bar_result.ran {
+		interface.input_key_add(&drawing.input, bar_result.run)
+	}
 	last_damage = drawing.damage
 	frames += 1
 }
@@ -220,7 +249,7 @@ measure_fonts :: proc "contextless" (window: ^display.Window) {
 			frame := interface.frame_begin(&table, &state, &input)
 			build(&frame, 7)
 			interface.frame_end(&frame)
-			graphics.clear(window.canvas, graphics.COLOR_BACKGROUND)
+			graphics.clear(window.canvas, graphics.colors.background)
 			interface.execute(&table, window.canvas)
 			least[index] = min(least[index], system.nanoseconds() - start)
 		}

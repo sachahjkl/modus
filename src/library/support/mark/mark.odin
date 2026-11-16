@@ -48,7 +48,7 @@ cell_size_is_accepted :: proc "contextless" (cell_size: int) -> bool {
 
 // The two backgrounds of the mark: the background of the system, and a light
 // background for a page of another program.
-BACKGROUND_DARK :: graphics.COLOR_BACKGROUND
+BACKGROUND_DARK :: graphics.DARK_BACKGROUND
 BACKGROUND_LIGHT :: 0xF4F6F8 // The light background: a page of the site.
 
 // The heron, one string for each row of cells, from the top. A "." is an
@@ -102,14 +102,14 @@ Part :: struct {
 // there. The eye has the color of the dark background on both.
 @(rodata)
 parts := [?]Part {
-	{letter = 'v', color_on_dark = graphics.COLOR_FIRMWARE, color_on_light = graphics.COLOR_FIRMWARE, box = {0, 0, 15, 15}}, // The crest and the tail: one part.
-	{letter = 'h', color_on_dark = graphics.COLOR_TEXT, color_on_light = 0x9FB2C8, box = {13, 1, 18, 12}}, // The head and the neck.
+	{letter = 'v', color_on_dark = graphics.DARK_FIRMWARE, color_on_light = graphics.DARK_FIRMWARE, box = {0, 0, 15, 15}}, // The crest and the tail: one part.
+	{letter = 'h', color_on_dark = graphics.DARK_TEXT, color_on_light = 0x9FB2C8, box = {13, 1, 18, 12}}, // The head and the neck.
 	{letter = 'k', color_on_dark = BACKGROUND_DARK, color_on_light = BACKGROUND_DARK, flat = true, box = {17, 2, 17, 2}}, // The eye.
-	{letter = 'y', color_on_dark = graphics.COLOR_BOOT_PROGRAM, color_on_light = graphics.COLOR_BOOT_PROGRAM, box = {19, 2, 23, 3}}, // The beak.
-	{letter = 'b', color_on_dark = graphics.COLOR_KERNEL, color_on_light = graphics.COLOR_KERNEL, box = {4, 11, 16, 15}}, // The body.
+	{letter = 'y', color_on_dark = graphics.DARK_BOOT_PROGRAM, color_on_light = graphics.DARK_BOOT_PROGRAM, box = {19, 2, 23, 3}}, // The beak.
+	{letter = 'b', color_on_dark = graphics.DARK_KERNEL, color_on_light = graphics.DARK_KERNEL, box = {4, 11, 16, 15}}, // The body.
 	{letter = 'd', color_on_dark = 0x2F6FC0, color_on_light = 0x2F6FC0, box = {7, 13, 12, 14}}, // The wing.
-	{letter = 'o', color_on_dark = graphics.COLOR_BOOT_PROGRAM, color_on_light = graphics.COLOR_BOOT_PROGRAM, box = {9, 16, 14, 22}}, // The legs.
-	{letter = 't', color_on_dark = graphics.COLOR_MEMORY, color_on_light = graphics.COLOR_MEMORY, box = {2, 22, 19, 23}}, // The water.
+	{letter = 'o', color_on_dark = graphics.DARK_BOOT_PROGRAM, color_on_light = graphics.DARK_BOOT_PROGRAM, box = {9, 16, 14, 22}}, // The legs.
+	{letter = 't', color_on_dark = graphics.DARK_MEMORY, color_on_light = graphics.DARK_MEMORY, box = {2, 22, 19, 23}}, // The water.
 }
 
 // part_of_letter gives the index in `parts` of the part of a letter of the
@@ -322,7 +322,7 @@ name_pixel :: proc "contextless" (cell_size, x, y: int, on_light: bool) -> (colo
 // name_color gives the color of the name: the text color on the dark
 // background, the dark background color on the light one.
 name_color :: proc "contextless" (on_light: bool) -> u32 {
-	return BACKGROUND_DARK if on_light else graphics.COLOR_TEXT
+	return BACKGROUND_DARK if on_light else graphics.DARK_TEXT
 }
 
 // background_color gives the color of the background of the mark.

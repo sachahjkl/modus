@@ -86,7 +86,7 @@ code_kind_of :: proc "contextless" (value: u8) -> Code_Kind {
 // when the kind has no class of its own.
 code_kind_color :: proc "contextless" (kind: Code_Kind, plain: graphics.Color) -> graphics.Color {
 	class := code_kind_classes[kind]
-	return class == .None ? plain : graphics.code_class_color(class, false)
+	return class == .None ? plain : graphics.code_class_color(class, graphics.appearance)
 }
 
 // code_runs_send gives the runs of the next record of a target: Kind.Edit,

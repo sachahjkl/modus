@@ -206,14 +206,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The window shows the picture with a picture record: until the first
 	// tiles, the picture is the background.
 	picture = {pixels = raw_data(picture_pixels[:]), width = PICTURE_WIDTH, height = PICTURE_HEIGHT, stride = PICTURE_WIDTH}
-	graphics.clear(picture, graphics.COLOR_BACKGROUND)
+	graphics.clear(picture, graphics.colors.background)
 	picture_memories[0] = picture_pixels[:]
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	drawing.now.picture_memories = picture_memories[:]
 	drawing.before.picture_memories = picture_memories[:]
 	{
 		frame := interface.window_frame_begin(&drawing, &window)
-		interface.draw_text(frame.table, MARGIN, 8, "One queue of tiles, one lock, four threads.", graphics.COLOR_TEXT)
+		interface.draw_text(frame.table, MARGIN, 8, "One queue of tiles, one lock, four threads.", graphics.colors.text)
 		interface.window_frame_end(&drawing, &frame, &window)
 	}
 
@@ -273,35 +273,35 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 		frame := interface.window_frame_begin(&drawing, &window)
 		table := frame.table
-		interface.draw_text(table, MARGIN, 8, "One queue of tiles, one lock, four threads.", graphics.COLOR_TEXT)
+		interface.draw_text(table, MARGIN, 8, "One queue of tiles, one lock, four threads.", graphics.colors.text)
 		// The pixels change when a tile is complete: the number of the
 		// picture and its complete tiles are the generation.
 		interface.draw_picture(table, MARGIN, HEADER + MARGIN, picture, u32(pictures_made) * 1024 + done)
 		x := 2 * MARGIN + PICTURE_WIDTH
 		y := HEADER + MARGIN
-		interface.draw_rectangle(table, x, y, PANEL, PICTURE_HEIGHT, graphics.COLOR_CARD_TOP)
-		after := interface.draw_text(table, x + 8, y + 8, "picture ", graphics.COLOR_TEXT)
-		interface.draw_unsigned(table, after, y + 8, pictures_made, graphics.COLOR_TEXT)
-		after = interface.draw_text(table, x + 8, y + 28, "tiles   ", graphics.COLOR_DIM)
-		after = interface.draw_unsigned(table, after, y + 28, u64(done), graphics.COLOR_DIM)
-		after = interface.draw_text(table, after, y + 28, "/", graphics.COLOR_DIM)
-		interface.draw_unsigned(table, after, y + 28, COLUMNS * ROWS, graphics.COLOR_DIM)
+		interface.draw_rectangle(table, x, y, PANEL, PICTURE_HEIGHT, graphics.colors.card_top)
+		after := interface.draw_text(table, x + 8, y + 8, "picture ", graphics.colors.text)
+		interface.draw_unsigned(table, after, y + 8, pictures_made, graphics.colors.text)
+		after = interface.draw_text(table, x + 8, y + 28, "tiles   ", graphics.colors.dim)
+		after = interface.draw_unsigned(table, after, y + 28, u64(done), graphics.colors.dim)
+		after = interface.draw_text(table, after, y + 28, "/", graphics.colors.dim)
+		interface.draw_unsigned(table, after, y + 28, COLUMNS * ROWS, graphics.colors.dim)
 		for &worker, index in workers {
 			line := y + 60 + index * 44
 			after = interface.draw_text(table, x + 8, line, "thread ", tint_color(index, 255))
 			after = interface.draw_unsigned(table, after, line, u64(index + 1), tint_color(index, 255))
-			interface.draw_unsigned(table, after + 16, line, u64(worker.share), graphics.COLOR_TEXT)
+			interface.draw_unsigned(table, after + 16, line, u64(worker.share), graphics.colors.text)
 			// The part of the tiles of this picture that the thread took.
-			interface.draw_rectangle(table, x + 8, line + 20, PANEL - 16, 8, graphics.COLOR_BACKGROUND)
+			interface.draw_rectangle(table, x + 8, line + 20, PANEL - 16, 8, graphics.colors.background)
 			interface.draw_rectangle(table, x + 8, line + 20, int(worker.share) * (PANEL - 16) / (COLUMNS * ROWS), 8, tint_color(index, 255))
 		}
 		line := y + 60 + WORKER_COUNT * 44 + 4
 		after = interface.draw_text(table, x + 8, line, "lock waits ", COLOR_WAITS)
 		interface.draw_unsigned(table, after, line, u64(queue.lock.waits), COLOR_WAITS)
-		interface.draw_text(table, x + 8, line + 24, "4 threads, 1 number", graphics.COLOR_DIM)
-		after = interface.draw_text(table, x + 8, line + 42, "lock:    lost ", graphics.COLOR_TEXT)
-		interface.draw_unsigned(table, after, line + 42, made_locked - sum_locked, graphics.COLOR_TEXT)
-		after = interface.draw_text(table, x + 8, line + 60, "no lock: lost ", graphics.COLOR_TEXT)
+		interface.draw_text(table, x + 8, line + 24, "4 threads, 1 number", graphics.colors.dim)
+		after = interface.draw_text(table, x + 8, line + 42, "lock:    lost ", graphics.colors.text)
+		interface.draw_unsigned(table, after, line + 42, made_locked - sum_locked, graphics.colors.text)
+		after = interface.draw_text(table, x + 8, line + 60, "no lock: lost ", graphics.colors.text)
 		interface.draw_unsigned(table, after, line + 60, made_free - sum_free, COLOR_WAITS)
 		interface.window_frame_end(&drawing, &frame, &window)
 		display.wait(&window, now + FRAME_TIME)

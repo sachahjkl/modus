@@ -6,6 +6,7 @@ import info "modus:contract/boot_info"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import module "modus:contract/module"
+import "modus:contract/remote"
 import "modus:contract/ring"
 import "modus:contract/start_grant"
 import "modus:contract/text_encoding"
@@ -473,6 +474,44 @@ commands_start :: proc "contextless" () {
 	// - `nickname`: the nickname of a disk program with a row.
 	// - `grant`: the name of the grant: `store`.
 	command("disallow", {.Text, .Text}, .None, "take a grant from a disk program, by nickname", disallow)
+	// Allows the key of a client of the program `remote` for the principal
+	// of this console: each call of that client, from another machine,
+	// acts for this principal (docs/PRINCIPALS.md, "The client keys of
+	// remote"). It gives nothing.
+	//
+	// - `key`: the Ed25519 public key of the client, 64 hexadecimal
+	//   digits. `modustool run` prints the key of its peer.
+	//
+	// ```
+	// > remote_allow("6a1f...")
+	// ```
+	//
+	// The grant lasts until `remote_disallow`, and holds no call while the
+	// session of the principal is locked. It does not last across a restart
+	// of the machine.
+	//
+	// Errors: this console does not act for its principal; the key has a
+	// wrong form; another principal allowed the key; the table is full.
+	command("remote_allow", {.Text}, .None, "let a client of remote call for the principal of this console, by its key", remote_allow)
+	// Revokes the key of a client of `remote` that the principal of this
+	// console allowed. `remote` ends the open connection of the client, and
+	// refuses the key in its next handshake. It gives the count of the
+	// connections to services that ended.
+	//
+	// - `key`: the key, as `remote_allow` took it.
+	//
+	// Errors: the principal of this console did not allow the key.
+	command("remote_disallow", {.Text}, .Integer, "end the grant of a client key of remote", remote_disallow)
+	// Gives one row for each key of a client of `remote` that the principal
+	// of this console allowed.
+	//
+	// ```
+	// > remote_clients()
+	// key                                                               principal
+	// 6a1f...                                                                   0
+	// 1 row of Remote_Client
+	// ```
+	command("remote_clients", {}, .Table, "the client keys of remote that the principal of this console allowed", remote_clients)
 	// Points a nickname to another file: its grants and its store follow.
 	// The log says "root: the file HASH will get the data of NICKNAME"
 	// before the change. It gives nothing.
@@ -2472,6 +2511,82 @@ allow :: proc "contextless" (arguments: []Value) -> Value {
 
 disallow :: proc "contextless" (arguments: []Value) -> Value {
 	return disk_grant_command("disallow", system.DISK_GRANT_DISALLOW, arguments)
+}
+
+// remote_client_request sends Remote_Client with a key of 64 hexadecimal
+// digits and an action, and waits for its completion. A key of another form
+// is refused here: the record carries 32 bytes.
+remote_client_request :: proc "contextless" (command_name: string, text: string, action: u64) -> (completion: ring.Record, refusal: Value, refused: bool) {
+	// A key and a hash of BLAKE3 have the same form: 32 bytes in 64
+	// hexadecimal digits.
+	key, parsed := disk_program.hash_parse(text)
+	if !parsed {
+		return {}, fail(command_name, ": the key must be 64 hexadecimal digits; the argument has ", u64(len(text)), " bytes, or a byte that is no digit"), true
+	}
+	key_values := transmute([4]u64)key
+	answered: bool
+	completion, answered = disk_request(.Remote_Client, {0 = key_values[0], 1 = key_values[1], 2 = key_values[2], 3 = key_values[3], 4 = action}, 3000)
+	if !answered {
+		return {}, fail_no_answer(), true
+	}
+	if system.Status(completion.kind) != .Ok {
+		return completion, fail_root(command_name == "remote_allow" ? "remote_allow: " : "remote_disallow: ", completion), true
+	}
+	return completion, {}, false
+}
+
+// remote_allow asks the root service to allow the key of a client of
+// `remote` for the principal of this console.
+remote_allow :: proc "contextless" (arguments: []Value) -> Value {
+	_, refusal, refused := remote_client_request("remote_allow", arguments[0].text, system.REMOTE_CLIENT_ALLOW)
+	if refused {
+		return refusal
+	}
+	return {}
+}
+
+// remote_disallow asks the root service to end the grant of the key of a
+// client of `remote`, and gives the count of the connections that ended.
+remote_disallow :: proc "contextless" (arguments: []Value) -> Value {
+	completion, refusal, refused := remote_client_request("remote_disallow", arguments[0].text, system.REMOTE_CLIENT_REVOKE)
+	if refused {
+		return refusal
+	}
+	return {kind = .Integer, integer = i64(completion.values[0])}
+}
+
+// remote_clients gives one row for each key of a client of `remote` that
+// the principal of this console allowed: the root service gives a caller
+// the rows of its own principal only.
+remote_clients :: proc "contextless" (arguments: []Value) -> Value {
+	columns := [2]Column{text_column("key", 64), integer_column("principal")}
+	table, made := made_table("Remote_Client", columns[:])
+	if !made {
+		return fail("remote_clients: the line has no room for the description")
+	}
+	for place in u64(0) ..< remote.CLIENT_CAPACITY {
+		completion, answered := disk_request(.Remote_Client, {4 = system.REMOTE_CLIENT_READ, 5 = place}, 3000)
+		if !answered {
+			return fail_no_answer()
+		}
+		if system.Status(completion.kind) != .Ok {
+			return fail_root("remote_clients: ", completion)
+		}
+		if completion.values[5] == 0 {
+			continue // A free row, or a row of another principal.
+		}
+		key := transmute([32]u8)[4]u64{completion.values[0], completion.values[1], completion.values[2], completion.values[3]}
+		digits: [64]u8
+		hexadecimal := "0123456789abcdef"
+		for item, index in key {
+			digits[2 * index] = hexadecimal[item >> 4]
+			digits[2 * index + 1] = hexadecimal[item & 15]
+		}
+		row := made_row(&table)
+		made_text(&table, row, 0, string(digits[:]))
+		made_integer(&table, row, 1, i64(completion.values[4]))
+	}
+	return made_value(&table, "remote_clients")
 }
 
 // nickname_move asks the root service to point a nickname to another file:

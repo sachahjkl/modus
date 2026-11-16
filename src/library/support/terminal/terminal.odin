@@ -231,13 +231,16 @@ Flag :: enum u8 {
 
 // The style of a run: values[0] of a record. The zero value is the default.
 // The color of a run: Style.color with the flag Color; if not, the color of
-// its code kind when the kind has one; if not, the color of its tone.
+// its value kind when it has one; if not, the color of its code kind when
+// the kind has one; if not, the color of its tone. The terminal chooses
+// each color but Style.color in the appearance in force when it draws, so
+// a line written before a change of the appearance takes the new colors.
 Style :: struct {
-	tone:     Tone, // What the run is.
-	flags:    bit_set[Flag;u8], // End_Line, Color, Reverse.
-	code:     Code_Kind, // A Text record: what the run is in a line of code (code_runs.odin).
-	reserved: u8, // 0.
-	color:    u32, // Red, green, blue: 0xRRGGBB.
+	tone:       Tone, // What the run is.
+	flags:      bit_set[Flag;u8], // End_Line, Color, Reverse.
+	code:       Code_Kind, // A Text record: what the run is in a line of code (code_runs.odin).
+	value_kind: u8, // The value kind of the run (modus:contract/value_kinds), or 0: none.
+	color:      u32, // Red, green, blue: 0xRRGGBB.
 }
 #assert(size_of(Style) == 8)
 

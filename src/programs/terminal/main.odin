@@ -46,7 +46,9 @@
 // the handles above.
 //
 // **What a reader sees**: a window with the name of the program, its
-// lines, a status bar that the program fills, and on the log:
+// lines, a status bar that the program fills, the
+// [action bar](term:action-bar) of Page Up and Page Down at the right of
+// its last line, and on the log:
 //
 // - "terminal: ok, console writes in a ring of N records";
 // - "terminal: the first key goes to console";
@@ -133,30 +135,51 @@ HISTORY :: 48 // The measures that the graph shows.
 GRAPH_BAR :: 4
 GRAPH_HEIGHT :: 48
 
-COLOR_GRAPH :: 0x58D878
-COLOR_GRAPH_DIM :: 0x1C3A28
-COLOR_STOPPED :: 0xF07060
-COLOR_HELD :: 0xF0C050
-COLOR_CURSOR :: 0x7FC8FF
 // The completion list: a card over the text, its chosen row in the chosen
 // blue of the rules with its text in white, the matched characters in the
 // accent, a border of one pixel in the color of the kernel as the menus of
 // the bar.
-COLOR_LIST :: graphics.COLOR_CARD_TOP
-COLOR_LIST_BORDER :: graphics.COLOR_KERNEL
 LIST_WIDTH_LEAST :: 16 // Cells: a list of short names stays wide enough to read.
 
-// The color of each tone.
+// The colors that are the terminal's own: the tone of each run of text, the
+// graph of the head, the states of the program and the cursor. Each has a
+// value in each appearance (src/md/features/appearance.md): a light value
+// is the dark one at the shade that keeps 4.5 to 1 on the light surfaces.
+Terminal_Colors :: struct {
+	tones:     [terminal.Tone]graphics.Color, // The color of each tone.
+	graph:     graphics.Color, // A bar of the graph of the head.
+	graph_dim: graphics.Color, // The empty part of a bar of the graph.
+	stopped:   graphics.Color, // "the program does not run".
+	held:      graphics.Color, // The view is held, and the rate of kernel entries.
+	cursor:    graphics.Color, // The cell of the cursor, in reverse.
+}
+
 @(rodata)
-tone_colors := [terminal.Tone]graphics.Color {
-	.Default = 0xC8D0D8,
-	.Dim     = 0x6C7986,
-	.Strong  = 0xFFFFFF,
-	.Good    = 0x58D878,
-	.Warning = 0xF0C050,
-	.Bad     = 0xF06060,
-	.Accent  = 0x58B8F0,
-	.Number  = 0x8C98A6,
+terminal_colors := [graphics.Appearance]Terminal_Colors {
+	.Dark = {
+		tones = {.Default = 0xC8D0D8, .Dim = 0x6C7986, .Strong = 0xFFFFFF, .Good = 0x58D878, .Warning = 0xF0C050, .Bad = 0xF06060, .Accent = 0x58B8F0, .Number = 0x8C98A6},
+		graph = 0x58D878,
+		graph_dim = 0x1C3A28,
+		stopped = 0xF07060,
+		held = 0xF0C050,
+		cursor = 0x7FC8FF,
+	},
+	.Light = {
+		// The text, the dim text and the strong text of the light tokens;
+		// the green and the red of the light tokens; the amber and the
+		// accent at 50 and 55 %, the gray of a number at 55 %.
+		tones = {.Default = 0x0B1018, .Dim = 0x4A525B, .Strong = 0x000000, .Good = 0x327C45, .Warning = 0x775F27, .Bad = 0xBA4A4A, .Accent = 0x306583, .Number = 0x4C535B},
+		graph = 0x327C45,
+		graph_dim = 0xD5E2DB, // The light background with 40 % of the green.
+		stopped = 0xA74E43, // The dark value at 70 %.
+		held = 0x775F27,
+		cursor = 0x3F637F, // The dark value at 50 %: the light background on it has 5.8 to 1.
+	},
+}
+
+// own_colors gives the colors of the terminal in the appearance in force.
+own_colors :: proc "contextless" () -> ^Terminal_Colors {
+	return &terminal_colors[graphics.appearance]
 }
 
 // ---- The lines that the terminal keeps. Only the reader uses them.
@@ -445,14 +468,18 @@ apply :: proc "contextless" (record: ring.Record) {
 }
 
 // style_color gives the color of a run of text: its own color with the
-// flag Color; if not, the color of its code kind when the kind has one; if
-// not, the color of its tone. A kind or a tone past the known ones is the
-// default.
+// flag Color; if not, the color of its value kind when it has one; if not,
+// the color of its code kind when the kind has one; if not, the color of
+// its tone. Each color but its own is the one of the appearance in force,
+// read at each draw. A kind or a tone past the known ones is the default.
 style_color :: proc "contextless" (style: terminal.Style) -> graphics.Color {
 	if .Color in style.flags {
 		return style.color & 0xFFFFFF
 	}
-	plain := tone_colors[terminal.Tone(min(u8(style.tone), u8(max(terminal.Tone))))]
+	plain := own_colors().tones[terminal.Tone(min(u8(style.tone), u8(max(terminal.Tone))))]
+	if value_kind := value_kinds.value_kind_of(style.value_kind); value_kind != .None {
+		return graphics.value_kind_color(value_kind, graphics.appearance, plain)
+	}
 	return terminal.code_kind_color(terminal.code_kind_of(u8(style.code)), plain)
 }
 
@@ -540,9 +567,9 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 	for index in 0 ..< shown_rows {
 		row := &list_keeping.shown.rows[offset + index]
 		chosen := offset + index == list_keeping.shown.chosen
-		background: graphics.Color = chosen ? graphics.COLOR_CHOSEN : COLOR_LIST
-		name_color: graphics.Color = chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT
-		about_color: graphics.Color = chosen ? graphics.COLOR_WHITE : tone_colors[.Dim]
+		background: graphics.Color = chosen ? graphics.colors.chosen : graphics.colors.card_top
+		name_color: graphics.Color = chosen ? graphics.COLOR_WHITE : graphics.colors.text
+		about_color: graphics.Color = chosen ? graphics.COLOR_WHITE : own_colors().tones[.Dim]
 		cells := view.cells[top + index][left:][:list_width]
 		for &cell in cells {
 			cell = {character = ' ', filled = true, color = name_color, background = background}
@@ -575,9 +602,9 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 			name_cell := Cell{character = character, filled = true, color = chosen ? name_color : terminal.code_kind_color(kind, name_color), background = background}
 			switch {
 			case matched && chosen:
-				name_cell.color, name_cell.background = graphics.COLOR_CHOSEN, graphics.COLOR_WHITE
+				name_cell.color, name_cell.background = graphics.colors.chosen, graphics.COLOR_WHITE
 			case matched:
-				name_cell.color = tone_colors[.Accent]
+				name_cell.color = own_colors().tones[.Accent]
 			}
 			cells[1 + icon_cells + name_shown] = name_cell
 			name_shown += 1
@@ -609,23 +636,23 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 // - A command that makes a record gives a type; a variable holds a value;
 //   a line of the history has the form of a time.
 list_icon_form :: proc "contextless" (icon: terminal.List_Icon) -> (form: ^kind_icons.Cells, color: graphics.Color) {
-	module_color := graphics.value_kind_color(value_kinds.Value_Kind.Module, false)
+	module_color := graphics.value_kind_color(value_kinds.Value_Kind.Module, graphics.appearance)
 	switch icon {
 	case .None:
 	case .Command:
-		return kind_icons.cells_of_value_kind(.Command), graphics.value_kind_color(value_kinds.Value_Kind.Command, false)
+		return kind_icons.cells_of_value_kind(.Command), graphics.value_kind_color(value_kinds.Value_Kind.Command, graphics.appearance)
 	case .Export:
 		return kind_icons.cells_of_desktop_kind(.Export), module_color
 	case .Record:
-		return kind_icons.cells_of_value_kind(.Type), graphics.value_kind_color(value_kinds.Value_Kind.Type, false)
+		return kind_icons.cells_of_value_kind(.Type), graphics.value_kind_color(value_kinds.Value_Kind.Type, graphics.appearance)
 	case .Service, .Module, .Program:
 		return kind_icons.cells_of_value_kind(.Module), module_color
 	case .Variable:
-		return kind_icons.cells_of_value_kind(.Value), graphics.value_kind_color(value_kinds.Value_Kind.Value, false)
+		return kind_icons.cells_of_value_kind(.Value), graphics.value_kind_color(value_kinds.Value_Kind.Value, graphics.appearance)
 	case .History_Line:
-		return kind_icons.cells_of_value_kind(.Time), graphics.value_kind_color(value_kinds.Value_Kind.Time, false)
+		return kind_icons.cells_of_value_kind(.Time), graphics.value_kind_color(value_kinds.Value_Kind.Time, graphics.appearance)
 	}
-	return nil, graphics.COLOR_TEXT
+	return nil, graphics.colors.text
 }
 
 forget :: proc "contextless" () {
@@ -707,7 +734,7 @@ view_make :: proc "contextless" () {
 					row[column] = {character = edit_characters[cell_index], color = terminal.code_kind_color(kind, edit_color)}
 				}
 				if edit_line.has_cursor && cell_index == edit_cursor_cell {
-					row[column] = {character = max(row[column].character, ' '), reverse = true, color = COLOR_CURSOR}
+					row[column] = {character = max(row[column].character, ' '), reverse = true, color = own_colors().cursor}
 				}
 			}
 			continue
@@ -752,7 +779,7 @@ view_make :: proc "contextless" () {
 			}
 		}
 		if continues {
-			row[columns - 1] = {character = '>', reverse = true, color = graphics.COLOR_DIM} // The line continues after the window.
+			row[columns - 1] = {character = '>', reverse = true, color = graphics.colors.dim} // The line continues after the window.
 		}
 	}
 	edit_top := int(i64(count) - i64(top))
@@ -773,7 +800,7 @@ hint_fill :: proc "contextless" (row: ^[COLUMNS_LIMIT]Cell) {
 	for cell_index in 0 ..< shown {
 		character, length := character_at(text, place)
 		in_mark := place >= marked[0] && place < marked[0] + marked[1]
-		row[cell_index] = {character = character, color = in_mark ? tone_colors[.Accent] : color}
+		row[cell_index] = {character = character, color = in_mark ? own_colors().tones[.Accent] : color}
 		place += length
 	}
 }
@@ -885,7 +912,7 @@ number :: proc "contextless" (buffer: ^[27]u8, value: u64) -> string {
 // tables are words: the cells hold 4-byte colors, so the table starts at
 // an address that is a multiple of 4. Each holds the texts of a frame, the
 // 3 bytes at most before the cells, and the cells of the largest grid.
-records_now, records_before: [384]interface.Draw_Record
+records_now, records_before: [448]interface.Draw_Record
 TEXT_WORDS :: (1024 + 4 + ROWS_LIMIT * COLUMNS_LIMIT * size_of(Cell)) / 4
 text_words_now, text_words_before: [TEXT_WORDS]u32
 // What the pointer did to the scroll bar of the lines in the last frame.
@@ -921,7 +948,7 @@ view_grid :: proc "contextless" () -> interface.Text_Grid {
 
 tile :: proc "contextless" (table: ^interface.Draw_Table, x: int, label: string, value: u64, color: graphics.Color) {
 	buffer: [27]u8
-	interface.draw_text(table, x, 8, label, graphics.COLOR_DIM)
+	interface.draw_text(table, x, 8, label, graphics.colors.dim)
 	interface.draw_text(table, x, 28, number(&buffer, value), color, interface.FONT_MEDIUM)
 }
 
@@ -929,13 +956,16 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	buffer: [27]u8
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
+	// While the list of the action bar is open, a press is the bar's: the
+	// scroll bars under the list do not take it.
+	interface.action_bar_input_take(&frame, &bar)
 
 	if measure {
 		// The head: the rates, and the graph of the lines in one second.
-		interface.draw_rectangle(table, 0, 0, width, HEAD_HEIGHT - 6, graphics.COLOR_CARD_TOP)
-		tile(table, 12, "lines in one second", rates.lines, COLOR_GRAPH)
-		tile(table, 196, "records in one second", rates.records, graphics.COLOR_TEXT)
-		tile(table, 388, "kernel entries, million records", rates.entries, COLOR_HELD)
+		interface.draw_rectangle(table, 0, 0, width, HEAD_HEIGHT - 6, graphics.colors.card_top)
+		tile(table, 12, "lines in one second", rates.lines, own_colors().graph)
+		tile(table, 196, "records in one second", rates.records, graphics.colors.text)
+		tile(table, 388, "kernel entries, million records", rates.entries, own_colors().held)
 		most: u64 = 1
 		for value in history {
 			most = max(most, value)
@@ -943,8 +973,8 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		for value, index in history {
 			bar_height := int(value * GRAPH_HEIGHT / most)
 			x := graph_x + index * GRAPH_BAR
-			interface.draw_rectangle(table, x, 9, GRAPH_BAR - 1, GRAPH_HEIGHT - bar_height, COLOR_GRAPH_DIM)
-			interface.draw_rectangle(table, x, 9 + GRAPH_HEIGHT - bar_height, GRAPH_BAR - 1, bar_height, COLOR_GRAPH)
+			interface.draw_rectangle(table, x, 9, GRAPH_BAR - 1, GRAPH_HEIGHT - bar_height, own_colors().graph_dim)
+			interface.draw_rectangle(table, x, 9 + GRAPH_HEIGHT - bar_height, GRAPH_BAR - 1, bar_height, own_colors().graph)
 		}
 	}
 
@@ -953,28 +983,36 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 
 	// The status of the program: a text, and a value of a total. With the
 	// rates it has its own line. If not, it takes the place of the line count.
-	interface.draw_rectangle(table, 0, status_y - 4, width, 1, graphics.COLOR_TRACK)
+	// The line of the keys is the band of the action bar, from edge to
+	// edge, under each text of the line: with no rates the status shares
+	// it, and the line at the top of the band is the line over the status.
+	bar_y := hint_y - 4
+	interface.draw_rectangle(table, 0, bar_y, width, interface.ACTION_BAR_ROW_HEIGHT, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, 0, status_y - 4, width, 1, graphics.colors.track)
+	if measure {
+		interface.draw_rectangle(table, 0, bar_y, width, 1, graphics.colors.track)
+	}
 	status := &view.status
 	has_status := status.total != 0
 	status_end := TEXT_X // Where the text of the status ends: the keys at the right must not run over it.
 	if has_status {
 		color := style_color(status.style)
-		x := interface.draw_text(table, TEXT_X, status_y, string(status.text[:status.length]), graphics.COLOR_TEXT) + 12
-		bar :: 240
-		interface.draw_rectangle(table, x, status_y + 4, bar, 8, graphics.COLOR_TRACK)
-		interface.draw_rectangle(table, x, status_y + 4, status_bar_length(status.value, status.total, bar), 8, color)
-		x = interface.draw_text(table, x + bar + 12, status_y, number(&buffer, status.value), graphics.COLOR_TEXT)
-		x = interface.draw_text(table, x, status_y, " of ", graphics.COLOR_DIM)
-		status_end = interface.draw_text(table, x, status_y, number(&buffer, status.total), graphics.COLOR_DIM)
+		x := interface.draw_text(table, TEXT_X, status_y, string(status.text[:status.length]), graphics.colors.text) + 12
+		STATUS_BAR_WIDTH :: 240
+		interface.draw_rectangle(table, x, status_y + 4, STATUS_BAR_WIDTH, 8, graphics.colors.track)
+		interface.draw_rectangle(table, x, status_y + 4, status_bar_length(status.value, status.total, STATUS_BAR_WIDTH), 8, color)
+		x = interface.draw_text(table, x + STATUS_BAR_WIDTH + 12, status_y, number(&buffer, status.value), graphics.colors.text)
+		x = interface.draw_text(table, x, status_y, " of ", graphics.colors.dim)
+		status_end = interface.draw_text(table, x, status_y, number(&buffer, status.total), graphics.colors.dim)
 	} else if program == 0 && measure {
-		interface.draw_text(table, TEXT_X, status_y, "the program does not run", COLOR_STOPPED)
+		interface.draw_text(table, TEXT_X, status_y, "the program does not run", own_colors().stopped)
 	}
 	if measure {
 		// At the right: the frames of the terminal.
 		frames := number(&buffer, rates.frames)
 		x := width - MARGIN - (len(frames) + len(" pictures in one second")) * CELL_WIDTH
-		x = interface.draw_text(table, x, status_y, frames, graphics.COLOR_TEXT)
-		interface.draw_text(table, x, status_y, " pictures in one second", graphics.COLOR_DIM)
+		x = interface.draw_text(table, x, status_y, frames, graphics.colors.text)
+		interface.draw_text(table, x, status_y, " pictures in one second", graphics.colors.dim)
 	}
 
 	// The place of the view, and the keys.
@@ -984,30 +1022,29 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	if measure || !has_status {
 		// The lines of the text that the rows show: the edit line and the
 		// row under it are not lines of the text.
-		x := interface.draw_text(table, TEXT_X, hint_y, follow ? "lines " : "held at lines ", follow ? graphics.COLOR_DIM : COLOR_HELD)
+		x := interface.draw_text(table, TEXT_X, hint_y, follow ? "lines " : "held at lines ", follow ? graphics.colors.dim : own_colors().held)
 		if view.text_rows == 0 {
-			x = interface.draw_text(table, x, hint_y, "none in view", follow ? graphics.COLOR_TEXT : COLOR_HELD)
+			x = interface.draw_text(table, x, hint_y, "none in view", follow ? graphics.colors.text : own_colors().held)
 		} else {
-			x = interface.draw_text(table, x, hint_y, number(&buffer, view.top + 1), follow ? graphics.COLOR_TEXT : COLOR_HELD)
-			x = interface.draw_text(table, x, hint_y, " to ", graphics.COLOR_DIM)
-			x = interface.draw_text(table, x, hint_y, number(&buffer, view.top + view.text_rows), follow ? graphics.COLOR_TEXT : COLOR_HELD)
+			x = interface.draw_text(table, x, hint_y, number(&buffer, view.top + 1), follow ? graphics.colors.text : own_colors().held)
+			x = interface.draw_text(table, x, hint_y, " to ", graphics.colors.dim)
+			x = interface.draw_text(table, x, hint_y, number(&buffer, view.top + view.text_rows), follow ? graphics.colors.text : own_colors().held)
 		}
-		x = interface.draw_text(table, x, hint_y, " of ", graphics.COLOR_DIM)
-		x = interface.draw_text(table, x, hint_y, number(&buffer, view.count), graphics.COLOR_TEXT)
+		x = interface.draw_text(table, x, hint_y, " of ", graphics.colors.dim)
+		x = interface.draw_text(table, x, hint_y, number(&buffer, view.count), graphics.colors.text)
 		if view.gone {
-			x = interface.draw_text(table, x, hint_y, "  older than the lines kept", graphics.COLOR_DIM)
+			x = interface.draw_text(table, x, hint_y, "  older than the lines kept", graphics.colors.dim)
 		}
 		if program == 0 && !measure {
-			x = interface.draw_text(table, x, hint_y, "  the program does not run", COLOR_STOPPED)
+			x = interface.draw_text(table, x, hint_y, "  the program does not run", own_colors().stopped)
 		}
 		hint_left = x
 	}
-	// The keys, at the right, when the text at the left leaves room for them.
-	hint :: "page up, page down: move  other keys: to the program"
-	hint_x := width - MARGIN - len(hint) * CELL_WIDTH
-	if hint_left + 2 * CELL_WIDTH <= hint_x {
-		interface.draw_text(table, hint_x, hint_y, hint, graphics.COLOR_DIM)
-	}
+	// The keys: the action bar, at the right of the text of the line. Its
+	// items stand from the right edge, so they keep their places while the
+	// numbers at the left change. The bar is drawn last, below.
+	bar_left := hint_left + 2 * CELL_WIDTH
+	bar_area := interface.Area{bar_left, bar_y, max(width - MARGIN - bar_left, 0), interface.ACTION_BAR_ROW_HEIGHT}
 	// The border of the completion list, one pixel outside its cells. It
 	// comes last, so that the records before keep their places in the
 	// table when the list opens or closes: the damage stays small.
@@ -1019,10 +1056,10 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		y := text_y + view.list_top * CELL_HEIGHT - 1
 		list_width := view.list_columns * CELL_WIDTH + 2
 		list_height := view.list_rows * CELL_HEIGHT + 2
-		interface.draw_rectangle(table, x, y, list_width, 1, COLOR_LIST_BORDER)
-		interface.draw_rectangle(table, x, y + list_height - 1, list_width, 1, COLOR_LIST_BORDER)
-		interface.draw_rectangle(table, x, y, 1, list_height, COLOR_LIST_BORDER)
-		interface.draw_rectangle(table, x + list_width - 1, y, 1, list_height, COLOR_LIST_BORDER)
+		interface.draw_rectangle(table, x, y, list_width, 1, graphics.colors.kernel)
+		interface.draw_rectangle(table, x, y + list_height - 1, list_width, 1, graphics.colors.kernel)
+		interface.draw_rectangle(table, x, y, 1, list_height, graphics.colors.kernel)
+		interface.draw_rectangle(table, x + list_width - 1, y, 1, list_height, graphics.colors.kernel)
 		// The kind icon of each row, over the cells that the row keeps for
 		// it: one pixel for a cell of the icon, at the left of its cells, in the middle
 		// of the height of the row.
@@ -1071,9 +1108,54 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		first_line = min(view.top - view.oldest, kept - shown_lines)
 	}
 	scroll_result = interface.scroll_bar(&frame, scroll_area, scroll_identity, .Vertical, {total = int(max(kept, 1)), visible = int(max(shown_lines, 1)), first = int(first_line)}, {page = rows - 1}, "scroll bar", text_view_area)
+	// The action bar, after each other element: its list opens over the
+	// lines and the scroll bar.
+	items := bar_items()
+	bar_result = interface.action_bar(&frame, bar_area, items[:], &bar, {alignment = .Right})
 	interface.window_frame_end(&drawing, &frame, window)
 	if table.full {
 		system.log("terminal: the draw table is full: records are missing")
+	}
+}
+
+// The keys of the terminal, in its action bar (docs/INTERFACE.md, "4.4
+// The action bar"). Each other key goes to the program, which names its
+// own keys.
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
+	return {interface.action_bar_item("lines before", 1, "Page Up"), interface.action_bar_item("lines after", 1, "Page Down")}
+}
+bar: interface.Action_Bar_State
+bar_result: interface.Action_Bar_Result // What the action bar of the last frame ran.
+
+// page_move gives the lines that a key moves the view: a page less one
+// line for Page Up and Page Down, 0 for another key.
+page_move :: proc "contextless" (code: u32) -> i64 {
+	switch code {
+	case display.KEY_PAGE_UP:
+		return -i64(rows - 1)
+	case display.KEY_PAGE_DOWN:
+		return i64(rows - 1)
+	}
+	return 0
+}
+
+// view_move asks for the view moved by some lines: the view holds there
+// while the program writes, and follows the last lines again when it
+// reaches them.
+view_move :: proc "contextless" (move: i64) {
+	if move == 0 {
+		return
+	}
+	was_following := request.follow
+	request.follow = false
+	request.top = u64(max(i64(view.top) + move, i64(view.oldest)))
+	if request.top + u64(rows) >= view.count {
+		request.follow = true
+	}
+	if was_following && !request.follow {
+		system.log("terminal: the view stays at line ", request.top + 1, ", ", program_name, " continues")
 	}
 }
 
@@ -1227,13 +1309,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				dirty = true
 				continue
 			}
-			// The pointer goes to the scroll bars, and to no other part of
-			// the window: a frame is built only when the pointer is on a
-			// bar, holds it, leaves it lit, or turns the wheel over the
-			// view of a bar.
+			// The pointer goes to the scroll bars and to the action bar, and
+			// to no other part of the window: a frame is built only when
+			// the pointer is on one of them, holds it, leaves it lit, turns
+			// the wheel over the view of a scroll bar, or the list of the
+			// action bar is open.
 			if event.kind == .Pointer {
 				interface.input_add(&drawing.input, event)
-				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity, text_view_area) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, list_scroll_area, list_scroll_identity, list_view_area) {
+				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity, text_view_area) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, list_scroll_area, list_scroll_identity, list_view_area) || interface.action_bar_wants_frame(&bar, &drawing.input) {
 					dirty = true
 				} else {
 					// A notch over no view moves nothing: it must not wait
@@ -1247,12 +1330,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				continue
 			}
 			dirty = true
-			move: i64
+			// The open list of the action bar takes its keys first.
+			outcome := interface.action_bar_key(&bar, {code = event.code, character = event.character, modifiers = event.modifiers})
+			if outcome.ran {
+				view_move(page_move(outcome.run.code))
+			}
+			if outcome.taken {
+				continue
+			}
+			move := page_move(event.code)
 			switch event.code {
-			case display.KEY_PAGE_UP:
-				move = -i64(rows - 1)
-			case display.KEY_PAGE_DOWN:
-				move = i64(rows - 1)
+			case display.KEY_PAGE_UP, display.KEY_PAGE_DOWN:
 			case:
 				// The key goes to the program. The terminal never waits for
 				// the program: this thread also draws the window and moves
@@ -1275,17 +1363,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 				request.follow = true
 			}
-			if move != 0 {
-				was_following := request.follow
-				request.follow = false
-				request.top = u64(max(i64(view.top) + move, i64(view.oldest)))
-				if request.top + u64(rows) >= view.count {
-					request.follow = true
-				}
-				if was_following && !request.follow {
-					system.log("terminal: the view stays at line ", request.top + 1, ", ", program_name, " continues")
-				}
-			}
+			view_move(move)
 		}
 		// A change that this loop did not draw waits for the next picture:
 		// on the clock of the frames, or for the compositor. The compositor
@@ -1364,6 +1442,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		draw(&window, request.follow)
+		// A press on an item of the action bar runs its key, as the key
+		// does: the next picture shows the moved view.
+		if bar_result.ran {
+			view_move(page_move(bar_result.run.code))
+			dirty = true
+		}
 		// The scroll bar moved the view: the next picture shows the lines
 		// from its first unit. The log has one line for a press that moved
 		// the view and one for a drag, not one for each step.

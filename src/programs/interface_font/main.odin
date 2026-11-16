@@ -178,7 +178,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.draw_whole_window_next(&drawing)
 	frame := interface.window_frame_begin(&drawing)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE INTERFACE FONT", "B612 Regular and Bold: proportional, with its pairs, at three positions in a pixel", graphics.COLOR_MACHINE)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE INTERFACE FONT", "B612 Regular and Bold: proportional, with its pairs, at three positions in a pixel", graphics.colors.machine)
 	labels := [?]struct {
 		top:  int,
 		text: string,
@@ -190,13 +190,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 		{GREEK_TOP - 24, "letters past the glyph cache, drawn on demand by the font service"},
 	}
 	for label in labels {
-		interface.draw_text(frame.table, content.x, content.y + label.top, label.text, graphics.COLOR_DIM)
+		interface.draw_text(frame.table, content.x, content.y + label.top, label.text, graphics.colors.dim)
 	}
 	// The line of the measures is wider than the card: it has the lines
 	// that it needs (docs/INTERFACE.md, "The text in a box"), and the card
 	// has room for three under TIME_TOP.
 	timing: [192]u8
-	interface.draw_text_wrapped(frame.table, content.x, content.y + TIME_TOP, content.width, system.format(timing[:], "one line of ", u64(len(PARAGRAPH[1])), " characters: shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; caches of ", u64(regular_cache.header.file_size), " and ", u64(bold_cache.header.file_size), " bytes, from the boot image"), graphics.COLOR_DIM)
+	interface.draw_text_wrapped(frame.table, content.x, content.y + TIME_TOP, content.width, system.format(timing[:], "one line of ", u64(len(PARAGRAPH[1])), " characters: shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; caches of ", u64(regular_cache.header.file_size), " and ", u64(bold_cache.header.file_size), " bytes, from the boot image"), graphics.colors.dim)
 	// The lines below are drawn by hand over the frame, in the same
 	// picture of the surface, before the present.
 	if !interface.window_frame_end_without_present(&drawing, &frame, window) {
@@ -207,17 +207,17 @@ draw :: proc "contextless" (window: ^display.Window) {
 	x := i64(content.x) * 64
 	// The paragraph and the bold line.
 	for line, index in PARAGRAPH {
-		line_draw(canvas, x, content.y + PARAGRAPH_TOP + index * 20, line, &regular_spacing, &regular_cache, 1, graphics.COLOR_TEXT)
+		line_draw(canvas, x, content.y + PARAGRAPH_TOP + index * 20, line, &regular_spacing, &regular_cache, 1, graphics.colors.text)
 	}
-	line_draw(canvas, x, content.y + PARAGRAPH_TOP + len(PARAGRAPH) * 20 + 8, BOLD_LINE, &bold_spacing, &bold_cache, 1, graphics.COLOR_TEXT)
+	line_draw(canvas, x, content.y + PARAGRAPH_TOP + len(PARAGRAPH) * 20 + 8, BOLD_LINE, &bold_spacing, &bold_cache, 1, graphics.colors.text)
 	// The pairs at scale 3, with and without their adjustment.
-	line_draw(canvas, x, content.y + PAIRS_TOP, PAIRS, &regular_spacing_large, &regular_cache, 3, graphics.COLOR_TEXT)
-	line_draw(canvas, x + 360 * 64, content.y + PAIRS_TOP, PAIRS, &no_pair_spacing_large, &regular_cache, 3, graphics.COLOR_DIM)
+	line_draw(canvas, x, content.y + PAIRS_TOP, PAIRS, &regular_spacing_large, &regular_cache, 3, graphics.colors.text)
+	line_draw(canvas, x + 360 * 64, content.y + PAIRS_TOP, PAIRS, &no_pair_spacing_large, &regular_cache, 3, graphics.colors.dim)
 	// One word at the three positions, each pixel enlarged.
 	small := graphics.Canvas{pixels = raw_data(small_pixels[:]), width = SMALL_WIDTH, height = 16, stride = SMALL_WIDTH}
 	for fraction, index in ENLARGED_FRACTIONS {
-		graphics.clear(small, graphics.COLOR_CARD_BOTTOM)
-		line_draw(small, 2 * 64 + fraction, 0, ENLARGED_WORD, &regular_spacing, &regular_cache, 1, graphics.COLOR_TEXT)
+		graphics.clear(small, graphics.colors.card_bottom)
+		line_draw(small, 2 * 64 + fraction, 0, ENLARGED_WORD, &regular_spacing, &regular_cache, 1, graphics.colors.text)
 		left := content.x + index * (ENLARGED_COLUMNS * ENLARGED + 24)
 		for row in 0 ..< 16 {
 			for column in 0 ..< ENLARGED_COLUMNS {
@@ -230,13 +230,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 	bold_right := i64(content.x + 440) * 64
 	for number, index in NUMBERS {
 		y := content.y + DIGITS_TOP + index * 20
-		line_draw(canvas, column_right - line_width(number, &regular_spacing), y, number, &regular_spacing, &regular_cache, 1, graphics.COLOR_TEXT)
-		line_draw(canvas, bold_right - line_width(number, &bold_spacing), y, number, &bold_spacing, &bold_cache, 1, graphics.COLOR_PROGRAM)
+		line_draw(canvas, column_right - line_width(number, &regular_spacing), y, number, &regular_spacing, &regular_cache, 1, graphics.colors.text)
+		line_draw(canvas, bold_right - line_width(number, &bold_spacing), y, number, &bold_spacing, &bold_cache, 1, graphics.colors.program)
 	}
 	// The Greek letters: the replacement glyph until the demand cache holds
 	// a letter at the generation of this frame.
 	for line, index in GREEK {
-		line_draw(canvas, x, content.y + GREEK_TOP + index * 20, line, &greek_spacing, &regular_cache, 1, graphics.COLOR_TEXT)
+		line_draw(canvas, x, content.y + GREEK_TOP + index * 20, line, &greek_spacing, &regular_cache, 1, graphics.colors.text)
 	}
 	display.present(window)
 	if !demand_given {
@@ -288,11 +288,11 @@ measure :: proc "contextless" () {
 	placed: [LINE_LIMIT]text_shaping.Placed_Glyph
 	shaping_time, drawing_time = max(u64), max(u64)
 	for _ in 0 ..< BATCHES {
-		graphics.clear(canvas, graphics.COLOR_CARD_BOTTOM)
+		graphics.clear(canvas, graphics.colors.card_bottom)
 		start := system.nanoseconds()
 		count, _, _ := text_shaping.shape(&regular_spacing, text, placed[:])
 		shaped := system.nanoseconds()
-		graphics.text_proportional(canvas, 0, 0, placed[:count], &regular_cache, 1, graphics.COLOR_TEXT)
+		graphics.text_proportional(canvas, 0, 0, placed[:count], &regular_cache, 1, graphics.colors.text)
 		drawn := system.nanoseconds()
 		shaping_time = min(shaping_time, shaped - start)
 		drawing_time = min(drawing_time, drawn - shaped)

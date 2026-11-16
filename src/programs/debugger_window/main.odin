@@ -21,8 +21,9 @@
 // **What a reader sees.** At the left the program, with the debug place
 // field and its threads, and under it the breakpoints. At the right the
 // source line of the chosen frame, the memory view, the stack of the chosen
-// thread and the variables of the chosen frame. The line at the bottom
-// names the keys.
+// thread and the variables of the chosen frame. The action bar at the
+// bottom names the keys; a press on an item does what its key does, and
+// the items that do not fit are behind its button "more".
 //
 // **Keys**, with a program attached and no focus in the field:
 //
@@ -60,7 +61,7 @@ MARGIN :: 8
 LEFT_WIDTH :: 328
 RIGHT_X :: MARGIN + LEFT_WIDTH + MARGIN
 RIGHT_WIDTH :: WIDTH - RIGHT_X - MARGIN
-KEYS_HEIGHT :: 4 * LINE + 8
+KEYS_HEIGHT :: interface.ACTION_BAR_ROW_HEIGHT // The action bar.
 CARDS_HEIGHT :: HEIGHT - 2 * MARGIN - KEYS_HEIGHT
 // The left column: the program above, the breakpoints below. The card of
 // the breakpoints has a fixed place, so its first row has one.
@@ -294,7 +295,40 @@ Frame_Acts :: struct {
 	index:     int, // The row of the act: the place in its table, or the number of a breakpoint.
 	keys:      [interface.KEY_CAPACITY]interface.Key_Press,
 	key_count: int,
+	// A press on an item of the action bar put its key in the input of the
+	// next frame: that frame runs it.
+	bar_key_given: bool,
 }
+
+// The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
+// action bar"). The keys 0 to 3 remove a breakpoint by its number: a key
+// with an argument is no item, and a press on a row of the breakpoints
+// does the same. Detach has the lowest priority: it is the first item to
+// go into the list, and the rarest act.
+// Procedures, not global arrays: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+attached_items :: proc "contextless" () -> [14]interface.Action_Bar_Item {
+	return {
+		interface.action_bar_item("thread before", 6, "Up"),
+		interface.action_bar_item("thread after", 6, "Down"),
+		interface.action_bar_item("frame before", 5, "Page Up"),
+		interface.action_bar_item("frame after", 5, "Page Down"),
+		interface.action_bar_item("hold", 8, "h"),
+		interface.action_bar_item("let run", 8, "r"),
+		interface.action_bar_item("let each run", 4, "c"),
+		interface.action_bar_item("one instruction", 7, "s"),
+		interface.action_bar_item("one line", 7, "l"),
+		interface.action_bar_item("one line, over each call", 5, "o"),
+		interface.action_bar_item("breakpoint at the line", 3, "b"),
+		interface.action_bar_item("registers or variables", 2, "g"),
+		interface.action_bar_item("keys leave the field", 1, "Esc"),
+		interface.action_bar_item("detach", 0, "d"),
+	}
+}
+detached_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
+	return {interface.action_bar_item("attach", 2, "Enter"), interface.action_bar_item("remove a character", 1, "Backspace")}
+}
+bar: interface.Action_Bar_State
 
 image: []u8
 service_file: []u8 // The file of the service `debugger` in the boot image: the description of its exports.
@@ -784,7 +818,7 @@ lines :: proc "contextless" (area: interface.Area, x, y, width: int, characters:
 rest_line :: proc "contextless" (area: interface.Area, y: int, shown, total: int, what: string) {
 	if shown < total {
 		buffer: [64]u8
-		write(area, 0, y, system.format(buffer[:], "and ", u64(total - shown), " more ", what), graphics.COLOR_DIM)
+		write(area, 0, y, system.format(buffer[:], "and ", u64(total - shown), " more ", what), graphics.colors.dim)
 	}
 }
 
@@ -798,9 +832,9 @@ row_element :: proc "contextless" (frame: ^interface.Frame, element: interface.E
 	interface.element_name(frame, area, system.format(name_buffer[:], row_name, " ", row_number))
 	switch {
 	case chosen:
-		interface.draw_rectangle(frame_table, area.x, area.y, area.width, area.height, graphics.COLOR_CHOSEN)
+		interface.draw_rectangle(frame_table, area.x, area.y, area.width, area.height, graphics.colors.chosen)
 	case result.under_pointer || result.focused:
-		interface.draw_rectangle(frame_table, area.x, area.y, area.width, area.height, graphics.COLOR_TRACK)
+		interface.draw_rectangle(frame_table, area.x, area.y, area.width, area.height, graphics.colors.track)
 	}
 	return result.activated
 }
@@ -813,15 +847,15 @@ act_ask :: proc "contextless" (act: Element_Act, index: int = 0) {
 state_color :: proc "contextless" (state: string) -> graphics.Color {
 	switch state {
 	case "stopped":
-		return graphics.COLOR_FAILED
+		return graphics.colors.failed
 	case "held":
-		return graphics.COLOR_BOOT_PROGRAM
+		return graphics.colors.boot_program
 	}
-	return graphics.COLOR_PROGRAM
+	return graphics.colors.program
 }
 
 draw_program :: proc "contextless" (frame: ^interface.Frame) {
-	inside := interface.card(frame, {MARGIN, MARGIN, LEFT_WIDTH, PROGRAM_HEIGHT}, "PROGRAM", "debugger.attach", graphics.COLOR_PROGRAM)
+	inside := interface.card(frame, {MARGIN, MARGIN, LEFT_WIDTH, PROGRAM_HEIGHT}, "PROGRAM", "debugger.attach", graphics.colors.program)
 	y := 0
 	if !attached {
 		// With no program, the name field is the one element: it keeps the
@@ -831,10 +865,10 @@ draw_program :: proc "contextless" (frame: ^interface.Frame) {
 		if interface.text_input(frame, {inside.x, inside.y, inside.width, ROW_HEIGHT}, name_field, name[:], &name_count, "the name of a program").activated {
 			act_ask(.Attach)
 		}
-		y = lines(inside, 0, ROW_HEIGHT + 8, inside.width, ready ? "type the name of a program that runs, then Enter" : "the service debugger is not reachable: this window can attach to nothing", graphics.COLOR_DIM)
+		y = lines(inside, 0, ROW_HEIGHT + 8, inside.width, ready ? "type the name of a program that runs, then Enter" : "the service debugger is not reachable: this window can attach to nothing", graphics.colors.dim)
 	} else {
-		x := write(inside, 0, y, "attached to ", graphics.COLOR_DIM)
-		write(inside, x, y, system.name_of(attached_row.program[:]), graphics.COLOR_TEXT)
+		x := write(inside, 0, y, "attached to ", graphics.colors.dim)
+		write(inside, x, y, system.name_of(attached_row.program[:]), graphics.colors.text)
 		place_field := interface.identity("debugger_window debug place field")
 		if interface.text_input(frame, {inside.x, inside.y + PLACE_FIELD_Y, inside.width, ROW_HEIGHT}, place_field, place_text[:], &place_count, "the debug place").activated {
 			act_ask(.Break_At_Place)
@@ -847,10 +881,10 @@ draw_program :: proc "contextless" (frame: ^interface.Frame) {
 				act_ask(acts[index])
 			}
 		}
-		y = lines(inside, 0, BUTTONS_Y + ROW_HEIGHT + 8, inside.width, "break at: a procedure, or file:line. watch, memory: an address or a global; a last word 1, 2, 4 or 8 is the bytes of a watch", graphics.COLOR_DIM)
+		y = lines(inside, 0, BUTTONS_Y + ROW_HEIGHT + 8, inside.width, "break at: a procedure, or file:line. watch, memory: an address or a global; a last word 1, 2, 4 or 8 is the bytes of a watch", graphics.colors.dim)
 	}
 	if status_count > 0 {
-		y = lines(inside, 0, y + 4, inside.width, string(status_text[:status_count]), status_failed ? graphics.COLOR_FAILED : graphics.COLOR_DIM)
+		y = lines(inside, 0, y + 4, inside.width, string(status_text[:status_count]), status_failed ? graphics.colors.failed : graphics.colors.dim)
 	}
 	if !attached {
 		return
@@ -859,7 +893,7 @@ draw_program :: proc "contextless" (frame: ^interface.Frame) {
 	if y + 2 * LINE > inside.height {
 		return
 	}
-	write(inside, 0, y, "THREADS", graphics.COLOR_DIM)
+	write(inside, 0, y, "THREADS", graphics.colors.dim)
 	y += LINE + 4
 	shown := 0
 	thread_row := interface.identity("debugger_window thread row")
@@ -878,9 +912,9 @@ draw_program :: proc "contextless" (frame: ^interface.Frame) {
 			act_ask(.Choose_Thread, index)
 		}
 		number: [24]u8
-		write(inside, 0, y, system.format(number[:], row.thread), chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+		write(inside, 0, y, system.format(number[:], row.thread), chosen ? graphics.COLOR_WHITE : graphics.colors.text)
 		write(inside, 24, y, state, chosen ? graphics.COLOR_WHITE : state_color(state))
-		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, chosen ? graphics.COLOR_WHITE : graphics.colors.text)
 		y += height + 2
 		shown += 1
 	}
@@ -891,13 +925,13 @@ draw_program :: proc "contextless" (frame: ^interface.Frame) {
 // removes each one, its kind, the bytes of a watch and the place that named
 // it. A click on a row removes it.
 draw_breakpoints :: proc "contextless" (frame: ^interface.Frame) {
-	inside := interface.card(frame, {MARGIN, BREAKS_Y, LEFT_WIDTH, BREAKS_HEIGHT}, "BREAKPOINTS", "debugger.breaks", graphics.COLOR_BOOT_PROGRAM)
+	inside := interface.card(frame, {MARGIN, BREAKS_Y, LEFT_WIDTH, BREAKS_HEIGHT}, "BREAKPOINTS", "debugger.breaks", graphics.colors.boot_program)
 	if !attached {
-		lines(inside, 0, 0, inside.width, "no program is attached", graphics.COLOR_DIM)
+		lines(inside, 0, 0, inside.width, "no program is attached", graphics.colors.dim)
 		return
 	}
 	if break_count == 0 {
-		lines(inside, 0, 0, inside.width, "none: b, a click on a source line, or break at and watch with a debug place", graphics.COLOR_DIM)
+		lines(inside, 0, 0, inside.width, "none: b, a click on a source line, or break at and watch with a debug place", graphics.colors.dim)
 		return
 	}
 	y := 0
@@ -917,8 +951,8 @@ draw_breakpoints :: proc "contextless" (frame: ^interface.Frame) {
 			act_ask(.Remove_Breakpoint, int(row.number))
 		}
 		number: [24]u8
-		write(inside, 0, y, system.format(number[:], row.number), graphics.COLOR_BOOT_PROGRAM)
-		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, graphics.COLOR_TEXT)
+		write(inside, 0, y, system.format(number[:], row.number), graphics.colors.boot_program)
+		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, graphics.colors.text)
 		y += height + 2
 		shown += 1
 	}
@@ -926,12 +960,12 @@ draw_breakpoints :: proc "contextless" (frame: ^interface.Frame) {
 }
 
 draw_source :: proc "contextless" (frame: ^interface.Frame) {
-	inside := interface.card(frame, {RIGHT_X, MARGIN, RIGHT_WIDTH, SOURCE_HEIGHT}, "SOURCE", "debugger.source", graphics.COLOR_RESOURCE)
+	inside := interface.card(frame, {RIGHT_X, MARGIN, RIGHT_WIDTH, SOURCE_HEIGHT}, "SOURCE", "debugger.source", graphics.colors.resource)
 	if source_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : thread_can_be_read() ? "the frame has no source line: its module has no debug object, or the service does not have the file" : "the thread runs: hold it (h) to read its line", graphics.COLOR_DIM)
+		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : thread_can_be_read() ? "the frame has no source line: its module has no debug object, or the service does not have the file" : "the thread runs: hold it (h) to read its line", graphics.colors.dim)
 		return
 	}
-	y := lines(inside, 0, 0, inside.width, system.name_of(source_rows[0].path[:]), graphics.COLOR_DIM) + 4
+	y := lines(inside, 0, 0, inside.width, system.name_of(source_rows[0].path[:]), graphics.colors.dim) + 4
 	shown := 0
 	source_row := interface.identity("debugger_window source row")
 	for &row, index in source_rows[:source_count] {
@@ -947,9 +981,9 @@ draw_source :: proc "contextless" (frame: ^interface.Frame) {
 		}
 		marked := system.name_of(row.mark[:]) != ""
 		number: [24]u8
-		write(inside, 0, y, system.name_of(row.mark[:]), graphics.COLOR_BOOT_PROGRAM)
-		write(inside, 24, y, system.format(number[:], row.line), graphics.COLOR_DIM)
-		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, marked ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
+		write(inside, 0, y, system.name_of(row.mark[:]), graphics.colors.boot_program)
+		write(inside, 24, y, system.format(number[:], row.line), graphics.colors.dim)
+		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, marked ? graphics.colors.text : graphics.colors.dim)
 		y += height + 2
 		shown += 1
 	}
@@ -962,18 +996,18 @@ draw_source :: proc "contextless" (frame: ^interface.Frame) {
 draw_memory :: proc "contextless" (frame: ^interface.Frame) {
 	count_buffer: [32]u8
 	count := memory_place_count > 0 && memory_count > 0 ? system.format(count_buffer[:], u64(memory_count), " rows") : ""
-	inside := interface.card(frame, {RIGHT_X, MEMORY_Y, RIGHT_WIDTH, MEMORY_HEIGHT}, "MEMORY", "debugger.memory", graphics.COLOR_MEMORY, count)
+	inside := interface.card(frame, {RIGHT_X, MEMORY_Y, RIGHT_WIDTH, MEMORY_HEIGHT}, "MEMORY", "debugger.memory", graphics.colors.memory, count)
 	if !attached {
-		lines(inside, 0, 0, inside.width, "no program is attached", graphics.COLOR_DIM)
+		lines(inside, 0, 0, inside.width, "no program is attached", graphics.colors.dim)
 		return
 	}
 	if memory_place_count == 0 {
-		lines(inside, 0, 0, inside.width, "type an address or a global in the debug place field, then memory", graphics.COLOR_DIM)
+		lines(inside, 0, 0, inside.width, "type an address or a global in the debug place field, then memory", graphics.colors.dim)
 		return
 	}
 	if memory_count == 0 {
 		buffer: [PLACE_LIMIT + 64]u8
-		lines(inside, 0, 0, inside.width, system.format(buffer[:], "the service read no byte at ", string(memory_place[:memory_place_count])), graphics.COLOR_DIM)
+		lines(inside, 0, 0, inside.width, system.format(buffer[:], "the service read no byte at ", string(memory_place[:memory_place_count])), graphics.colors.dim)
 		return
 	}
 	shown := 0
@@ -985,18 +1019,18 @@ draw_memory :: proc "contextless" (frame: ^interface.Frame) {
 			continue
 		}
 		y := shown * LINE
-		write(inside, 0, y, address, graphics.COLOR_DIM)
-		write(inside, MEMORY_BYTES_X, y, system.name_of(row.bytes[:]), graphics.COLOR_TEXT)
-		write(inside, MEMORY_TEXT_X, y, system.name_of(row.text[:]), graphics.COLOR_MEMORY)
+		write(inside, 0, y, address, graphics.colors.dim)
+		write(inside, MEMORY_BYTES_X, y, system.name_of(row.bytes[:]), graphics.colors.text)
+		write(inside, MEMORY_TEXT_X, y, system.name_of(row.text[:]), graphics.colors.memory)
 		shown += 1
 	}
 	rest_line(inside, shown * LINE, shown, memory_count, "rows")
 }
 
 draw_stack :: proc "contextless" (frame: ^interface.Frame) {
-	inside := interface.card(frame, {RIGHT_X, LOW_Y, STACK_WIDTH, LOW_HEIGHT}, "STACK", "debugger.stack", graphics.COLOR_KERNEL)
+	inside := interface.card(frame, {RIGHT_X, LOW_Y, STACK_WIDTH, LOW_HEIGHT}, "STACK", "debugger.stack", graphics.colors.kernel)
 	if frame_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : "the thread runs: it has no stack to read", graphics.COLOR_DIM)
+		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : "the thread runs: it has no stack to read", graphics.colors.dim)
 		return
 	}
 	y := 0
@@ -1016,8 +1050,8 @@ draw_stack :: proc "contextless" (frame: ^interface.Frame) {
 			act_ask(.Choose_Frame, index)
 		}
 		number: [24]u8
-		write(inside, 0, y, system.format(number[:], row.frame), chosen ? graphics.COLOR_WHITE : graphics.COLOR_DIM)
-		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+		write(inside, 0, y, system.format(number[:], row.frame), chosen ? graphics.COLOR_WHITE : graphics.colors.dim)
+		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, chosen ? graphics.COLOR_WHITE : graphics.colors.text)
 		y += height + 2
 		shown += 1
 	}
@@ -1025,9 +1059,9 @@ draw_stack :: proc "contextless" (frame: ^interface.Frame) {
 }
 
 draw_registers :: proc "contextless" (frame: ^interface.Frame) {
-	inside := interface.card(frame, {VARIABLES_X, LOW_Y, VARIABLES_WIDTH, LOW_HEIGHT}, "REGISTERS", "debugger.registers", graphics.COLOR_MACHINE)
+	inside := interface.card(frame, {VARIABLES_X, LOW_Y, VARIABLES_WIDTH, LOW_HEIGHT}, "REGISTERS", "debugger.registers", graphics.colors.machine)
 	if register_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : "the thread runs: hold it (h) to read its registers", graphics.COLOR_DIM)
+		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : "the thread runs: hold it (h) to read its registers", graphics.colors.dim)
 		return
 	}
 	// A column holds a name and a value of up to 16 digits after its "0x".
@@ -1043,11 +1077,11 @@ draw_registers :: proc "contextless" (frame: ^interface.Frame) {
 		if column >= columns {
 			break
 		}
-		write(inside, column * column_width, line * LINE, system.name_of(row.name[:]), graphics.COLOR_DIM)
+		write(inside, column * column_width, line * LINE, system.name_of(row.name[:]), graphics.colors.dim)
 		// The value without its leading zeros keeps its column narrow. Its
 		// "0x" stays, dim: a reader knows that the digits are hexadecimal.
-		write(inside, column * column_width + 56, line * LINE, "0x", graphics.COLOR_DIM)
-		write(inside, column * column_width + 72, line * LINE, value_short(system.name_of(row.value[:])), graphics.COLOR_TEXT)
+		write(inside, column * column_width + 56, line * LINE, "0x", graphics.colors.dim)
+		write(inside, column * column_width + 72, line * LINE, value_short(system.name_of(row.value[:])), graphics.colors.text)
 		shown += 1
 	}
 	rest_line(inside, inside.height - LINE, shown, register_count, "registers")
@@ -1071,9 +1105,9 @@ draw_variables :: proc "contextless" (frame: ^interface.Frame) {
 		draw_registers(frame)
 		return
 	}
-	inside := interface.card(frame, {VARIABLES_X, LOW_Y, VARIABLES_WIDTH, LOW_HEIGHT}, "VARIABLES", "debugger.locals", graphics.COLOR_MACHINE)
+	inside := interface.card(frame, {VARIABLES_X, LOW_Y, VARIABLES_WIDTH, LOW_HEIGHT}, "VARIABLES", "debugger.locals", graphics.colors.machine)
 	if variable_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : thread_can_be_read() ? "the frame has no variable that the debug object describes" : "the thread runs: it has no variable to read", graphics.COLOR_DIM)
+		lines(inside, 0, 0, inside.width, !attached ? "no program is attached" : thread_can_be_read() ? "the frame has no variable that the debug object describes" : "the thread runs: it has no variable to read", graphics.colors.dim)
 		return
 	}
 	y := 0
@@ -1086,8 +1120,8 @@ draw_variables :: proc "contextless" (frame: ^interface.Frame) {
 		if y + height > inside.height - LINE {
 			break
 		}
-		y = lines(inside, 0, y, inside.width, label, graphics.COLOR_DIM)
-		y = lines(inside, 16, y, inside.width - 16, value, graphics.COLOR_TEXT) + 2
+		y = lines(inside, 0, y, inside.width, label, graphics.colors.dim)
+		y = lines(inside, 16, y, inside.width - 16, value, graphics.colors.text) + 2
 		shown += 1
 	}
 	rest_line(inside, y, shown, variable_count, "variables")
@@ -1100,14 +1134,19 @@ draw :: proc "contextless" (window: ^display.Window) -> Frame_Acts {
 	frame := interface.window_frame_begin(&drawing, window)
 	frame_table = frame.table
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
+	// The keys of the open list of the action bar, and a press on it, go
+	// to the bar before any element of the window.
+	interface.action_bar_input_take(&frame, &bar)
 	draw_program(&frame)
 	draw_breakpoints(&frame)
 	draw_source(&frame)
 	draw_memory(&frame)
 	draw_stack(&frame)
 	draw_variables(&frame)
-	keys := interface.Area{MARGIN + 8, HEIGHT - MARGIN - KEYS_HEIGHT + 8, WIDTH - 2 * MARGIN - 16, KEYS_HEIGHT}
-	lines(keys, 0, 0, keys.width, attached ? "up, down: thread   page up, page down: frame   h: hold   r: let run   c: let each run   s: one instruction   l: one line   o: one line, over each call   b: a breakpoint at the line of the frame   0 to 3: remove a breakpoint   g: the registers or the variables   d: detach   a click on a row: choose it, a breakpoint at a source line, remove a breakpoint   escape: the keys leave the field" : "type the name of a program   backspace: remove a character   enter: attach", graphics.COLOR_DIM)
+	// The bar comes last: its list opens over the cards.
+	bar_area := interface.Area{0, HEIGHT - KEYS_HEIGHT, WIDTH, KEYS_HEIGHT}
+	when_attached, when_detached := attached_items(), detached_items()
+	bar_result := interface.action_bar(&frame, bar_area, attached ? when_attached[:] : when_detached[:], &bar)
 	// The input is cleared at the end of the frame: the keys that no
 	// element took are kept first.
 	for press in frame.input.keys[:frame.input.key_count] {
@@ -1117,15 +1156,34 @@ draw :: proc "contextless" (window: ^display.Window) -> Frame_Acts {
 		}
 	}
 	interface.window_frame_end(&drawing, &frame, window)
+	if bar_result.ran {
+		// A press on an item acts as its key. With a program attached the
+		// letters are acts, so the debug place field gives up the focus:
+		// else `h` would type in the field and not hold the thread. With
+		// none, the name field keeps it, and Enter attaches.
+		if attached {
+			drawing.state.focus = 0
+		}
+		frame_acts.bar_key_given = interface.input_key_add(&drawing.input, bar_result.run)
+	}
 	return frame_acts
 }
 
-// frame_build draws a frame, runs what it asked, and draws again when an
-// act changed the rows.
+// The frames that one event can build: the frame of the event, the frame
+// that runs the key of an item of the action bar, and the frame that shows
+// what an act changed.
+FRAME_ROUNDS :: 3
+
+// frame_build draws a frame, runs what it asked, and draws again while an
+// act changed the rows or the action bar gave a key to the next frame.
 frame_build :: proc "contextless" (window: ^display.Window) {
 	acts := draw(window)
-	if acts_run(&acts) {
-		draw(window)
+	for _ in 1 ..< FRAME_ROUNDS {
+		ran := acts_run(&acts)
+		if !ran && !acts.bar_key_given {
+			return
+		}
+		acts = draw(window)
 	}
 }
 

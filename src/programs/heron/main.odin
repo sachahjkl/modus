@@ -131,8 +131,8 @@ SLOW_FACTOR :: 4 // The play is this many times slower in slow motion.
 // the time inside the whole numbers of the play.
 STILL_STEP_MOST :: 86_400_000_000
 
-COLOR_STAGE :: graphics.COLOR_BACKGROUND
-COLOR_LINES :: graphics.COLOR_POINT // The lines between the cells.
+COLOR_STAGE :: graphics.DARK_BACKGROUND
+COLOR_LINES :: graphics.DARK_POINT // The lines between the cells.
 COLOR_CHANGED :: graphics.COLOR_WHITE // The outline of a cell that the frame changed in the still heron.
 
 // The color of a pixel of the form picture that no cell covers. A color
@@ -659,14 +659,14 @@ changed_cells :: proc "contextless" () -> int {
 // band_key draws one key of the band and what it does, in a color: the
 // color of a state that runs for a key whose state is on.
 band_key :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, key, text: string, color: graphics.Color) {
-	after := interface.draw_text(table, x, y, key, graphics.COLOR_TEXT)
+	after := interface.draw_text(table, x, y, key, graphics.colors.text)
 	interface.draw_text(table, after + 8, y, text, color)
 }
 
 // state_color gives the color of the text of a key of the band: the color
 // of a state that runs when its state is on, else the dim color.
 state_color :: proc "contextless" (on: bool) -> graphics.Color {
-	return graphics.Color(on ? graphics.COLOR_PROGRAM : graphics.COLOR_DIM)
+	return graphics.Color(on ? graphics.colors.program : graphics.colors.dim)
 }
 
 // way_text gives the plain words of the way of a move.
@@ -715,10 +715,10 @@ CONTROL_WAY_X :: 456 // "g on the grid": 13.
 // play with their states.
 band_draw :: proc "contextless" (frame: ^interface.Frame) {
 	table := frame.table
-	interface.draw_rectangle(table, 0, STAGE_HEIGHT, WIDTH, 1, graphics.COLOR_TRACK)
+	interface.draw_rectangle(table, 0, STAGE_HEIGHT, WIDTH, 1, graphics.colors.track)
 	playing := state == .Animation
 	y := STAGE_HEIGHT + 8
-	interface.draw_text(table, BAND_MARGIN, y, playing ? mark.animation_names[animation] : "still", graphics.COLOR_TEXT, interface.FONT_BOLD)
+	interface.draw_text(table, BAND_MARGIN, y, playing ? mark.animation_names[animation] : "still", graphics.colors.text, interface.FONT_BOLD)
 	builder: interface.Text_Builder
 	progress, whole: u64 = 0, 1
 	if playing {
@@ -726,25 +726,25 @@ band_draw :: proc "contextless" (frame: ^interface.Frame) {
 		interface.text_put_number(&builder, u64(frame_now()))
 		interface.text_put(&builder, " of ")
 		interface.text_put_number(&builder, u64(mark.animation_frame_count(animation)))
-		interface.draw_text(table, FRAME_TEXT_X, y, interface.text_of(&builder), graphics.COLOR_DIM)
+		interface.draw_text(table, FRAME_TEXT_X, y, interface.text_of(&builder), graphics.colors.dim)
 		progress, whole = u64(animation_time / 1000), u64(mark.animation_duration(animation))
 	}
-	interface.bar(frame, {PROGRESS_X, y + 4, WIDTH - PROGRESS_X - BAND_MARGIN, 8}, progress, whole, graphics.COLOR_KERNEL)
+	interface.bar(frame, {PROGRESS_X, y + 4, WIDTH - PROGRESS_X - BAND_MARGIN, 8}, progress, whole, graphics.colors.kernel)
 	y += interface.LINE + 8
 	for name, index in animation_keys {
 		band_key(table, BAND_MARGIN + index % KEYS_IN_A_LINE * KEY_COLUMN, y + index / KEYS_IN_A_LINE * interface.LINE, name, mark.animation_names[mark.Animation(index)], state_color(playing && int(animation) == index))
 	}
 	y += KEY_LINES * interface.LINE + 4
 	band_key(table, CONTROL_PAUSE_X, y, "space", "pause", state_color(paused))
-	band_key(table, CONTROL_FRAME_X, y, ".", "next frame", graphics.COLOR_DIM)
+	band_key(table, CONTROL_FRAME_X, y, ".", "next frame", graphics.colors.dim)
 	band_key(table, CONTROL_SLOW_X, y, "s", "slow", state_color(slow))
 	band_key(table, CONTROL_LINES_X, y, "l", "lines", state_color(lines_shown))
 	builder.count = 0
 	interface.text_put(&builder, "cell ")
 	interface.text_put_number(&builder, u64(cell_sizes[cell_size_index]))
-	band_key(table, CONTROL_CELL_X, y, "z", interface.text_of(&builder), graphics.COLOR_DIM)
+	band_key(table, CONTROL_CELL_X, y, "z", interface.text_of(&builder), graphics.colors.dim)
 	// The way of a move is one of two states, and each has its words.
-	band_key(table, CONTROL_WAY_X, y, "g", way_text(way), graphics.Color(way == .On_The_Grid ? graphics.COLOR_PROGRAM : graphics.COLOR_BOOT_PROGRAM))
+	band_key(table, CONTROL_WAY_X, y, "g", way_text(way), graphics.Color(way == .On_The_Grid ? graphics.colors.program : graphics.colors.boot_program))
 }
 
 // damage_pixels gives the count of the pixels of the damage rectangles of

@@ -30,6 +30,8 @@
 // - Backspace: back to the page before;
 // - o: the table of all the modules, as `overview()` shows it.
 //
+// The [action bar](term:action-bar) at the bottom names these keys: a press on an item does what its key does.
+//
 // A click on a name of the list shows that module. A click on a link with a line under it shows the page that it
 // names.
 //
@@ -66,7 +68,8 @@ import module "modus:contract/module"
 import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
+// The page, and the action bar with its open list (about 120 records).
+records_now, records_before: [1024]interface.Draw_Record
 text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 
@@ -266,10 +269,10 @@ put_use :: proc "contextless" (call, name, description: string) {
 	put_built(USE_INDENT, COLOR_CODE, call, "(\"", name, "\")")
 	column := max(USE_INDENT + len("connect(\"\")") + len(name) + 2, 24)
 	if fits_after(description, column) {
-		put(description, column, graphics.COLOR_TEXT)
+		put(description, column, graphics.colors.text)
 		line_join()
 	} else {
-		put(description, USE_INDENT + 4, graphics.COLOR_TEXT)
+		put(description, USE_INDENT + 4, graphics.colors.text)
 	}
 }
 
@@ -289,7 +292,7 @@ page_build :: proc "contextless" () {
 	file := file_of(entry)
 	if file == nil {
 		put_built(0, COLOR_TITLE, name)
-		put("This file is not a valid module.", 0, graphics.COLOR_TEXT)
+		put("This file is not a valid module.", 0, graphics.colors.text)
 		return
 	}
 	head, _ := module.header(file)
@@ -299,16 +302,16 @@ page_build :: proc "contextless" () {
 	imports := int(max(module.count(file, .Imports), 1)) - 1
 
 	put_built(0, COLOR_TITLE, name)
-	put_paragraph(about, 0, graphics.COLOR_TEXT)
+	put_paragraph(about, 0, graphics.colors.text)
 	put("", 0, 0)
 	hash: [16]u8
 	digits := system.HEX_DIGITS
 	for b, index in entry.hash[:8] {
 		hash[2 * index], hash[2 * index + 1] = digits[b >> 4], digits[b & 0xF]
 	}
-	put_built(0, graphics.COLOR_DIM, "file      ", entry.size, " bytes, hash ", string(hash[:]), "...")
-	put_built(0, graphics.COLOR_DIM, "memory    ", head.memory_size >> 10, " KiB when loaded, ", u64(max(module.count(file, .Segments), 1) - 1), " segments, ", u64(imports), " imports")
-	put_built(0, graphics.COLOR_DIM, "exports   ", u64(exports), has_entry ? ", and an entry" : ", and no entry")
+	put_built(0, graphics.colors.dim, "file      ", entry.size, " bytes, hash ", string(hash[:]), "...")
+	put_built(0, graphics.colors.dim, "memory    ", head.memory_size >> 10, " KiB when loaded, ", u64(max(module.count(file, .Segments), 1) - 1), " segments, ", u64(imports), " imports")
+	put_built(0, graphics.colors.dim, "exports   ", u64(exports), has_entry ? ", and an entry" : ", and no entry")
 	put("", 0, 0)
 
 	put("HOW TO USE IT", 0, COLOR_HEADING)
@@ -357,7 +360,7 @@ page_build :: proc "contextless" () {
 
 	information_page(entry.hash)
 	put("DOCUMENTATION", 0, COLOR_HEADING)
-	put_markdown(text, 0, graphics.COLOR_TEXT)
+	put_markdown(text, 0, graphics.colors.text)
 	if exports == 0 {
 		return
 	}
@@ -377,7 +380,7 @@ page_build :: proc "contextless" () {
 			wanted_row = row_count
 		}
 		put(system.written(&writer), 0, COLOR_EXPORT)
-		put_markdown(module.string_at(file, function.text_offset, function.text_count), 4, graphics.COLOR_TEXT)
+		put_markdown(module.string_at(file, function.text_offset, function.text_count), 4, graphics.colors.text)
 		put("", 0, 0)
 	}
 	// The records that the exports use: the name, the size, and each field.
@@ -406,7 +409,7 @@ page_build :: proc "contextless" () {
 			system.write_part(&writer, ", at byte ")
 			system.write_part(&writer, u64(item.offset))
 			built_count += writer.count
-			put(system.written(&writer), 4, graphics.COLOR_TEXT)
+			put(system.written(&writer), 4, graphics.colors.text)
 		}
 		put("", 0, 0)
 	}
@@ -418,14 +421,90 @@ draw :: proc "contextless" (window: ^display.Window) {
 		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	}
 	frame := interface.window_frame_begin(&drawing, window)
+	// A press on the action bar, or while its list is open, is the bar's:
+	// the scroll bar under the list does not take it.
+	interface.action_bar_input_take(&frame, &bar)
 	draw_records(&frame)
 	// The scroll bar of the text: the pointer on it moves the text as Page
 	// Up and Page Down do, and the wheel over the text moves it too.
 	moved := interface.scroll_bar(&frame, scroll_area(), scroll_identity(), .Vertical, {total = rows(), visible = ROWS, first = first_line}, {page = ROWS - 2}, "", text_view_area())
+	// The action bar, last: its list opens over the text.
+	items := bar_items()
+	bar_result := interface.action_bar(&frame, bar_area(), items[:], &bar)
 	interface.window_frame_end(&drawing, &frame, window)
 	if moved.changed {
 		first_line = moved.first
 		text_moved_by_scroll_bar = true
+	}
+	// A press on an item runs its key, in the procedure of the keys.
+	if bar_result.ran {
+		key_run(bar_result.run)
+		bar_acted = true
+	}
+}
+
+// The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
+// action bar"). The keys that move the text have the lowest priority: the
+// scroll bar moves it too.
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [10]interface.Action_Bar_Item {
+	return {
+		interface.action_bar_item("module before", 6, "Up"),
+		interface.action_bar_item("module after", 6, "Down"),
+		interface.action_bar_item("next link", 5, "Tab"),
+		interface.action_bar_item("open the link", 5, "Enter"),
+		interface.action_bar_item("back", 4, "Backspace"),
+		interface.action_bar_item("all the modules", 3, "o"),
+		interface.action_bar_item("link before", 2, "Shift", "Tab"),
+		interface.action_bar_item("rows before", 1, "Page Up"),
+		interface.action_bar_item("rows after", 1, "Page Down"),
+		interface.action_bar_item("start of the text", 0, "Home"),
+	}
+}
+bar: interface.Action_Bar_State
+bar_acted: bool // A press on an item of the action bar ran its key in the last frame: the next frame shows it.
+
+// The text at the right of the action bar, "rows 1 to 33 of 120", has this
+// room: the bar stops before it, so the bar keeps its place while the
+// numbers change.
+PLACE_COLUMNS :: 28
+
+// bar_area gives the place of the action bar: under the text, from the
+// list of the modules to the place of the rows.
+bar_area :: proc "contextless" () -> interface.Area {
+	return {LIST_WIDTH, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH - LIST_WIDTH - PLACE_COLUMNS * CELL_WIDTH - MARGIN, interface.ACTION_BAR_ROW_HEIGHT}
+}
+
+// key_run runs one key: a typed key, or the key of an item of the action
+// bar that a press ran.
+key_run :: proc "contextless" (press: interface.Key_Press) {
+	switch press.code {
+	case display.KEY_UP:
+		navigation_leave()
+		select(selected - 1)
+		page_log()
+	case display.KEY_DOWN:
+		navigation_leave()
+		select(selected + 1)
+		page_log()
+	case display.KEY_PAGE_UP:
+		scroll(-(ROWS - 2))
+	case display.KEY_PAGE_DOWN:
+		scroll(ROWS - 2)
+	case display.KEY_HOME:
+		scroll(-ROW_PART_CAPACITY)
+	case interface.KEY_TAB:
+		link_focus_move(press.modifiers & display.MODIFIER_SHIFT != 0)
+	case display.KEY_ENTER:
+		link_open(focused_link)
+	case display.KEY_BACKSPACE:
+		page_back()
+	case:
+		if press.character == 'o' {
+			navigation_leave()
+			overview_build()
+		}
 	}
 }
 
@@ -435,8 +514,8 @@ COLOR_FOCUS :: 0xFFFFFF
 
 draw_records :: proc "contextless" (frame: ^interface.Frame) {
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
-	interface.draw_rectangle(table, 0, 0, LIST_WIDTH, HEIGHT, graphics.COLOR_CARD_TOP)
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
+	interface.draw_rectangle(table, 0, 0, LIST_WIDTH, HEIGHT, graphics.colors.card_top)
 	entries := system.image_entries(image)
 	first_row := list_first_row()
 	for index in 0 ..< list_count {
@@ -456,7 +535,7 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 		if exports > 0 {
 			buffer: [8]u8
 			count := system.format(buffer[:], u64(exports))
-			interface.draw_text(table, LIST_WIDTH - 8 - len(count) * CELL_WIDTH, y, count, graphics.COLOR_DIM)
+			interface.draw_text(table, LIST_WIDTH - 8 - len(count) * CELL_WIDTH, y, count, graphics.colors.dim)
 		}
 	}
 
@@ -477,7 +556,7 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 		if .Code_Block in part.flags {
 			// An example is a block: a band from its indentation to the end
 			// of the text, on each of its rows.
-			interface.draw_rectangle(table, x - 4, y, left + TEXT_WIDTH + 4 - (x - 4), CELL_HEIGHT, graphics.COLOR_TRACK)
+			interface.draw_rectangle(table, x - 4, y, left + TEXT_WIDTH + 4 - (x - 4), CELL_HEIGHT, graphics.colors.track)
 		}
 		focused := part.link > 0 && int(part.link) == focused_link
 		if focused {
@@ -491,7 +570,7 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 		case .Opens_A_Page in part.flags:
 			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, part.color)
 		case .Underlined in part.flags:
-			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, graphics.COLOR_DIM)
+			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, graphics.colors.dim)
 		}
 		// A link names itself by its label, at its first part: a machine
 		// test presses it by that name (src/md/infrastructure/test_pointer.md).
@@ -499,13 +578,17 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 			interface.element_name(frame, {x, y, int(part.width), CELL_HEIGHT}, page_links[part.link - 1].label)
 		}
 	}
-	bottom := HEIGHT - CELL_HEIGHT - 6
-	interface.draw_rectangle(table, LIST_WIDTH, bottom - 4, WIDTH - LIST_WIDTH, 1, 0x30363C)
-	hint := interface.draw_text(table, left, bottom, "up, down: module  Tab, Enter: link  Backspace: back", graphics.COLOR_DIM)
+	// The band of the action bar goes on under the place of the rows, at
+	// the right of the bar (draw: the bar draws its own part last).
+	keys := bar_area()
+	place_left := keys.x + keys.width
+	interface.draw_rectangle(table, place_left, keys.y, WIDTH - place_left, keys.height, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, place_left, keys.y, WIDTH - place_left, 1, graphics.colors.track)
 	buffer: [64]u8
 	total := rows()
 	place := system.format(buffer[:], "rows ", u64(min(first_line + 1, total)), " to ", u64(min(first_line + ROWS, total)), " of ", u64(total))
-	interface.draw_text(table, max(hint + 16, WIDTH - MARGIN - len(place) * CELL_WIDTH), bottom, place, graphics.COLOR_DIM)
+	place_room := WIDTH - MARGIN - place_left
+	interface.draw_text_right(table, WIDTH - MARGIN, keys.y + (keys.height - CELL_HEIGHT) / 2, interface.text_fit(table, {}, place, place_room), graphics.colors.dim)
 }
 
 // The list of the modules, at the left of the window. The name of a module
@@ -544,14 +627,14 @@ list_build :: proc "contextless" () {
 		file := file_of(entry)
 		head, _ := module.header(file)
 		exports := described_exports(file)
-		color := graphics.Color(graphics.COLOR_DIM)
+		color := graphics.Color(graphics.colors.dim)
 		switch {
 		case exports > 0 && head.entry_export != 0:
 			color = COLOR_EXPORT
 		case exports > 0:
 			color = COLOR_TITLE
 		case head.entry_export != 0:
-			color = graphics.COLOR_TEXT
+			color = graphics.colors.text
 		}
 		list_row[index], list_exports[index], list_colors[index] = line, exports, color
 		line += max(interface.text_wrapped_line_count(nil, {}, system.name_of(entry.name[:]), list_name_room(exports)), 1)
@@ -738,8 +821,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		if changed && display.canvas_free(&window) {
 			draw(&window)
-			changed = text_moved_by_scroll_bar
+			changed = text_moved_by_scroll_bar || bar_acted
 			text_moved_by_scroll_bar = false
+			bar_acted = false
 		}
 		// A picture that waits for the compositor: display.canvas_free said
 		// no, and the wait then ends when the compositor has read the ring
@@ -777,38 +861,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					continue
 				}
 				changed = true
-				switch event.code {
-				case display.KEY_UP:
-					navigation_leave()
-					select(selected - 1)
-					page_log()
-				case display.KEY_DOWN:
-					navigation_leave()
-					select(selected + 1)
-					page_log()
-				case display.KEY_PAGE_UP:
-					scroll(-(ROWS - 2))
-				case display.KEY_PAGE_DOWN:
-					scroll(ROWS - 2)
-				case display.KEY_HOME:
-					scroll(-ROW_PART_CAPACITY)
-				case interface.KEY_TAB:
-					link_focus_move(event.modifiers & display.MODIFIER_SHIFT != 0)
-				case display.KEY_ENTER:
-					link_open(focused_link)
-				case display.KEY_BACKSPACE:
-					page_back()
-				case:
-					if event.character == 'o' {
-						navigation_leave()
-						overview_build()
-					}
+				// The open list of the action bar takes its keys first.
+				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
+				outcome := interface.action_bar_key(&bar, press)
+				if outcome.ran {
+					key_run(outcome.run)
+				}
+				if !outcome.taken {
+					key_run(press)
 				}
 			case .Pointer:
-				// The scroll bar of the text takes the pointer from the input
-				// of the next frame.
+				// The scroll bar of the text and the action bar take the
+				// pointer from the input of the next frame.
 				interface.input_add(&drawing.input, event)
-				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area(), scroll_identity(), text_view_area()) {
+				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area(), scroll_identity(), text_view_area()) || interface.action_bar_wants_frame(&bar, &drawing.input) {
 					changed = true
 				} else {
 					// A notch over no view moves nothing, and does not wait
@@ -816,6 +882,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					drawing.input.wheel -= event.wheel
 				}
 				down := event.buttons & display.BUTTON_LEFT != 0
+				// A press on the action bar, or anywhere while its list is
+				// open, is the bar's: it does not choose a module or open
+				// a link under it.
+				if interface.action_bar_takes_pointer(&bar, event.x, event.y) {
+					pressed = down
+					continue
+				}
 				if down && !pressed && event.x >= 0 && event.x < LIST_WIDTH {
 					if index := list_index_at(event.y); index >= 0 {
 						navigation_leave()
