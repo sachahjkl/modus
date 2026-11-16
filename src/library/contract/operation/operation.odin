@@ -3032,7 +3032,8 @@ Processor_Report :: struct {
 // Record n is at index n % LOG_RECORD_CAPACITY, after the head. A reader
 // that is late by more than the capacity lost records: it knows how many.
 // The kernel can write over a record while a reader copies it: the reader
-// reads `written` again after the copy.
+// reads `written` again after the copy, with the two rules of
+// `log_first_kept` and `log_copy_kept` (log_ring.odin).
 //
 // The level of one record of the log: how much the text matters. A program
 // gives it to `Log`; a reader of the log filters on it. See
@@ -3079,30 +3080,38 @@ Log_Head :: struct {
 //
 // The kernel writes it for a `Log` operation, or for a line of its own; the
 // root service gives the memory of the records (`ROOT_LOG_RECORDS`) to the
-// readers of the log. The kernel sets `time`, `program`, `thread` and
-// `name`: a program cannot write a record of another program. 256 bytes.
-// See [log record](term:log-record).
+// readers of the log. The kernel sets `time`, `program`, `program_serial`,
+// `own_number`, `thread` and `name`: a program cannot write a record of
+// another program. The program slot with the program serial names one
+// program: the log service gives a reader that does not act for the
+// principal the records of those two numbers only, numbered by `own_number`
+// (modus:contract/log_scope). The slots have one byte each: the kernel has
+// at most 256 program slots and 256 thread slots, which leaves room for the
+// two numbers in 256 bytes. See [log record](term:log-record).
 //
 // Example: the line `[console:shell] started` on the serial port is one
 // record with `name = "console"`, `channel = "shell"`, `level = .Info`,
 // `text_count = 7`.
 Log_Record :: struct {
-	sequence:   u64, // The number of the record, from 0.
-	time:       u64, // Microseconds since the start of the machine.
-	program:    u32, // The slot of the program. 0: the kernel.
-	thread:     u32, // The slot of the thread. 0: the kernel.
-	level:      Log_Level, // The level that the writer gave.
-	more:       u8, // 1: the text continues in the next record.
-	text_count: u16, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`.
-	run_count:  u8, // The value runs of the text: runs[:run_count].
-	reserved:   [3]u8, // 0.
-	name:       [32]u8, // The name of the program, or "kernel".
+	sequence:       u64, // The number of the record in the whole log, from 0.
+	time:           u64, // Microseconds since the start of the machine.
+	program:        u8, // The program slot. 0: the kernel.
+	thread:         u8, // The slot of the thread. 0: the kernel.
+	level:          Log_Level, // The level that the writer gave.
+	more:           u8, // 1: the text continues in the next record.
+	program_serial: u32, // The program serial: it changes for each new program in the slot. 0: the kernel.
+	own_number:     u32, // The number of the record among the records of its program, from 0 at its start; it starts again from 0 after 2^32 records. 0 for the kernel.
+	text_count:     u16, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`.
+	run_count:      u8, // The value runs of the text: runs[:run_count].
+	reserved:       u8, // 0.
+	name:           [32]u8, // The name of the program, or "kernel".
 	channel:    [LOG_CHANNEL_CAPACITY]u8, // All zero: the program gave no channel.
 	runs:       [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count].
 	text:       [LOG_TEXT_CAPACITY]u8, // The text, UTF-8, `text_count` bytes.
 }
 
 #assert(size_of(Log_Record) == 256)
+#assert(offset_of(Log_Record, name) == 32)
 #assert(size_of(Log_Head) == size_of(Log_Record))
 
 // The stacks of the kernel. Each processor has one slot of addresses: a

@@ -365,6 +365,11 @@ Program :: struct {
 	ports_serial: u64, // Changes with each Ports handle of the program. It stays when the slot serves a new program.
 	cleaned:      bool, // program_cleanup ran: the slot can be free when no handle names it. Control lock.
 	serial:       u32, // Changes for each new program in the slot. It stays when the slot serves a new program.
+	// The log records of this program: the own number of its next record
+	// (op.Log_Record.own_number). Log lock; program_create sets it to 0,
+	// when no thread of the slot runs. A new program starts at 0, so its
+	// own numbers say nothing of the programs before it in the slot.
+	log_records_written:  u32,
 	// The fault ring (fault_ring.odin), under the program lock. 0: no fault
 	// handler, and every fault stops the program.
 	fault_handler:        u32, // The thread whose thread record holds the fault ring.
