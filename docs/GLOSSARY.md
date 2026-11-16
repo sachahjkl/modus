@@ -380,7 +380,7 @@ Do not use: backtrace, call stack (for this), unwind.
 
 ### Module record
 
-A module record is what the kernel keeps of one module in a program (`op.Module_Record`, 80 bytes): its base address, its size, its hash, and the hash that a replacement put it in place of.
+A module record is what the kernel keeps of one module in a program (`op.Module_Record`, 88 bytes): its base address, its size, its hash, the hash that a replacement put it in place of, and its module writer.
 
 The loader writes the record with `Program_Module` after it mapped the module. The kernel does not read the module: the record is what the loader asserts. The kernel uses it to name the module of a fault address and of each frame of a stack trace, and `Inspect` gives the records of a program. A program has at most 16 module records.
 
@@ -389,6 +389,20 @@ The module records of a program that runs are its identity: `manual.running()` a
 The design: `docs/MODULE_CONTRACT.md`, "Loading".
 
 Do not use: link map entry, loaded image list.
+
+### Module writer
+
+The module writer of a module record is the party that wrote it: the program itself (`program`), or a holder of its program handle with Control, its starter (`starter`).
+
+The kernel writes it at each `Program_Module` (`op.Module_Writer`), from the caller and the target: the value that the caller passes is not read. A program cannot replace or remove a record of the writer `starter`, and cannot map or unmap memory at its addresses: the kernel refuses with `No_Right` and the error kind `Starter_Module`. So a record of the writer `starter` names the code that the starter put there, and a record of the writer `program` is what the program says of itself. `inspect.modules()`, `manual.running()` and `program_modules()` show it in the field `writer`. A program never holds Control over itself: `Handle_Give` removes Control and Give from a program handle that goes to the program that it names, so a program cannot pass the authority of its starter to a child.
+
+Example: the root service starts `imports`, and the record of its module has the writer `starter`; `imports` loads `calendar` in its own memory, and that record has the writer `program`.
+
+It is not the `system.Writer` of a text, which writes bytes into a buffer.
+
+The design: `docs/MODULE_CONTRACT.md`, "The writer of a module record".
+
+Do not use: owner, author.
 
 ### Table
 
@@ -2167,7 +2181,7 @@ Do not use: program table, origin page.
 
 A disk grant table is the table of the root service that binds each nickname of one principal to the hash of one module file, with the grants of that file.
 
-The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The persisted form is the object `grant_table` of the store `programs` of the principal, with a tag of keyed BLAKE2b under a key that a passphrase gives. For principal 0 that passphrase is optional (see "Machine passphrase", below): with none, the table lasts until the machine stops; with one, the root service reads the table after it is typed and writes it after each change. For a named principal the key comes from its unlock key at its unlock: the root service reads the table at the first unlock of the run, and a console of its session changes it. A table whose tag fails is refused, and gives no grant.
+The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. It also keeps the client keys of `remote` that its principal allowed, 4 at most (see "Client key", below). The persisted form is the object `grant_table` of the store `programs` of the principal, with a tag of keyed BLAKE2b under a key that a passphrase gives. For principal 0 that passphrase is optional (see "Machine passphrase", below): with none, the table lasts until the machine stops; with one, the root service reads the table after it is typed and writes it after each change. For a named principal the key comes from its unlock key at its unlock: the root service reads the table at the first unlock of the run, and a console of its session changes it. A table whose tag fails is refused, and gives no grant.
 
 A disk grant table is not the grant table of the root service (`grants_of`), which gives the programs of the boot image their grants by their names, and which a disk program never reaches.
 
@@ -2329,7 +2343,7 @@ Do not use: login, sign in, authentication.
 
 The lock of a session is the act that ends the session of a named principal: each program of the session stops, and an unlock is needed again (`lock()` in the console).
 
-The programs stop; they are not frozen. A program that keeps its state in its store at each change loses nothing. The lock of a session is not a lock of memory.
+The programs stop; they are not frozen. A program that keeps its state in its store at each change loses nothing. The lock also stops the window of `unlock` that the session asked for (a change of the passphrase, a machine passphrase, a seal of the machine key), so nobody at the locked machine reads its recovery key; such a window writes nothing before Enter, so the stop loses no recovery key (`PRINCIPALS.md`, "4. The unlock and the lock"). The lock of a session is not a lock of memory.
 
 Do not use: log out, sign out.
 
@@ -2389,7 +2403,7 @@ Do not use: superuser, privileged, person.
 
 A client key is the Ed25519 public key that a client of the remote service proves in the QUIC handshake, and that a principal allows so that each call of that client acts for it.
 
-The client sends it as a raw public key, with a CertificateVerify signed by its private key (mutual TLS 1.3). A principal allows it from a console that acts for it, with `remote_allow(key)`, and ends the grant with `remote_disallow(key)`. One key belongs to one principal. A key that no principal allowed is refused in the handshake with the alert access_denied, before any call. The key of the server of `remote` is another key: the pinned key of the client.
+The client sends it as a raw public key, with a CertificateVerify signed by its private key (mutual TLS 1.3). A principal allows it from a console that acts for it, with `remote_allow(key)`, and ends the grant with `remote_disallow(key)`. One key belongs to one principal. The disk grant table of the principal keeps the key, so it lasts across a restart as the other grants of the principal do. A key that no principal allowed is refused in the handshake with the alert access_denied, before any call. The key of the server of `remote` is another key: the pinned key of the client.
 
 The design: `docs/PRINCIPALS.md`, "The client keys of remote".
 
@@ -2399,7 +2413,7 @@ Do not use: client certificate, API key.
 
 The client table is the page in which the root service keeps each client key that a principal allowed, with that principal and a serial; the remote service reads it and never writes it.
 
-Each row is one grant (`remote.Client`). Its serial names that grant: a new row, a lock and an unlock of the session of its principal each give a new one, and a connection to a service that the root service made for a row ends when the serial of the row changes. The remote service maps the table with the right Read only, by its start grant `Remote_Clients`, and waits on its version, which the root service wakes at each change. It holds 8 rows, 4 of them for one principal at most, and lasts until the machine stops.
+Each row is one grant (`remote.Client`). Its serial names that grant: a new row, a lock and an unlock of the session of its principal each give a new one, and a connection to a service that the root service made for a row ends when the serial of the row changes. The remote service maps the table with the right Read only, by its start grant `Remote_Clients`, and waits on its version, which the root service wakes at each change. It holds 8 rows, 4 of them for one principal at most. The table itself lasts until the machine stops: the disk grant table of each principal keeps its keys, and after the read of that table the root service gives each key a row again, with a new serial. A row whose key another principal allowed too, one in this run and one in its disk grant table, is contested: it holds no grant for either principal until one of them revokes the key.
 
 The design: `src/library/contract/remote/client_table.odin`; `docs/PRINCIPALS.md`, "The client keys of remote".
 

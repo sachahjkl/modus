@@ -178,11 +178,12 @@ segments :: proc "c" (name: ^string, result: ^[]information.Segment, error: ^err
 	return table_count(count, problem, error)
 }
 
-// running gives one row for each module that runs in a program, from the module records of the kernel: the program, the module, its hash, and the hash that a replacement changed.
+// running gives one row for each module that runs in a program, from the module records of the kernel: the program, the module, its hash, the hash that a replacement changed, and the writer of the record.
 //
 // The module records are what each loader asserted with the kernel operation `Program_Module`; the manual reads
 // them with `Inspect` and the right **Inspect** on the machine. The rows are records
-// [`Running`](information.Running).
+// [`Running`](information.Running). The field `writer` is `starter` for a record that the starter wrote, which
+// the program cannot change, and `program` for a record that the program wrote for itself.
 //
 // **Result**: the count of rows, or a negative number with an error record:
 //

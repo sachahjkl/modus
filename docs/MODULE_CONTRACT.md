@@ -237,7 +237,31 @@ Status of the loader in user space (`src/library/support/system/load.odin`):
 - **Refusals**: a missing import, an import cycle, a bad file, a replacement that fails its check, a slot that cannot be bound, no room, a kernel operation that fails. On a failure, the space is as it was before the load, and the caller has a load error (below).
 - **Shared code**: a prepared module has two parts. The code is the segments with no Write: the loader never writes them (a rebase and a slot are in a segment with Write, and the loader checks it), so their pages are the same at each base and with each binding, and the table keys them by the hash of the module only. Two programs that import one module at two places map one copy of its code. The fixed part is the segments that are read-only after the load: the loader writes their rebases and their slots, so the table keys them by the hash, the base, and the hash and the base of the module of each import. A writable segment, with its slots, is bound in the copy of each program. The tool gives a segment of the range that the linker makes read-only after the load, and that holds no rebase and no slot, the flags of a constant segment: no loader writes it, so it is a part of the code, shared at each base (`segment_flags_after_the_relocations` in `tools/modustool/convert.odin`). The linker always makes that range, for a table of its own that the tool does not copy; in a module with no table of addresses and no import it is such a segment, of one page with no byte.
 - **Addresses**: the module of a program is at `PROGRAM_BASE`, and its imports follow it, with one page with no memory between two modules. The addresses are fixed: the random base of the design is not done.
-- **Module records**: after it mapped a module, the loader writes its module record in the kernel (operation `Program_Module`): its addresses, its hash, and the hash that a replacement put it in place of. The kernel does not read the module: the record is what the loader asserts. It names the module of the address of a fault with it, and `Inspect` gives the records of a program.
+- **Module records**: after it mapped a module, the loader writes its module record in the kernel (operation `Program_Module`): its addresses, its hash, and the hash that a replacement put it in place of. The kernel does not read the module: the record is what the loader asserts. It names the module of the address of a fault with it, and `Inspect` gives the records of a program. The kernel adds the module writer of the record ("The writer of a module record", below).
+
+### The writer of a module record
+
+The kernel marks each module record with its module writer (`op.Module_Writer`): `starter` when another program wrote it through the program handle with Control, `program` when the program wrote it for itself. The kernel knows the writer at each `Program_Module`: it compares the program of the record with the program that calls. The kernel writes the record of the root service with the writer `starter`.
+
+A program cannot change a record of the writer `starter`. The kernel refuses, with `No_Right` and the error kind `Starter_Module`:
+
+- `Program_Module` of the program in itself that replaces or removes such a record;
+- `Memory_Unmap` of the program in itself of a mapping that meets such a record;
+- `Memory_Map` of the program in itself at addresses that meet such a record. This check comes before the check of the other mappings.
+
+An address that the kernel chooses (`Memory_Map` with the address 0) meets no such record. The starter keeps each right: it replaces and removes a record, and maps and unmaps in its child, as before.
+
+A program never holds the authority of its starter over itself. `Handle_Give` removes Control and Give from a program handle whose copy goes to the program that it names. Else the program would give that handle to a child, and the child, another party, would change the records of the program as a starter does.
+
+A record of the writer `starter` covers the whole module, its data too, and it pins each mapping that it meets: the program cannot unmap it. A starter that writes a record over memory that the program mapped for itself pins that memory as well.
+
+A frame of a stack trace (`op.Stop_Frame`) names the base and the hash of the record that holds its address, not its writer. A reader that needs the writer of a frame matches the base of the frame with a record of the `Module_Report` of the program (`Inspect` with the kind `Modules`). The record of the instruction, `Stop_Report.module`, carries its writer.
+
+So a report says which modules a program really holds. The bytes at the addresses of a record of the writer `starter` are the code that the starter mapped: the program cannot map other memory there, `Memory_Protect` never gives a page more than its mapping was made with, and the loader gives the program no handle of the memory of a module. A record of the writer `program` is what the program says of itself: a call host, for example, loads its isolated module itself. A program can still run code that no record names, in memory of its own.
+
+`inspect.modules()`, `manual.running()` and `program_modules()` of the console show the writer in the field `writer`. The program `imports` tries the four changes in the main machine test, and writes `imports: the module record of the root service: 4 of 4 changes refused with Starter_Module, writer starter; calendar, loaded by this program: writer program`.
+
+The design and the refused forms are in `src/md/features/module_record_writer.md`.
 
 ### The error of a load
 
@@ -419,7 +443,7 @@ Each other start grant is refused with `Unsupported`: a command gives `store` on
 - **Principal 0 with a machine passphrase** (`PRINCIPALS.md`, "Principal 0 and its machine passphrase"). The table is the object `grant_table` of the store `programs`. The root service reads it after the passphrase is typed at the start, and writes it after each change. Until the passphrase is typed, the disk programs of principal 0 start with no grant, and a change of the table is refused; the machine runs, and nothing waits.
 - **A named principal** (`PRINCIPALS.md`, "The disk grant table of a named principal"). The table is the object `grant_table` of its store `programs.principal.1`, under a key that `unlock` derives from its unlock key. The root service reads it at the first unlock of the run, and writes it after each change. A console that the desktop starts during the session acts for the principal, and changes its table.
 
-The persisted form is in `modus:support/disk_program` (`table_encode`, `table_decode`): 1008 bytes, the rows that persist, a global setting of persistence with an exception for each row (the default is to persist), and a tag of keyed BLAKE2b. The name `grant_table` is no name of a disk program, as `programs` is not. A table whose tag fails is refused with a line of the log, and gives no grant, so a reader of the disk with no passphrase adds no grant:
+The persisted form is in `modus:support/disk_program` (`table_encode`, `table_decode`): 1136 bytes, the rows that persist, the client keys of `remote` that the principal allowed (4 at most; `PRINCIPALS.md`, "The client keys of remote"), a global setting of persistence with an exception for each row (the default is to persist; the client keys follow the global setting), and a tag of keyed BLAKE2b. The name `grant_table` is no name of a disk program, as `programs` is not. A table whose tag fails is refused with a line of the log, and gives no grant, so a reader of the disk with no passphrase adds no grant:
 
 ```
 root: refused the disk grant table of principal 0 from the store programs: its tag does not verify under the key of the principal: another key wrote it, or a byte changed; it gives no grant, and it is kept: no change is written over it

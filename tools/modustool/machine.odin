@@ -180,6 +180,7 @@ Step :: struct {
 	element:    string, // For Click_Element and Wheel: the element name ("watch", "frame 0", "round_robin").
 	notches:    int, // For Wheel: the notches of the wheel, in NOTCH_TOWARD_THE_END.
 	form:       string, // For Point: the pointer form that compositor.pointer() must also report, "dark" or "light" (docs/POINTERS.md).
+	shown_only: bool, // For Screen_Text: the text must be read off the screen, and is not kept: the step proves that a window shows it, and a later step still types the texts kept before.
 }
 
 // The two clocks agree to whole seconds: the machine reads its real-time
@@ -2340,7 +2341,11 @@ scenario := [?]Step {
 	// replacements of the machine when it starts it.
 	{kind = .Launch, text = "imports"},
 	{kind = .Wait, text = "compositor: surface imports", any_order = true},
-	{kind = .Wait, text = "imports: ok, 12 cases"},
+	// A program cannot change the module record that its starter wrote:
+	// not remove it, not replace it, not unmap or map at its addresses. Its
+	// own load is a record of the writer program.
+	{kind = .Wait, text = "imports: the module record of the root service: 4 of 4 changes refused with Starter_Module, writer starter; calendar, loaded by this program: writer program"},
+	{kind = .Wait, text = "imports: ok, 13 cases"},
 	{kind = .Wait, text = "imports: a call through an import slot: "},
 	{kind = .Wait, text = "imports: the bind of agenda: "},
 	{kind = .Wait, text = "imports: two programs import calendar at two places: one copy of its code, "},
@@ -4315,7 +4320,9 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			element_wheel(machine, step.text, step.element, step.notches, index) or_return
 		case .Screen_Text:
 			read := screen_text_read(machine, step.text, step.element, index) or_return
-			screen_text_keep(read)
+			if !step.shown_only {
+				screen_text_keep(read)
+			}
 		case .Click, .Drag, .Launch, .Move, .Close:
 			step := step
 			moved_title: string
