@@ -30,8 +30,9 @@
 // `log_reader storm`, which writes more records than the whole log keeps
 // and pushes the records of this program and of its two children out of
 // the whole log. Each check above runs after that storm, and still finds
-// each record, with nothing lost. The machine test starts it two times
-// (src/md/features/log_reader_scope.md, src/md/features/own_log_ring.md).
+// each record, with nothing lost. The machine test starts it two times.
+// The designs: (src/md/features/log_reader_scope.md) and
+// (src/md/features/own_log_ring.md).
 //
 // **What a reader sees.** It has no window. Start it with
 // `start("log_reader")` in the console. It writes on the log:
