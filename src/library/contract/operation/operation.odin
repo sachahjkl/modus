@@ -391,7 +391,7 @@ Operation :: enum u32 {
 	//
 	// - `budget`: a budget handle with **Spend**. It pays for one program slot, for the page tables of
 	//   the program, and for the `OWN_LOG_PAGES` pages of its own log ring, which return to it when the
-	//   program stops. The program keeps it: it pays for its first thread at `Program_Start`, and for each
+	//   slot of the program is free. The program keeps it: it pays for its first thread at `Program_Start`, and for each
 	//   page table of the program after.
 	// - `name`, `name_length`: the name of the program, at most 31 bytes, in memory that the program can
 	//   read: the reports and the log show it. Each byte is a printable character of ASCII or the
@@ -1224,8 +1224,10 @@ Operation :: enum u32 {
 	// ```
 	Log_Read = 35, // (memory, program, serial, after, records: Log_Record, count) -> copied, lost, total.
 	// Copies the records of the own log ring of one program: the last `OWN_LOG_RECORD_CAPACITY` records
-	// that the program wrote, which only its own records push out. The log service reads the
-	// [own records](term:own-records) of a caller with it (src/md/features/own_log_ring.md). The kernel
+	// that the program wrote, which only its own records push out. The ring lives until the slot of the
+	// program is free: after its stop, while a handle names it, it is still read. The log service reads
+	// the [own records](term:own-records) of a caller with it, and the records of a program whose handle
+	// a starter lends (src/md/features/own_log_ring.md). The kernel
 	// copies whole records under the log lock, so no copy is torn, and gives them to the caller after
 	// the lock. A guest has no own log ring after its first `Guest_Run`.
 	//
@@ -1253,8 +1255,8 @@ Operation :: enum u32 {
 	// - `Bad_Handle`, `No_Right`: `memory` is not a handle of the memory of the log with **Read**.
 	// - `Bad_Operation`: `program` is 0 or past the program slots, or `count` is above
 	//   `OWN_LOG_RECORD_CAPACITY`.
-	// - `Bad_State`: the slot holds no program with this serial and an own log ring: the program stopped,
-	//   or another program has the slot.
+	// - `Bad_State`: the slot holds no program with this serial and an own log ring: the slot is free,
+	//   another program has it, or the program is a guest.
 	// - `Bad_Address`: the program cannot write the `count` records at `records`.
 	//
 	// ```odin
@@ -3098,9 +3100,8 @@ LOG_CHANNEL_CAPACITY :: 16
 LOG_RUN_CAPACITY :: 8
 // The value runs that one Log operation takes, after its text.
 LOG_CALL_RUN_LIMIT :: 32
-// 128 pages: 2047 records. With 64 pages (1023 records), the main machine
-// test wrote about 1024 records before it starts the program log, which
-// checks that it lost none: each new line of a program broke the check.
+// 128 pages: 2047 records. A reader that starts late copies the newest 2046
+// of them.
 LOG_PAGES :: 128
 // The records that the log keeps: the pages of the log less the head, in
 // records of 256 bytes.

@@ -58,6 +58,8 @@ BAR_X :: 232
 BAR_WIDTH :: 380 // Two processors.
 BAR_FULL :: 2_000_000
 ROW_COUNT :: 4
+// Each row has a series color of its own: four threads of one kind.
+#assert(ROW_COUNT <= graphics.SERIES_COLOR_COUNT)
 // A literal, because the tool counts the pictures of the window from it;
 // the assertion keeps it equal to its layout.
 HEIGHT :: 354
@@ -65,9 +67,6 @@ HEIGHT :: 354
 INTERVAL :: 1000
 BURST :: 100
 
-COLOR_WRONG :: 0xE0B040
-COLOR_LIMIT :: 0xF06060
-COLORS := [ROW_COUNT]graphics.Color{0x4898F0, 0xF09040, 0x58D878, 0xC070E0}
 
 // One budget: its limit, and what it used in the last interval, for one second.
 Row :: struct {
@@ -206,25 +205,27 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for row, index in rows {
 			interface.draw_rectangle(table, 6, y - 4, WIDTH - 12, 2 * LINE - 2, graphics.colors.card_top)
 			interface.draw_text(table, 12, y, row.name, graphics.colors.text)
-			x := interface.draw_unsigned(table, BAR_X, y, row.used / 1000, sample > 1 && !within(row) ? COLOR_WRONG : graphics.colors.text)
+			x := interface.draw_unsigned(table, BAR_X, y, row.used / 1000, sample > 1 && !within(row) ? graphics.colors.failed : graphics.colors.text)
 			x = interface.draw_text(table, x, y, " ms used of ", graphics.colors.dim)
 			x = interface.draw_unsigned(table, x, y, row.limit / 1000, graphics.colors.text)
 			interface.draw_text(table, x, y, " ms in one second", graphics.colors.dim)
 			y += LINE
 			interface.draw_rectangle(table, BAR_X, y, BAR_WIDTH, 10, graphics.colors.background)
-			interface.draw_rectangle(table, BAR_X, y, int(min(row.used, BAR_FULL) * BAR_WIDTH / BAR_FULL), 10, COLORS[index])
-			interface.draw_rectangle(table, BAR_X + int(min(row.limit, BAR_FULL) * BAR_WIDTH / BAR_FULL), y - 3, 2, 16, COLOR_LIMIT)
+			interface.draw_rectangle(table, BAR_X, y, int(min(row.used, BAR_FULL) * BAR_WIDTH / BAR_FULL), 10, graphics.colors.series[index])
+			// The mark of the limit says the number of the limit: the
+			// color of that number, the text.
+			interface.draw_rectangle(table, BAR_X + int(min(row.limit, BAR_FULL) * BAR_WIDTH / BAR_FULL), y - 3, 2, 16, graphics.colors.text)
 			y += LINE
 		}
 		y += LINE / 2
 		interface.draw_text(table, 12, y, "what the three budgets use counts in the budget of the program.", graphics.colors.dim)
 		y += LINE
 		interface.draw_text(table, 12, y, "a new budget with a higher limit than the program:", graphics.colors.dim)
-		interface.draw_text(table, 424, y, rule_right ? "refused: no budget" : "another answer", rule_right ? graphics.colors.program : COLOR_WRONG)
+		interface.draw_text(table, 424, y, rule_right ? "refused: no budget" : "another answer", rule_right ? graphics.colors.program : graphics.colors.failed)
 		y += LINE
 		line: [96]u8
 		interface.draw_text(table, 12, y, system.format(line[:], "100 log records at once, ", log_limit, " for each second:"), graphics.colors.dim)
-		interface.draw_text(table, 424, y, system.format(line[:], accepted, " written, ", refused, " refused"), log_right ? graphics.colors.program : COLOR_WRONG)
+		interface.draw_text(table, 424, y, system.format(line[:], accepted, " written, ", refused, " refused"), log_right ? graphics.colors.program : graphics.colors.failed)
 		interface.window_frame_end(&drawing, &frame, &window)
 		for _ in display.next_event(&window) {}
 		system.sleep(system.time() + INTERVAL)

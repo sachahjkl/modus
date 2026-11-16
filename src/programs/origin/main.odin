@@ -59,7 +59,6 @@ CASE_CAPACITY :: 12
 HEIGHT :: 442
 #assert(HEIGHT == 12 + 4 * LINE + CASE_CAPACITY * LINE + 3 * LINE + 12)
 
-COLOR_WRONG :: 0xE0B040
 
 // One case: what the program did, and what the kernel answered.
 Case :: struct {
@@ -197,7 +196,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.colors.card_top)
 			}
 			interface.draw_text(table, 12, y, item.text, graphics.colors.text)
-			interface.draw_text(table, ANSWER_X, y, item.right ? item.answer : "another answer", item.right ? graphics.colors.program : COLOR_WRONG)
+			interface.draw_text(table, ANSWER_X, y, item.right ? item.answer : "another answer", item.right ? graphics.colors.program : graphics.colors.failed)
 			y += LINE
 		}
 		y += LINE / 2

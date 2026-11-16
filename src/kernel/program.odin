@@ -1447,11 +1447,17 @@ program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 // program_free frees the slot of a stopped program that no handle names,
 // after its cleanup. Stopped alone does not say that the cleanup ran: a
 // thread of it can still run on a processor. The caller holds the control
-// lock.
+// lock, and no lock after the program lock.
+//
+// The own log ring ends here, not at the cleanup: while a handle names the
+// program, its holder can read its last records (Log_Read with the slot
+// and the serial). Its pages return to the budget with the slot, before
+// the slot can serve a new program.
 program_free :: proc "contextless" (program: ^Program) {
 	if program.state != .Stopped || !program.cleaned {
 		return
 	}
+	own_log_ring_end(program)
 	program.state = .None
 	budgets[program.budget].amounts.programs += 1
 }
@@ -1847,10 +1853,9 @@ program_cleanup :: proc "contextless" (index: u32) {
 	guest_end(index)
 	address_space_free(program.table, &program.budget)
 	program.table = 0
-	// The own log ring ends with the program: its only reader is the
-	// program itself, whose connections end now, and its records stay in
-	// the whole log. A guest gave its ring back at its first run.
-	own_log_ring_end(program)
+	// The own log ring stays until the slot is free (program_free): a
+	// holder of the program handle, such as the starter, still reads the
+	// last records of a program that stopped.
 	program.cleaned = true
 	program_unlock(index, taken)
 	for &other, other_index in programs[1:] {

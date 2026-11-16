@@ -97,7 +97,10 @@ the_sentence_of_the_log :: proc(t: ^testing.T) {
 	testing.expect_value(t, sentence_write(buffer[:], .Auto, {}), "the appearance in force is dark: auto, and the system has no date")
 	testing.expect_value(t, sentence_write(buffer[:], .Auto, at(1, 4, 0, 500)), "the appearance in force is dark: auto, light from 07:00 to 19:00 of the local time; the local time is 01:04 with a zone of 0 s, at 1794791040 s since 1970")
 	testing.expect_value(t, sentence_write(buffer[:], .Auto, at(7, 0, 0, 0, -3_600)), "the appearance in force is dark: auto, light from 07:00 to 19:00 of the local time; the local time is 06:00 with a zone of -3600 s, at 1794812400 s since 1970")
-	// A buffer too short cuts the sentence and does not fault.
+	// A buffer too short cuts the sentence, does not fault, and ends with
+	// the cut mark of the writer of the system: never a silent cut.
 	short: [8]u8
-	testing.expect_value(t, sentence_write(short[:], .Auto, at(12, 0, 0)), "the appe")
+	cut := sentence_write(short[:], .Auto, at(12, 0, 0))
+	testing.expect(t, len(cut) <= len(short))
+	testing.expect_value(t, cut, "... and ")
 }

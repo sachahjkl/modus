@@ -177,11 +177,15 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "log":
 		return {.Log_Records, .Serve} // It serves records(): the whole log to a caller that acts for the principal, its own records to each other caller.
 	case "log_reader":
-		// The test of the own records: a connection to the log service and
-		// to no other service (callable_of), with no grant to act for the
-		// principal, and the boot image for the description of the exports
-		// of that service and for its child, a copy of itself that writes
-		// many records (src/md/features/own_log_ring.md).
+		// The test of the own records and of the records of its children: a
+		// connection to the log service and to no other service
+		// (callable_of), with no grant to act for the principal, and the
+		// boot image for the description of the exports of that service and
+		// for the module of its children. It starts them on its own budget,
+		// and the handle of each child is its grant to read the records of
+		// that child (src/md/features/log_reader_scope.md). One child writes
+		// more records than the whole log keeps
+		// (src/md/features/own_log_ring.md).
 		return {.Connect, .Image}
 	case "boot":
 		return {.Inspect, .Image} // It shows the modules of the boot image.
@@ -463,7 +467,7 @@ own_records_amount_of :: proc "contextless" (caller: ^Started) -> u64 {
 // the log to them.
 log_grant :: proc "contextless" (name: string) -> system.Grant {
 	rights := system.Rights{.Write}
-	if name == "console" || name == "rings" || name == "errors" || name == "fault_ring" || name == "debugged" || name == "log_reader" { // errors gives it to its child, which measures a refused Log; the child of fault_ring that repairs logs its own cases; a child of debugged writes one line from a buffer that its debugger watches; the child of log_reader writes more records than the whole log keeps.
+	if name == "console" || name == "rings" || name == "errors" || name == "fault_ring" || name == "debugged" || name == "log_reader" { // errors gives it to its child, which measures a refused Log; the child of fault_ring that repairs logs its own cases; a child of debugged writes one line from a buffer that its debugger watches; each child of log_reader writes the records that its starter reads back, one of them more than the whole log keeps.
 		rights += {.Give}
 	}
 	return {system.context_record().handles[op.CONTEXT_LOG], rights}
@@ -2123,6 +2127,10 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	// The caller receives its handles through its ring to this service.
 	status: system.Status
 	given: [3]system.Handle
+	// The program handle of the service, with Read only and never Give: a
+	// handle with Read and Give lends to log.program_records, and would give
+	// each client the log records of the service
+	// (src/md/features/log_reader_scope.md).
 	given[0], status = system.give(caller.requests_memory, service.program, {.Read})
 	if status == .Ok {
 		given[1], status = system.give(caller.requests_memory, ring_memory, {.Read, .Write})

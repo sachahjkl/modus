@@ -314,7 +314,9 @@ own_log_ring_give_back :: proc "contextless" (frames: [op.OWN_LOG_PAGES]u64, bud
 // own_log_ring_end frees the own log ring of a program, if it has one, and
 // its pages return to its budget. The frames are cleared under the log
 // lock, so no Log_Read copies the ring after its pages leave; the frame
-// lock comes after the log lock is free. The caller holds the program lock.
+// lock comes after the log lock is free. No thread of the program runs:
+// the caller is the first run of a guest, under the program lock, or the
+// free of the slot, under the control lock.
 own_log_ring_end :: proc "contextless" (owner: ^Program) {
 	log_taken := log_take()
 	ring_frames := owner.log_ring_frames

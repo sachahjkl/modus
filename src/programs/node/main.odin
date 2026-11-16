@@ -80,7 +80,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if ok && taken.kind == relay.RECORD {
 				record = taken
 				record.values[1] += 1
-				state.color = u32(record.values[0])
+				state.series = u32(record.values[0])
 				state.since, state.release = now, now + work_time
 				state.holding = 1
 			}

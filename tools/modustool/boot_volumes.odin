@@ -830,7 +830,7 @@ test_part_volumes := [?]Volumes_Of_Part {
 	// The machines of the keys sealed by the TPM too: the signed main
 	// volume, whose build writes the variable store of Secure Boot, and the
 	// other system, signed.
-	{part = "principals", procedures = {"principals_tests_run", "principals_tpm_tests_run", "principals_tpm_principal_tests_run", "tpm_key_machine_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_SECURE_BOOT, BOOT_VOLUME_OTHER_SYSTEM}},
+	{part = "principals", procedures = {"principals_tests_run", "principals_tpm_tests_run", "principals_tpm_principal_tests_run", "principals_tpm_machine_passphrase_tests_run", "tpm_key_machine_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_SECURE_BOOT, BOOT_VOLUME_OTHER_SYSTEM}},
 	// No machine starts: the part needs the built modules, which the build
 	// of a volume gives.
 	{part = "outside_module", procedures = {"outside_module_examples_check"}, volumes = {BOOT_VOLUME}},

@@ -45,6 +45,17 @@ Color_Tokens :: struct {
 	text:         Color, // The text.
 	dim:          Color, // A text of less weight: a unit, a caption.
 	text_strong:  Color, // The text that an input types, and the outline of the focus: more than the text.
+	// A state that asks for attention and is not a failure: a warning of
+	// the log, a ring that is full. A yellow apart from the orange of the
+	// boot program, so that "starts" and "take care" stay two colors.
+	warning:      Color,
+	link:         Color, // A name that leads to another page: a link of a page of `manual`.
+	// The series colors: they tell apart the members of one series, several
+	// things of one kind that no concept of the rules tells apart (the
+	// threads of a program, the programs of the log, the records of a ring,
+	// the protections of a page). A member takes the color of its number in
+	// the series; a series of more members starts again at the first.
+	series:       [SERIES_COLOR_COUNT]Color,
 	// The desktop (section 9). The title bar of the window that has the
 	// focus goes from title at the left to title_end at the right; the
 	// title bar of another window from title_quiet to title_quiet_end.
@@ -90,6 +101,13 @@ DARK_FAILED :: 0xF06060
 DARK_NOT_USABLE :: 0x4A5563
 DARK_TEXT :: 0xDCE4EC
 DARK_DIM :: 0x7C8A99
+DARK_WARNING :: 0xF0C050
+DARK_LINK :: 0x6CB4F0
+SERIES_COLOR_COUNT :: 8
+// The series colors of the dark appearance. A program that computes a
+// picture in the color of a member reads these: a picture keeps its pixels
+// in both appearances, and its legend takes the color of the same hue.
+DARK_SERIES :: [SERIES_COLOR_COUNT]Color{0x4696FF, 0xFF963C, 0x5AE66E, 0xDC64FA, 0xE06890, 0x60D8D0, 0xD8D860, 0x9CC040}
 DARK_TITLE :: 0x3F7CC4
 DARK_TITLE_END :: 0x162C45
 DARK_CHOSEN :: 0x3C76BB
@@ -126,6 +144,9 @@ DARK_COLOR_TOKENS :: Color_Tokens {
 	text                      = DARK_TEXT,
 	dim                       = DARK_DIM,
 	text_strong               = COLOR_WHITE,
+	warning                   = DARK_WARNING,
+	link                      = DARK_LINK,
+	series                    = DARK_SERIES,
 	title                     = DARK_TITLE,
 	title_end                 = DARK_TITLE_END,
 	chosen                    = DARK_CHOSEN,
@@ -164,6 +185,13 @@ LIGHT_COLOR_TOKENS :: Color_Tokens {
 	text                      = COLOR_INK,
 	dim                       = 0x4A525B, // shade(DARK_DIM, 60).
 	text_strong               = COLOR_BLACK,
+	warning                   = 0x886D2D, // shade(DARK_WARNING, 57).
+	// shade(DARK_LINK, 55): a focused link is on the track, so the link
+	// keeps 4.5 to 1 there too.
+	link                      = 0x3B6283,
+	// Each at the shade that keeps 4.5 to 1 on the light surfaces:
+	// shade(DARK_SERIES[n], 76, 64, 56, 75, 79, 57, 54, 63).
+	series                    = {0x3471C1, 0xA35F26, 0x32803D, 0xA44ABB, 0xB05171, 0x367A76, 0x747433, 0x617828},
 	title                     = DARK_TITLE,
 	title_end                 = DARK_TITLE_END,
 	chosen                    = DARK_CHOSEN,
