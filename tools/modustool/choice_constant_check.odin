@@ -480,9 +480,9 @@ choice_families_of_tree :: proc(root: string) -> (families: []Choice_Family, fil
 	}
 	slice.sort(files[:])
 	sources := make([dynamic]Export_Source, context.temp_allocator)
-	skipped := root == "" ? CHOICE_CONSTANT_SKIPPED_FOLDER : join(root, "/", CHOICE_CONSTANT_SKIPPED_FOLDER)
+	skipped := join(root == "" ? CHOICE_CONSTANT_SKIPPED_FOLDER : join(root, "/", CHOICE_CONSTANT_SKIPPED_FOLDER), "/")
 	for file in files {
-		if source_is_a_test(file) || strings.has_prefix(file, skipped + "/") {
+		if source_is_a_test(file) || strings.has_prefix(file, skipped) {
 			continue
 		}
 		text, read_ok := site_read_quiet(file)
