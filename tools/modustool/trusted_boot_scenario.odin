@@ -4,8 +4,10 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import info "modus:contract/boot_info"
 import "modus:contract/release"
 import "modus:contract/system_description"
+import "modus:support/tpm2"
 
 // The machines of the trusted boot (docs/TRUSTED_BOOT.md), `modustool test
 // trusted_boot`. With the usual firmware, the boot program must refuse:
@@ -36,6 +38,27 @@ import "modus:contract/system_description"
 //  11. the volume of machine 8, packaged as the files of a release with a
 //      release signing key of the test, verifies, decompresses, and starts
 //      from its GPT disk.
+// Then the TPM floors (src/md/features/rollback_floors.md), with one
+// software TPM whose state the six machines share, as one TPM across
+// restarts, and Secure Boot on but in machine 17:
+//  12. a newer system (the security version one above the repository)
+//      starts on a TPM with no floor; its boot program defines the key
+//      floor and the version floor of its key number, and raises them to
+//      its numbers, before its measure;
+//  then swtpm alone, as another system on the machine, replaces the
+//      version floor with an index planted with an authorization value and
+//      never written, and the key floor with a foreign index;
+//  13. the same system takes both as 0, removes them, and puts its own
+//      floors back;
+//  14. the system of the repository is then refused: its security version
+//      is below the version floor, and the kernel never starts;
+//  15. a newer system whose boot program has a newer key (the key number
+//      one above) starts, raises the key floor, and starts the version
+//      floor of its key number;
+//  16. the boot program of machine 12, with the older key number, is then
+//      refused: its signing key is revoked;
+//  17. with Secure Boot off, so another PCR 7, each floor is foreign: the
+//      system of machine 14 starts, and its boot program changes no floor.
 
 // The module that the volumes of machines 1 and 5 change: the root service
 // starts it at each boot: with no check, the machine runs it.
@@ -338,6 +361,271 @@ trusted_boot_tests_run :: proc() -> bool {
 	refused_machine_run(scenario_secure_boot_refused[:], BOOT_VOLUME_SECURE_BOOT_CHANGED, TEST_OUTPUT_SECURE_BOOT_CHANGED, .With_Secure_Boot) or_return
 	refused_machine_run(scenario_secure_boot_refused[:], BOOT_VOLUME, TEST_OUTPUT_SECURE_BOOT_UNSIGNED, .With_Secure_Boot) or_return
 	release_image_machine_run() or_return
+	floor_tests_run() or_return
+	return true
+}
+
+// The state of the software TPM that the six machines of the floors share.
+FLOOR_TPM_STATE_FOLDER :: BUILD_FOLDER + "/test_tpm_floor_state"
+TEST_OUTPUT_FLOOR :: BUILD_FOLDER + "/test_output_floor_%d.txt"
+// The number of the output of the plant, which runs swtpm alone between
+// machines 12 and 13.
+FLOOR_PLANT_NUMBER :: 0
+// The authorization value of the planted index: another system knows it,
+// and this system does not.
+FLOOR_PLANTED_VALUE :: "planted by another system"
+#assert(len(FLOOR_PLANTED_VALUE) <= tpm2.AUTHORIZATION_VALUE_SIZE)
+// The lines of the boot program on the floors (src/boot/trust.odin).
+FLOOR_LINE :: "boot program: the TPM floors: the key floor %d%s, the version floor of the key number %d %d%s"
+FLOOR_RAISED_LINE :: "boot program: %s rose from %d to %d"
+FLOOR_DEFINED_LINE :: "boot program: %s: defined its index"
+FLOOR_ABSENT_WORDS :: " (no index: no system defined it)"
+FLOOR_HELD_WORDS :: " (held)"
+FLOOR_FOREIGN_WORDS :: " (a foreign index, taken as 0: another system defined it, or PCR 7 changed)"
+FLOOR_NEVER_WRITTEN_WORDS :: " (an index never written, taken as 0)"
+FLOOR_STAY_LINE :: "boot program: the TPM floors stay as they are: the firmware did not verify this boot program"
+
+// The numbers of the build, for the lines that the machines of the floors
+// print: the key number that the build gave its key, and the security
+// version of the repository. Each test volume raises one of them by 1.
+Floor_Numbers :: struct {
+	key_number:       u64,
+	security_version: u64,
+}
+
+// floor_numbers_read reads the key number of the build from the key file
+// that every boot program holds (system_key_write).
+floor_numbers_read :: proc() -> (numbers: Floor_Numbers, ok: bool) {
+	bytes := read_file(SYSTEM_KEY_FILE) or_return
+	if len(bytes) != system_description.PUBLIC_KEY_SIZE + 8 {
+		fmt.eprintfln("modustool: test failed: %s has %d bytes, not a public key and a key number", SYSTEM_KEY_FILE, len(bytes))
+		return {}, false
+	}
+	for index in 0 ..< 8 {
+		numbers.key_number |= u64(bytes[system_description.PUBLIC_KEY_SIZE + index]) << (8 * u64(index))
+	}
+	numbers.security_version = system_description.SECURITY_VERSION
+	return numbers, true
+}
+
+// Floor_Machine holds the steps of one machine of the floors and the texts
+// that they name, outside the temporary memory: the tool frees that memory
+// after each step.
+Floor_Machine :: struct {
+	steps: [dynamic]Step,
+	texts: [dynamic]string,
+}
+
+// floor_wait adds a wait for a text that the machine writes. The text comes
+// from fmt.aprintf: the machine owns it, and frees it after its run.
+floor_wait :: proc(machine: ^Floor_Machine, text: string, any_order := false, fails_on := "") {
+	append(&machine.texts, text)
+	append(&machine.steps, Step{kind = .Wait, text = text, any_order = any_order, fails_on = fails_on, seconds = TPM_MACHINE_STEP_SECONDS})
+}
+
+// floor_start_steps adds the steps of the start of a machine of the floors
+// up to its check: the boot program started, who verified it, the floors
+// that it read, and its two numbers.
+floor_start_steps :: proc(machine: ^Floor_Machine, firmware: Machine_Firmware, floors_line: string, key_number, security_version: u64) {
+	append(&machine.steps, Step{kind = .Wait, text = "boot program: started", seconds = TPM_MACHINE_FIRST_WAIT_SECONDS})
+	append(&machine.steps, Step{kind = .Wait, text = firmware == .With_Secure_Boot ? SECURE_BOOT_VERIFIED_LINE : BOOT_PROGRAM_ONLY_VERIFIED_LINE, seconds = TPM_MACHINE_STEP_SECONDS})
+	floor_wait(machine, floors_line)
+	floor_wait(machine, fmt.aprintf("boot program: this boot program has the key number %d, and the system description the security version %d", key_number, security_version))
+}
+
+// floor_started_steps adds the steps after the raises of a machine that
+// starts: the measure, after which no program raises a floor, the root
+// service, and the desktop; then the end.
+floor_started_steps :: proc(machine: ^Floor_Machine) {
+	append(&machine.steps, Step{kind = .Wait, text = MEASURE_LINE, fails_on = MEASURE_REFUSED_LINE, seconds = TPM_MACHINE_STEP_SECONDS})
+	append(&machine.steps, Step{kind = .Wait, text = "root: the TPM floors before this start: ", seconds = TPM_MACHINE_STEP_SECONDS})
+	append(&machine.steps, Step{kind = .Wait, text = "compositor: surface console", any_order = true, seconds = TPM_MACHINE_STEP_SECONDS})
+	append(&machine.steps, Step{kind = .Quit})
+}
+
+// floor_refused_steps adds the steps of a refusal: its line, before any
+// measure, and the boot display; then the end.
+floor_refused_steps :: proc(machine: ^Floor_Machine, refusal: string) {
+	floor_wait(machine, refusal, fails_on = MEASURE_LINE)
+	append(&machine.steps, Step{kind = .Wait, text = "boot program: the boot display shows the failure", seconds = TPM_MACHINE_STEP_SECONDS})
+	append(&machine.steps, Step{kind = .Quit})
+}
+
+// floor_machine_forget frees the texts of a machine and empties it for the
+// next one.
+floor_machine_forget :: proc(machine: ^Floor_Machine) {
+	for text in machine.texts {
+		delete(text)
+	}
+	clear(&machine.texts)
+	clear(&machine.steps)
+}
+
+// floor_machine_run runs one machine of the floors on the shared state of
+// the software TPM, then empties it. A machine that starts reaches the
+// desktop, and the tool ends QEMU; a refused machine shows its failure, and
+// the tool checks that its kernel never started.
+floor_machine_run :: proc(machine: ^Floor_Machine, volume: string, number: int, refused: bool, firmware: Machine_Firmware = .With_Secure_Boot) -> bool {
+	defer floor_machine_forget(machine)
+	output := self_test_file(TEST_OUTPUT_FLOOR, number)
+	// The tool ends QEMU: status 0.
+	passed := machine_test(machine.steps[:], volume, output, 0, firmware = firmware, tpm_state = FLOOR_TPM_STATE_FOLDER, tpm_device = true)
+	tpm_traffic_report(output)
+	if !passed {
+		return false
+	}
+	if refused {
+		log_bytes := read_file(output) or_return
+		if strings.contains(string(log_bytes), "kernel: ") {
+			fmt.eprintfln("modustool: test failed: the kernel of %s started after the boot program refused it for a TPM floor", volume)
+			return false
+		}
+	}
+	return true
+}
+
+// floor_plant does to the state of the software TPM of the floors what
+// another system on the machine can do with the empty value of the owner
+// hierarchy, with swtpm alone and no QEMU: it replaces the version floor of
+// the key number given with an index that has the area of a floor (its
+// attributes, the policy of this system) and an authorization value, never
+// written; and it replaces the key floor with a foreign index, whose policy
+// is not the policy of this system. The policy comes from the area of the
+// key floor that machine 12 defined.
+floor_plant :: proc(key_number: u64) -> bool {
+	alone := tpm_alone_start(FLOOR_TPM_STATE_FOLDER, self_test_file(TEST_OUTPUT_FLOOR, FLOOR_PLANT_NUMBER)) or_return
+	defer tpm_alone_stop(&alone)
+	command: [128]u8
+	answer: [TPM_TOOL_ANSWER_LIMIT]u8
+	count := tpm2.nv_read_public_command(command[:], info.KEY_FLOOR_INDEX)
+	bytes := tpm_alone_transact(&alone, command[:count], answer[:], "TPM2_NV_ReadPublic") or_return
+	public, code, problem := tpm2.nv_public_answer(bytes)
+	if problem != .None || public.policy_size != tpm2.DIGEST_SIZE || public.attributes & tpm2.NV_WRITTEN == 0 {
+		fmt.eprintfln("modustool: test failed: the key floor of machine 12 is not a written floor (response code 0x%X)", code)
+		return false
+	}
+	policy: [tpm2.DIGEST_SIZE]u8
+	copy(policy[:], public.policy[:tpm2.DIGEST_SIZE])
+	other_policy := policy
+	other_policy[0] ~= 1
+	planted_value: string = FLOOR_PLANTED_VALUE
+	version_index := info.version_floor_index(key_number)
+	Plant_Step :: struct {
+		count: int,
+		what:  string,
+	}
+	plant_steps := [4]Plant_Step {
+		{0, "TPM2_NV_UndefineSpace of the version floor"},
+		{0, "TPM2_NV_DefineSpace of a planted index with an authorization value"},
+		{0, "TPM2_NV_UndefineSpace of the key floor"},
+		{0, "TPM2_NV_DefineSpace of a foreign index"},
+	}
+	for &step, place in plant_steps {
+		// One command buffer: each command is built just before it goes.
+		switch place {
+		case 0:
+			step.count = tpm2.nv_undefine_command(command[:], version_index)
+		case 1:
+			step.count = tpm2.floor_area_define_command(command[:], version_index, &policy, transmute([]u8)planted_value)
+		case 2:
+			step.count = tpm2.nv_undefine_command(command[:], info.KEY_FLOOR_INDEX)
+		case 3:
+			step.count = tpm2.floor_area_define_command(command[:], info.KEY_FLOOR_INDEX, &other_policy, nil)
+		}
+		bytes = tpm_alone_transact(&alone, command[:step.count], answer[:], step.what) or_return
+		code, problem = tpm2.status_answer(bytes)
+		if problem != .None {
+			fmt.eprintfln("modustool: test failed: swtpm refused %s (response code 0x%X)", step.what, code)
+			return false
+		}
+	}
+	fmt.printfln("modustool: %s: as another system can, the version floor of the key number %d is now an index with the area of a floor and an authorization value, never written, and the key floor a foreign index", FLOOR_TPM_STATE_FOLDER, key_number)
+	return true
+}
+
+// floor_tests_run runs the six machines of the TPM floors on a new state
+// of the software TPM, with a plant of another system between machines 12
+// and 13.
+floor_tests_run :: proc() -> bool {
+	numbers := floor_numbers_read() or_return
+	reset_folder(FLOOR_TPM_STATE_FOLDER) or_return
+	machine: Floor_Machine
+	machine.steps = make([dynamic]Step)
+	machine.texts = make([dynamic]string)
+	defer {
+		floor_machine_forget(&machine)
+		delete(machine.steps)
+		delete(machine.texts)
+	}
+	newer_version := numbers.security_version + 1
+	newer_key := numbers.key_number + 1
+	key_name := "the key floor"
+	// Not in the temporary memory: they serve several machines.
+	version_name := fmt.aprintf("the version floor of the key number %d", numbers.key_number)
+	defer delete(version_name)
+	newer_version_name := fmt.aprintf("the version floor of the key number %d", newer_key)
+	defer delete(newer_version_name)
+
+	// 12. A newer system on a TPM with no floor defines and raises both, in
+	// its boot program, before its measure.
+	floor_start_steps(&machine, .With_Secure_Boot, fmt.aprintf(FLOOR_LINE, 0, FLOOR_ABSENT_WORDS, numbers.key_number, 0, FLOOR_ABSENT_WORDS), numbers.key_number, newer_version)
+	floor_wait(&machine, fmt.aprintf(FLOOR_DEFINED_LINE, key_name))
+	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, key_name, 0, numbers.key_number))
+	floor_wait(&machine, fmt.aprintf(FLOOR_DEFINED_LINE, version_name))
+	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, version_name, 0, newer_version))
+	floor_started_steps(&machine)
+	floor_machine_run(&machine, BOOT_VOLUME_NEWER_SYSTEM, 12, false) or_return
+	test_passed_print("a newer system defined the TPM floors and raised them before its measure: the key floor to %d, the version floor of its key to %d", numbers.key_number, newer_version)
+
+	// Another system plants an index with an authorization value, and a
+	// foreign one.
+	floor_plant(numbers.key_number) or_return
+
+	// 13. The same newer system finds both, takes each as 0, removes them,
+	// and puts its own floors back.
+	floor_start_steps(&machine, .With_Secure_Boot, fmt.aprintf(FLOOR_LINE, 0, FLOOR_FOREIGN_WORDS, numbers.key_number, 0, FLOOR_NEVER_WRITTEN_WORDS), numbers.key_number, newer_version)
+	floor_wait(&machine, fmt.aprintf("boot program: %s: removed a foreign index: another system defined it, or PCR 7 changed", key_name))
+	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, key_name, 0, numbers.key_number))
+	floor_wait(&machine, fmt.aprintf("boot program: %s: removed an index that was never written: another system planted it", version_name))
+	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, version_name, 0, newer_version))
+	floor_started_steps(&machine)
+	floor_machine_run(&machine, BOOT_VOLUME_NEWER_SYSTEM, 13, false) or_return
+	test_passed_print("%s", "the boot program removed a planted index with an authorization value and a foreign index, and put the floors of this system back")
+
+	// 14. The system of the repository: below the version floor that
+	// machine 13 put back.
+	held := fmt.aprintf(FLOOR_LINE, numbers.key_number, FLOOR_HELD_WORDS, numbers.key_number, newer_version, FLOOR_HELD_WORDS)
+	floor_start_steps(&machine, .With_Secure_Boot, held, numbers.key_number, numbers.security_version)
+	floor_refused_steps(&machine, fmt.aprintf("boot program: the security version %d of the system description is below the version floor %d of the TPM: an older system", numbers.security_version, newer_version))
+	floor_machine_run(&machine, BOOT_VOLUME_SECURE_BOOT, 14, true) or_return
+	test_passed_print("the boot program refused the system of %s after a newer one started: its security version %d is below the version floor %d", BOOT_VOLUME_SECURE_BOOT, numbers.security_version, newer_version)
+
+	// 15. A newer key raises the key floor, and starts the version floor of
+	// its own key number.
+	floor_start_steps(&machine, .With_Secure_Boot, fmt.aprintf(FLOOR_LINE, numbers.key_number, FLOOR_HELD_WORDS, newer_key, 0, FLOOR_ABSENT_WORDS), newer_key, newer_version)
+	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, key_name, numbers.key_number, newer_key))
+	floor_wait(&machine, fmt.aprintf(FLOOR_DEFINED_LINE, newer_version_name))
+	floor_wait(&machine, fmt.aprintf(FLOOR_RAISED_LINE, newer_version_name, 0, newer_version))
+	floor_started_steps(&machine)
+	floor_machine_run(&machine, BOOT_VOLUME_NEWER_KEY, 15, false) or_return
+	test_passed_print("a boot program with the key number %d raised the key floor from %d to %d", newer_key, numbers.key_number, newer_key)
+
+	// 16. The boot program of machine 12: its key is revoked.
+	floor_start_steps(&machine, .With_Secure_Boot, fmt.aprintf(FLOOR_LINE, newer_key, FLOOR_HELD_WORDS, numbers.key_number, newer_version, FLOOR_HELD_WORDS), numbers.key_number, newer_version)
+	floor_refused_steps(&machine, fmt.aprintf("boot program: the key number %d of this boot program is below the key floor %d of the TPM: its key is revoked", numbers.key_number, newer_key))
+	floor_machine_run(&machine, BOOT_VOLUME_NEWER_SYSTEM, 16, true) or_return
+	test_passed_print("the boot program with the key number %d refused to start after a boot program with the key number %d raised the key floor: its signing key is revoked", numbers.key_number, newer_key)
+
+	// 17. Another PCR 7: the system of the repository, whose boot program
+	// machine 14 refused, on the firmware with Secure Boot off. Each floor
+	// is foreign there, so the older system starts; with Secure Boot off,
+	// its boot program changes no floor.
+	floor_start_steps(&machine, .With_Tpm_Driver, fmt.aprintf(FLOOR_LINE, 0, FLOOR_FOREIGN_WORDS, numbers.key_number, 0, FLOOR_FOREIGN_WORDS), numbers.key_number, numbers.security_version)
+	append(&machine.steps, Step{kind = .Wait, text = FLOOR_STAY_LINE, seconds = TPM_MACHINE_STEP_SECONDS})
+	floor_started_steps(&machine)
+	floor_machine_run(&machine, BOOT_VOLUME_SECURE_BOOT, 17, false, .With_Tpm_Driver) or_return
+	test_passed_print("%s", "with another PCR 7 (Secure Boot off), each floor is foreign: the older system started, and its boot program changed no floor")
+	fmt.println("modustool: the TPM floors: 6 machines passed")
 	return true
 }
 
