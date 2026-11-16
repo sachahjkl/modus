@@ -132,8 +132,9 @@ bridge_group_of :: proc "contextless" (bus: u32) -> (group: Bridge_Group, found:
 	return {}, false
 }
 
-// bridge_devices_hold makes a handle to the registers of the first memory
-// BAR of each device behind a conventional bridge but the one at a place:
+// bridge_devices_hold makes a handle to the first page of the registers of
+// the first memory BAR of each device behind a conventional bridge but the
+// one at a place:
 // the device service of that place holds them all. A device with no memory
 // BAR gets no handle, and the kernel then refuses the domain of all of
 // them. More than pci.BRIDGE_DEVICE_COUNT other devices give No_Slot, with
@@ -157,10 +158,13 @@ bridge_devices_hold :: proc "contextless" (group: Bridge_Group, place: pci.Place
 						system.log_in("devices", .Error, "root: more than ", u64(pci.BRIDGE_DEVICE_COUNT + 1), " devices behind the conventional bridge in front of the bus ", u64(group.first_bus), ": no service for them")
 						return handles, count, .No_Slot
 					}
-					member_bars := pci.bars(member)
-					for bar in member_bars {
-						if bar.size != 0 {
-							handles[count], _, status = device_handle(.Memory, bar.address, (bar.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+					// The handle names the device for the IOMMU by the first
+					// page of its register: the address is enough. A size
+					// would turn the memory of a device off, which another
+					// party can use at that time (pci.bar_address).
+					for index in 0 ..< pci.BAR_COUNT {
+						if address := pci.bar_address(member, index); address != 0 {
+							handles[count], _, status = device_handle(.Memory, address &~ (system.PAGE_SIZE - 1), 1)
 							if status != .Ok {
 								return handles, count, status
 							}
@@ -383,16 +387,21 @@ display_open :: proc "contextless" (framebuffer_address, width, height, pixels_p
 		system.log_in("devices", .Info, "root: no standard VGA at the place ", u64(bochs_display.PLACE_DEVICE), " of the bus: the compositor writes the screen page that the display shows")
 		return 0, 0
 	}
-	bars := pci.bars(place)
-	video := bars[bochs_display.VIDEO_MEMORY_BAR]
-	registers_range := bars[bochs_display.REGISTERS_BAR]
+	// The addresses only, with no size: a size turns the memory of the
+	// device off while the display shows it, and under KVM it throws away
+	// every nested page table of the machine
+	// (src/md/infrastructure/whole_frame.md). The display registers give
+	// the size of the video memory (bochs_display.screen_pages).
+	video_address := pci.bar_address(place, bochs_display.VIDEO_MEMORY_BAR)
+	registers_address := pci.bar_address(place, bochs_display.REGISTERS_BAR)
 	page_bytes := pixels_per_line * height * size_of(u32)
-	if video.address != framebuffer_address || video.size < bochs_display.PAGE_COUNT * page_bytes || registers_range.size < bochs_display.DISPLAY_REGISTERS_OFFSET + size_of([bochs_display.Register]u16) {
-		system.log_in("devices", .Info, "root: the standard VGA does not hold the framebuffer of the firmware and two screen pages: the compositor writes the screen page that the display shows")
+	decodes_memory := pci.read_16(place, pci.OFFSET_COMMAND) & pci.COMMAND_MEMORY != 0
+	if !decodes_memory || video_address != framebuffer_address || registers_address == 0 || registers_address % system.PAGE_SIZE != 0 {
+		system.log_in("devices", .Info, "root: the standard VGA does not hold the framebuffer of the firmware and its display registers: the compositor writes the screen page that the display shows")
 		return 0, 0
 	}
 	status: system.Status
-	registers, _, status = device_handle(.Memory, registers_range.address, 1)
+	registers, _, status = device_handle(.Memory, registers_address, 1)
 	if status != .Ok {
 		return 0, 0
 	}
@@ -408,7 +417,7 @@ display_open :: proc "contextless" (framebuffer_address, width, height, pixels_p
 		system.close(registers)
 		return 0, 0
 	}
-	pages_memory, _, status = device_handle(.Display_Memory, video.address, (bochs_display.PAGE_COUNT * page_bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+	pages_memory, _, status = device_handle(.Display_Memory, video_address, (bochs_display.PAGE_COUNT * page_bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 	if status != .Ok {
 		system.memory_unmap(address)
 		system.close(registers)

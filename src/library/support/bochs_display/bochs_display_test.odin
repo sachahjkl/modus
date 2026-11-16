@@ -17,15 +17,12 @@ registers_of_the_firmware :: proc() -> (registers: [Register]u16) {
 	registers[.Enable] = ENABLED | LINEAR_FRAMEBUFFER
 	registers[.Virtual_Width] = TEST_WIDTH
 	registers[.Virtual_Height] = (16 << 20) / (TEST_WIDTH * BITS_PER_PIXEL / 8)
+	registers[.Video_Memory_Blocks] = (16 << 20) / VIDEO_MEMORY_BLOCK
 	return
 }
 
-// The mode of the firmware with room for two screens gives two pages.
-@(test)
-the_mode_of_the_firmware_gives_two_screen_pages :: proc(t: ^testing.T) {
-	registers := registers_of_the_firmware()
-	testing.expect_value(t, screen_pages(&registers[.Identity], TEST_WIDTH, TEST_HEIGHT, TEST_WIDTH), PAGE_COUNT)
-}
+// The blocks of video memory that two screens of the test take.
+TWO_SCREEN_BLOCKS :: PAGE_COUNT * TEST_HEIGHT * TEST_WIDTH * BITS_PER_PIXEL / 8 / VIDEO_MEMORY_BLOCK
 
 // Each fact that a page needs, broken one at a time, gives one page: the
 // display would show a part of two screens, or a screen of another mode.
@@ -47,6 +44,8 @@ a_mode_that_differs_from_the_framebuffer_gives_one_page :: proc(t: ^testing.T) {
 		{.Offset_X, 8},
 		{.Offset_Y, TEST_HEIGHT},
 		{.Virtual_Height, PAGE_COUNT * TEST_HEIGHT - 1},
+		{.Video_Memory_Blocks, 0},
+		{.Video_Memory_Blocks, TWO_SCREEN_BLOCKS - 1},
 	}
 	for change in changes {
 		registers := registers_of_the_firmware()
@@ -57,8 +56,9 @@ a_mode_that_differs_from_the_framebuffer_gives_one_page :: proc(t: ^testing.T) {
 	// the video memory.
 	registers := registers_of_the_firmware()
 	testing.expect_value(t, screen_pages(&registers[.Identity], TEST_WIDTH, TEST_HEIGHT, TEST_WIDTH + 8), 1)
-	// Exactly two screens of lines is enough.
+	// Exactly two screens of lines and of blocks is enough.
 	registers[.Virtual_Height] = PAGE_COUNT * TEST_HEIGHT
+	registers[.Video_Memory_Blocks] = TWO_SCREEN_BLOCKS
 	testing.expect_value(t, screen_pages(&registers[.Identity], TEST_WIDTH, TEST_HEIGHT, TEST_WIDTH), PAGE_COUNT)
 }
 
@@ -72,4 +72,11 @@ a_flip_writes_the_first_line_of_the_page :: proc(t: ^testing.T) {
 	testing.expect(t, page_show(&registers[.Identity], 0, TEST_HEIGHT))
 	testing.expect_value(t, registers[.Offset_Y], u16(0))
 	testing.expect_value(t, registers[.Offset_X], u16(0))
+}
+
+// The mode of the firmware with room for two screens gives two pages.
+@(test)
+the_mode_of_the_firmware_gives_two_screen_pages :: proc(t: ^testing.T) {
+	registers := registers_of_the_firmware()
+	testing.expect_value(t, screen_pages(&registers[.Identity], TEST_WIDTH, TEST_HEIGHT, TEST_WIDTH), PAGE_COUNT)
 }

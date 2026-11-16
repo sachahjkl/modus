@@ -44,7 +44,10 @@ Register :: enum u32 {
 	Virtual_Height = 7, // The lines that the video memory holds: QEMU computes it from its size.
 	Offset_X       = 8, // The first pixel of a line that the display shows.
 	Offset_Y       = 9, // The first line that the display shows: the start of the shown screen page.
+	Video_Memory_Blocks = 10, // The size of the video memory, in VIDEO_MEMORY_BLOCK. Read only.
 }
+
+VIDEO_MEMORY_BLOCK :: 64 * 1024 // The unit of Video_Memory_Blocks, in bytes.
 
 IDENTITY_FIRST :: 0xB0C0
 IDENTITY_LAST :: 0xB0C5
@@ -67,9 +70,13 @@ write :: proc "contextless" (registers: rawptr, register: Register, value: u16) 
 // screen_pages gives the count of whole screen pages that the display
 // shows with Offset_Y alone: PAGE_COUNT when the registers say the mode of
 // the screen that the firmware gave, the display shows the page 0, and the
-// video memory holds PAGE_COUNT screens, else 1. width, height and pixels_per_line are the framebuffer
-// of the firmware. A page of another layout would show a part of two
-// screens, so each fact is checked.
+// video memory holds PAGE_COUNT screens, else 1. width, height and
+// pixels_per_line are the framebuffer of the firmware. A page of another
+// layout would show a part of two screens, so each fact is checked. The
+// size of the video memory comes from the registers, not from a size of
+// its base address register, which would turn the screen off
+// (src/md/infrastructure/whole_frame.md): Video_Memory_Blocks and
+// Virtual_Height must each hold the pages.
 screen_pages :: proc "contextless" (registers: rawptr, width, height, pixels_per_line: u64) -> int {
 	identity := read(registers, .Identity)
 	enable := read(registers, .Enable)
@@ -90,6 +97,8 @@ screen_pages :: proc "contextless" (registers: rawptr, width, height, pixels_per
 		// other one first.
 		return 1
 	case height == 0 || u64(read(registers, .Virtual_Height)) < PAGE_COUNT * height:
+		return 1
+	case u64(read(registers, .Video_Memory_Blocks)) * VIDEO_MEMORY_BLOCK < PAGE_COUNT * height * pixels_per_line * BITS_PER_PIXEL / 8:
 		return 1
 	}
 	return PAGE_COUNT
