@@ -1106,7 +1106,7 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Prog
 		switch {
 		case op.Device_Kind(v[1]) == .Message && read_machine_full().messages:
 			record_set(record, .Full, .Interrupts, 0, 0, op.MESSAGE_CAPACITY, 0)
-		case op.Device_Kind(v[1]) == .Memory && read_regions_full():
+		case (op.Device_Kind(v[1]) == .Memory || op.Device_Kind(v[1]) == .Display_Memory) && read_regions_full():
 			record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
 		case:
 			return false
@@ -1297,6 +1297,14 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		flags: u64
 		if read_user(program, v[1] + u64(offset_of(op.Guest_Registers, rflags)), &flags, size_of(flags)) && flags &~ op.GUEST_FLAGS_DEFINED != 0 {
 			record_set(record, .Bad_Value, .None, 2, flags, 0, 0)
+			return true
+		}
+	case .Device_Create:
+		// Display_Memory over a range of device memory that does not hold
+		// the framebuffer of the firmware: the record gives the address
+		// and, as its limit, the address of that framebuffer.
+		if op.Device_Kind(v[1]) == .Display_Memory && device_range(v[2], v[3]) && !display_memory_range(v[2], v[3]) {
+			record_set(record, .Bad_Value, .None, 3, v[2], boot_record.framebuffer.address, 0)
 			return true
 		}
 	case .Fault_Answer:

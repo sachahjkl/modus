@@ -10,7 +10,8 @@
 // compositor for a [surface](term:surface): memory that the program and the
 // compositor share. The program draws into it and sends `Present`; the
 // compositor copies the changed rectangle into its frame, then the frame to
-// the framebuffer. The compositor is the only holder of the framebuffer and
+// the screen page that the display does not show, and flips
+// (src/md/infrastructure/whole_frame.md). The compositor is the only holder of the framebuffer and
 // of the ring of the [input service](term:input-service), so no program
 // reads the keys of another window or draws over it.
 //
@@ -33,7 +34,9 @@
 //
 // The keys go to the window in front, unless the palette is open.
 //
-// **Its lines in the log**: `compositor: ok <width>x<height>` at the start,
+// **Its lines in the log**: `compositor: two screen pages: each frame
+// reaches the screen whole, by a page flip` (or `one screen page` on a
+// display with no page flip), `compositor: ok <width>x<height>` at the start,
 // `compositor: first frame`, then, on the channel `surfaces`, one line for
 // each new surface, each move and each window brought to the front, the
 // time of a full frame, and the events of the palette.
@@ -47,7 +50,10 @@
 // **How it starts.** The root service starts it at each boot, after the
 // input service and before the console. Its context is not the context of
 // the other programs: the handles 0 to 2 are the framebuffer, the ring of
-// the input service, and a control ring to the root service; the values 0
+// the input service, and a control ring to the root service; on the
+// standard VGA of the test machine, the handle 0 holds two
+// [screen pages](term:screen-page) and the handle 3 is the memory of the
+// registers of the VGA, for the [page flip](term:page-flip); the values 0
 // to 3 are the width, the height, the pixels of a line and the pixel format
 // of the screen. The root service also maps its own file (for its exports),
 // two [pointer themes](term:pointer-theme), the
@@ -77,6 +83,7 @@
 // pointer is in docs/POINTERS.md.
 package compositor
 
+import "modus:support/bochs_display"
 import "modus:support/display"
 import "modus:contract/errors"
 import "modus:contract/settings"
@@ -95,13 +102,18 @@ import program_page "modus:contract/disk_program_page"
 import "base:intrinsics"
 
 // Its loop, and the thread that makes the lists of the palette. The
-// working memory: its surfaces, its tables and the screen.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3799, programs = 1, threads = 2}
+// working memory: its surfaces, its tables and the screen. The device
+// memory of the screen costs no page, but its page tables do: the two
+// screen pages (1536 pages, 6 MiB) need up to 4 page tables where the one
+// framebuffer needed up to 3, and the page of the display registers needs
+// a page table and a page directory: 4 pages more.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3803, programs = 1, threads = 2}
 
 // The context of this service.
-GRANT_FRAMEBUFFER :: 0
+GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
 GRANT_INPUT :: 1
 GRANT_CONTROL :: 2
+GRANT_DISPLAY_REGISTERS :: 3 // The registers of the standard VGA, with the memory of two screen pages. 0: no page flip.
 VALUE_WIDTH :: 0
 VALUE_HEIGHT :: 1
 VALUE_PIXELS_PER_LINE :: 2
@@ -170,8 +182,21 @@ Rectangle :: struct {
 	left, top, right, bottom: int,
 }
 
-screen: graphics.Canvas // The framebuffer of the machine.
+screen: graphics.Canvas // The framebuffer of the machine: the screen page 0.
 red_first: bool
+// The screen pages (src/md/infrastructure/whole_frame.md). With two, each
+// frame goes into the page
+// that the display does not show, then a page flip shows it whole. With
+// one, each frame is written into the page that the display shows.
+screen_pages: [bochs_display.PAGE_COUNT]graphics.Canvas
+screen_page_count: int
+screen_page_shown: int
+display_registers: rawptr // The display registers of Bochs, mapped. nil with one screen page.
+// What each screen page owes: the rectangles where it differs from the
+// frame in memory. The rule of the two pictures of a surface.
+screen_page_debts: interface.Picture_Debts
+page_flips: u64 // The page flips since the start.
+frames_on_the_shown_page: u64 // The frames written into the screen page that the display showed.
 frame: graphics.Canvas // The picture that the compositor builds, then copies to the screen.
 background: graphics.Canvas
 background_appearance: graphics.Appearance // The appearance of the pixels of `background` and of the mark of the bar.
@@ -440,6 +465,32 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}
 }
 
+// screen_pages_open finds the second screen page: the memory of the
+// handle 0 holds two screens, and the display registers of the handle 3
+// say the mode of the screen with room for two pages. It writes one line
+// that says which form holds.
+screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
+	screen_pages[0] = screen
+	screen_page_count = 1
+	page_pixels := screen.stride * screen.height
+	registers := ctx.handles[GRANT_DISPLAY_REGISTERS]
+	if registers != 0 && system.memory_size(ctx.handles[GRANT_FRAMEBUFFER]) * system.PAGE_SIZE >= u64(bochs_display.PAGE_COUNT * page_pixels * size_of(graphics.Color)) {
+		if address, status := system.memory_map(registers); status == .Ok {
+			display_registers = rawptr(uintptr(address) + bochs_display.DISPLAY_REGISTERS_OFFSET)
+			if bochs_display.screen_pages(display_registers, u64(screen.width), u64(screen.height), u64(screen.stride)) == bochs_display.PAGE_COUNT {
+				screen_pages[1] = {pixels = screen.pixels[page_pixels:], width = screen.width, height = screen.height, stride = screen.stride}
+				screen_page_count = bochs_display.PAGE_COUNT
+			}
+		}
+	}
+	if screen_page_count == bochs_display.PAGE_COUNT {
+		system.log("compositor: two screen pages: each frame reaches the screen whole, by a page flip")
+	} else {
+		display_registers = nil
+		system.log("compositor: one screen page: each frame is written into the screen page that the display shows")
+	}
+}
+
 // entry starts the compositor and runs its one loop: it draws the screen
 // until the machine stops.
 //
@@ -490,6 +541,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
+	screen_pages_open(ctx)
 	red_first = ctx.values[VALUE_FORMAT] == FORMAT_RED_FIRST
 	frame = canvas_create(width, height)
 	background = canvas_create(width, height)
@@ -1074,19 +1126,65 @@ draw_areas :: proc "contextless" (areas: []Rectangle) {
 	}
 
 	for area in areas {
-		width, height := area.right - area.left, area.bottom - area.top
-		canvas := graphics.view(frame, area.left, area.top, width, height)
+		canvas := graphics.view(frame, area.left, area.top, area.right - area.left, area.bottom - area.top)
 		pointer_draw(canvas, -area.left, -area.top) // pointer_picture.odin
-		target := graphics.view(screen, area.left, area.top, width, height)
-		if !red_first {
-			graphics.copy(target, 0, 0, canvas)
-			continue
+	}
+	screen_put(areas)
+}
+
+// screen_put puts the frame in memory on the screen. With one screen page,
+// it copies the damage rectangles into the page that the display shows.
+// With two, it copies the damage rectangles and the debt of the hidden page
+// into that page, then flips: the display shows the frame whole, and the
+// page that it showed owes the damage of this frame. A page that is not
+// known (the start, a refused flip) is copied whole.
+screen_put :: proc "contextless" (areas: []Rectangle) {
+	if screen_page_count < bochs_display.PAGE_COUNT {
+		for area in areas {
+			screen_copy(screen_pages[0], area)
 		}
-		for y in 0 ..< height {
-			for column in 0 ..< width {
-				color := canvas.pixels[y * canvas.stride + column]
-				target.pixels[y * target.stride + column] = color >> 16 & 0xFF | color & 0xFF00 | (color & 0xFF) << 16
-			}
+		frames_on_the_shown_page += 1
+		return
+	}
+	hidden := 1 - screen_page_shown
+	changed, copied, owed_by_the_shown_page: interface.Damage
+	for area in areas {
+		interface.damage_add(&changed, {area.left, area.top, area.right, area.bottom})
+	}
+	interface.damage_of_picture(&screen_page_debts, hidden, &changed, {0, 0, screen.width, screen.height}, &copied, &owed_by_the_shown_page)
+	for rectangle in copied.rectangles[:copied.count] {
+		screen_copy(screen_pages[hidden], {rectangle.left, rectangle.top, rectangle.right, rectangle.bottom})
+	}
+	if !bochs_display.page_show(display_registers, hidden, screen.height) {
+		// The device kept another offset: it shows no page that this
+		// service knows. The page 0 then takes each frame, as with no
+		// device, from this whole frame on.
+		system.log("compositor: the display refused the page flip to the screen page ", u64(hidden), ": each later frame is written into the screen page 0, which the display shows")
+		bochs_display.page_show(display_registers, 0, screen.height)
+		screen_page_count, screen_page_shown = 1, 0
+		screen_copy(screen_pages[0], {0, 0, screen.width, screen.height})
+		frames_on_the_shown_page += 1
+		return
+	}
+	page_flips += 1
+	screen_page_shown = hidden
+	interface.picture_debts_after(&screen_page_debts, hidden, &changed, true)
+}
+
+// screen_copy copies a rectangle of the frame in memory into a screen page,
+// in the order of the bytes of the screen.
+screen_copy :: proc "contextless" (page: graphics.Canvas, area: Rectangle) {
+	width, height := area.right - area.left, area.bottom - area.top
+	canvas := graphics.view(frame, area.left, area.top, width, height)
+	target := graphics.view(page, area.left, area.top, width, height)
+	if !red_first {
+		graphics.copy(target, 0, 0, canvas)
+		return
+	}
+	for y in 0 ..< height {
+		for column in 0 ..< width {
+			color := canvas.pixels[y * canvas.stride + column]
+			target.pixels[y * target.stride + column] = color >> 16 & 0xFF | color & 0xFF00 | (color & 0xFF) << 16
 		}
 	}
 }

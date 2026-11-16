@@ -83,6 +83,7 @@
 // The design: (docs/ARCHITECTURE.md, "U2. Root service").
 package root
 
+import "modus:support/bochs_display"
 import "modus:support/bootscreen"
 import "modus:support/bootscreen/collect"
 import "modus:support/display"
@@ -332,6 +333,10 @@ debugger_window_callable := [?]string{"debugger"}
 @(rodata)
 log_reader_callable := [?]string{"log"}
 
+// The handle 3 of the context of the compositor: the memory of the
+// registers of the standard VGA, when its handle 0 is the memory of two
+// screen pages (devices.odin, display_open). 0: no page flip.
+COMPOSITOR_GRANT_DISPLAY_REGISTERS :: 3
 // The values of the context of the compositor that name its own file: 0 to
 // 3 are the screen.
 COMPOSITOR_VALUE_FILE_ADDRESS :: 4
@@ -649,6 +654,11 @@ fail :: proc "contextless" (text: string, status: system.Status) -> ! {
 	system.log_in("programs", .Error, "root: ", text, ": status ", status)
 	if compositor != 0 {
 		system.call(.Program_Stop, u64(compositor), 0) // The screen returns to this service.
+		// The compositor could leave the page 1 on the screen; the boot
+		// display is on the page 0, the framebuffer of the firmware.
+		if display_registers_address != nil {
+			bochs_display.page_show(display_registers_address, 0, display_screen_height)
+		}
 	}
 	message.count = 0
 	bootscreen.put(&message, "the start failed: ")
@@ -811,6 +821,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	{
 		grants: [op.CONTEXT_HANDLES]system.Grant
 		grants[0] = {ctx.handles[op.ROOT_FRAMEBUFFER], {.Read, .Write}}
+		// The two screen pages of the standard VGA and its registers, in
+		// place of the framebuffer of the firmware: the compositor then
+		// puts each frame on the screen by a page flip. The address of the
+		// framebuffer is in the boot record.
+		// With no boot record, the address is 0: no page flip.
+		framebuffer_address: u64
+		if _, inspect_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(&screen_data.boot)), size_of(screen_data.boot)); inspect_status == .Ok {
+			framebuffer_address = screen_data.boot.framebuffer_address
+		}
+		pages_memory, display_registers := display_open(framebuffer_address, ctx.values[op.ROOT_VALUE_WIDTH], ctx.values[op.ROOT_VALUE_HEIGHT], ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE])
+		defer if pages_memory != 0 {
+			system.close(pages_memory) // The compositor holds its own handle.
+		}
+		if pages_memory != 0 {
+			grants[0] = {pages_memory, {.Read, .Write}}
+			grants[COMPOSITOR_GRANT_DISPLAY_REGISTERS] = {display_registers, {.Read, .Write}}
+		}
 		grants[1] = {input_memory, {.Read, .Write}}
 		grants[2] = {control_memory, {.Read, .Write}}
 		grants[op.CONTEXT_LOG] = log_grant("compositor")

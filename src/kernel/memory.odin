@@ -722,6 +722,17 @@ user_range :: proc "contextless" (program: ^Program, address: u64, size: u64, wr
 	return true
 }
 
+// display_memory_range says if a range that device_range accepts holds the
+// framebuffer of the firmware: the one range that Device_Create of the kind
+// Display_Memory maps with the cache rule of the firmware. Over registers,
+// that rule could let the processor read a register ahead of the program;
+// over a range that another handle maps with no cache, two rules for the
+// same frames are undefined for the processor (src/md/infrastructure/whole_frame.md).
+display_memory_range :: proc "contextless" (start: u64, page_count: u64) -> bool {
+	framebuffer := boot_record.framebuffer
+	return framebuffer.format != .None && framebuffer.address >= start && framebuffer.address - start < page_count * PAGE_SIZE
+}
+
 // device_range says if a range of physical addresses can be device memory:
 // no page of it is memory that the firmware gave as free or as loaded.
 device_range :: proc "contextless" (start: u64, page_count: u64) -> bool {
