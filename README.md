@@ -222,7 +222,7 @@ The guides below give the details. `docs/DEMONSTRATIONS.md` says what the test s
 | `docs/SCHEDULING.md` | The scheduling strategies: what the system takes from CFS, EEVDF and `sched_ext`, and how it changes strategy while it runs |
 | `docs/SIMD.md` | Which procedures compute with vectors, in which form, and how to measure each one |
 | `CHANGELOG.md` | What each release brings, newest first. `changelog.d/` holds the changes that are not in a release yet |
-| `ROADMAP.md` | The planned work, in the sections Now, Next and Later: what each work gives the user |
+| `ROADMAP.md` | The planned work, in the sections Now, Next and Later, then Maybe for what is not decided: what each work gives the user |
 | `docs/research/` | Research notes with sources, and video transcripts |
 | `src/md/README.md` | The intent of each part of the system, by the standard of [srcmd.org](https://srcmd.org): why a part has its form, the forms that were refused, the subtle points. An overview of the system and a file index. Read it before a change of the code |
 

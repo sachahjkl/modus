@@ -17,6 +17,10 @@ import op "modus:contract/operation"
 
 TEST_BUILD_CHECKS_LOCK_ORDER :: #config(TEST_BUILD_CHECKS_LOCK_ORDER, true)
 
+// A wait for a lock longer than this is a hang, and the waiter drains the
+// log of the kernel to the serial port while it waits.
+LOCK_WAIT_BEFORE_DRAIN_MILLISECONDS :: 1000
+
 Lock :: struct {
 	next:    u32, // The next ticket.
 	serving: u32, // The ticket that holds the lock.
@@ -50,8 +54,16 @@ lock_take :: proc "contextless" (lock: ^Lock, kind: op.Lock_Kind) {
 				started = cycles_now()
 			}
 		}
+		// A wait past LOCK_WAIT_BEFORE_DRAIN_MILLISECONDS is a hang: the
+		// waiter then drains the log at each turn, so the lines that explain
+		// the hang reach the serial port even when the processors that
+		// tick are the ones that hang. The drain takes no lock.
+		drain_after := cycles_now() + cycle_frequency / 1000 * LOCK_WAIT_BEFORE_DRAIN_MILLISECONDS
 		for intrinsics.atomic_load(&lock.serving) != ticket {
 			sync_acknowledge(cpu)
+			if cycle_frequency != 0 && cycles_now() >= drain_after {
+				serial_drain_of_a_processor(cpu)
+			}
 			intrinsics.cpu_relax()
 		}
 		if started != 0 {

@@ -372,6 +372,11 @@ Program :: struct {
 	// before it in the slot. 64 bits: the window of the own log ring
 	// (op.own_log_window) needs the count, not its low bits.
 	log_records_written:  u64,
+	// The Log operations of this program that its log limit refused since
+	// its last accepted one. Program lock (Log runs under it); the cleanup
+	// reads it after the threads ended, and writes it on the log when it is
+	// not 0, so a refusal that no later line said is not silent.
+	log_lines_refused: u64,
 	// The frames of the own log ring of this program (op.OWN_LOG_PAGES),
 	// which its budget paid: a copy of each record of the program, which
 	// only its own records push out (src/md/features/own_log_ring.md).
@@ -534,7 +539,11 @@ budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) ->
 			from.amounts.pages -= amounts.pages
 			from.amounts.programs -= amounts.programs
 			from.amounts.threads -= amounts.threads
+			// Log reads it with no lock (budget_log).
+			intrinsics.atomic_sub(&from.amounts.log_records, amounts.log_records)
 			budget = {live = true, parent = parent, amounts = amounts}
+			// The count of this second moves with the log records.
+			budget_log_count_to_child(parent, u32(slot + 1))
 			return u32(slot + 1), .Ok
 		}
 	}
@@ -577,6 +586,12 @@ budget_release :: proc "contextless" (index: u32) {
 			intrinsics.atomic_store(&other.parent, parent)
 		}
 	}
+	// After its programs and threads moved: the records that it wrote in
+	// this second stay spent in its parent. Its amount returns after its
+	// count, so a Log of the parent meanwhile is checked against the
+	// smaller amount and never passes it.
+	budget_log_count_to_parent(index, parent)
+	intrinsics.atomic_add(&budgets[parent].amounts.log_records, budget.amounts.log_records)
 	budget^ = {ended = true, parent = parent}
 }
 
@@ -1875,6 +1890,13 @@ program_cleanup :: proc "contextless" (index: u32) {
 			thread_finish(u32(slot + 1), thread.serial)
 		}
 	}
+	// The lines that its log limit refused and that no later line of the
+	// program said: no thread of it runs a Log now. The control lock comes
+	// before the log lock.
+	if refused := program.log_lines_refused; refused != 0 {
+		program.log_lines_refused = 0
+		log("kernel: ", Module_Name{program_name(program)}, ": ", refused, " lines were refused by its log limit, the last ones before its stop")
+	}
 	taken := program_lock(index)
 	program.thread_count = 0
 	program.thread_areas = 0
@@ -2088,6 +2110,14 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 				}
 			}
 		}
+		// The lines of the log go to the serial port here, not in Log. Each
+		// processor tries, so a hang of one does not silence the others.
+		// The thread that this tick interrupts was charged above: the time
+		// of the drain moves the start of its next charge, so no budget pays
+		// for the lines of others.
+		drain_start := cycles_now()
+		serial_tick(cpu)
+		cpu.charged_from += cycles_now() - drain_start
 		apic_write(APIC_END, 0)
 	case frame.vector == VECTOR_WAKE || frame.vector == VECTOR_SYNC:
 		// A thread that woke on another processor preempts the thread
