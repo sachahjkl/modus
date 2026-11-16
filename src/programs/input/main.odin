@@ -46,8 +46,9 @@
 // service: it cannot reach another program.
 //
 // **What it does not prove.** It works with the PS/2 controller that QEMU
-// emulates, with two keyboard layouts (src/library/support/keyboard_layout).
-// It has no USB, and no AltGr.
+// emulates, with two keyboard layouts (src/library/support/keyboard_layout);
+// AltGr, the right Alt key, gives the third level of the layout of France.
+// It has no USB.
 package input
 
 import "modus:support/display"
@@ -94,6 +95,7 @@ layout_now :: proc "contextless" () -> settings.Keyboard_Layout {
 SCAN_LEFT_SHIFT :: 0x2A
 SCAN_RIGHT_SHIFT :: 0x36
 SCAN_CONTROL :: 0x1D
+SCAN_ALT :: 0x38 // The left Alt key; after the prefix 0xE0, the right Alt key: AltGr.
 SCAN_EXTENDED :: 0xE0
 
 // The commands of the mouse. The identities that it answers are in
@@ -113,6 +115,9 @@ CONTROLLER_POLLS :: 100000
 output: ring.Ring
 output_memory: system.Handle
 modifiers: u32
+// AltGr is down. It is not a bit of the modifiers of a key record: the
+// character of the record already holds the third level that it gives.
+alt_graph_held: bool
 extended: bool
 // The packets of the mouse, in the protocol that its identity gave.
 mouse_decoder: key_path.Mouse_Decoder
@@ -311,7 +316,8 @@ pointer_record :: proc "contextless" (pointer: key_path.Pointer_Packet) -> ring.
 
 // keyboard_byte turns one byte of the keyboard into a record `Key`. The
 // prefix 0xE0 marks the next byte as an extended key; Shift and Control
-// change the modifiers; bit 7 is the release.
+// change the modifiers, and AltGr the level of the layout; bit 7 is the
+// release.
 keyboard_byte :: proc "contextless" (value: u8) {
 	if value == SCAN_EXTENDED {
 		extended = true
@@ -338,13 +344,25 @@ keyboard_byte :: proc "contextless" (value: u8) {
 			modifiers &~= bit
 		}
 	}
+	// Only the right Alt key is AltGr: the left Alt key changes no
+	// character.
+	alt_graph_key := code == (SCAN_ALT | display.KEY_EXTENDED)
+	if alt_graph_key {
+		alt_graph_held = pressed
+	}
 	layout := layout_now()
-	shift := modifiers & display.MODIFIER_SHIFT != 0
+	held: keyboard_layout.Level_Keys
+	if modifiers & display.MODIFIER_SHIFT != 0 {
+		held += {.Shift}
+	}
+	if alt_graph_held {
+		held += {.Alt_Graph}
+	}
 	accent_alone, character: rune
 	if pressed {
-		accent_alone, character = keyboard_layout.key_press(&dead_key, layout, shift, code, bit != 0)
+		accent_alone, character = keyboard_layout.key_press(&dead_key, layout, held, code, bit != 0 || alt_graph_key)
 	} else {
-		character = keyboard_layout.key_character(layout, shift, code)
+		character = keyboard_layout.key_character(layout, held, code)
 	}
 	if accent_alone != 0 {
 		key_record_send(code, accent_alone, true)

@@ -5077,11 +5077,21 @@ Do not use: preference, option, configuration.
 
 A dead key is a key of a layout of the keyboard that gives no character itself, and puts its accent on the character of the next key.
 
-The layout of France has two: the key right of P gives the circumflex, and with Shift the diaeresis. `^` then `e` gives ê, and `¨` then `i` gives ï, because the words of French need â, ê, î, ô, û, ë, ï and ü and the keyboard has no other key for them. A space after a dead key gives the accent alone; a key with no accented form gives the accent, then its own character, as two key records; Shift and Control keep the accent waiting. The input service keeps the accent that waits, and the tables are in `src/library/support/keyboard_layout`.
+The layout of France has four: the key right of P gives the circumflex, and with Shift the diaeresis; with AltGr, the key of 2 gives the tilde and the key of 7 the grave accent. `^` then `e` gives ê, `¨` then `i` gives ï, and `` ` `` then Shift `a` gives À, because the words of French need â, ê, î, ô, û, ë, ï, ü and the capitals with a grave accent, and the keyboard has no other key for them. A space after a dead key gives the accent alone; a key with no accented form gives the accent, then its own character, as two key records; Shift, Control and AltGr keep the accent waiting. The input service keeps the accent that waits, and the tables are in `src/library/support/keyboard_layout`.
 
 The design: `src/md/features/keyboard_layout.md`.
 
 Do not use: compose key (for this), accent key, modifier (for this).
+
+### AltGr
+
+AltGr is the right Alt key of the keyboard, which gives the third level of the layout of France: a third character of a key, after the character without Shift and the character with Shift.
+
+With the layout of France, AltGr with the keys of the row of the digits gives `#`, `{`, `[`, `|`, `\`, `^`, `@`, `]` and `}`, as an AZERTY keyboard prints them on the right side of the keys; with the key of `$` it gives `¤`. AltGr with the key of 2 or of 7 is a dead key: the tilde or the grave accent. Shift with AltGr gives the third level too. A key with no character on the third level, as a letter, gives none: AltGr with `e` gives no euro sign, because the fonts do not draw it. AltGr is the scan code 0x38 after the prefix 0xE0; the left Alt key and Control with Alt are not AltGr. With the layout of the United States, AltGr changes no character. The input service keeps the state of AltGr; the key record carries the character that the third level gives, and no modifier bit of AltGr.
+
+The design: `src/md/features/keyboard_layout.md`.
+
+Do not use: Option, level-3 shift, compose key (for this).
 
 ### Settings page
 
