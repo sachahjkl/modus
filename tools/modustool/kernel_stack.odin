@@ -10,7 +10,8 @@ import "core:strings"
 // The measure of the deepest stack of the kernel (src/md/infrastructure/kernel_stack_depth.md;
 // docs/TOOLS.md, "The deepest stack of the kernel"). The frames come from
 // the section .stack_sizes that llc writes, the calls from the listing of
-// the linked kernel. Each rule that the graph cannot read is a row of a
+// the linked kernel, and the arguments pushed outside a frame from the scan
+// of the stack pointer. Each rule that the graph cannot read is a row of a
 // table below, with its reason.
 
 // The frame that interrupt_common and kernel_enter push before they call
@@ -28,11 +29,19 @@ INTERRUPT_ALIGNMENT_BYTES :: 8
 // that iretq starts 48 bytes under the top.
 REFUSED_RETURN_BYTES_ABOVE :: 48
 KERNEL_STACK_BYTES :: op.KERNEL_STACK_PAGES * info.PAGE_SIZE
-// The build fails when less stays free. The listing does not show a push
-// of an argument outside the frame, nor an indirect jump that is a tail
-// call: the margin is the room for them.
+// The build fails when less stays free. The measure counts each push and
+// each tail call of the listing: the margin is for a chain of the graph
+// that no input runs, and for a change of the code between two builds.
 // One rule for each stack: a quarter of it stays free.
 STACK_LEAST_FREE_PART :: 4
+// The bytes that one push or one pop moves the stack pointer by.
+STACK_WORD_BYTES :: 8
+// The scan of the stack pointer stops above this count: a path that pushes
+// in a loop has no bound, and no chain deeper than a kernel stack passes
+// the check.
+STACK_SCAN_DEPTH_MOST :: KERNEL_STACK_BYTES
+// The count of an instruction that no path of the scan reached.
+STACK_SCAN_NOT_REACHED :: -1
 
 // An interrupt stack and what kernel_interrupt runs on it. The gate of each
 // of its vectors names it in the task state (src/kernel/processor.odin).
@@ -67,8 +76,9 @@ Kernel_Stack_Recursion :: struct {
 	levels: int,
 }
 
-// A procedure whose indirect calls reach only the procedures of targets.
-// No target: the call reaches no procedure of the kernel.
+// A procedure whose indirect calls and indirect tail calls reach only the
+// procedures of targets. No target: the call reaches no procedure of the
+// kernel.
 Kernel_Stack_Indirect_Call :: struct {
 	caller:  string,
 	targets: []string,
@@ -238,26 +248,41 @@ kernel_stack_rules := Kernel_Stack_Rules {
 
 // One procedure of the listing. names[0] is the first name at its address.
 Stack_Procedure :: struct {
-	names:               [dynamic]string,
-	address:             u64,
-	edges:               [dynamic]Stack_Edge,
-	indirect_calls:      int,
-	first_indirect_call: string, // The text of the first one.
-	unknown_calls:       [dynamic]string, // The calls to an address where no procedure starts.
+	names:                      [dynamic]string,
+	address:                    u64,
+	instructions:               [dynamic]Stack_Instruction,
+	edges:                      [dynamic]Stack_Edge,
+	indirect_calls:             int,
+	first_indirect_call:        string, // The text of the first one.
+	// The most bytes that the procedure pushed outside its frame at one of
+	// its indirect calls.
+	indirect_call_pushed_bytes: int,
+	// The jumps through a register where the scan of the stack pointer
+	// found no frame: tail calls to procedures that the listing does not
+	// name.
+	indirect_tail_calls:        int,
+	first_indirect_tail_call:   string,
+	unknown_calls:              [dynamic]string, // The calls to an address where no procedure starts.
+	// What the scan of the stack pointer could not read, each a whole line.
+	scan_problems:              [dynamic]string,
 }
 
 Stack_Edge :: struct {
-	target: int, // The index of the procedure.
-	tail:   bool, // A jump: the callee takes the place of the frame of the caller.
+	target:       int, // The index of the procedure.
+	tail:         bool, // A jump: the callee takes the place of the frame of the caller.
+	// The bytes that the caller pushed outside its frame before the call:
+	// they stay under the callee with the frame and the return address.
+	pushed_bytes: int,
 }
 
-// A call or a jump of the listing to an address, before the procedures
-// are all known.
-Stack_Call :: struct {
-	from:        int,
-	address:     u64,
-	tail:        bool,
-	instruction: string,
+// One instruction of the listing.
+Stack_Instruction :: struct {
+	address:  u64,
+	mnemonic: string,
+	operands: string, // With no comment of the listing.
+	text:     string, // The whole instruction, for a problem.
+	direct:   bool, // A call or a jump to the address target.
+	target:   u64,
 }
 
 // What the measure of one kernel gives: the lines, or the problems.
@@ -452,9 +477,7 @@ stack_procedure_named :: proc(procedures: []Stack_Procedure, name: string) -> in
 // tells a compiled procedure from a label of assembly.
 kernel_call_graph_read :: proc(listing: string, frames: map[u64]int) -> []Stack_Procedure {
 	procedures := make([dynamic]Stack_Procedure, context.temp_allocator)
-	calls := make([dynamic]Stack_Call, context.temp_allocator)
 	current := -1
-	current_has_instructions := false
 	text := listing
 	for line in strings.split_lines_iterator(&text) {
 		trimmed := strings.trim_space(line)
@@ -467,7 +490,7 @@ kernel_call_graph_read :: proc(listing: string, frames: map[u64]int) -> []Stack_
 				if address, is_address := listing_hexadecimal(trimmed[:open]); is_address {
 					name := trimmed[open + 2:len(trimmed) - 2]
 					_, compiled := frames[address]
-					if current >= 0 && address == procedures[current].address && !current_has_instructions {
+					if current >= 0 && address == procedures[current].address && len(procedures[current].instructions) == 0 {
 						// Two names at one address: one procedure.
 						append(&procedures[current].names, name)
 						continue
@@ -486,9 +509,15 @@ kernel_call_graph_read :: proc(listing: string, frames: map[u64]int) -> []Stack_
 					}
 					names := make([dynamic]string, context.temp_allocator)
 					append(&names, name)
-					append(&procedures, Stack_Procedure{names = names, address = address, edges = make([dynamic]Stack_Edge, context.temp_allocator), unknown_calls = make([dynamic]string, context.temp_allocator)})
+					append(&procedures, Stack_Procedure {
+						names         = names,
+						address       = address,
+						instructions  = make([dynamic]Stack_Instruction, context.temp_allocator),
+						edges         = make([dynamic]Stack_Edge, context.temp_allocator),
+						unknown_calls = make([dynamic]string, context.temp_allocator),
+						scan_problems = make([dynamic]string, context.temp_allocator),
+					})
 					current = len(procedures) - 1
-					current_has_instructions = false
 					continue
 				}
 			}
@@ -498,76 +527,356 @@ kernel_call_graph_read :: proc(listing: string, frames: map[u64]int) -> []Stack_
 		if colon <= 0 || current < 0 {
 			continue
 		}
-		if _, is_address := listing_hexadecimal(trimmed[:colon]); !is_address {
+		instruction_address, is_address := listing_hexadecimal(trimmed[:colon])
+		if !is_address {
 			continue
 		}
 		instruction := strings.trim_space(trimmed[colon + 1:])
-		if instruction == "" {
+		// "subq	$0x2b8, %rsp            # imm = 0x2B8": the comment is not
+		// an operand.
+		code := instruction
+		if hash := strings.index_byte(code, '#'); hash >= 0 {
+			code = strings.trim_space(code[:hash])
+		}
+		if code == "" {
 			continue
 		}
-		current_has_instructions = true
-		mnemonic := instruction_mnemonic(instruction)
-		is_call := mnemonic == "call" || mnemonic == "callq"
-		is_jump := len(mnemonic) > 0 && mnemonic[0] == 'j'
-		if !is_call && !is_jump {
-			continue
+		mnemonic := instruction_mnemonic(code)
+		if mnemonic == "" {
+			// llvm-objdump writes a prefix on its own line, at its own
+			// address ("2391c: lock", then "2391d: decq 0x48(%rsi)"), and a
+			// jump can go to it. The line stays an instruction, named by the
+			// prefix, that moves no stack pointer.
+			words := code
+			mnemonic, _ = strings.fields_iterator(&words)
 		}
-		operand := strings.trim_space(instruction[strings.index(instruction, mnemonic) + len(mnemonic):])
-		if strings.has_prefix(operand, "*") {
-			// A jump through a register is taken as a jump inside its
-			// procedure: a table of the branches of a switch.
-			if is_call {
-				procedures[current].indirect_calls += 1
-				if procedures[current].first_indirect_call == "" {
-					procedures[current].first_indirect_call = instruction
-				}
+		item := Stack_Instruction {
+			address  = instruction_address,
+			mnemonic = mnemonic,
+			operands = strings.trim_space(code[strings.index(code, mnemonic) + len(mnemonic):]),
+			text     = instruction,
+		}
+		if (stack_is_call(mnemonic) || stack_is_jump(mnemonic)) && !strings.has_prefix(item.operands, "*") {
+			target_text := item.operands
+			if space := strings.index_any(target_text, " \t"); space >= 0 {
+				target_text = target_text[:space]
 			}
-			continue
+			item.target, item.direct = listing_hexadecimal(strings.trim_prefix(target_text, "0x"))
 		}
-		target_text := operand
-		if space := strings.index_any(operand, " \t"); space >= 0 {
-			target_text = operand[:space]
-		}
-		target, is_target := listing_hexadecimal(strings.trim_prefix(target_text, "0x"))
-		if !is_target {
-			continue
-		}
-		append(&calls, Stack_Call{from = current, address = target, tail = is_jump, instruction = instruction})
+		append(&procedures[current].instructions, item)
 	}
 	starts := make(map[u64]int, context.temp_allocator)
 	for procedure, index in procedures {
 		starts[procedure.address] = index
 	}
-	for call in calls {
-		target, is_start := starts[call.address]
-		if !is_start {
-			// A jump to an address inside a procedure is a branch.
-			if !call.tail {
-				append(&procedures[call.from].unknown_calls, call.instruction)
-			}
-			continue
+	returns := stack_procedures_that_return(procedures[:], starts)
+	for &procedure in procedures {
+		frame, compiled := frames[procedure.address]
+		// The procedures of assembly are not scanned: the row of each one
+		// holds what it pushes.
+		counts: []int
+		if compiled {
+			counts = stack_pointer_scan(&procedure, procedures[:], starts, returns)
 		}
-		append(&procedures[call.from].edges, Stack_Edge{target = target, tail = call.tail})
+		for instruction, position in procedure.instructions {
+			is_call := stack_is_call(instruction.mnemonic)
+			if !is_call && !stack_is_jump(instruction.mnemonic) {
+				continue
+			}
+			target, is_start := starts[instruction.target]
+			is_start &&= instruction.direct
+			pushed_bytes := 0
+			if compiled {
+				count := counts[position]
+				if count == STACK_SCAN_NOT_REACHED {
+					// A jump inside the procedure moves nothing to another
+					// frame. A problem of the scan already left the rest
+					// unread.
+					if (is_call || is_start || !instruction.direct) && len(procedure.scan_problems) == 0 {
+						append(&procedure.scan_problems, fmt.tprintf("the scan of the stack pointer of %s reaches no count at %s", procedure.names[0], instruction.text))
+					}
+				} else if is_call {
+					pushed_bytes = max(count - frame, 0)
+				}
+			}
+			if !instruction.direct {
+				if !strings.has_prefix(instruction.operands, "*") {
+					continue
+				}
+				if is_call {
+					procedure.indirect_calls += 1
+					if procedure.first_indirect_call == "" {
+						procedure.first_indirect_call = instruction.text
+					}
+					procedure.indirect_call_pushed_bytes = max(procedure.indirect_call_pushed_bytes, pushed_bytes)
+				} else if compiled && counts[position] == 0 {
+					// No frame stays: the jump leaves the procedure. Above 0
+					// it is a branch of a table of a switch.
+					procedure.indirect_tail_calls += 1
+					if procedure.first_indirect_tail_call == "" {
+						procedure.first_indirect_tail_call = instruction.text
+					}
+				}
+				continue
+			}
+			if !is_start {
+				// A jump to an address inside a procedure is a branch.
+				if is_call {
+					append(&procedure.unknown_calls, instruction.text)
+				}
+				continue
+			}
+			append(&procedure.edges, Stack_Edge{target = target, tail = !is_call, pushed_bytes = pushed_bytes})
+		}
 	}
 	return procedures[:]
+}
+
+// stack_is_call says if a mnemonic of the listing is a call.
+stack_is_call :: proc(mnemonic: string) -> bool {
+	return mnemonic == "call" || mnemonic == "callq"
+}
+
+// stack_is_jump says if a mnemonic of the listing is a jump, with a
+// condition or not.
+stack_is_jump :: proc(mnemonic: string) -> bool {
+	return len(mnemonic) > 0 && mnemonic[0] == 'j'
+}
+
+// stack_leaves says if an instruction leaves its procedure for its caller,
+// or for a program. A far return ("lretq") is a return too: gdt_load
+// returns with it to load the code selector.
+@(private = "file")
+stack_leaves :: proc(mnemonic: string) -> bool {
+	return strings.has_prefix(mnemonic, "ret") || strings.has_prefix(mnemonic, "lret") || strings.has_prefix(mnemonic, "iret") || strings.has_prefix(mnemonic, "sysret")
+}
+
+// stack_procedures_that_return says for each procedure if a path of it can
+// come back to its caller: a ret, a jump through a register, or a tail
+// call to a procedure that returns. The scan of the stack pointer ends a
+// path at a call of a procedure that never returns, so the pushes before
+// that call do not flow into the block that follows it.
+@(private = "file")
+stack_procedures_that_return :: proc(procedures: []Stack_Procedure, starts: map[u64]int) -> []bool {
+	returns := make([]bool, len(procedures), context.temp_allocator)
+	for changed := true; changed; {
+		changed = false
+		for procedure, index in procedures {
+			if returns[index] {
+				continue
+			}
+			for instruction in procedure.instructions {
+				comes_back := stack_leaves(instruction.mnemonic)
+				if stack_is_jump(instruction.mnemonic) {
+					if !instruction.direct {
+						// A branch of a table, or a tail call to a procedure
+						// that the listing does not name: either can return.
+						comes_back = true
+					} else if target, is_start := starts[instruction.target]; is_start && target != index && returns[target] {
+						comes_back = true
+					}
+				}
+				if comes_back {
+					returns[index] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	return returns
+}
+
+// stack_falls_through says if a path goes on after an instruction to the
+// next instruction of the listing.
+@(private = "file")
+stack_falls_through :: proc(instruction: Stack_Instruction, starts: map[u64]int, returns: []bool) -> bool {
+	mnemonic := instruction.mnemonic
+	switch {
+	case stack_leaves(mnemonic), mnemonic == "ud2", mnemonic == "int3", mnemonic == "jmp", mnemonic == "jmpq":
+		return false
+	case stack_is_call(mnemonic) && instruction.direct:
+		if target, is_start := starts[instruction.target]; is_start && !returns[target] {
+			return false
+		}
+	}
+	return true
+}
+
+// listing_immediate reads a constant operand of the listing: "$0x2b8",
+// "$-0x80".
+@(private = "file")
+listing_immediate :: proc(text: string) -> (value: int, ok: bool) {
+	digits := strings.trim_prefix(text, "$")
+	if len(digits) == len(text) {
+		return 0, false
+	}
+	negative := strings.has_prefix(digits, "-")
+	digits = strings.trim_prefix(digits, "-")
+	if !strings.has_prefix(digits, "0x") {
+		return 0, false
+	}
+	magnitude, is_number := listing_hexadecimal(digits[2:])
+	if !is_number || magnitude > u64(max(int)) {
+		return 0, false
+	}
+	value = int(magnitude)
+	return negative ? -value : value, true
+}
+
+// stack_scan_reach gives an instruction a count from one path, and keeps
+// the larger count where two paths meet.
+@(private = "file")
+stack_scan_reach :: proc(counts: []int, pending: ^[dynamic]int, position, count: int) {
+	if position >= len(counts) || counts[position] >= count {
+		return
+	}
+	counts[position] = count
+	append(pending, position)
+}
+
+// stack_pointer_scan gives, for each instruction of a compiled procedure,
+// the bytes between the stack pointer and the return address that the
+// caller pushed, or STACK_SCAN_NOT_REACHED. In the body the count is the
+// frame from llc; at a call it is more by the arguments pushed outside the
+// frame. Each fact that the scan cannot read is a problem of the procedure
+// (src/md/infrastructure/kernel_stack_depth.md).
+@(private = "file")
+stack_pointer_scan :: proc(procedure: ^Stack_Procedure, procedures: []Stack_Procedure, starts: map[u64]int, returns: []bool) -> []int {
+	instructions := procedure.instructions[:]
+	name := procedure.names[0]
+	counts := make([]int, len(instructions), context.temp_allocator)
+	for &count in counts {
+		count = STACK_SCAN_NOT_REACHED
+	}
+	positions := make(map[u64]int, context.temp_allocator)
+	for instruction, position in instructions {
+		positions[instruction.address] = position
+	}
+	pending := make([dynamic]int, context.temp_allocator)
+	stack_scan_reach(counts, &pending, 0, 0)
+	// The largest count at a jump through a register that a table of a
+	// switch holds the branches of.
+	table_count := STACK_SCAN_NOT_REACHED
+	for {
+		for len(pending) > 0 {
+			position := pop(&pending)
+			count := counts[position]
+			instruction := instructions[position]
+			mnemonic := instruction.mnemonic
+			// The operand that an instruction writes is its last one.
+			first_operand, last_operand := instruction.operands, instruction.operands
+			if comma := strings.index(instruction.operands, ","); comma >= 0 {
+				first_operand = strings.trim_space(instruction.operands[:comma])
+				last_operand = strings.trim_space(instruction.operands[strings.last_index(instruction.operands, ",") + 1:])
+			}
+			after := count
+			switch {
+			case mnemonic == "push" || mnemonic == "pushq" || mnemonic == "pushf" || mnemonic == "pushfq":
+				after = count + STACK_WORD_BYTES
+			case mnemonic == "pop" || mnemonic == "popq" || mnemonic == "popf" || mnemonic == "popfq":
+				after = count - STACK_WORD_BYTES
+			case mnemonic == "pushw" || mnemonic == "popw" || mnemonic == "pushfw" || mnemonic == "popfw":
+				append(&procedure.scan_problems, fmt.tprintf("%s moves its stack pointer by a size that the scan does not read: %s", name, instruction.text))
+				return counts
+			case (mnemonic == "sub" || mnemonic == "subq" || mnemonic == "add" || mnemonic == "addq") && last_operand == "%rsp":
+				bytes, is_constant := listing_immediate(first_operand)
+				if !is_constant {
+					append(&procedure.scan_problems, fmt.tprintf("%s writes its stack pointer in a form that the scan does not read: %s", name, instruction.text))
+					return counts
+				}
+				after = strings.has_prefix(mnemonic, "sub") ? count + bytes : count - bytes
+			case strings.has_prefix(mnemonic, "ret"):
+				if count != 0 {
+					append(&procedure.scan_problems, fmt.tprintf("%s returns with %d bytes on its stack: %s", name, count, instruction.text))
+					return counts
+				}
+			case stack_is_jump(mnemonic) && !instruction.direct:
+				if count > 0 {
+					table_count = max(table_count, count)
+				}
+			case stack_is_jump(mnemonic):
+				if inside, is_inside := positions[instruction.target]; is_inside {
+					stack_scan_reach(counts, &pending, inside, count)
+				} else if target, is_start := starts[instruction.target]; is_start {
+					if count != 0 {
+						append(&procedure.scan_problems, fmt.tprintf("%s jumps to %s with %d bytes on its stack: %s", name, procedures[target].names[0], count, instruction.text))
+						return counts
+					}
+				} else {
+					append(&procedure.scan_problems, fmt.tprintf("%s jumps to an address where no instruction of it and no procedure starts: %s", name, instruction.text))
+					return counts
+				}
+			case last_operand == "%rsp" && !strings.has_prefix(mnemonic, "cmp") && !strings.has_prefix(mnemonic, "test") && !stack_is_call(mnemonic):
+				// A mov, a lea or an and of the stack pointer: llc writes
+				// none in a frame of a fixed size.
+				append(&procedure.scan_problems, fmt.tprintf("%s writes its stack pointer in a form that the scan does not read: %s", name, instruction.text))
+				return counts
+			}
+			if after < 0 {
+				append(&procedure.scan_problems, fmt.tprintf("%s takes more bytes off its stack than it put on it: %s", name, instruction.text))
+				return counts
+			}
+			if after > STACK_SCAN_DEPTH_MOST {
+				append(&procedure.scan_problems, fmt.tprintf("%s pushes more than %d bytes: a path that pushes in a loop, at %s", name, STACK_SCAN_DEPTH_MOST, instruction.text))
+				return counts
+			}
+			if stack_falls_through(instruction, starts, returns) {
+				stack_scan_reach(counts, &pending, position + 1, after)
+			}
+		}
+		// The branches of a table: each block that starts after the end of
+		// a path, and that no path reached, starts with the count of the
+		// jump through the table. Padding between two blocks is no block.
+		if table_count == STACK_SCAN_NOT_REACHED {
+			break
+		}
+		seeded := false
+		for instruction, position in instructions {
+			if counts[position] != STACK_SCAN_NOT_REACHED || stack_is_padding(instruction.mnemonic) {
+				continue
+			}
+			before := position - 1
+			for before >= 0 && stack_is_padding(instructions[before].mnemonic) {
+				before -= 1
+			}
+			if before >= 0 && stack_falls_through(instructions[before], starts, returns) {
+				continue
+			}
+			stack_scan_reach(counts, &pending, position, table_count)
+			seeded = true
+		}
+		if !seeded {
+			break
+		}
+	}
+	return counts
+}
+
+// stack_is_padding says if an instruction is the filler that the
+// assembler puts between two blocks.
+@(private = "file")
+stack_is_padding :: proc(mnemonic: string) -> bool {
+	return strings.has_prefix(mnemonic, "nop") || mnemonic == "int3"
 }
 
 // What the search of the depths knows of the graph.
 @(private = "file")
 Depth_Search :: struct {
-	procedures: []Stack_Procedure,
-	frames:     []int, // -1: not known.
-	levels:     []int, // 0: left out.
-	target:     int, // The procedure where a chain ends; -1: any procedure.
-	depth:      []int, // DEPTH_NOT_COMPUTED, DEPTH_NO_CHAIN, or the bytes from the entry of the procedure.
-	next:       []int, // The callee of the deepest chain; -1: none.
-	next_tail:  []bool,
-	recursive:  []bool, // The deepest chain holds more than one level of it.
+	procedures:  []Stack_Procedure,
+	frames:      []int, // -1: not known.
+	levels:      []int, // 0: left out.
+	target:      int, // The procedure where a chain ends; -1: any procedure.
+	depth:       []int, // DEPTH_NOT_COMPUTED, DEPTH_NO_CHAIN, or the bytes from the entry of the procedure.
+	next:        []int, // The callee of the deepest chain; -1: none.
+	next_tail:   []bool,
+	next_pushed: []int, // The bytes pushed outside the frame for the call of next.
+	recursive:   []bool, // The deepest chain holds more than one level of it.
 	// For a procedure of a cycle break: the procedure that no chain below
 	// it runs; -1 for the others.
-	cut:        []int,
-	start:      int, // The cycle break whose search this is; -1: none.
-	below:      []^Depth_Search, // The search below each cycle break, made at its first use.
+	cut:         []int,
+	start:       int, // The cycle break whose search this is; -1: none.
+	below:       []^Depth_Search, // The search below each cycle break, made at its first use.
 }
 
 // cut_levels gives a copy of levels with the procedure cut left out.
@@ -611,27 +920,33 @@ depth_of :: proc(search: ^Depth_Search, index: int) -> int {
 	}
 	best := search.target < 0 ? frame : DEPTH_NO_CHAIN
 	calls_itself := false
+	// The most bytes pushed outside the frame for a call of itself.
+	pushed_for_itself := 0
 	for edge in search.procedures[index].edges {
 		if search.levels[edge.target] == 0 {
 			continue
 		}
 		if edge.target == index {
-			calls_itself ||= !edge.tail
+			if !edge.tail {
+				calls_itself = true
+				pushed_for_itself = max(pushed_for_itself, edge.pushed_bytes)
+			}
 			continue
 		}
 		below := depth_of(search, edge.target)
 		if below == DEPTH_NO_CHAIN {
 			continue
 		}
-		through := edge.tail ? below : frame + RETURN_ADDRESS_BYTES + below
+		through := edge.tail ? below : frame + edge.pushed_bytes + RETURN_ADDRESS_BYTES + below
 		if through > best {
 			best = through
 			search.next[index] = edge.target
 			search.next_tail[index] = edge.tail
+			search.next_pushed[index] = edge.tail ? 0 : edge.pushed_bytes
 		}
 	}
 	if best != DEPTH_NO_CHAIN && calls_itself && search.levels[index] > 1 {
-		best += (search.levels[index] - 1) * (frame + RETURN_ADDRESS_BYTES)
+		best += (search.levels[index] - 1) * (frame + pushed_for_itself + RETURN_ADDRESS_BYTES)
 		search.recursive[index] = true
 	}
 	search.depth[index] = best
@@ -641,17 +956,18 @@ depth_of :: proc(search: ^Depth_Search, index: int) -> int {
 @(private = "file")
 depth_search_make :: proc(procedures: []Stack_Procedure, frames, levels: []int, target: int, cut: []int, start: int) -> Depth_Search {
 	search := Depth_Search {
-		procedures = procedures,
-		frames     = frames,
-		levels     = levels,
-		target     = target,
-		depth      = make([]int, len(procedures), context.temp_allocator),
-		next       = make([]int, len(procedures), context.temp_allocator),
-		next_tail  = make([]bool, len(procedures), context.temp_allocator),
-		recursive  = make([]bool, len(procedures), context.temp_allocator),
-		cut        = cut,
-		start      = start,
-		below      = make([]^Depth_Search, len(procedures), context.temp_allocator),
+		procedures  = procedures,
+		frames      = frames,
+		levels      = levels,
+		target      = target,
+		depth       = make([]int, len(procedures), context.temp_allocator),
+		next        = make([]int, len(procedures), context.temp_allocator),
+		next_tail   = make([]bool, len(procedures), context.temp_allocator),
+		next_pushed = make([]int, len(procedures), context.temp_allocator),
+		recursive   = make([]bool, len(procedures), context.temp_allocator),
+		cut         = cut,
+		start       = start,
+		below       = make([]^Depth_Search, len(procedures), context.temp_allocator),
 	}
 	for index in 0 ..< len(procedures) {
 		search.depth[index] = DEPTH_NOT_COMPUTED
@@ -681,6 +997,9 @@ chain_text :: proc(search: ^Depth_Search, start: int) -> string {
 		}
 		if tail {
 			strings.write_string(&text, " (a tail call)")
+		}
+		if search.next_pushed[index] > 0 {
+			fmt.sbprintf(&text, " (%d bytes pushed for the call)", search.next_pushed[index])
 		}
 		tail = search.next_tail[index]
 		index = search.next[index]
@@ -777,7 +1096,12 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 					append(&measure.problems, fmt.tprintf("the indirect calls of %s reach %s, and the listing has no such procedure", procedure.names[0], target_name))
 					continue
 				}
-				append(&procedure.edges, Stack_Edge{target = target})
+				if procedure.indirect_calls > 0 {
+					append(&procedure.edges, Stack_Edge{target = target, pushed_bytes = procedure.indirect_call_pushed_bytes})
+				}
+				if procedure.indirect_tail_calls > 0 {
+					append(&procedure.edges, Stack_Edge{target = target, tail = true})
+				}
 			}
 		}
 	}
@@ -868,6 +1192,12 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 		}
 		if procedure.indirect_calls > 0 && !indirect_stated[index] {
 			append(&measure.problems, fmt.tprintf("%s has %d indirect calls (%s), and the table of the indirect calls has no row for it", name, procedure.indirect_calls, procedure.first_indirect_call))
+		}
+		if procedure.indirect_tail_calls > 0 && !indirect_stated[index] {
+			append(&measure.problems, fmt.tprintf("%s has %d indirect tail calls (%s), and the table of the indirect calls has no row for it", name, procedure.indirect_tail_calls, procedure.first_indirect_tail_call))
+		}
+		for item in procedure.scan_problems {
+			append(&measure.problems, item)
 		}
 		for edge in procedure.edges {
 			if edge.target == index && !edge.tail && levels[index] == 1 {
@@ -1002,9 +1332,11 @@ callees_depth :: proc(search: ^Depth_Search, caller: int, names: []string, probl
 	chain = search.procedures[caller].names[0]
 	for name in names {
 		target := -1
+		pushed_bytes := 0
 		for edge in search.procedures[caller].edges {
 			if stack_procedure_matches(search.procedures[edge.target], name) {
 				target = edge.target
+				pushed_bytes = max(pushed_bytes, edge.tail ? 0 : edge.pushed_bytes)
 			}
 		}
 		if target < 0 {
@@ -1015,8 +1347,8 @@ callees_depth :: proc(search: ^Depth_Search, caller: int, names: []string, probl
 		if below == DEPTH_NO_CHAIN {
 			continue
 		}
-		if RETURN_ADDRESS_BYTES + below > bytes {
-			bytes = RETURN_ADDRESS_BYTES + below
+		if pushed_bytes + RETURN_ADDRESS_BYTES + below > bytes {
+			bytes = pushed_bytes + RETURN_ADDRESS_BYTES + below
 			chain = fmt.tprintf("%s -> %s", search.procedures[caller].names[0], chain_text(search, target))
 		}
 	}
