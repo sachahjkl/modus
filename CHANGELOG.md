@@ -6,7 +6,7 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
-## [0.92.0] - 2026-11-14
+## [0.92.0] - 2026-11-14 12:08
 
 ### Added
 
@@ -101,7 +101,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **A debug trap at the entry of the kernel no longer runs on a stack or with a gs that a program chose**: a program that runs `mov ss` or `pop ss` with the trap flag set, just before `syscall`, `int3`, `int1` or an instruction that faults, could, on a processor that gives the held trap at the first instruction of the kernel, make the processor push the frame of the trap on the stack of the program at privilege 0, or run the kernel with the gs of the program: the machine stopped, or values that the program chose went to an address of the kernel that it chose. The debug exception, the non-maskable interrupt and the machine check now have their own stack on each processor. The kernel drops each such trap with no code that reads gs; after `int1` the frame of the program is lost, and the kernel stops that program with the stop code of a debug exception. An NMI, a machine check or a double fault runs with the gs of the kernel and stops the machine with its line.
 - **A program no longer sees the data selectors of the program before it**: the kernel did not keep `ds`, `es`, `fs` and `gs` for a thread, so a value that one program loaded stayed for the next program on that processor, a channel of a few bits between programs. Each return to a program now loads the null selector in each.
 
-## [0.91.0] - 2026-11-12
+## [0.91.0] - 2026-11-12 11:20
 
 ### Added
 
@@ -128,25 +128,25 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **A program can no longer stop the machine at the return from the kernel**: a `syscall` in the last two bytes below the half of a program (its return address 2^47 is not canonical), or the flag nested task set with `popfq` before a `syscall`, made the processor fault in the kernel at its return, and the kernel stopped the machine. The kernel now checks the frame of each thread before it returns to it and stops that thread's program as its own fault, with the stop code 0x400 and the refused address in its stop report; it clears nested task at each `syscall`; and a fault at the return instruction itself is a fault of the thread.
 
-## [0.86.0] - 2026-11-12
+## [0.86.0] - 2026-11-12 05:05
 
 ### Changed
 
 - **The desktop names things in B612 too.** The buttons of the bar, its menus, the titles of the windows and the launcher are in the interface font B612, and the clock, the date and what the person types stay in Paper Mono; the buttons are as wide as their names in that font. The display of the boot, after its first screen, has its titles and names in B612 too.
 
-## [0.85.0] - 2026-11-12
+## [0.85.0] - 2026-11-12 05:04
 
 ### Fixed
 
 - **A QUIC server frees the connection of a client that went silent at its idle timeout**: a client that vanished while the server had data in flight kept its connection, and its place in the table of `quic_echo`, for about two hours, because each unanswered probe pushed the idle timeout further. It now ends after 30 s, whatever the probes. A replayed packet can no longer keep a silent connection alive, a server can no longer be started with no idle timeout, and `quic_echo` logs how long each idle end took against its bound.
 
-## [0.84.0] - 2026-11-12
+## [0.84.0] - 2026-11-12 05:04
 
 ### Fixed
 
 - **No text of the system is cut in silence**: a log line longer than 512 bytes was cut with no sign, and so was each text that a program formats in a buffer too small; the log now takes a text whole, in several lines, and a text that a place cannot hold ends with "... and N bytes more". The console refuses a program name longer than 31 bytes, which the root service cut before.
 
-## [0.83.0] - 2026-11-12
+## [0.83.0] - 2026-11-12 04:10
 
 ### Added
 
@@ -156,13 +156,13 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **The console prints a long result whole**: a result of more than 256 bytes was cut in the terminal and in the log with no sign, and a line of more than 192 bytes was cut in the log; the console now prints each result at any length.
 
-## [0.82.0] - 2026-11-12
+## [0.82.0] - 2026-11-12 03:44
 
 ### Changed
 
 - **Windows name things in B612.** The titles, captions, labels, buttons and lists of every window drawn with the interface package are in the interface font B612, and their values (numbers, typed text, tables, terminals) stay in Paper Mono; a window with no interface font draws everything in Paper Mono with the same layout.
 
-## [0.81.0] - 2026-11-12
+## [0.81.0] - 2026-11-12 03:14
 
 ### Added
 
@@ -177,7 +177,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **A program that used AVX no longer gets the high halves of its ymm registers from another thread**: before, the kernel saved only 512 bytes with `fxsave` and kept the `XCR0` that the firmware left, so AVX could work with wrong values and no error. Now a register state component is enabled only when the kernel saves it.
 - **A reset QUIC stream no longer closes the whole connection**: when a stream was reset while flow control still held back some of its bytes, the reset named the bytes written instead of the bytes sent, and a correct peer closed the connection. The bytes of a stream are now erased from memory when the stream ends.
 
-## [0.80.0] - 2026-11-12
+## [0.80.0] - 2026-11-12 01:57
 
 ### Added
 
@@ -187,7 +187,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **A QUIC server can no longer be stopped by a few dozen real addresses**: the budget of Initial checks of each address can no longer be renewed by addresses that take turns, so 33 hosts no longer stop every new client of `quic_echo`. A new address gets no check while the table of 1024 addresses is busy, and `quic_echo` counts it.
 
-## [0.79.0] - 2026-11-12
+## [0.79.0] - 2026-11-12 01:54
 
 ### Added
 
@@ -198,7 +198,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The zero of the system is slashed.** Every window, the console and the terminal draw the character 0 as the slashed zero of Paper Mono, which its feature zero gives, so a 0 no longer looks like the capital O.
 - **The caches of the interface font come with the system.** The two glyph caches of B612 are in the boot image, checked once by the root service and shared read-only by every program with a window, and a program learns which shared ranges it received from one value of its context; the program `interface_font` no longer builds its own caches.
 
-## [0.78.0] - 2026-11-12
+## [0.78.0] - 2026-11-12 01:27
 
 ### Added
 
@@ -219,7 +219,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **Long names of one length no longer slow each key of the console**: the order of two names in the completion list read whole names, up to 64 times for each name, so a service with long export names of one length made each key slow; it now reads at most 256 bytes of a name, and one key has a fixed bound.
 
-## [0.77.0] - 2026-11-12
+## [0.77.0] - 2026-11-12 01:24
 
 ### Added
 
@@ -229,7 +229,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **The program `settings` can no longer make the keys of the person get lost.** A new count of changes on the settings page with the same values made the compositor send one record into the ring of each window, the ring that also carries the keys and the pointer; it now tells the windows only when the values differ from the values that it told last.
 
-## [0.76.0] - 2026-11-12
+## [0.76.0] - 2026-11-12 00:44
 
 ### Added
 
@@ -252,7 +252,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **A QUIC server keeps nothing for a client that did not prove its address**: `quic_echo` answers a first Initial with a Retry and takes a connection only for a client that came back with its token, so forged source addresses no longer hold its handshake places; the work of new connections has a budget in each second.
 - **The network service limits what a UDP listen grant sends to an unproven address**: at most 3 times the bytes that came from the remote, until the program marks it validated with the new command `Validate`; a send no longer keeps a remote admitted.
 
-## [0.75.0] - 2026-11-12
+## [0.75.0] - 2026-11-12 00:12
 
 ### Added
 
@@ -267,7 +267,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **No program chooses where another program reads its glyph caches.** The program `settings` could write the address and the size of the glyph caches on the settings page, and so make each program that started later read and draw memory that `settings` controlled; the caches are now at fixed addresses with their sizes in the context that the root service writes, mapped read-only for every program. A program also no longer waits for ever on a settings page left in the middle of a change.
 - **A hostile font file no longer stops the reader.** A glyph made of thousands of empty parts made the font reader run for an unbounded time; the reader now stops at 64 parts, and a glyph cache whose monospace glyphs leave their cells, or whose header has unknown flags or a name with no end, is refused.
 
-## [0.74.0] - 2026-11-11
+## [0.74.0] - 2026-11-11 22:46
 
 ### Added
 
@@ -281,7 +281,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **Text on cards and in the console draws faster.** A glyph of the vector font over a plain background costs 109 ns in place of 181 ns on the host (the least of many runs), with the same pixels.
 - **Paper Mono is the font of the system.** The console, the terminal and every window draw their text in Paper Mono on the same grid of 8 x 16 pixels, in place of JetBrains Mono, and the titles of the cards in Paper Mono SemiBold.
 
-## [0.73.0] - 2026-11-11
+## [0.73.0] - 2026-11-11 22:24
 
 ### Added
 
@@ -293,7 +293,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **A terminal gives its program the modifiers of each key**, so that Control with a key reaches the console; a cell of the text grid of the interface package can have a fill color (draw record version 5).
 
-## [0.72.0] - 2026-11-11
+## [0.72.0] - 2026-11-11 21:48
 
 ### Changed
 
@@ -301,7 +301,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The text of the vector font is blended four pixels at a time**: the blend of a glyph over a pixel, in linear light with the three subpixel bands, runs in the SSE2 registers and gives the same pixels as before.
 - **The pointer picture is blended four pixels at a time**, in the SSE2 registers, with the same pixels as before.
 
-## [0.71.0] - 2026-11-11
+## [0.71.0] - 2026-11-11 21:22
 
 ### Added
 
@@ -312,7 +312,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **The call request of `remote` has 112 bytes**: it names the place of the table of error details, and the answer of a failed call carries the details and their count. The remote service refuses a request of a tool built before this change.
 
-## [0.70.0] - 2026-11-11
+## [0.70.0] - 2026-11-11 20:55
 
 ### Added
 
@@ -337,7 +337,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **One datagram could stop a program that uses ChaCha20 for QUIC header protection**: the ChaCha20 code taken from Odin refused the block with the last counter, and the sender of a packet chooses that counter. The taken file has the correction as listed adjustments, and the correction is offered to Odin. No program used this path yet.
 
-## [0.69.0] - 2026-11-11
+## [0.69.0] - 2026-11-11 20:08
 
 ### Added
 
@@ -355,7 +355,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **The compositor takes only a surface that the program gave**: a program could name, in its command to create a surface, a handle that the compositor holds for another program. The compositor then showed the memory of the other program and closed its handle. The compositor now asks the kernel to prove that the handle came through the ring of the program, and closes each handle that it was given, also when it refuses the command.
 
-## [0.68.0] - 2026-11-11
+## [0.68.0] - 2026-11-11 19:55
 
 ### Fixed
 
@@ -366,7 +366,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **One program could stop the machine**: a thread made with a first instruction that is not an address of a program made the processor fault in the kernel when the thread first ran, and the kernel stopped the machine. The kernel now refuses such a thread, and such a stack.
 
-## [0.67.0] - 2026-11-11
+## [0.67.0] - 2026-11-11 19:38
 
 ### Added
 
@@ -374,7 +374,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **Undo to any earlier note in notes.** Up and Down step through the versions of the note, with the date of each, Enter restores the version shown, and Escape goes back to the current note.
 - **The system knows the date.** The bar shows the date and the time of day in UTC, the HTTP server sends the field Date, and each version keeps the date of its change. The date comes from the clock of the machine, read again each 10 seconds; the service date gives it to a caller with now(). The clock gives the years 2020 to 2099; a clock with an empty battery, or a reading that is not a date, gives no date, and the bar then shows the time since the start.
 
-## [0.66.0] - 2026-11-11
+## [0.66.0] - 2026-11-11 19:13
 
 ### Added
 
@@ -389,7 +389,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **A program that maps and unmaps no longer grows its page tables**: a mapping with no address takes the first free range between the mappings of the program; before, each such mapping took a new range and new page tables until the budget refused (a call host refused its 61st call).
 
-## [0.65.0] - 2026-11-11
+## [0.65.0] - 2026-11-11 19:13
 
 ### Added
 
@@ -400,19 +400,19 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - A picture or a text grid that changed its index in the draw table, with the same size, was not drawn again.
 
-## [0.64.0] - 2026-11-11
+## [0.64.0] - 2026-11-11 19:13
 
 ### Changed
 
 - **The compiler runs on all its threads, with no patch**: with the release dev-2026-11a of Odin, the same source gives the same module for any count of compiler threads (20 builds of each of the 64 modules, one result each). The patch of 0.59.0 and the option `-thread-count:1` are removed.
 
-## [0.63.0] - 2026-11-11
+## [0.63.0] - 2026-11-11 19:13
 
 ### Changed
 
 - **The compiler is Odin dev-2026-11a**, pinned by the flake itself: the system used the release of May through Nixpkgs. The instructions `rdrand` and `rdseed` are `asm` templates of the new compiler, inline in the code, and the copied ChaCha20 is taken again from the new release.
 
-## [0.62.0] - 2026-11-11
+## [0.62.0] - 2026-11-11 17:26
 
 ### Added
 
@@ -427,7 +427,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The kernel reports its own fault as whole lines**: the report took no lock, and a line of another processor arrived mixed with it on the serial port, so nobody could read the fault. The processor that reports is now the only writer.
 - The machine test lost typed keys on a loaded host (`start("fetch")` arrived as `start("ETCH")`). The tool now sends a key only after the compositor received the key before it.
 
-## [0.61.0] - 2026-11-11
+## [0.61.0] - 2026-11-11 17:26
 
 ### Added
 
@@ -443,7 +443,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - The terminal showed rows of two frames: with two pictures, a frame presented only its difference with its own picture, and the screen showed the other one.
 - A card cuts its caption to the room between its title and its count, and the boot display cuts a fact after its last whole word.
 
-## [0.60.0] - 2026-11-11
+## [0.60.0] - 2026-11-11 17:26
 
 ### Added
 
@@ -451,7 +451,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The seed of the system**: the root service gathers it at its start from `rdseed`, `rdrand` and samples of the cycle counter, mixed with BLAKE3, and logs its strength: "entropy", "processor" or "weak". A machine with neither instruction starts and says "weak". The program `randomness` shows these facts.
 - **ChaCha20 from `core:crypto` of Odin**, copied into `support/cryptography` with only its imports changed. `kerneltool cryptography-origin`, which the check runs, proves that each copied file is its origin, pinned by its hash, with the listed changes only.
 
-## [0.59.0] - 2026-11-11
+## [0.59.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -465,7 +465,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **One source gives one module**: the Odin compiler started one worker thread beside its main thread also with `-thread-count:1`, and the two threads changed the order of the declarations. A module could differ from one build to the next (`host` in 1 build of 12 to 39, `console` with 3 distinct LLVM IR files in 60 builds). The flake applies a patch of 91 lines to the compiler: with `-thread-count:1` the main thread runs each task. `kerneltool repeat all 100` gave one module, one LLVM IR file and one object for each of the 61 modules and the boot program.
 
-## [0.58.0] - 2026-11-11
+## [0.58.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -479,7 +479,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The default font is the vector font** (owner, 2026-11-11). Spleen 8x16 is the fallback and a choice of the person. The value 13 of the context of each program with a surface names the settings page.
 - The rasterizer of the vector font works in fixed point. It replaces the prototype in floating point of 0.51.0.
 
-## [0.57.0] - 2026-11-11
+## [0.57.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -495,7 +495,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - `log.records` (0.47.0) left places of its result empty. It fills each place now, and a long text comes in two rows with a continuation mark.
 
-## [0.56.0] - 2026-11-11
+## [0.56.0] - 2026-11-11 17:07
 
 ### Changed
 
@@ -512,7 +512,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **A `server.put` or `server.remove` while a remote read that page** made the server read past the page and stop, or serve mixed bytes. Each page has a generation now, and an answer whose page changed ends with a RST.
 - A connection that the server had closed had no time limit. The limits now run until its last byte leaves.
 
-## [0.55.0] - 2026-11-11
+## [0.55.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -525,7 +525,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - The log keeps 2047 records (1023 before).
 
-## [0.54.0] - 2026-11-11
+## [0.54.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -542,7 +542,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - A `Present` of the whole surface from a place of its own damaged the screen past the window. It damages the window only.
 - The prototype of the vector font wrote a cell outside its row for a vertical edge on the last column.
 
-## [0.53.0] - 2026-11-11
+## [0.53.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -557,7 +557,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - The name of a static variable changed from one build to the next, so two builds of one source could give two `kernel.module` files. It is the same now.
 
-## [0.52.0] - 2026-11-11
+## [0.52.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -578,7 +578,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **32 silent connections from one host filled `server`**: it never freed a connection that made no progress. It now ends one after 10 s, and one address holds at most 24 of its 48 records.
 - A RST with data was accepted after the cut, zero-window probes never gave up, and a half-open connection held a record for about 243 s. Each is closed; 18 host tests cover the hostile cases, and 15 of them failed before their correction.
 
-## [0.51.0] - 2026-11-11
+## [0.51.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -591,7 +591,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - **The close button of a window is a deep red** (`0xB82232`), brighter under the pointer and quiet on a window that is not in front: the color of the concept "stop a program" (owner, 2026-11-11).
 
-## [0.50.0] - 2026-11-11
+## [0.50.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -599,7 +599,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - Four reports of the kernel for the right Inspect: `Program_Mappings`, `Threads`, `Stop` and `Pages`. The exports `inspect.mappings`, `inspect.threads` and `inspect.modules` give the same facts to `kerneltool call`.
 - `errors` keeps its stopped program `fault` until the next run of its case, so that a developer tool can show its stop report.
 
-## [0.49.0] - 2026-11-11
+## [0.49.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -609,7 +609,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - 20 programs take the colors of the design rules from `support/graphics`.
 
-## [0.48.0] - 2026-11-11
+## [0.48.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -622,7 +622,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - The network service is also on the data path of TCP segments (one copy, the IPv4 header, the checksum, the grant). The note of property 5 says so.
 
-## [0.47.0] - 2026-11-11
+## [0.47.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -635,7 +635,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - `kerneltool call` reads and hashes each module file one time: a call that confirms the place of the pointer takes 0.3 ms, not 3.7 ms.
 - `monitor` writes no log line for each call, and `remote` writes one sentence for a refusal.
 
-## [0.46.0] - 2026-11-11
+## [0.46.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -650,7 +650,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **EEVDF is the strategy at boot.**
 - The machine handle has one more right, `Schedule`. The kernel has 27 operations.
 
-## [0.45.0] - 2026-11-11
+## [0.45.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -666,7 +666,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - `graphics.copy` called the `memcpy` of the freestanding Odin runtime, which copies one byte at a time. A full frame with 15 windows took 26.6 ms; it takes 2.1 ms.
 
-## [0.44.0] - 2026-11-11
+## [0.44.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -675,7 +675,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - The person starts `remote` from the menu, and `revoke("remote", "person")` cuts its right to act for the person.
 - The test step `Call` checks typed results in place of lines of the log.
 
-## [0.43.0] - 2026-11-11
+## [0.43.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -685,7 +685,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 
 - The milliseconds of the time page lost the ticks that came late on a loaded host. They now come from the cycle counter: `clock` shows the page 0 to 3 ms behind it.
 
-## [0.42.0] - 2026-11-11
+## [0.42.0] - 2026-11-11 17:07
 
 ### Added
 
@@ -1060,3 +1060,93 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The console**: integers, texts, variables, arithmetic and typed commands. `load("math")` makes the exports of a module commands.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
+
+[0.92.0]: https://github.com/sachahjkl/modus/releases/tag/v0.92.0
+[0.91.0]: https://github.com/sachahjkl/modus/releases/tag/v0.91.0
+[0.86.0]: https://github.com/sachahjkl/modus/releases/tag/v0.86.0
+[0.85.0]: https://github.com/sachahjkl/modus/releases/tag/v0.85.0
+[0.84.0]: https://github.com/sachahjkl/modus/releases/tag/v0.84.0
+[0.83.0]: https://github.com/sachahjkl/modus/releases/tag/v0.83.0
+[0.82.0]: https://github.com/sachahjkl/modus/releases/tag/v0.82.0
+[0.81.0]: https://github.com/sachahjkl/modus/releases/tag/v0.81.0
+[0.80.0]: https://github.com/sachahjkl/modus/releases/tag/v0.80.0
+[0.79.0]: https://github.com/sachahjkl/modus/releases/tag/v0.79.0
+[0.78.0]: https://github.com/sachahjkl/modus/releases/tag/v0.78.0
+[0.77.0]: https://github.com/sachahjkl/modus/releases/tag/v0.77.0
+[0.76.0]: https://github.com/sachahjkl/modus/releases/tag/v0.76.0
+[0.75.0]: https://github.com/sachahjkl/modus/releases/tag/v0.75.0
+[0.74.0]: https://github.com/sachahjkl/modus/releases/tag/v0.74.0
+[0.73.0]: https://github.com/sachahjkl/modus/releases/tag/v0.73.0
+[0.72.0]: https://github.com/sachahjkl/modus/releases/tag/v0.72.0
+[0.71.0]: https://github.com/sachahjkl/modus/releases/tag/v0.71.0
+[0.70.0]: https://github.com/sachahjkl/modus/releases/tag/v0.70.0
+[0.69.0]: https://github.com/sachahjkl/modus/releases/tag/v0.69.0
+[0.68.0]: https://github.com/sachahjkl/modus/releases/tag/v0.68.0
+[0.67.0]: https://github.com/sachahjkl/modus/releases/tag/v0.67.0
+[0.66.0]: https://github.com/sachahjkl/modus/releases/tag/v0.66.0
+[0.65.0]: https://github.com/sachahjkl/modus/releases/tag/v0.65.0
+[0.64.0]: https://github.com/sachahjkl/modus/releases/tag/v0.64.0
+[0.63.0]: https://github.com/sachahjkl/modus/releases/tag/v0.63.0
+[0.62.0]: https://github.com/sachahjkl/modus/releases/tag/v0.62.0
+[0.61.0]: https://github.com/sachahjkl/modus/releases/tag/v0.61.0
+[0.60.0]: https://github.com/sachahjkl/modus/releases/tag/v0.60.0
+[0.59.0]: https://github.com/sachahjkl/modus/releases/tag/v0.59.0
+[0.58.0]: https://github.com/sachahjkl/modus/releases/tag/v0.58.0
+[0.57.0]: https://github.com/sachahjkl/modus/releases/tag/v0.57.0
+[0.56.0]: https://github.com/sachahjkl/modus/releases/tag/v0.56.0
+[0.55.0]: https://github.com/sachahjkl/modus/releases/tag/v0.55.0
+[0.54.0]: https://github.com/sachahjkl/modus/releases/tag/v0.54.0
+[0.53.0]: https://github.com/sachahjkl/modus/releases/tag/v0.53.0
+[0.52.0]: https://github.com/sachahjkl/modus/releases/tag/v0.52.0
+[0.51.0]: https://github.com/sachahjkl/modus/releases/tag/v0.51.0
+[0.50.0]: https://github.com/sachahjkl/modus/releases/tag/v0.50.0
+[0.49.0]: https://github.com/sachahjkl/modus/releases/tag/v0.49.0
+[0.48.0]: https://github.com/sachahjkl/modus/releases/tag/v0.48.0
+[0.47.0]: https://github.com/sachahjkl/modus/releases/tag/v0.47.0
+[0.46.0]: https://github.com/sachahjkl/modus/releases/tag/v0.46.0
+[0.45.0]: https://github.com/sachahjkl/modus/releases/tag/v0.45.0
+[0.44.0]: https://github.com/sachahjkl/modus/releases/tag/v0.44.0
+[0.43.0]: https://github.com/sachahjkl/modus/releases/tag/v0.43.0
+[0.42.0]: https://github.com/sachahjkl/modus/releases/tag/v0.42.0
+[0.41.0]: https://github.com/sachahjkl/modus/releases/tag/v0.41.0
+[0.40.0]: https://github.com/sachahjkl/modus/releases/tag/v0.40.0
+[0.39.0]: https://github.com/sachahjkl/modus/releases/tag/v0.39.0
+[0.38.0]: https://github.com/sachahjkl/modus/releases/tag/v0.38.0
+[0.37.0]: https://github.com/sachahjkl/modus/releases/tag/v0.37.0
+[0.36.0]: https://github.com/sachahjkl/modus/releases/tag/v0.36.0
+[0.35.0]: https://github.com/sachahjkl/modus/releases/tag/v0.35.0
+[0.34.0]: https://github.com/sachahjkl/modus/releases/tag/v0.34.0
+[0.33.0]: https://github.com/sachahjkl/modus/releases/tag/v0.33.0
+[0.32.0]: https://github.com/sachahjkl/modus/releases/tag/v0.32.0
+[0.31.0]: https://github.com/sachahjkl/modus/releases/tag/v0.31.0
+[0.30.0]: https://github.com/sachahjkl/modus/releases/tag/v0.30.0
+[0.29.0]: https://github.com/sachahjkl/modus/releases/tag/v0.29.0
+[0.28.0]: https://github.com/sachahjkl/modus/releases/tag/v0.28.0
+[0.27.0]: https://github.com/sachahjkl/modus/releases/tag/v0.27.0
+[0.26.0]: https://github.com/sachahjkl/modus/releases/tag/v0.26.0
+[0.25.0]: https://github.com/sachahjkl/modus/releases/tag/v0.25.0
+[0.24.0]: https://github.com/sachahjkl/modus/releases/tag/v0.24.0
+[0.23.0]: https://github.com/sachahjkl/modus/releases/tag/v0.23.0
+[0.22.0]: https://github.com/sachahjkl/modus/releases/tag/v0.22.0
+[0.21.0]: https://github.com/sachahjkl/modus/releases/tag/v0.21.0
+[0.20.0]: https://github.com/sachahjkl/modus/releases/tag/v0.20.0
+[0.19.0]: https://github.com/sachahjkl/modus/releases/tag/v0.19.0
+[0.18.0]: https://github.com/sachahjkl/modus/releases/tag/v0.18.0
+[0.17.0]: https://github.com/sachahjkl/modus/releases/tag/v0.17.0
+[0.16.0]: https://github.com/sachahjkl/modus/releases/tag/v0.16.0
+[0.15.0]: https://github.com/sachahjkl/modus/releases/tag/v0.15.0
+[0.14.0]: https://github.com/sachahjkl/modus/releases/tag/v0.14.0
+[0.13.0]: https://github.com/sachahjkl/modus/releases/tag/v0.13.0
+[0.12.0]: https://github.com/sachahjkl/modus/releases/tag/v0.12.0
+[0.11.0]: https://github.com/sachahjkl/modus/releases/tag/v0.11.0
+[0.10.0]: https://github.com/sachahjkl/modus/releases/tag/v0.10.0
+[0.9.0]: https://github.com/sachahjkl/modus/releases/tag/v0.9.0
+[0.8.0]: https://github.com/sachahjkl/modus/releases/tag/v0.8.0
+[0.7.0]: https://github.com/sachahjkl/modus/releases/tag/v0.7.0
+[0.6.0]: https://github.com/sachahjkl/modus/releases/tag/v0.6.0
+[0.5.0]: https://github.com/sachahjkl/modus/releases/tag/v0.5.0
+[0.4.0]: https://github.com/sachahjkl/modus/releases/tag/v0.4.0
+[0.3.0]: https://github.com/sachahjkl/modus/releases/tag/v0.3.0
+[0.2.0]: https://github.com/sachahjkl/modus/releases/tag/v0.2.0
+[0.1.0]: https://github.com/sachahjkl/modus/releases/tag/v0.1.0
+[0.0.0]: https://github.com/sachahjkl/modus/releases/tag/v0.0.0
