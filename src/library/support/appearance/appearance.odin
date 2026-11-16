@@ -11,6 +11,7 @@ package appearance
 
 import "modus:contract/date"
 import "modus:contract/settings"
+import "modus:support/sentence"
 
 SECONDS_OF_A_DAY :: 86_400
 LIGHT_FROM_SECOND :: 7 * 3_600 // 07:00 of the local time: the light appearance starts.
@@ -93,34 +94,21 @@ SENTENCE_START :: "the appearance in force is "
 SENTENCE_ZONE :: " with a zone of "
 SENTENCE_DATE :: " s, at "
 
-// Writer: the bytes of a sentence in a buffer of the caller. A text that
-// does not fit is cut at the end of the buffer.
+// The writer of the sentence is the one of the system: a text that does not
+// fit ends with its cut mark, never cut in silence.
 @(private)
-Writer :: struct {
-	buffer: []u8,
-	count:  int,
+part :: proc "contextless" (writer: ^sentence.Writer, text: string) {
+	sentence.write_bytes(writer, transmute([]u8)text)
 }
 
 @(private)
-part :: proc "contextless" (writer: ^Writer, text: string) {
-	writer.count += copy(writer.buffer[writer.count:], text)
-}
-
-@(private)
-decimal :: proc "contextless" (writer: ^Writer, number: i64, least_digits: int = 1) {
-	digits: [24]u8
-	count := 0
+decimal :: proc "contextless" (writer: ^sentence.Writer, number: i64, least_digits: int = 1) {
 	value := number
 	if value < 0 {
 		part(writer, "-")
 		value = -value
 	}
-	for value > 0 || count < least_digits {
-		digits[len(digits) - 1 - count] = u8('0' + value % 10)
-		value /= 10
-		count += 1
-	}
-	part(writer, string(digits[len(digits) - count:]))
+	sentence.write_unsigned(writer, u64(value), least_digits)
 }
 
 // sentence_write writes in buffer why a setting gives its appearance in
@@ -135,18 +123,18 @@ decimal :: proc "contextless" (writer: ^Writer, number: i64, least_digits: int =
 // The date is in seconds of UTC; the modus tool checks it against the
 // clock that it gave the machine, then calls in_force_of over it.
 sentence_write :: proc "contextless" (buffer: []u8, setting: settings.Appearance, moment: Moment) -> string {
-	writer := Writer{buffer = buffer}
+	writer := sentence.Writer{buffer = buffer}
 	in_force := in_force_of(setting, moment)
 	part(&writer, SENTENCE_START)
 	part(&writer, settings.appearance_in_force_names[in_force])
 	if setting != .Auto {
 		part(&writer, ": the setting ")
 		part(&writer, settings.descriptions[.Appearance].value_names[u32(setting)])
-		return string(buffer[:writer.count])
+		return sentence.written(&writer)
 	}
 	if !moment.known {
 		part(&writer, ": auto, and the system has no date")
-		return string(buffer[:writer.count])
+		return sentence.written(&writer)
 	}
 	part(&writer, ": auto, light from ")
 	decimal(&writer, LIGHT_FROM_SECOND / 3_600, 2)
@@ -162,5 +150,5 @@ sentence_write :: proc "contextless" (buffer: []u8, setting: settings.Appearance
 	part(&writer, SENTENCE_DATE)
 	decimal(&writer, (moment.milliseconds - floor_modulo(moment.milliseconds, 1000)) / 1000)
 	part(&writer, " s since 1970")
-	return string(buffer[:writer.count])
+	return sentence.written(&writer)
 }
