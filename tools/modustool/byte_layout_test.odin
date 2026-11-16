@@ -12,7 +12,7 @@ import module "modus:contract/module"
 Expected_Field :: struct {
 	key:    string,
 	name:   string,
-	offset: int,
+	offset: uintptr, // The type that offset_of gives.
 	size:   int,
 }
 
@@ -163,7 +163,7 @@ byte_layout_offsets_agree_with_offset_of :: proc(t: ^testing.T) {
 		if !testing.expectf(t, has_field, "the byte layout %s has the field %s", row.key, row.name) {
 			continue
 		}
-		testing.expectf(t, field.offset == row.offset, "%s.%s is at %d in the layout and at %d by offset_of", row.key, row.name, field.offset, row.offset)
+		testing.expectf(t, uintptr(field.offset) == row.offset, "%s.%s is at %d in the layout and at %d by offset_of", row.key, row.name, field.offset, row.offset)
 		testing.expectf(t, field.size == row.size, "%s.%s has %d bytes in the layout and %d by size_of", row.key, row.name, field.size, row.size)
 	}
 	testing.expect_value(t, size_of(u64), module.REBASE_WORD_SIZE)
@@ -211,8 +211,8 @@ byte_layout_rectangles_cover_each_byte_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, "")
 	testing.expect_value(t, layout.size, size_of(Test_Record))
 	if testing.expect_value(t, len(layout.fields), 6) {
-		testing.expect(t, layout.fields[1].is_padding && layout.fields[1].offset == offset_of(Test_Record, first) + 1 && layout.fields[1].size == offset_of(Test_Record, second) - 1, "the padding after first")
-		testing.expect(t, layout.fields[5].is_padding && layout.fields[5].offset == offset_of(Test_Record, fourth) + 20 && layout.fields[5].offset + layout.fields[5].size == size_of(Test_Record), "the padding at the end")
+		testing.expect(t, layout.fields[1].is_padding && layout.fields[1].offset == int(offset_of(Test_Record, first)) + 1 && layout.fields[1].size == int(offset_of(Test_Record, second)) - 1, "the padding after first")
+		testing.expect(t, layout.fields[5].is_padding && layout.fields[5].offset == int(offset_of(Test_Record, fourth)) + 20 && layout.fields[5].offset + layout.fields[5].size == size_of(Test_Record), "the padding at the end")
 		testing.expect_value(t, layout.fields[4].comment, "Twenty bytes.")
 	}
 	expect_each_byte_covered_once(t, layout)
@@ -224,7 +224,7 @@ byte_layout_rectangles_cover_each_byte_once :: proc(t: ^testing.T) {
 	}
 	if testing.expect_value(t, len(fourth_pieces), 3) {
 		testing.expect(t, fourth_pieces[0].first && !fourth_pieces[1].first && !fourth_pieces[2].first, "the first piece of a field holds its size, the others say continued")
-		testing.expect_value(t, fourth_pieces[0].column, offset_of(Test_Record, fourth) % BYTE_LAYOUT_ROW_BYTES)
+		testing.expect_value(t, fourth_pieces[0].column, int(offset_of(Test_Record, fourth)) % BYTE_LAYOUT_ROW_BYTES)
 		testing.expect_value(t, fourth_pieces[1].span, BYTE_LAYOUT_ROW_BYTES)
 		testing.expect_value(t, fourth_pieces[1].rows, 1)
 	}
