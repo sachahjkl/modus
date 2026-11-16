@@ -264,7 +264,8 @@ build_modules :: proc() -> bool {
 	resources := build_pointer_themes(pointer_theme_source_of_the_build(), false) or_return
 	build_measure_step("the pointer themes", step_started)
 	step_started = time.tick_now()
-	// The glyph caches of the default font and of the interface font: five more resources (vector_fonts.odin).
+	// The glyph caches of the default font and of the interface font, and
+	// the font outlines: six more resources (vector_fonts.odin).
 	glyph_caches := build_glyph_caches() or_return
 	build_measure_step("the glyph caches", step_started)
 	step_started = time.tick_now()

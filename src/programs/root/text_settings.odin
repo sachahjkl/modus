@@ -1,6 +1,7 @@
 package root
 
 import "modus:contract/fixed_addresses"
+import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "modus:support/bootscreen"
 import "modus:support/display"
@@ -35,6 +36,9 @@ settings_memory: system.Handle
 boot_interface_font: display.Interface_Font // The interface font of the boot display, from the boot image.
 settings_page: ^settings.Page
 glyph_cache_mappings: [settings.Glyph_Cache]system.Mapping // page_count 0: no such glyph cache.
+// The font outlines of the boot image: page_count 0 when the image has
+// none, or none that font_outlines.validate accepts.
+font_outlines_mapping: system.Mapping
 // The boot pass of `settings` is the next start of that name: start() gives
 // it the value VALUE_BOOT_PASS.
 settings_boot_pass: bool
@@ -73,6 +77,17 @@ text_settings_create :: proc "contextless" () {
 		}
 		glyph_cache_mappings[cache] = mapping
 	}
+	// The font outlines, given only when their hash is right and their
+	// format valid, as a glyph cache; and the demand cache beside them.
+	if mapping, _, given := resource_mapping(font_outlines.RESOURCE_NAME, font_outlines.ADDRESS, "each program with a surface"); given {
+		entry := system.image_resource_find(image, font_outlines.RESOURCE_NAME)
+		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size]); problem.kind == .None {
+			font_outlines_mapping = mapping
+		} else {
+			system.log_in("programs", .Warning, "root: the font outlines are refused: ", font_outlines.problem_sentences[problem.kind], ", value ", problem.value, ": they are not given")
+		}
+	}
+	demand_cache_create()
 	if glyph_cache_mappings[.With_Grid_Fit].page_count == 0 {
 		system.log_in("programs", .Warning, "root: the boot image has no valid glyph cache: the text of the system is Spleen 8x16")
 		return
@@ -93,18 +108,20 @@ text_settings_create :: proc "contextless" () {
 	}
 }
 
-// text_settings_give adds the settings page and the glyph caches,
-// read-only, to the mappings of a program that has a surface or a terminal,
-// and sets the bit of each range in its values. A cache mapping has no
-// flag: the right Read only, for every program, the program `settings`
-// included. The pages come from the boot image, whose one handle (of this
+// text_settings_give adds the settings page, the glyph caches, the font
+// outlines and the demand cache, read-only, to the mappings of a program
+// that has a surface or a terminal, and sets the bit of each range in its
+// values. A cache mapping has no flag: the right Read only, for every
+// program, the program `settings` included. The pages of the caches and of
+// the outlines come from the boot image, whose one handle (of this
 // service) has no right Write.
 text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
 	if settings_page == nil {
 		return
 	}
-	if count^ + 1 + len(glyph_cache_mappings) > len(mappings) {
-		mapping_dropped_log("the settings page and the glyph caches", len(mappings))
+	// The page, the caches, the outlines and the demand cache.
+	if count^ + 1 + len(glyph_cache_mappings) + 2 > len(mappings) {
+		mapping_dropped_log("the settings page, the glyph caches, the font outlines and the demand cache", len(mappings))
 		return
 	}
 	mappings[count^] = {memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}
@@ -118,6 +135,13 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 			fixed_addresses.range_mapped_add(values, settings.glyph_cache_ranges[cache])
 		}
 	}
+	if font_outlines_mapping.page_count != 0 {
+		mappings[count^] = font_outlines_mapping
+		mappings[count^].flags = {}
+		count^ += 1
+		fixed_addresses.range_mapped_add(values, .Font_Outlines)
+	}
+	demand_cache_give(mappings, count, values)
 }
 
 // settings_boot_pass_start starts `settings` for its boot pass: it reads

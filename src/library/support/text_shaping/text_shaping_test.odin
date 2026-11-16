@@ -1,15 +1,18 @@
 #+build !freestanding
 package text_shaping
 
-import "modus:contract/demand_cache"
+import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
-import "core:mem"
+import "core:sync"
 import "core:testing"
+import "modus:support/fallback_glyphs"
 import "modus:support/vector_font"
 
 @(private = "file")
 b612_regular := #load("../../../../resources/fonts/b612.ttf")
+@(private = "file")
+paper_mono := #load("../../../../resources/fonts/paper_mono.ttf")
 
 // test_spacing builds the glyph cache of B612 (three positions at scale 1,
 // one at the scales 2 and 3) and gives the spacing of scale 1. The memory
@@ -142,68 +145,76 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	testing.expect_value(t, placed[0], Placed_Glyph{})
 }
 
-// With a demand cache: a character past the glyph cache is the replacement
-// glyph, with the advance of "0", and wanted, until the cache holds it at
-// the generation of the frame; then it is a glyph of the demand cache with
-// its own advance, and no pair. An absent character and an invalid
-// sequence are never wanted.
+// With a fallback face, a character past the glyph cache that a font of
+// the chain has is a fallback glyph with the advance of its font file and
+// no pair; the advance is the same at each measure, whatever the private
+// glyph cache holds. A character that no font has (ā, Ж), an invalid
+// sequence, and a code point past Unicode are the replacement glyph, with
+// the advance of "0". A spacing with no face (the module text_shaping)
+// places the replacement glyph, last.
 @(test)
-a_character_on_demand_is_placed_from_the_next_frame :: proc(t: ^testing.T) {
+a_fallback_glyph_has_the_advance_of_its_font :: proc(t: ^testing.T) {
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
+	defer fallback_glyphs.state = {}
+	fonts := [2]font_outlines.Font_Input{{"b612", b612_regular}, {"paper_mono", paper_mono}}
+	size := font_outlines.resource_size(fonts[:])
+	words := make([]u64, (size + 7) / 8)
+	defer delete(words)
+	bytes := ([^]u8)(raw_data(words))[:size]
+	_, written := font_outlines.resource_write(fonts[:], bytes)
+	testing.expect(t, written)
+	outlines, problem := font_outlines.validate(bytes)
+	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
+	fallback_glyphs.state = {}
+	_ = fallback_glyphs.open(&outlines, 0)
+
 	spacing, memory := test_spacing(t)
 	defer delete(memory)
-	file := ([^]u8)(raw_data(memory))[:int((^glyph_cache.Header)(raw_data(memory)).file_size)]
-	cache, _ := glyph_cache.validate(file)
-	bytes, allocation := mem.alloc_bytes(demand_cache.SIZE, demand_cache.PAGE_SIZE)
-	testing.expect(t, allocation == nil)
-	defer mem.free_bytes(bytes)
-	base := uintptr(raw_data(bytes))
-	faces: [demand_cache.Face]demand_cache.Face_Header
-	faces[.Interface] = {font_hash = cache.header.font_hash, flags = cache.header.flags}
-	writer := demand_cache.writer_open(base, vector_font.RENDERER_VERSION, faces)
-	reader, ok := demand_cache.reader_of(base, .Interface, &cache)
-	testing.expect(t, ok)
-	spacing.demand = &reader
+	testing.expect_value(t, spacing.fallback, fallback_glyphs.Face.Interface)
 	OMEGA :: rune(0x03A9)
-	A_MACRON :: rune(0x0101)
-	text := "AΩB\xffā"
-	demand_cache.reader_frame_begin(&reader)
+	text := "AΩB\xffāЖ─"
+	zero := spacing.advances['0' - glyph_cache.ASCII_FIRST]
 	placed: [8]Placed_Glyph
 	count, width, shaped := shape(&spacing, transmute([]u8)text, placed[:])
-	testing.expect(t, shaped && count == 5)
-	zero := spacing.advances['0' - glyph_cache.ASCII_FIRST]
-	testing.expect_value(t, placed[1].glyph, REPLACEMENT_GLYPH)
-	testing.expect_value(t, placed[1].advance, zero)
-	testing.expect_value(t, reader.wanted_count, 2) // Ω and ā; not the invalid byte.
-	testing.expect_value(t, reader.wanted[0], OMEGA)
-	testing.expect_value(t, reader.wanted[1], A_MACRON)
-	// The font service publishes Ω, and ā as absent.
-	entry := demand_cache.Entry{state = .Drawn, advances = {700, 1400, 2100}}
-	place, _ := demand_cache.place_find(&writer, .Interface, OMEGA)
-	demand_cache.publish(&writer, place, .Interface, OMEGA, entry)
-	place, _ = demand_cache.place_find(&writer, .Interface, A_MACRON)
-	demand_cache.publish(&writer, place, .Interface, A_MACRON, demand_cache.Entry{state = .Absent})
-	// The same frame: the same placed glyphs.
+	testing.expect(t, shaped && count == 7)
+	for index in ([?]int{3, 4, 5}) {
+		testing.expectf(t, placed[index].glyph == REPLACEMENT_GLYPH && placed[index].advance == zero, "glyph %v: the replacement glyph with the advance of 0", index)
+	}
+	omega_advance, found := fallback_glyphs.advance(.Interface, OMEGA, 1)
+	testing.expect(t, found && omega_advance > 0)
+	testing.expect_value(t, placed[1].glyph, FALLBACK_GLYPH_FIRST + u32(OMEGA))
+	testing.expect_value(t, placed[1].advance, omega_advance) // No pair with a fallback glyph.
+	testing.expect_value(t, placed[2].x, placed[1].x + omega_advance)
+	testing.expect_value(t, placed[0].advance, spacing.advances['A' - glyph_cache.ASCII_FIRST])
+	testing.expect_value(t, placed[6].glyph, FALLBACK_GLYPH_FIRST + 0x2500) // From Paper Mono, the second font.
+	// Draws in the private glyph cache change no advance.
+	for character in ([?]rune{OMEGA, 0x2500}) {
+		_, _, _ = fallback_glyphs.glyph(.Interface, character, 1, 0)
+	}
 	_, again, _ := shape(&spacing, transmute([]u8)text, placed[:])
 	testing.expect_value(t, again, width)
-	// The next frame.
-	demand_cache.reader_frame_begin(&reader)
-	count, width, shaped = shape(&spacing, transmute([]u8)text, placed[:])
-	testing.expect(t, shaped && count == 5)
-	testing.expect_value(t, placed[1].glyph, DEMAND_GLYPH_FIRST + u32(OMEGA))
-	testing.expect_value(t, placed[1].advance, i32(700)) // No pair with a glyph on demand.
-	testing.expect_value(t, placed[0].advance, spacing.advances['A' - glyph_cache.ASCII_FIRST])
-	testing.expect_value(t, placed[2].x, placed[1].x + 700)
-	testing.expect_value(t, placed[4].glyph, REPLACEMENT_GLYPH)
-	testing.expect_value(t, reader.wanted_count, 0)
-	// At scale 3 the advance of scale 3.
+	// A code point past Unicode, encoded in four bytes, is an invalid
+	// sequence.
+	past := [4]u8{0xF4, 0x90, 0x80, 0x80}
+	_, _, _ = shape(&spacing, past[:], placed[:1])
+	testing.expect_value(t, placed[0].glyph, REPLACEMENT_GLYPH)
+	// At scale 3, the advance of scale 3.
 	spacing.scale = 3
-	shape(&spacing, transmute([]u8)string("Ω"), placed[:1])
-	testing.expect_value(t, placed[0].advance, i32(2100))
-	// The module has no demand cache: the replacement glyph.
-	spacing.demand = nil
-	shape(&spacing, transmute([]u8)string("Ω"), placed[:1])
+	_, _, _ = shape(&spacing, transmute([]u8)string("Ω"), placed[:1])
+	large, _ := fallback_glyphs.advance(.Interface, OMEGA, 3)
+	testing.expect_value(t, placed[0].advance, large)
+	// A spacing with no face: the replacement glyph.
+	spacing.fallback = .None
+	_, _, _ = shape(&spacing, transmute([]u8)string("Ω"), placed[:1])
 	testing.expect_value(t, placed[0].glyph, REPLACEMENT_GLYPH)
 }
+
+// The tests of this package that open the fallback state run one at a
+// time: the state is one for the package, and the runner runs tests on
+// several threads.
+@(private = "file")
+fallback_test_lock: sync.Mutex
 
 // 10 000 texts in one call give the widths of 10 000 calls of one text.
 @(test)

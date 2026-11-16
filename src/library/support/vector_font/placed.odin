@@ -130,8 +130,9 @@ glyph_render_placed :: proc "contextless" (font: ^Font_File, measures: Font_Meas
 // scale: units * 8 * scale / units_per_cell pixels, rounded to the nearest
 // integer, a half up, toward plus infinity (divide_rounded): -42.5 gives
 // -42, 42.5 gives 43. A negative pair adjustment is rounded by the same
-// rule as a positive one, not toward 0: -42.67 gives -43.
-@(private)
+// rule as a positive one, not toward 0: -42.67 gives -43. The glyphs past
+// the glyph cache (src/library/support/fallback_glyphs) take their advance
+// from it too, so their advance is the advance that a build would give.
 units_to_subpixels :: proc "contextless" (units, scale, units_per_cell: int) -> i32 {
 	return i32(divide_rounded(i64(units) * i64(8 * scale * glyph_cache.SUBPIXEL), i64(units_per_cell)))
 }

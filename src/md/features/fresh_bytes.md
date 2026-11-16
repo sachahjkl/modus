@@ -88,4 +88,4 @@ An entropy service that stops after the reads of the start writes one line too:
 
 Built: the read of the device every 30 seconds, the mix in the root service, the pages of 32 bytes for each program, the mix at each refill and each key, the line of the first refresh, the stop after 3 refused reads, the line of `randomness` and the row of its window, the host tests of the contract and of the generator, and the machine test of `modustool test random`.
 
-Left: the programs that the root service starts with no mappings (the device services, the TPM service, the font service, `input`) and the programs that another program starts get no page. A starter that gives its child a page of its own is not built (ROADMAP.md, "Fresh bytes for the services and the children of a program").
+Left: the programs that the root service starts with no mappings (the device services, the TPM service, `input`) and the programs that another program starts get no page. A starter that gives its child a page of its own is not built (ROADMAP.md, "Fresh bytes for the services and the children of a program").

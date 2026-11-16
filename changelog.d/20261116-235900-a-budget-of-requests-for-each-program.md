@@ -1,3 +1,0 @@
-type: Security
-
-**A budget of requests for each program**: the font service reads at most 32 requests of one program in each window of 1000 ms, so a program that writes its request ring with no end no longer makes the service turn with no end. A request past the budget waits in the ring of its program until the window ends, and is then read, not dropped. The answer that spends the budget names the end of the window, each answer counts the windows in which the program passed, and the log has one line for each program at its first pass. Each program has its own budget and its own count, so a hold tells a program nothing of the requests of another. A program that asks only for what it draws never meets the budget.

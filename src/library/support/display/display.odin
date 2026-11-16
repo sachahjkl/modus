@@ -43,7 +43,9 @@ import "modus:support/graphics"
 import "modus:contract/ring"
 import "modus:support/key_path"
 import "modus:contract/fixed_addresses"
+import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
+import "modus:support/fallback_glyphs"
 import "modus:contract/pointer_pictures"
 import "modus:contract/settings"
 import "modus:contract/text_encoding"
@@ -564,14 +566,23 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 	if problems.bold.kind != .None && problems.bold.kind != .Not_Mapped {
 		system.log_in("programs", .Warning, "display: the bold glyph cache is refused: ", glyph_cache.problem_sentences[problems.bold.kind], ": the titles are the regular weight")
 	}
+	if problems.outlines.kind != .None && problems.outlines.kind != .Not_Mapped {
+		system.log_in("programs", .Warning, "display: the font outlines are refused: ", font_outlines.problem_sentences[problems.outlines.kind], ", value ", problems.outlines.value, ": the characters past the glyph caches draw the replacement glyph")
+	}
+	if problems.fonts_missing != {} {
+		system.log_in("programs", .Warning, "display: the font outlines lack ", u64(card(problems.fonts_missing)), " fonts of the fallback chains, or the renderer refuses them: the chains skip them")
+	}
 }
 
 // What text_settings_load refused: the problem of each glyph cache of the
-// font of the cells, and of the bold weight. A record of zeros: no problem.
+// font of the cells, of the bold weight and of the font outlines. A record
+// of zeros: no problem.
 Text_Settings_Problems :: struct {
 	cells:                 [settings.Grid_Fit]glyph_cache.Problem, // The cache of each grid fit.
 	cells_of_another_font: [settings.Grid_Fit]bool, // The cache is valid, and cannot draw cells (graphics.cell_cache_problem).
 	bold:                  glyph_cache.Problem, // The cache of the bold weight. Not_Mapped: the program has none.
+	outlines:              font_outlines.Problem, // The font outlines. Not_Mapped: the program has none.
+	fonts_missing:         fallback_glyphs.Outline_Fonts, // The fonts of the chains that the outlines lack or that the renderer refuses.
 }
 
 // text_settings_load does the work of text_settings_open and writes no
@@ -588,6 +599,9 @@ text_settings_load :: proc "contextless" (ctx: ^system.Context) -> (problems: Te
 		return {}, false
 	}
 	settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
+	// The outlines first: the faces of the glyph caches below are found
+	// by the hash of their font files.
+	problems.outlines, problems.fonts_missing = fallback_load(ctx)
 	places := [settings.Grid_Fit]settings.Glyph_Cache {
 		.On  = .With_Grid_Fit,
 		.Off = .Without_Grid_Fit,
@@ -611,9 +625,6 @@ text_settings_load :: proc "contextless" (ctx: ^system.Context) -> (problems: Te
 	if problems.bold.kind == .None {
 		problems.bold = graphics.text_bold_cache_use(bold)
 	}
-	// The faces of the demand cache beside the caches of cells, when the
-	// starter mapped it.
-	cell_demand_load(ctx, &bold, problems.bold.kind == .None)
 	text_settings_apply()
 	return problems, true
 }
@@ -698,8 +709,9 @@ appearance_of_choice_use :: proc "contextless" (choice: settings.Choice) -> bool
 
 // text_settings_apply gives the choice of the settings page to
 // src/library/support/graphics: the font, the order of the stripes, the
-// glyph cache of the grid fit and its face of the demand cache, and the
-// appearance in force.
+// glyph cache of the grid fit, and the appearance in force. The private
+// glyph cache keeps its glyphs: its key holds the grid fit and the scale,
+// and its words do not depend on the order of the stripes.
 text_settings_apply :: proc "contextless" () {
 	if settings_page == nil {
 		return
@@ -713,6 +725,5 @@ text_settings_apply :: proc "contextless" () {
 	} else {
 		font = .Spleen
 	}
-	cell_demand_given(grid_fit, glyph_cache_valid[grid_fit])
 	graphics.text_choice_set(font, graphics.Subpixel_Order(u8(settings.subpixel_order_of(choice))))
 }

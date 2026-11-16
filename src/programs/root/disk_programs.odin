@@ -584,7 +584,8 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client), 1 = nickname[0], 2 = nickname[1], 3 = nickname[2], 4 = program_page.hash_head(hash)}})
 	grants[system.GRANT_DISPLAY] = {display_memory, {.Read, .Write}}
 	// The date page, the fresh bytes page, the settings page, five glyph
-	// caches, the file of the storage service.
+	// caches, the font outlines, the demand cache, the file of the storage
+	// service.
 	mappings: [12]system.Mapping
 	mapping_count := 0
 	date_page_give(mappings[:], &mapping_count, &values)
