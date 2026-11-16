@@ -12,10 +12,11 @@ import "core:math/bits"
 // threads and the size of its window. Each counted part is a fact of the
 // files of the build.
 
-// The pages that the starter and the kernel pay for the first thread: its
-// stack, the page of the context of the program, and its thread area. The
-// guard page of a thread area has no memory.
-BUDGET_FIRST_THREAD_PAGES :: op.STACK_PAGES + 1 + (op.THREAD_AREA_PAGES - 1)
+// The pages that the starter and the kernel pay for the program and its
+// first thread: its stack, the page of the context of the program, its
+// thread area, and the own log ring that the kernel takes from the budget
+// at Program_Create. The guard page of a thread area has no memory.
+BUDGET_FIRST_THREAD_PAGES :: op.STACK_PAGES + 1 + (op.THREAD_AREA_PAGES - 1) + op.OWN_LOG_PAGES
 
 // The pages of each other thread: the stack that system.thread_start makes
 // when its caller gives no count, and its thread area.
@@ -44,7 +45,7 @@ Budget_Count :: struct {
 //
 // Example: the stated budget {working_memory_pages = 100, threads = 3,
 // window_width = 512, window_height = 256}, a module of 5 pages and one
-// import of 3 pages give 100 + 8 + (68 + 2 * 19) + 256 = 470 pages, the
+// import of 3 pages give 100 + 8 + (72 + 2 * 19) + 256 = 474 pages, the
 // least programs and 3 threads.
 budget_count :: proc(stated: Stated_Budget, module_memory_size: u64, import_memory_sizes: []u64) -> (counted: Budget_Count, ok: bool) {
 	add :: proc(sum: ^u64, value: u64) -> bool {
