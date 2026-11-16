@@ -1,6 +1,7 @@
 #+build !freestanding
 package tpm2
 
+import info "modus:contract/boot_info"
 import "core:testing"
 
 // Each command is compared with its bytes, as part 3 of the TPM 2.0
@@ -765,4 +766,328 @@ the_refusals_of_the_lockout_hierarchy_are_named :: proc(t: ^testing.T) {
 	code, problem = status_answer(taken[:])
 	testing.expect_value(t, problem, Answer_Problem.None)
 	testing.expect_value(t, code, RESPONSE_SUCCESS)
+}
+
+// The commands of the TPM floors, byte for byte (TPM 2.0 part 3,
+// TPM2_NV_ReadPublic, TPM2_NV_Read, TPM2_NV_DefineSpace,
+// TPM2_NV_UndefineSpace, TPM2_NV_SetBits).
+@(test)
+the_floor_commands_have_their_bytes :: proc(t: ^testing.T) {
+	buffer: [256]u8
+	count := nv_read_public_command(buffer[:], info.KEY_FLOOR_INDEX)
+	expected_public := [?]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0E, 0x00, 0x00, 0x01, 0x69, 0x01, 0x80, 0x6D, 0x00}
+	testing.expect_value(t, count, len(expected_public))
+	testing.expect(t, string(buffer[:count]) == string(expected_public[:]))
+
+	count = nv_read_command(buffer[:], info.version_floor_index(1))
+	expected_read := [?]u8 {
+		0x80, 0x02, 0x00, 0x00, 0x00, 0x23, 0x00, 0x00, 0x01, 0x4E,
+		0x01, 0x80, 0x6D, 0x01, 0x01, 0x80, 0x6D, 0x01, // The index authorizes its own read.
+		0x00, 0x00, 0x00, 0x09, 0x40, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, // The empty password.
+		0x00, 0x08, 0x00, 0x00, // 8 bytes from the first.
+	}
+	testing.expect_value(t, count, len(expected_read))
+	testing.expect(t, string(buffer[:count]) == string(expected_read[:]))
+
+	policy: [DIGEST_SIZE]u8
+	for index in 0 ..< DIGEST_SIZE {
+		policy[index] = u8(0xB0 + index)
+	}
+	count = floor_define_command(buffer[:], info.KEY_FLOOR_INDEX, &policy)
+	expected_define_head := [?]u8 {
+		0x80, 0x02, 0x00, 0x00, 0x00, 0x4D, 0x00, 0x00, 0x01, 0x2A,
+		0x40, 0x00, 0x00, 0x01, // The owner hierarchy.
+		0x00, 0x00, 0x00, 0x09, 0x40, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, // No authorization value of the index.
+		0x00, 0x2E, // The public area: 46 bytes.
+		0x01, 0x80, 0x6D, 0x00, 0x00, 0x0B, // The index, SHA-256.
+		0x02, 0x04, 0x00, 0x28, // POLICYWRITE, the type bits, AUTHREAD, NO_DA.
+		0x00, 0x20, // The policy: 32 bytes.
+	}
+	testing.expect_value(t, count, len(expected_define_head) + DIGEST_SIZE + 2)
+	testing.expect(t, string(buffer[:len(expected_define_head)]) == string(expected_define_head[:]))
+	testing.expect(t, string(buffer[len(expected_define_head):][:DIGEST_SIZE]) == string(policy[:]))
+	testing.expect_value(t, buffer[count - 2], 0x00)
+	testing.expect_value(t, buffer[count - 1], 0x08) // 8 bytes of data.
+	testing.expect_value(t, floor_define_command(buffer[:count - 1], info.KEY_FLOOR_INDEX, &policy), 0)
+
+	count = nv_undefine_command(buffer[:], info.version_floor_index(1))
+	expected_undefine := [?]u8 {
+		0x80, 0x02, 0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x01, 0x22,
+		0x40, 0x00, 0x00, 0x01, 0x01, 0x80, 0x6D, 0x01, // The owner hierarchy, then the index.
+		0x00, 0x00, 0x00, 0x09, 0x40, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00,
+	}
+	testing.expect_value(t, count, len(expected_undefine))
+	testing.expect(t, string(buffer[:count]) == string(expected_undefine[:]))
+
+	count = floor_set_bits_command(buffer[:], info.KEY_FLOOR_INDEX, 0x0300_0000, floor_bit(2))
+	expected_set_bits := [?]u8 {
+		0x80, 0x02, 0x00, 0x00, 0x00, 0x27, 0x00, 0x00, 0x01, 0x35,
+		0x01, 0x80, 0x6D, 0x00, 0x01, 0x80, 0x6D, 0x00,
+		0x00, 0x00, 0x00, 0x09, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, // The policy session: no nonce, continue, an empty HMAC.
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, // Bit 1: the floor 2.
+	}
+	testing.expect_value(t, count, len(expected_set_bits))
+	testing.expect(t, string(buffer[:count]) == string(expected_set_bits[:]))
+	count = floor_set_bits_command(buffer[:], info.KEY_FLOOR_INDEX, 0x0300_0000, floor_bit(info.FLOOR_LIMIT))
+	testing.expect_value(t, buffer[count - 8], 0x80) // Bit 63, big-endian.
+
+	// The index planted with an authorization value, as the tool plants it:
+	// the same area, and a sized value in place of the empty one.
+	value := [3]u8{'a', 'b', 'c'}
+	count = floor_area_define_command(buffer[:], info.KEY_FLOOR_INDEX, &policy, value[:])
+	testing.expect_value(t, count, len(expected_define_head) + DIGEST_SIZE + 2 + len(value))
+	testing.expect_value(t, buffer[28], 0x03) // The size of the value, after the empty password.
+	testing.expect(t, string(buffer[29:32]) == "abc")
+	too_long: [AUTHORIZATION_VALUE_SIZE + 1]u8
+	testing.expect_value(t, floor_area_define_command(buffer[:], info.KEY_FLOOR_INDEX, &policy, too_long[:]), 0)
+}
+
+// The decision of the boot program for each answer about a floor
+// (src/md/features/rollback_floors.md): a planted index, never written or
+// with an authorization value, and a foreign one are removed and defined
+// again; a read that fails for another reason changes nothing.
+@(test)
+each_finding_of_a_floor_has_its_step :: proc(t: ^testing.T) {
+	pcr_7: [DIGEST_SIZE]u8
+	policy := floor_policy_digest(&pcr_7)
+	buffer: [256]u8
+	public: Nv_Public
+	index := info.KEY_FLOOR_INDEX
+
+	absent := [?]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x01, 0x8B}
+	_, code, problem := nv_public_answer(absent[:])
+	testing.expect_value(t, floor_state_of_public(problem, code, &public, index, &policy), info.Floor_State.Absent)
+	// A failure of the TPM that names no handle: the floor is not read.
+	failed := [?]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x09, 0x01}
+	_, code, problem = nv_public_answer(failed[:])
+	testing.expect_value(t, floor_state_of_public(problem, code, &public, index, &policy), info.Floor_State.Not_Read)
+	testing.expect_value(t, floor_state_of_public(.Malformed, 0, &public, index, &policy), info.Floor_State.Not_Read)
+
+	public, code, problem = nv_public_answer(floor_public_answer_write(buffer[:], index, FLOOR_ATTRIBUTES, policy[:], FLOOR_DATA_SIZE))
+	testing.expect_value(t, floor_state_of_public(problem, code, &public, index, &policy), info.Floor_State.Never_Written)
+	public, code, problem = nv_public_answer(floor_public_answer_write(buffer[:], index, FLOOR_ATTRIBUTES | NV_WRITTEN, policy[:], FLOOR_DATA_SIZE))
+	testing.expect_value(t, floor_state_of_public(problem, code, &public, index, &policy), info.Floor_State.Held)
+	// The policy of another PCR 7: after a change of db or dbx.
+	other_pcr_7 := pcr_7
+	other_pcr_7[0] = 1
+	other_policy := floor_policy_digest(&other_pcr_7)
+	public, code, problem = nv_public_answer(floor_public_answer_write(buffer[:], index, FLOOR_ATTRIBUTES | NV_WRITTEN, other_policy[:], FLOOR_DATA_SIZE))
+	testing.expect_value(t, floor_state_of_public(problem, code, &public, index, &policy), info.Floor_State.Foreign)
+
+	state, floor := floor_state_of_read(.None, RESPONSE_SUCCESS, floor_bit(3))
+	testing.expect_value(t, state, info.Floor_State.Held)
+	testing.expect_value(t, floor, 3)
+	// TPM_RC_BAD_AUTH and TPM_RC_AUTH_FAIL of session 1, and
+	// TPM_RC_NV_AUTHORIZATION: an index with an authorization value.
+	for refused_code in ([3]u32{0x9A2, 0x98E, RESPONSE_NV_AUTHORIZATION}) {
+		state, floor = floor_state_of_read(.Refused, refused_code, 0)
+		testing.expectf(t, state == .Read_Refused && floor == 0, "the code 0x%X is no refusal of the authorization", refused_code)
+	}
+	state, floor = floor_state_of_read(.Refused, 0x902, 0) // TPM_RC_OBJECT_MEMORY.
+	testing.expect_value(t, state, info.Floor_State.Not_Read)
+	state, _ = floor_state_of_read(.Malformed, 0, 0)
+	testing.expect_value(t, state, info.Floor_State.Not_Read)
+
+	testing.expect_value(t, floor_step_of(.Held), Floor_Step.Raise)
+	testing.expect_value(t, floor_step_of(.Absent), Floor_Step.Define_Then_Raise)
+	for planted in ([3]info.Floor_State{.Foreign, .Never_Written, .Read_Refused}) {
+		testing.expect_value(t, floor_step_of(planted), Floor_Step.Remove_Then_Define_Then_Raise)
+	}
+	testing.expect_value(t, floor_step_of(.Not_Read), Floor_Step.Nothing)
+	testing.expect_value(t, floor_step_of(.None), Floor_Step.Nothing)
+}
+
+// floor_public_answer_write writes an answer of TPM2_NV_ReadPublic: the
+// public area of an index, then a name of SHA-256.
+@(private = "file")
+floor_public_answer_write :: proc(buffer: []u8, index: u32, attributes: u32, policy: []u8, data_size: u16) -> []u8 {
+	writer := Command_Writer{buffer = buffer}
+	put_u16(&writer, TAG_NO_SESSIONS)
+	put_u32(&writer, 0)
+	put_u32(&writer, RESPONSE_SUCCESS)
+	area_place := writer.count
+	put_u16(&writer, 0)
+	put_u32(&writer, index)
+	put_u16(&writer, ALGORITHM_SHA256)
+	put_u32(&writer, attributes)
+	put_sized(&writer, policy)
+	put_u16(&writer, data_size)
+	set_u16_at(&writer, area_place, u16(writer.count - area_place - 2))
+	name: [2 + DIGEST_SIZE]u8
+	name[1] = u8(ALGORITHM_SHA256)
+	put_sized(&writer, name[:])
+	set_u32_at(&writer, 2, u32(writer.count))
+	return buffer[:writer.count]
+}
+
+// The vector of the policy of a floor, from sha256sum: PCR 7 holds 32
+// bytes of 0x22, PCR 11 its 32 zero bytes before the measure; the
+// selection is PCR 7 and PCR 11.
+@(test)
+the_floor_policy_has_its_digest :: proc(t: ^testing.T) {
+	pcr_7: [DIGEST_SIZE]u8
+	for &item in pcr_7 {
+		item = 0x22
+	}
+	policy := floor_policy_digest(&pcr_7)
+	expected := [DIGEST_SIZE]u8{0x79, 0x72, 0x14, 0x3f, 0x4c, 0xf8, 0x90, 0xc8, 0xeb, 0xa1, 0x4a, 0x9b, 0x41, 0xb6, 0x93, 0xd0, 0xef, 0x19, 0x67, 0x9b, 0xa4, 0x2d, 0x44, 0x33, 0x35, 0x34, 0xa8, 0xbd, 0xdb, 0x6b, 0x4a, 0xc0}
+	testing.expect(t, policy == expected)
+	// Another PCR 7, as with Secure Boot off or another db: another policy.
+	pcr_7[0] = 0x23
+	testing.expect(t, floor_policy_digest(&pcr_7) != expected)
+}
+
+// The public area of a floor of this system passes, written or not. Each
+// other area is foreign: another index, another hash, another type, another
+// way to write, another policy, another size.
+@(test)
+a_foreign_index_is_no_floor :: proc(t: ^testing.T) {
+	pcr_7: [DIGEST_SIZE]u8
+	policy := floor_policy_digest(&pcr_7)
+	buffer: [256]u8
+	answer := floor_public_answer_write(buffer[:], info.KEY_FLOOR_INDEX, FLOOR_ATTRIBUTES, policy[:], FLOOR_DATA_SIZE)
+	public, code, problem := nv_public_answer(answer)
+	testing.expect_value(t, problem, Answer_Problem.None)
+	testing.expect_value(t, code, RESPONSE_SUCCESS)
+	testing.expect_value(t, public.index, info.KEY_FLOOR_INDEX)
+	testing.expect(t, floor_public_check(&public, info.KEY_FLOOR_INDEX, &policy))
+	testing.expect(t, !floor_public_check(&public, info.version_floor_index(1), &policy))
+
+	written := floor_public_answer_write(buffer[:], info.KEY_FLOOR_INDEX, FLOOR_ATTRIBUTES | NV_WRITTEN, policy[:], FLOOR_DATA_SIZE)
+	public, _, problem = nv_public_answer(written)
+	testing.expect_value(t, problem, Answer_Problem.None)
+	testing.expect(t, floor_public_check(&public, info.KEY_FLOOR_INDEX, &policy))
+
+	NV_AUTHORIZATION_WRITE :: u32(1 << 2)
+	NV_OWNER_WRITE :: u32(1 << 1)
+	NV_TYPE_COUNTER :: u32(1 << 4)
+	NV_TYPE_ORDINARY :: u32(0)
+	foreign_attributes := [?]u32 {
+		FLOOR_ATTRIBUTES | NV_AUTHORIZATION_WRITE, // Anyone with the empty value raises it.
+		FLOOR_ATTRIBUTES | NV_OWNER_WRITE, // Any system with the owner value raises it.
+		FLOOR_ATTRIBUTES &~ NV_TYPE_MASK | NV_TYPE_COUNTER, // A counter: another meaning of its value.
+		FLOOR_ATTRIBUTES &~ NV_TYPE_MASK | NV_TYPE_ORDINARY, // An ordinary index: a writer sets it lower.
+		FLOOR_ATTRIBUTES &~ NV_NO_DICTIONARY_ATTACK,
+	}
+	for attributes in foreign_attributes {
+		answer = floor_public_answer_write(buffer[:], info.KEY_FLOOR_INDEX, attributes, policy[:], FLOOR_DATA_SIZE)
+		public, _, problem = nv_public_answer(answer)
+		testing.expect_value(t, problem, Answer_Problem.None)
+		testing.expectf(t, !floor_public_check(&public, info.KEY_FLOOR_INDEX, &policy), "an index with the attributes 0x%X is a floor", attributes)
+	}
+	other_policy := policy
+	other_policy[31] ~= 1
+	answer = floor_public_answer_write(buffer[:], info.KEY_FLOOR_INDEX, FLOOR_ATTRIBUTES, other_policy[:], FLOOR_DATA_SIZE)
+	public, _, _ = nv_public_answer(answer)
+	testing.expect(t, !floor_public_check(&public, info.KEY_FLOOR_INDEX, &policy))
+	// No policy, and a policy of 48 bytes: a policy of another hash.
+	answer = floor_public_answer_write(buffer[:], info.KEY_FLOOR_INDEX, FLOOR_ATTRIBUTES, nil, FLOOR_DATA_SIZE)
+	public, _, problem = nv_public_answer(answer)
+	testing.expect_value(t, problem, Answer_Problem.None)
+	testing.expect(t, !floor_public_check(&public, info.KEY_FLOOR_INDEX, &policy))
+	long_policy: [48]u8
+	copy(long_policy[:], policy[:])
+	answer = floor_public_answer_write(buffer[:], info.KEY_FLOOR_INDEX, FLOOR_ATTRIBUTES, long_policy[:], FLOOR_DATA_SIZE)
+	public, _, problem = nv_public_answer(answer)
+	testing.expect_value(t, problem, Answer_Problem.None)
+	testing.expect(t, !floor_public_check(&public, info.KEY_FLOOR_INDEX, &policy))
+	answer = floor_public_answer_write(buffer[:], info.KEY_FLOOR_INDEX, FLOOR_ATTRIBUTES, policy[:], 16)
+	public, _, _ = nv_public_answer(answer)
+	testing.expect(t, !floor_public_check(&public, info.KEY_FLOOR_INDEX, &policy))
+}
+
+// Hostile answers of TPM2_NV_ReadPublic and of TPM2_NV_Read: a size that
+// does not fit, a byte after the fields, a policy longer than any digest,
+// data of another size. No value comes from such an answer.
+@(test)
+a_hostile_answer_of_an_index_gives_nothing :: proc(t: ^testing.T) {
+	pcr_7: [DIGEST_SIZE]u8
+	policy := floor_policy_digest(&pcr_7)
+	buffer: [256]u8
+	good := floor_public_answer_write(buffer[:], info.KEY_FLOOR_INDEX, FLOOR_ATTRIBUTES, policy[:], FLOOR_DATA_SIZE)
+	length := len(good)
+
+	// One byte more inside the answer, with its size: the name does not end it.
+	longer: [256]u8
+	copy(longer[:], good)
+	longer[5] = u8(length + 1)
+	public, _, problem := nv_public_answer(longer[:length + 1])
+	testing.expect_value(t, problem, Answer_Problem.Malformed)
+	testing.expect_value(t, public.index, 0)
+	// The size of the public area past the end of the answer.
+	past: [256]u8
+	copy(past[:], good)
+	past[11] = 0xF0
+	_, _, problem = nv_public_answer(past[:length])
+	testing.expect_value(t, problem, Answer_Problem.Malformed)
+	// The size of the public area one byte short of its fields: the policy
+	// then reads into the data size, and the area does not end at its end.
+	short: [256]u8
+	copy(short[:], good)
+	short[11] -= 1
+	_, _, problem = nv_public_answer(short[:length])
+	testing.expect_value(t, problem, Answer_Problem.Malformed)
+	// A policy longer than the largest digest.
+	long_policy: [NV_POLICY_LIMIT + 1]u8
+	answer := floor_public_answer_write(buffer[:], info.KEY_FLOOR_INDEX, FLOOR_ATTRIBUTES, long_policy[:], FLOOR_DATA_SIZE)
+	_, _, problem = nv_public_answer(answer)
+	testing.expect_value(t, problem, Answer_Problem.Malformed)
+	// The answer of an index that is not defined: TPM_RC_HANDLE of handle 1.
+	absent := [?]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x01, 0x8B}
+	code: u32
+	_, code, problem = nv_public_answer(absent[:])
+	testing.expect_value(t, problem, Answer_Problem.Refused)
+	testing.expect(t, handle_absent(code))
+	testing.expect(t, !handle_absent(0x99D)) // A policy that fails names no absent handle.
+	testing.expect(t, !handle_absent(0x00B)) // A format 0 code with the same low bits.
+
+	// The answer of TPM2_NV_Read: the size of the parameters, 8 bytes, then
+	// the area of the session.
+	read := [?]u8 {
+		0x80, 0x02, 0x00, 0x00, 0x00, 0x1D, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x0A, 0x00, 0x08,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, // Bits 0 and 2: the floor 3.
+		0x00, 0x00, 0x01, 0x00, 0x00,
+	}
+	bits, read_code, read_problem := nv_read_answer(read[:])
+	testing.expect_value(t, read_problem, Answer_Problem.None)
+	testing.expect_value(t, read_code, RESPONSE_SUCCESS)
+	testing.expect_value(t, bits, 5)
+	testing.expect_value(t, floor_of_bits(bits), 3)
+	// 4 bytes of data in place of 8.
+	short_read := read
+	short_read[5] = 0x19
+	short_read[13] = 0x06
+	short_read[15] = 0x04
+	bits, _, read_problem = nv_read_answer(short_read[:0x19])
+	testing.expect_value(t, read_problem, Answer_Problem.Malformed)
+	testing.expect_value(t, bits, 0)
+	// A size of the parameters past the end.
+	past_read := read
+	past_read[13] = 0x40
+	_, _, read_problem = nv_read_answer(past_read[:])
+	testing.expect_value(t, read_problem, Answer_Problem.Malformed)
+	// The refusal of a read of an index that was never written.
+	uninitialized := [?]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x01, 0x4A}
+	_, read_code, read_problem = nv_read_answer(uninitialized[:])
+	testing.expect_value(t, read_problem, Answer_Problem.Refused)
+	testing.expect_value(t, read_code, u32(0x14A))
+}
+
+// The floor is the place of the highest set bit plus one, and the raise to
+// a number sets the one bit that gives it.
+@(test)
+the_floor_is_the_highest_bit :: proc(t: ^testing.T) {
+	testing.expect_value(t, floor_of_bits(0), 0)
+	testing.expect_value(t, floor_of_bits(1), 1)
+	testing.expect_value(t, floor_of_bits(0b1011), 4)
+	testing.expect_value(t, floor_of_bits(u64(1) << 63), u64(info.FLOOR_LIMIT))
+	testing.expect_value(t, floor_bit(0), 0)
+	testing.expect_value(t, floor_bit(info.FLOOR_LIMIT + 1), 0)
+	for number in u64(1) ..= info.FLOOR_LIMIT {
+		testing.expect_value(t, floor_of_bits(floor_bit(number)), number)
+		// Bits only add: a lower raise after a higher one keeps the higher floor.
+		testing.expect_value(t, floor_of_bits(floor_bit(number) | floor_bit(1)), number)
+	}
 }
