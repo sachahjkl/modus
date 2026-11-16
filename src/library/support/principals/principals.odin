@@ -123,7 +123,7 @@ Change_End :: enum u8 {
 
 @(rodata)
 change_end_sentences := [Change_End]string {
-	.None                 = "unlock stopped before the end of the change",
+	.None                 = "unlock stopped before the end: the old or the new secret opens",
 	.Passphrase_Changed   = "the passphrase is changed",
 	.Recovery_Key_Changed = "the new recovery key is kept; the old one opens no new file",
 	.Cancelled            = "the change is cancelled: nothing changed",

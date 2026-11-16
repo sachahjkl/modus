@@ -842,6 +842,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Stop:
 				for &item in started {
 					if item.program != 0 && item.client == system.Handle(record.values[0]) {
+						// A close of the window of unlock is a stop that
+						// this service asked: it does not count toward the
+						// bound of its restarts.
+						if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
+							unlock_stop_asked = true
+						}
 						system.call(.Program_Stop, u64(item.program), 0)
 					}
 				}
@@ -2236,8 +2242,8 @@ reap :: proc "contextless" () {
 			// The kernel forgets the stop report with the last handle,
 			// which release closes: a disk program keeps it here.
 			stop_report_keep(&item)
-			if system.name_of(item.name[:]) == "unlock" {
-				unlock_stopped(code != 0)
+			if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
+				unlock_stopped()
 			}
 			release(&item)
 		}

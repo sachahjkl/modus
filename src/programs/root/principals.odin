@@ -55,14 +55,19 @@ unlock_start_asked: bool
 // The mode of the last `unlock` that started: a lock stops the `unlock` of
 // a change, which the session asked for (principal_lock).
 unlock_running_mode: u64
-// The stops of `unlock` with a code other than 0, and its starts that
-// failed, since the last lock or the last start of a session. Past the
-// bound, the root service starts it no more while a principal is locked,
-// until the machine starts again: a file that stops it at once must not
-// start it in a loop. A close of its window counts too, so the bound
-// leaves room for a close by mistake.
+// The stops of `unlock` that the root service did not ask, while a
+// principal is locked, whatever their code, and its starts that failed for
+// another cause than a full table, since the last lock or the last start
+// of a session. Past the bound, the root service starts it no more while a
+// principal is locked, until the machine starts again: a file that stops
+// it at once, with any code, must not start it in a loop. A close of its
+// window and a stop at a lock are asked by the root service, so they never
+// count: closes by mistake never reach the bound.
 UNLOCK_RESTART_LIMIT :: 3
 unlock_failed_stops: int
+// The root service asked the stop of the `unlock` that runs (a close of
+// its window, a lock during a change): its stop does not count.
+unlock_stop_asked: bool
 
 // The change in progress: the caller of Principal_Change waits for its
 // completion until `unlock` gives the end, or stops (principal_change_end,
@@ -232,6 +237,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	// (unlock_for_a_locked_principal).
 	if running := find("unlock"); running != nil {
 		if unlock_running_mode == principals.MODE_CHANGE_PASSPHRASE || unlock_running_mode == principals.MODE_NEW_RECOVERY_KEY {
+			unlock_stop_asked = true
 			system.call(.Program_Stop, u64(running.program), 0)
 			system.log_in("programs", .Info, "root: the lock stops the change in the window of unlock; unlock asks for the passphrase when it stopped")
 		} else {
@@ -243,15 +249,20 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	return .Ok
 }
 
-// unlock_stopped counts a stop of `unlock` that reap found: a stop with a
-// code other than 0 counts toward UNLOCK_RESTART_LIMIT.
-unlock_stopped :: proc "contextless" (failed: bool) {
-	if !failed {
+// unlock_stopped counts a stop of `unlock` that reap found: each stop
+// while a principal is locked, whatever its code, unless the root service
+// asked it. An `unlock` that stops at once with the code 0 (a store that
+// lost the file of a principal whose record is locked) must be bounded as
+// a fault is.
+unlock_stopped :: proc "contextless" () {
+	asked := unlock_stop_asked
+	unlock_stop_asked = false
+	if asked || !principal_locked() {
 		return
 	}
 	unlock_failed_stops += 1
-	if unlock_failed_stops == UNLOCK_RESTART_LIMIT && principal_locked() {
-		system.log_in("programs", .Warning, "root: unlock stopped ", u64(UNLOCK_RESTART_LIMIT), " times with an error while a principal is locked: it starts no more until the machine starts again")
+	if unlock_failed_stops == UNLOCK_RESTART_LIMIT {
+		system.log_in("programs", .Warning, "root: unlock stopped ", u64(UNLOCK_RESTART_LIMIT), " times while a principal is locked, with no stop that the root service asked: it starts no more until the machine starts again")
 	}
 }
 
@@ -274,7 +285,9 @@ unlock_for_a_locked_principal :: proc "contextless" () {
 	if !principal_locked() || find("unlock") != nil || unlock_failed_stops >= UNLOCK_RESTART_LIMIT {
 		return
 	}
-	if unlock_start(principals.MODE_UNLOCK, "") != .Ok {
+	// A full table is not counted: a slot comes free only with a stop, and
+	// a stop is an event, so the next pass tries again with no hot loop.
+	if status := unlock_start(principals.MODE_UNLOCK, ""); status != .Ok && status != .No_Slot {
 		unlock_failed_stops += 1
 	}
 }
@@ -305,7 +318,9 @@ principal_change_finish :: proc "contextless" (end: principals.Change_End, probl
 	asker := principal_change_asker
 	principal_change_asker = nil
 	if asker != nil && asker.program != 0 && asker.requests.head != nil {
-		system.send(&asker.requests.completions, ring.Record{kind = u32(system.Status.Ok), tag = principal_change_tag, values = {0 = u64(end), 1 = u64(problem)}})
+		if !system.send(&asker.requests.completions, ring.Record{kind = u32(system.Status.Ok), tag = principal_change_tag, values = {0 = u64(end), 1 = u64(problem)}}) {
+			system.log_in("programs", .Warning, "root: the completion ring of ", system.Module_Name{system.name_of(asker.name[:])}, " is full: the end of the change does not reach it, and its line waits until Escape")
+		}
 	}
 }
 
