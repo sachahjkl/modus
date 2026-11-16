@@ -7,6 +7,7 @@ import "core:os"
 import "core:strings"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/pointer_pictures"
 import "modus:contract/release"
 import "modus:contract/replacement_list"
 import "modus:contract/system_description"
@@ -377,6 +378,72 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 	description_entries, description_valid := system_description.entries(description)
 	if !found || !description_valid || len(description_entries) == 0 || description_entries[0].hash != kernel_hash {
 		return fmt.tprintf("the system description of %s does not name the kernel module of the build", image_path)
+	}
+	// Only a published volume: the machine test packages a volume of a
+	// development build, which may hold the theme of the owner.
+	if packaging == .Publisher_Keys_Only {
+		repository_license, license_found := repository_license_read()
+		if !license_found {
+			return fmt.tprintf("cannot read the license of the repository in %s", SITE_LICENSE_FILE)
+		}
+		if problem := release_pointer_theme_problem(image_path, image, resources, repository_license); problem != "" {
+			return problem
+		}
+	}
+	return ""
+}
+
+// repository_license_read gives the SPDX identifier of the license of the
+// repository, from the first line of LICENSE, as the reuse list reads it.
+repository_license_read :: proc() -> (license: string, ok: bool) {
+	text, read_error := os.read_entire_file(SITE_LICENSE_FILE, context.temp_allocator)
+	if read_error != nil {
+		return "", false
+	}
+	lines := site_lines(string(text))
+	if len(lines) == 0 {
+		return "", false
+	}
+	license = reuse_spdx_of_record_words(strings.trim_space(lines[0]))
+	return license, license != ""
+}
+
+// release_pointer_theme_problem says why a boot image holds a pointer theme
+// that a release must not publish, or gives "". The license of the theme of
+// the owner allows no public download. Its resource is refused by its name,
+// and each pointer theme file under any name by the license in its header:
+// a release holds only a theme under the license of the repository.
+release_pointer_theme_problem :: proc(image_path: string, image: []u8, resources: []info.Image_Entry, repository_license: string) -> string {
+	for &entry in resources {
+		name := system_description.name_of(&entry.name)
+		if name == pointer_pictures.RESOURCE_OF_THE_OWNER {
+			return fmt.tprintf("%s holds the resource %s, the pointer theme of the owner: a release image holds the pointer theme of the system only", image_path, name)
+		}
+		bytes, inside := info.image_entry_bytes(image, &entry)
+		if !inside {
+			return fmt.tprintf("the entry %s of %s points outside it", name, image_path)
+		}
+		if len(bytes) < size_of(u64) {
+			continue
+		}
+		magic: u64
+		for index in 0 ..< size_of(u64) {
+			magic |= u64(bytes[index]) << uint(8 * index)
+		}
+		if magic != pointer_pictures.MAGIC {
+			continue
+		}
+		// A copy: validate reads the file in place, and wants the alignment
+		// of an allocation, which an entry inside a test image may lack.
+		theme := make([]u8, len(bytes), context.temp_allocator)
+		copy(theme, bytes)
+		if found := pointer_pictures.validate(theme); found.kind != .None {
+			return fmt.tprintf("the resource %s of %s starts as a pointer theme file and is not a valid one (%v)", name, image_path, found.kind)
+		}
+		license := pointer_pictures.text_of(pointer_pictures.header(theme).license[:])
+		if license != repository_license {
+			return fmt.tprintf("the resource %s of %s is the pointer theme \"%s\" under the license %s, not %s, the license of the repository: a release image holds the pointer theme of the system only", name, image_path, pointer_pictures.text_of(pointer_pictures.header(theme).theme_name[:]), license, repository_license)
+		}
 	}
 	return ""
 }
@@ -807,6 +874,9 @@ release_image_command :: proc() -> int {
 	// work tree.
 	build_whole = true
 	test_build_checks = true
+	// The theme of the system only, whatever the environment names: the
+	// license of the theme of the owner allows no public download.
+	build_pointer_theme_of_the_owner = false
 	build_measure_start()
 	if !build_modules() {
 		return EXIT_FAILURE

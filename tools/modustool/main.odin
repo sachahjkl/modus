@@ -29,7 +29,8 @@
 //     command "module-build" run from the folder of another project
 //     (outside_module.odin)
 //   FONT_SOURCE: the BDF file of the font, for the command "font"
-//   POINTER_THEME_SOURCE: the folder of the Xcursor theme of the owner (docs/POINTERS.md)
+//   POINTER_THEME_SOURCE: the folder of the Xcursor theme of the owner (docs/POINTERS.md);
+//     only the default shell sets it, and `release image` ignores it
 //   VECTOR_FONT_SOURCES: the font files of the vector font candidates, for the command "vector_fonts"
 package modustool
 

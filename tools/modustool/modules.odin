@@ -257,7 +257,7 @@ build_modules :: proc() -> bool {
 	build_measure_step("the debug image", step_started)
 	step_started = time.tick_now()
 	// The pointer themes: the resources of the boot image (pointers.odin).
-	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
+	resources := build_pointer_themes(pointer_theme_source_of_the_build(), false) or_return
 	build_measure_step("the pointer themes", step_started)
 	step_started = time.tick_now()
 	// The glyph caches of the default font and of the interface font: five more resources (vector_fonts.odin).

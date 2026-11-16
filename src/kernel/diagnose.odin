@@ -508,6 +508,114 @@ diagnose :: proc "contextless" (program_index: u32, command: ring.Record, status
 	return record
 }
 
+// diagnose_command gives the error record of a command that failed, as
+// diagnose, and writes its table of error details when its kind names one
+// (src/md/features/kernel_error_details.md). It runs where diagnose runs:
+// after the operation freed its locks, and only on a failure, so a command
+// that succeeds never reads the bit here.
+diagnose_command :: proc "contextless" (program_index: u32, command: ring.Record, status: op.Status) -> errors.Error_Record {
+	if command.kind & op.COMMAND_NAMES_ERROR_DETAILS == 0 {
+		return diagnose(program_index, command, status)
+	}
+	named := command
+	named.kind &~= op.COMMAND_NAMES_ERROR_DETAILS
+	if named.kind == 0 || named.kind > u32(max(op.Operation)) {
+		return diagnose(program_index, command, status) // Unknown_Operation, with the kind that the program sent.
+	}
+	operation := op.Operation(named.kind)
+	// The dispatch refused the command before the operation: the last value
+	// is an argument of this operation, or the operation runs before the
+	// dispatch. It is not a table, and nothing is written there.
+	if !op.command_takes_error_details(operation) {
+		unsupported := errors.Error_Record{operation = i64(named.kind)}
+		record_set(&unsupported, .Unsupported, .None, 0, u64(named.kind), 0, 0)
+		return unsupported
+	}
+	record := diagnose(program_index, named, status)
+	error_details_write(&programs[program_index], operation, named.values, record)
+	return record
+}
+
+// error_details_write finds each argument of a refused command that the
+// checks of its form find wrong now, and writes the details in the table
+// place that the last value of the command names, with the Append rule.
+// The first detail is the error record; then one for each other argument,
+// in their order, at most one for each argument.
+@(private = "file")
+error_details_write :: proc "contextless" (program: ^Program, operation: op.Operation, v: [7]u64, first: errors.Error_Record) {
+	place: op.Error_Details_Place
+	place_address := v[op.ERROR_DETAILS_VALUE]
+	if !read_user(program, place_address, &place, size_of(place)) {
+		return // No table that the program can read: the completion holds the record.
+	}
+	details: [op.ERROR_DETAILS_MOST]errors.Error_Record
+	details[0] = first
+	count := 1
+	for n in 0 ..< op.ERROR_DETAILS_VALUE {
+		if i64(n + 1) == first.argument {
+			continue
+		}
+		detail := errors.Error_Record{operation = i64(operation)}
+		if argument_explain(&detail, program, operation, v, n) {
+			details[count] = detail
+			count += 1
+		}
+	}
+	// The place is the copy above: the program can change its memory at any
+	// time, and the kernel reads it once. A detail past the capacity is counted and not written: the Append
+	// rule. A detail that fits and that the program cannot receive (its page
+	// cannot be written, its address passes the end of the addresses) ends
+	// the answer there: the count then names only the records written, so a
+	// reader never takes old bytes for a detail.
+	record_size := u64(size_of(errors.Error_Record))
+	answered := u64(count)
+	for &detail, number in details[:count] {
+		at := place.count + u64(number)
+		if at < place.count || at >= place.capacity {
+			break
+		}
+		if at > (max(u64) - place.address) / record_size || !write_user(program, place.address + at * record_size, &detail, record_size) {
+			answered = u64(number)
+			break
+		}
+	}
+	total := place.count + answered
+	if total < place.count {
+		total = max(u64) // The count stops at the largest number.
+	}
+	_ = write_user(program, place_address + u64(offset_of(op.Error_Details_Place, count)), &total, size_of(total))
+}
+
+// argument_explain says what is wrong with the argument n of an operation
+// (from 0), from the checks that need no status: a handle, then the form
+// of a count, a set of flags or a choice. It reads only the handles of the
+// program and the values of the command: no fact of another program.
+@(private = "file")
+argument_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64, n: int) -> bool {
+	if handle_argument_explain(record, program, operation, v, n) {
+		return true
+	}
+	problem, limit := op.argument_value_problem(operation, n, v)
+	if problem == .None {
+		return false
+	}
+	record_set(record, problem, .None, n + 1, v[n], limit, 0)
+	return true
+}
+
+// write_user copies to memory of the program that runs, if it can write it.
+// Lock: the program lock: no unmap runs between user_range and user_copy.
+@(private = "file")
+write_user :: proc "contextless" (program: ^Program, address: u64, source: rawptr, size: u64) -> bool {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	if !user_range(program, address, size, true) {
+		return false
+	}
+	user_copy(rawptr(uintptr(address)), source, size)
+	return true
+}
+
 // handle_explain says what is wrong with a handle that an operation needs
 // of a kind (None: any kind) with rights. false: the handle is good.
 @(private = "file")
@@ -543,70 +651,29 @@ handle_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 
 @(private = "file")
 handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
-	form := &op.OPERATIONS[operation]
-	for parameter, n in form.parameters {
-		if parameter.form != .Handle && parameter.form != .Handle_Or_Zero || parameter.form == .Handle_Or_Zero && v[n] == 0 {
-			continue
-		}
-		rights := parameter.rights
-		kind := parameter.kind
-		#partial switch operation {
-		case .Memory_Map:
-			if n == 0 {
-				flags := transmute(op.Map_Flags)v[3]
-				if .Write in flags {
-					rights += {.Write}
-				}
-				if .Execute in flags {
-					rights += {.Execute}
-				}
-			}
-		case .Handle_Give:
-			if n == 1 && v[0] == 0 {
-				rights = {} // A copy in this program needs no Give.
-			}
-			if n == 0 {
-				// The target: a program with Control, or a memory object.
-				slot, found := read_handle_find(program, v[0], .None)
-				if found && slot.kind == .Program {
-					rights = {.Control}
-				} else if found && slot.kind != .Memory {
-					kind = .Program
-				}
-			}
-		case .Thread_Control:
-			// The right depends on the command: Write for a write of the
-			// registers, Control for a write of the schedule or of the
-			// placement. A command of the schedule or of the placement
-			// also takes the machine handle, with Schedule and Inspect.
-			if n == 0 && v[2] <= u64(max(op.Thread_Control_Command)) {
-				command := op.Thread_Control_Command(v[2])
-				rights = op.thread_control_rights(command)
-				machine_rights, by_machine_number := op.thread_control_machine_rights(command)
-				if op.thread_control_names_a_program(command) {
-					// The schedule of a program: the machine handle only,
-					// so each other handle is explained as a handle of the
-					// wrong kind.
-					kind, rights = .Machine, machine_rights
-				} else if slot, found := read_handle_find(program, v[0], .None); found && slot.kind == .Machine && by_machine_number {
-					kind, rights = .Machine, machine_rights
-				} else if op.thread_control_needs_the_debugger(command) || found && slot.kind == .Program && op.thread_control_takes_debug_handle(command) {
-					// The debugger of a program names a thread by the
-					// program handle with Debug.
-					kind, rights = .Program, {.Debug}
-				}
-			}
-		}
-		if handle_explain(record, program, n + 1, v[n], kind, rights) {
+	for n in 0 ..< len(v) {
+		if handle_argument_explain(record, program, operation, v, n) {
 			return true
 		}
 	}
+	return false
+}
+
+// handle_argument_explain says what is wrong with the handle argument n of
+// an operation (from 0), with the kind and the rights that the operation
+// needs of it, which can depend on the other arguments. false: the argument
+// is not a handle, or the handle is good.
+@(private = "file")
+handle_argument_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64, n: int) -> bool {
 	// The payer of a commit: a handle of the budget of the object, with
 	// Commit or Spend. The record says nothing of a budget that is not the
 	// payer: a program sees only what its handles let it see.
-	if operation == .Memory_Commit && transmute(op.Commit_Flags)v[4] & {.Decommit} == {} {
+	if operation == .Memory_Commit && n == 1 && transmute(op.Commit_Flags)v[4] & {.Decommit} == {} {
 		if v[1] == 0 {
 			record_set(record, .Handle_Absent, .None, 2, 0, 0, 0)
+			return true
+		}
+		if handle_explain(record, program, 2, v[1], .Budget, {}) {
 			return true
 		}
 		slot, found := read_handle_find(program, v[1], .Budget)
@@ -621,8 +688,64 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 			record_set(record, .Not_Payer, .None, 2, v[1], 0, 0)
 			return true
 		}
+		return false
 	}
-	return false
+	// A handle that the operation does not read with these values names no
+	// fault: the budget of a decommit, the thread of a command out of range.
+	parameter := op.OPERATIONS[operation].parameters[n]
+	if parameter.form != .Handle && parameter.form != .Handle_Or_Zero || !op.argument_is_read(operation, n, v) {
+		return false
+	}
+	rights := parameter.rights
+	kind := parameter.kind
+	#partial switch operation {
+	case .Memory_Map:
+		if n == 0 {
+			flags := transmute(op.Map_Flags)v[3]
+			if .Write in flags {
+				rights += {.Write}
+			}
+			if .Execute in flags {
+				rights += {.Execute}
+			}
+		}
+	case .Handle_Give:
+		if n == 1 && v[0] == 0 {
+			rights = {} // A copy in this program needs no Give.
+		}
+		if n == 0 {
+			// The target: a program with Control, or a memory object.
+			slot, found := read_handle_find(program, v[0], .None)
+			if found && slot.kind == .Program {
+				rights = {.Control}
+			} else if found && slot.kind != .Memory {
+				kind = .Program
+			}
+		}
+	case .Thread_Control:
+		// The right depends on the command: Write for a write of the
+		// registers, Control for a write of the schedule or of the
+		// placement. A command of the schedule or of the placement
+		// also takes the machine handle, with Schedule and Inspect.
+		if n == 0 && v[2] <= u64(max(op.Thread_Control_Command)) {
+			command := op.Thread_Control_Command(v[2])
+			rights = op.thread_control_rights(command)
+			machine_rights, by_machine_number := op.thread_control_machine_rights(command)
+			if op.thread_control_names_a_program(command) {
+				// The schedule of a program: the machine handle only,
+				// so each other handle is explained as a handle of the
+				// wrong kind.
+				kind, rights = .Machine, machine_rights
+			} else if slot, found := read_handle_find(program, v[0], .None); found && slot.kind == .Machine && by_machine_number {
+				kind, rights = .Machine, machine_rights
+			} else if op.thread_control_needs_the_debugger(command) || found && slot.kind == .Program && op.thread_control_takes_debug_handle(command) {
+				// The debugger of a program names a thread by the
+				// program handle with Debug.
+				kind, rights = .Program, {.Debug}
+			}
+		}
+	}
+	return handle_explain(record, program, n + 1, v[n], kind, rights)
 }
 
 // read_pays_for says if a budget pays for a memory object now.

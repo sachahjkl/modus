@@ -1,0 +1,3 @@
+type: Added
+
+**Error details for the kernel operations.** A kernel command can name a table of error details: bit 31 of its kind, and the address of the table in its last value (`system.call_with_error_details`). When the kernel refuses the command, the table gets the error record, then one error detail for each other argument that the kernel finds wrong: a handle, a count above its limit, an unknown flag, a choice out of its range. A table that is too small holds the first details and counts each one. A command with no table runs the same lines of the kernel as before: only the default branch of the dispatch, which already refused an unknown operation, reads the bit. `Log` and `Guest_Run` take no table. No kernel operation is added.
