@@ -2,7 +2,6 @@ package modustool
 
 import "modus:contract/errors"
 import "modus:contract/remote"
-import "core:crypto"
 import "core:encoding/hex"
 import "core:fmt"
 import "core:mem"
@@ -261,8 +260,17 @@ peer_remote_client_key_set :: proc(state: ^Peer_Remote, private_key: [32]u8) {
 // console of the machine. A key that the source of the tool fixes would be
 // a key that anyone who reads the source holds.
 peer_remote_client_key_draw :: proc(state: ^Peer_Remote) -> string {
+	// The tool holds the system's copy of core:crypto, whose rand_bytes stops
+	// the program: on the host the bytes come from getrandom.
 	private_key: [32]u8
-	crypto.rand_bytes(private_key[:])
+	drawn := 0
+	for drawn < len(private_key) {
+		count, error := linux.getrandom(private_key[drawn:], {})
+		if error != .NONE {
+			fmt.panicf("modustool: getrandom failed: %v", error)
+		}
+		drawn += count
+	}
 	peer_remote_client_key_set(state, private_key)
 	mem.zero_explicit(&private_key, size_of(private_key))
 	return hex_of(state.client_public_key[:])
