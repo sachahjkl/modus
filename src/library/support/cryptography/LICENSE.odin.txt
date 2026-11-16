@@ -2,6 +2,9 @@ The code of src/library/support/cryptography that the manifest names is taken fr
 Odin's core:crypto, tag dev-2026-05 (https://github.com/odin-lang/Odin),
 under the license of Odin (zlib), whose text follows. Each such file is
 marked in its first line as altered (its imports only).
+The same license covers the libraries of the Odin compiler that the build
+compiles into the modules: base:runtime in each one, and each package of
+core: that a source of the system imports (docs/PROPERTIES.md, "Reuse list").
 
 Copyright (c) 2016-2025 Ginger Bill. All rights reserved.
 

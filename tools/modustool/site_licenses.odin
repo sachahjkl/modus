@@ -18,6 +18,9 @@ SITE_POSY_MANIFEST :: "resources/pointers/posy.manifest"
 SITE_SYSTEM_POINTER_MANIFEST :: "resources/pointers/system.manifest"
 SITE_ODIN_LICENSE_FILE :: CRYPTOGRAPHY_FOLDER + "/LICENSE.odin.txt"
 SITE_FIAT_LICENSE_FILE :: CRYPTOGRAPHY_FOLDER + "/LICENSE.fiat-crypto.txt"
+// The start of the line of a license file that names its license, in the
+// form of SPDX: "SPDX-License-Identifier: BSD-2-Clause".
+SPDX_IDENTIFIER_LINE_START :: "SPDX-License-Identifier: "
 
 Site_License_Row :: struct {
 	what:           string,
@@ -397,7 +400,7 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	spleen := Site_License_Row {
 		what          = "Spleen 8x16",
 		place         = SITE_SPLEEN_LICENSE_FILE,
-		license       = SITE_NOT_RECORDED, // The file holds the text of the license, not its name.
+		license       = site_line_after(spleen_text, SPDX_IDENTIFIER_LINE_START),
 		author        = site_line_after(spleen_text, "Copyright "),
 		in_boot_image = "yes, in each program that draws text",
 	}
