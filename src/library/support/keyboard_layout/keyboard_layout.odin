@@ -1,8 +1,8 @@
 // The layouts of the keyboard (src/md/features/keyboard_layout.md): the
-// character of each key as a code point, and the dead keys of the layout
-// of France. The input service is the one user: it reads the setting
-// `keyboard_layout` at each key, and keeps the accent that waits in a
-// `Dead_Key_State`.
+// character of each key as a code point, the third level that AltGr gives,
+// and the dead keys of the layout of France. The input service is the one
+// user: it reads the setting `keyboard_layout` at each key, and keeps the
+// accent that waits in a `Dead_Key_State`.
 //
 // The package has no state of its own and makes no kernel call, so a host
 // test presses each key of each layout.
@@ -16,6 +16,17 @@ import "modus:contract/settings"
 TABLE_KEY_COUNT :: 0x3A
 KEY_LESS_GREATER :: 0x56 // The key between the left Shift and Z (or W) of a keyboard of 102 keys.
 KEY_DEAD_ACCENTS :: 0x1A // The key right of P: the dead keys of the layout of France.
+KEY_DEAD_TILDE :: 0x03 // The key of 2: with AltGr, the dead tilde of the layout of France.
+KEY_DEAD_GRAVE :: 0x08 // The key of 7: with AltGr, the dead grave accent of the layout of France.
+
+// The keys that choose the level of a key: Shift gives the second level,
+// AltGr the third. AltGr is the right Alt key, the scan code 0x38 after the
+// prefix 0xE0.
+Level_Key :: enum u8 {
+	Shift,
+	Alt_Graph,
+}
+Level_Keys :: bit_set[Level_Key;u8]
 
 // The characters of the keys, without Shift and with Shift.
 Key_Characters :: [2][TABLE_KEY_COUNT]rune
@@ -37,10 +48,36 @@ characters_french := Key_Characters {
 	{0, 0, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '°', '+', 8, '\t', 'A', 'Z', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', 0, '£', '\n', 0, 'Q', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'M', '%', 0, 0, 'µ', 'W', 'X', 'C', 'V', 'B', 'N', '?', '.', '/', '§', 0, '*', 0, ' '},
 }
 
+// Scan code set 1, layout of France: the character of each key with AltGr,
+// the third level. A key that the list does not name gives no character.
+// The keys of 2 and 7 are dead keys: their entry is 0, and dead_accent_of
+// gives their accent. AltGr with e gives the euro sign on an AZERTY
+// keyboard; the fonts do not draw it, so the key gives no character.
+@(rodata)
+characters_french_alt_graph := [TABLE_KEY_COUNT]rune {
+	0x04 = '#',
+	0x05 = '{',
+	0x06 = '[',
+	0x07 = '|',
+	0x09 = '\\',
+	0x0A = '^',
+	0x0B = '@',
+	0x0C = ']',
+	0x0D = '}',
+	0x0E = 8,
+	0x0F = '\t',
+	0x1B = '¤',
+	0x1C = '\n',
+	0x37 = '*',
+	0x39 = ' ',
+}
+
 // The accents of the dead keys, as the character that the accent alone
-// gives: the circumflex and the diaeresis.
+// gives: the circumflex, the diaeresis, the tilde and the grave accent.
 ACCENT_CIRCUMFLEX :: '^'
 ACCENT_DIAERESIS :: '¨'
+ACCENT_TILDE :: '~'
+ACCENT_GRAVE :: '`'
 
 // One letter with an accent: the letter, then the letter that the accent
 // makes of it.
@@ -58,17 +95,31 @@ circumflex_letters := [?]Accented_Letter{{'a', 'â'}, {'e', 'ê'}, {'i', 'î'}, 
 @(rodata)
 @(private)
 diaeresis_letters := [?]Accented_Letter{{'a', 'ä'}, {'e', 'ë'}, {'i', 'ï'}, {'o', 'ö'}, {'u', 'ü'}, {'y', 'ÿ'}, {'A', 'Ä'}, {'E', 'Ë'}, {'I', 'Ï'}, {'O', 'Ö'}, {'U', 'Ü'}}
+@(rodata)
+@(private)
+tilde_letters := [?]Accented_Letter{{'a', 'ã'}, {'o', 'õ'}, {'n', 'ñ'}, {'A', 'Ã'}, {'O', 'Õ'}, {'N', 'Ñ'}}
+@(rodata)
+@(private)
+grave_letters := [?]Accented_Letter{{'a', 'à'}, {'e', 'è'}, {'i', 'ì'}, {'o', 'ò'}, {'u', 'ù'}, {'A', 'À'}, {'E', 'È'}, {'I', 'Ì'}, {'O', 'Ò'}, {'U', 'Ù'}}
 
 // key_character gives the character of a key in a layout, as a code point,
-// or 0: a key with no character, a dead key, a key past the tables. code is
-// the scan code, with display.KEY_EXTENDED for an extended key.
-key_character :: proc "contextless" (layout: settings.Keyboard_Layout, shift: bool, code: u32) -> rune {
+// or 0: a key with no character, a dead key, a key past the tables. held
+// is the keys of the level that are down. code is the scan code, with
+// display.KEY_EXTENDED for an extended key.
+key_character :: proc "contextless" (layout: settings.Keyboard_Layout, held: Level_Keys, code: u32) -> rune {
+	shift := .Shift in held
+	// The layout of the United States has no third level: AltGr there
+	// changes no character.
+	third_level := layout == .French && (.Alt_Graph in held)
 	row := shift ? 1 : 0
 	if code == KEY_LESS_GREATER {
 		switch layout {
 		case .United_States:
 			return shift ? '|' : '\\'
 		case .French:
+			if third_level {
+				return 0
+			}
 			return shift ? '>' : '<'
 		}
 		return 0
@@ -80,16 +131,32 @@ key_character :: proc "contextless" (layout: settings.Keyboard_Layout, shift: bo
 	case .United_States:
 		return characters_united_states[row][code]
 	case .French:
+		// The third level ignores Shift: the layout builds no fourth level.
+		if third_level {
+			return characters_french_alt_graph[code]
+		}
 		return characters_french[row][code]
 	}
 	return 0
 }
 
 // dead_accent_of gives the accent of a dead key, or 0 for a key that is not
-// a dead key in this layout.
-dead_accent_of :: proc "contextless" (layout: settings.Keyboard_Layout, shift: bool, code: u32) -> rune {
-	if layout == .French && code == KEY_DEAD_ACCENTS {
-		return shift ? ACCENT_DIAERESIS : ACCENT_CIRCUMFLEX
+// a dead key in this layout with the keys of the level that are down.
+dead_accent_of :: proc "contextless" (layout: settings.Keyboard_Layout, held: Level_Keys, code: u32) -> rune {
+	if layout != .French {
+		return 0
+	}
+	if .Alt_Graph in held {
+		switch code {
+		case KEY_DEAD_TILDE:
+			return ACCENT_TILDE
+		case KEY_DEAD_GRAVE:
+			return ACCENT_GRAVE
+		}
+		return 0
+	}
+	if code == KEY_DEAD_ACCENTS {
+		return (.Shift in held) ? ACCENT_DIAERESIS : ACCENT_CIRCUMFLEX
 	}
 	return 0
 }
@@ -103,6 +170,10 @@ accented_letter :: proc "contextless" (accent, letter: rune) -> (accented: rune,
 		letters = circumflex_letters[:]
 	case ACCENT_DIAERESIS:
 		letters = diaeresis_letters[:]
+	case ACCENT_TILDE:
+		letters = tilde_letters[:]
+	case ACCENT_GRAVE:
+		letters = grave_letters[:]
 	}
 	for item in letters {
 		if item.letter == letter {
@@ -122,12 +193,12 @@ Dead_Key_State :: struct {
 // accent that waits. character is the character of the key record of the
 // press, or 0. accent_alone, when it is not 0, is the character of a key
 // record that goes before it: the accent that a key could not combine with.
-// modifier_key: the key is Shift or Control, which keeps the accent
+// modifier_key: the key is Shift, Control or AltGr, which keeps the accent
 // waiting. The rules are in src/md/features/keyboard_layout.md, "The
 // chosen form".
-key_press :: proc "contextless" (state: ^Dead_Key_State, layout: settings.Keyboard_Layout, shift: bool, code: u32, modifier_key: bool) -> (accent_alone: rune, character: rune) {
+key_press :: proc "contextless" (state: ^Dead_Key_State, layout: settings.Keyboard_Layout, held: Level_Keys, code: u32, modifier_key: bool) -> (accent_alone: rune, character: rune) {
 	waiting := state.accent
-	if accent := dead_accent_of(layout, shift, code); accent != 0 {
+	if accent := dead_accent_of(layout, held, code); accent != 0 {
 		if waiting != 0 {
 			// A dead key while an accent waits: the waiting accent alone.
 			state.accent = 0
@@ -136,14 +207,14 @@ key_press :: proc "contextless" (state: ^Dead_Key_State, layout: settings.Keyboa
 		state.accent = accent
 		return 0, 0
 	}
-	typed := key_character(layout, shift, code)
+	typed := key_character(layout, held, code)
 	if waiting == 0 {
 		return 0, typed
 	}
 	switch {
 	case typed == 0 && modifier_key:
-		// Shift and Control keep the accent: Shift then a letter gives a
-		// capital with its accent.
+		// Shift, Control and AltGr keep the accent: Shift then a letter
+		// gives a capital with its accent.
 		return 0, 0
 	case typed < ' ':
 		// A key with no character or a control character drops the accent.
