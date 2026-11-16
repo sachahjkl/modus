@@ -61,7 +61,7 @@ reuse_list_good_list_has_no_problem :: proc(t: ^testing.T) {
 	problems := reuse_list_problems(REUSE_TEST_GOOD_LIST, reuse_test_works[:], reuse_test_every_file_exists)
 	testing.expect_value(t, len(problems), 0)
 	for problem in problems {
-		testing.logf(t, "unexpected: %s", problem)
+		testing.expectf(t, false, "unexpected: %s", problem)
 	}
 }
 
@@ -132,7 +132,7 @@ reuse_list_of_the_repository_is_whole :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 	append(&problems, ..reuse_list_problems(document, works, reuse_file_exists))
 	for problem in problems {
-		testing.logf(t, "%s", problem)
+		testing.expectf(t, false, "%s", problem)
 	}
 	testing.expect_value(t, len(problems), 0)
 	runtime_found := false
