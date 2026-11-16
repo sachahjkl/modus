@@ -594,7 +594,7 @@ A minus before a variable is an answer, and a procedure literal inside the body 
 modustool: src/programs/manual/main.odin:618: the export show gives a negative number with no error record: give it the last parameter error: ^errors.Error_Record, and write the record on this path with errors.fail (docs/MODULE_CONTRACT.md, "8. Errors that diagnose")
 ```
 
-What it does not see: a `return` of a variable that holds a negative number, a helper of another package, and a failure that gives 0 or an empty text. Review holds them. The design: `src/md/api/export_error_records.md`.
+What it does not see: a `return` of a variable that holds a negative number, a helper of another package, and a failure that gives 0 or an empty text. A 0 and an empty text are also answers (`tally.last()` before the first add, `roman(0)`), and the source does not tell the two apart. Review holds them. The design: `src/md/api/export_error_records.md`.
 
 **When they run.** `modustool check` runs the three after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same three conditions on the sources of the repository.
 
