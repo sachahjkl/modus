@@ -196,6 +196,8 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "font_without_grid_fit.png", group = .Interface, guide = "docs/FONTS.md", caption = "The setting of the grid fit turned off: the vector font drawn from its second glyph cache."},
 	{file = "font_candidates.png", group = .Interface, guide = "docs/FONTS.md", caption = "Six candidate fonts beside Spleen 8x16, each from a glyph cache in fixed point, and a word of each enlarged."},
 	{file = "settings.png", group = .Interface, guide = "docs/FONTS.md", caption = "The program settings: the font, the subpixel order, the pointer theme and the grid fit change while the programs run."},
+	{file = "desktop_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The light appearance: the bar, the console and the settings in the light form of the color tokens, set with settings.set(\"appearance\", \"light\")."},
+	{file = "console_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The console in the light appearance: each value kind keeps its color, in its light value."},
 	{file = "keys_french.png", group = .Interface, guide = "docs/FONTS.md", caption = "The layout of France in the console: é from its key, ê from the dead key ^, € from AltGr with e, each drawn from the glyph cache with no box."},
 	{file = "settings_kept.png", group = .Interface, guide = "docs/FONTS.md", caption = "A setting kept across a restart of the machine: the next start finds the font Spleen in the store of settings."},
 

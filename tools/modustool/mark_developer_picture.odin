@@ -40,23 +40,23 @@ mark_animations_picture_write :: proc() -> bool {
 	}
 	colors := make([]graphics.Color, width * height, context.temp_allocator)
 	canvas := graphics.Canvas{pixels = raw_data(colors), width = width, height = height, stride = width}
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.DARK_BACKGROUND)
 	saved := graphics.text_state
 	defer graphics.text_state = saved
 	graphics.text_choice_set(.Spleen, .Red_Green_Blue)
 
 	y := MARK_ANIMATIONS_MARGIN
-	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, "The animations of the mark (" + MARK_SOURCE_FOLDER + "): frame 0 is the still heron; cells of 8 pixels", graphics.COLOR_TEXT)
+	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, "The animations of the mark (" + MARK_SOURCE_FOLDER + "): frame 0 is the still heron; cells of 8 pixels", graphics.DARK_TEXT)
 	y += MARK_ANIMATIONS_LINE
 	for animation in mark.Animation {
 		moves := "" if !mark.animation_moves(animation) else "; the home of the site and the program heron move the heron"
 		heading := fmt.tprintf("%s: %d frames, %d ms%s", mark.animation_names[animation], mark.animation_frame_count(animation), mark.animation_duration(animation), moves)
-		graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, heading, graphics.COLOR_KERNEL)
+		graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, heading, graphics.DARK_KERNEL)
 		count := mark.animation_frame_count(animation)
 		for frame in 0 ..= count {
 			x := MARK_ANIMATIONS_MARGIN + frame * column_width
 			cells, _ := mark.animation_frame_cells(animation, frame)
-			graphics.fill(canvas, x, y + MARK_ANIMATIONS_LINE, heron, heron, graphics.COLOR_CARD_TOP)
+			graphics.fill(canvas, x, y + MARK_ANIMATIONS_LINE, heron, heron, graphics.DARK_CARD_TOP)
 			mark.cells_draw(canvas, &cells, x, y + MARK_ANIMATIONS_LINE, MARK_ANIMATIONS_CELL_SIZE, .Smooth, false)
 			caption := "still"
 			if frame > 0 {
@@ -65,7 +65,7 @@ mark_animations_picture_write :: proc() -> bool {
 				caption = fmt.tprintf("%d: %d ms, %d cells", frame, row.duration_milliseconds, mark.cells_differ_count(&cells, &still))
 			}
 			fmt.assertf(len(caption) * MARK_ANIMATIONS_CHARACTER_WIDTH <= heron, "the text %q under a frame is wider than its box", caption)
-			graphics.text(canvas, x, y + MARK_ANIMATIONS_LINE + heron + 4, caption, graphics.COLOR_DIM)
+			graphics.text(canvas, x, y + MARK_ANIMATIONS_LINE + heron + 4, caption, graphics.DARK_DIM)
 		}
 		y += row_height
 		if mark.animation_moves(animation) {
@@ -74,7 +74,7 @@ mark_animations_picture_write :: proc() -> bool {
 		}
 	}
 	still_least, still_most := mark.still_bounds()
-	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, fmt.tprintf("On the home of the site: each animation once in a round, in an order of chance; still for %d to %d ms between two", still_least, still_most), graphics.COLOR_TEXT)
+	graphics.text(canvas, MARK_ANIMATIONS_MARGIN, y, fmt.tprintf("On the home of the site: each animation once in a round, in an order of chance; still for %d to %d ms between two", still_least, still_most), graphics.DARK_TEXT)
 
 	rgb := make([]u8, 3 * len(colors), context.temp_allocator)
 	for color, index in colors {

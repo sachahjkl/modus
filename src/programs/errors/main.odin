@@ -1193,30 +1193,30 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
-	interface.draw_text(table, 16, 8, "each case makes an error for real; under it, the sentence of its record: errors.Error_Record,", graphics.COLOR_DIM)
-	interface.draw_text(table, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. Its key or a click runs a case again; tab: the next page", graphics.COLOR_DIM)
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
+	interface.draw_text(table, 16, 8, "each case makes an error for real; under it, the sentence of its record: errors.Error_Record,", graphics.colors.dim)
+	interface.draw_text(table, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. Its key or a click runs a case again; tab: the next page", graphics.colors.dim)
 	page_text: [32]u8
-	interface.draw_text_right(table, WIDTH - 16, 8 + LINE, system.format(page_text[:], "page ", u64(shown_page + 1), " of ", u64(page_count)), graphics.COLOR_TEXT)
+	interface.draw_text_right(table, WIDTH - 16, 8 + LINE, system.format(page_text[:], "page ", u64(shown_page + 1), " of ", u64(page_count)), graphics.colors.text)
 	y := TOP
 	first := page_first[shown_page]
 	for &item, place in cases[first:page_first[shown_page + 1]] {
 		index := first + place
 		height := case_height(index)
 		if place % 2 == 0 {
-			interface.draw_rectangle(table, 8, y, WIDTH - 16, height, graphics.COLOR_TRACK)
+			interface.draw_rectangle(table, 8, y, WIDTH - 16, height, graphics.colors.track)
 		}
-		interface.draw_text(table, 16, y, key_names[index:index + 1], graphics.COLOR_DIM)
-		interface.draw_text(table, 32, y, item.text, graphics.COLOR_DIM)
-		interface.draw_text(table, 440, y, item.expected, graphics.COLOR_TEXT)
-		interface.draw_text(table, 640, y, item.right ? "the expected record" : "another answer", item.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
-		color: u32 = item.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED
+		interface.draw_text(table, 16, y, key_names[index:index + 1], graphics.colors.dim)
+		interface.draw_text(table, 32, y, item.text, graphics.colors.dim)
+		interface.draw_text(table, 440, y, item.expected, graphics.colors.text)
+		interface.draw_text(table, 640, y, item.right ? "the expected record" : "another answer", item.right ? graphics.colors.text : graphics.colors.failed)
+		color: u32 = item.right ? graphics.colors.text : graphics.colors.failed
 		// The whole sentence, on the lines that case_height counted.
 		interface.draw_text_wrapped(table, 32, y + LINE, SENTENCE_ROOM, string(item.sentence[:item.count]), color)
 		y += height
 	}
 	y += 8
 	line: [192]u8
-	interface.draw_text_wrapped(table, 16, y, WIDTH - 32, system.format(line[:], "a failure with its error record: ", kernel_failed, " ns in a kernel operation (success: ", kernel_good, " ns), ", direct_failed, " ns in a direct call (success: ", direct_good, " ns)"), graphics.COLOR_DIM)
+	interface.draw_text_wrapped(table, 16, y, WIDTH - 32, system.format(line[:], "a failure with its error record: ", kernel_failed, " ns in a kernel operation (success: ", kernel_good, " ns), ", direct_failed, " ns in a direct call (success: ", direct_good, " ns)"), graphics.colors.dim)
 	interface.window_frame_end(&drawing, &frame, window)
 }

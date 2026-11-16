@@ -1,12 +1,13 @@
-// The style sheet of the site. Its colors come from the table of the design
-// rules (src/library/support/graphics/rules.odin, docs/DESIGN.md) and from the mark
-// (src/library/support/mark): the site repeats no color of the rules as its own number.
+// The style sheet of the site. Its colors come from the table of the color
+// tokens of the design rules (src/library/support/graphics/rules.odin,
+// docs/DESIGN.md): its dark form is the dark appearance of the system, its
+// light form the light one. The site repeats no color of the rules as its
+// own number.
 package modustool
 
 import "core:fmt"
 import "core:strings"
 import "modus:support/graphics"
-import "modus:support/mark"
 
 // The level of graphics.mix for a percent.
 site_percent :: proc(percent: u32) -> u32 {
@@ -66,25 +67,29 @@ Site_Colors :: struct {
 	on_light:    bool,
 }
 
+// The dark form: the tokens of the dark appearance of the system.
 site_dark_colors :: proc() -> Site_Colors {
-	return Site_Colors{background = graphics.COLOR_BACKGROUND, card_top = graphics.COLOR_CARD_TOP, card_bottom = graphics.COLOR_CARD_BOTTOM, track = graphics.COLOR_TRACK, text = graphics.COLOR_TEXT, dim = graphics.COLOR_DIM, line = graphics.COLOR_TITLE, match = graphics.COLOR_BOOT_PROGRAM}
+	tokens := graphics.color_tokens_of(.Dark)
+	return Site_Colors{background = tokens.background, card_top = tokens.card_top, card_bottom = tokens.card_bottom, track = tokens.track, text = tokens.text, dim = tokens.dim, line = tokens.title, match = tokens.boot_program}
 }
 
-// The light form: the light background of the mark, white cards, the text
-// in the color of the dark background (as the name of the light mark), and
-// the dim color at 60 % so that it keeps its contrast on white.
+// The light form: the tokens of the light appearance of the system, which
+// is the light form of the site (src/md/features/appearance.md): the light
+// background of the mark, white cards, the text in the color of the dark
+// background (as the name of the light mark), and the dim color at 60 % so
+// that it keeps its contrast on white.
 site_light_colors :: proc() -> Site_Colors {
-	background := graphics.Color(mark.BACKGROUND_LIGHT)
+	tokens := graphics.color_tokens_of(.Light)
 	return Site_Colors {
-		background = background,
-		card_top = graphics.COLOR_WHITE,
-		card_bottom = graphics.mix(graphics.COLOR_WHITE, background, site_percent(50)),
-		track = graphics.mix(background, graphics.COLOR_DIM, site_percent(25)),
-		text = graphics.Color(mark.name_color(true)),
-		dim = graphics.shade(graphics.COLOR_DIM, 60),
-		line = graphics.COLOR_TITLE,
+		background = tokens.background,
+		card_top = tokens.card_top,
+		card_bottom = tokens.card_bottom,
+		track = tokens.track,
+		text = tokens.text,
+		dim = tokens.dim,
+		line = tokens.title,
 		// The accent at half its light keeps its contrast on white.
-		match = graphics.shade(graphics.COLOR_BOOT_PROGRAM, 50),
+		match = graphics.shade(graphics.DARK_BOOT_PROGRAM, 50),
 		on_light = true,
 	}
 }
@@ -942,9 +947,9 @@ site_scroll_variables :: proc(builder: ^strings.Builder, light: bool) {
 // line color, darker, under white text: the same in both forms), and the
 // placeholder of the search field, on the track color.
 site_polish_colors :: proc(light: bool) -> (selection, selection_text, placeholder: graphics.Color) {
-	selection = graphics.shade(graphics.COLOR_TITLE, 70)
+	selection = graphics.shade(graphics.DARK_TITLE, 70)
 	selection_text = graphics.COLOR_WHITE
-	placeholder = light ? site_light_colors().dim : graphics.shade(graphics.COLOR_DIM, 115)
+	placeholder = light ? site_light_colors().dim : graphics.shade(graphics.DARK_DIM, 115)
 	return
 }
 
@@ -1011,7 +1016,7 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// The grid of points of the background (docs/DESIGN.md, section 3): a
 	// square of 2 pixels each 24 pixels, at 12 + 24 n. A picture in the style
 	// sheet itself, so that the page asks for no other file.
-	point := fmt.tprintf("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\"><rect width=\"2\" height=\"2\" fill=\"%s\"/></svg>", site_color(graphics.COLOR_POINT))
+	point := fmt.tprintf("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\"><rect width=\"2\" height=\"2\" fill=\"%s\"/></svg>", site_color(graphics.DARK_POINT))
 	strings.write_string(&builder, ".section-home {\n  background-image: url(\"")
 	strings.write_string(&builder, site_svg_data_address(point))
 	strings.write_string(&builder, "\");\n  background-position: 12px 12px;\n}\n")

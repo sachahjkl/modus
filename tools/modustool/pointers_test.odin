@@ -2,7 +2,6 @@ package modustool
 
 import "modus:contract/pointer_pictures"
 import "modus:support/graphics"
-import "modus:support/mark"
 import "core:fmt"
 import "core:math"
 import "core:mem"
@@ -411,9 +410,10 @@ system_pointer_theme_has_an_edge_around_its_fill :: proc(t: ^testing.T) {
 // dark of the desktop, its value for a light surround on white.
 @(test)
 pointer_colors_show_on_the_surfaces_of_each_form :: proc(t: ^testing.T) {
+	dark, light := graphics.DARK_COLOR_TOKENS, graphics.LIGHT_COLOR_TOKENS
 	surfaces := [pointer_pictures.Pointer_Form][]graphics.Color {
-		.Dark  = {graphics.COLOR_BACKGROUND, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM, graphics.COLOR_TRACK, graphics.COLOR_TITLE_QUIET, graphics.COLOR_TITLE_END},
-		.Light = {graphics.COLOR_WHITE, graphics.Color(mark.BACKGROUND_LIGHT), graphics.COLOR_TEXT, site_light_colors().card_bottom, site_light_colors().track},
+		.Dark  = {dark.background, dark.card_top, dark.card_bottom, dark.track, dark.title_quiet, dark.title_end},
+		.Light = {light.background, light.card_top, light.card_bottom, light.track, light.title_quiet},
 	}
 	for form in pointer_pictures.Pointer_Form {
 		colors := POINTER_FORM_COLORS[form]

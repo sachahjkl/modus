@@ -2,7 +2,6 @@ package modustool
 
 import "modus:contract/pointer_pictures"
 import "modus:support/graphics"
-import "modus:support/mark"
 import "core:fmt"
 import "core:os"
 import "core:time"
@@ -25,11 +24,10 @@ POINTER_PREVIEW_LINE :: 20 // A line of the font of 8 by 16.
 POINTER_PREVIEW_NAME_WIDTH :: 30 * 8 // 30 characters: the longest name has 28.
 POINTER_PREVIEW_MAGNIFIED :: 192 // The side of a magnified picture: 24 at 8 times, 48 at 4 times.
 
-// The surface under each form: the background of the desktop, and the
-// light background of the site.
+// The surface under each form: the background of each appearance.
 pointer_preview_surfaces := [pointer_pictures.Pointer_Form]graphics.Color {
-	.Dark  = graphics.COLOR_BACKGROUND,
-	.Light = graphics.Color(mark.BACKGROUND_LIGHT),
+	.Dark  = graphics.DARK_COLOR_TOKENS.background,
+	.Light = graphics.LIGHT_COLOR_TOKENS.background,
 }
 // The two greys of the block where the edge and the fill both show: the
 // first at 1:1, both as a checkerboard when magnified.
@@ -76,13 +74,13 @@ run_pointers_preview :: proc(output: string) -> int {
 
 	colors := make([]graphics.Color, width * height, context.temp_allocator)
 	canvas := graphics.Canvas{pixels = raw_data(colors), width = width, height = height, stride = width}
-	graphics.clear(canvas, graphics.COLOR_TRACK)
+	graphics.clear(canvas, graphics.DARK_TRACK)
 	saved := graphics.text_state
 	defer graphics.text_state = saved
 	graphics.text_choice_set(.Spleen, .Red_Green_Blue)
 
 	y := POINTER_PREVIEW_MARGIN
-	graphics.text(canvas, POINTER_PREVIEW_MARGIN, y, fmt.tprintf("%s: each shape, the dark form then the light form, each on its surface and on grey, each size at 1:1 and magnified; amber: the hot spot", SYSTEM_POINTER_MANIFEST), graphics.COLOR_TEXT)
+	graphics.text(canvas, POINTER_PREVIEW_MARGIN, y, fmt.tprintf("%s: each shape, the dark form then the light form, each on its surface and on grey, each size at 1:1 and magnified; amber: the hot spot", SYSTEM_POINTER_MANIFEST), graphics.DARK_TEXT)
 	y += POINTER_PREVIEW_LINE
 	for shape in pointer_pictures.Pointer_Shape {
 		item: ^Manifest_Shape
@@ -97,13 +95,13 @@ run_pointers_preview :: proc(output: string) -> int {
 		frame_count := len(item.frames)
 		for frame in 0 ..< max(min(frame_count, 2), 1) {
 			name := pointer_pictures.SHAPE_NAMES[shape]
-			graphics.text(canvas, POINTER_PREVIEW_MARGIN, y + POINTER_PREVIEW_GAP, name, graphics.COLOR_TEXT)
-			graphics.text(canvas, POINTER_PREVIEW_MARGIN, y + POINTER_PREVIEW_GAP + POINTER_PREVIEW_LINE, fmt.tprintf("hot %d,%d", item.hot_spot.x, item.hot_spot.y), graphics.COLOR_BOOT_PROGRAM)
+			graphics.text(canvas, POINTER_PREVIEW_MARGIN, y + POINTER_PREVIEW_GAP, name, graphics.DARK_TEXT)
+			graphics.text(canvas, POINTER_PREVIEW_MARGIN, y + POINTER_PREVIEW_GAP + POINTER_PREVIEW_LINE, fmt.tprintf("hot %d,%d", item.hot_spot.x, item.hot_spot.y), graphics.DARK_BOOT_PROGRAM)
 			// The time of the frame: the first frame at 0, the second at the
 			// delay of the first.
 			time_milliseconds: u64 = 0
 			if frame_count > 0 {
-				graphics.text(canvas, POINTER_PREVIEW_MARGIN, y + POINTER_PREVIEW_GAP + 2 * POINTER_PREVIEW_LINE, fmt.tprintf("frame %d of %d", frame + 1, frame_count), graphics.COLOR_DIM)
+				graphics.text(canvas, POINTER_PREVIEW_MARGIN, y + POINTER_PREVIEW_GAP + 2 * POINTER_PREVIEW_LINE, fmt.tprintf("frame %d of %d", frame + 1, frame_count), graphics.DARK_DIM)
 				if frame > 0 {
 					time_milliseconds = u64(item.frames[0].delay)
 				}
@@ -180,14 +178,14 @@ pointer_preview_draw :: proc(canvas: graphics.Canvas, x, y, side, magnification:
 		}
 	}
 	if magnification == 1 {
-		graphics.fill(canvas, x + hot_x, y - 4, 1, 3, graphics.COLOR_BOOT_PROGRAM)
-		graphics.fill(canvas, x - 4, y + hot_y, 3, 1, graphics.COLOR_BOOT_PROGRAM)
+		graphics.fill(canvas, x + hot_x, y - 4, 1, 3, graphics.DARK_BOOT_PROGRAM)
+		graphics.fill(canvas, x - 4, y + hot_y, 3, 1, graphics.DARK_BOOT_PROGRAM)
 		return
 	}
-	grid := graphics.mix(surface, graphics.COLOR_DIM, 72)
+	grid := graphics.mix(surface, graphics.DARK_DIM, 72)
 	for line in 0 ..= side {
 		graphics.fill(canvas, x + line * magnification, y, 1, side * magnification, grid)
 		graphics.fill(canvas, x, y + line * magnification, side * magnification, 1, grid)
 	}
-	graphics.outline(canvas, x + hot_x * magnification, y + hot_y * magnification, magnification + 1, magnification + 1, 1, graphics.COLOR_BOOT_PROGRAM)
+	graphics.outline(canvas, x + hot_x * magnification, y + hot_y * magnification, magnification + 1, magnification + 1, 1, graphics.DARK_BOOT_PROGRAM)
 }

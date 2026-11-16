@@ -33,19 +33,21 @@ Code_Class_Color :: struct {
 @(rodata)
 code_class_colors := [Code_Class]Code_Class_Color {
 	.None        = {},
-	.Keyword     = {accent = COLOR_KERNEL, dark_percent = 115, light_percent = 55},
-	.Type        = {accent = COLOR_FIRMWARE, dark_percent = 115, light_percent = 60},
-	.Literal     = {accent = COLOR_MEMORY, dark_percent = 100, light_percent = 50},
-	.Name        = {accent = COLOR_PROGRAM, dark_percent = 100, light_percent = 45},
-	.Directive   = {accent = COLOR_MACHINE, dark_percent = 115, light_percent = 55},
-	.Comment     = {accent = COLOR_DIM, dark_percent = 125, light_percent = 60},
-	.Punctuation = {accent = COLOR_DIM, dark_percent = 140, light_percent = 50},
+	.Keyword     = {accent = DARK_KERNEL, dark_percent = 115, light_percent = 55},
+	.Type        = {accent = DARK_FIRMWARE, dark_percent = 115, light_percent = 60},
+	.Literal     = {accent = DARK_MEMORY, dark_percent = 100, light_percent = 50},
+	.Name        = {accent = DARK_PROGRAM, dark_percent = 100, light_percent = 45},
+	.Directive   = {accent = DARK_MACHINE, dark_percent = 115, light_percent = 55},
+	.Comment     = {accent = DARK_DIM, dark_percent = 125, light_percent = 60},
+	.Punctuation = {accent = DARK_DIM, dark_percent = 140, light_percent = 50},
 }
 
-// code_class_color gives the color of a class on a dark surface, or on the
-// light page when light. The class None has no color: the caller keeps the
-// color of the text around it.
-code_class_color :: proc "contextless" (class: Code_Class, light: bool) -> Color {
+// code_class_color gives the color of a class in one appearance: on the
+// surfaces of the dark appearance and of the dark page of the site, or of
+// the light appearance and the light page. A program passes
+// `graphics.appearance`, the appearance in force. The class None has no
+// color: the caller keeps the color of the text around it.
+code_class_color :: proc "contextless" (class: Code_Class, of: Appearance) -> Color {
 	description := code_class_colors[class]
-	return shade(description.accent, light ? description.light_percent : description.dark_percent)
+	return shade(description.accent, of == .Light ? description.light_percent : description.dark_percent)
 }

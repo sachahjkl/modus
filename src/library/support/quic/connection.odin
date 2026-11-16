@@ -268,7 +268,7 @@ Connection_Configuration :: struct {
 // }
 // ```
 Connection :: struct {
-	configuration:                     Connection_Configuration, // A copy of the configuration of the caller. The private key of a server is erased from it when TLS starts: the handshake has its own copy.
+	configuration:                     Connection_Configuration, // A copy of the configuration of the caller. The private key of a server or of a client is erased from it when TLS starts: the handshake has its own copy.
 	cryptography:                      ^Cryptography, // The cryptography module of the program: each seal, open and key derivation is a call of it. The caller keeps it loaded for the life of the record.
 	generator:                         ^random.Generator, // The random generator of the thread: the connection identifiers and the key share of TLS come from it.
 	state:                             Connection_State, // Where the connection is: a program reads it after each call.
@@ -634,8 +634,9 @@ connection_tls_start :: proc "contextless" (connection: ^Connection, error: ^err
 	connection.tls_started = true
 	started := tls_start(&connection.tls, tls_configuration, connection.cryptography, connection.generator, error)
 	// The configuration of the connection keeps no copy of the private key
-	// of a server: the handshake has its own.
+	// of a server or of a client: the handshake has its own.
 	secret_erase(&tls_configuration.server_private_key, size_of(tls_configuration.server_private_key))
+	secret_erase(&tls_configuration.client_private_key, size_of(tls_configuration.client_private_key))
 	return started
 }
 
@@ -743,7 +744,7 @@ tls_failure_code :: proc "contextless" (connection: ^Connection) -> u64 {
 @(private)
 connection_peer_parameters_are_known :: proc "contextless" (connection: ^Connection) -> bool {
 	#partial switch connection.tls.state {
-	case .Client_Waits_For_Certificate, .Client_Waits_For_Certificate_Verify, .Client_Waits_For_Finished, .Server_Waits_For_Finished, .Connected:
+	case .Client_Waits_For_Certificate, .Client_Waits_For_Certificate_Verify, .Client_Waits_For_Finished, .Server_Waits_For_Client_Certificate, .Server_Waits_For_Client_Certificate_Verify, .Server_Waits_For_Finished, .Connected:
 		return true
 	}
 	return false

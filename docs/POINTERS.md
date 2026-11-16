@@ -207,14 +207,8 @@ coordinate = digits [ "." digits ]          units: 1 to 3 digits, then at most 3
 - **A layer** paints its contours over the layers before it, by role: a paint names a role, and each form gives the role its color. The contours of one layer are a union: the tool adds each contour in one direction, so two contours that overlap never cancel. A layer has a contour at least, and a contour two segments at least.
 - **The edge is 1 pixel at every size, inside the contours.** For `fill` and `accent`, the tool paints the contours in the edge color, then the contours moved in by 1 pixel in the color of the layer: the contours are the whole shape, and a larger size has a finer edge, not a thicker one. `inside` paints the contours with no edge, for a part on the fill. `edge` paints the edge color as drawn: the line between two parts. `clear` paints the edge color on its contours moved out by 1 pixel, then makes its contours transparent: a hole has an edge too.
 - **Joins.** Two contours of one layer that must join overlap by 2 units: their moved contours meet. A part thinner than 2 units has no fill: its moved contour is inside out, and the tool drops it.
-- **The forms.** A manifest with an outline makes two forms: the dark form (fill white, edge `COLOR_BACKGROUND`) and the light form (fill `COLOR_BACKGROUND`, edge white). A shape from a source keeps its pictures in both forms.
-- **The accents** are tokens of the design rules, by the name of their constant in `src/library/support/graphics` without `COLOR_`. Each token has a value for a dark surround and one for a light surround; an accent takes the value for the color around it, the fill for `inside`, else the edge. No manifest holds a color value.
-
-  | Token | Dark surround | Light surround |
-  |---|---|---|
-  | `title`, the blue of the focus | `COLOR_TITLE` | `COLOR_TITLE` at 85 % (`graphics.shade`) |
-  | `stop_program`, the red of "stop a program" | `COLOR_STOP_PROGRAM_POINTER_OVER` | `COLOR_STOP_PROGRAM` |
-  | `boot_program`, the amber of a match | `COLOR_BOOT_PROGRAM` | `COLOR_BOOT_PROGRAM` at 50 %, as on the light form of the site |
+- **The forms.** A manifest with an outline makes two forms: the dark form (fill white, edge `COLOR_INK`, the darkest color of the rules) and the light form (fill `COLOR_INK`, edge white). A shape from a source keeps its pictures in both forms.
+- **The accents** are color tokens of the design rules, by the name of their field in `graphics.Color_Tokens` (`src/library/support/graphics`). An accent takes the value of its token for the color around it: the fill for `inside`, else the edge. Around the dark, it takes the value of the token in the dark appearance (`DARK_COLOR_TOKENS`); around white, its value in the light appearance (`LIGHT_COLOR_TOKENS`), whose surfaces are light. No manifest holds a color value. The tokens that a manifest can name: `title` (the blue of the focus), `stop_program` (the red of "stop a program") and `boot_program` (the amber of "starts" and of a match).
 
 - **Frames.** The layers before the first `frame` are in every frame. Each `frame` adds the layers after it, over those. An animation has two frames at least.
 - **The option `hot`** is required, and inside the square.

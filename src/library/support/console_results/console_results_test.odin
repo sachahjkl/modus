@@ -330,11 +330,11 @@ table_cells_have_the_color_of_their_value_kind :: proc(t: ^testing.T) {
 		after = number
 		kind := part_value_kind(part)
 		testing.expectf(t, kind == cell.kind, "the cell %s has the kind %v, not %v", cell.text, kind, cell.kind)
-		testing.expectf(t, graphics.value_kind_color(kind, false) == graphics.value_kind_color(cell.kind, false), "the cell %s has the color of %v", cell.text, cell.kind)
+		testing.expectf(t, graphics.value_kind_color(kind, graphics.appearance) == graphics.value_kind_color(cell.kind, graphics.appearance), "the cell %s has the color of %v", cell.text, cell.kind)
 	}
 	// A time is not in the color of a number: a reader tells them apart by
 	// the color and by the unit of the head.
-	testing.expect(t, graphics.value_kind_color(.Time, false) != graphics.value_kind_color(.Number, false))
+	testing.expect(t, graphics.value_kind_color(.Time, graphics.appearance) != graphics.value_kind_color(.Number, graphics.appearance))
 	// The heads and their units are dim labels, and the unit is never in a
 	// cell.
 	testing.expect_value(t, drawn.parts[Part.Label], len("name") + len("count") + len("used (pages)") + len("wait (ms)"))

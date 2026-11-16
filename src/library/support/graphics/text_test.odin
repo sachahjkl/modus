@@ -26,7 +26,7 @@ blend_error_against_srgb :: proc(t: ^testing.T) {
 	Pair :: struct {
 		front, back: Color,
 	}
-	pairs := [?]Pair{{COLOR_TEXT, COLOR_CARD_BOTTOM}, {COLOR_DIM, COLOR_BACKGROUND}, {COLOR_PROGRAM, COLOR_CARD_TOP}, {COLOR_BACKGROUND, COLOR_TEXT}}
+	pairs := [?]Pair{{DARK_TEXT, DARK_CARD_BOTTOM}, {DARK_DIM, DARK_BACKGROUND}, {DARK_PROGRAM, DARK_CARD_TOP}, {DARK_BACKGROUND, DARK_TEXT}}
 	for pair in pairs {
 		worst_gamma_two, worst_plain: f64
 		for coverage in u32(0) ..= 255 {
@@ -46,11 +46,11 @@ blend_error_against_srgb :: proc(t: ^testing.T) {
 		testing.expect(t, worst_gamma_two < 16)
 	}
 	// Coverage 0 keeps the pixel; coverage 255 on each stripe is the color.
-	line := [2]Color{COLOR_CARD_BOTTOM, COLOR_CARD_BOTTOM}
+	line := [2]Color{DARK_CARD_BOTTOM, DARK_CARD_BOTTOM}
 	words := [2]u32{0, 0xFFFFFFFF}
-	blend_coverage_row(raw_data(line[:]), raw_data(words[:]), 0, 2, COLOR_TEXT, .Red_Green_Blue, &table)
-	testing.expect_value(t, line[0], Color(COLOR_CARD_BOTTOM))
-	testing.expect_value(t, line[1], Color(COLOR_TEXT))
+	blend_coverage_row(raw_data(line[:]), raw_data(words[:]), 0, 2, DARK_TEXT, .Red_Green_Blue, &table)
+	testing.expect_value(t, line[0], Color(DARK_CARD_BOTTOM))
+	testing.expect_value(t, line[1], Color(DARK_TEXT))
 	// The order blue, green, red takes the red coverage for the blue channel.
 	line = {0, 0}
 	words = {0x00FF0000, 0x00FF0000}
@@ -65,12 +65,12 @@ text_without_cache_is_spleen :: proc(t: ^testing.T) {
 	first, second: [24 * 48]Color
 	a := Canvas{pixels = raw_data(first[:]), width = 24, height = 48, stride = 24}
 	b := Canvas{pixels = raw_data(second[:]), width = 24, height = 48, stride = 24}
-	text(a, 0, 0, "g", COLOR_TEXT)
-	character_spleen(b, 0, 0, 'g', COLOR_TEXT)
+	text(a, 0, 0, "g", DARK_TEXT)
+	character_spleen(b, 0, 0, 'g', DARK_TEXT)
 	testing.expect(t, first == second)
 	first, second = {}, {}
-	text_scaled(a, 0, 0, "g", COLOR_TEXT, 3)
-	character_spleen_enlarged(b, 0, 0, 'g', COLOR_TEXT, 3)
+	text_scaled(a, 0, 0, "g", DARK_TEXT, 3)
+	character_spleen_enlarged(b, 0, 0, 'g', DARK_TEXT, 3)
 	testing.expect(t, first == second)
 }
 
@@ -84,13 +84,13 @@ text_of_the_latin_supplement_is_drawn :: proc(t: ^testing.T) {
 	a := Canvas{pixels = raw_data(drawn[:]), width = 8, height = 16, stride = 8}
 	b := Canvas{pixels = raw_data(glyph[:]), width = 8, height = 16, stride = 8}
 	c := Canvas{pixels = raw_data(replacement[:]), width = 8, height = 16, stride = 8}
-	testing.expect_value(t, text(a, 0, 0, "é", COLOR_TEXT), CELL_WIDTH)
-	character_spleen(b, 0, 0, 'é', COLOR_TEXT)
-	character_replacement(c, 0, 0, COLOR_TEXT, 1)
+	testing.expect_value(t, text(a, 0, 0, "é", DARK_TEXT), CELL_WIDTH)
+	character_spleen(b, 0, 0, 'é', DARK_TEXT)
+	character_replacement(c, 0, 0, DARK_TEXT, 1)
 	testing.expect(t, drawn == glyph)
 	testing.expect(t, drawn != replacement)
 	drawn = {}
-	text(a, 0, 0, "ā", COLOR_TEXT) // U+0101, past the Latin-1 Supplement.
+	text(a, 0, 0, "ā", DARK_TEXT) // U+0101, past the Latin-1 Supplement.
 	testing.expect(t, drawn == replacement)
 	testing.expect_value(t, text_width("été"), 3 * CELL_WIDTH)
 	for character in rune(glyph_cache.LATIN_FIRST) ..= glyph_cache.LATIN_LAST {
@@ -102,8 +102,8 @@ text_of_the_latin_supplement_is_drawn :: proc(t: ^testing.T) {
 	// and not the replacement glyph.
 	testing.expect(t, cell_font_draws(glyph_cache.EURO_SIGN))
 	drawn, glyph = {}, {}
-	testing.expect_value(t, text(a, 0, 0, "€", COLOR_TEXT), CELL_WIDTH)
-	character_spleen(b, 0, 0, glyph_cache.EURO_SIGN, COLOR_TEXT)
+	testing.expect_value(t, text(a, 0, 0, "€", DARK_TEXT), CELL_WIDTH)
+	character_spleen(b, 0, 0, glyph_cache.EURO_SIGN, DARK_TEXT)
 	testing.expect(t, drawn == glyph)
 	testing.expect(t, drawn != replacement)
 	no_ink: [8 * 16]Color
@@ -132,12 +132,12 @@ glyph_draw_cost :: proc(t: ^testing.T) {
 	REPEAT :: 200_000
 	start := time.tick_now()
 	for index in 0 ..< REPEAT {
-		character_vector_reference(&cache, &state.square_root, .Red_Green_Blue, canvas, 8, 8, rune(sample[index % len(sample)]), COLOR_TEXT, 1)
+		character_vector_reference(&cache, &state.square_root, .Red_Green_Blue, canvas, 8, 8, rune(sample[index % len(sample)]), DARK_TEXT, 1)
 	}
 	vector := time.duration_nanoseconds(time.tick_since(start)) / REPEAT
 	start = time.tick_now()
 	for index in 0 ..< REPEAT {
-		character_spleen(canvas, 8, 8, rune(sample[index % len(sample)]), COLOR_TEXT)
+		character_spleen(canvas, 8, 8, rune(sample[index % len(sample)]), DARK_TEXT)
 	}
 	spleen := time.duration_nanoseconds(time.tick_since(start)) / REPEAT
 	fmt.printfln("graphics: one glyph on the host: from the glyph cache %v ns, Spleen 8x16 %v ns", vector, spleen)
@@ -168,11 +168,11 @@ fast_blend_is_the_reference :: proc(t: ^testing.T) {
 	defer delete(second)
 	a := Canvas{pixels = raw_data(first), width = WIDTH, height = 48, stride = WIDTH}
 	b := Canvas{pixels = raw_data(second), width = WIDTH, height = 48, stride = WIDTH}
-	colors := [?]Color{COLOR_TEXT, COLOR_DIM, COLOR_PROGRAM, COLOR_BACKGROUND, COLOR_WHITE}
+	text_colors := [?]Color{DARK_TEXT, DARK_DIM, DARK_PROGRAM, DARK_BACKGROUND, COLOR_WHITE}
 	differences := 0
 	for background in Speed_Background {
 		for order in Subpixel_Order {
-			for color in colors {
+			for color in text_colors {
 				for scale in 1 ..= 3 {
 					background_fill(a, background)
 					background_fill(b, background)

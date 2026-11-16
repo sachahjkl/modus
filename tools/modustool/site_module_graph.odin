@@ -65,9 +65,9 @@ site_graph_kind_meanings := [Site_Graph_Kind]string {
 
 // The accent of each kind: the colors of the card of the boot image.
 site_graph_kind_colors := [Site_Graph_Kind]graphics.Color {
-	.Kernel   = graphics.COLOR_KERNEL,
-	.Program  = graphics.COLOR_PROGRAM,
-	.No_Entry = graphics.COLOR_NO_ENTRY,
+	.Kernel   = graphics.DARK_KERNEL,
+	.Program  = graphics.DARK_PROGRAM,
+	.No_Entry = graphics.DARK_NO_ENTRY,
 }
 
 // The shade of each accent in the light form, so that a bar keeps the

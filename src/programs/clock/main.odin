@@ -158,11 +158,11 @@ sentence :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, p
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE TIME PAGE", "Time_Record: one page that each program reads", graphics.COLOR_KERNEL)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE TIME PAGE", "Time_Record: one page that each program reads", graphics.colors.kernel)
 	column := interface.column_of(content)
-	interface.cell_text(&frame, interface.column_take(&column, LINE), "the kernel writes the time in one page. each program reads it: no kernel entry.", graphics.COLOR_DIM)
+	interface.cell_text(&frame, interface.column_take(&column, LINE), "the kernel writes the time in one page. each program reads it: no kernel entry.", graphics.colors.dim)
 	builder: interface.Text_Builder
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "since boot", clock_text(&builder, system.time()), graphics.COLOR_TEXT, 120)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "since boot", clock_text(&builder, system.time()), graphics.colors.text, 120)
 	interface.column_take(&column, 8)
 
 	// The table: the way, its reads, its kernel entries. A measure run
@@ -184,34 +184,34 @@ draw :: proc "contextless" (window: ^display.Window) {
 		color := graphics.Color(index == 0 ? COLOR_PAGE : COLOR_ENTRY)
 		interface.cell_text(&frame, cells[0], measure.name, color)
 		if !measure.done {
-			interface.cell_text(&frame, cells[1], "...", graphics.COLOR_DIM)
+			interface.cell_text(&frame, cells[1], "...", graphics.colors.dim)
 			continue
 		}
 		if measured {
 			interface.bar(&frame, {cells[1].x, cells[1].y + 8, cells[1].width, 8}, measure.rate, most, color)
 		}
-		interface.cell_text(&frame, cells[2], interface.number_text(&builder, measured ? measure.rate : measure.reads), graphics.COLOR_TEXT, .Right)
-		interface.cell_text(&frame, cells[3], interface.number_text(&builder, measure.entries), graphics.COLOR_TEXT, .Right)
+		interface.cell_text(&frame, cells[2], interface.number_text(&builder, measured ? measure.rate : measure.reads), graphics.colors.text, .Right)
+		interface.cell_text(&frame, cells[3], interface.number_text(&builder, measure.entries), graphics.colors.text, .Right)
 	}
-	interface.cell_text(&frame, interface.column_take(&column, LINE), measured ? "kernel entries: for one million reads." : "the reads in one second are a measure: run `modustool measure clock`.", graphics.COLOR_DIM)
+	interface.cell_text(&frame, interface.column_take(&column, LINE), measured ? "kernel entries: for one million reads." : "the reads in one second are a measure: run `modustool measure clock`.", graphics.colors.dim)
 	interface.column_take(&column, 8)
 	if checked {
 		numbers: [5]interface.Text_Builder
 		sentence(&frame, interface.column_take(&column, LINE),
-			{"the time went back ", graphics.COLOR_DIM},
-			{interface.number_text(&numbers[0], went_back), went_back == 0 ? graphics.COLOR_TEXT : graphics.COLOR_FAILED},
-			{" times. a kernel entry was outside two reads of the page ", graphics.COLOR_DIM},
-			{interface.number_text(&numbers[1], outside), outside == 0 ? graphics.COLOR_TEXT : graphics.COLOR_FAILED},
-			{" times.", graphics.COLOR_DIM})
+			{"the time went back ", graphics.colors.dim},
+			{interface.number_text(&numbers[0], went_back), went_back == 0 ? graphics.colors.text : graphics.colors.failed},
+			{" times. a kernel entry was outside two reads of the page ", graphics.colors.dim},
+			{interface.number_text(&numbers[1], outside), outside == 0 ? graphics.colors.text : graphics.colors.failed},
+			{" times.", graphics.colors.dim})
 		sentence(&frame, interface.column_take(&column, LINE),
-			{"against the cycle counter, the page was ", graphics.COLOR_DIM},
-			{interface.number_text(&numbers[2], least), least <= LEAST_LIMIT ? graphics.COLOR_TEXT : graphics.COLOR_FAILED},
-			{" to ", graphics.COLOR_DIM},
-			{interface.number_text(&numbers[3], behind), graphics.COLOR_TEXT},
-			{" ms behind and ", graphics.COLOR_DIM},
-			{interface.number_text(&numbers[4], ahead), ahead <= AHEAD_LIMIT ? graphics.COLOR_TEXT : graphics.COLOR_FAILED},
-			{" ms ahead.", graphics.COLOR_DIM})
-		sentence(&frame, interface.column_take(&column, LINE), {refused ? "the kernel refuses to remove the time page of this program." : "the kernel removed the time page.", refused ? graphics.COLOR_DIM : graphics.COLOR_FAILED})
+			{"against the cycle counter, the page was ", graphics.colors.dim},
+			{interface.number_text(&numbers[2], least), least <= LEAST_LIMIT ? graphics.colors.text : graphics.colors.failed},
+			{" to ", graphics.colors.dim},
+			{interface.number_text(&numbers[3], behind), graphics.colors.text},
+			{" ms behind and ", graphics.colors.dim},
+			{interface.number_text(&numbers[4], ahead), ahead <= AHEAD_LIMIT ? graphics.colors.text : graphics.colors.failed},
+			{" ms ahead.", graphics.colors.dim})
+		sentence(&frame, interface.column_take(&column, LINE), {refused ? "the kernel refuses to remove the time page of this program." : "the kernel removed the time page.", refused ? graphics.colors.dim : graphics.colors.failed})
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

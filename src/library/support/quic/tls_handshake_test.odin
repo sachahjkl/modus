@@ -3,7 +3,8 @@
 // 1-RTT Handshake" of RFC 8448 (section 3: X25519, SHA-256), a whole
 // handshake of a client against a server in memory, and hostile messages:
 // each message cut at each length, each byte changed, messages out of order,
-// and 20 000 random messages.
+// and 20 000 random messages; then the key of a client that a server asks
+// for: allowed, refused, not proven, absent, and requests that are refused.
 package quic
 
 import "modus:contract/errors"
@@ -666,4 +667,193 @@ a_client_hello_with_a_session_identifier_is_a_protocol_violation :: proc(t: ^tes
 	server = receiver_after(pair, messages[:], 0, hello)
 	testing.expect_value(t, server.state, Tls_State.Server_Waits_For_Finished)
 	testing.expect(t, !server.protocol_violation)
+}
+
+// A client key of the test: 32 bytes of another fixed pattern than the key
+// of the server.
+CLIENT_PRIVATE_KEY_OF_THE_TEST :: "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"
+
+// The key that the procedure of the server of a test allows, and the count
+// of its calls. Each test runs on a thread of its own: these are of that
+// thread.
+@(thread_local)
+allowed_client_key_of_the_test: [ED25519_KEY_SIZE]u8
+@(thread_local)
+client_key_checks_of_the_test: int
+
+client_key_check_of_the_test :: proc "contextless" (key: ^[ED25519_KEY_SIZE]u8) -> bool {
+	client_key_checks_of_the_test += 1
+	return key^ == allowed_client_key_of_the_test
+}
+
+// pair_with_client_key makes a pair whose client has a key of its own.
+// server_asks gives the server the procedure that asks for it; allowed says
+// if that procedure allows the key of the client. It gives the public key
+// of the client.
+pair_with_client_key :: proc(pair: ^Test_Pair, server_asks: bool, allowed: bool) -> (client_public_key: [ED25519_KEY_SIZE]u8) {
+	pair_make(pair)
+	copy(pair.client_configuration.client_private_key[:], bytes_of(CLIENT_PRIVATE_KEY_OF_THE_TEST))
+	error: errors.Error_Record
+	secret := string(pair.client_configuration.client_private_key[:])
+	result := client_public_key[:]
+	pair.cryptography.ed25519_public_key(&secret, &result, &error)
+	if server_asks {
+		pair.server_configuration.client_key_check = client_key_check_of_the_test
+	}
+	allowed_client_key_of_the_test = allowed ? client_public_key : {}
+	client_key_checks_of_the_test = 0
+	return client_public_key
+}
+
+// A server that asks for the key of the client, and a client that proves
+// it: ten messages (the CertificateRequest after EncryptedExtensions, and the
+// Certificate and CertificateVerify of the client before its Finished), both
+// sides connected with the same keys, and the server holds the key of the
+// client. The procedure of the server ran once.
+@(test)
+a_whole_handshake_with_the_key_of_the_client :: proc(t: ^testing.T) {
+	pair := new(Test_Pair, context.temp_allocator)
+	key := pair_with_client_key(pair, true, true)
+	sent := handshake_run(pair)
+	testing.expect_value(t, pair.client.state, Tls_State.Connected)
+	testing.expect_value(t, pair.server.state, Tls_State.Connected)
+	testing.expect_value(t, len(sent), 10)
+	types := [10]Handshake_Message{.Client_Hello, .Server_Hello, .Encrypted_Extensions, .Certificate_Request, .Certificate, .Certificate_Verify, .Finished, .Certificate, .Certificate_Verify, .Finished}
+	for item, index in sent {
+		testing.expectf(t, Handshake_Message(item.bytes[0]) == types[index], "message %d has the type %d", index, item.bytes[0])
+		testing.expect_value(t, item.from_client, index == 0 || index >= 7)
+	}
+	testing.expect(t, pair.server.client_public_key == key, "the server holds the key of the client")
+	testing.expect(t, pair.client.client_public_key == key)
+	testing.expect_value(t, client_key_checks_of_the_test, 1)
+	error: errors.Error_Record
+	for sending in ([]bool{true, false}) {
+		client_keys, server_keys: Packet_Keys
+		testing.expect(t, tls_packet_keys(&pair.client, .Application, sending, &client_keys, &error))
+		testing.expect(t, tls_packet_keys(&pair.server, .Application, !sending, &server_keys, &error))
+		testing.expect(t, client_keys == server_keys)
+	}
+	// The private key of the client is erased with the other secrets.
+	tls_handshake_erase_secrets(&pair.client)
+	testing.expect(t, pair.client.configuration.client_private_key == [ED25519_KEY_SIZE]u8{})
+}
+
+// A key that the procedure of the server refuses: the server fails with
+// access_denied after the signature of the client verified, keeps the
+// refused key, and holds no key of a client.
+@(test)
+a_client_key_that_the_server_refuses :: proc(t: ^testing.T) {
+	pair := new(Test_Pair, context.temp_allocator)
+	key := pair_with_client_key(pair, true, false)
+	handshake_run(pair)
+	testing.expect_value(t, pair.server.state, Tls_State.Failed)
+	testing.expect_value(t, pair.server.alert, Alert.Access_Denied)
+	testing.expect(t, pair.server.refused_client_public_key == key, "the server keeps the key that it refused")
+	testing.expect(t, pair.server.client_public_key == [ED25519_KEY_SIZE]u8{})
+	testing.expect_value(t, client_key_checks_of_the_test, 1)
+}
+
+// A changed byte of the signature of the client: the server fails with
+// decrypt_error, and its procedure never sees the key, which nothing
+// proved.
+@(test)
+a_client_signature_that_does_not_verify :: proc(t: ^testing.T) {
+	pair := new(Test_Pair, context.temp_allocator)
+	pair_with_client_key(pair, true, true)
+	handshake_run(pair, proc(message_index: int, message: []u8) -> []u8 {
+		// The message 8 is the CertificateVerify of the client.
+		if message_index == 8 {
+			message[len(message) - 1] ~= 0x01
+		}
+		return message
+	})
+	testing.expect_value(t, pair.server.state, Tls_State.Failed)
+	testing.expect_value(t, pair.server.alert, Alert.Decrypt_Error)
+	testing.expect_value(t, client_key_checks_of_the_test, 0)
+}
+
+// A client with no key to a server that asks: certificate_required at the
+// ClientHello. A client with a key to a server that does not ask: the seven
+// messages of a handshake with no proof of the client, and the server holds
+// no key of a client.
+@(test)
+a_client_key_where_the_other_side_has_none :: proc(t: ^testing.T) {
+	pair := new(Test_Pair, context.temp_allocator)
+	pair_make(pair)
+	pair.server_configuration.client_key_check = client_key_check_of_the_test
+	handshake_run(pair)
+	testing.expect_value(t, pair.server.state, Tls_State.Failed)
+	testing.expect_value(t, pair.server.alert, Alert.Certificate_Required)
+
+	pair_with_client_key(pair, false, true)
+	sent := handshake_run(pair)
+	testing.expect_value(t, pair.client.state, Tls_State.Connected)
+	testing.expect_value(t, pair.server.state, Tls_State.Connected)
+	testing.expect_value(t, len(sent), 7)
+	testing.expect(t, pair.server.client_public_key == [ED25519_KEY_SIZE]u8{})
+	testing.expect_value(t, client_key_checks_of_the_test, 0)
+}
+
+// A CertificateRequest to a client with no key is unexpected_message, and a
+// second one to a client with a key too. A CertificateRequest with a request
+// context is illegal_parameter, and one with no signature_algorithms is
+// missing_extension.
+@(test)
+certificate_requests_that_are_refused :: proc(t: ^testing.T) {
+	asked := new(Test_Pair, context.temp_allocator)
+	pair_with_client_key(asked, true, true)
+	messages := handshake_run(asked)
+	request := messages[3].bytes
+	testing.expect_value(t, Handshake_Message(request[0]), Handshake_Message.Certificate_Request)
+
+	// The client of a pair with no key, after the ServerHello and the
+	// EncryptedExtensions of the server that asks.
+	pair := new(Test_Pair, context.temp_allocator)
+	error: errors.Error_Record
+	pair_make(pair)
+	pair.server_configuration.client_key_check = client_key_check_of_the_test
+	tls_start(&pair.server, &pair.server_configuration, &pair.cryptography, &pair.server_generator, &error)
+	tls_start(&pair.client, &pair.client_configuration, &pair.cryptography, &pair.client_generator, &error)
+	// That server refuses this client at once: certificate_required.
+	tls_receive(&pair.server, .Initial, tls_bytes_to_send(&pair.client, .Initial), &error)
+	testing.expect_value(t, pair.server.alert, Alert.Certificate_Required)
+
+	// A second CertificateRequest to a client with a key.
+	pair_with_client_key(pair, true, true)
+	tls_start(&pair.server, &pair.server_configuration, &pair.cryptography, &pair.server_generator, &error)
+	tls_start(&pair.client, &pair.client_configuration, &pair.cryptography, &pair.client_generator, &error)
+	tls_receive(&pair.server, .Initial, tls_bytes_to_send(&pair.client, .Initial), &error)
+	tls_receive(&pair.client, .Initial, tls_bytes_to_send(&pair.server, .Initial), &error)
+	flight := tls_bytes_to_send(&pair.server, .Handshake)
+	encrypted_extensions_length := MESSAGE_HEADER_SIZE + (int(flight[1]) << 16 | int(flight[2]) << 8 | int(flight[3]))
+	request_length := MESSAGE_HEADER_SIZE + (int(flight[encrypted_extensions_length + 1]) << 16 | int(flight[encrypted_extensions_length + 2]) << 8 | int(flight[encrypted_extensions_length + 3]))
+	first_part := flight[:encrypted_extensions_length + request_length]
+	testing.expect(t, tls_receive(&pair.client, .Handshake, first_part, &error))
+	testing.expect_value(t, pair.client.state, Tls_State.Client_Waits_For_Certificate)
+	testing.expect(t, pair.client.client_key_requested)
+	second := flight[encrypted_extensions_length:][:request_length]
+	testing.expect(t, !tls_receive(&pair.client, .Handshake, second, &error))
+	testing.expect_value(t, pair.client.alert, Alert.Unexpected_Message)
+
+	// A request context of one byte, and no signature_algorithms. The
+	// request is the header, the length of the context (0), the length of
+	// the block, and the one extension.
+	with_context := make([]u8, len(request) + 1, context.temp_allocator)
+	copy(with_context, request[:MESSAGE_HEADER_SIZE])
+	with_context[MESSAGE_HEADER_SIZE] = 1
+	with_context[MESSAGE_HEADER_SIZE + 1] = 0x55
+	copy(with_context[MESSAGE_HEADER_SIZE + 2:], request[MESSAGE_HEADER_SIZE + 1:])
+	with_context[3] += 1
+	no_algorithms := []u8{u8(Handshake_Message.Certificate_Request), 0, 0, 3, 0, 0, 0}
+	for changed, index in ([2][]u8{with_context, no_algorithms}) {
+		pair_with_client_key(pair, true, true)
+		tls_start(&pair.server, &pair.server_configuration, &pair.cryptography, &pair.server_generator, &error)
+		tls_start(&pair.client, &pair.client_configuration, &pair.cryptography, &pair.client_generator, &error)
+		tls_receive(&pair.server, .Initial, tls_bytes_to_send(&pair.client, .Initial), &error)
+		tls_receive(&pair.client, .Initial, tls_bytes_to_send(&pair.server, .Initial), &error)
+		server_flight := tls_bytes_to_send(&pair.server, .Handshake)
+		tls_receive(&pair.client, .Handshake, server_flight[:encrypted_extensions_length], &error)
+		testing.expect(t, !tls_receive(&pair.client, .Handshake, changed, &error))
+		testing.expect_value(t, pair.client.alert, index == 0 ? Alert.Illegal_Parameter : Alert.Missing_Extension)
+	}
 }

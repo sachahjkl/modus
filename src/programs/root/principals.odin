@@ -203,6 +203,8 @@ principal_unlock :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 		return status
 	}
 	principal_records[number].state = .Unlocked
+	// The client keys that the principal allowed take calls again.
+	remote_clients_session_changed(number, false)
 	unlock_failed_stops = 0
 	system.log_in("programs", .Info, "root: the session of principal ", number, " \"", principal_name(number), "\" starts: the desktop starts each program in it")
 	return .Ok
@@ -227,6 +229,9 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 		}
 	}
 	principal_records[number].state = .Locked
+	// A call from another machine acts for no principal whose session is
+	// locked: the connections of its client keys end.
+	remote_clients_session_changed(number, true)
 	completion^[0] = count
 	system.log_in("programs", .Info, "root: the session of principal ", number, " \"", principal_name(number), "\" ends: ", count, " programs stopped")
 	unlock_failed_stops = 0

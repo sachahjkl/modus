@@ -14,8 +14,12 @@ package quic
 //   is read;
 // - one application protocol (ALPN), and the quic_transport_parameters of
 //   each side, carried as bytes;
-// - no session resumption, no 0-RTT, no HelloRetryRequest, no client
-//   certificate.
+// - when the server asks for it, the client proves its own key the same
+//   way: a CertificateRequest, then the raw public key of the client and
+//   its signature; the server gives the key to a procedure of its caller,
+//   which allows it or refuses it (access_denied);
+// - no session resumption, no 0-RTT, no HelloRetryRequest, no X.509
+//   certificate of either side.
 //
 // Each message of the peer is hostile input: each length is checked before
 // a byte is read, an extension that this side does not know is skipped in a
@@ -67,7 +71,8 @@ TLS_SUITE_CHACHA20_POLY1305_SHA256 :: 0x1303
 //
 // A client offers this type alone in `server_certificate_type`, and the server answers with it. The
 // Certificate of the server then holds a [raw public key](term:raw-public-key), not an X.509
-// certificate.
+// certificate. A client with a key of its own offers it alone in `client_certificate_type` too, and
+// a server that asks for the key of the client answers with it.
 CERTIFICATE_TYPE_RAW_PUBLIC_KEY :: 2
 
 // The extensions of TLS that this handshake knows, by their numbers (RFC 8446, section 4.2).
@@ -85,13 +90,14 @@ CERTIFICATE_TYPE_RAW_PUBLIC_KEY :: 2
 // A client of this handshake writes seven of them, in this order: `Supported_Versions`,
 // `Supported_Groups`, `Signature_Algorithms`, `Key_Share`, `Server_Certificate_Type`,
 // `Application_Protocol` and `Quic_Transport_Parameters`. A server requires these seven in a
-// ClientHello (missing_extension).
+// ClientHello (missing_extension). A client with a key of its own writes `Client_Certificate_Type`
+// too, after `Server_Certificate_Type`; a server that asks for the key of the client requires it.
 Extension :: enum u16 {
 	Server_Name             = 0, // `server_name` (RFC 6066). A server takes it in a ClientHello and does not read it: a key is pinned, not a name. A client does not send it.
 	Supported_Groups        = 10, // `supported_groups` (RFC 8446, section 4.2.7): the groups of the key exchange. The list of a ClientHello must hold `TLS_GROUP_X25519`. A client takes it in EncryptedExtensions, where a server names the groups that it prefers, and does not read it.
-	Signature_Algorithms    = 13, // `signature_algorithms` (RFC 8446, section 4.2.3): the signature schemes that the client verifies. ClientHello only; the list must hold `TLS_SIGNATURE_ED25519`.
+	Signature_Algorithms    = 13, // `signature_algorithms` (RFC 8446, section 4.2.3): the signature schemes that a side verifies: the client in a ClientHello, the server in a CertificateRequest. The list must hold `TLS_SIGNATURE_ED25519`.
 	Application_Protocol    = 16, // `application_layer_protocol_negotiation`, ALPN (RFC 7301): the protocol names of the client in a ClientHello, the one chosen name in EncryptedExtensions. QUIC requires it (RFC 9001, section 8.1).
-	Client_Certificate_Type = 19, // `client_certificate_type` (RFC 7250). A server takes it in a ClientHello and does not read it: this handshake asks no certificate of a client.
+	Client_Certificate_Type = 19, // `client_certificate_type` (RFC 7250): the certificate types that the client can send, in a ClientHello; the one chosen type in EncryptedExtensions. Both must be `CERTIFICATE_TYPE_RAW_PUBLIC_KEY`. A server that does not ask for the key of the client does not read it.
 	Server_Certificate_Type = 20, // `server_certificate_type` (RFC 7250): the certificate types that the client takes in a ClientHello, the one chosen type in EncryptedExtensions. Both must be `CERTIFICATE_TYPE_RAW_PUBLIC_KEY`.
 	Pre_Shared_Key          = 41, // `pre_shared_key` (RFC 8446, section 4.2.11). A server takes it in a ClientHello and does not read it: no session is resumed, and the handshake is always a full one.
 	Early_Data              = 42, // `early_data` (RFC 8446, section 4.2.10). A server takes it in a ClientHello and does not read it: no 0-RTT data is accepted.
@@ -108,20 +114,25 @@ Extension :: enum u16 {
 // unsupported_extension.
 EXTENSIONS_OF_A_SERVER_HELLO :: bit_set[Extension]{.Pre_Shared_Key, .Supported_Versions, .Key_Share}
 EXTENSIONS_OF_ENCRYPTED_EXTENSIONS :: bit_set[Extension]{.Server_Name, .Supported_Groups, .Application_Protocol, .Client_Certificate_Type, .Server_Certificate_Type, .Early_Data, .Quic_Transport_Parameters}
+// The known extensions that the standard specifies for a CertificateRequest: of the members of
+// `Extension`, `signature_algorithms` only. The other ones that the standard specifies there are
+// not members, and a client skips them (RFC 8446, section 4.3.2).
+EXTENSIONS_OF_A_CERTIFICATE_REQUEST :: bit_set[Extension]{.Signature_Algorithms}
 
 // The types of the handshake messages of TLS 1.3 that this handshake names (RFC 8446, section 4).
 //
 // Each message starts with its type as one byte and its length as 3 bytes (`MESSAGE_HEADER_SIZE`).
 // A message is taken only in the state and at the encryption level where it belongs
 // (`message_read`); each other message fails the handshake with unexpected_message. That is true
-// of a type that is not a member too: CertificateRequest, EndOfEarlyData and each unknown type.
+// of a type that is not a member too: EndOfEarlyData and each unknown type.
 Handshake_Message :: enum u8 {
 	Client_Hello         = 1, // ClientHello (section 4.1.2): the offer of the client, at the Initial level. `tls_start` writes it; a server reads it first.
 	Server_Hello         = 2, // ServerHello (section 4.1.3): the choice of the server and its key share, at the Initial level. A ServerHello with the Random of a HelloRetryRequest is refused.
 	New_Session_Ticket   = 4, // NewSessionTicket (section 4.6.1). A server of this handshake sends none. A client that is connected takes one at the Application level and drops it: no session is resumed.
-	Encrypted_Extensions = 8, // EncryptedExtensions (section 4.3.1): ALPN, the certificate type and the transport parameters of the server, at the Handshake level.
-	Certificate          = 11, // Certificate (section 4.4.2): one entry, the raw public key of the server, at the Handshake level.
-	Certificate_Verify   = 15, // CertificateVerify (section 4.4.3): the Ed25519 signature of the server over the transcript, at the Handshake level.
+	Encrypted_Extensions = 8, // EncryptedExtensions (section 4.3.1): ALPN, the certificate types and the transport parameters of the server, at the Handshake level.
+	Certificate          = 11, // Certificate (section 4.4.2): one entry, the raw public key of its sender, at the Handshake level: from the server, then from the client when the server asked for it.
+	Certificate_Request  = 13, // CertificateRequest (section 4.3.2): the server asks for the key of the client, after EncryptedExtensions. A client with no key of its own refuses it.
+	Certificate_Verify   = 15, // CertificateVerify (section 4.4.3): the Ed25519 signature of its sender over the transcript, at the Handshake level.
 	Finished             = 20, // Finished (section 4.4.4): the HMAC of the transcript, from the server then from the client, at the Handshake level.
 	Key_Update           = 24, // KeyUpdate (section 4.6.3). QUIC forbids it (RFC 9001, section 6): it always fails with unexpected_message.
 }
@@ -139,14 +150,16 @@ Alert :: enum u8 {
 	Unexpected_Message       = 10, // unexpected_message: a message of a type that the state does not wait for, or at the wrong encryption level; bytes at a level that the handshake left; more bytes than a level buffers.
 	Handshake_Failure        = 40, // handshake_failure: the two sides share no parameters. A ClientHello with neither cipher suite, without X25519, without ed25519 or without an X25519 key share; at a client, a HelloRetryRequest.
 	Bad_Certificate          = 42, // bad_certificate: the key of the server is not the pinned key. `Tls_Handshake.refused_server_public_key` holds the key that came.
-	Unsupported_Certificate  = 43, // unsupported_certificate: the client did not offer the raw public key type, the server did not answer with it, or the entry of the Certificate is not an Ed25519 SubjectPublicKeyInfo of 44 bytes.
-	Illegal_Parameter        = 47, // illegal_parameter: a field that is well formed and has a wrong value: an extension that comes two times, a session identifier that is not empty (in a ClientHello the transport closes with PROTOCOL_VIOLATION instead), a compression method, a key share of another size or of small order, a ServerHello that selects what was not offered, transport parameters over `TRANSPORT_PARAMETERS_LIMIT`.
+	Unsupported_Certificate  = 43, // unsupported_certificate: a side did not offer the raw public key type where it is needed, the other side did not answer with it, or the entry of a Certificate is not an Ed25519 SubjectPublicKeyInfo of 44 bytes.
+	Illegal_Parameter        = 47, // illegal_parameter: a field that is well formed and has a wrong value: an extension that comes two times, a session identifier that is not empty (in a ClientHello the transport closes with PROTOCOL_VIOLATION instead), a compression method, a key share of another size or of small order, a ServerHello that selects what was not offered, transport parameters over `TRANSPORT_PARAMETERS_LIMIT`, a CertificateRequest with a request context.
+	Access_Denied            = 49, // access_denied: the server asked for the key of the client, the client proved it, and the procedure of the caller of the server refused it. `Tls_Handshake.refused_client_public_key` holds that key.
 	Decode_Error             = 50, // decode_error: a message that is malformed: a length that passes its bytes, bytes left after the last field, a list of a wrong size, a message over 4096 bytes, more than `EXTENSION_TYPES_LIMIT` extensions.
 	Decrypt_Error            = 51, // decrypt_error: the signature of CertificateVerify or the verify_data of a Finished does not verify.
 	Protocol_Version         = 70, // protocol_version: a ClientHello whose `legacy_version` is not 0x0303, or whose `supported_versions` does not hold TLS 1.3.
 	Internal_Error           = 80, // internal_error: this side failed by itself: a configuration that `tls_start` refuses, a random seed that is too weak, a refusal of the module, a buffer of the handshake that is full.
-	Missing_Extension        = 109, // missing_extension: a required extension is absent from a ClientHello, a ServerHello or EncryptedExtensions.
+	Missing_Extension        = 109, // missing_extension: a required extension is absent from a ClientHello, a ServerHello, EncryptedExtensions or a CertificateRequest.
 	Unsupported_Extension    = 110, // unsupported_extension: a ServerHello or EncryptedExtensions holds an extension that the client did not offer.
+	Certificate_Required     = 116, // certificate_required: the server asks for the key of the client, and the ClientHello offers no `client_certificate_type`, or the Certificate of the client has no entry.
 	No_Application_Protocol  = 120, // no_application_protocol: the ClientHello does not name the protocol of the server, or EncryptedExtensions names none (RFC 9001, section 8.1).
 }
 
@@ -184,9 +197,13 @@ Tls_Role :: enum u8 {
 //
 // - A **client** goes through `Client_Waits_For_Server_Hello`,
 //   `Client_Waits_For_Encrypted_Extensions`, `Client_Waits_For_Certificate`,
-//   `Client_Waits_For_Certificate_Verify` and `Client_Waits_For_Finished`, then `Connected`.
+//   `Client_Waits_For_Certificate_Verify` and `Client_Waits_For_Finished`, then `Connected`. In
+//   `Client_Waits_For_Certificate` a client with a key of its own also takes one
+//   CertificateRequest, and stays in that state.
 // - A **server** goes through `Server_Waits_For_Client_Hello` and `Server_Waits_For_Finished`, then
-//   `Connected`.
+//   `Connected`. A server that asks for the key of the client goes through
+//   `Server_Waits_For_Client_Certificate` and `Server_Waits_For_Client_Certificate_Verify` before
+//   `Server_Waits_For_Finished`.
 // - Each failure goes to `Failed`, from any state.
 Tls_State :: enum u8 {
 	Start, // A zero record: `tls_start` was not called. `tls_receive` fails each message in this state.
@@ -196,7 +213,9 @@ Tls_State :: enum u8 {
 	Client_Waits_For_Certificate_Verify, // The key is the pinned key; the client waits for the signature that proves that the server holds its private key.
 	Client_Waits_For_Finished, // The client waits for the Finished of the server. After it the client writes its own Finished and is connected.
 	Server_Waits_For_Client_Hello, // The server waits for the ClientHello, at the Initial level. It wrote nothing yet.
-	Server_Waits_For_Finished, // The server wrote its whole flight and has its application secrets; it waits for the Finished of the client, at the Handshake level.
+	Server_Waits_For_Client_Certificate, // The server wrote its whole flight with a CertificateRequest, and has its application secrets; it waits for the Certificate of the client, at the Handshake level.
+	Server_Waits_For_Client_Certificate_Verify, // The server has the key of the client; it waits for the signature that proves that the client holds its private key.
+	Server_Waits_For_Finished, // The server wrote its whole flight and has its application secrets, and, when it asked for one, the proven key of the client that its caller allowed; it waits for the Finished of the client, at the Handshake level.
 	Connected, // The handshake is complete: both Finished messages verified. A client still takes a NewSessionTicket and drops it; each other message fails the handshake.
 	Failed, // The handshake failed: `Tls_Handshake.alert` holds the reason, and the secrets were erased. Each later `tls_receive` fails again.
 }
@@ -284,6 +303,21 @@ HELLO_RETRY_REQUEST_RANDOM := [32]u8{0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0
 // string.
 SERVER_SIGNATURE_CONTEXT :: "TLS 1.3, server CertificateVerify"
 
+// The context string of the signature of a client in CertificateVerify (RFC 8446, section 4.4.3).
+//
+// It has the length of the string of a server, so both contents have `SIGNATURE_CONTENT_SIZE`
+// bytes. A signature of a server is never a valid signature of a client, and the reverse.
+CLIENT_SIGNATURE_CONTEXT :: "TLS 1.3, client CertificateVerify"
+#assert(len(CLIENT_SIGNATURE_CONTEXT) == len(SERVER_SIGNATURE_CONTEXT))
+
+// The procedure of a server that says if the proven key of a client is allowed.
+//
+// The handshake calls it once, after the CertificateVerify of the client verified with that key:
+// the client holds its private key. True lets the handshake go on to the Finished of the client.
+// False fails it with access_denied, and keeps the key in `Tls_Handshake.refused_client_public_key`.
+// The procedure runs inside `tls_receive`: it must not wait.
+Client_Key_Check :: #type proc "contextless" (key: ^[ED25519_KEY_SIZE]u8) -> bool
+
 // What the caller of each side gives to a handshake: its role, its protocol, its transport parameters and its key.
 //
 // `tls_start` copies the record into the handshake, so the caller can change its own copy after the
@@ -291,8 +325,9 @@ SERVER_SIGNATURE_CONTEXT :: "TLS 1.3, server CertificateVerify"
 // a least seed strength under `Processor`, and a client with no pinned key.
 //
 // **What a client sets**: `role`, `application_protocol`, `transport_parameters`,
-// `server_public_key` and `least_seed_strength`. **What a server sets**: the same, with
-// `server_private_key` in place of `server_public_key`.
+// `server_public_key` and `least_seed_strength`, and `client_private_key` when a server asks for its
+// key. **What a server sets**: the same, with `server_private_key` in place of `server_public_key`,
+// and `client_key_check` when it asks for the key of each client.
 Tls_Configuration :: struct {
 	// The side of this handshake.
 	role:                       Tls_Role,
@@ -315,6 +350,16 @@ Tls_Configuration :: struct {
 	// `tls_start` refuses them. A server leaves it at zero: it computes its public key from its
 	// private key.
 	server_public_key:          [ED25519_KEY_SIZE]u8,
+	// The client: its own Ed25519 private key, 32 bytes, which proves it to a server that asks. 32 zero
+	// bytes mean that the client has no key: it offers no `client_certificate_type`, and it refuses a
+	// CertificateRequest. The handshake erases its copy with the other secrets. A server leaves it at
+	// zero.
+	client_private_key:         [ED25519_KEY_SIZE]u8,
+	// The server: the procedure that allows or refuses the proven key of a client. nil: the server
+	// asks for no key of a client. Not nil: it sends a CertificateRequest, refuses a client that offers
+	// no raw public key (certificate_required), and calls the procedure after the signature of the
+	// client verified. A client leaves it nil.
+	client_key_check:           Client_Key_Check,
 	// The least [seed strength](term:seed-strength) of the random generator that the caller accepts for
 	// the key share and the random values (`random.fill_for_a_key`). QUIC asks for `Processor` at
 	// least: `tls_start` refuses a lower value, the zero value too.
@@ -359,6 +404,8 @@ Level_Bytes :: struct {
 // - the cipher suite TLS_CHACHA20_POLY1305_SHA256 first, TLS_AES_128_GCM_SHA256 also;
 // - the proof of the server with a [raw public key](term:raw-public-key) (RFC 7250), which the
 //   client compares with its [pinned key](term:pinned-key);
+// - when the configuration of the server has a `client_key_check`, the proof of the client the
+//   same way, which that procedure allows or refuses;
 // - one application protocol (ALPN), and the `quic_transport_parameters` of each side.
 //
 // **What this handshake does not do**, as the code refuses it:
@@ -371,8 +418,9 @@ Level_Bytes :: struct {
 // - **Session resumption and 0-RTT**: a server takes `pre_shared_key`, `early_data` and
 //   `psk_key_exchange_modes` in a ClientHello and does not read them; it sends no
 //   NewSessionTicket. A client drops a NewSessionTicket.
-// - **A certificate of the client**: a server sends no CertificateRequest, and a client that
-//   receives one fails (unexpected_message).
+// - **A certificate of the client in another form than a raw public key**: a server with no
+//   `client_key_check` sends no CertificateRequest; a client with no key of its own that receives
+//   one fails (unexpected_message), and does not send an empty Certificate.
 // - **KeyUpdate**, which QUIC forbids, and the compatibility mode of TLS 1.3 for middleboxes: a
 //   ServerHello with a session identifier fails (illegal_parameter), and a ClientHello with one
 //   fails as a PROTOCOL_VIOLATION of QUIC (`protocol_violation`).
@@ -433,6 +481,20 @@ Tls_Handshake :: struct {
 	// bad_certificate). It is a public value: the caller says which key came, so that a reader sees a
 	// stale pin at once. All zeros when no key was refused.
 	refused_server_public_key:     [ED25519_KEY_SIZE]u8,
+	// The client: its own Ed25519 public key, which `tls_start` computes from its private key; all
+	// zeros for a client with no key. The server: the key of the Certificate of the client; it is
+	// proven and allowed once the state is `Server_Waits_For_Finished` or later. All zeros when the
+	// server asks for no key.
+	client_public_key:             [ED25519_KEY_SIZE]u8,
+	// The server: the proven key of a client that `client_key_check` refused (alert access_denied).
+	// It is a public value, for the line of the log of the caller. All zeros when no key was refused.
+	refused_client_public_key:     [ED25519_KEY_SIZE]u8,
+	// The client: the server sent a CertificateRequest, so the client sends its Certificate and its
+	// CertificateVerify before its Finished.
+	client_key_requested:          bool,
+	// The client: EncryptedExtensions answered `client_certificate_type` with the raw public key, so
+	// a CertificateRequest asks for a raw public key and not for an X.509 certificate.
+	client_key_type_agreed:        bool,
 	// The two handshake traffic secrets exist: `tls_packet_keys` gives the keys of the Handshake level.
 	// It is false again once the secrets are erased.
 	handshake_keys_ready:          bool,
@@ -453,12 +515,12 @@ Tls_Handshake :: struct {
 // the next level, bytes of an earlier level can only be a mistake of the peer or a forgery (RFC
 // 9001, section 4.1.3).
 //
-// **Result**: `Handshake` in the five states that wait for a message of the Handshake level;
+// **Result**: `Handshake` in the seven states that wait for a message of the Handshake level;
 // `Application` when the handshake is connected; `Initial` in each other state, the first one and
 // the failed one too.
 tls_receive_level :: proc "contextless" (state: Tls_State) -> Encryption_Level {
 	#partial switch state {
-	case .Client_Waits_For_Encrypted_Extensions, .Client_Waits_For_Certificate, .Client_Waits_For_Certificate_Verify, .Client_Waits_For_Finished, .Server_Waits_For_Finished:
+	case .Client_Waits_For_Encrypted_Extensions, .Client_Waits_For_Certificate, .Client_Waits_For_Certificate_Verify, .Client_Waits_For_Finished, .Server_Waits_For_Client_Certificate, .Server_Waits_For_Client_Certificate_Verify, .Server_Waits_For_Finished:
 		return .Handshake
 	case .Connected:
 		return .Application
@@ -499,8 +561,8 @@ tls_fail :: proc "contextless" (handshake: ^Tls_Handshake, error: ^errors.Error_
 
 // tls_handshake_erase_secrets erases each secret of a handshake.
 //
-// It writes zeros over the X25519 private key, the whole key schedule and the copy of the Ed25519
-// private key of a server (`secret_erase`). The handshake calls it at each failure. The transport
+// It writes zeros over the X25519 private key, the whole key schedule and the copies of the Ed25519
+// private keys of a server and of a client (`secret_erase`). The handshake calls it at each failure. The transport
 // calls it when it took the application keys, and when it ends a connection: after that no secret
 // of TLS is in the record, only public values.
 //
@@ -515,6 +577,7 @@ tls_handshake_erase_secrets :: proc "contextless" (handshake: ^Tls_Handshake) {
 	secret_erase(&handshake.x25519_private_key, size_of(handshake.x25519_private_key))
 	secret_erase(&handshake.schedule, size_of(handshake.schedule))
 	secret_erase(&handshake.configuration.server_private_key, size_of(handshake.configuration.server_private_key))
+	secret_erase(&handshake.configuration.client_private_key, size_of(handshake.configuration.client_private_key))
 }
 
 // A reader of the bytes of one message of the peer, which never reads past their end.
@@ -899,7 +962,8 @@ shared_secret_and_handshake_keys :: proc "contextless" (handshake: ^Tls_Handshak
 // ChaCha20-Poly1305 first, the null compression, then seven extensions: `supported_versions` with
 // TLS 1.3, `supported_groups` with X25519, `signature_algorithms` with ed25519, `key_share` with
 // one X25519 key, `server_certificate_type` with the raw public key, ALPN with the one name, and
-// `quic_transport_parameters`. It has no `server_name` and no padding.
+// `quic_transport_parameters`. A client with a key of its own adds `client_certificate_type` with
+// the raw public key, after `server_certificate_type`. It has no `server_name` and no padding.
 //
 // **Result**: true when the handshake started. False, with the state `Failed` and the alert
 // internal_error (nothing is sent to a peer):
@@ -912,8 +976,8 @@ shared_secret_and_handshake_keys :: proc "contextless" (handshake: ^Tls_Handshak
 // - `Bad_Value`, argument 2: the protocol name does not have 1 to `APPLICATION_PROTOCOL_LIMIT`
 //   bytes, or the transport parameters have more than `TRANSPORT_PARAMETERS_LIMIT`. The record
 //   holds the count of bytes at fault as its value;
-// - `Refused`, argument 0: the module did not give the public key of the server, or the key
-//   share;
+// - `Refused`, argument 0: the module did not give the public key of the server or of the
+//   client, or the key share;
 // - `Seed_Too_Weak`, the record of the generator: the seed of the program is weaker than the
 //   configuration asks. A server meets this later, when it reads the ClientHello.
 tls_start :: proc "contextless" (handshake: ^Tls_Handshake, configuration: ^Tls_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, error: ^errors.Error_Record) -> bool {
@@ -944,6 +1008,16 @@ tls_start :: proc "contextless" (handshake: ^Tls_Handshake, configuration: ^Tls_
 		}
 		handshake.state = .Server_Waits_For_Client_Hello
 		return true
+	}
+	client_has_key := configuration.client_private_key != ([ED25519_KEY_SIZE]u8{})
+	if client_has_key {
+		// The public key that the Certificate of the client carries, when a
+		// server asks for it.
+		secret := string(handshake.configuration.client_private_key[:])
+		result := handshake.client_public_key[:]
+		if cryptography.ed25519_public_key(&secret, &result, error) != ED25519_KEY_SIZE {
+			return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
+		}
 	}
 	if !random.fill_for_a_key(generator, handshake.client_random[:], configuration.least_seed_strength, error) {
 		handshake.state = .Failed
@@ -987,6 +1061,13 @@ tls_start :: proc "contextless" (handshake: ^Tls_Handshake, configuration: ^Tls_
 	write_integer(&writer, 2, 2)
 	write_integer(&writer, 1, 1)
 	write_integer(&writer, CERTIFICATE_TYPE_RAW_PUBLIC_KEY, 1)
+	if client_has_key {
+		// The key of the client can go as a raw public key only.
+		write_integer(&writer, int(Extension.Client_Certificate_Type), 2)
+		write_integer(&writer, 2, 2)
+		write_integer(&writer, 1, 1)
+		write_integer(&writer, CERTIFICATE_TYPE_RAW_PUBLIC_KEY, 1)
+	}
 	write_extension_application_protocol(&writer, &handshake.configuration)
 	write_extension_transport_parameters(&writer, &handshake.configuration)
 	vector_end(&writer, extensions, 2)
@@ -1206,8 +1287,8 @@ tls_receive :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption_
 //
 // Each other message fails with unexpected_message, with its type as the value of the record: a
 // message of another type, at another level, or after the end. That includes KeyUpdate, which QUIC
-// forbids (RFC 9001, section 6), CertificateRequest, and each message to a server that is
-// connected.
+// forbids (RFC 9001, section 6), a CertificateRequest after the Certificate of the server, and each
+// message to a server that is connected.
 @(private)
 message_read :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption_Level, message: []u8, error: ^errors.Error_Record) -> bool {
 	type := Handshake_Message(message[0])
@@ -1221,9 +1302,12 @@ message_read :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption
 		{.Server_Waits_For_Client_Hello, .Initial, .Client_Hello},
 		{.Client_Waits_For_Server_Hello, .Initial, .Server_Hello},
 		{.Client_Waits_For_Encrypted_Extensions, .Handshake, .Encrypted_Extensions},
+		{.Client_Waits_For_Certificate, .Handshake, .Certificate_Request},
 		{.Client_Waits_For_Certificate, .Handshake, .Certificate},
 		{.Client_Waits_For_Certificate_Verify, .Handshake, .Certificate_Verify},
 		{.Client_Waits_For_Finished, .Handshake, .Finished},
+		{.Server_Waits_For_Client_Certificate, .Handshake, .Certificate},
+		{.Server_Waits_For_Client_Certificate_Verify, .Handshake, .Certificate_Verify},
 		{.Server_Waits_For_Finished, .Handshake, .Finished},
 	}
 	for item in expected {
@@ -1236,11 +1320,18 @@ message_read :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption
 			case .Client_Waits_For_Encrypted_Extensions:
 				return encrypted_extensions_read(handshake, message, body, error)
 			case .Client_Waits_For_Certificate:
+				if type == .Certificate_Request {
+					return certificate_request_read(handshake, message, body, error)
+				}
 				return certificate_read(handshake, message, body, error)
 			case .Client_Waits_For_Certificate_Verify:
 				return certificate_verify_read(handshake, message, body, error)
 			case .Client_Waits_For_Finished:
 				return server_finished_read(handshake, message, body, error)
+			case .Server_Waits_For_Client_Certificate:
+				return client_certificate_read(handshake, message, body, error)
+			case .Server_Waits_For_Client_Certificate_Verify:
+				return client_certificate_verify_read(handshake, message, body, error)
 			case .Server_Waits_For_Finished:
 				return client_finished_read(handshake, message, body, error)
 			case .Start, .Connected, .Failed:
@@ -1274,11 +1365,13 @@ message_read :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption
 // 8. TLS 1.3 in `supported_versions`: protocol_version;
 // 9. X25519 in `supported_groups` and ed25519 in `signature_algorithms`: handshake_failure;
 // 10. the raw public key in `server_certificate_type`: unsupported_certificate;
-// 11. the protocol of the server in the list of ALPN: no_application_protocol;
-// 12. one X25519 key share of 32 bytes: illegal_parameter for two of them or for another size,
+// 11. a server with a `client_key_check` only: `client_certificate_type` is there
+//     (certificate_required) and holds the raw public key (unsupported_certificate);
+// 12. the protocol of the server in the list of ALPN: no_application_protocol;
+// 13. one X25519 key share of 32 bytes: illegal_parameter for two of them or for another size,
 //     handshake_failure for none. A HelloRetryRequest would ask for one; this handshake sends
 //     none;
-// 13. the form of the transport parameters (`transport_parameters_take`).
+// 14. the form of the transport parameters (`transport_parameters_take`).
 //
 // A list that is malformed is decode_error in each case.
 //
@@ -1352,6 +1445,16 @@ client_hello_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u
 	if has, ok := list_has(extensions.data[.Server_Certificate_Type], 1, 1, CERTIFICATE_TYPE_RAW_PUBLIC_KEY); !ok || !has {
 		return tls_fail(handshake, error, ok ? Alert.Unsupported_Certificate : Alert.Decode_Error, ok ? errors.Kind.Unsupported : errors.Kind.Bad_Value)
 	}
+	if handshake.configuration.client_key_check != nil {
+		// This server asks for the key of each client, as a raw public key:
+		// a client that offers none has no key to prove.
+		if .Client_Certificate_Type not_in extensions.present {
+			return tls_fail(handshake, error, .Certificate_Required, .Absent)
+		}
+		if has, ok := list_has(extensions.data[.Client_Certificate_Type], 1, 1, CERTIFICATE_TYPE_RAW_PUBLIC_KEY); !ok || !has {
+			return tls_fail(handshake, error, ok ? Alert.Unsupported_Certificate : Alert.Decode_Error, ok ? errors.Kind.Unsupported : errors.Kind.Bad_Value)
+		}
+	}
 	if matches, ok := application_protocol_matches(&handshake.configuration, extensions.data[.Application_Protocol], false); !ok || !matches {
 		return tls_fail(handshake, error, ok ? Alert.No_Application_Protocol : Alert.Decode_Error, ok ? errors.Kind.Unsupported : errors.Kind.Bad_Value)
 	}
@@ -1423,27 +1526,30 @@ client_hello_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u
 	return server_flight_send(handshake, error)
 }
 
-// server_flight_send writes the four messages of a server at the Handshake level, then makes the application secrets.
+// server_flight_send writes the messages of a server at the Handshake level, then makes the application secrets.
 //
 // The messages, in the order of RFC 8446, section 4:
 //
 // 1. **EncryptedExtensions**: ALPN with the one name, `server_certificate_type` with the raw public
-//    key, and the transport parameters of the server.
-// 2. **Certificate**: an empty request context and one entry: the 44 bytes of the
-//    SubjectPublicKeyInfo of the Ed25519 key, with no extension.
-// 3. **CertificateVerify**: the scheme ed25519 and the signature of 64 bytes over the content of
-//    `signature_content`, which holds the hash of the transcript up to the Certificate. It proves
-//    that the server holds the private key of the key that it showed.
+//    key, `client_certificate_type` with the raw public key when the server asks for the key of the
+//    client, and the transport parameters of the server.
+// 2. **CertificateRequest**, only when the configuration has a `client_key_check`: an empty request
+//    context and `signature_algorithms` with ed25519.
+// 3. **Certificate** and **CertificateVerify** (`proof_of_key_send`): the raw public key of the
+//    server, and its signature over the transcript up to that Certificate.
 // 4. **Finished**: the HMAC of the transcript up to CertificateVerify (`finished_send`).
 //
 // Then it derives the two application traffic secrets from the transcript up to its own Finished
-// (`key_schedule_application`), sets `application_keys_ready`, and waits for the Finished of the
-// client (`Server_Waits_For_Finished`).
+// (`key_schedule_application`), sets `application_keys_ready`, and waits for the Certificate of
+// the client (`Server_Waits_For_Client_Certificate`) when it asked for it, else for the Finished of
+// the client (`Server_Waits_For_Finished`). The transport opens no 1-RTT packet of the client
+// before the handshake is connected, so no stream of a client comes before its key is allowed.
 //
-// It sends no CertificateRequest and no NewSessionTicket. Each failure is internal_error: a refusal
-// of the module, or a buffer with no room.
+// It sends no NewSessionTicket. Each failure is internal_error: a refusal of the module, or a
+// buffer with no room.
 @(private)
 server_flight_send :: proc "contextless" (handshake: ^Tls_Handshake, error: ^errors.Error_Record) -> bool {
+	asks_for_client_key := handshake.configuration.client_key_check != nil
 	buffer: [LEVEL_BUFFER_SIZE]u8
 	// EncryptedExtensions: ALPN, the certificate type, the transport
 	// parameters.
@@ -1455,22 +1561,79 @@ server_flight_send :: proc "contextless" (handshake: ^Tls_Handshake, error: ^err
 	write_integer(&writer, int(Extension.Server_Certificate_Type), 2)
 	write_integer(&writer, 1, 2)
 	write_integer(&writer, CERTIFICATE_TYPE_RAW_PUBLIC_KEY, 1)
+	if asks_for_client_key {
+		// The key of the client comes as a raw public key, as the ClientHello
+		// offered.
+		write_integer(&writer, int(Extension.Client_Certificate_Type), 2)
+		write_integer(&writer, 1, 2)
+		write_integer(&writer, CERTIFICATE_TYPE_RAW_PUBLIC_KEY, 1)
+	}
 	write_extension_transport_parameters(&writer, &handshake.configuration)
 	vector_end(&writer, block, 2)
 	vector_end(&writer, body, 3)
 	if writer.failed || !message_send(handshake, .Handshake, buffer[:writer.position], error) {
 		return writer.failed ? tls_fail(handshake, error, .Internal_Error, .Too_Long, argument = 0) : false
 	}
+	if asks_for_client_key {
+		// CertificateRequest: an empty request context, and the one signature
+		// scheme that this server verifies (RFC 8446, section 4.3.2).
+		writer = Writer{bytes = buffer[:]}
+		write_integer(&writer, int(Handshake_Message.Certificate_Request), 1)
+		body = vector_start(&writer, 3)
+		write_integer(&writer, 0, 1)
+		request_block := vector_start(&writer, 2)
+		write_integer(&writer, int(Extension.Signature_Algorithms), 2)
+		write_integer(&writer, 4, 2)
+		write_integer(&writer, 2, 2)
+		write_integer(&writer, TLS_SIGNATURE_ED25519, 2)
+		vector_end(&writer, request_block, 2)
+		vector_end(&writer, body, 3)
+		if writer.failed || !message_send(handshake, .Handshake, buffer[:writer.position], error) {
+			return writer.failed ? tls_fail(handshake, error, .Internal_Error, .Too_Long, argument = 0) : false
+		}
+	}
+	// Certificate and CertificateVerify of the server.
+	if !proof_of_key_send(handshake, handshake.configuration.server_private_key[:], handshake.server_public_key[:], SERVER_SIGNATURE_CONTEXT, error) {
+		return false
+	}
+	// Finished of the server, then the application secrets.
+	if !finished_send(handshake, handshake.schedule.server_handshake_traffic[:], error) {
+		return false
+	}
+	hash: [HASH_SIZE]u8
+	if !transcript_hash(handshake, &hash, error) || !key_schedule_application(handshake.cryptography, &handshake.schedule, hash[:], error) {
+		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
+	}
+	handshake.application_keys_ready = true
+	handshake.state = asks_for_client_key ? .Server_Waits_For_Client_Certificate : .Server_Waits_For_Finished
+	return true
+}
+
+// proof_of_key_send writes the Certificate and the CertificateVerify of this side at the Handshake level.
+//
+// The two messages, the same for a server and for a client but for the context string:
+//
+// 1. **Certificate**: an empty request context and one entry: the 44 bytes of the
+//    SubjectPublicKeyInfo of the Ed25519 key, with no extension.
+// 2. **CertificateVerify**: the scheme ed25519 and the signature of 64 bytes over the content of
+//    `signature_content`, which holds the hash of the transcript up to that Certificate. It proves
+//    that this side holds the private key of the key that it showed.
+//
+// Each failure is internal_error: a refusal of the module, or a buffer with no room.
+@(private)
+proof_of_key_send :: proc "contextless" (handshake: ^Tls_Handshake, private_key: []u8, public_key: []u8, signature_context: string, error: ^errors.Error_Record) -> bool {
+	// The larger of the two messages is the CertificateVerify: 72 bytes.
+	buffer: [128]u8
 	// Certificate: an empty request context, one entry with the raw public
 	// key and no extension.
-	writer = Writer{bytes = buffer[:]}
+	writer := Writer{bytes = buffer[:]}
 	write_integer(&writer, int(Handshake_Message.Certificate), 1)
-	body = vector_start(&writer, 3)
+	body := vector_start(&writer, 3)
 	write_integer(&writer, 0, 1)
 	list := vector_start(&writer, 3)
 	write_integer(&writer, PUBLIC_KEY_INFORMATION_SIZE, 3)
 	write_bytes(&writer, ED25519_PUBLIC_KEY_INFORMATION_PREFIX[:])
-	write_bytes(&writer, handshake.server_public_key[:])
+	write_bytes(&writer, public_key)
 	write_integer(&writer, 0, 2)
 	vector_end(&writer, list, 3)
 	vector_end(&writer, body, 3)
@@ -1479,11 +1642,11 @@ server_flight_send :: proc "contextless" (handshake: ^Tls_Handshake, error: ^err
 	}
 	// CertificateVerify: the signature of the transcript to the Certificate.
 	content: [SIGNATURE_CONTENT_SIZE]u8
-	if !signature_content(handshake, &content, error) {
+	if !signature_content(handshake, signature_context, &content, error) {
 		return false
 	}
 	signature: [ED25519_SIGNATURE_SIZE]u8
-	secret, signed := string(handshake.configuration.server_private_key[:]), string(content[:])
+	secret, signed := string(private_key), string(content[:])
 	result := signature[:]
 	if handshake.cryptography.ed25519_sign(&secret, &signed, &result, error) != ED25519_SIGNATURE_SIZE {
 		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
@@ -1498,40 +1661,30 @@ server_flight_send :: proc "contextless" (handshake: ^Tls_Handshake, error: ^err
 	if writer.failed || !message_send(handshake, .Handshake, buffer[:writer.position], error) {
 		return writer.failed ? tls_fail(handshake, error, .Internal_Error, .Too_Long, argument = 0) : false
 	}
-	// Finished of the server, then the application secrets.
-	if !finished_send(handshake, handshake.schedule.server_handshake_traffic[:], error) {
-		return false
-	}
-	hash: [HASH_SIZE]u8
-	if !transcript_hash(handshake, &hash, error) || !key_schedule_application(handshake.cryptography, &handshake.schedule, hash[:], error) {
-		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
-	}
-	handshake.application_keys_ready = true
-	handshake.state = .Server_Waits_For_Finished
 	return true
 }
 
 // The bytes of what a CertificateVerify signs: 130.
 //
-// 64 spaces, the 33 bytes of `SERVER_SIGNATURE_CONTEXT`, one zero byte and the 32 bytes of the
-// transcript hash.
+// 64 spaces, the 33 bytes of `SERVER_SIGNATURE_CONTEXT` or of `CLIENT_SIGNATURE_CONTEXT`, one zero
+// byte and the 32 bytes of the transcript hash.
 SIGNATURE_CONTENT_SIZE :: 64 + len(SERVER_SIGNATURE_CONTEXT) + 1 + HASH_SIZE
 
-// signature_content writes what the CertificateVerify of a server signs.
+// signature_content writes what a CertificateVerify signs.
 //
-// The content is 64 bytes 0x20 (spaces), the context string of a server, one zero byte, then the
-// hash of the transcript as it is now (RFC 8446, section 4.4.3). The server calls it after it
-// wrote its Certificate, the client after it read it: both then hash the same messages, from
-// ClientHello to Certificate. The spaces and the string keep the signature from being a valid
-// signature of anything else.
+// The content is 64 bytes 0x20 (spaces), the context string of the side that signs, one zero byte,
+// then the hash of the transcript as it is now (RFC 8446, section 4.4.3). The side that signs calls
+// it after it wrote its Certificate, the other side after it read it: both then hash the same
+// messages, from ClientHello to that Certificate. The spaces and the string keep the signature from
+// being a valid signature of anything else, the signature of the other side too.
 //
 // False, with internal_error, when the hash of the transcript fails.
 @(private)
-signature_content :: proc "contextless" (handshake: ^Tls_Handshake, content: ^[SIGNATURE_CONTENT_SIZE]u8, error: ^errors.Error_Record) -> bool {
+signature_content :: proc "contextless" (handshake: ^Tls_Handshake, signature_context: string, content: ^[SIGNATURE_CONTENT_SIZE]u8, error: ^errors.Error_Record) -> bool {
 	for index in 0 ..< 64 {
 		content[index] = 0x20
 	}
-	copy(content[64:], SERVER_SIGNATURE_CONTEXT)
+	copy(content[64:], signature_context[:len(SERVER_SIGNATURE_CONTEXT)])
 	content[64 + len(SERVER_SIGNATURE_CONTEXT)] = 0
 	hash: [HASH_SIZE]u8
 	if !transcript_hash(handshake, &hash, error) {
@@ -1675,9 +1828,11 @@ server_hello_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u
 // - the form of the message: decode_error;
 // - only the extensions that the client offered and that RFC 8446, section 4.2, lets a server
 //   answer there: ALPN, `server_certificate_type`, `quic_transport_parameters` and
-//   `supported_groups`. Each other extension fails with unsupported_extension. That includes
-//   `server_name`, `client_certificate_type` and `early_data`: the RFC lets a server send them
-//   there only as an answer, and this client offers none of them;
+//   `supported_groups`, and `client_certificate_type` for a client with a key of its own. Each
+//   other extension fails with unsupported_extension. That includes `server_name` and
+//   `early_data`: the RFC lets a server send them there only as an answer, and this client offers
+//   neither of them;
+// - `client_certificate_type`, when it is there, is the raw public key: unsupported_certificate;
 // - `supported_groups` is taken and not read: it names the groups that the server prefers for a
 //   later connection (RFC 8446, section 4.2.7), and this client has one group;
 // - ALPN is there: no_application_protocol (RFC 9001, section 8.1); it holds one name, the name of
@@ -1698,8 +1853,20 @@ encrypted_extensions_read :: proc "contextless" (handshake: ^Tls_Handshake, mess
 	extensions: Extensions
 	// supported_groups is taken and not read: a server may name there the
 	// groups that it prefers, to a client that offered the extension.
-	if !extensions_read(handshake, block, {.Application_Protocol, .Server_Certificate_Type, .Quic_Transport_Parameters, .Supported_Groups}, EXTENSIONS_OF_ENCRYPTED_EXTENSIONS, false, &extensions, error) {
+	offered := bit_set[Extension]{.Application_Protocol, .Server_Certificate_Type, .Quic_Transport_Parameters, .Supported_Groups}
+	if handshake.client_public_key != ([ED25519_KEY_SIZE]u8{}) {
+		offered += {.Client_Certificate_Type}
+	}
+	if !extensions_read(handshake, block, offered, EXTENSIONS_OF_ENCRYPTED_EXTENSIONS, false, &extensions, error) {
 		return false
+	}
+	if .Client_Certificate_Type in extensions.present {
+		// The one type that this client offered for its own key.
+		client_type := extensions.data[.Client_Certificate_Type]
+		if len(client_type) != 1 || client_type[0] != CERTIFICATE_TYPE_RAW_PUBLIC_KEY {
+			return tls_fail(handshake, error, .Unsupported_Certificate, .Unsupported)
+		}
+		handshake.client_key_type_agreed = true
 	}
 	if .Application_Protocol not_in extensions.present {
 		// RFC 9001, section 8.1: a server that chose no protocol.
@@ -1727,6 +1894,92 @@ encrypted_extensions_read :: proc "contextless" (handshake: ^Tls_Handshake, mess
 	return true
 }
 
+// certificate_request_read reads the CertificateRequest of a server: it asks for the key of the client.
+//
+// **What it checks**, with the alert of each refusal (RFC 8446, section 4.3.2):
+//
+// - a client with a key of its own, and one CertificateRequest at most: unexpected_message. A client
+//   with no key offered no `client_certificate_type`, and sends no empty Certificate;
+// - EncryptedExtensions answered `client_certificate_type` with the raw public key:
+//   unsupported_certificate. No answer means X.509 (RFC 7250, section 4.2), which this client does
+//   not have;
+// - the form of the message: decode_error; an empty request context, as each CertificateRequest
+//   of a handshake has: illegal_parameter;
+// - the extensions: `signature_algorithms` must be there (missing_extension) and hold ed25519
+//   (handshake_failure). Each extension that is not a member of `Extension` is skipped, as the
+//   standard asks; a member that the standard does not specify there fails with illegal_parameter.
+//
+// Then the message is in the transcript, and the client still waits for the Certificate of the
+// server. After the Finished of the server it sends its own Certificate and CertificateVerify.
+@(private)
+certificate_request_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u8, body: []u8, error: ^errors.Error_Record) -> bool {
+	if handshake.client_public_key == ([ED25519_KEY_SIZE]u8{}) || handshake.client_key_requested {
+		return tls_fail(handshake, error, .Unexpected_Message, .State, int(Handshake_Message.Certificate_Request))
+	}
+	if !handshake.client_key_type_agreed {
+		return tls_fail(handshake, error, .Unsupported_Certificate, .Unsupported)
+	}
+	reader := Reader{bytes = body}
+	request_context := read_vector(&reader, 1)
+	block := read_vector(&reader, 2)
+	if !read_done(&reader) {
+		return tls_fail(handshake, error, .Decode_Error, .Bad_Value, reader.position)
+	}
+	if len(request_context) != 0 {
+		return tls_fail(handshake, error, .Illegal_Parameter, .Bad_Value)
+	}
+	extensions: Extensions
+	if !extensions_read(handshake, block, EXTENSIONS_OF_A_CERTIFICATE_REQUEST, EXTENSIONS_OF_A_CERTIFICATE_REQUEST, true, &extensions, error) {
+		return false
+	}
+	if .Signature_Algorithms not_in extensions.present {
+		return tls_fail(handshake, error, .Missing_Extension, .Absent)
+	}
+	if has, ok := list_has(extensions.data[.Signature_Algorithms], 2, 2, TLS_SIGNATURE_ED25519); !ok || !has {
+		return tls_fail(handshake, error, ok ? Alert.Handshake_Failure : Alert.Decode_Error, ok ? errors.Kind.Unsupported : errors.Kind.Bad_Value)
+	}
+	if !transcript_add(handshake, message, error) {
+		return false
+	}
+	handshake.client_key_requested = true
+	return true
+}
+
+// raw_public_key_read reads the body of a Certificate of either side: one raw public key.
+//
+// **What it checks**, with the alert of each refusal (RFC 8446, section 4.4.2):
+//
+// - an empty request context, and a list with at most one entry: decode_error. A raw public key
+//   is one entry; the extensions of the entry are read past and not used;
+// - the entry is 44 bytes that start with `ED25519_PUBLIC_KEY_INFORMATION_PREFIX`:
+//   unsupported_certificate.
+//
+// **Results**: `information`, the 44 bytes of the entry, or nil for a list with no entry, which
+// the caller refuses with its own alert; `read`, false when the handshake failed here.
+@(private)
+raw_public_key_read :: proc "contextless" (handshake: ^Tls_Handshake, body: []u8, error: ^errors.Error_Record) -> (information: []u8, read: bool) {
+	reader := Reader{bytes = body}
+	request_context := read_vector(&reader, 1)
+	list := read_vector(&reader, 3)
+	if !read_done(&reader) || len(request_context) != 0 {
+		return nil, tls_fail(handshake, error, .Decode_Error, .Bad_Value)
+	}
+	if len(list) == 0 {
+		return nil, true
+	}
+	entries := Reader{bytes = list}
+	information = read_vector(&entries, 3)
+	read_vector(&entries, 2) // The extensions of the entry: none is used.
+	if !read_done(&entries) {
+		// More than one entry, or a cut one: a raw public key is one entry.
+		return nil, tls_fail(handshake, error, .Decode_Error, .Bad_Value)
+	}
+	if len(information) != PUBLIC_KEY_INFORMATION_SIZE || string(information[:12]) != string(ED25519_PUBLIC_KEY_INFORMATION_PREFIX[:]) {
+		return nil, tls_fail(handshake, error, .Unsupported_Certificate, .Unsupported)
+	}
+	return information, true
+}
+
 // certificate_read reads the Certificate of the server: one raw public key, which must be the pinned key.
 //
 // **What it checks**, with the alert of each refusal (RFC 8446, section 4.4.2):
@@ -1746,21 +1999,13 @@ encrypted_extensions_read :: proc "contextless" (handshake: ^Tls_Handshake, mess
 // the signature of the next message, which only the holder of the private key can make.
 @(private)
 certificate_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u8, body: []u8, error: ^errors.Error_Record) -> bool {
-	reader := Reader{bytes = body}
-	request_context := read_vector(&reader, 1)
-	list := read_vector(&reader, 3)
-	if !read_done(&reader) || len(request_context) != 0 {
-		return tls_fail(handshake, error, .Decode_Error, .Bad_Value)
+	information, read := raw_public_key_read(handshake, body, error)
+	if !read {
+		return false
 	}
-	entries := Reader{bytes = list}
-	information := read_vector(&entries, 3)
-	read_vector(&entries, 2) // The extensions of the entry: none is used.
-	if !read_done(&entries) {
-		// No entry, or more than one: a raw public key is one entry.
+	if information == nil {
+		// No entry: a server always has its key.
 		return tls_fail(handshake, error, .Decode_Error, .Bad_Value)
-	}
-	if len(information) != PUBLIC_KEY_INFORMATION_SIZE || string(information[:12]) != string(ED25519_PUBLIC_KEY_INFORMATION_PREFIX[:]) {
-		return tls_fail(handshake, error, .Unsupported_Certificate, .Unsupported)
 	}
 	if string(information[12:]) != string(handshake.configuration.server_public_key[:]) {
 		// Not the key that the caller pinned: whoever holds it is not the
@@ -1793,28 +2038,52 @@ certificate_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u8
 // Then it adds the message to the transcript and waits for the Finished of the server.
 @(private)
 certificate_verify_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u8, body: []u8, error: ^errors.Error_Record) -> bool {
-	reader := Reader{bytes = body}
-	algorithm := read_integer(&reader, 2)
-	signature := read_vector(&reader, 2)
-	if !read_done(&reader) {
-		return tls_fail(handshake, error, .Decode_Error, .Bad_Value)
-	}
-	if algorithm != TLS_SIGNATURE_ED25519 || len(signature) != ED25519_SIGNATURE_SIZE {
-		return tls_fail(handshake, error, .Illegal_Parameter, .Bad_Value)
-	}
-	content: [SIGNATURE_CONTENT_SIZE]u8
-	if !signature_content(handshake, &content, error) {
+	signature, read := signature_scheme_read(handshake, body, error)
+	if !read {
 		return false
 	}
-	public, signed, signature_text := string(handshake.server_public_key[:]), string(content[:]), string(signature)
-	if handshake.cryptography.ed25519_verify(&public, &signed, &signature_text, error) != 0 {
-		return tls_fail(handshake, error, .Decrypt_Error, .Not_Authentic)
-	}
-	if !transcript_add(handshake, message, error) {
+	if !signature_verify(handshake, handshake.server_public_key[:], SERVER_SIGNATURE_CONTEXT, signature, error) || !transcript_add(handshake, message, error) {
 		return false
 	}
 	handshake.state = .Client_Waits_For_Finished
 	return true
+}
+
+// signature_verify checks the signature of a CertificateVerify, with the key of the Certificate before it.
+//
+// It builds the signed content from the transcript of this side, up to that Certificate
+// (`signature_content`), with the context string of the side that signed. False: decrypt_error,
+// with `Not_Authentic`, when the module does not verify the signature; internal_error when the
+// hash fails.
+@(private)
+signature_verify :: proc "contextless" (handshake: ^Tls_Handshake, public_key: []u8, signature_context: string, signature: []u8, error: ^errors.Error_Record) -> bool {
+	content: [SIGNATURE_CONTENT_SIZE]u8
+	if !signature_content(handshake, signature_context, &content, error) {
+		return false
+	}
+	public, signed, signature_text := string(public_key), string(content[:]), string(signature)
+	if handshake.cryptography.ed25519_verify(&public, &signed, &signature_text, error) != 0 {
+		return tls_fail(handshake, error, .Decrypt_Error, .Not_Authentic)
+	}
+	return true
+}
+
+// signature_scheme_read reads the body of a CertificateVerify of either side: the scheme and the signature.
+//
+// False: decode_error for a malformed body; illegal_parameter for another scheme than ed25519 or a
+// signature that does not have 64 bytes.
+@(private)
+signature_scheme_read :: proc "contextless" (handshake: ^Tls_Handshake, body: []u8, error: ^errors.Error_Record) -> (signature: []u8, read: bool) {
+	reader := Reader{bytes = body}
+	algorithm := read_integer(&reader, 2)
+	signature = read_vector(&reader, 2)
+	if !read_done(&reader) {
+		return nil, tls_fail(handshake, error, .Decode_Error, .Bad_Value)
+	}
+	if algorithm != TLS_SIGNATURE_ED25519 || len(signature) != ED25519_SIGNATURE_SIZE {
+		return nil, tls_fail(handshake, error, .Illegal_Parameter, .Bad_Value)
+	}
+	return signature, true
 }
 
 // server_finished_read is the last step of the client side: it checks the Finished of the server, makes the application secrets, and writes its own Finished.
@@ -1825,11 +2094,19 @@ certificate_verify_read :: proc "contextless" (handshake: ^Tls_Handshake, messag
 //    the server), and adds it to the transcript;
 // 2. it derives the two application traffic secrets from the transcript up to that Finished
 //    (`key_schedule_application`);
-// 3. it writes the Finished of the client at the Handshake level (`finished_send`);
-// 4. it sets `application_keys_ready` and the state `Connected`.
+// 3. when the server sent a CertificateRequest, it writes its own Certificate and
+//    CertificateVerify at the Handshake level (`proof_of_key_send`, with the context string of a
+//    client);
+// 4. it writes the Finished of the client at the Handshake level (`finished_send`), over the
+//    transcript up to its CertificateVerify when it wrote one;
+// 5. it sets `application_keys_ready` and the state `Connected`.
+//
+// The application secrets come from the transcript up to the Finished of the server, as RFC 8446,
+// section 7.1, says: the proof of the client does not change them.
 //
 // For TLS the client is connected now. For QUIC the handshake is confirmed later, when the
-// HANDSHAKE_DONE frame of the server comes: that is the transport's.
+// HANDSHAKE_DONE frame of the server comes: that is the transport's. A server that refuses the key
+// of the client closes the connection before it: the transport of the client sees the alert.
 @(private)
 server_finished_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u8, body: []u8, error: ^errors.Error_Record) -> bool {
 	if !finished_check(handshake, body, handshake.schedule.server_handshake_traffic[:], error) || !transcript_add(handshake, message, error) {
@@ -1839,11 +2116,78 @@ server_finished_read :: proc "contextless" (handshake: ^Tls_Handshake, message: 
 	if !transcript_hash(handshake, &hash, error) || !key_schedule_application(handshake.cryptography, &handshake.schedule, hash[:], error) {
 		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 	}
+	if handshake.client_key_requested && !proof_of_key_send(handshake, handshake.configuration.client_private_key[:], handshake.client_public_key[:], CLIENT_SIGNATURE_CONTEXT, error) {
+		return false
+	}
 	if !finished_send(handshake, handshake.schedule.client_handshake_traffic[:], error) {
 		return false
 	}
 	handshake.application_keys_ready = true
 	handshake.state = .Connected
+	return true
+}
+
+// client_certificate_read is a step of a server that asks for the key of the client: it reads the Certificate of the client.
+//
+// **What it checks**, with the alert of each refusal:
+//
+// - the form of `raw_public_key_read`: decode_error, unsupported_certificate;
+// - one entry: certificate_required for a list with no entry (RFC 8446, section 4.4.2.4).
+//
+// Then the key is in `Tls_Handshake.client_public_key`, the message is in the transcript, and the
+// server waits for the CertificateVerify of the client. The key is not proven yet, and the
+// procedure of the caller does not see it before its proof: a peer that does not hold the private
+// key learns nothing of which keys are allowed.
+@(private)
+client_certificate_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u8, body: []u8, error: ^errors.Error_Record) -> bool {
+	information, read := raw_public_key_read(handshake, body, error)
+	if !read {
+		return false
+	}
+	if information == nil {
+		return tls_fail(handshake, error, .Certificate_Required, .Absent)
+	}
+	copy(handshake.client_public_key[:], information[12:])
+	if !transcript_add(handshake, message, error) {
+		return false
+	}
+	handshake.state = .Server_Waits_For_Client_Certificate_Verify
+	return true
+}
+
+// client_certificate_verify_read checks the signature of the client, then asks the caller of the server if its key is allowed.
+//
+// **What it checks**, with the alert of each refusal:
+//
+// - the form of the message, the scheme ed25519 and a signature of 64 bytes
+//   (`signature_scheme_read`): decode_error, illegal_parameter;
+// - the signature over the transcript up to the Certificate of the client, with the context string
+//   of a client (`signature_verify`): decrypt_error, with `Not_Authentic`;
+// - the procedure `client_key_check` of the configuration allows the proven key: access_denied,
+//   with `No_Grant`. The key goes to `Tls_Handshake.refused_client_public_key`, and
+//   `client_public_key` is erased.
+//
+// Then it adds the message to the transcript and waits for the Finished of the client.
+@(private)
+client_certificate_verify_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u8, body: []u8, error: ^errors.Error_Record) -> bool {
+	signature, read := signature_scheme_read(handshake, body, error)
+	if !read {
+		return false
+	}
+	if !signature_verify(handshake, handshake.client_public_key[:], CLIENT_SIGNATURE_CONTEXT, signature, error) {
+		return false
+	}
+	// The procedure reads a copy: it cannot change the key of the handshake.
+	key := handshake.client_public_key
+	if handshake.configuration.client_key_check == nil || !handshake.configuration.client_key_check(&key) {
+		handshake.refused_client_public_key = handshake.client_public_key
+		handshake.client_public_key = {}
+		return tls_fail(handshake, error, .Access_Denied, .No_Grant)
+	}
+	if !transcript_add(handshake, message, error) {
+		return false
+	}
+	handshake.state = .Server_Waits_For_Finished
 	return true
 }
 
@@ -1853,7 +2197,8 @@ server_finished_read :: proc "contextless" (handshake: ^Tls_Handshake, message: 
 // client holds the handshake secrets and saw the flight of the server unchanged. The message goes
 // in the transcript and the state is `Connected`.
 //
-// It proves nothing about who the client is: this handshake asks no certificate of a client.
+// With no `client_key_check` it proves nothing about who the client is. With one, the key of the
+// client was proven and allowed before this message (`client_certificate_verify_read`).
 @(private)
 client_finished_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u8, body: []u8, error: ^errors.Error_Record) -> bool {
 	if !finished_check(handshake, body, handshake.schedule.client_handshake_traffic[:], error) || !transcript_add(handshake, message, error) {

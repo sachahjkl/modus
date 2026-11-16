@@ -4,7 +4,7 @@ These rules say how a program of this system looks. They are taken from the boot
 
 A new graphical program follows these rules. The programs of the desktop that came before do not follow all of them yet: see "State" at the end.
 
-**Why rules.** One look across the system lets a reader trust what a screen says: a value always has the font of the cells and the color of its kind, a concept always has its color, and each number on a screen names the record that it comes from. The rules live as one table of constants (`src/library/support/graphics/rules.odin`), so a change of a color changes every program and the site at once.
+**Why rules.** One look across the system lets a reader trust what a screen says: a value always has the font of the cells and the color of its kind, a concept always has its color, and each number on a screen names the record that it comes from. The rules live as one table of color tokens (`src/library/support/graphics/rules.odin`), with a value in the dark and in the light appearance, so a change of a color changes every program and the site at once.
 
 **For whom.** A reader who writes a graphical program, and a reader who changes the desktop or the site.
 
@@ -14,7 +14,7 @@ A new graphical program follows these rules. The programs of the desktop that ca
 
 ![The boot display, the model of the rules: the stages of the start on a line of time, the memory, the machine, the boot image, the programs](screenshots/boot.png)
 
-The rules live as one table of constants in `src/library/support/graphics/rules.odin`: the grid, the surfaces, the colors of the concepts and the colors of the desktop, with `mix`, `shade`, `block` and `gradient`. The boot display, the compositor and the programs read this table. A program does not repeat a color of the rules as its own constant.
+The rules live as one table in `src/library/support/graphics/rules.odin`: the grid, and the color tokens (the surfaces, the colors of the concepts and the colors of the desktop) in the dark and the light appearance, with `mix`, `shade`, `block` and `gradient`. The compositor and the programs read a token through the appearance in force (`graphics.colors.text`); the boot display reads the dark values (`graphics.DARK_TEXT`). A program does not repeat a color of the rules as its own constant. The tables of this guide name a token `colors.text`.
 
 ## 1. What is on the screen
 
@@ -39,13 +39,13 @@ Forms are rectangles by preference, because a rectangle can carry a measure (its
 
 A surface is a level of depth: the background, a card on it, and a track inside a card. The only sign of depth is a gradient from lighter at the top to darker at the bottom: no shadow.
 
-There are three levels. Each is a constant of the package.
+There are three levels. Each is a color token of the package, with a value in each appearance (section 4, "The appearances").
 
-| Level | Color | Use |
-|---|---|---|
-| Background | `0x0B1018` | Under all cards. A grid of points of 2 pixels, each 24 pixels, lies on it |
-| Card | `0x17212E` at the top to `0x111822` at the bottom | The frame of one subject |
-| Track | `0x1C2633` | The empty part of a bar, a band or a tube |
+| Level | Token | Dark | Light | Use |
+|---|---|---|---|---|
+| Background | `colors.background` | `0x0B1018` | `0xF4F6F8` | Under all cards. A grid of points of 2 pixels, each 24 pixels, lies on it, in `colors.point` (`0x18212D`; `0xDDE2E8`) |
+| Card | `colors.card_top`, `colors.card_bottom` | `0x17212E` at the top to `0x111822` at the bottom | `0xFFFFFF` to `0xF9FAFB` | The frame of one subject |
+| Track | `colors.track` | `0x1C2633` | `0xD6DBE0` | The empty part of a bar, a band or a tube |
 
 - A surface has a color that goes from lighter at the top to darker at the bottom. This is the one sign of depth.
 - A card has a border of 1 pixel in its accent, at 28 % at the top and 14 % at the bottom.
@@ -57,26 +57,38 @@ Color carries meaning, so each color names one concept of the system: the kernel
 
 One color is one concept, as one term is one concept.
 
-| Concept | Color |
-|---|---|
-| Firmware | `0x8E7CC3` |
-| Boot program | `0xE0A040` |
-| Kernel | `0x4A9CF0` |
-| Program | `0x58D878` |
-| Memory | `0x38C0B0` |
-| Machine | `0xD070B0` |
-| A module with no entry export | `0xC8C058` |
-| A resource of the boot image | `0x9AA8C8` |
-| Failed | `0xF06060` |
-| Stop a program | `0xB82232`: a rich red, the color of the close button of a window |
-| Not usable | `0x4A5563` |
-| Text | `0xDCE4EC` |
-| Dim text | `0x7C8A99` |
+| Concept | Token | Dark | Light |
+|---|---|---|---|
+| Firmware | `colors.firmware` | `0x8E7CC3` | `0x7566A1` |
+| Boot program | `colors.boot_program` | `0xE0A040` | `0x906729` |
+| Kernel | `colors.kernel` | `0x4A9CF0` | `0x3571AF` |
+| Program | `colors.program` | `0x58D878` | `0x327C45` |
+| Memory | `colors.memory` | `0x38C0B0` | `0x247C71` |
+| Machine | `colors.machine` | `0xD070B0` | `0xA15688` |
+| A module with no entry export | `colors.no_entry` | `0xC8C058` | `0x6D6930` |
+| A resource of the boot image | `colors.resource` | `0x9AA8C8` | `0x5C6478` |
+| Failed | `colors.failed` | `0xF06060` | `0xBA4A4A` |
+| Stop a program | `colors.stop_program` | `0xB82232`: a rich red, the color of the close button of a window | `0xB82232` |
+| Not usable | `colors.not_usable` | `0x4A5563` | `0xA9B2BD` |
+| Text | `colors.text` | `0xDCE4EC` | `0x0B1018` |
+| Dim text | `colors.dim` | `0x7C8A99` | `0x4A525B` |
+| Strong text: the text that an input types, the outline of the focus | `colors.text_strong` | `0xFFFFFF` | `0x000000` |
 
 - The state of a thing has three colors: the color of the boot program while it starts, the color of a program when it runs, the color "failed" when it failed.
 - Two neighbours of one concept take two shades of its color, so that their limit is visible.
 - If a thing has an identity (a hash), its color can come from the hash. A thing that changes takes a new color.
 - A color never stands alone for a fact: a text or a place says the same fact.
+
+### The appearances
+
+The desktop has two appearances: dark and light. The setting `appearance` chooses one: `auto`, the default, `dark` or `light` (`docs/FONTS.md`, "7. The setting"). With `auto` the light appearance holds from 07:00 to 19:00 of the local time, and the dark one at night; a system with no date is dark. The settings page holds the appearance in force, and each window draws once at a change. The design: `src/md/features/appearance.md`.
+
+- **One table.** Each color of the rules is a color token, with one value in each appearance: the tables of sections 3 and 4. `graphics.colors` holds the tokens of the appearance in force of a program; `display` gives it the appearance of the settings page, and the interface package reads it at each frame.
+- **The light appearance is the light form of the site.** The background is the light background of the mark, a card is white, the text is the dark background of the dark appearance. A concept is its accent at the shade that its value kind has on the light page of the site: the same color in a window and on a page.
+- **What does not change.** The blue of the title bar, the chosen blue, the red of the close button, and white on them: white keeps its contrast on them in both. The pointer is black and white. The boot display is dark: the boot program draws before any setting is read, and the display is the model of the rules. A picture keeps its pixels; the mark of the bar takes the colors of the light background of the mark.
+- **The colors of code, of values and of the scroll bar** have a value in each appearance: `code_class_color`, `value_kind_color` and `scroll_bar_colors_of` take the appearance.
+- **The contrast.** Each pair that a rule of this guide names keeps its bound in both appearances: a text 4.5 to 1, a large text and a graphic 3 to 1. Host tests compute each pair from the table (`src/library/support/graphics/appearance_test.odin`, `palette_colors_test.odin`, `value_colors_test.odin`). A concept is never a text on the track: in the light appearance it has about 3.6 to 1 there.
+- **The colors that a program owns** (the measures of `clock`, the states of `rings`, the headings of `manual`, the levels of `log`) keep their value in both appearances. Their light values are planned work (`ROADMAP.md`).
 
 ### The colors of code
 
@@ -94,7 +106,7 @@ Code has one set of colors wherever it is shown: on the site, and in the console
 
 - A part with no class has the color of the text around it.
 - Each class has at least 4.5 to 1 on each surface that shows code: the block of code of the site in both forms, and the background and the card in the terminal. Host tests compute each contrast.
-- On a chosen row (`COLOR_CHOSEN`, section 10), no class keeps that contrast: the row is white.
+- On a chosen row (`colors.chosen`, section 10), no class keeps that contrast: the row is white.
 
 ### The colors of values
 
@@ -219,25 +231,25 @@ The desktop is the screen of the compositor: the background, the bar, the window
 
 ### Background and bar
 
-- The background is `COLOR_BACKGROUND` with the grid of points of section 3. The compositor computes it once, at its start.
-- The bar is 32 pixels high, at the top of the screen. It has the surface of a card (`COLOR_CARD_TOP` to `COLOR_CARD_BOTTOM`) and a line of 1 pixel in `COLOR_TRACK` at its bottom.
+- The background is `colors.background` with the grid of points of section 3. The compositor computes it at its start, and again at each change of the appearance.
+- The bar is 32 pixels high, at the top of the screen. It has the surface of a card (`colors.card_top` to `colors.card_bottom`) and a line of 1 pixel in `colors.track` at its bottom.
 - The bar holds, from the left: the mark of the system (the heron with cells of 1 pixel, 24 by 24, at (16, 4): section 11); the button `programs`; the button `windows`; at the right, the key of the palette ("palette: super") and the clock: the date and the time of day in UTC (`src/library/contract/date`), or the time since the start of the machine while the system has no date.
-- A button is 24 pixels high, in `COLOR_TRACK`. The button of an open menu is in `COLOR_TITLE`, with its label in white.
+- A button is 24 pixels high, in `colors.track`. The button of an open menu is in `colors.title`, with its label in white.
 
 ### Menus
 
 - A menu of the bar is a card under its button: a border of 1 pixel in the color of the kernel, a title in capital letters, the caption of its source and the count of its lines.
 - The menu of the programs has two columns of lines. Its caption is `bar.names`, the table of the names in `src/library/support/bar`.
 - The menu of the windows has one line for each window, in the order of the client table. The window that has the focus has a square of 8 pixels before its title, and its title is white.
-- The line of a disk program has its nickname in the interface font, then, 8 pixels after it, the hash prefix of its file in the font of the cells and in `COLOR_DIM`: a value, faded, beside the name. The menu is as wide as the longest nickname with its hash prefix in the font of the cells, so a nickname needs no cut in that font.
-- A line is 24 pixels high. The line under the pointer is a chosen row: `COLOR_CHOSEN`, with its text in white (section 10).
+- The line of a disk program has its nickname in the interface font, then, 8 pixels after it, the hash prefix of its file in the font of the cells and in `colors.dim`: a value, faded, beside the name. The menu is as wide as the longest nickname with its hash prefix in the font of the cells, so a nickname needs no cut in that font.
+- A line is 24 pixels high. The line under the pointer is a chosen row: `colors.chosen`, with its text in white (section 10).
 
 ### Windows
 
 - A window is a title bar of 24 pixels over the surface of its program, with a border of 2 pixels at the left, the right and the bottom. There is no shadow.
-- The title bar of the window that has the focus goes from `COLOR_TITLE` (`0x3F7CC4`) at its left column to `COLOR_TITLE_END` (`0x162C45`, the same blue at 36 %) at its right column. Its top line is 125 % of these colors: the sign of depth of section 3. The bottom border has the colors of the title bar; the left border is the start color, the right border the end color.
-- The title bar of another window is quiet: it goes from `COLOR_TITLE_QUIET` (`0x2A3442`) to `COLOR_TITLE_QUIET_END` (`0x161D27`), and its title is in the dim color. So the gradient also says which window has the keyboard. Its title also says it: a title in white has the focus.
-- The close button is a square of 24 x 24 pixels at the right end of the title bar, with the character `x` of the font in white. Its color is the concept "stop a program": a deep red `COLOR_STOP_PROGRAM` (`0xB82232`), not the coral of "failed", because to close a window is not a failure. It has the sign of depth of the rules: a block from 118 % of the red at the top to 82 % at the bottom, and a top line at 150 %. When the pointer is over it, the red is brighter (`0xE0343F`). On a window that is not in front, the red is quiet (`0x4E2229`) and the `x` is a dim pink (`0xC09098`). The button shows the character `x`, not a cross of squares of 2 pixels: the two lines of such a cross do not meet on one square at the centre, and the cross does not match the title.
+- The title bar of the window that has the focus goes from `colors.title` (`0x3F7CC4`) at its left column to `colors.title_end` (`0x162C45`, the same blue at 36 %) at its right column. Its top line is 125 % of these colors: the sign of depth of section 3. The bottom border has the colors of the title bar; the left border is the start color, the right border the end color.
+- The title bar of another window is quiet: it goes from `colors.title_quiet` (`0x2A3442`; light `0xE4E8ED`) to `colors.title_quiet_end` (`0x161D27`; light `0xD3D9E0`), and its title is in the dim color. So the gradient also says which window has the keyboard. Its title also says it: a title in white has the focus.
+- The close button is a square of 24 x 24 pixels at the right end of the title bar, with the character `x` of the font in white. Its color is the concept "stop a program": a deep red `colors.stop_program` (`0xB82232`), not the coral of "failed", because to close a window is not a failure. It has the sign of depth of the rules: a block from 118 % of the red at the top to 82 % at the bottom, and a top line at 150 %. When the pointer is over it, the red is brighter (`0xE0343F`). On a window that is not in front, the red is quiet (`colors.stop_program_quiet`: `0x4E2229`; light `0xF2D5D9`) and the `x` is a dim pink (`colors.stop_program_quiet_mark`: `0xC09098`; light `0x8E3A47`). The button shows the character `x`, not a cross of squares of 2 pixels: the two lines of such a cross do not meet on one square at the centre, and the cross does not match the title.
 - The compositor places a new window at (64, 56), and each next one 40 pixels to the right and 32 pixels lower, for 8 windows (`PLACE_X`, `PLACE_Y`, `PLACE_STEP_X`, `PLACE_STEP_Y` in `src/programs/compositor/main.odin`). Each of these places is on the grid. `bar.new_window_place` then moves a window that does not fit up and left, on the grid (`docs/INTERFACE.md`, section 2.6).
 - Cost: the compositor computes the colors of one line of a title bar once, for the columns that the frame shows, with a fixed-point step for each channel (no division for each pixel), then copies them to the 24 lines. At its start it measures three forms of a title bar of 1024 pixels, 64 times each, and writes them on the log. On 10 machines of one check: one color takes 1.6 to 2.7 us, a mix for each pixel 65 to 87 us, one row of colors then copies 5.7 to 6.8 us. The gradient costs about 4 us for each window that a frame draws.
 - At 8 bits for each channel, the gradient has 41 levels of red, 80 of green and 126 of blue over the width of a window. The picture shows no band, so there is no dithering.
@@ -245,8 +257,8 @@ The desktop is the screen of the compositor: the background, the bar, the window
 ### Pointer
 
 - The pointer is a slanted arrow with a large head and a short slim tail, 13 pixels wide and 18 high at the size 24: a fill inside an edge of 1 pixel. Its point is the top left corner; its left side is upright, its right side at 45 degrees to the wing, and its tail leaves the head along the axis of the arrow, 2 down for 1 across, ended square. This arrow is the shape `arrow` of the pointer theme of the system (`resources/pointers/system.manifest`). Each other pointer shape of that theme has the same style: a fill inside an edge of 1 pixel at every size, strokes of 1 pixel of fill at 24, the level and upright edges on whole pixels, the slanted sides and the curves smooth. The shapes are outlines that the tool draws at the build (`docs/POINTERS.md`, "4. The manifest").
-- **Two forms.** On a dark desktop the pointer is white in an edge of `COLOR_BACKGROUND`; on a light desktop it is `COLOR_BACKGROUND` in a white edge. The fill is the large part, so it carries the contrast on the surfaces of the appearance in force: 19 to 1 on the dark desktop, 17 to 1 on the light background. The compositor takes the form of the appearance in force.
-- **Accents.** A pointer has an accent only on a part that means something: the blue of the focus (`COLOR_TITLE`) on the arc that turns in `wait` and `busy_with_arrow` and on the question mark of `help`, the red of "stop a program" on the slash of `forbidden`, the amber of a match on the dot at the hot spot of `crosshair`. The arrow, the hands, the I-beam and the resize arrows have none. An accent takes the value of its token for the color around it: a darker value on white, a brighter one on the dark (`docs/POINTERS.md`, "4. The manifest").
+- **Two forms.** On a dark desktop the pointer is white in an edge of `COLOR_INK`; on a light desktop it is `COLOR_INK` in a white edge. The fill is the large part, so it carries the contrast on the surfaces of the appearance in force: 19 to 1 on the dark desktop, 17 to 1 on the light background. The compositor takes the form of the appearance in force.
+- **Accents.** A pointer has an accent only on a part that means something: the blue of the focus (the token `title`) on the arc that turns in `wait` and `busy_with_arrow` and on the question mark of `help`, the red of "stop a program" on the slash of `forbidden`, the amber of a match on the dot at the hot spot of `crosshair`. The arrow, the hands, the I-beam and the resize arrows have none. An accent takes the value of its token for the color around it: its value of the light appearance on white, of the dark appearance on the dark (`docs/POINTERS.md`, "4. The manifest").
 - A compositor with no valid pointer theme draws an arrow of squares of 2 pixels from its own code, black at the edge and white inside, so that the pointer never disappears.
 - **Not a rectangle.** The pointer pictures of both themes have smooth edges, curves and transparency: they are not rectangles. The theme "Posy's Cursor" (`docs/POINTERS.md`) is a build input of the development shell; when the build has it, it is the default pointer theme. A release image holds the theme of the system only. The pointer picture is the one picture resource of the desktop that does not follow sections 2 and 7. It is drawn with a blend of premultiplied alpha. The windows, the bar, the menus, the palette and each program keep rectangular forms and no transparency.
 
@@ -259,49 +271,49 @@ The desktop is the screen of the compositor: the background, the bar, the window
 
 | Part | Height | Content |
 |---|---|---|
-| Input band | 48 | The typed part at scale 2 (cells of 16 x 32), 16 pixels from the left edge. Its last 2 pixels are a line in `COLOR_TITLE` |
+| Input band | 48 | The typed part at scale 2 (cells of 16 x 32), 16 pixels from the left edge. Its last 2 pixels are a line in `colors.title` |
 | List | 12 rows of 24 = 288 | The entries |
 | Gap | 8 | |
 | Detail line | 24 | One sentence in the dim color: what the choice of the chosen entry does |
 | Footer | 24 | At the left, in the search only: the count of the entries that match, of all the entries, with the word for what is counted ("13 of 58 entries"; "entries, no commands" when the console gives none). At the right: the keys of the state, with what Enter does on the chosen entry ("enter: to the front   esc: close"); while nothing is typed, the prefixes ("> commands  @ windows  : settings  ? manual"). On a result and while a command runs, the footer has the keys only |
 | Margin | 8 | |
 
-- **The input band is flush.** It is the top of the panel. Its fill (`COLOR_TRACK`) touches the top, the left and the right edge of the panel. Nothing is around it: no title over it, no margin, no border on those three sides. A reader tells it from the list by four signs: the step of surface (the track over the surface of a card); the line of 2 pixels in `COLOR_TITLE` under the band, from edge to edge; the caret of 4 x 32 pixels in `COLOR_TITLE`; the size of the typed part, at scale 2 where each row is at scale 1.
+- **The input band is flush.** It is the top of the panel. Its fill (`colors.track`) touches the top, the left and the right edge of the panel. Nothing is around it: no title over it, no margin, no border on those three sides. A reader tells it from the list by four signs: the step of surface (the track over the surface of a card); the line of 2 pixels in `colors.title` under the band, from edge to edge; the caret of 4 x 32 pixels in `colors.title`; the size of the typed part, at scale 2 where each row is at scale 1.
 - **The edge of the rest.** The list, the detail line and the footer have the surface of a card and a border of 1 pixel in the color of the kernel (28 % to 14 %) at the left, the right and the bottom, as a menu of the bar has. They have no border at the top: the line of the band is the edge there. The palette is not a card: it has no title and no caption. Each row says what it is in words, and the footer counts the entries in a plain word: a name of the code is not a word for a reader of the panel.
-- **The typed part.** It is white, in the font of the cells. Left, Right, Home, End, Delete and Backspace edit it at the caret (`src/library/support/line_editor`). It holds at most 64 bytes of UTF-8. When it is empty, the band says "type a part of a name" in the dim color, at scale 2.
+- **The typed part.** It is the strong text (`colors.text_strong`: white in the dark appearance, black in the light one), in the font of the cells. Left, Right, Home, End, Delete and Backspace edit it at the caret (`src/library/support/line_editor`). It holds at most 64 bytes of UTF-8. When it is empty, the band says "type a part of a name" in the dim color, at scale 2.
 - **Two kinds of entries** come from the compositor itself and need no other program: the programs (the table `bar.names`, what the menu of the programs lists) and the windows (the client table, what the menu of the windows lists). Each window also gives the entry of its close, named "close" and its title. The palette provider, the console, adds one entry for each of its commands (`CONSOLE.md`, "8. The palette provider").
 - **A row** is 24 pixels: 16 pixels, the icon of 12 pixels, 8 pixels, the name, then at the right the kind in words, 16 pixels from the edge.
   - **The icon** is the kind icon of the entry (section 4, "The icons of the kinds"), with cells of 1 pixel. Its form says what the entry is, so a reader who does not tell two colors apart still tells a window from a program and a command from a setting. Its color says one fact of the entry: the color of the kind when the thing is there or in use, the dim color when it is not. An entry that destroys has the icon of that act, whatever its kind:
 
 | Entry | Icon | Color |
 |---|---|---|
-| A program that has a window now | Module | The color of a module, `COLOR_PROGRAM` |
+| A program that has a window now | Module | The color of a module, `colors.program` |
 | A program that has no window now | Module | The dim color |
-| The window that has the focus | Window | `COLOR_TITLE` |
+| The window that has the focus | Window | `colors.title` |
 | Another window | Window | The dim color |
-| A command with no parameter | Command | The color of a command, `COLOR_PROGRAM` |
+| A command with no parameter | Command | The color of a command, `colors.program` |
 | A command with parameters | Command | The dim color, as the whole row |
 | An export | Export | The color of a module; the dim color with parameters |
 | The value of a setting, or the scheduling strategy, that the machine uses now | Setting | The text color |
 | Another value of a setting; another scheduling strategy | Setting | The dim color |
-| An entry that destroys: the close of a window, a command such as `shutdown` | Stop | The red of the close button under the pointer, `COLOR_STOP_PROGRAM_POINTER_OVER` |
+| An entry that destroys: the close of a window, a command such as `shutdown` | Stop | The red of the close button under the pointer, `colors.stop_program_pointer_over` |
 | A candidate of a field of a form: a program or a module | Module | The color of a module |
 | A candidate of a field of a form: a grant | Grant | The color of a grant |
 
-  - **The colors of the icons**: each one has at least 3 to 1 on both colors of a card (3.66 for the red, 3.78 for the blue of the title bar, 4.60 for the dim color). The deep red `COLOR_STOP_PROGRAM` has 2.56 there: it is the fill of the row that asks for a second Enter, not the color of an icon. `COLOR_NOT_USABLE` has 2.14: a program with no window has the dim color. On the chosen row and on the row that asks, each icon is white: no color of a kind keeps 3 to 1 on `COLOR_CHOSEN`. The fact that the color said is then in the words at the right and in the detail line. A host test computes each pair (`src/library/support/graphics/palette_colors_test.odin`).
+  - **The colors of the icons**: each one has at least 3 to 1 on both colors of a card (3.66 for the red, 3.78 for the blue of the title bar, 4.60 for the dim color). The deep red `colors.stop_program` has 2.56 there: it is the fill of the row that asks for a second Enter, not the color of an icon. `colors.not_usable` has 2.14: a program with no window has the dim color. On the chosen row and on the row that asks, each icon is white: no color of a kind keeps 3 to 1 on `colors.chosen`. The fact that the color said is then in the words at the right and in the detail line. A host test computes each pair (`src/library/support/graphics/palette_colors_test.odin`).
   - **The kind** is said in words at the right, in the dim color: `window`, `program`, `close a window`, `command`, `export`; `setting` for a setting row, and for a value alone `setting`, or `setting, in use` for the value that the machine uses now; a command with parameters says `command, needs arguments`. A color never stands alone for a fact (section 4).
   - **The name** of a program or of a window is in the interface font. A command is code: its name is in the font of the cells, in the color of a name of the colors of code, and its parameters and its result follow it in the dim color. A signature longer than its room is cut at the end of a parameter, with `, ...)`, or shows `(...)`: it is never cut inside a parameter, and it never reaches the words at the right. A command with parameters is dim as a whole.
   - **The matched characters**: a line of 2 pixels in the color of the kernel is under each matched character of a name.
-- **The chosen row** is a chosen row of section 10: `COLOR_CHOSEN`, its name and its kind in white, the line under each matched character in white. The kind stays on the chosen row: "plasma" the window and "plasma" the program are then two things in words, on each row. What Enter does on the chosen entry is in the footer: "enter: to the front", "enter: start", "enter: close", "enter: run", "enter: arguments", "enter: set". The icon of the chosen row is white.
+- **The chosen row** is a chosen row of section 10: `colors.chosen`, its name and its kind in white, the line under each matched character in white. The kind stays on the chosen row: "plasma" the window and "plasma" the program are then two things in words, on each row. What Enter does on the chosen entry is in the footer: "enter: to the front", "enter: start", "enter: close", "enter: run", "enter: arguments", "enter: set". The icon of the chosen row is white.
 - **The detail line** says what the choice does, with the facts of now. A window: "The window of the program console. It has the focus.", or "Brings the window of the program life to the front and gives it the focus." A program: "Starts the program plasma. It has no window now.", or "Starts the program plasma one more time. It has 1 window now." A close: "Stops the program plasma: its window closes. Asks for a second Enter." A command: its help sentence.
 - **With a typed part: one list, ranked**, with no group: the best match is the first row. The match is the fuzzy match of the console (`src/library/support/line_editor`): the characters of the typed part appear in the name in their order, not always side by side, without the case of the letters ("closepla" matches "close plasma"). Among entries of one score, the order is: the entries chosen lately, the newest first; then the kind (a window, a program, a command, an export, the close of a window); then the order of the table. A better match always comes before a recent choice.
 - **With no typed part: groups**, each under a dim line of text: "recent" (at most 5 entries, the newest first), "windows" (each window, the front one first), "programs" (the order of `bar.names`). A group with no entry is absent. To reach a window is the most frequent act, so the windows show before any letter. The entries that destroy and the commands show only for a typed part, or as a recent choice.
 - **The recent choices**: the panel remembers the last 16 chosen entries, by kind and name, in the memory of the compositor. A restart of the machine loses them.
 - **More than 12 rows**: a scroll bar at the right (section 10, "The scroll bar") says which part of the list the panel shows, and takes the pointer: a press on an arrow button moves the rows by one, a press on the track by 12, and the thumb follows the pointer. The view moves, and the choice follows it: when the view no longer shows the chosen entry, the choice goes to the nearest entry that the view shows, so Enter always runs a row that is drawn. The candidates of a form have the same scroll bar, with the same rule. The scroll bar of the row that asks for a second Enter shows the place only. A point on the scroll bar is on no row.
 - **No match**: one dim line, `nothing has "xyz" in its name`, and Enter runs nothing.
-- **An entry that destroys asks for a second Enter**: the close of a window, and the commands `shutdown`, `lock` and `history_clear`. Enter on it changes the chosen row: its fill is `COLOR_STOP_PROGRAM` and its text says the act in full ("stop plasma: its window closes", "shutdown(): stop the machine"); the footer says "enter: confirm   another key: back". A second Enter runs it. Each other key goes back to the search, with the typed part kept, and does nothing else. The compositor draws this question: a provider cannot skip it.
+- **An entry that destroys asks for a second Enter**: the close of a window, and the commands `shutdown`, `lock` and `history_clear`. Enter on it changes the chosen row: its fill is `colors.stop_program` and its text says the act in full ("stop plasma: its window closes", "shutdown(): stop the machine"); the footer says "enter: confirm   another key: back". A second Enter runs it. Each other key goes back to the search, with the typed part kept, and does nothing else. The compositor draws this question: a provider cannot skip it.
 - **A command with no parameter runs from the panel.** Enter sends the choice to the console, and the panel waits: the list makes room for the call, in the color of a name, and "runs in the console". The panel still takes its keys: Escape closes it, and the line goes on in the console. The panel sets no bound on a line: the console has none.
-- **A result** shows in the place of the list, under the call: an Integer as the one large number of the panel (scale 3), a Text of one line, the lines of a Record, "done" for a command with no value, an error in `COLOR_FAILED`. Each part has the color of what it is, as in the console. A Table, and each result of more than 12 lines or 76 cells, is not drawn in the panel: the panel closes and the window of the console comes to the front, with the line and its result. Escape closes the panel; each other key goes back to the search.
+- **A result** shows in the place of the list, under the call: an Integer as the one large number of the panel (scale 3), a Text of one line, the lines of a Record, "done" for a command with no value, an error in `colors.failed`. Each part has the color of what it is, as in the console. A Table, and each result of more than 12 lines or 76 cells, is not drawn in the panel: the panel closes and the window of the console comes to the front, with the line and its result. Escape closes the panel; each other key goes back to the search.
 - **A command with parameters has a form.** Enter turns the input band into the call, as code, at the scale of the typed part: the name of the command in the color of a name, then one field for each parameter, with its name: `revoke(name: plasma, grant: |)`. The caret is in one field; the name of that parameter is in the text color, the others are quiet. A call wider than the band shows the part that holds the caret.
   - **A field has the kind of its parameter.** An Integer field takes digits, and one `-` at its start. A Text field takes each character but a quote, 48 bytes of UTF-8 at most. A refused key changes nothing, and the detail line says why, in the color of a failure: "an Integer takes digits, and one - at its start".
   - **A number with its unit.** When the command, or the description of the export, says that an Integer counts a size or a time, its integer unit, the band shows the unit after the number, in the color of a size or of a time, also while the field is empty: `buffer(count: 4 pages)`, `wait_stop(milliseconds: 3000 ms)`. The prompt under the band says it: "type the value of count: an Integer, in pages". The input types the number in that unit, and the panel sends the number as it is. The text of each unit is the one of the log: `bytes`, `KiB`, `MiB`, `pages`, `blocks`, `ns`, `us`, `ms`, `s`.
@@ -360,16 +372,16 @@ The interface package (`src/library/support/interface`, `docs/INTERFACE.md`) dra
 
 | Element | The rule |
 |---|---|
-| Background | `COLOR_BACKGROUND` and the grid of points of section 3, at 12 + 24 n of the surface |
+| Background | `colors.background` and the grid of points of section 3, at 12 + 24 n of the surface |
 | Card | A border of 1 pixel in its accent (28 % to 14 %), the surface of a card, a bar of 4 x 16 pixels and the title in the accent, the caption of its record in the dim color, a count at the right in the text color. Its content starts 40 pixels under its top and 16 pixels inside its sides |
 | Line of a label and a value | The label in the dim color; the value in the text color (or in the color of its concept), at the right of its area for a number |
-| Table | The titles of the columns in the dim color; lines of 24 pixels; every second line, from the first, on a band of `COLOR_CARD_TOP`; numbers at the right of their column |
-| Bar | The track in `COLOR_TRACK`; the full part from 125 % of its color at the top to 78 % at the bottom; 2 pixels at least for a value above 0 |
-| Button | A rectangle of the track with its label in the text color; blue (`COLOR_TITLE`) at 60 % when it has the focus or the pointer is over it, full blue with a white label when it is open or both |
-| List with a choice | Lines of 24 pixels; the chosen line in `COLOR_CHOSEN` with its name and its hint in white; a line of 2 pixels under a searched part of each name; a scroll bar at the right when the lines do not fit, which moves the choice |
+| Table | The titles of the columns in the dim color; lines of 24 pixels; every second line, from the first, on a band of `colors.card_top`; numbers at the right of their column |
+| Bar | The track in `colors.track`; the full part from 125 % of its color at the top to 78 % at the bottom; 2 pixels at least for a value above 0 |
+| Button | A rectangle of the track with its label in the text color; blue (`colors.title`) at 60 % when it has the focus or the pointer is over it, full blue with a white label when it is open or both |
+| List with a choice | Lines of 24 pixels; the chosen line in `colors.chosen` with its name and its hint in white; a line of 2 pixels under a searched part of each name; a scroll bar at the right when the lines do not fit, which moves the choice |
 | List of rows | Rows of 24 pixels: the kind icon of the row, 12 pixels, in a color that says one fact (white on the chosen row), the name (in the font of the cells with a quiet detail after it when it is code), and at the right what the row is, in words, in the dim color; a line of 2 pixels under each matched character of a name; the chosen row filled, with its text in white, and at its right its hint or the same words as the other rows; a dim line of text as the heading of a group; a scroll bar at the right when the rows do not fit, which shows the place, and takes the pointer when the caller of the list names it: the caller then moves its view |
 | Scroll bar | 17 pixels thick: an arrow button at each end, the track, and the thumb with its border, its gradient across, its inner line and its grip. See "The scroll bar" |
-| Text input | A field of the track with a line of 2 pixels at its bottom (`COLOR_TITLE` with the focus, `COLOR_NOT_USABLE` without); the text in white, at scale 1 or 2; a caret of 2 x 16 pixels in `COLOR_TITLE` with the focus (4 x 32 at scale 2), at any place of the text; the placeholder in the dim color |
+| Text input | A field of the track with a line of 2 pixels at its bottom (`colors.title` with the focus, `colors.not_usable` without); the text in the strong text color (`colors.text_strong`), at scale 1 or 2; a caret of 2 x 16 pixels in `colors.title` with the focus (4 x 32 at scale 2), at any place of the text; the placeholder in the dim color |
 | Panel with a flush input | The input is the top band of the panel, from edge to edge, with no border on its three outer sides: its fill and the line of 2 pixels under it are its edge. The rest of the panel has a border of 1 pixel at the left, the right and the bottom |
 | Large number | The font at 3 times its size, drawn from its outline at 24 x 48: the one number of a card (section 5) |
 
@@ -377,12 +389,12 @@ The interface package (`src/library/support/interface`, `docs/INTERFACE.md`) dra
 
 A chosen row is the chosen line of a list, of a menu of the bar, of the palette, and of the completion list of the terminal.
 
-- Its color is `COLOR_CHOSEN`, `0x3C76BB`: the blue of the title bar at 96 % (`shade(COLOR_TITLE, 96)`). It is not the title blue itself: white has 4.29 to 1 on `0x3F7CC4`, under the 4.5 that a text needs.
+- Its color is `colors.chosen`, `0x3C76BB`: the blue of the title bar at 96 % (`shade(colors.title, 96)`). It is not the title blue itself: white has 4.29 to 1 on `0x3F7CC4`, under the 4.5 that a text needs.
 - Its text is white: 4.67 to 1. No other color of the rules keeps 4.5 on it: the text color has 3.63, the accent of a match under 3.3.
 - A matched character of a chosen row in a grid of cells is the reverse: the chosen blue on a white cell, 4.67 to 1. In a list of the interface font, the line of 2 pixels under the searched part, or under each matched character, is white.
-- A title bar is not a chosen row: it keeps its gradient from `COLOR_TITLE`. An open button draws its white label on `COLOR_CHOSEN` too (4.67).
-- The row of the palette that asks for a second Enter is not in `COLOR_CHOSEN`: its fill is `COLOR_STOP_PROGRAM`, the concept of what it does, and its text is white: 6.3 to 1.
-- A host test computes the contrast of the text and of a matched character on the chosen row (`src/library/support/terminal/code_runs_test.odin`). A second host test computes the pairs of the palette: white on the chosen row, white on `COLOR_STOP_PROGRAM`, white and each color of code on the track of the input band, the dim color on the surface of a card, the dim placeholder of the input band as a large text, at 3 to 1, and each color of an icon of a row on the surface of a card, at 3 to 1 (`src/library/support/graphics/palette_colors_test.odin`).
+- A title bar is not a chosen row: it keeps its gradient from `colors.title`. An open button draws its white label on `colors.chosen` too (4.67).
+- The row of the palette that asks for a second Enter is not in `colors.chosen`: its fill is `colors.stop_program`, the concept of what it does, and its text is white: 6.3 to 1.
+- A host test computes the contrast of the text and of a matched character on the chosen row (`src/library/support/terminal/code_runs_test.odin`). A second host test computes the pairs of the palette: white on the chosen row, white on `colors.stop_program`, white and each color of code on the track of the input band, the dim color on the surface of a card, the dim placeholder of the input band as a large text, at 3 to 1, and each color of an icon of a row on the surface of a card, at 3 to 1 (`src/library/support/graphics/palette_colors_test.odin`).
 
 - An element that takes input can take the focus, and the keyboard reaches it: Tab, Enter, Space, the arrows (`docs/INTERFACE.md`, section 4).
 
@@ -415,7 +427,7 @@ A view that shows a part of a longer content has a scroll bar at its right (or u
 | Hot | The pointer is over an arrow button | That button has the blue border, a blue fill and a light triangle |
 | Pressed | The button of the pointer is down on an arrow button or on the thumb | A stronger blue fill |
 
-**The colors** of the dark form, the form of each surface of the system. The light form is in the same table, for the light form of the site.
+**The colors** of the dark form, the form of the dark appearance and of the dark page of the site, and of the light form, the form of the light appearance and of the light page (`graphics.scroll_bar_colors_of`).
 
 | Color | Dark | Light |
 |---|---|---|
@@ -654,5 +666,6 @@ With the boot image of the last build (77 modules and 9 resources), the card nam
 - The boot display follows all rules.
 - The desktop (the compositor: background, bar, menus, windows, pointer, palette) follows all rules. The pointer pictures of both pointer themes are the one exception of their own (section 9, "Pointer"). New windows and windows that the pointer drags are on the grid of 8.
 - `clock`, the window of `remote`, the palette of the compositor, `interface_elements`, `vector_glyphs`, `settings` and `hall_of_fame` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `src/library/support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
-- Each other program takes from `src/library/support/graphics` the colors that have a role of the rules: the background, the card (a panel or a band), the text, the dim color, the track (the empty part of a bar), an expected answer (`COLOR_PROGRAM`) and a failure (`COLOR_FAILED`), where its own color had that role. The colors that mean something of one program stay in it: a refusal that the program expects, an answer that is not the expected one (`0xE0B040` in eight programs), the measures of `flow`, `crowd`, `disk` and `clock`, the bars of `budget` and `processors`, the states of `rings`, `threads` and `terminal`, the headings of `manual`, the count of `tally`, the paper of `paint`, the levels of `log`, the kinds of pages of `pages`. Some of them have the value of a rule color with another meaning (`0xE0A040` for kernel entries): a color of the rules for them is a change of meaning, which is not done.
+- Each other program takes from `src/library/support/graphics` the colors that have a role of the rules: the background, the card (a panel or a band), the text, the dim color, the track (the empty part of a bar), an expected answer (`colors.program`) and a failure (`colors.failed`), where its own color had that role. The colors that mean something of one program stay in it: a refusal that the program expects, an answer that is not the expected one (`0xE0B040` in eight programs), the measures of `flow`, `crowd`, `disk` and `clock`, the bars of `budget` and `processors`, the states of `rings`, `threads` and `terminal`, the headings of `manual`, the count of `tally`, the paper of `paint`, the levels of `log`, the kinds of pages of `pages`. Some of them have the value of a rule color with another meaning (`0xE0A040` for kernel entries): a color of the rules for them is a change of meaning, which is not done.
+- The appearances (section 4, "The appearances"): the desktop, the palette, each window of the interface package, the terminal with its tones, the console and its results follow the light appearance. The colors that a program owns keep their dark value in the light appearance: those of `budget`, `clock`, `crowd`, `disk`, `flow`, `frames`, `imports`, `limits`, `log`, `manual`, `monitor`, `notes`, `origin`, `pages`, `processors`, `rights`, `rings`, `tally`, `threads` and `workers`. The paper of `paint` is light in both. The boot display, and the program `boot` that shows it, are dark in both.
 - The windows below the level of the boot display, `remote` and `scheduler`, from the farthest: `paint` (a light paper), `manual` (its own colors for headings, no cards), `monitor` (one list, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.

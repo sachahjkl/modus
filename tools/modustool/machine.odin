@@ -61,9 +61,20 @@ CONSOLE_SCROLL_BAR_ARROW_DOWN_Y :: 428 - 9 // The middle of the arrow button at 
 CONSOLE_SCROLL_BAR_THUMB_END_Y :: 428 - 17 - 4 // In the last pixels of the track: the thumb of a view that follows the last lines ends there, and is 8 pixels long at least.
 CONSOLE_SCROLL_BAR_TRACK_START_Y :: 17 + 4 // Near the start of the track: a thumb dragged there is at its first place.
 
+// The line of remote when the grant of a client key ends while no client of
+// it is connected, after one call to one service: the slot of that
+// connection is free, and no other slot is in use.
+REMOTE_ONE_SLOT_FREED :: "remote: the grants of 1 connections to services ended (a revocation, or a lock or an unlock of a session): their slots are free; 0 of 24 slots in use"
+
 Step_Kind :: enum {
 	Wait, // The log of the kernel has text, after the text of the last Wait.
 	Date, // As Wait; then the number after text is a date of the machine in seconds since 1970, which date_check checks by order against the clock of the host.
+	// As Wait, for the line of the appearance in force that the setting
+	// auto gives (text: its start, "settings: the appearance in force is "):
+	// date_check checks the date of the line, then the tool computes the
+	// rule of the day over that date and its zone, and the line must name
+	// the same appearance (machine_clock.odin).
+	Appearance_Auto,
 	Type, // Press the keys of text, then Enter. When the console is in front, the tool then waits for the echo of the line on the log (console_echo.odin).
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
@@ -121,7 +132,7 @@ Step_Kind :: enum {
 	Quic_Key, // As Remember: the 64 hexadecimal digits after text, in the log after the last Wait, are the public key of a QUIC server, which the QUIC client of the peer pins (peer_quic.odin).
 	Peer_Quic, // The peer runs the QUIC case text (peer_quic.odin) and checks its answers.
 	Openssl_Quic, // `openssl s_client -quic` of the host sends the line text to quic_echo through the UDP relay of the peer, and must get it back, from the key that the step Quic_Key read (quic_real.odin, peer_relay.odin).
-	Remote_Key, // As Quic_Key, for the QUIC client of `remote` in the peer (peer_remote.odin): each Call after it goes over QUIC with this key.
+	Remote_Key, // As Quic_Key, for the QUIC client of `remote` in the peer (peer_remote.odin): each Call after it goes over QUIC with this key. The client proves its own key, which a step allows first: remote_allow("{client key}") in a console (CLIENT_KEY_MARK).
 	Remote_Case, // The peer runs the case text of `remote` (peer_remote.odin, remote_case_run) and checks its outcome.
 	// Read the text of the element `element` of the window with the title
 	// text off a picture of the screen, in Spleen 8x16 (screen_text.odin).
@@ -172,16 +183,18 @@ DATE_TOLERANCE_SECONDS :: 5
 // date_check checks a date of the machine, in seconds since 1970, by order
 // against the clock of the host: not before earliest, a date of the host
 // before the machine wrote it, and not after the date of the host now. QEMU
-// gives the machine the clock of the host as its real-time clock (-rtc
-// base=utc). The time between the two dates of the host is how late the
-// tool read the date, which a loaded host stretches: it is no fault.
-date_check :: proc(index: int, machine_seconds: i64, what: string, earliest: i64) -> bool {
+// gives the machine a real-time clock that is the clock of the host moved by
+// clock_offset_seconds (machine_clock.odin): the check takes the offset off
+// first. The time between the two dates of the host is how late the tool
+// read the date, which a loaded host stretches: it is no fault.
+date_check :: proc(index: int, machine_seconds: i64, what: string, earliest: i64, clock_offset_seconds: i64) -> bool {
 	host := time.time_to_unix(time.now())
-	if machine_seconds < earliest - DATE_TOLERANCE_SECONDS || machine_seconds > host + DATE_TOLERANCE_SECONDS {
-		fmt.eprintfln("modustool: test failed: step %d: the date of the machine (%s) is %d, not between %d and %d, the dates of the host before it was written and now", index + 1, what, machine_seconds, earliest, host)
+	on_the_host := machine_seconds - clock_offset_seconds
+	if on_the_host < earliest - DATE_TOLERANCE_SECONDS || on_the_host > host + DATE_TOLERANCE_SECONDS {
+		fmt.eprintfln("modustool: test failed: step %d: the date of the machine (%s) is %d, %d on the clock of the host, not between %d and %d, the dates of the host before it was written and now", index + 1, what, machine_seconds, on_the_host, earliest, host)
 		return false
 	}
-	test_passed_print("the date of the machine (%s) is %d s since 1970, between %d and %d on the host", what, machine_seconds, earliest, host)
+	test_passed_print("the date of the machine (%s) is %d s since 1970, %d on the clock of the host, between %d and %d", what, machine_seconds, on_the_host, earliest, host)
 	return true
 }
 
@@ -292,7 +305,7 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
-	{kind = .Wait, text = "settings: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; kept in the store"},
+	{kind = .Wait, text = "settings: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; kept in the store"},
 	// A line for the next machine: the console keeps its line history in
 	// its store, after each line and before shutdown().
 	{kind = .Type, text = "length(\"kept across a stop\")"},
@@ -310,9 +323,9 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "storage: ok, generation 1027: 3 stores, 4 objects, ", any_order = true},
 	{kind = .Wait, text = "console: the line history: 4 lines kept from before the stop", any_order = true},
 	// The setting of the machine before: the desktop draws in Spleen 8x16.
-	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; in ", any_order = true},
+	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; in ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
-	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; "},
+	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; "},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
@@ -344,7 +357,7 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "settings.set(\"font\", \"vector\")"},
-	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; kept in the store"},
+	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; kept in the store"},
 	{kind = .Front, text = "notes"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "notes: count 1100"},
@@ -519,10 +532,19 @@ scenario_network := [?]Step {
 	// can come before the line of the start.
 	{kind = .Wait, text = "root: started remote", any_order = true},
 	{kind = .Remote_Key, text = "remote: the public key of this service: "},
-	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
+	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only, and for the client keys that a principal allowed", any_order = true},
+	// The key of the client of the peer: the principal allows it from a
+	// console that acts for it, and each call of that client acts for that
+	// principal (docs/PRINCIPALS.md, "The client keys of remote").
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "remote_allow(\"{client key}\")"},
+	{kind = .Wait, text = "root: principal 0 allowed the client key "},
+	{kind = .Front, text = "remote"},
 	// Six malformed call requests, each on its own stream: each one has its
-	// error record, and no call runs.
+	// error record, and no call runs. The first connection binds the key of
+	// the client to its principal.
 	{kind = .Remote_Case, text = "malformed"},
+	{kind = .Wait, text = ": its calls act for principal 0", any_order = true},
 	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 104 bytes"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument kind has the value 9, which the call refuses; it takes at most 1"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument arguments has 400 bytes; it can have at most 16 bytes"},
@@ -535,8 +557,8 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "compositor.windows()", expected = "rows of Window"},
 	// An Integer, with the measure of a small call.
 	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4", repeat = 1000},
-	{kind = .Wait, text = "root: connected remote to the service monitor", any_order = true},
-	{kind = .Wait, text = "remote: connected to the service monitor"},
+	{kind = .Wait, text = "root: connected remote to the service monitor, acting for principal 0, for the client key ", any_order = true},
+	{kind = .Wait, text = "remote: connected to the service monitor, for principal 0"},
 	{kind = .Wait, text = "remote: the window drew one picture in ", any_order = true},
 	// A Table: the row of the remote service is there, and the count of the
 	// rows is the count that the monitor wrote on the log.
@@ -605,9 +627,44 @@ scenario_network := [?]Step {
 	{kind = .Close, text = "inspect"},
 	{kind = .Wait, text = "root: inspect stopped with code 0"},
 	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the principal (-3)"},
-	{kind = .Call, text = "storage.stores()", expected = "no grant to see the stores"},
+	{kind = .Call, text = "storage.stores()", outcome = .Failed, expected = "error: storage.stores: the caller has no grant for this: to act for the principal (-10)"},
 	{kind = .Call, text = "manual.modules()", expected = " rows of Module"},
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
+	// The principal revokes the key of the client while its connection is
+	// open: remote ends that connection with the code Revoked, and refuses
+	// the key in the next handshake with one line of its log. A key that no
+	// principal allowed is refused the same way. The two programs write
+	// their lines of the revocation in either order.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
+	{kind = .Wait, text = "root: principal 0 revoked the client key ", any_order = true},
+	{kind = .Wait, text = " of principal 0 ended (a revocation, or a lock of its session): the connection from 10.0.2.2 port "},
+	{kind = .Remote_Case, text = "revoked"},
+	{kind = .Wait, text = ": no principal allowed it; the handshake ends before any call"},
+	{kind = .Remote_Case, text = "unknown client key"},
+	{kind = .Wait, text = ": no principal allowed it; the handshake ends before any call"},
+	// Three grants of the same key, each ended while no client of it is
+	// connected: each end frees the slot of its connection to a service,
+	// so the table of connections of remote never fills. Each allow gives
+	// the row a new serial, as an unlock does; principal 0 has no lock.
+	{kind = .Type, text = "remote_allow(\"{client key}\")"},
+	{kind = .Wait, text = "root: principal 0 allowed the client key "},
+	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4"},
+	{kind = .Remote_Case, text = "close"},
+	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
+	{kind = .Wait, text = REMOTE_ONE_SLOT_FREED},
+	{kind = .Type, text = "remote_allow(\"{client key}\")"},
+	{kind = .Wait, text = "root: principal 0 allowed the client key "},
+	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4"},
+	{kind = .Remote_Case, text = "close"},
+	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
+	{kind = .Wait, text = REMOTE_ONE_SLOT_FREED},
+	{kind = .Type, text = "remote_allow(\"{client key}\")"},
+	{kind = .Wait, text = "root: principal 0 allowed the client key "},
+	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4"},
+	{kind = .Remote_Case, text = "close"},
+	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
+	{kind = .Wait, text = REMOTE_ONE_SLOT_FREED},
 	{kind = .Front, text = "remote"},
 	{kind = .Shot, text = "remote"},
 	// The desktop: the scenario closes remote and manual, the palette starts
@@ -921,7 +978,7 @@ scenario := [?]Step {
 	// service runs.
 	{kind = .Wait, text = "root: connected console to the store of its line history in the service storage, 4 blocks", any_order = true},
 	{kind = .Wait, text = "console: no line history kept: the history starts empty", any_order = true},
-	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; in ", any_order = true},
+	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; in ", any_order = true},
 	{kind = .Wait, text = "root: settings stopped with code 0"},
 
 	// The console: a language with typed commands.
@@ -1238,7 +1295,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
-	{kind = .Wait, text = "compositor: the window settings gave 5 act names", any_order = true},
+	{kind = .Wait, text = "compositor: the window settings gave 6 act names", any_order = true},
 	{kind = .Wait, text = "settings: ok, ", any_order = true},
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
@@ -1395,6 +1452,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: square_root: the argument value has -4; it must have at least 0 (-1)"},
 	{kind = .Type, text = "number(\"41\") + fibonacci(10)"},
 	{kind = .Wait, text = "[console] 96"},
+	// Above 2^40 the search refuses with a record, not with the answer 0.
+	{kind = .Type, text = "next_prime(1099511627777)"},
+	{kind = .Wait, text = "[console] error: next_prime: the argument from has the value 1099511627777, which the call refuses; it takes at most 1099511627776 (-1)"},
 	{kind = .Type, text = "next_prime(\"x\")"},
 	{kind = .Wait, text = "error: next_prime: argument 1 is Integer, not Text"},
 	{kind = .Type, text = "clear()"},
@@ -1605,6 +1665,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   commands  4"},
 	{kind = .Wait, text = "[console]   memory    left the console"},
 	{kind = .Type, text = "release(b)"},
+	// The key of the client of the peer, for the calls of the host below
+	// (docs/PRINCIPALS.md, "The client keys of remote").
+	{kind = .Type, text = "remote_allow(\"{client key}\")"},
+	{kind = .Wait, text = "root: principal 0 allowed the client key "},
 
 	// The hall of fame. The program writes its line after it presented its
 	// first frame, with the count of the cards that the frame drew; the
@@ -2083,6 +2147,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] add(amount: Integer, note: Text) -> Integer"},
 	{kind = .Type, text = "manual.show(\"nothing\")"},
 	{kind = .Wait, text = "[console] error: manual.show: the argument name names none of the modules (-1)"},
+	// A name or a number that names nothing gives an error record, not an
+	// empty text: the caller tells a failure from an empty answer.
+	{kind = .Type, text = "manual.about(\"nothing\")"},
+	{kind = .Wait, text = "[console] error: manual.about: the argument name names none of the modules (-1)"},
+	{kind = .Type, text = "manual.signature(\"tally\", 9)"},
+	{kind = .Wait, text = "[console] error: manual.signature: the argument export has the value 9, which the call refuses; it takes at most 5 (-2)"},
 	{kind = .Type, text = "manual.show(\"tally\")"},
 	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
 	{kind = .Move, text = "manual", to_x = 80, to_y = 64},
@@ -2894,23 +2964,24 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
-	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; ", any_order = true},
+	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "font_spleen"},
 	{kind = .Call, text = "settings.get(\"font\")", expected = "spleen"},
 	{kind = .Call, text = "settings.set(\"font\", \"vector\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; "},
 	{kind = .Call, text = "settings.set(\"grid_fit\", \"off\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us, appearance auto; "},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us"},
 	{kind = .Shot, text = "font_without_grid_fit"},
 	{kind = .Call, text = "settings.set(\"pointer_theme\", \"system\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme system, grid fit off, keyboard layout us; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme system, grid fit off, keyboard layout us, appearance auto; "},
 	{kind = .Point, inside_window = "settings", x = 100, y = 12, text = "move"}, // The title bar, in the theme of the system.
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"bgr\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr, pointer theme system, grid fit off, keyboard layout us; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr, pointer theme system, grid fit off, keyboard layout us, appearance auto; "},
 	{kind = .Call, text = "settings.get(\"subpixel_order\")", expected = "bgr"},
+	{kind = .Call, text = "settings.get(\"colour\")", outcome = .Failed, expected = "error: settings.get: the argument name names nothing that exists (-2)"},
 	{kind = .Call, text = "settings.set(\"font\", \"comic\")", outcome = .Failed, expected = "(-3)"},
 	{kind = .Call, text = "settings.set(\"colour\", \"red\")", outcome = .Failed, expected = "(-2)"},
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"rgb\")", expected = "1"},
@@ -2923,7 +2994,7 @@ scenario := [?]Step {
 	// under the other layout would not be the line that the tool means.
 	{kind = .Front, text = "console"},
 	{kind = .Call, text = "settings.set(\"keyboard_layout\", \"french\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout french; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout french, appearance auto; "},
 	// A typed name opens the completion list: Escape closes it, so that
 	// Enter runs the line and does not take a candidate.
 	{kind = .Keys, text = "q"},
@@ -2988,11 +3059,42 @@ scenario := [?]Step {
 	// replacement box in the console.
 	{kind = .Shot, text = "keys_french"},
 	{kind = .Call, text = "settings.set(\"keyboard_layout\", \"us\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; "},
 	{kind = .Keys, text = "q"},
 	{kind = .Key, text = "esc"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] > q"},
+	// The appearance (src/md/features/appearance.md): the light one, then
+	// the dark one, then auto. Each window draws once in the tokens of the
+	// new appearance. The tool gave the machine a clock at 01:00 UTC
+	// (machine_clock.odin), so auto gives the dark one; the step
+	// Appearance_Auto checks the line by the rule over the date that it
+	// names, and that date against the clock of the machine.
+	{kind = .Call, text = "settings.set(\"appearance\", \"light\")", expected = "1"},
+	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; kept in the store"},
+	{kind = .Wait, text = "settings: the appearance in force is light: the setting light"},
+	{kind = .Wait, text = "compositor: the pointer form in use: light", any_order = true},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; the appearance in force light; "},
+	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light"},
+	{kind = .Point, x = 116, y = 14, text = "pointing_hand", form = "light"}, // The button of the programs in the bar: the light form of the pointer.
+	{kind = .Front, text = "settings"},
+	{kind = .Shot, text = "desktop_light"},
+	// The console in the light appearance: a record whose values have the
+	// colors of their kinds, which the terminal chooses when it draws.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"settings\")"},
+	{kind = .Wait, text = "[console]   module     settings"},
+	{kind = .Wait, text = "[console]   call       service"},
+	{kind = .Shot, text = "console_light"},
+	{kind = .Call, text = "settings.set(\"appearance\", \"dark\")", expected = "1"},
+	{kind = .Wait, text = "settings: the appearance in force is dark: the setting dark"},
+	{kind = .Wait, text = "compositor: the pointer form in use: dark", any_order = true},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance dark; the appearance in force dark; "},
+	{kind = .Point, x = 116, y = 14, text = "pointing_hand", form = "dark"},
+	{kind = .Call, text = "settings.set(\"appearance\", \"auto\")", expected = "1"},
+	{kind = .Appearance_Auto, text = "settings: the appearance in force is "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; the appearance in force dark; "},
+	{kind = .Call, text = "settings.get(\"appearance\")", expected = "auto"},
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "settings"},
 	{kind = .Close, text = "settings"},
@@ -3262,6 +3364,7 @@ Machine :: struct {
 	forward:     Forward, // QEMU user networking: the port of hostfwd and the listener of guestfwd.
 	started_at:  time.Tick, // When QEMU started: the first Wait says how long the boot took.
 	started_unix: i64, // When QEMU started, in seconds since 1970: no date that the machine prints is before it.
+	clock_offset_seconds: i64, // The seconds that the real-time clock of the machine is ahead of the clock of the host (machine_clock.odin).
 	times:       Machine_Step_Times, // The times of the step that runs (test_times.odin).
 	echo:        Console_Echo, // The lines typed into the console whose echo the tool waits for (console_echo.odin).
 }
@@ -3598,7 +3701,8 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		forward = {host_port = port, listener = &listener}
 	}
 	defer listener_stop(&listener)
-	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor, firmware, vnc, paused, iommu, entropy_device, tpm_device)
+	clock := machine_clock_of(time.time_to_unix(time.now()))
+	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor, firmware, vnc, paused, iommu, entropy_device, tpm_device, clock.argument)
 	if !ok {
 		return false
 	}
@@ -3619,6 +3723,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	machine := Machine {
 		started_at = time.tick_now(),
 		started_unix = time.time_to_unix(time.now()),
+		clock_offset_seconds = clock.offset_seconds,
 		process   = process,
 		monitor   = monitor_write,
 		output    = output,
@@ -3793,6 +3898,13 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		if has_kept_mark || has_before_mark {
 			step.text = screen_text_expand(step.text, screen_text_kept, screen_text_before)
 		}
+		if strings.contains(step.text, CLIENT_KEY_MARK) {
+			if machine.peer == nil || machine.peer.remote == nil {
+				fmt.eprintfln("modustool: test failed: step %d names %s, and the machine has no peer with a client of remote", index + 1, CLIENT_KEY_MARK)
+				return false
+			}
+			step.text = client_key_expand(machine.peer.remote, step.text)
+		}
 		switch step.kind {
 		case .Wait:
 			limit := first_wait ? BOOT_HANG_BOUND : HANG_BOUND
@@ -3833,7 +3945,9 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: no number after \"%s\"", index + 1, step.text)
 				return false
 			}
-			date_check(index, value, step.text, machine.started_unix) or_return
+			date_check(index, value, step.text, machine.started_unix, machine.clock_offset_seconds) or_return
+		case .Appearance_Auto:
+			appearance_auto_check(machine, index, step) or_return // machine_clock.odin
 		case .Generation:
 			seen_before := machine.seen
 			if !log_wait(machine, step.text, step.any_order) {
@@ -4231,7 +4345,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("modustool: test failed: step %d: no number after \"%s\" in the answer of %s", index + 1, step.date_after, step.text)
 					return false
 				}
-				date_check(index, milliseconds / 1000, step.text, call_started_unix) or_return
+				date_check(index, milliseconds / 1000, step.text, call_started_unix, machine.clock_offset_seconds) or_return
 			}
 			if step.lose > 0 {
 				// QUIC sent the dropped datagrams again; the service ran the
@@ -4362,7 +4476,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			test_passed_print("the TCP case \"%s\" of the peer: %s", step.text, result)
 		case .Fetch:
-			if !forward_fetch(machine.forward, step.text) {
+			if !forward_fetch(machine.forward, step.text, machine.clock_offset_seconds) {
 				return false
 			}
 		case .Http:

@@ -2335,11 +2335,31 @@ Do not use: master key, device key.
 
 Acts for the principal is a grant of the root service (`acts_for_principal`): in each service that the program is connected to, it sees what the service holds for all callers, for the principal of its session.
 
-Without it, a caller of a service sees only its own data. The console and the remote service have it; `revoke("remote", "acts_for_principal")` ends it, and the next call is refused. The grant travels in bit 63 of the grant of each connection (`isolated.CALLER_ACTS_FOR_PRINCIPAL`).
+Without it, a caller of a service sees only its own data. The console and the remote service have it; `revoke("remote", "acts_for_principal")` ends it, and the next call is refused. The grant travels in bit 63 of the grant of each connection (`isolated.CALLER_ACTS_FOR_PRINCIPAL`). A connection of the remote service acts for the principal of the client key that it is for, not for the session of the remote service.
 
 The design: `docs/PRINCIPALS.md`, "The session".
 
 Do not use: superuser, privileged, person.
+
+### Client key
+
+A client key is the Ed25519 public key that a client of the remote service proves in the QUIC handshake, and that a principal allows so that each call of that client acts for it.
+
+The client sends it as a raw public key, with a CertificateVerify signed by its private key (mutual TLS 1.3). A principal allows it from a console that acts for it, with `remote_allow(key)`, and ends the grant with `remote_disallow(key)`. One key belongs to one principal. A key that no principal allowed is refused in the handshake with the alert access_denied, before any call. The key of the server of `remote` is another key: the pinned key of the client.
+
+The design: `docs/PRINCIPALS.md`, "The client keys of remote".
+
+Do not use: client certificate, API key.
+
+### Client table
+
+The client table is the page in which the root service keeps each client key that a principal allowed, with that principal and a serial; the remote service reads it and never writes it.
+
+Each row is one grant (`remote.Client`). Its serial names that grant: a new row, a lock and an unlock of the session of its principal each give a new one, and a connection to a service that the root service made for a row ends when the serial of the row changes. The remote service maps the table with the right Read only, by its start grant `Remote_Clients`, and waits on its version, which the root service wakes at each change. It holds 8 rows, 4 of them for one principal at most, and lasts until the machine stops.
+
+The design: `src/library/contract/remote/client_table.odin`; `docs/PRINCIPALS.md`, "The client keys of remote".
+
+Do not use: allow list, access list, key ring.
 
 ### Input
 
@@ -2557,7 +2577,7 @@ Do not use: dropdown, popup, autocomplete menu, suggestions.
 
 The chosen row is the one line of a list, a menu or a completion list that Enter or a press takes.
 
-It is drawn in the chosen blue `COLOR_CHOSEN` with its text in white, on every display of the system.
+It is drawn in the chosen blue `colors.chosen` with its text in white, on every display of the system.
 
 The rules: `docs/DESIGN.md`, "The chosen row".
 
@@ -2619,9 +2639,9 @@ Do not use: span, segment, chunk.
 
 ### Style
 
-A style says what a run of text is and how to show it (8 bytes): a tone, flags (end of the line, own color, reverse), a code kind and a color.
+A style says what a run of text is and how to show it (8 bytes): a tone, flags (end of the line, own color, reverse), a code kind, a value kind and a color.
 
-The zero style is plain text. The color of a run is its own color with the flag Color; else the color of its code kind, when it has one; else the color of its tone.
+The zero style is plain text. The color of a run is its own color with the flag Color; else the color of its value kind, when it has one; else the color of its code kind, when it has one; else the color of its tone. The terminal chooses each color but the own color in the appearance in force when it draws, so a line written before a change of the appearance takes the colors of the new one: the console sends the value kind of a value, not its color.
 
 Do not use: attribute, SGR, escape code.
 
@@ -4845,7 +4865,7 @@ Do not use: scroll event, wheel click, wheel delta.
 
 The scroll bar track is the part of a scroll bar between its two arrow buttons, on which the thumb moves.
 
-Its length stands for the whole content. A press on it, before or after the thumb, moves the view by one page toward the pointer. It has a border of 1 pixel and a gradient across it. The word is the word of the design rules for the empty part of a bar (`COLOR_TRACK`), and of the parts of a scroll bar in a style sheet.
+Its length stands for the whole content. A press on it, before or after the thumb, moves the view by one page toward the pointer. It has a border of 1 pixel and a gradient across it. The word is the word of the design rules for the empty part of a bar (`colors.track`), and of the parts of a scroll bar in a style sheet.
 
 The scroll bar track is not the whole bar: the arrow buttons are outside it.
 
@@ -5227,7 +5247,7 @@ Do not use: proportional font cache.
 
 ### Setting
 
-A setting is one choice of the principal of the machine that each program follows: the font, the order of the subpixel bands, the pointer theme, the grid fit or the layout of the keyboard.
+A setting is one choice of the principal of the machine that each program follows: the font, the order of the subpixel bands, the pointer theme, the grid fit, the layout of the keyboard or the appearance.
 
 A setting is one value of the settings page, with 0 as its default:
 
@@ -5235,7 +5255,8 @@ A setting is one value of the settings page, with 0 as its default:
 - `subpixel_order`: `rgb`, `bgr` or `none`;
 - `pointer_theme`: `owner` or `system`;
 - `grid_fit`: `on` or `off`;
-- `keyboard_layout`: `us` or `french`.
+- `keyboard_layout`: `us` or `french`;
+- `appearance`: `auto`, `dark` or `light`.
 
 The program `settings` is the one writer. It shows each setting as a row of buttons, and it exports `settings.set(name, value)` and `settings.get(name)`, so the console and `modustool call` change a setting too. A caller that does not act for the principal gets `No_Grant`. A change takes effect while programs run: the compositor sees it, draws its screen again and sends `Settings_Changed` to each window. The values survive a stop: `settings` keeps them as one record in its private store, and its boot pass writes them on the page at the start.
 
@@ -5273,11 +5294,41 @@ The root service creates the page at the start. The program `settings` receives 
 
 A write makes the change count odd while it lasts; a reader reads again until it sees one even count (`settings.read`), and after 64 reads takes the defaults. The compositor waits on the change count as a word wait. A value that the page does not know reads as 0: the worst that a writer can do to another program is to change a look.
 
-It is not a registry and not a file: it is shared memory with one writer, and its record in the private store of `settings` is the copy that survives a stop.
+It is not a registry and not a file: it is shared memory with one writer of the values, and its record in the private store of `settings` is the copy that survives a stop. Beside the values it holds the appearance in force, one word that the program `settings` writes with the values and the root service writes alone at an edge of the rule of the day.
 
 The design: `docs/FONTS.md`, "7. The setting", and "Who can write a cache".
 
 Do not use: registry, config file, dconf.
+
+### Appearance
+
+An appearance is one value of each color token: the desktop has two, dark and light.
+
+The dark appearance is the one of the boot display: light text on a dark background. The light appearance is the light form of the site: dark text on the light background of the mark, white cards, each concept at a darker shade of its accent. The blue of the title bar, the chosen blue and the red of the close button are the same in both. The setting `appearance` chooses `dark`, `light`, or `auto`: the light appearance from 07:00 to 19:00 of the local time and the dark one at night. A picture keeps its pixels in both, and the boot display is always dark.
+
+The design: `src/md/features/appearance.md`, and `docs/DESIGN.md`, "The appearances".
+
+Do not use: theme (for this: a pointer theme is a set of pointer pictures), dark mode, light mode, skin.
+
+### Appearance in force
+
+The appearance in force is the appearance, dark or light, that each program draws now.
+
+It is one word of the settings page. With the setting `dark` or `light` it is that value; with `auto` it is the value of the rule of the day at this moment, which `src/library/support/appearance` computes from the date page. The program `settings` writes it with each change of the values, and the root service writes it at 07:00 and 19:00 of the local time. A program reads it at each frame through `src/library/support/display`, which gives it to `graphics.appearance_use`; the compositor sends `Settings_Changed` to each window when it changes, so each window draws once.
+
+The design: `src/md/features/appearance.md`.
+
+Do not use: current theme, active mode.
+
+### Color token
+
+A color token is a named color of the design rules that has one value in each appearance: a surface, a concept or a part of the desktop.
+
+`graphics.Color_Tokens` holds each token; `graphics.colors` holds their values in the appearance in force of a program, so a drawer writes `graphics.colors.text` and draws the text of the dark or of the light appearance. The `DARK_` constants of the package are the values of the dark appearance, for constant tables and for what is always dark (the boot display, the mark). White, black and the ink of a text on white are not tokens: they are the same in both appearances.
+
+The design: `src/md/features/appearance.md`, and `src/library/support/graphics/rules.odin`.
+
+Do not use: palette color (the palette is a panel of the desktop), design token, swatch.
 
 ### Monospace font
 
@@ -5767,7 +5818,7 @@ A raw public key is a public key that a TLS peer sends in its Certificate messag
 
 The server sends the SubjectPublicKeyInfo of its Ed25519 key: 12 fixed bytes and the 32 bytes of the key, 44 bytes in all. The client offers `server_certificate_type` with the one type RawPublicKey, and the server answers with that type. No other DER is read and no X.509 certificate is read: a parser of certificates is a large parser of hostile input, and the system has no certificate authority, no name and no date to check.
 
-The client trusts the key only when it is the pinned key, and CertificateVerify proves that the server holds its private key, over the transcript. `quic_echo` and `remote` make a new Ed25519 key at each start and write the public key on the log ("remote: the public key of this service: " and 64 hexadecimal digits). The OpenSSL client of the host speaks to `quic_echo` with `-enable_server_rpk`.
+The client trusts the key only when it is the pinned key, and CertificateVerify proves that the server holds its private key, over the transcript. `quic_echo` and `remote` make a new Ed25519 key at each start and write the public key on the log ("remote: the public key of this service: " and 64 hexadecimal digits). The OpenSSL client of the host speaks to `quic_echo` with `-enable_server_rpk`. A client proves its own key the same way when the server asks for it (`client_certificate_type`, a CertificateRequest): the client key of `remote`.
 
 The design: `docs/QUIC.md`, "4. TLS 1.3 for QUIC (the second layer, built)".
 

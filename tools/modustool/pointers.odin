@@ -34,11 +34,11 @@ LINK_DEPTH_LIMIT :: 8
 // makes the same pixels.
 OUTLINE_COORDINATE_SCALE :: 1000
 OUTLINE_COORDINATE_DECIMALS :: 3
-// The two colors of an outline: the dark of the desktop and white. The dark
-// form has a white fill in a dark edge, for a dark desktop; the light form
-// a dark fill in a white edge, for a light desktop (docs/POINTERS.md, "5. The
-// two themes").
-POINTER_DARK_COLOR :: u32(graphics.COLOR_BACKGROUND)
+// The two colors of an outline: the darkest color of the rules (the
+// background of the dark appearance) and white. The dark form has a white
+// fill in a dark edge, for a dark desktop; the light form a dark fill in a
+// white edge, for a light desktop (docs/POINTERS.md, "5. The two themes").
+POINTER_DARK_COLOR :: u32(graphics.COLOR_INK)
 POINTER_LIGHT_COLOR :: u32(graphics.COLOR_WHITE)
 // The edge of an outline is 1 pixel at every size: drawn from the contours,
 // so a larger size has a finer edge, not a thicker one.
@@ -56,11 +56,11 @@ POINTER_FORM_COLORS := [pointer_pictures.Pointer_Form]Pointer_Form_Colors {
 }
 
 // An accent of a pointer: a color token of the design rules (the name of
-// its constant in modus:support/graphics, with no COLOR_), with its value
-// for a dark surround and for a light surround. An accent inside the fill
-// has the fill around it; an accent with an edge has the edge around it.
-// The value for a light surround is the value that the light form of the
-// site gives the token: a darker shade, which keeps 3 to 1 on white.
+// its field in graphics.Color_Tokens), with its value for a dark surround
+// and for a light surround: the value of the token in the dark appearance
+// and in the light appearance, whose surfaces are of those colors. An accent
+// inside the fill has the fill around it; an accent with an edge has the
+// edge around it.
 Pointer_Accent :: struct {
 	name:     string,
 	on_dark:  u32,
@@ -69,14 +69,11 @@ Pointer_Accent :: struct {
 
 // pointer_accents gives the tokens that a manifest can name.
 pointer_accents :: proc() -> [3]Pointer_Accent {
+	dark, light := graphics.DARK_COLOR_TOKENS, graphics.LIGHT_COLOR_TOKENS
 	return {
-		// The blue of the title bar and of the focus.
-		{name = "title", on_dark = graphics.COLOR_TITLE, on_light = graphics.shade(graphics.COLOR_TITLE, 85)},
-		// The red of "stop a program": its bright form under the pointer on
-		// a dark surround, its deep form on a light one.
-		{name = "stop_program", on_dark = graphics.COLOR_STOP_PROGRAM_POINTER_OVER, on_light = graphics.COLOR_STOP_PROGRAM},
-		// The amber of a match, as the search of the site marks it.
-		{name = "boot_program", on_dark = graphics.COLOR_BOOT_PROGRAM, on_light = graphics.shade(graphics.COLOR_BOOT_PROGRAM, 50)},
+		{name = "title", on_dark = dark.title, on_light = light.title}, // The blue of the title bar and of the focus.
+		{name = "stop_program", on_dark = dark.stop_program, on_light = light.stop_program}, // The red of "stop a program".
+		{name = "boot_program", on_dark = dark.boot_program, on_light = light.boot_program}, // The amber of "starts", and of a match.
 	}
 }
 

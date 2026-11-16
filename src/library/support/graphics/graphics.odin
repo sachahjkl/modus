@@ -12,8 +12,9 @@
 // - `text`, `text_scaled`, `text_bold`, `character` (`text.odin`): the text of
 //   the system, from a glyph cache or from Spleen 8x16 (`font.odin`).
 // - `Blend_Tables` (`blend.odin`): the blend of a glyph over a color.
-// - The design rules (`rules.odin`): the grid, the surfaces and one color
-//   for each concept.
+// - The design rules (`rules.odin`): the grid, and the color tokens (the
+//   surfaces, one color for each concept, the desktop) in the dark and the
+//   light appearance; `colors` holds the tokens of the appearance in force.
 // - `value_kind_colors`, `Code_Class_Color`: the colors of the values of the
 //   log and of the classes of code.
 //
@@ -27,7 +28,7 @@ Color :: u32
 
 // rgb gives the color of three channels, each from 0 to 255.
 //
-// Example: `rgb(0x3F, 0x7C, 0xC4)` is `COLOR_TITLE`.
+// Example: `rgb(0x3F, 0x7C, 0xC4)` is the blue of the title bar, `colors.title`.
 rgb :: #force_inline proc "contextless" (red, green, blue: u32) -> Color {
 	return red << 16 | green << 8 | blue
 }
@@ -52,7 +53,7 @@ view :: proc "contextless" (canvas: Canvas, x, y, width, height: int) -> Canvas 
 
 // fill paints a rectangle in one color, cut to the canvas.
 //
-// Example: `graphics.fill(canvas, 0, 0, 100, 24, graphics.COLOR_TRACK)`.
+// Example: `graphics.fill(canvas, 0, 0, 100, 24, graphics.colors.track)`.
 fill :: proc "contextless" (canvas: Canvas, x, y, width, height: int, color: Color) {
 	x0 := max(x, 0)
 	y0 := max(y, 0)
