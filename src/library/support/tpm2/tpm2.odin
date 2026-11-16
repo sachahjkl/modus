@@ -28,11 +28,19 @@
 // attribute noDA is clear: the TPM counts each wrong value, and refuses
 // each try for a time after too many.
 //
-// See [TPM service](term:tpm-service) and
-// [sealed by the TPM](term:sealed-by-the-tpm).
+// The TPM floors are indices of the TPM that only gain bits: the boot
+// program reads them through the firmware, refuses an older system or a
+// revoked key, then defines and raises them before its measure
+// (src/md/features/rollback_floors.md). The commands of the indices and
+// the checks of their answers are at the end of this file.
+//
+// See [TPM service](term:tpm-service),
+// [sealed by the TPM](term:sealed-by-the-tpm) and
+// [TPM floor](term:tpm-floor).
 package tpm2
 
 import "base:runtime"
+import info "modus:contract/boot_info"
 import "modus:support/cryptography/sha2"
 
 // The tags of a command and of an answer.
@@ -64,6 +72,13 @@ COMMAND_DICTIONARY_ATTACK_LOCK_RESET :: u32(0x0000_0139)
 // TPM2_PolicyAuthValue, not with its own code: either command then
 // satisfies the same policy (TPM 2.0 part 3, TPM2_PolicyPassword).
 COMMAND_POLICY_AUTH_VALUE :: u32(0x0000_016B)
+// The commands of the indices of the TPM floors: the boot program reads,
+// defines and raises them through the firmware.
+COMMAND_NV_UNDEFINE_SPACE :: u32(0x0000_0122)
+COMMAND_NV_DEFINE_SPACE :: u32(0x0000_012A)
+COMMAND_NV_SET_BITS :: u32(0x0000_0135)
+COMMAND_NV_READ :: u32(0x0000_014E)
+COMMAND_NV_READ_PUBLIC :: u32(0x0000_0169)
 
 // The kind of TPM2_Shutdown: the next TPM2_Startup is a reset, as the
 // firmware starts the TPM with TPM2_Startup(CLEAR) at each start.
@@ -189,6 +204,9 @@ RESPONSE_AUTHORIZATION_FAIL :: u32(0x00E)
 RESPONSE_LOCKOUT :: u32(0x921)
 RESPONSE_RETRY :: u32(0x922)
 RESPONSE_ERROR_MASK :: u32(0x3F) // The bits of the error of a format 1 code.
+// The error of a format 1 code: the handle names nothing. TPM2_NV_ReadPublic
+// answers it for an index that is not defined.
+RESPONSE_HANDLE :: u32(0x00B)
 
 // policy_fails says if a response code says that the policy of the object
 // does not hold: the values of the PCRs differ from the values of the seal.
@@ -215,6 +233,12 @@ locked_out :: proc "contextless" (code: u32) -> bool {
 // once it wrote that use to its memory.
 retry_asked :: proc "contextless" (code: u32) -> bool {
 	return code == RESPONSE_RETRY
+}
+
+// handle_absent says if a response code says that a handle names nothing
+// (TPM_RC_HANDLE): for TPM2_NV_ReadPublic, an index that is not defined.
+handle_absent :: proc "contextless" (code: u32) -> bool {
+	return code & RESPONSE_FORMAT_ONE != 0 && code & RESPONSE_ERROR_MASK == RESPONSE_HANDLE
 }
 
 // ticket_fails says if a response code says that a ticket is not the HMAC
@@ -375,7 +399,8 @@ start_session_command :: proc "contextless" (buffer: []u8, kind: u8) -> int {
 }
 
 // policy_pcr_command builds TPM2_PolicyPCR with PCR 7 and PCR 11 of the
-// SHA-256 bank and no digest: the TPM takes the values of the PCRs now.
+// SHA-256 bank and no digest: the TPM takes the values of the PCRs now. The
+// policy of a sealed object and of a TPM floor.
 policy_pcr_command :: proc "contextless" (buffer: []u8, session: u32) -> int {
 	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_POLICY_PCR)
 	put_u32(&command_writer, session)
@@ -916,4 +941,282 @@ area_fits :: proc "contextless" (area: []u8, limit: int) -> bool {
 		return false
 	}
 	return int(u16(area[0]) << 8 | u16(area[1])) == len(area) - 2
+}
+
+// The attributes of an index (TPM 2.0 part 2, TPMA_NV).
+NV_POLICY_WRITE :: u32(1 << 3) // Only a policy session writes it.
+NV_TYPE_MASK :: u32(0xF << 4) // The bits of the type of the index.
+NV_TYPE_BITS :: u32(2 << 4) // TPM_NT_BITS: 64 bits that TPM2_NV_SetBits adds to and never clears.
+NV_AUTHORIZATION_READ :: u32(1 << 18) // A read with the authorization value of the index.
+NV_NO_DICTIONARY_ATTACK :: u32(1 << 25) // A wrong value is no failure that the TPM counts.
+NV_WRITTEN :: u32(1 << 29) // The TPM sets it at the first write.
+// The attributes of a TPM floor, NV_WRITTEN aside. The index has an empty
+// authorization value: the boot program reads it and holds no secret. Only
+// a policy session writes it. Its policy is PCR 7 with Secure Boot on and
+// PCR 11 before the measure (32 zero bytes): only a boot program that the
+// certificate of the publisher verified, before it measures the system,
+// raises it, and no kernel or program after the measure can. The owner
+// hierarchy defined it: the TPM refuses TPMA_NV_POLICY_DELETE for an index
+// of that hierarchy.
+FLOOR_ATTRIBUTES :: NV_POLICY_WRITE | NV_TYPE_BITS | NV_AUTHORIZATION_READ | NV_NO_DICTIONARY_ATTACK
+FLOOR_DATA_SIZE :: 8 // The bytes of the data of a floor: its 64 bits.
+// The largest policy of an index: a digest of SHA-512. A foreign index can
+// have a policy of another hash.
+NV_POLICY_LIMIT :: 64
+// The errors of the codes that say that the TPM refused the authorization
+// of a read: TPM_RC_BAD_AUTH and TPM_RC_AUTH_FAIL of format 1, and
+// TPM_RC_NV_AUTHORIZATION of format 0.
+RESPONSE_BAD_AUTHORIZATION :: u32(0x022)
+RESPONSE_NV_AUTHORIZATION :: u32(0x149)
+
+// The public area of an index, as TPM2_NV_ReadPublic gives it.
+Nv_Public :: struct {
+	index:          u32, // The handle of the index.
+	name_algorithm: u16, // The hash of its name and of its policy.
+	attributes:     u32, // TPMA_NV.
+	policy:         [NV_POLICY_LIMIT]u8, // policy_size bytes of it are the policy.
+	policy_size:    int,
+	data_size:      u16, // The bytes of its data.
+}
+
+// nv_read_public_command builds TPM2_NV_ReadPublic of an index: it needs no
+// authorization.
+nv_read_public_command :: proc "contextless" (buffer: []u8, index: u32) -> int {
+	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_NV_READ_PUBLIC)
+	put_u32(&command_writer, index)
+	return end(&command_writer)
+}
+
+// nv_read_command builds TPM2_NV_Read of the 8 bytes of a floor, with the
+// index as its own authorization and the empty password.
+nv_read_command :: proc "contextless" (buffer: []u8, index: u32) -> int {
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_NV_READ)
+	put_u32(&command_writer, index) // The authorization: the index.
+	put_u32(&command_writer, index)
+	put_password_session(&command_writer)
+	put_u16(&command_writer, FLOOR_DATA_SIZE)
+	put_u16(&command_writer, 0) // From its first byte.
+	return end(&command_writer)
+}
+
+// floor_define_command builds TPM2_NV_DefineSpace of a floor under the
+// owner hierarchy with its empty password: no authorization value of the
+// index, FLOOR_ATTRIBUTES, the policy given, and 8 bytes.
+floor_define_command :: proc "contextless" (buffer: []u8, index: u32, policy: ^[DIGEST_SIZE]u8) -> int {
+	return floor_area_define_command(buffer, index, policy, nil)
+}
+
+// floor_area_define_command builds TPM2_NV_DefineSpace of an index with the
+// area of a floor and the authorization value given. The system defines
+// each floor with none (floor_define_command); the tool defines one with a
+// value to plant an index as another system can.
+floor_area_define_command :: proc "contextless" (buffer: []u8, index: u32, policy: ^[DIGEST_SIZE]u8, authorization: []u8) -> int {
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_NV_DEFINE_SPACE)
+	if len(authorization) > AUTHORIZATION_VALUE_SIZE {
+		return 0
+	}
+	put_u32(&command_writer, HANDLE_OWNER)
+	put_password_session(&command_writer)
+	put_sized(&command_writer, authorization)
+	size_place := command_writer.count
+	put_u16(&command_writer, 0)
+	put_u32(&command_writer, index)
+	put_u16(&command_writer, ALGORITHM_SHA256)
+	put_u32(&command_writer, FLOOR_ATTRIBUTES)
+	put_sized(&command_writer, policy^[:])
+	put_u16(&command_writer, FLOOR_DATA_SIZE)
+	set_u16_at(&command_writer, size_place, u16(command_writer.count - size_place - 2))
+	return end(&command_writer)
+}
+
+// nv_undefine_command builds TPM2_NV_UndefineSpace of an index under the
+// owner hierarchy with its empty password: the boot program removes with it
+// an index at the place of a floor that is not a floor that it can read.
+nv_undefine_command :: proc "contextless" (buffer: []u8, index: u32) -> int {
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_NV_UNDEFINE_SPACE)
+	put_u32(&command_writer, HANDLE_OWNER)
+	put_u32(&command_writer, index)
+	put_password_session(&command_writer)
+	return end(&command_writer)
+}
+
+// floor_set_bits_command builds TPM2_NV_SetBits of a floor, in a policy
+// session that ran policy_pcr_command: the TPM adds the bits to the
+// field. The session has no key, so its HMAC is empty.
+floor_set_bits_command :: proc "contextless" (buffer: []u8, index: u32, session: u32, bits: u64) -> int {
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_NV_SET_BITS)
+	put_u32(&command_writer, index) // The authorization: the index, through its policy.
+	put_u32(&command_writer, index)
+	put_u32(&command_writer, 9) // The bytes of the area: one session of 9 bytes.
+	put_u32(&command_writer, session)
+	put_u16(&command_writer, 0) // No nonce.
+	put_u8(&command_writer, SESSION_CONTINUE)
+	put_u16(&command_writer, 0) // The empty HMAC.
+	put_u32(&command_writer, u32(bits >> 32))
+	put_u32(&command_writer, u32(bits & 0xFFFF_FFFF))
+	return end(&command_writer)
+}
+
+// nv_public_answer reads the answer of TPM2_NV_ReadPublic: the public area
+// of the index, then its name. Each field must fit its sized buffer, and no
+// byte may follow. A policy longer than the largest digest is refused: no
+// TPM gives one.
+nv_public_answer :: proc "contextless" (answer: []u8) -> (public: Nv_Public, code: u32, problem: Answer_Problem) {
+	reader: Answer_Reader
+	reader, code, problem = answer_begin(answer)
+	if problem != .None {
+		return {}, code, problem
+	}
+	// The command has no session, so the answer has none: no size of the
+	// parameters comes before them.
+	_, area := take_sized(&reader)
+	_, _ = take_sized(&reader) // The name.
+	if reader.failed || reader.place != len(answer) || answer[0] != u8(TAG_NO_SESSIONS >> 8) || answer[1] != u8(TAG_NO_SESSIONS & 0xFF) {
+		return {}, code, .Malformed
+	}
+	area_reader := Answer_Reader{bytes = area}
+	public.index = take_u32(&area_reader)
+	public.name_algorithm = take_u16(&area_reader)
+	public.attributes = take_u32(&area_reader)
+	_, policy := take_sized(&area_reader)
+	public.data_size = take_u16(&area_reader)
+	if area_reader.failed || area_reader.place != len(area) || len(policy) > NV_POLICY_LIMIT {
+		return {}, code, .Malformed
+	}
+	copy(public.policy[:], policy)
+	public.policy_size = len(policy)
+	return public, code, .None
+}
+
+// floor_public_check says if a public area is the area of a TPM floor of
+// this system at the index given: SHA-256, FLOOR_ATTRIBUTES with
+// NV_WRITTEN set or not, the policy given, and 8 bytes. Any other area is a
+// foreign index: another system defined it, or PCR 7 changed since its
+// definition. A foreign index with another type, a write by another
+// authorization, or a policy that another system satisfies could go down,
+// or rise for another system: its value is never a floor.
+floor_public_check :: proc "contextless" (public: ^Nv_Public, index: u32, policy: ^[DIGEST_SIZE]u8) -> bool {
+	if public.index != index || public.name_algorithm != ALGORITHM_SHA256 || public.attributes & ~NV_WRITTEN != FLOOR_ATTRIBUTES || public.data_size != FLOOR_DATA_SIZE {
+		return false
+	}
+	return public.policy_size == DIGEST_SIZE && string(public.policy[:DIGEST_SIZE]) == string(policy^[:])
+}
+
+// nv_read_answer reads the answer of TPM2_NV_Read of a floor: its 8 bytes,
+// big-endian, as the bits of the field.
+nv_read_answer :: proc "contextless" (answer: []u8) -> (bits: u64, code: u32, problem: Answer_Problem) {
+	reader: Answer_Reader
+	reader, code, problem = answer_begin(answer)
+	if problem != .None {
+		return 0, code, problem
+	}
+	parameters_begin(&reader)
+	_, data := take_sized(&reader)
+	if reader.failed || len(data) != FLOOR_DATA_SIZE {
+		return 0, code, .Malformed
+	}
+	for value in data {
+		bits = bits << 8 | u64(value)
+	}
+	return bits, code, .None
+}
+
+// floor_policy_digest gives the policy of a TPM floor for a value of PCR
+// 7: TPM2_PolicyPCR from an empty policy, with the selection of PCR 7 and
+// PCR 11, and the SHA-256 of the value of PCR 7 then of 32 zero bytes, the
+// value of PCR 11 before the measure. The boot program computes it from
+// PCR 7 now, with no session.
+floor_policy_digest :: proc "contextless" (pcr_7_value: ^[DIGEST_SIZE]u8) -> [DIGEST_SIZE]u8 {
+	pcr_11_before_the_measure: [DIGEST_SIZE]u8
+	pcr_digest := sha256_of(pcr_7_value^[:], pcr_11_before_the_measure[:])
+	return policy_pcr_digest(&pcr_digest)
+}
+
+// authorization_refused says if a response code of TPM2_NV_Read says that
+// the TPM refused the authorization of the read: the index has another
+// authorization value than the empty one.
+authorization_refused :: proc "contextless" (code: u32) -> bool {
+	if code == RESPONSE_NV_AUTHORIZATION {
+		return true
+	}
+	return code & RESPONSE_FORMAT_ONE != 0 && (code & RESPONSE_ERROR_MASK == RESPONSE_BAD_AUTHORIZATION || code & RESPONSE_ERROR_MASK == RESPONSE_AUTHORIZATION_FAIL)
+}
+
+// floor_state_of_public decides the state of a floor from the answer of
+// TPM2_NV_ReadPublic of its index (src/md/features/rollback_floors.md):
+// Absent, Foreign, Never_Written, Not_Read, or Held when the bytes must be
+// read. An index with the area of a floor that was never written is not
+// trusted: the boot program writes each floor at once when it defines it,
+// so such an index was planted, and it can hold an authorization value that
+// refuses each later read. Its floor is 0 anyway.
+floor_state_of_public :: proc "contextless" (problem: Answer_Problem, code: u32, public: ^Nv_Public, index: u32, policy: ^[DIGEST_SIZE]u8) -> info.Floor_State {
+	switch {
+	case problem == .Refused && handle_absent(code):
+		return .Absent
+	case problem != .None:
+		return .Not_Read
+	case !floor_public_check(public, index, policy):
+		return .Foreign
+	case public.attributes & NV_WRITTEN == 0:
+		return .Never_Written
+	}
+	return .Held
+}
+
+// floor_state_of_read decides the state of a floor of the state Held from
+// the answer of TPM2_NV_Read of its bytes: Held with its floor, Read_Refused
+// when the TPM refuses the authorization (an index that another system
+// planted with an authorization value), or Not_Read.
+floor_state_of_read :: proc "contextless" (problem: Answer_Problem, code: u32, bits: u64) -> (state: info.Floor_State, floor: u64) {
+	switch {
+	case problem == .None:
+		return .Held, floor_of_bits(bits)
+	case problem == .Refused && authorization_refused(code):
+		return .Read_Refused, 0
+	}
+	return .Not_Read, 0
+}
+
+// The step that a start with Secure Boot on takes for one floor before its
+// raise, from the state that the boot program read.
+Floor_Step :: enum u8 {
+	Nothing, // The floor could not be read: it stays as it is.
+	Raise, // The index is a floor of this system: set the bit of the number when it is above the floor.
+	Define_Then_Raise, // No index: define it, then set the bit.
+	Remove_Then_Define_Then_Raise, // An index that is not a floor that this system can read: remove it, define it, then set the bit.
+}
+
+// floor_step_of gives the step of a floor in a given state.
+floor_step_of :: proc "contextless" (state: info.Floor_State) -> Floor_Step {
+	switch state {
+	case .Held:
+		return .Raise
+	case .Absent:
+		return .Define_Then_Raise
+	case .Foreign, .Never_Written, .Read_Refused:
+		return .Remove_Then_Define_Then_Raise
+	case .None, .Not_Read:
+	}
+	return .Nothing
+}
+
+// floor_of_bits gives the floor that the field of an index holds: the
+// place of its highest set bit plus one; 0 with no bit set.
+floor_of_bits :: proc "contextless" (bits: u64) -> u64 {
+	floor: u64
+	for place in u64(0) ..< 64 {
+		if bits & (u64(1) << place) != 0 {
+			floor = place + 1
+		}
+	}
+	return floor
+}
+
+// floor_bit gives the bit that raises a floor to a number: bit number - 1.
+// A number out of 1 to boot_info.FLOOR_LIMIT gives 0, which raises nothing.
+floor_bit :: proc "contextless" (number: u64) -> u64 {
+	if number == 0 || number > info.FLOOR_LIMIT {
+		return 0
+	}
+	return u64(1) << (number - 1)
 }

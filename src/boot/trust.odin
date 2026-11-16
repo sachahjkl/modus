@@ -7,6 +7,12 @@ package boot
 // the firmware to measure the description into the TPM. A failed check
 // stops the boot with the failure on the boot display.
 //
+// Between the checks and the measure, it reads the TPM floors through the
+// firmware, refuses a boot program whose key number, or a system
+// description whose security version, is below its floor, and with Secure
+// Boot on raises the floors to its own numbers
+// (src/md/features/rollback_floors.md).
+//
 // What this proves depends on what verified the boot program itself. With
 // Secure Boot off, nothing did: whoever can write the boot volume can
 // replace the boot program, its public key and its checks. The checks then
@@ -19,10 +25,13 @@ import info "modus:contract/boot_info"
 import "modus:contract/system_description"
 import "modus:support/bootscreen"
 import "modus:support/cryptography/ed25519"
+import "modus:support/tpm2"
 
-// The public key of the signing key, 32 bytes: the tool writes it before
-// it builds the boot program (tools/modustool/system_description.odin).
-system_public_key := #load(#config(SYSTEM_PUBLIC_KEY, "../../build/system_public_key.bin"))
+// The key of the system, 40 bytes: the public key of the signing key, then
+// its key number as a little-endian u64. The tool writes it before it
+// builds the boot program (tools/modustool/system_description.odin).
+system_key := #load(#config(SYSTEM_KEY, "../../build/system_key.bin"))
+SYSTEM_KEY_SIZE :: system_description.PUBLIC_KEY_SIZE + 8
 
 // trust_check verifies the system description of the boot image and gives
 // its bytes. It fills the trust record. It does not return when a check
@@ -30,10 +39,16 @@ system_public_key := #load(#config(SYSTEM_PUBLIC_KEY, "../../build/system_public
 trust_check :: proc "contextless" (boot: ^info.Boot_Info, image: []u8) -> (description: []u8) {
 	trust := &boot.trust
 	start := u64(intrinsics.read_cycle_counter())
-	if len(system_public_key) != system_description.PUBLIC_KEY_SIZE {
-		trust_fail(boot, .Boot_Image, "the boot program holds no public key of 32 bytes")
+	if len(system_key) != SYSTEM_KEY_SIZE {
+		trust_fail(boot, .Boot_Image, "the boot program holds no public key of 32 bytes with its key number")
 	}
-	copy(trust.public_key[:], system_public_key)
+	copy(trust.public_key[:], system_key[:system_description.PUBLIC_KEY_SIZE])
+	for index in 0 ..< 8 {
+		trust.key_number |= u64(system_key[system_description.PUBLIC_KEY_SIZE + index]) << (8 * u64(index))
+	}
+	if trust.key_number == 0 || trust.key_number > info.FLOOR_LIMIT {
+		trust_fail(boot, .Boot_Image, "the key number of the boot program is not 1 to 64")
+	}
 	trust.key_kind = trust.public_key == system_description.TEST_PUBLIC_KEY ? info.Signing_Key_Kind.Test : info.Signing_Key_Kind.Person
 	signature: []u8
 	found: bool
@@ -365,6 +380,324 @@ register_read :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, register: u64) -> 
 	at += 6
 	copy(value[:], response[at:][:32])
 	return value, 0, true
+}
+
+// The register of the policy of the TPM floors: the state of Secure Boot,
+// with the certificate that verified the boot program. The policy also
+// names PCR 11 with the value that it has before the measure.
+FLOOR_POLICY_REGISTER :: 7
+// The bytes of a command of the floors, and of the response buffer that the
+// firmware fills: the largest command is the definition of an index, 77
+// bytes; the largest answer is the public area of an index with its name,
+// about 100 bytes.
+FLOOR_COMMAND_LIMIT :: 128
+FLOOR_RESPONSE_LIMIT :: 512
+
+// floors_check reads the TPM floors through the firmware, before the
+// measure: the key floor, and the version floor of the key number of this
+// boot program. It stops the start when the key number is below the key
+// floor, or the security version of the description below the version
+// floor. Then, with Secure Boot on, it raises both floors to its own
+// numbers (src/md/features/rollback_floors.md). It fills the trust record.
+//
+// The check is the work of this boot program, the code of the volume that
+// starts: a refused system runs no kernel and no program. A floor that
+// cannot be read is 0, and the start goes on: a TPM that the firmware
+// stopped using would else stop each start, and such a machine opens no key
+// sealed by the TPM either.
+//
+// The raise is here, before the measure, because the policy of a floor
+// names PCR 11 before the measure: after it, no kernel and no program, not
+// even one of a system that a stolen key signed, can raise a floor.
+floors_check :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
+	trust := &boot.trust
+	trust.security_version, _ = system_description.security_version_of(description)
+	guid := EFI_TCG2_GUID
+	tpm: ^Efi_Tcg2_Protocol
+	if system.boot_services.locate_protocol(&guid, nil, (^rawptr)(&tpm)) != 0 || tpm == nil {
+		print("boot program: the firmware has no TPM protocol: no TPM floor is read, and no older system is refused\r\n")
+		return
+	}
+	version_index := info.version_floor_index(trust.key_number)
+	// The policy of a floor of this system names PCR 7 as it is now: an
+	// index whose policy names another PCR 7 is foreign.
+	pcr_7, pcr_status, pcr_read := register_read(tpm, FLOOR_POLICY_REGISTER)
+	policy: [32]u8
+	if !pcr_read {
+		trust.version_floor_state = .Not_Read
+		trust.key_floor_state = .Not_Read
+		trust.floor_status = pcr_status
+	} else {
+		policy = tpm2.floor_policy_digest(&pcr_7)
+		trust.key_floor, trust.key_floor_state = floor_read(tpm, info.KEY_FLOOR_INDEX, &policy, &trust.floor_status)
+		trust.version_floor, trust.version_floor_state = floor_read(tpm, version_index, &policy, &trust.floor_status)
+	}
+
+	// The line is longer than one text of the boot display: it goes out in
+	// parts.
+	print("boot program: the TPM floors: the key floor ")
+	print_number(trust.key_floor)
+	print(floor_state_words(trust.key_floor_state))
+	print(", the version floor of the key number ")
+	print_number(trust.key_number)
+	print(" ")
+	print_number(trust.version_floor)
+	print(floor_state_words(trust.version_floor_state))
+	print("\r\n")
+	text: bootscreen.Text
+	if trust.floor_status != 0 {
+		bootscreen.put(&text, "boot program: a read of the TPM floors failed: status ")
+		bootscreen.put_hex(&text, trust.floor_status, 16)
+		print(string(text.bytes[:text.count]))
+		print("\r\n")
+	}
+	print("boot program: this boot program has the key number ")
+	print_number(trust.key_number)
+	print(", and the system description the security version ")
+	print_number(trust.security_version)
+	print("\r\n")
+
+	// The key first: a description that a revoked key signed proves
+	// nothing, its security version included. Each refusal fits one text of
+	// the boot display, which shows it.
+	refusal: bootscreen.Text
+	if trust.key_number < trust.key_floor {
+		bootscreen.put(&refusal, "the key number ")
+		bootscreen.put_number(&refusal, trust.key_number)
+		bootscreen.put(&refusal, " of this boot program is below the key floor ")
+		bootscreen.put_number(&refusal, trust.key_floor)
+		bootscreen.put(&refusal, " of the TPM: its key is revoked")
+		trust_fail(boot, .Boot_Image, string(refusal.bytes[:refusal.count]))
+	}
+	if trust.security_version < trust.version_floor {
+		bootscreen.put(&refusal, "the security version ")
+		bootscreen.put_number(&refusal, trust.security_version)
+		bootscreen.put(&refusal, " of the system description is below the version floor ")
+		bootscreen.put_number(&refusal, trust.version_floor)
+		bootscreen.put(&refusal, " of the TPM: an older system")
+		trust_fail(boot, .Boot_Image, string(refusal.bytes[:refusal.count]))
+	}
+
+	if !pcr_read {
+		return
+	}
+	// With Secure Boot off, PCR 7 says "off": a floor defined now would
+	// have a policy that any boot program satisfies.
+	if trust.verifier != .Firmware_And_Boot_Program {
+		print("boot program: the TPM floors stay as they are: the firmware did not verify this boot program\r\n")
+		return
+	}
+	key_name: bootscreen.Text
+	bootscreen.put(&key_name, "the key floor")
+	floor_raise(tpm, info.KEY_FLOOR_INDEX, string(key_name.bytes[:key_name.count]), trust.key_floor_state, trust.key_floor, trust.key_number, &policy)
+	version_name: bootscreen.Text
+	bootscreen.put(&version_name, "the version floor of the key number ")
+	bootscreen.put_number(&version_name, trust.key_number)
+	floor_raise(tpm, version_index, string(version_name.bytes[:version_name.count]), trust.version_floor_state, trust.version_floor, trust.security_version, &policy)
+}
+
+// floor_raise raises one floor to number, which the checks put at or above
+// it, with the step that package tpm2 gives for its state: it removes an
+// index that is not a floor that this boot program can read (planted by
+// another system, or of another PCR 7), defines an absent one, then sets
+// the bit of number in a policy session of PCR 7 and PCR 11. A step that
+// fails writes one line, and the floor stays: a floor that does not rise
+// refuses less, and stops no start.
+floor_raise :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, index: u32, name: string, state: info.Floor_State, floor: u64, number: u64, policy: ^[32]u8) {
+	command: [FLOOR_COMMAND_LIMIT]u8
+	response: [FLOOR_RESPONSE_LIMIT]u8
+	step := tpm2.floor_step_of(state)
+	if step == .Nothing {
+		return
+	}
+	if step == .Raise && number <= floor {
+		print("boot program: ")
+		print(name)
+		print(" is ")
+		print_number(floor)
+		print(": this boot program, with the number ")
+		print_number(number)
+		print(", leaves it\r\n")
+		return
+	}
+	if step == .Remove_Then_Define_Then_Raise {
+		count := tpm2.nv_undefine_command(command[:], index)
+		if !floor_command_run(tpm, command[:count], response[:], name, "TPM2_NV_UndefineSpace") {
+			return
+		}
+		print("boot program: ")
+		print(name)
+		#partial switch state {
+		case .Never_Written:
+			print(": removed an index that was never written: another system planted it\r\n")
+		case .Read_Refused:
+			print(": removed an index whose read the TPM refuses: another system planted it with an authorization value\r\n")
+		case:
+			print(": removed a foreign index: another system defined it, or PCR 7 changed\r\n")
+		}
+	}
+	if step != .Raise {
+		count := tpm2.floor_define_command(command[:], index, policy)
+		if !floor_command_run(tpm, command[:count], response[:], name, "TPM2_NV_DefineSpace") {
+			return
+		}
+		print("boot program: ")
+		print(name)
+		print(": defined its index\r\n")
+	}
+	// A policy session: TPM2_PolicyPCR of PCR 7 and PCR 11 now, which the
+	// policy of the index names.
+	count := tpm2.start_session_command(command[:], tpm2.SESSION_POLICY)
+	answer, firmware_status, answered := firmware_submit(tpm, command[:count], response[:])
+	if !answered {
+		floor_step_failed(name, "TPM2_StartAuthSession", firmware_status)
+		return
+	}
+	session, code, problem := tpm2.handle_answer(answer)
+	if problem != .None {
+		floor_step_failed(name, "TPM2_StartAuthSession", u64(code))
+		return
+	}
+	defer {
+		flush_count := tpm2.flush_command(command[:], session)
+		_, _, _ = firmware_submit(tpm, command[:flush_count], response[:])
+	}
+	count = tpm2.policy_pcr_command(command[:], session)
+	if !floor_command_run(tpm, command[:count], response[:], name, "TPM2_PolicyPCR") {
+		return
+	}
+	count = tpm2.floor_set_bits_command(command[:], index, session, tpm2.floor_bit(number))
+	if !floor_command_run(tpm, command[:count], response[:], name, "TPM2_NV_SetBits") {
+		return
+	}
+	print("boot program: ")
+	print(name)
+	print(" rose from ")
+	print_number(step == .Raise ? floor : 0)
+	print(" to ")
+	print_number(number)
+	print("\r\n")
+}
+
+// floor_command_run sends one command of a raise and reads an answer with
+// no field that the raise needs. A failure writes one line.
+floor_command_run :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, command: []u8, response: []u8, name: string, command_name: string) -> bool {
+	answer, firmware_status, answered := firmware_submit(tpm, command, response)
+	if !answered {
+		floor_step_failed(name, command_name, firmware_status)
+		return false
+	}
+	code, problem := tpm2.status_answer(answer)
+	if problem != .None {
+		floor_step_failed(name, command_name, u64(code))
+		return false
+	}
+	return true
+}
+
+// floor_step_failed writes the failure of one command of a raise: the
+// status of the firmware, or the response code of the TPM (0: an answer
+// that does not have its form).
+floor_step_failed :: proc "contextless" (name: string, command_name: string, status: u64) {
+	text: bootscreen.Text
+	bootscreen.put_hex(&text, status, 16)
+	print("boot program: ")
+	print(name)
+	print(": the TPM refused ")
+	print(command_name)
+	print(" (status ")
+	print(string(text.bytes[:text.count]))
+	print("): the floor stays\r\n")
+}
+
+// print_number writes a number in decimal digits on the log.
+print_number :: proc "contextless" (value: u64) {
+	text: bootscreen.Text
+	bootscreen.put_number(&text, value)
+	print(string(text.bytes[:text.count]))
+}
+
+// floor_state_words gives the words of the state of a floor that follow its
+// number on the log.
+floor_state_words :: proc "contextless" (state: info.Floor_State) -> string {
+	switch state {
+	case .None:
+		return " (not read: no TPM)"
+	case .Absent:
+		return " (no index: no system defined it)"
+	case .Held:
+		return " (held)"
+	case .Foreign:
+		return " (a foreign index, taken as 0: another system defined it, or PCR 7 changed)"
+	case .Not_Read:
+		return " (not read, taken as 0)"
+	case .Never_Written:
+		return " (an index never written, taken as 0)"
+	case .Read_Refused:
+		return " (an index whose read the TPM refuses, taken as 0)"
+	}
+	return ""
+}
+
+// floor_read reads one floor: the public area of its index, then, for the
+// area of a floor of this system that was written, its 8 bytes. Each answer
+// comes from the TPM through the firmware; package tpm2 reads it and
+// decides the state. status keeps the code of the first read that failed.
+floor_read :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, index: u32, policy: ^[32]u8, status: ^u64) -> (floor: u64, state: info.Floor_State) {
+	command: [FLOOR_COMMAND_LIMIT]u8
+	response: [FLOOR_RESPONSE_LIMIT]u8
+	count := tpm2.nv_read_public_command(command[:], index)
+	answer, firmware_status, answered := firmware_submit(tpm, command[:count], response[:])
+	if !answered {
+		floor_status_keep(status, firmware_status)
+		return 0, .Not_Read
+	}
+	public, code, problem := tpm2.nv_public_answer(answer)
+	state = tpm2.floor_state_of_public(problem, code, &public, index, policy)
+	if state == .Not_Read {
+		floor_status_keep(status, u64(code))
+	}
+	if state != .Held {
+		return 0, state
+	}
+	count = tpm2.nv_read_command(command[:], index)
+	answer, firmware_status, answered = firmware_submit(tpm, command[:count], response[:])
+	if !answered {
+		floor_status_keep(status, firmware_status)
+		return 0, .Not_Read
+	}
+	bits: u64
+	bits, code, problem = tpm2.nv_read_answer(answer)
+	state, floor = tpm2.floor_state_of_read(problem, code, bits)
+	if state != .Held {
+		floor_status_keep(status, u64(code))
+	}
+	return floor, state
+}
+
+floor_status_keep :: proc "contextless" (status: ^u64, code: u64) {
+	if status^ == 0 {
+		status^ = code
+	}
+}
+
+// firmware_submit sends one command to the TPM through SubmitCommand of the
+// firmware and gives the answer: the bytes that the size of its header
+// names, within the response buffer. status is the status of the firmware
+// when answered is false, or 0 when the answer does not fit its buffer.
+firmware_submit :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, command: []u8, response: []u8) -> (answer: []u8, status: u64, answered: bool) {
+	if len(command) == 0 || len(response) < 10 {
+		return nil, 0, false
+	}
+	firmware_status := tpm.submit_command(tpm, u32(len(command)), raw_data(command), u32(len(response)), raw_data(response))
+	if firmware_status != 0 {
+		return nil, u64(firmware_status), false
+	}
+	size := int(big_endian_u32(response[2:]))
+	if size < 10 || size > len(response) {
+		return nil, 0, false
+	}
+	return response[:size], 0, true
 }
 
 put_little_endian_u32 :: proc "contextless" (bytes: []u8, value: u32) {

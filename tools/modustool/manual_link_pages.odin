@@ -1,9 +1,9 @@
 // The link pages of the manual (src/md/features/manual_links.md): the
 // resource `manual_pages` of the boot image. The documentation of a module
-// links terms of the glossary and headings of the guides; the program
-// `manual` reads only the boot image, so the build writes the page of each
-// such target in one resource, in the format of
-// src/library/contract/manual_pages.
+// links terms of the glossary, headings of the guides and declarations of
+// the sources that no module describes; the program `manual` reads only the
+// boot image, so the build writes the page of each such target in one
+// resource, in the format of src/library/contract/manual_pages.
 package modustool
 
 import "core:fmt"
@@ -19,16 +19,47 @@ MANUAL_PAGES_FILE :: BUILD_FOLDER + "/manual_pages.resource"
 // build reads the files, a host test gives texts.
 Manual_Document_Reader :: #type proc(path: string) -> (text: string, ok: bool)
 
+// A reader of the declarations of the sources that have one of these names:
+// the build parses the sources, a host test gives an index.
+Manual_Declaration_Reader :: #type proc(names: []string) -> (index: Site_Declaration_Index, ok: bool)
+
+// The readers of the texts that the link pages come from.
+Manual_Page_Readers :: struct {
+	documents:    Manual_Document_Reader,
+	declarations: Manual_Declaration_Reader,
+}
+
+// The readers of the build: the files of the repository.
+manual_page_readers_of_the_build :: proc() -> Manual_Page_Readers {
+	return {documents = site_read_quiet, declarations = manual_declarations_read}
+}
+
+// manual_declarations_read gives the declarations of the sources of the
+// system that have one of these names, by the reader of the site.
+manual_declarations_read :: proc(names: []string) -> (index: Site_Declaration_Index, ok: bool) {
+	index = site_declaration_index_make()
+	ok = site_declaration_index_fill(&index, names)
+	return
+}
+
+// One module file of the boot image, with the name of its entry: a link
+// names a module by that name.
+Manual_Module_File :: struct {
+	name: string,
+	file: []u8,
+}
+
 // build_manual_pages writes the resource of the link pages from the module
-// files of the boot image and the documents of the repository.
+// files of the boot image and the documents and sources of the repository.
 build_manual_pages :: proc() -> (resource: Resource_File, ok: bool) {
-	files := make([dynamic][]u8, context.temp_allocator)
+	modules := make([dynamic]Manual_Module_File, context.temp_allocator)
 	for build in module_builds {
 		if module_in_boot_image(build) {
-			append(&files, read_file(module_path(build.name)) or_return)
+			file := read_file(module_path(build.name)) or_return
+			append(&modules, Manual_Module_File{name = build.name, file = file})
 		}
 	}
-	sources, missing := manual_link_pages_make(files[:], site_read_quiet)
+	sources, missing := manual_link_pages_make(modules[:], manual_page_readers_of_the_build())
 	// A target that names nothing stops `modustool site`: here it is only
 	// a link that the manual draws with no line under it.
 	for target in missing {
@@ -48,9 +79,10 @@ build_manual_pages :: proc() -> (resource: Resource_File, ok: bool) {
 
 // manual_documentation_texts gives the documentation text of each module
 // file and of each of its exports.
-manual_documentation_texts :: proc(files: [][]u8) -> []string {
+manual_documentation_texts :: proc(modules: []Manual_Module_File) -> []string {
 	texts := make([dynamic]string, context.temp_allocator)
-	for file in files {
+	for item in modules {
+		file := item.file
 		if module.validate(file) != .None {
 			continue
 		}
@@ -67,25 +99,94 @@ manual_documentation_texts :: proc(files: [][]u8) -> []string {
 
 // manual_link_pages_make gives the link pages of the documentation of these
 // module files, in the order of the bytes of their targets, and each target
-// of a term or a guide that names nothing that the reader has.
-manual_link_pages_make :: proc(files: [][]u8, read: Manual_Document_Reader) -> (pages: []manual_pages.Page_Source, missing: []string) {
+// of a term, a guide or a name that names nothing that the readers have. A
+// name that a module of the image describes opens on the page of that
+// module: it needs no link page.
+manual_link_pages_make :: proc(modules: []Manual_Module_File, readers: Manual_Page_Readers) -> (pages: []manual_pages.Page_Source, missing: []string) {
 	targets := make([dynamic]string, context.temp_allocator)
-	for text in manual_documentation_texts(files) {
+	for text in manual_documentation_texts(modules) {
 		found, _ := site_comment_links(text)
-		append(&targets, ..found)
+		for target in found {
+			if manual_pages.link_target_kind(target) == .Name && manual_name_described(modules, target) {
+				continue
+			}
+			append(&targets, target)
+		}
 	}
-	return manual_link_pages_of_targets(targets[:], read)
+	return manual_link_pages_of_targets(targets[:], readers)
+}
+
+// manual_name_described says if a module of the image describes what a
+// name names, by the rule of the manual (link_resolve in
+// src/programs/manual/page_text.odin): a module by its name, a module and
+// one of its exports, or a record by the last part of the name.
+manual_name_described :: proc(modules: []Manual_Module_File, target: string) -> bool {
+	name, export := target, ""
+	if period := strings.index_byte(target, '.'); period >= 0 {
+		name, export = target[:period], target[period + 1:]
+	}
+	if len(export) > 2 && strings.has_suffix(export, "()") {
+		export = export[:len(export) - 2]
+	}
+	record := target[strings.last_index_byte(target, '.') + 1:]
+	for item in modules {
+		file := item.file
+		if item.name != name || module.validate(file) != .None {
+			continue
+		}
+		if export == "" {
+			return true
+		}
+		head, _ := module.header(file)
+		for index in 1 ..< module.count(file, .Exports) {
+			function, found := module.function(file, index)
+			if found && index != head.entry_export && function.name_count != 0 && module.string_at(file, function.name_offset, function.name_count) == export {
+				return true
+			}
+		}
+	}
+	if record == "" {
+		return false
+	}
+	for item in modules {
+		file := item.file
+		if module.validate(file) != .None {
+			continue
+		}
+		for index in 1 ..< module.count(file, .Records) {
+			if described, found := module.record_type(file, index); found && module.string_at(file, described.name_offset, described.name_count) == record {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // manual_link_pages_of_targets gives the link pages of the targets of
-// links: the targets of a term or a guide, and the headings under each
-// heading of a guide.
-manual_link_pages_of_targets :: proc(targets: []string, read: Manual_Document_Reader) -> (pages: []manual_pages.Page_Source, missing: []string) {
+// links: the targets of a term, a guide or a name, and the headings under
+// each heading of a guide. A name has the page of its declaration in the
+// sources; the caller leaves out a name that a module describes.
+manual_link_pages_of_targets :: proc(targets: []string, readers: Manual_Page_Readers) -> (pages: []manual_pages.Page_Source, missing: []string) {
+	read := readers.documents
 	waiting := make([dynamic]string, context.temp_allocator)
+	// The last name of each name target: the declarations to read.
+	wanted_names := make([dynamic]string, context.temp_allocator)
 	for target in targets {
-		kind := manual_pages.link_target_kind(target)
-		if kind == .Term || kind == .Guide {
+		switch manual_pages.link_target_kind(target) {
+		case .Term, .Guide:
 			append(&waiting, target)
+		case .Name:
+			append(&waiting, target)
+			if span, is_name := site_declaration_span_read(target); is_name {
+				append(&wanted_names, span.name)
+			}
+		case .Address:
+		}
+	}
+	declarations := site_declaration_index_make()
+	if len(wanted_names) > 0 && readers.declarations != nil {
+		if index, read_ok := readers.declarations(wanted_names[:]); read_ok {
+			declarations = index
 		}
 	}
 	done := make(map[string]bool, context.temp_allocator)
@@ -113,7 +214,9 @@ manual_link_pages_of_targets :: proc(targets: []string, read: Manual_Document_Re
 			page, found = manual_term_page(glossary, target)
 		case .Guide:
 			page, children, found = manual_guide_page(target, read)
-		case .Name, .Address:
+		case .Name:
+			page, found = manual_declaration_page(&declarations, target)
+		case .Address:
 		}
 		// A page that the format refuses (a control character in a guide, a
 		// target over its limit) is a link with no page, not a failed build.
@@ -150,6 +253,38 @@ manual_term_page :: proc(glossary: Glossary, target: string) -> (page: manual_pa
 		}
 	}
 	return {}, false
+}
+
+// manual_declaration_page gives the page of a target that names a
+// declaration of the sources, resolved as the site resolves the link of a
+// comment: the package and the name as the title, then the kind, the file
+// and the line, the one line of Odin in a block, and the comment. The
+// target of the page is the target of the link, so the manual finds it.
+manual_declaration_page :: proc(declarations: ^Site_Declaration_Index, target: string) -> (page: manual_pages.Page_Source, found: bool) {
+	span, is_name := site_declaration_span_read(target)
+	if !is_name {
+		return {}, false
+	}
+	place, resolution := site_declaration_resolve(declarations, span, nil)
+	if resolution != .Linked {
+		return {}, false
+	}
+	declaration := declarations.declarations[place]
+	builder := strings.builder_make(context.temp_allocator)
+	// The page has no line "from": its first sentence names the file.
+	fmt.sbprintf(&builder, "A %s of `%s`, line %d.\n\n", site_declaration_kind_names[declaration.kind], declaration.file, declaration.line)
+	signature, _ := strings.replace_all(declaration.signature, "\t", "    ", context.temp_allocator)
+	strings.write_string(&builder, "```odin\n")
+	strings.write_string(&builder, signature)
+	strings.write_string(&builder, "\n```\n\n")
+	if declaration.comment != "" {
+		comment, _ := strings.replace_all(declaration.comment, "\t", "    ", context.temp_allocator)
+		strings.write_string(&builder, comment)
+	} else {
+		strings.write_string(&builder, "It has no comment in its source.")
+	}
+	title := manual_title_of(strings.concatenate({declaration.package_name, ".", declaration.name}, context.temp_allocator))
+	return {target = target, title = title, text = strings.to_string(builder)}, true
 }
 
 // One heading of a guide, with its id on the page of the site.

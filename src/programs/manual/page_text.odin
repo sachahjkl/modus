@@ -51,7 +51,7 @@ Link_Destination_Kind :: enum u8 {
 	Module, // The page of a module of the boot image.
 	Export, // The page of a module, from the signature of an export.
 	Record, // The page of a module, from the description of a record.
-	Link_Page, // A page of the resource manual_pages: a term or a heading of a guide.
+	Link_Page, // A page of the resource manual_pages: a term, a heading of a guide, or a declaration that no module describes.
 }
 
 Link_Destination :: struct {
@@ -541,7 +541,8 @@ link_address_place :: proc "contextless" () {
 // (src/md/features/manual_links.md, "The chosen form"): an address is
 // shown; a term and a guide open their link page when the resource has
 // it; a name opens a module, a module and its export, or a record that a
-// module describes, first in the module of the page.
+// module describes, first in the module of the page, and else the link
+// page of its declaration when the resource has it.
 link_resolve :: proc "contextless" (target: string) -> Link_Destination {
 	switch manual_pages.link_target_kind(target) {
 	case .Address:
@@ -594,6 +595,11 @@ link_resolve :: proc "contextless" (target: string) -> Link_Destination {
 		if record_described(index, record) {
 			return {kind = .Record, index = index, name = record}
 		}
+	}
+	// A declaration that no module describes: its page, which the build
+	// took from the sources, under the target of the link.
+	if index, found := manual_pages.find(link_pages, target); found {
+		return {kind = .Link_Page, index = index}
 	}
 	return {}
 }
@@ -735,8 +741,11 @@ link_page_build :: proc "contextless" (index: int) {
 	page_kind, link_page_index = .Link_Page, index
 	target := manual_pages.target_of(link_pages, index)
 	put(manual_pages.title_of(link_pages, index), 0, COLOR_TITLE)
-	source := "docs/GLOSSARY.md"
-	if manual_pages.link_target_kind(target) == .Guide {
+	source := ""
+	switch manual_pages.link_target_kind(target) {
+	case .Term:
+		source = "docs/GLOSSARY.md"
+	case .Guide:
 		source = target
 		for place in 0 ..< len(target) {
 			if target[place] == '#' {
@@ -744,8 +753,13 @@ link_page_build :: proc "contextless" (index: int) {
 				break
 			}
 		}
+	case .Name, .Address:
+		// The page of a declaration names its file and its line in its
+		// first sentence: a line "from" would say it twice.
 	}
-	put_built(0, graphics.COLOR_DIM, "from ", source)
+	if source != "" {
+		put_built(0, graphics.COLOR_DIM, "from ", source)
+	}
 	put("", 0, 0)
 	put_markdown(manual_pages.text_of(link_pages, index), 0, graphics.COLOR_TEXT)
 }

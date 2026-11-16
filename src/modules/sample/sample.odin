@@ -69,24 +69,48 @@ grow :: proc "c" (rectangle: ^Rectangle, by: i64, result: ^Rectangle) {
 	result^ = {rectangle.x - by, rectangle.y - by, rectangle.width + 2 * by, rectangle.height + 2 * by}
 }
 
-// bytes_of maps a memory object for the time of one export. count is 0 when
-// the kernel refuses; then status says why.
+// The value of the Memory_Map command that holds the memory handle, from 1:
+// the argument that an error record of the kernel names for it.
+MEMORY_MAP_ARGUMENT_MEMORY :: 1
+
+// The result of an export that fails: the error record says why.
+ERROR :: -1
+
+// bytes_of maps a memory object for the time of one export. ok is false
+// when the kernel refuses; then the error record holds the refusal, in the
+// words of the export: argument names the parameter of the export that
+// holds the handle.
 @(private)
-bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags) -> (bytes: []u8, status: system.Status) {
-	address := system.memory_map(memory, flags) or_return
-	return ([^]u8)(address)[:system.memory_size(memory) * system.PAGE_SIZE], .Ok
+bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argument: i64, error: ^errors.Error_Record) -> (bytes: []u8, ok: bool) {
+	refusal: errors.Error_Record
+	address, status := system.memory_map(memory, flags, error = &refusal)
+	if status != .Ok {
+		if error != nil {
+			// The record of the kernel names an argument of Memory_Map, and
+			// the kernel operation: the caller called the export, with its
+			// own arguments.
+			error^ = refusal
+			error.operation = 0
+			error.argument = refusal.argument == MEMORY_MAP_ARGUMENT_MEMORY ? argument : 0
+			if refusal.kind == i64(errors.Kind.None) {
+				error^ = errors.error_make(.Refused, found = i64(status))
+			}
+		}
+		return nil, false
+	}
+	return ([^]u8)(address)[:system.memory_size(memory) * system.PAGE_SIZE], true
 }
 
 // fill writes a value in each byte of a memory object, and gives the count
 // of bytes. The caller lends the object to read and to write.
 //
-// The handle is lent for this call only: the module cannot keep it. The value is taken modulo 256. A negative
-// result is the status of the kernel, negated, when the map is refused.
+// The handle is lent for this call only: the module cannot keep it. The value is taken modulo 256. When the
+// kernel refuses the map, the result is -1 with the error record of the kernel for the argument memory.
 @(export, link_name = "fill")
-fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64) -> i64 {
-	bytes, status := bytes_of(memory.handle, {.Write})
-	if status != .Ok {
-		return -i64(status)
+fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64, error: ^errors.Error_Record) -> i64 {
+	bytes, ok := bytes_of(memory.handle, {.Write}, 1, error)
+	if !ok {
+		return ERROR
 	}
 	for &b in bytes {
 		b = u8(value)
@@ -98,12 +122,12 @@ fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64) -> i64 {
 // total adds the bytes of a memory object. The caller lends the object to
 // read only.
 //
-// A negative result is the status of the kernel, negated, when the map is refused.
+// When the kernel refuses the map, the result is -1 with the error record of the kernel for the argument memory.
 @(export, link_name = "total")
-total :: proc "c" (memory: system.Lent({.Read})) -> i64 {
-	bytes, status := bytes_of(memory.handle, {})
-	if status != .Ok {
-		return -i64(status)
+total :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> i64 {
+	bytes, ok := bytes_of(memory.handle, {}, 1, error)
+	if !ok {
+		return ERROR
 	}
 	sum: i64
 	for b in bytes {
@@ -117,12 +141,13 @@ total :: proc "c" (memory: system.Lent({.Read})) -> i64 {
 // field of the record.
 //
 // A span outside the object gives 0: the export checks first, count and their sum against the size. The handle
-// in a record is lent as a handle parameter is: the rights of the field description, for the call only.
+// in a record is lent as a handle parameter is: the rights of the field description, for the call only. When the
+// kernel refuses the map, the result is -1 with the error record of the kernel for the argument span.
 @(export, link_name = "span_total")
-span_total :: proc "c" (span: ^Span) -> i64 {
-	bytes, status := bytes_of(span.memory.handle, {})
-	if status != .Ok {
-		return -i64(status)
+span_total :: proc "c" (span: ^Span, error: ^errors.Error_Record) -> i64 {
+	bytes, ok := bytes_of(span.memory.handle, {}, 1, error)
+	if !ok {
+		return ERROR
 	}
 	sum: i64
 	if span.first >= 0 && span.count >= 0 && span.first <= i64(len(bytes)) && span.count <= i64(len(bytes)) - span.first {
@@ -141,8 +166,9 @@ span_total :: proc "c" (span: ^Span) -> i64 {
 // result 0 means that the lent handle had more rights than its description.
 @(export, link_name = "spoil")
 spoil :: proc "c" (memory: system.Lent({.Read})) -> i64 {
-	bytes, status := bytes_of(memory.handle, {.Write})
+	address, status := system.memory_map(memory.handle, {.Write})
 	if status == .Ok {
+		bytes := ([^]u8)(address)[:system.memory_size(memory.handle) * system.PAGE_SIZE]
 		bytes[0] = 0xFF
 		system.memory_unmap(raw_data(bytes))
 	}

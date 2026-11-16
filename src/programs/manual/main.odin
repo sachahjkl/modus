@@ -11,7 +11,9 @@
 // code is in the font of the cells, a list item has its mark and its indentation, and an example is a block. A
 // link is a colored name. A link that opens has a line under it: a link to a module, to an export or to a record of
 // the boot image, and a link to a term of the glossary or to a heading of a guide, whose
-// [link page](term:link-page) the boot image carries in the resource `manual_pages`. An address of another host is shown after its link, and does not open.
+// [link page](term:link-page) the boot image carries in the resource `manual_pages`. A declaration of the sources
+// that no module describes has its link page there too: [`system.word_wait`](system.word_wait) shows its line of
+// Odin and its comment. An address of another host is shown after its link, and does not open.
 // This program reads the file only: it **does not load the module**, and it does not start it.
 //
 // The page of a module also says how the module can be used. The system has *one kind of file* for a program, a
@@ -53,6 +55,7 @@
 // The design of the description tables: (docs/MODULE_CONTRACT.md, "Description tables").
 package manual
 
+import "modus:contract/errors"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -605,12 +608,16 @@ text_result :: proc "contextless" (text: string, result: ^[]u8) -> i64 {
 	return i64(len(text))
 }
 
-// show shows the page of a module of the boot image, by name. The result is the count of exports of the module, or -1 when the boot image has no module with this name.
+// show shows the page of a module of the boot image, by name.
+//
+// **Result**: the count of exports of the module, or a negative number with an error record:
+//
+// - `Absent` (-1): no module of the boot image has this name.
 @(export, link_name = "show")
-show :: proc "c" (name: ^string) -> i64 {
+show :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	index := find(name^)
 	if index < 0 {
-		return -1
+		return errors.fail(error, -1, .Absent, .Modules, 1)
 	}
 	navigation_leave()
 	select(index)
