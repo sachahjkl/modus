@@ -1,0 +1,3 @@
+type: Changed
+
+**The window of the log tells the records gone before its start from the records that it lost**: its top line and its line "log: ok, ..." now give two counts in place of one. "Gone before its start" counts the records that the ring no longer held when the window started, and says only how long the machine ran before it. "Lost since" counts the records that the window was too slow to read, and only that count is red when it is not 0. The main machine test requires "0 lost since", so a new line of the log before the window starts no longer fails it. The window no longer writes its count of the records of the kernel in the channel boot, which depended on the same length; it writes the records and the size of the memory of the log in its place.

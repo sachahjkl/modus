@@ -3057,9 +3057,8 @@ LOG_CHANNEL_CAPACITY :: 16
 LOG_RUN_CAPACITY :: 8
 // The value runs that one Log operation takes, after its text.
 LOG_CALL_RUN_LIMIT :: 32
-// 128 pages: 2047 records. With 64 pages (1023 records), the main machine
-// test wrote about 1024 records before it starts the program log, which
-// checks that it lost none: each new line of a program broke the check.
+// 128 pages: 2047 records. A reader that starts late copies the newest 2046
+// of them.
 LOG_PAGES :: 128
 // The records that the log keeps: the pages of the log less the head, in
 // records of 256 bytes.

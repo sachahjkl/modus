@@ -28,22 +28,24 @@
 // **What a reader sees.** Start it from the menu of the programs, or with
 // `start("log")` in the console. The window has:
 //
-// - a top line: the count of records read, the count lost, and the count of
-//   each level;
+// - a top line: the count of records read, the count gone before its
+//   start, the count lost since, and the count of each level;
 // - the channels, each with its count of records (at most 12; the others
 //   count together);
 // - the newest records, in 30 lines: the time in seconds, the program, the
 //   channel and the text, with the legend of the value kinds over the
 //   column of the text. A text is whole, on the lines that it needs.
 //
-// At its start it writes two records: `log: the kernel wrote <count>
-// records in the channel boot` and `log: ok, <count> records, <count> lost,
-// <count> channels`.
+// At its start it writes two records: `log: the memory of the log: <count>
+// records in <size>` and `log: ok, <count> records, <count> gone before its
+// start, <count> lost since, <count> channels`.
 //
 // **Lost records.** The kernel keeps the last 2047 records in a ring of
-// memory, and writes over the oldest one when the ring is full. A reader
-// that is slower than the writers loses records. This program counts them,
-// in red when the count is not 0.
+// memory, and writes over the oldest one when the ring is full. The records
+// that the kernel wrote over before this program kept its first record are
+// gone before its start: their count says how long the machine ran before
+// it. A reader that is slower than the writers loses records after that:
+// this program counts them as lost since, in red when the count is not 0.
 //
 // **Its grants**: **Log_Records**, the memory of the log records with the
 // right Read, and **Serve**, its exports. The program writes no record in
@@ -105,16 +107,12 @@ Channel :: struct {
 
 rows: [ROWS]system.Log_Record // The last records: rows[n % ROWS] is record n of this reader.
 row_count: u64
-lost: u64
+gone_before_start: u64 // The records that the kernel wrote over before this reader kept its first record.
+lost: u64 // The records after the first kept record that this reader did not read.
 channels: [CHANNELS]Channel
 channel_count: int
 other_channels: u64 // Records of the channels that have no place in `channels`.
 level_counts: [system.Log_Level]u64
-kernel_boot: u64 // Records of the kernel in the channel "boot".
-
-same :: proc "contextless" (name: []u8, text: string) -> bool {
-	return system.name_of(name) == text
-}
 
 // The kinds that the legend shows: the kinds that the logs of the system
 // write.
@@ -254,9 +252,6 @@ take :: proc "contextless" (record: ^system.Log_Record) {
 	rows[row_count % ROWS] = record^
 	row_count += 1
 	level_counts[record.level] += 1
-	if record.program == 0 && same(record.channel[:], "boot") {
-		kernel_boot += 1
-	}
 	for &channel in channels[:channel_count] {
 		if channel.name == record.channel {
 			channel.count += 1
@@ -280,9 +275,14 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	graphics.fill(canvas, MARGIN, MARGIN - 4, WIDTH - 2 * MARGIN, 2, graphics.colors.kernel)
 	x := graphics.text(canvas, MARGIN, MARGIN, "the log  ", graphics.colors.kernel)
 	x = graphics.unsigned(canvas, x, MARGIN, row_count, graphics.colors.text)
-	x = graphics.text(canvas, x, MARGIN, " records read, ", graphics.colors.dim)
+	x = graphics.text(canvas, x, MARGIN, " read, ", graphics.colors.dim)
+	// Records gone before the start are a fact of the boot, not a fault
+	// of this reader: only the count lost since is in the color of a
+	// failure (src/md/features/log_window_losses.md).
+	x = graphics.unsigned(canvas, x, MARGIN, gone_before_start, graphics.colors.text)
+	x = graphics.text(canvas, x, MARGIN, " gone before its start, ", graphics.colors.dim)
 	x = graphics.unsigned(canvas, x, MARGIN, lost, lost == 0 ? graphics.colors.text : graphics.colors.failed)
-	x = graphics.text(canvas, x, MARGIN, " lost    ", graphics.colors.dim)
+	x = graphics.text(canvas, x, MARGIN, " lost since    ", graphics.colors.dim)
 	for count, level in level_counts {
 		names := [system.Log_Level]string {
 			.Info    = "info ",
@@ -378,12 +378,13 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 // **The loop.** One wait covers the window, the counter of the log and the
 // service ring. After each wake it takes every new record (`take`): the
 // counts of each level and of each channel, and the last 30 records. It
-// adds the records that the kernel wrote over before the read to the lost
-// count. It draws the window again only when a record came. At the first
-// turn it writes two records of its own on the channel `log`: the count of
-// the records of the kernel on the channel `boot`, then
-// `log: ok, <count> records, <count> lost, <count> channels`. Then it runs
-// the calls of its exports.
+// adds the records that the kernel wrote over before the read to the count
+// gone before its start while it kept no record, and to the count lost
+// since after that. It draws the window again only when a record came. At
+// the first turn it writes two records of its own on the channel `log`: the
+// records that the ring keeps and the size of the memory of the log, then
+// `log: ok, <count> records, <count> gone before its start, <count> lost
+// since, <count> channels`. Then it runs the calls of its exports.
 //
 // **The stop**: with no window, it stops with the code 1. With no grant of
 // the log records, it writes `log: cannot read the records of the log:
@@ -408,7 +409,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		for {
 			record, late, has := system.log_next(&reader)
-			lost += late
+			// Before the first kept record, a gap only says how long the
+			// machine ran before this program; after it, a gap is a
+			// record that this reader was too slow to read.
+			if row_count == 0 {
+				gone_before_start += late
+			} else {
+				lost += late
+			}
 			if !has {
 				break
 			}
@@ -434,8 +442,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if !logged {
 			logged = true
-			system.log_in("log", .Info, "log: the kernel wrote ", kernel_boot, " records in the channel boot")
-			system.log_in("log", .Info, "log: ok, ", row_count, " records, ", lost, " lost, ", u64(channel_count), " channels")
+			// The memory object of the log is its head and its records,
+			// each of the size of one record.
+			memory_bytes := (reader.head.capacity + 1) * size_of(system.Log_Record)
+			system.log_in("log", .Info, "log: the memory of the log: ", reader.head.capacity, " records in ", system.Size{memory_bytes / 1024, .Kibibytes})
+			system.log_in("log", .Info, "log: ok, ", row_count, " records, ", gone_before_start, " gone before its start, ", lost, " lost since, ", u64(channel_count), " channels")
 			continue
 		}
 		// The list comes after the reads and after the question to the
