@@ -55,6 +55,11 @@ service_started: u64 // system.time() at the start of the service.
 // The counts that stores() gives.
 commits: u64
 blocks_written: u64
+commits_refused: u64 // The commits that their read back refused: the disk did not keep a write.
+commits_undecided: u64 // The commits whose root write, or its read back, failed on the device: not taken, and the open of the next start decides.
+roots_refused_in_a_row: u64 // The roots that their read back found with other bytes since the last root that read back whole.
+blocks_read_back: u64 // The blocks, the roots and the zeros that a read back read.
+read_back_nanoseconds: u64 // The time of those reads: a measure of the cost of the read back.
 
 // The block service.
 blocks: ring.Ring
@@ -62,7 +67,7 @@ region: [^]u8
 disk_tag: u32
 disk_errors: u64
 disk_size: u64 // The blocks of the disk that the service uses.
-broken: bool // A write of a root failed: the service does not know which root the disk has, and makes no change.
+broken: bool // The write of a root or its read back failed, or a place of the root dropped ROOT_REFUSAL_LIMIT roots in a row: the service makes no change until its next start.
 
 check_of :: format.check
 root_check :: format.root_check
@@ -1181,12 +1186,36 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 			plan_drop()
 			return errors.fail(error, ERROR_DISK, .Device)
 		}
+		blocks_written += u64(len(part))
 	}
 	if !flush() {
 		plan_drop()
 		return errors.fail(error, ERROR_DISK, .Device)
 	}
 	plan.next.generation = root.generation + 1
+	// The device answered Ok to each write; a disk that did not keep one
+	// gives other bytes at the read. The blocks are read back before the
+	// root: a commit with a dropped block then never has a root on the
+	// disk, and no later write can make that root whole
+	// (src/md/features/dropped_write.md).
+	differ, blocks_state := commit_blocks_read_back()
+	switch blocks_state {
+	case .Good:
+	case .Wrong:
+		// Nothing on the disk names the blocks of the commit, and the state
+		// in memory is still the state of the root before: the service goes
+		// on from it.
+		plan_drop()
+		commits_refused += 1
+		system.log_in("storage", .Error, "storage: the read back of the commit of generation ", plan.next.generation, " found ", differ, differ == 1 ? string(" block with other bytes: the disk did not keep it") : string(" blocks with other bytes: the disk did not keep them"), "; the commit is refused before its root, and the service goes on from generation ", root.generation)
+		return errors.fail(error, ERROR_DISK, .Device, .Dropped_Writes, 0, 0, 0, i64(differ))
+	case .Device:
+		// No root names the blocks: the disk holds the state before.
+		plan_drop()
+		commits_refused += 1
+		system.log_in("storage", .Error, "storage: the read back of the commit of generation ", plan.next.generation, " failed on the device: the commit is refused before its root")
+		return errors.fail(error, ERROR_DISK, .Device)
+	}
 	plan.next.time = time_now()
 	plan.next.date = date_now()
 	plan.next.check = root_check(&plan.next)
@@ -1196,15 +1225,36 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		// The root on the disk is the old one, or the new one: the service
 		// cannot know. It stops serving changes.
 		plan_drop()
-		broken = true
+		root_undecided(plan.next.generation, "its write failed on the device")
 		return errors.fail(error, ERROR_DISK, .Device)
 	}
+	blocks_written += 1
+	// The root too: if the disk did not keep it, the root before is still
+	// the newest on the disk, and a commit that took this state would write
+	// over the blocks that the root before names.
+	switch root_read_back(place, &plan.next) {
+	case .Good:
+	case .Wrong:
+		// The place holds an older root or other bytes, and the root before
+		// stays the newest: the service goes on from it, and the next commit
+		// writes its root in that place.
+		plan_drop()
+		commits_refused += 1
+		system.log_in("storage", .Error, "storage: the read back of the root of the commit of generation ", plan.next.generation, " found other bytes: the disk did not keep it; the commit is refused, and the service goes on from generation ", root.generation)
+		root_refused_in_a_row()
+		return errors.fail(error, ERROR_DISK, .Device, .Dropped_Writes, 0, 0, 0, 1)
+	case .Device:
+		// The root can be on the disk: as for a failed write of a root.
+		plan_drop()
+		root_undecided(plan.next.generation, "its read back failed on the device")
+		return errors.fail(error, ERROR_DISK, .Device)
+	}
+	roots_refused_in_a_row = 0
 	// The commit is on the disk: the service takes its state.
 	root = plan.next
 	root_place = place
 	store_blocks[plan.store_index] = plan.store_block
 	commits += 1
-	blocks_written += u64(plan.write_count) + 1
 	opened.store_versions[plan.store_index] = u64(i64(opened.store_versions[plan.store_index]) + plan.versions_change)
 	if plan.dropped_versions != 0 {
 		system.log_in("storage", .Warning, "storage: the commit of generation ", root.generation, " dropped ", plan.dropped_versions, " version indexes or leaves with a wrong check in the store ", system.name_of(root.stores[plan.store_index].name[:]), ": those versions are lost, the objects stay")
@@ -1249,10 +1299,17 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 // root before the last commit is on the disk, whole, and names each block
 // that the last commit freed; after it, neither root names one, so the
 // erase of versions can write zeros over them
-// (src/md/features/version_erase.md).
-root_again :: proc "contextless" () -> bool {
+// (src/md/features/version_erase.md). It reads the root back: the zeros go
+// only over blocks that no root on the disk names, and a second root that
+// the disk did not keep leaves the root before the last commit there.
+//   .Good:   the second root is on the disk; the service takes it.
+//   .Wrong:  the disk did not keep it; the service keeps the last commit,
+//            whose next commit writes its root over the root before.
+//   .Device: a write, the Flush or the read failed; the service cannot know
+//            which root the disk has, and stops serving changes.
+root_again :: proc "contextless" () -> Read {
 	if broken {
-		return false
+		return .Device
 	}
 	next := root
 	next.generation = root.generation + 1
@@ -1261,31 +1318,47 @@ root_again :: proc "contextless" () -> bool {
 	next.check = root_check(&next)
 	intrinsics.mem_copy_non_overlapping(raw_data(slot(0)), &next, BLOCK_SIZE)
 	place := 1 - root_place
+	// The caller writes the line of a failure: it names the object.
 	if !transfer(.Write, {{number = place, slot = 0}}) || !flush() {
-		// As for a commit: the service cannot know which root the disk has,
-		// and stops serving changes.
+		commits_undecided += 1
 		broken = true
-		return false
+		return .Device
 	}
+	blocks_written += 1
+	switch root_read_back(place, &next) {
+	case .Good:
+	case .Wrong:
+		commits_refused += 1
+		root_refused_in_a_row()
+		return .Wrong
+	case .Device:
+		commits_undecided += 1
+		broken = true
+		return .Device
+	}
+	roots_refused_in_a_row = 0
 	root = next
 	root_place = place
 	commits += 1
-	blocks_written += 1
-	return true
+	return .Good
 }
 
 // freed_blocks_zero writes zero bytes over each block that the last commit
 // freed: each block of the change of the reference counts of the plan
 // whose count is 0 now. Nothing names them, and no commit took one since:
-// the service runs one call at a time. It gives the count of the blocks
-// written, and false when a write or the Flush failed.
-freed_blocks_zero :: proc "contextless" () -> (zeroed: u64, ok: bool) {
+// the service runs one call at a time. Then it reads them back, because a
+// write of zeros that the disk drops leaves the old bytes, the bytes that
+// the erase exists to remove. It gives the blocks that read back as zeros
+// and the blocks that read back with other bytes, on every path: a block
+// that no read reached counts in neither. ok is false when a write, the
+// Flush or a read failed.
+freed_blocks_zero :: proc "contextless" () -> (zeroed: u64, not_zeroed: u64, ok: bool) {
 	intrinsics.mem_zero(region, REGION_BLOCKS * BLOCK_SIZE)
 	requests: [REGION_BLOCKS]Request
 	count := 0
 	for place in plan.delta_places[:plan.delta_count] {
 		number := plan.delta_blocks[place]
-		if number < 2 || number >= disk_size || opened.references[number] != 0 {
+		if !freed_block(number) {
 			continue
 		}
 		cache_forget(number)
@@ -1295,18 +1368,67 @@ freed_blocks_zero :: proc "contextless" () -> (zeroed: u64, ok: bool) {
 			continue
 		}
 		if !transfer(.Write, requests[:count]) {
-			return zeroed, false
+			return 0, 0, false
 		}
-		zeroed += u64(count)
+		blocks_written += u64(count)
 		count = 0
 	}
 	if count > 0 {
 		if !transfer(.Write, requests[:count]) {
-			return zeroed, false
+			return 0, 0, false
 		}
-		zeroed += u64(count)
+		blocks_written += u64(count)
 	}
-	return zeroed, flush()
+	if !flush() {
+		return 0, 0, false
+	}
+	// The read back: the region now receives the bytes of the disk.
+	count = 0
+	for place in plan.delta_places[:plan.delta_count] {
+		number := plan.delta_blocks[place]
+		if !freed_block(number) {
+			continue
+		}
+		requests[count] = {number = number, slot = u64(count)}
+		count += 1
+		if count < REGION_BLOCKS {
+			continue
+		}
+		if !zeros_read_back(requests[:count], &zeroed, &not_zeroed) {
+			return zeroed, not_zeroed, false
+		}
+		count = 0
+	}
+	if count > 0 && !zeros_read_back(requests[:count], &zeroed, &not_zeroed) {
+		return zeroed, not_zeroed, false
+	}
+	return zeroed, not_zeroed, true
+}
+
+// freed_block says if a block of the change of the reference counts of the
+// plan is free now: the erase writes zeros over it.
+freed_block :: proc "contextless" (number: u64) -> bool {
+	return number >= 2 && number < disk_size && opened.references[number] == 0
+}
+
+// zeros_read_back reads blocks that the erase wrote with zeros, and counts
+// each one in `zeroed` when it holds zeros, in `not_zeroed` when it holds
+// other bytes. A failed read counts none.
+zeros_read_back :: proc "contextless" (requests: []Request, zeroed: ^u64, not_zeroed: ^u64) -> bool {
+	started := system.nanoseconds()
+	defer read_back_nanoseconds += system.nanoseconds() - started
+	if !transfer(.Read, requests) {
+		return false
+	}
+	blocks_read_back += u64(len(requests))
+	for index in 0 ..< len(requests) {
+		if block_tree.is_zero(slot(u64(index))) {
+			zeroed^ += 1
+		} else {
+			not_zeroed^ += 1
+		}
+	}
+	return true
 }
 
 // released_blocks_kept counts the blocks that the last commit took a name
@@ -1323,15 +1445,15 @@ released_blocks_kept :: proc "contextless" () -> (kept: u64) {
 	return kept
 }
 
-// commit_read_back reads each block that the last commit wrote from the
-// device, and its root, past the cache of the service, and compares them
-// with the bytes that the commit wrote. The erase of versions needs it before its second
-// root: that root replaces the root before the commit, the one root that
-// the open can fall back to when the disk did not keep a write of the
-// commit (src/md/features/dropped_write.md). A disk that answers a read
-// from the same cache that lost the write still passes: the read back
-// proves only what the device gives.
-commit_read_back :: proc "contextless" () -> (differ: u64, state: Read) {
+// commit_blocks_read_back reads each block that the commit of the plan
+// wrote from the device, past the cache of the service, and compares it
+// with the bytes that the commit wrote. A disk that answers a read from the
+// same cache that lost the write still passes: the read back proves only
+// what the device gives (src/md/features/dropped_write.md). The blocks and
+// the time count in the measure that stores() gives.
+commit_blocks_read_back :: proc "contextless" () -> (differ: u64, state: Read) {
+	started := system.nanoseconds()
+	defer read_back_nanoseconds += system.nanoseconds() - started
 	for first := 0; first < plan.write_count; first += REGION_BLOCKS {
 		part := plan.writes[first:min(first + REGION_BLOCKS, plan.write_count)]
 		requests: [REGION_BLOCKS]Request
@@ -1341,21 +1463,52 @@ commit_read_back :: proc "contextless" () -> (differ: u64, state: Read) {
 		if !transfer(.Read, requests[:len(part)]) {
 			return differ, .Device
 		}
+		blocks_read_back += u64(len(part))
 		for write, index in part {
 			if string(slot(u64(index))) != string(write.bytes^[:]) {
 				differ += 1
 			}
 		}
 	}
-	// The root of the commit too: if the disk did not keep it, the root
-	// before it is the newest on the disk, and it names the blocks that the
-	// zeros would write over.
-	if !transfer(.Read, {{number = root_place, slot = 0}}) {
-		return differ, .Device
-	}
-	if string(slot(0)) != string(([^]u8)(&root)[:BLOCK_SIZE]) {
-		differ += 1
-	}
 	return differ, differ == 0 ? .Good : .Wrong
+}
+
+// After this many roots in a row that the disk did not keep, the service
+// stops its changes. The two places of the root are fixed: a commit cannot
+// move its root to another block, as it moves its other blocks. So a place
+// that drops each write refuses each commit, and each one costs its writes
+// and a line for nothing. Three in a row tells such a place from one lost
+// write; the reads go on, and the next start opens the disk again.
+ROOT_REFUSAL_LIMIT :: 3
+
+// root_refused_in_a_row counts a root that the disk did not keep, and stops
+// the changes of the service at ROOT_REFUSAL_LIMIT in a row.
+root_refused_in_a_row :: proc "contextless" () {
+	roots_refused_in_a_row += 1
+	if roots_refused_in_a_row == ROOT_REFUSAL_LIMIT {
+		broken = true
+		system.log_in("storage", .Error, "storage: the disk did not keep the root of ", u64(ROOT_REFUSAL_LIMIT), " commits in a row: a place of the root drops its writes; the service makes no change until its next start, and its objects can still be read")
+	}
+}
+
+// root_undecided ends a commit whose root can be on the disk or not: the
+// service does not take it, makes no change until its next start, and the
+// open of that start decides.
+root_undecided :: proc "contextless" (generation: u64, cause: string) {
+	commits_undecided += 1
+	broken = true
+	system.log_in("storage", .Error, "storage: the root of the commit of generation ", generation, ": ", cause, "; the commit is not taken, the open of the next start decides, and the service makes no change until then")
+}
+
+// root_read_back reads the root in `place` from the device and compares it
+// with the root that the service wrote there.
+root_read_back :: proc "contextless" (place: u64, written: ^Root) -> Read {
+	started := system.nanoseconds()
+	defer read_back_nanoseconds += system.nanoseconds() - started
+	if !transfer(.Read, {{number = place, slot = 0}}) {
+		return .Device
+	}
+	blocks_read_back += 1
+	return string(slot(0)) == string(([^]u8)(written)[:BLOCK_SIZE]) ? .Good : .Wrong
 }
 

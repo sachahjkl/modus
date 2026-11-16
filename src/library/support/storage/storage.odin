@@ -638,7 +638,7 @@ compare :: proc "contextless" (client: ^Client, place: Place, name: string, firs
 Erase_Measure :: struct {
 	generation: i64, // The generation of the root that the erase wrote last; 0 when the object had no version.
 	versions:   i64, // The versions that the erase ended.
-	zeroed:     i64, // The blocks written with zero bytes.
+	zeroed:     i64, // The blocks written with zero bytes that read back as zero bytes.
 	kept:       i64, // The blocks of the versions that another state still names: they keep their bytes.
 	damaged:    i64, // The damaged version indexes, leaves and states that were ended with no zeros over them.
 }

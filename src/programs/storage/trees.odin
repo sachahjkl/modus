@@ -880,7 +880,8 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	plan_finish()
 	// The parts of the versions with a wrong block: the plan drops them, or
 	// releases them with no walk under the wrong block, so their bytes get
-	// no zeros. plan_commit keeps the plan, so the counts stay readable.
+	// no zeros. They are read before the commit; a commit that succeeds
+	// keeps the plan, which the zeros read after it.
 	damaged := plan.dropped_versions + plan.release_damaged
 	generation := plan_commit(error)
 	if generation < 0 {
@@ -891,30 +892,36 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	kept_name := name
 	object_name := kept_text(&kept_name)
 	store_name := system.name_of(root.stores[store_index].name[:])
-	// The root before the commit is the one root that the open can fall
-	// back to if the disk did not keep a write of the commit; the second
-	// root replaces it. So the blocks of the commit are read back first.
-	differ, read_back := commit_read_back()
-	if read_back != .Good {
-		// The service makes no change until its next start: a commit now
-		// would replace that root too.
-		broken = true
-		if read_back == .Device {
-			system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the read back of its blocks failed: no second root and no zeros; the service makes no change until its next start")
-		} else {
-			system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and ", differ, " blocks of that commit read back with other bytes: the disk did not keep them; no second root and no zeros, and the service makes no change until its next start, whose open falls back to the root before")
-		}
-		return {}, errors.fail(error, ERROR_DISK, .Device, .None, 0, 0, 0, i64(differ))
-	}
-	if !root_again() {
-		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the second root failed: no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
+	// The second root replaces the root before the commit, the one root
+	// that the open can fall back to if the disk did not keep a write of the
+	// commit. The commit read its blocks back before it returned: a commit
+	// that the disk did not keep whole was refused there, with the versions
+	// still in the state of the service.
+	switch root_again() {
+	case .Good:
+	case .Wrong:
+		// The root before the commit is still on the disk and names the
+		// freed blocks: no zeros. The next commit writes its root over it.
+		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the read back of the second root found other bytes: the disk did not keep it; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
+		// No unit Dropped_Writes: its sentence says that the store keeps its
+		// state before, and the commit of the end is already on the disk.
+		return {}, errors.fail(error, ERROR_DISK, .Device)
+	case .Device:
+		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the write or the read back of the second root failed on the device: it is not taken, the open of the next start decides, and the service makes no change until then; no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
 		return {}, errors.fail(error, ERROR_DISK, .Device)
 	}
-	zeroed, zeros_written := freed_blocks_zero()
+	zeroed, not_zeroed, zeros_written := freed_blocks_zero()
 	if !zeros_written {
-		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", root.generation, ", and a write of zeros failed: ", zeroed, " blocks hold zeros, the others keep their old bytes until a commit takes them")
+		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", root.generation, ", and a write, the Flush or the read back of the zeros failed: ", zeroed, " blocks read back as zeros and ", not_zeroed, " with other bytes; the others were not read back, and can keep their old bytes until a commit takes them")
 		return {}, errors.fail(error, ERROR_DISK, .Device)
 	}
+	if not_zeroed != 0 {
+		// The versions are ended; the bytes of these free blocks stay on the
+		// disk. The row counts only the blocks that read back as zeros.
+		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", root.generation, ", and the read back of the zeros found ", not_zeroed, " blocks with other bytes: the disk did not keep those writes, and their old bytes stay in free blocks until a commit takes them")
+	}
+	// The count of the zeros is the count of the blocks that read back as
+	// zeros: a block that the disk did not write is in the line above.
 	system.log("storage: the versions of ", object_name, " in the store ", store_name, " are erased: ", u64(ended), u64(ended) == 1 ? string(" version") : string(" versions"), " ended, ", zeroed, " blocks written with zeros, ", kept, " blocks kept that another state names, generation ", root.generation)
 	if damaged != 0 {
 		system.log_in("storage", .Warning, "storage: the erase of the versions of ", object_name, " in the store ", store_name, " ended ", damaged, " damaged version indexes, leaves or states with no zeros over them: their blocks keep their bytes, in use until the next start of the service and free after it")
