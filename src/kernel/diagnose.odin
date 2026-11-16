@@ -736,6 +736,10 @@ handle_argument_explain :: proc "contextless" (record: ^errors.Error_Record, pro
 				// so each other handle is explained as a handle of the
 				// wrong kind.
 				kind, rights = .Machine, machine_rights
+			} else if op.thread_control_counts_the_caller(command) {
+				// The thread counters: the machine handle with Counters
+				// only.
+				kind, rights = .Machine, op.THREAD_COUNTERS_RIGHTS
 			} else if slot, found := read_handle_find(program, v[0], .None); found && slot.kind == .Machine && by_machine_number {
 				kind, rights = .Machine, machine_rights
 			} else if op.thread_control_needs_the_debugger(command) || found && slot.kind == .Program && op.thread_control_takes_debug_handle(command) {
@@ -1254,6 +1258,12 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		// processors of the machine.
 		if cpu := processor_self(); cpu.thread_write_refusal != .None {
 			record_set(record, .Bad_Value, .None, 4, cpu.thread_write_refused_value, cpu.thread_write_refused_limit, u64(cpu.thread_write_refusal))
+			return true
+		}
+		// A command of the thread counters on a machine with no counter
+		// plan: the value is the operation, as for a guest.
+		if v[2] <= u64(max(op.Thread_Control_Command)) && op.thread_control_counts_the_caller(op.Thread_Control_Command(v[2])) && counter_plan.vendor == .None {
+			record_set(record, .Unsupported, .None, 0, u64(op.Operation.Thread_Control), 0, 0)
 			return true
 		}
 		// A read of the memory of a program of more bytes than one read

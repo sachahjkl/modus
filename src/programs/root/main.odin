@@ -199,6 +199,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Image} // It starts its children from the boot image, and is the debugger of each one: no grant of this service gives it that.
 	case "kernel_events":
 		return {.Events, .Image} // It gives the event table of the machine, and starts its children from the boot image.
+	case "counters":
+		return {.Counters} // It counts the events of the processor for its own loop (docs/ARCHITECTURE.md, "The counters of a thread").
 	case "scheduler":
 		// It reads the counts of the scheduler, changes the strategy and
 		// writes the weight of each thread (the share policy). It starts
@@ -1383,6 +1385,9 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	if .Events in role {
 		machine_rights += {.Events}
 	}
+	if .Counters in role {
+		machine_rights += {.Counters}
+	}
 	if machine_rights != {} {
 		grants[system.GRANT_MACHINE] = {machine, machine_rights}
 	}
@@ -1539,7 +1544,7 @@ find :: proc "contextless" (name: string) -> ^Started {
 grants_held :: proc "contextless" (item: ^Started) -> bit_set[Grant] {
 	held := item.role
 	if .Machine in item.revoked {
-		held -= {.Inspect, .Stop, .Schedule, .Events}
+		held -= {.Inspect, .Stop, .Schedule, .Events, .Counters}
 	}
 	if .Image in item.revoked {
 		held -= {.Image}

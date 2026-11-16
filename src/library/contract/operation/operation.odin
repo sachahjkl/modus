@@ -202,6 +202,10 @@ Right :: enum u32 {
 	// and writes their registers and their breakpoints, and reads the memory of the program (Thread_Control).
 	// The handle of a new program has it; the root service gives it to no program at its start.
 	Debug = 13,
+	// Machine: count the events of the processor for the code of the calling thread (Thread_Control, the
+	// commands of the thread counters). A count of the misses of a shared cache measures what other programs do,
+	// so it is a grant, as a precise clock is (src/md/features/processor_counters.md).
+	Counters = 14,
 }
 // The rights of one handle, as a set: bit n is the `Right` n. It is the
 // form in which an operation takes and gives rights (`Handle_Give`,
@@ -216,7 +220,7 @@ Object_Kind :: enum u8 {
 	Program   = 2, // A program: its addresses, its handles and its threads (`Program_Create`). Rights: Give, Read, Control, Debug.
 	Interrupt = 3, // One interrupt line or message interrupt of a device, which wakes the threads of its holder (`Device_Create`). Rights: Give, Read.
 	Ports     = 4, // A range of input and output ports of a device (`Device_Create`). Rights: Give.
-	Machine   = 5, // The machine: its rights are Give, Inspect, Devices, Stop, Physical, Schedule and Events.
+	Machine   = 5, // The machine: its rights are Give, Inspect, Devices, Stop, Physical, Schedule, Events and Counters.
 	Thread    = 6, // One thread of a program (`Thread_Create`). Rights: Give, Read, Write, Control, Inspect.
 	Budget    = 7, // A budget: what its holders can still create (`Budget_Create`). Rights: Give, Read, Spend, Commit.
 	Log       = 8, // The log of the kernel. Rights: Give, Write. Each program has one at `CONTEXT_LOG`.
@@ -1103,7 +1107,9 @@ Operation :: enum u32 {
 	// writes the placement of a thread: the processors that can run it (`Thread_Placement`), also while the
 	// thread runs ([the placement of a thread](docs/SCHEDULING.md#the-placement-of-a-thread)). Two more
 	// commands read and write the schedule of a program (`Program_Schedule`): the new-thread weight limit
-	// of all the threads of one program at once, through the machine handle only.
+	// of all the threads of one program at once, through the machine handle only. Three commands count the
+	// events of the processor for the code of the calling thread (`Thread_Counters`,
+	// [the counters of a thread](docs/ARCHITECTURE.md#the-counters-of-a-thread)).
 	//
 	// **Arguments**
 	//
@@ -1117,15 +1123,18 @@ Operation :: enum u32 {
 	//   the caller debugs (`Fault_Handler_Set` with that handle first), and then `number` names a live thread
 	//   of that program, for each command but the two of the schedule and the two of the placement
 	//   (`thread_control_takes_debug_handle`). The two commands of the schedule of a program take the
-	//   machine handle with **Schedule** and **Inspect** only.
+	//   machine handle with **Schedule** and **Inspect** only. The three commands of the thread counters
+	//   act on the calling thread (`thread_control_counts_the_caller`): `Start_Counters` and
+	//   `Read_Counters` take the machine handle with **Counters** only; `Stop_Counters` reads no handle.
 	// - `number`: the number of the thread when `thread` is 0; the machine number of the thread
 	//   (`Thread_Report.machine_number`) when `thread` is the machine handle. For the two commands of the
 	//   schedule of a program: the slot of the program in the low 32 bits and its serial
-	//   (`Program_Report.program_serial`) in the high 32 bits (`program_slot_and_serial`).
+	//   (`Program_Report.program_serial`) in the high 32 bits (`program_slot_and_serial`). Not read by
+	//   the three commands of the thread counters.
 	// - `command`: a `Thread_Control_Command`.
 	// - `address`, `size`: the memory of the command that reads or writes: `size` is at least the size of
 	//   a `Thread_Registers`, of the extended state area (`Thread_State`), of a `Thread_Schedule`, of a
-	//   `Thread_Breakpoints` or of a `Thread_Placement`, and the program can read it, or write it for a read
+	//   `Thread_Breakpoints`, of a `Thread_Placement` or of a `Thread_Counters`, and the program can read it, or write it for a read
 	//   of the thread. For
 	//   `Read_Memory`, `size` is the count of bytes to read, at most `THREAD_MEMORY_READ_LIMIT`.
 	// - `source`: for `Read_Memory`, the address of the first byte in the program of the thread.
@@ -1145,13 +1154,16 @@ Operation :: enum u32 {
 	//   (`thread_breakpoints_refusal`) changes nothing; a `Read_Memory` of more than
 	//   `THREAD_MEMORY_READ_LIMIT` bytes; a `Write_Placement` that `thread_placement_after_write` refuses
 	//   changes nothing: through 0 or a thread handle a set with a processor that the set of the thread
-	//   does not have, and for each writer a set or a limit with no processor that the machine has.
+	//   does not have, and for each writer a set or a limit with no processor that the machine has;
+	//   `Start_Counters` or `Read_Counters` on a machine whose processors have no counters that the
+	//   kernel uses, with the error kind `Unsupported`.
 	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with the rights of the command, and not
 	//   the machine handle with the rights of a command of the schedule or of the placement. The machine
 	//   handle with another command gives `Bad_Handle`. A program handle with no **Debug** gives
 	//   `No_Right`, and a program handle with a command of the schedule or of the placement `Bad_Handle`.
-	//   A command of the schedule of a program with 0 or with a handle that is not the machine handle
-	//   gives `Bad_Handle`.
+	//   A command of the schedule of a program, `Start_Counters` or `Read_Counters` with 0 or with a
+	//   handle that is not the machine handle gives `Bad_Handle`; the machine handle with no
+	//   **Counters** gives `No_Right` for `Start_Counters` and `Read_Counters`.
 	// - `Bad_State`: no live program has the slot and the serial of `number`, for a command of the
 	//   schedule of a program; no live thread of this program has `number`; no live thread of the machine has the
 	//   machine number `number`; the thread or its program ended, also for a read or a write of a
@@ -1160,7 +1172,8 @@ Operation :: enum u32 {
 	//   thread; a `Stop` above
 	//   `THREAD_STOP_COUNT_LIMIT` or of a thread that ends; a `Resume` at the count 0; through a program
 	//   handle with **Debug**: the caller is not the debugger of the program, the program is the caller, or a
-	//   `Resume` of a thread that the debugger did not stop.
+	//   `Resume` of a thread that the debugger did not stop; a `Read_Counters` of a thread that does not
+	//   count.
 	// - `Bad_Address`: `size` is too small, or the program cannot read or write the memory; a `Read_Memory`
 	//   whose first byte the program of the thread cannot read, or whose range is not below `USER_END`.
 	Guest_Run = 34, // (program, registers: Guest_Registers) -> kind: Guest_Exit_Kind, a, b, c, next, exit code, exit information.
@@ -1918,7 +1931,9 @@ Fault_Answer_Kind :: enum u64 {
 // registers or of the breakpoints needs the thread held: its stop count
 // above 0 and its processor
 // left (`Bad_State` before). The two commands of the schedule, the two of
-// the placement and the read of the memory need no hold.
+// the placement and the read of the memory need no hold. The three
+// commands of the thread counters act on the calling thread: a start and a
+// read through the machine handle with Counters, a stop with no handle.
 // See [thread control](term:thread-control) and
 // (docs/ARCHITECTURE.md, "The control of a thread").
 Thread_Control_Command :: enum u64 {
@@ -2025,7 +2040,57 @@ Thread_Control_Command :: enum u64 {
 	// with Schedule and Inspect. Bad_Operation for a value above
 	// WEIGHT_FULL (program_schedule_after_write): nothing changes.
 	Write_Program_Schedule = 15,
+	// The calling thread counts the four events of Thread_Counters from 0,
+	// from now on, in user mode only -> nothing. A thread that counts starts
+	// again from 0. Only the machine handle with Counters; `number` is not
+	// read (thread_control_counts_the_caller). Read_Counters takes the same
+	// handle.
+	Start_Counters       = 16,
+	// Writes the Thread_Counters of the calling thread at the address (size:
+	// at least its size) -> the bytes written. The thread goes on counting.
+	// Bad_State when the thread does not count.
+	Read_Counters        = 17,
+	// The calling thread stops counting -> nothing. A thread that does not
+	// count is left as it is. It needs no handle and no right, and gives Ok
+	// on each machine: it only takes a capability away, so a thread whose
+	// right was revoked can still stop.
+	Stop_Counters        = 18,
 }
+
+// thread_control_counts_the_caller says if a command of Thread_Control is a
+// command of the thread counters: it acts on the calling thread, and takes
+// only the machine handle with the right Counters (THREAD_COUNTERS_RIGHTS),
+// but Stop_Counters, which reads no handle.
+// The counts of a thread that runs are in the registers of its processor,
+// and the calling thread runs on the processor of its kernel entry: the
+// kernel reads them there with no hold and no interrupt to another
+// processor.
+thread_control_counts_the_caller :: proc "contextless" (command: Thread_Control_Command) -> bool {
+	return command == .Start_Counters || command == .Read_Counters || command == .Stop_Counters
+}
+
+// The rights of the machine handle that the commands of the thread counters
+// need.
+THREAD_COUNTERS_RIGHTS :: Rights{.Counters}
+
+// The counts of the events of the processor for the code of one thread, in
+// user mode only, since its last Start_Counters (Read_Counters). 32 bytes.
+// The order of the fields is the order of the general counters 0 to 3.
+//
+// The cache misses are the misses of one level of one vendor: the last level
+// cache on Intel, the L2 cache on AMD. Compare two counts on one machine,
+// not two machines. See [thread counters](term:thread-counters) and
+// (docs/ARCHITECTURE.md, "The counters of a thread").
+//
+// Example: a loop of 1 000 000 turns of 3 instructions each gives
+// `instructions_retired` of at least 3 000 000.
+Thread_Counters :: struct {
+	instructions_retired: u64,
+	cycles:               u64, // Cycles of the processor while it runs the thread, not halted.
+	cache_misses:         u64,
+	branch_misses:        u64, // Branches mispredicted, retired.
+}
+#assert(size_of(Thread_Counters) == 32)
 
 // thread_control_names_a_program says if a command of Thread_Control names
 // a program, by its slot and its serial, in place of a thread: the two
@@ -2086,12 +2151,13 @@ thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Com
 // thread_control_takes_debug_handle says if a command of Thread_Control
 // also takes the program handle with Debug of the program that the caller
 // debugs, with the number of a thread of that program in place of a thread
-// handle: each command but the two of the schedule and the two of the
-// placement. A debugger holds, reads and writes a thread; the share of a
-// thread and its processors are not a part of debugging.
+// handle: each command but the two of the schedule, the two of the
+// placement and the three of the thread counters. A debugger holds, reads
+// and writes a thread; the share of a thread and its processors are not a
+// part of debugging, and the thread counters are of the calling thread.
 thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control_Command) -> bool {
 	#partial switch command {
-	case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule:
+	case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
 		return false
 	}
 	return true

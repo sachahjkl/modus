@@ -530,6 +530,34 @@ thread_memory_read :: proc "contextless" (thread: Handle, number: u64, source: u
 	return results[0], status
 }
 
+// The thread counters (docs/ARCHITECTURE.md, "The counters of a thread"):
+// the events of the processor for the code of the calling thread, in user
+// mode only. A start and a read take the machine handle with the right
+// Counters, and act on the calling thread. A machine whose processors have
+// no counters that the kernel uses gives them Bad_Operation, with the error
+// kind Unsupported.
+
+// thread_counters_start makes the calling thread count from 0, from now on.
+thread_counters_start :: proc "contextless" (machine: Handle, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Thread_Control, u64(machine), 0, u64(op.Thread_Control_Command.Start_Counters))
+	return status
+}
+
+// thread_counters_read gives the counts of the calling thread since its
+// last start; it goes on counting. Bad_State when it does not count.
+thread_counters_read :: proc "contextless" (machine: Handle, error: ^errors.Error_Record = nil) -> (counters: op.Thread_Counters, status: Status) {
+	_, status = call_with_error(error, .Thread_Control, u64(machine), 0, u64(op.Thread_Control_Command.Read_Counters), u64(uintptr(&counters)), size_of(counters))
+	return counters, status
+}
+
+// thread_counters_stop makes the calling thread stop counting. It needs no
+// handle and no right: it only takes a capability away, so a thread whose
+// right was revoked can still stop.
+thread_counters_stop :: proc "contextless" (error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Thread_Control, 0, 0, u64(op.Thread_Control_Command.Stop_Counters))
+	return status
+}
+
 // memory_physical gives the device address of the first page of a memory
 // object: the devices of the caller see its pages follow each other from
 // there. It is the physical address of a contiguous object, or with the
