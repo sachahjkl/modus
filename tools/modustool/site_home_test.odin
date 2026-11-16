@@ -278,7 +278,7 @@ site_card_content_starts_at_the_top :: proc(t: ^testing.T) {
 		testing.expectf(t, !strings.contains(sheet, refused), "the style sheet holds %q: a part of a card would sit at its bottom", refused)
 	}
 	// Each grid of cards whose cards have their own height says so.
-	for rule in ([]string{".docs-parts { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start;", ".roadmap-columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 16px; align-items: start; }", ".measure-charts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start;"}) {
+	for rule in ([]string{".docs-parts { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start;", ".roadmap-columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 16px; align-items: start; }", ".roadmap-maybe-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 16px; align-items: start; }", ".measure-charts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start;"}) {
 		testing.expectf(t, strings.contains(sheet, rule), "the style sheet has no %q", rule)
 	}
 	site: Site

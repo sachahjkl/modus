@@ -1452,10 +1452,15 @@ A few lines that say what the file is.
 - **Another summary.** One sentence. [Design](src/md/features/the_design.md)
 
 ## Later
+
+## Maybe
+
+- **A third summary.** Two ways are open, and each waits for one thing.
 ```
 
 - The title is `# Roadmap`. A preamble of text can follow it.
-- The sections are `## Now`, `## Next` and `## Later`, in this order, each one time. **Now** is the work that is in progress. **Next** is the work that is decided and comes after. **Later** is the work that is wanted and has no order. The file has no other heading.
+- The sections are `## Now`, `## Next` and `## Later`, in this order, each one time. **Now** is the work that is in progress. **Next** is the work that is decided and comes after. **Later** is the work that is wanted and has no order.
+- An optional last section `## Maybe` holds what may be done one day and is not decided: each entry says the ways open and what each waits for. It comes after `## Later`, one time or not at all. The file has no other heading.
 - A section is a list, which can be empty. An entry (`GLOSSARY.md`, "Roadmap entry") is `- **<summary>.** <one or two sentences>`. The summary is plain text of at most 80 bytes (`ROADMAP_SUMMARY_MOST`), with its period inside the bold. A next line of the same entry starts with two spaces.
 - The sentences say what the work gives a user of the system, or a developer who builds on it. They do not say how the code changes.
 - When an intent file holds the design of the work, the entry ends with its design link: `[Design](src/md/<file>.md)`. An entry has no other link.
@@ -1467,7 +1472,7 @@ A few lines that say what the file is.
 
 | Fault | The rule |
 |---|---|
-| The title or a section | Line 1 is `# Roadmap`. The three sections are present, in their order, each one time, and no other heading exists |
+| The title or a section | Line 1 is `# Roadmap`. The three sections are present, in their order, each one time; `## Maybe` comes after them, one time or not at all; no other heading exists |
 | The lines | One empty line before and after a heading, no two empty lines, one line feed at the end, no tab, no space at the end of a line |
 | The preamble | No front matter (`---`), no field `key: value`, no entry before the first section |
 | The form of an entry | A bold summary with its period, not empty, at most 80 bytes, with none of the characters `*`, `[`, `]`, `<`, `>`; then one space and one or two sentences. A sentence ends at a `.`, a `?` or a `!` outside a code span, before a space or the end of the text |

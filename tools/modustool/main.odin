@@ -560,7 +560,7 @@ COMMANDS :: [?]Command {
 	// The file is written by hand: an entry is added when a work is planned,
 	// and removed in the commit that ends the work
 	// (docs/TOOLS.md, "The roadmap").
-	{name = "roadmap", about = "check: the planned work of `" + ROADMAP_FILE + "`, in the sections Now, Next and Later, for the page of the roadmap of the site", run = run_roadmap},
+	{name = "roadmap", about = "check: the planned work of `" + ROADMAP_FILE + "`, in the sections Now, Next, Later and Maybe, for the page of the roadmap of the site", run = run_roadmap},
 	// Writes the site in `build/site/`: the home, the guides, the reference
 	// tables read from the code, the status, the news, the releases, the
 	// roadmap, the index of the search and its script.

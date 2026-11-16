@@ -1,6 +1,7 @@
 // The roadmap of the system (docs/GLOSSARY.md, "Roadmap", "Roadmap entry").
 // ROADMAP.md holds the planned work, in three sections: what is in work
-// now, what comes next, what comes later. It is plain Markdown that a
+// now, what comes next, what comes later; then, optional, what may be done
+// one day and is not decided. It is plain Markdown that a
 // reader understands with no tool, and the one place of the plans: when a
 // work is done, its entry leaves the file in the commit of its changelog
 // fragment.
@@ -32,13 +33,20 @@ Roadmap_Section :: enum {
 	Now, // The work that is in progress.
 	Next, // The work that is decided and comes after.
 	Later, // The work that is wanted and has no order.
+	Maybe, // What may be done one day and is not decided: the ways open, and what each waits for.
 }
 
 roadmap_section_names := [Roadmap_Section]string {
 	.Now   = "Now",
 	.Next  = "Next",
 	.Later = "Later",
+	.Maybe = "Maybe",
 }
+
+// The count of the sections that each file has: the sections up to Later.
+// The section Maybe, the last one, is optional, because a project can have
+// no work that waits on something outside it.
+ROADMAP_REQUIRED_SECTION_COUNT :: int(Roadmap_Section.Later) + 1
 
 // One entry: "- **<summary>.** <one or two sentences> [Design](src/md/<file>.md)",
 // the design link only when an intent file exists.
@@ -334,7 +342,8 @@ roadmap_entry_finish :: proc(entries: ^[dynamic]Roadmap_Entry, entry_lines: ^[dy
 //   line 1: "# Roadmap"; then a preamble of text with no heading, no list,
 //   no front matter and no field "key: value";
 //   then "## Now", "## Next" and "## Later", in this order, each one time,
-//   and no other heading of any level;
+//   then "## Maybe" one time or not at all, and no other heading of any
+//   level;
 //   a section is a list, which can be empty: each entry is "- <text>", and
 //   the next lines of its text start with two spaces;
 //   one empty line before and after each heading, no two empty lines, one
@@ -354,7 +363,7 @@ roadmap_parse :: proc(content: string) -> (roadmap: Roadmap, problems: [dynamic]
 		at(&problems, 1, "the title \"" + ROADMAP_TITLE + "\" is expected on the first line, with no front matter before it")
 		return
 	}
-	sections_expected :: "the sections are \"## Now\", \"## Next\" and \"## Later\", in this order, each one time, and the file has no other heading"
+	sections_expected :: "the sections are \"## Now\", \"## Next\" and \"## Later\", in this order, each one time, then \"## Maybe\" one time if the file has it, and the file has no other heading"
 	entries := make([dynamic]Roadmap_Entry, context.temp_allocator)
 	entry_lines := make([dynamic]string, context.temp_allocator)
 	// What the line before was.
@@ -420,7 +429,7 @@ roadmap_parse :: proc(content: string) -> (roadmap: Roadmap, problems: [dynamic]
 			case roadmap_metadata_line(line):
 				at(&problems, number, "a field \"key: value\"; the roadmap has no metadata field")
 			case strings.has_prefix(line, "- ") || strings.has_prefix(line, "* "):
-				at(&problems, number, "an entry before the heading of its section (\"## Now\", \"## Next\" or \"## Later\")")
+				at(&problems, number, "an entry before the heading of its section (\"## Now\", \"## Next\", \"## Later\" or \"## Maybe\")")
 			}
 			if problem := roadmap_text_problem(line); problem != "" {
 				at(&problems, number, fmt.tprintf("the line has %s", problem))
@@ -456,7 +465,7 @@ roadmap_parse :: proc(content: string) -> (roadmap: Roadmap, problems: [dynamic]
 	if previous == .Entry {
 		roadmap_entry_finish(&entries, &entry_lines, section, entry_line, &problems)
 	}
-	if sections_seen < len(Roadmap_Section) {
+	if sections_seen < ROADMAP_REQUIRED_SECTION_COUNT {
 		at(&problems, len(lines), fmt.tprintf("the section \"## %s\" is not in the file; %s", roadmap_section_names[Roadmap_Section(sections_seen)], sections_expected))
 	}
 	// No entry twice: two entries with one summary are one work.
@@ -584,6 +593,6 @@ roadmap_check :: proc() -> bool {
 		fmt.eprintfln("modustool: test failed: the roadmap has %d problems", len(problems))
 		return false
 	}
-	test_passed_print("%s has %d entries (%d now, %d next, %d later), all well formed, and none has the summary of an entry of the changelog", ROADMAP_FILE, len(roadmap.entries), roadmap_section_count(roadmap, .Now), roadmap_section_count(roadmap, .Next), roadmap_section_count(roadmap, .Later))
+	test_passed_print("%s has %d entries (%d now, %d next, %d later, %d maybe), all well formed, and none has the summary of an entry of the changelog", ROADMAP_FILE, len(roadmap.entries), roadmap_section_count(roadmap, .Now), roadmap_section_count(roadmap, .Next), roadmap_section_count(roadmap, .Later), roadmap_section_count(roadmap, .Maybe))
 	return true
 }

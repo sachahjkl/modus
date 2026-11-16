@@ -6821,11 +6821,11 @@ Do not use: changeset, news file, entry (for the file).
 
 ### Roadmap
 
-The roadmap is the file `ROADMAP.md`: the planned work of the system, in three sections, Now, Next and Later.
+The roadmap is the file `ROADMAP.md`: the planned work of the system, in three sections, Now, Next and Later, then an optional section Maybe.
 
-It is the one place of the plans, and the other half of the changelog: the changelog lists the work that is done, the roadmap the work that is planned. **Now** holds the work that is in progress, **Next** the work that is decided and comes after, **Later** the work that is wanted and has no order. The file is plain Markdown that a reader understands with no tool: a title, the three sections, and in each a list of roadmap entries. It gives no date, and it names no decision and no person.
+It is the one place of the plans, and the other half of the changelog: the changelog lists the work that is done, the roadmap the work that is planned. **Now** holds the work that is in progress, **Next** the work that is decided and comes after, **Later** the work that is wanted and has no order. **Maybe**, the optional last section, holds what may be done one day and is not decided: each entry says the ways open and what each waits for. The file is plain Markdown that a reader understands with no tool: a title, the sections, and in each a list of roadmap entries. It gives no date, and it names no decision and no person.
 
-The file is written by hand. A work that is planned gets an entry; a work that is done loses its entry in the commit of its changelog fragment. `modustool roadmap check` checks the form of the file, and `modustool check` runs it. The site shows the file at `roadmap/`, as three columns of cards.
+The file is written by hand. A work that is planned gets an entry; a work that is done loses its entry in the commit of its changelog fragment. `modustool roadmap check` checks the form of the file, and `modustool check` runs it. The site shows the file at `roadmap/`, as three columns of cards, with the section Maybe under them.
 
 It is not the status page, which gives the state of each property and what is not done of it. It is not a list of the limits of the code: a limit becomes planned work only when an entry names it. It is not a promise of an order: only the sections order the entries.
 
