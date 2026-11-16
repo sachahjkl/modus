@@ -7,8 +7,8 @@ import "core:sync"
 import "modus:support/storage_mount"
 
 // The dropped write (src/md/features/dropped_write.md). The disk that the
-// tool serves drops two writes of the console, each the block of data of
-// an object whose bytes start with a marker that nothing else on the disk
+// tool serves drops three writes of the console to one object, each found
+// by a block whose bytes start with a marker that nothing else on the disk
 // starts with:
 //   - the dropped one: the disk answers Ok and keeps nothing of the block.
 //     The commit read back finds it before the root: the service refuses
@@ -24,18 +24,17 @@ import "modus:support/storage_mount"
 // must give (a loss of power at that moment), on the host with the code of
 // the open, then on a second machine: the open refuses the newest root,
 // which names the lost block, and uses the root before it, with no wrong
-// block, and the first object is its first version.
+// block, and the object is its first version.
 // What the durable image at the end of the first machine must give: the
 // limit of the read back. The commits after the hidden one name its block
-// too, so the open takes the newest root with its damage: the object of
-// the hidden write is damaged, and the first object is its first version.
+// too, so the open takes the newest root with its damage: the object,
+// whose current version is the hidden write, is damaged.
 
 DROPPED_WRITE_MARKER :: "the version that the disk drops"
 DROPPED_WRITE_HIDDEN_MARKER :: "the version that the cache of the disk hides"
 DROPPED_WRITE_ROOT_MARKER :: "the version whose root the disk drops"
 DROPPED_WRITE_FIRST_VERSION :: "the version that the disk keeps"
 DROPPED_WRITE_OBJECT :: "kept"
-DROPPED_WRITE_HIDDEN_OBJECT :: "hidden"
 DROPPED_WRITE_STORE :: "console" // The private store of the console.
 TEST_DROPPED_WRITE_DISK :: BUILD_FOLDER + "/test_dropped_write_disk.img"
 TEST_OUTPUT_DROPPED_WRITE :: BUILD_FOLDER + "/test_output_dropped_write_%d.txt"
@@ -72,8 +71,10 @@ scenario_dropped_write_first := [?]Step {
 	{kind = .Wait, text = "[console] error: storage.write: the disk did not keep 1 block of the commit: the commit is refused, and the store keeps its state before it (-6)"},
 	{kind = .Type, text = "storage.read(0, \"" + DROPPED_WRITE_OBJECT + "\")"},
 	{kind = .Wait, text = "[console] " + DROPPED_WRITE_FIRST_VERSION, fails_on = "[console] " + DROPPED_WRITE_ROOT_MARKER},
-	// The hidden write: the read back passes, and the commit is taken.
-	{kind = .Type, text = "storage.write(0, \"" + DROPPED_WRITE_HIDDEN_OBJECT + "\", \"" + DROPPED_WRITE_HIDDEN_MARKER + "\")"},
+	// The hidden write: the read back passes, and the commit is taken. It
+	// writes the same object: the store of the console has a limit of 3
+	// blocks, and a second object needs 4.
+	{kind = .Type, text = "storage.write(0, \"" + DROPPED_WRITE_OBJECT + "\", \"" + DROPPED_WRITE_HIDDEN_MARKER + "\")"},
 	{kind = .Wait, text = "[console] {generation+6}"},
 	// The cost of the read back: a measure, which no step reads.
 	{kind = .Type, text = "storage.stores()"},
@@ -98,8 +99,8 @@ root_generations :: proc(image: []u8) -> (generations: [ROOT_BLOCK_PLACES]u64) {
 // What the open of an image must give.
 @(private = "file")
 Dropped_Write_Expected :: enum {
-	Fallback, // The open refuses the newest root and uses the one before it, with no wrong block; the hidden object is not there.
-	Hidden_Damage, // The open uses the newest root, with the hidden object damaged and no other damage.
+	Fallback, // The open refuses the newest root and uses the one before it, with no wrong block, and the object is its first version.
+	Hidden_Damage, // The open uses the newest root, with the object damaged, as its current version names the lost block, and no other object damaged.
 }
 
 // dropped_write_image_check opens an image on the host with the code of
@@ -113,7 +114,6 @@ dropped_write_image_check :: proc(image: []u8, expected: Dropped_Write_Expected,
 	defer free(state)
 	contents := disk_contents(image, state)
 	kept := stored_object_of(&contents, DROPPED_WRITE_STORE, DROPPED_WRITE_OBJECT)
-	hidden := stored_object_of(&contents, DROPPED_WRITE_STORE, DROPPED_WRITE_HIDDEN_OBJECT)
 	if contents.mount.failed || contents.mount.needs_format {
 		fmt.eprintfln("modustool: test failed: the dropped write: %s does not open", what)
 		return 0, false
@@ -127,8 +127,8 @@ dropped_write_image_check :: proc(image: []u8, expected: Dropped_Write_Expected,
 		case contents.mount.wrong != 0 || contents.mount.damaged_objects != 0 || contents.mount.damaged_versions != 0:
 			fmt.eprintfln("modustool: test failed: the dropped write: the open of %s gives %d wrong blocks, %d damaged objects and %d damaged versions", what, contents.mount.wrong, contents.mount.damaged_objects, contents.mount.damaged_versions)
 			return 0, false
-		case hidden != nil:
-			fmt.eprintfln("modustool: test failed: the dropped write: the open of %s gives the object %s, which the root before the newest one does not name", what, DROPPED_WRITE_HIDDEN_OBJECT)
+		case kept == nil || kept.damaged || kept.hash_wrong || string(kept.bytes) != DROPPED_WRITE_FIRST_VERSION:
+			fmt.eprintfln("modustool: test failed: the dropped write: the object %s of the store %s is not its first version on %s", DROPPED_WRITE_OBJECT, DROPPED_WRITE_STORE, what)
 			return 0, false
 		}
 	case .Hidden_Damage:
@@ -136,14 +136,10 @@ dropped_write_image_check :: proc(image: []u8, expected: Dropped_Write_Expected,
 		case contents.mount.older || contents.mount.generation != newest:
 			fmt.eprintfln("modustool: test failed: the dropped write: the open of %s uses the generation %d, and the newest root has the generation %d: both roots name the lost block, so it must use the newest root with its damage", what, contents.mount.generation, newest)
 			return 0, false
-		case contents.mount.damaged_objects != 1 || contents.mount.damaged_versions != 0 || hidden == nil || !hidden.damaged:
-			fmt.eprintfln("modustool: test failed: the dropped write: the open of %s gives %d damaged objects and %d damaged versions: only the object %s must be damaged", what, contents.mount.damaged_objects, contents.mount.damaged_versions, DROPPED_WRITE_HIDDEN_OBJECT)
+		case contents.mount.damaged_objects != 1 || kept == nil || !kept.damaged:
+			fmt.eprintfln("modustool: test failed: the dropped write: the open of %s gives %d damaged objects: only the object %s, whose current version is the hidden write, must be damaged", what, contents.mount.damaged_objects, DROPPED_WRITE_OBJECT)
 			return 0, false
 		}
-	}
-	if kept == nil || kept.damaged || kept.hash_wrong || string(kept.bytes) != DROPPED_WRITE_FIRST_VERSION {
-		fmt.eprintfln("modustool: test failed: the dropped write: the object %s of the store %s is not its first version on %s", DROPPED_WRITE_OBJECT, DROPPED_WRITE_STORE, what)
-		return 0, false
 	}
 	return contents.mount.generation, true
 }
@@ -186,7 +182,7 @@ dropped_write_run :: proc() -> bool {
 		return false
 	}
 	test_passed_print("the dropped write: the disk answered Ok to the write of block %d and did not keep it; the read back refused that commit before its root; the disk dropped the root of a later commit, and the read back of the root refused it; the object %s read its first version after each, with no restart", server.dropped_block, DROPPED_WRITE_OBJECT)
-	test_passed_print("the dropped write: the disk hid the loss of block %d from the read back; the open on the host of the image at the root of generation %d refuses that root and uses the generation %d, with 0 wrong blocks; the image at the end opens its generation %d with the object %s damaged, the limit of the read back", server.hidden_block, hidden_commit, before, end_generation, DROPPED_WRITE_HIDDEN_OBJECT)
+	test_passed_print("the dropped write: the disk hid the loss of block %d from the read back; the open on the host of the image at the root of generation %d refuses that root and uses the generation %d, with 0 wrong blocks; the image at the end opens its generation %d with the object %s damaged, the limit of the read back", server.hidden_block, hidden_commit, before, end_generation, DROPPED_WRITE_OBJECT)
 	if err := os.write_entire_file(TEST_DROPPED_WRITE_DISK, server.durable_at_hidden_root); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", TEST_DROPPED_WRITE_DISK, err)
 		return false
