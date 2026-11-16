@@ -7472,6 +7472,16 @@ The design: `docs/SITE.md`, "The types".
 
 Do not use: tooltip, type info, hover card (for this).
 
+### Byte layout
+
+A byte layout is the diagram of the bytes of one record of a format: rows of 8 bytes, the offset of each row, and each field as a rectangle over its bytes with its name and its size.
+
+It answers "where is each byte?" in the manner of the header diagrams of the RFCs. The offsets and the sizes come from the compiler that builds the tool (`type_info_of`), and the type and the comment of each field from the source, so the diagram cannot differ from the code. A guide marks its place with a fence `byte-layout`, whose body is the same layout as a list of text for a reader of the raw Markdown; the tool writes that list and checks it. The guide of the module contract shows the header, the table directory and the record of each table of a module file. A byte layout is not a type card: the card lists the fields of a type; the layout draws them in place.
+
+The design: `docs/SITE.md`, "The byte layouts".
+
+Do not use: packet diagram, struct diagram, byte map.
+
 ### Identity card
 
 An identity card is what the site states of one module: its name, its kind, its hash, its size, the counts of its exports, its imports and the modules that import it, its license, and the first sentence of its documentation.

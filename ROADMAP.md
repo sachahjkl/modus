@@ -10,6 +10,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **Byte layouts of the other formats.** The guides show the records of the kernel operations, the fault ring and the disk formats of the storage service byte by byte, as the guide of the module contract shows the module file. [Design](src/md/features/byte_layout.md)
 - **A serial port that keeps every line of a flood.** A principal who debugs a flood of log lines sees every line on the serial port, and not a count of the lines that it lost. [Design](src/md/features/log_side_channels.md)
 - **An outside module imports another outside module.** The import of a module of another project names a module of the same project, and not only a module of the system. A developer then writes a library module and the programs that import it outside the repository. [Design](src/md/infrastructure/third_party_module.md)
 - **A guest that runs a whole system.** A guest gets several guest processors, an interrupt that its program injects, long mode, memory at the guest address 0, and memory that it writes and then executes. A program can then run a kernel of another system in it. [Design](src/md/features/guest.md)

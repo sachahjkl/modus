@@ -100,10 +100,13 @@ serial_copy: op.Log_Record // The copy of a record that the drain checks before 
 serial_line: [op.LOG_SERIAL_LINE_BYTES_MOST]u8
 serial_line_count: int
 serial_line_written: int
-// The bytes that the drain of a tick wrote, and the cycles that it took,
-// for the one line of its measure.
+// For the one line of the measure of the drain: the bytes that the drains
+// of the ticks and of the idle loop wrote, and the cycles of their port
+// writes alone, so the rate is the rate of the port.
 serial_measured_bytes: u64
 serial_measured_cycles: u64
+serial_measured_tick_bytes: u64
+serial_measured_idle_bytes: u64
 // 0: the measure is not ready; 1: ready, the next tick writes it; 2: written.
 serial_measure_state: u32
 // A tick drains the log from the first tick on. Before it, each writer of a
@@ -408,36 +411,55 @@ serial_writer_free :: proc "contextless" () {
 	intrinsics.atomic_store(&serial_writer, 0)
 }
 
+// How a drain may use its processor.
+Serial_Drain_Mode :: enum u8 {
+	// The flush, a report, the start: it waits for the device and has no
+	// bound; those end the machine or run alone.
+	Wait,
+	// A tick or a long wait for a lock: SERIAL_MICROSECONDS_OF_A_TICK at
+	// most, with interrupts off.
+	Tick,
+	// The idle loop: no bound in time, a window for interrupts after each
+	// byte, and it leaves at once when a queue receives a thread.
+	Idle,
+}
+
 // serial_drain writes on the serial port the records of the whole log from
 // serial_next up to the record before `until`, in their order, and gives
 // the bytes that it wrote. The caller is the serial writer. It reads the
 // log as a reader of the whole log does, with no log lock, so no Log waits
-// for the serial port (serial_line_next).
+// for the serial port (serial_line_next). An idle drain writes up to the
+// newest record, also the records that come while it writes.
 //
-// With a processor (a tick, a long wait for a lock), it writes only while
-// the device takes bytes: SERIAL_QUEUE_BYTES when the transmit register is
-// empty, and it leaves when it is not, or after
-// SERIAL_MICROSECONDS_OF_A_TICK, so it never spins with interrupts off;
-// between two writes it answers processor_sync, and it leaves when the
-// machine stops, for the flush. With no processor (the flush, a report, the
-// start), it waits for the device and has no bound: those end the machine
-// or run alone.
+// A drain of a processor (.Tick, .Idle) writes only while the device takes
+// bytes: SERIAL_QUEUE_BYTES when the transmit register is empty. A tick
+// leaves when the register is not empty, or after its bound, so it never
+// spins with interrupts off. The idle drain opens interrupt_window after
+// each byte and while the register is not empty, with the serial writer
+// free (serial_idle_window), and leaves when a queue received a thread, an
+// interrupt came, or a report began (serial_idle_drain_ends).
+// Between two writes, both answer processor_sync, and leave when the
+// machine stops, for the flush.
 @(private = "file")
-serial_drain :: proc "contextless" (until: u64, cpu: ^Processor) -> (bytes: int) {
+serial_drain :: proc "contextless" (until: u64, cpu: ^Processor, mode: Serial_Drain_Mode, idle: ^Serial_Idle_Drain = nil) -> (bytes: int) {
 	if log_head == nil {
 		return 0
 	}
 	// Before the timer is measured the frequency is 0: one burst.
 	deadline := cycles_now() + cycle_frequency / 1_000_000 * SERIAL_MICROSECONDS_OF_A_TICK
 	for {
-		if serial_line_written == serial_line_count && !serial_line_next(until) {
-			return bytes
+		if serial_line_written == serial_line_count {
+			last := mode == .Idle ? intrinsics.atomic_load(&log_head.written) : until
+			if !serial_line_next(last) {
+				return bytes
+			}
 		}
-		if cpu == nil {
+		switch mode {
+		case .Wait:
 			for port_read_8(SERIAL_LINE_STATUS) & SERIAL_TRANSMIT_EMPTY == 0 {
 				intrinsics.cpu_relax()
 			}
-		} else {
+		case .Tick:
 			if cycles_now() >= deadline || intrinsics.atomic_load(&machine_stopping) {
 				return bytes
 			}
@@ -445,20 +467,119 @@ serial_drain :: proc "contextless" (until: u64, cpu: ^Processor) -> (bytes: int)
 			if port_read_8(SERIAL_LINE_STATUS) & SERIAL_TRANSMIT_EMPTY == 0 {
 				return bytes
 			}
+		case .Idle:
+			for {
+				if serial_idle_drain_ends(cpu, idle) {
+					return bytes
+				}
+				sync_acknowledge(cpu)
+				if port_read_8(SERIAL_LINE_STATUS) & SERIAL_TRANSMIT_EMPTY != 0 {
+					break
+				}
+				if !serial_idle_window(cpu, idle) {
+					return bytes
+				}
+			}
 		}
 		// The queue of the device is empty: up to SERIAL_QUEUE_BYTES go with
-		// no look at the line status. The drain of a processor looks at the
-		// time before each byte, so it ends within one port write of its
-		// bound; the byte that it did not write waits in serial_line.
+		// no look at the line status. A tick looks at the time before each
+		// byte, so it ends within one port write of its bound; the idle
+		// drain opens a window after each byte, so an interrupt waits one
+		// port write at most. A byte that is not written waits in
+		// serial_line.
 		burst := min(SERIAL_QUEUE_BYTES, serial_line_count - serial_line_written)
 		for _ in 0 ..< burst {
-			if cpu != nil && cycles_now() >= deadline {
+			if mode == .Tick && cycles_now() >= deadline {
 				break
 			}
+			if mode == .Idle && serial_idle_drain_ends(cpu, idle) {
+				return bytes
+			}
+			started := cycles_now()
 			port_write_8(SERIAL_PORT, serial_line[serial_line_written])
+			if mode != .Wait {
+				serial_measure_note(cycles_now() - started, mode)
+			}
 			serial_line_written += 1
 			bytes += 1
+			if serial_line_written == serial_line_count {
+				serial_lag_note()
+			}
+			if mode == .Idle && !serial_idle_window(cpu, idle) {
+				return bytes
+			}
 		}
+	}
+}
+
+// The state of one idle drain, which belongs to its call.
+Serial_Idle_Drain :: struct {
+	pushes:            u32, // queue_pushes when the processor found no thread.
+	interrupts_before: u64, // cpu.idle_interrupts when the drain began.
+	writer_lost:       bool, // Another processor took the serial writer in a window.
+}
+
+// serial_idle_drain_ends says if the idle drain must leave: a queue
+// received a thread, an interrupt came in a window (as idle_wait returns
+// after one interrupt, so the processor looks at the queues again: a wake
+// of kick_all pushes no thread), the machine stops, or a report of a fault
+// began.
+@(private = "file")
+serial_idle_drain_ends :: proc "contextless" (cpu: ^Processor, idle: ^Serial_Idle_Drain) -> bool {
+	return queue_pushes() != idle.pushes || intrinsics.atomic_load(&cpu.idle_interrupts) != idle.interrupts_before || intrinsics.atomic_load(&machine_stopping) || intrinsics.atomic_load(&log_serial_only)
+}
+
+// serial_idle_window frees the serial writer, opens interrupt_window, and
+// takes the writer again with no wait. The state of the serial port is
+// whole between two bytes, so a handler in the window can drain (its
+// tick), report a fault, or stop the machine with the writer free, and a
+// handler that hangs holds no writer. false: another processor took the
+// writer, and the idle drain leaves without it.
+@(private = "file")
+serial_idle_window :: proc "contextless" (cpu: ^Processor, idle: ^Serial_Idle_Drain) -> bool {
+	serial_writer_free()
+	interrupt_window()
+	if !serial_writer_take(cpu.apic_id + 1, 0) {
+		idle.writer_lost = true
+		return false
+	}
+	return true
+}
+
+// The time of the record of the line in serial_line, in microseconds since
+// the start of the machine; 0 for the line of a count of lost records. And
+// the largest time between the time of a record and the write of the end
+// of its line on the port. Only the serial writer reads and writes them.
+serial_line_time: u64
+serial_largest_lag: u64
+
+// serial_lag_note counts the lag of the line that the drain just ended.
+@(private = "file")
+serial_lag_note :: proc "contextless" () {
+	if serial_line_time == 0 {
+		return
+	}
+	now := microseconds(cycles_now())
+	if now > serial_line_time && now - serial_line_time > serial_largest_lag {
+		serial_largest_lag = now - serial_line_time
+	}
+}
+
+// serial_measure_note counts one byte of a drain of a processor and the
+// cycles of its port write, until the measure is ready.
+@(private = "file")
+serial_measure_note :: proc "contextless" (cycles: u64, mode: Serial_Drain_Mode) {
+	if intrinsics.atomic_load(&serial_measure_state) != 0 {
+		return
+	}
+	intrinsics.atomic_add(&serial_measured_cycles, cycles)
+	if mode == .Idle {
+		intrinsics.atomic_add(&serial_measured_idle_bytes, 1)
+	} else {
+		intrinsics.atomic_add(&serial_measured_tick_bytes, 1)
+	}
+	if intrinsics.atomic_add(&serial_measured_bytes, 1) + 1 >= SERIAL_MEASURE_BYTES {
+		intrinsics.atomic_store(&serial_measure_state, 1)
 	}
 }
 
@@ -506,6 +627,7 @@ serial_record_line :: proc "contextless" (record: ^op.Log_Record) {
 	head_count := op.log_line_head(record, serial_line_open, &head)
 	text_count := min(int(record.text_count), op.LOG_TEXT_CAPACITY)
 	serial_line_count, serial_line_written = 0, 0
+	serial_line_time = max(record.time, 1)
 	serial_line_put(head[:head_count])
 	serial_line_put(record.text[:text_count])
 	serial_line_open = record.more != 0
@@ -520,6 +642,7 @@ serial_record_line :: proc "contextless" (record: ^op.Log_Record) {
 @(private = "file")
 serial_lost_line :: proc "contextless" (lost: u64) {
 	serial_line_count, serial_line_written = 0, 0
+	serial_line_time = 0
 	if serial_line_open {
 		serial_line_put({'\r', '\n'})
 		serial_line_open = false
@@ -543,7 +666,7 @@ serial_lost_line :: proc "contextless" (lost: u64) {
 // serial writer: the flush, a report, or a writer before the first tick.
 serial_drain_all :: proc "contextless" () {
 	if log_head != nil {
-		_ = serial_drain(intrinsics.atomic_load(&log_head.written), nil)
+		_ = serial_drain(intrinsics.atomic_load(&log_head.written), nil, .Wait)
 	}
 }
 
@@ -559,18 +682,36 @@ serial_drain_of_a_processor :: proc "contextless" (cpu: ^Processor) {
 	// A report that began after the look above keeps its writer, and this
 	// drain gives it back at once.
 	if !intrinsics.atomic_load(&log_serial_only) {
-		started := cycles_now()
-		written := serial_drain(intrinsics.atomic_load(&log_head.written), cpu)
-		// The measure counts only the drains that wrote: the rate that the
-		// drain keeps while it has lines.
-		if written > 0 && intrinsics.atomic_load(&serial_measure_state) == 0 {
-			intrinsics.atomic_add(&serial_measured_cycles, cycles_now() - started)
-			if intrinsics.atomic_add(&serial_measured_bytes, u64(written)) + u64(written) >= SERIAL_MEASURE_BYTES {
-				intrinsics.atomic_store(&serial_measure_state, 1)
-			}
-		}
+		_ = serial_drain(intrinsics.atomic_load(&log_head.written), cpu, .Tick)
 	}
 	serial_writer_free()
+}
+
+// serial_drain_while_idle is the drain of a processor that has nothing to
+// run: before its idle wait, for as long as no queue receives a thread
+// since `pushes` and no interrupt comes. So on a machine with an idle
+// processor the serial port lags the log only by the rate of the port. It
+// takes no lock, and an interrupt comes only in interrupt_window, between
+// two bytes, with the serial writer free (serial_idle_window). The caller
+// set cpu.idle: a waker sends it an interrupt, which the next window takes.
+// interrupted: an interrupt came, as after idle_wait, so the caller looks
+// at its queues and sets its idle flag again before it waits: a wake of
+// kick_all, which pushes no thread and clears the flag, is not lost.
+serial_drain_while_idle :: proc "contextless" (cpu: ^Processor, pushes: u32) -> (interrupted: bool) {
+	if log_head == nil || intrinsics.atomic_load(&log_serial_only) || !serial_writer_take(cpu.apic_id + 1, 0) {
+		return false
+	}
+	idle := Serial_Idle_Drain {
+		pushes            = pushes,
+		interrupts_before = intrinsics.atomic_load(&cpu.idle_interrupts),
+	}
+	if !intrinsics.atomic_load(&log_serial_only) {
+		_ = serial_drain(intrinsics.atomic_load(&log_head.written), cpu, .Idle, &idle)
+	}
+	if !idle.writer_lost {
+		serial_writer_free()
+	}
+	return intrinsics.atomic_load(&cpu.idle_interrupts) != idle.interrupts_before
 }
 
 // serial_tick is the drain of the tick of a processor, then the one line of
@@ -588,10 +729,12 @@ serial_tick :: proc "contextless" (cpu: ^Processor) {
 		bytes := intrinsics.atomic_load(&serial_measured_bytes)
 		cycles := max(intrinsics.atomic_load(&serial_measured_cycles), 1)
 		frequency := max(cycle_frequency, 1)
+		// The rate of the port: the bytes over the cycles of their writes.
+		// An idle processor drains at that rate.
 		rate := bytes * frequency / cycles
-		// What one processor keeps when it writes SERIAL_MICROSECONDS_OF_A_TICK at each tick.
+		// What one busy processor keeps when it writes SERIAL_MICROSECONDS_OF_A_TICK at each tick.
 		at_the_ticks := rate * SERIAL_MICROSECONDS_OF_A_TICK * TICKS_PER_SECOND / 1_000_000
-		log("kernel: the drain of the serial port wrote ", Size{bytes, .Bytes}, " in ", Duration{cycles * 1_000_000 / frequency, .Microseconds}, " of writing: ", rate, " bytes each second while it writes, ", at_the_ticks, " at 100 us of each tick of one processor")
+		log("kernel: the drain of the serial port wrote ", Size{bytes, .Bytes}, " in ", Duration{cycles * 1_000_000 / frequency, .Microseconds}, " of port writes: ", rate, " bytes each second while it writes; ", intrinsics.atomic_load(&serial_measured_idle_bytes), " bytes in the idle loop, at that rate, and ", intrinsics.atomic_load(&serial_measured_tick_bytes), " at the ticks, at most ", at_the_ticks, " each second for one busy processor")
 	}
 }
 
@@ -635,6 +778,12 @@ serial_flush :: proc "contextless" () {
 		intrinsics.atomic_store(&serial_writer, self)
 	}
 	serial_drain_all()
+	// The measure of the lag of a line, once, on the serial port only: the
+	// machine stops, and a record written now would not reach the port.
+	digits: [20]u8
+	log_bytes(transmute([]u8)string("kernel: the largest lag of a line of the log on the serial port: "))
+	log_bytes(decimal_digits(&digits, serial_largest_lag))
+	log_bytes(transmute([]u8)string(" us\r\n"))
 	serial_writer_free()
 }
 

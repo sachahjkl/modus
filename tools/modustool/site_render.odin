@@ -401,6 +401,15 @@ site_render_fence :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 		strings.write_byte(&code_text, '\n')
 		index += 1
 	}
+	// A fence of byte layouts of a guide: the diagrams in its place; its
+	// body is their text form for a reader of the raw Markdown.
+	if keys, is_layout := byte_layout_fence_keys(language); is_layout && !renderer.comment && renderer.site != nil {
+		byte_layout_fence_write(renderer, keys, strings.to_string(code_text), start + first_line_number)
+		if index >= len(lines) {
+			site_not_rendered(renderer, start + first_line_number, "a fence with no end, shown to the end of the file")
+		}
+		return index + 1
+	}
 	strings.write_string(b, "<pre><code>")
 	// Only a block that its document marks as Odin is colored: the language
 	// of a block with no mark is not guessed. A fence of a comment is in an
