@@ -167,7 +167,7 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 	put(&text, " of code, ")
 	put_number(&text, report.run_count)
 	put(&text, " runs")
-	show(canvas, x, y + 6, &text, graphics.COLOR_DIM)
+	show(canvas, x, y + 6, &text, graphics.colors.dim)
 	line += 2
 	shown := min(int(report.run_count), rows, op.MAPPING_RUN_CAPACITY)
 	for run, index in report.runs[:shown] {
@@ -190,7 +190,7 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 		put_hex(&text, run.start)
 		put(&text, "  ")
 		put_size(&text, run.page_count)
-		x = show(canvas, MARGIN + 16, y, &text, graphics.COLOR_TEXT)
+		x = show(canvas, MARGIN + 16, y, &text, graphics.colors.text)
 		put(&text, " read")
 		if .Write in run.flags {
 			put(&text, " write")
@@ -204,7 +204,7 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 		show(canvas, x, y, &text, color)
 		if kernel {
 			part(&text, run.start)
-			show(canvas, PART_X, y, &text, graphics.COLOR_DIM)
+			show(canvas, PART_X, y, &text, graphics.colors.dim)
 		}
 		line += 1
 	}
@@ -212,7 +212,7 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 		put(&text, "and ")
 		put_number(&text, report.run_count - u64(shown))
 		put(&text, " more runs")
-		show(canvas, MARGIN + 16, MARGIN + line * LINE, &text, graphics.COLOR_DIM)
+		show(canvas, MARGIN + 16, MARGIN + line * LINE, &text, graphics.colors.dim)
 		line += 1
 	}
 	return line
@@ -220,12 +220,12 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 
 rule :: proc "contextless" (canvas: graphics.Canvas, line: int, kept: bool, text: ^Text) {
 	y := MARGIN + line * LINE
-	graphics.fill(canvas, MARGIN, y + 4, 8, 8, kept ? graphics.COLOR_PROGRAM : COLOR_GUARD)
-	show(canvas, MARGIN + 16, y, text, kept ? graphics.COLOR_TEXT : COLOR_GUARD)
+	graphics.fill(canvas, MARGIN, y + 4, 8, 8, kept ? graphics.colors.program : COLOR_GUARD)
+	show(canvas, MARGIN + 16, y, text, kept ? graphics.colors.text : COLOR_GUARD)
 }
 
 draw :: proc "contextless" (canvas: graphics.Canvas) {
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.colors.background)
 	text: Text
 	line := half(canvas, 0, "the kernel half", &kernel_half, KERNEL_ROWS, true)
 	line += 1

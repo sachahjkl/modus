@@ -283,15 +283,15 @@ view_show_chosen :: proc "contextless" () {
 // header_draw draws the title, then the caption and the keys when each
 // one has its whole width: a text is whole or absent.
 header_draw :: proc "contextless" (table: ^interface.Draw_Table) {
-	after := interface.draw_text(table, MARGIN, HEADER_Y, TITLE, graphics.COLOR_TEXT, interface.FONT_INTERFACE_BOLD)
+	after := interface.draw_text(table, MARGIN, HEADER_Y, TITLE, graphics.colors.text, interface.FONT_INTERFACE_BOLD)
 	caption_x := after + 16
 	caption_end := caption_x + interface.text_measured_width(table, interface.FONT_INTERFACE, CAPTION)
 	hint_x := WIDTH - MARGIN - interface.text_measured_width(table, interface.FONT_INTERFACE, HINT)
 	if caption_end <= WIDTH - MARGIN {
-		interface.draw_text(table, caption_x, HEADER_Y, CAPTION, graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		interface.draw_text(table, caption_x, HEADER_Y, CAPTION, graphics.colors.dim, interface.FONT_INTERFACE)
 	}
 	if caption_end + 16 <= hint_x {
-		interface.draw_text(table, hint_x, HEADER_Y, HINT, graphics.COLOR_DIM, interface.FONT_INTERFACE)
+		interface.draw_text(table, hint_x, HEADER_Y, HINT, graphics.colors.dim, interface.FONT_INTERFACE)
 	}
 }
 
@@ -305,26 +305,26 @@ card_draw :: proc "contextless" (frame: ^interface.Frame, index: int, area: inte
 	border := 1
 	if index == chosen {
 		border = 2
-		interface.draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.COLOR_CHOSEN)
+		interface.draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.chosen)
 	} else {
-		interface.draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(graphics.COLOR_DIM, 28), graphics.shade(graphics.COLOR_DIM, 14))
+		interface.draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(graphics.colors.dim, 28), graphics.shade(graphics.colors.dim, 14))
 	}
-	interface.draw_vertical_gradient(table, area.x + border, area.y + border, area.width - 2 * border, area.height - 2 * border, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
+	interface.draw_vertical_gradient(table, area.x + border, area.y + border, area.width - 2 * border, area.height - 2 * border, graphics.colors.card_top, graphics.colors.card_bottom)
 	interface.element_name(frame, area, person.name)
 
 	text_x := area.x + shape.text_x
 	text_y := area.y + PADDING
-	interface.draw_text_wrapped(table, text_x, text_y, shape.text_room, person.name, graphics.COLOR_TEXT, interface.FONT_INTERFACE_BOLD)
+	interface.draw_text_wrapped(table, text_x, text_y, shape.text_room, person.name, graphics.colors.text, interface.FONT_INTERFACE_BOLD)
 	text_y += shape.name_lines * LINE + TEXT_GAP
-	interface.draw_text_wrapped(table, text_x, text_y, shape.text_room, person.work, graphics.COLOR_TEXT, interface.FONT_INTERFACE)
+	interface.draw_text_wrapped(table, text_x, text_y, shape.text_room, person.work, graphics.colors.text, interface.FONT_INTERFACE)
 	if !shape.portrait {
 		return
 	}
 	interface.draw_picture(table, area.x + PADDING, area.y + PADDING, portrait_canvas(person.portrait), 1)
 	credit_y := area.y + PADDING + shape.top_height + TEXT_GAP
-	interface.draw_text_wrapped(table, area.x + PADDING, credit_y, CREDIT_ROOM, interface.text_of(&credit_authors[index]), graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	interface.draw_text_wrapped(table, area.x + PADDING, credit_y, CREDIT_ROOM, interface.text_of(&credit_authors[index]), graphics.colors.dim, interface.FONT_INTERFACE)
 	credit_y += shape.author_lines * LINE
-	interface.draw_text_wrapped(table, area.x + PADDING, credit_y, CREDIT_ROOM, person.credit_license, graphics.COLOR_DIM, interface.FONT_INTERFACE)
+	interface.draw_text_wrapped(table, area.x + PADDING, credit_y, CREDIT_ROOM, person.credit_license, graphics.colors.dim, interface.FONT_INTERFACE)
 }
 
 // build describes the whole window for one frame, and gives the count of

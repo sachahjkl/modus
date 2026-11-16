@@ -5,7 +5,6 @@ import module "modus:contract/module"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:support/console_results"
-import "modus:support/graphics"
 import "modus:support/system"
 import terminal "modus:support/terminal"
 
@@ -197,12 +196,11 @@ part_style :: proc "contextless" (part: console_results.Part) -> terminal.Style 
 	return value_kind_style(console_results.part_value_kind(part))
 }
 
-// value_kind_style gives the style of a value of a kind. None is plain.
+// value_kind_style gives the style of a value of a kind. None is plain. The
+// style names the kind, not a color: the terminal gives the color of the
+// kind in the appearance in force when it draws the line.
 value_kind_style :: proc "contextless" (kind: value_kinds.Value_Kind) -> terminal.Style {
-	if kind == .None {
-		return {}
-	}
-	return {flags = {.Color}, color = u32(graphics.value_kind_color(kind, false))}
+	return {value_kind = u8(kind)}
 }
 
 // value_draw draws the value of a line with the drawer of its kind. A line

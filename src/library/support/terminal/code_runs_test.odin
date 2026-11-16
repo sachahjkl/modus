@@ -33,28 +33,28 @@ contrast_ratio :: proc(first, second: graphics.Color) -> f64 {
 // contrast too.
 @(test)
 code_colors_keep_their_contrast :: proc(t: ^testing.T) {
-	surfaces := [?]graphics.Color{graphics.COLOR_BACKGROUND, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM}
+	surfaces := [?]graphics.Color{graphics.colors.background, graphics.colors.card_top, graphics.colors.card_bottom}
 	for kind in Code_Kind {
-		color := code_kind_color(kind, graphics.COLOR_TEXT)
+		color := code_kind_color(kind, graphics.colors.text)
 		for surface in surfaces {
 			ratio := contrast_ratio(color, surface)
 			testing.expectf(t, ratio >= CODE_CONTRAST_LEAST, "the kind %v (%06x) on %06x: a contrast of %.2f; at least %.1f", kind, u32(color), u32(surface), ratio, CODE_CONTRAST_LEAST)
 		}
 	}
-	// The chosen row: its text is white on COLOR_CHOSEN, and a matched
+	// The chosen row: its text is white on the chosen blue, and a matched
 	// character is the reverse, the chosen blue on a white cell. Both keep
 	// the same bound as the colors of code.
-	white := contrast_ratio(graphics.COLOR_WHITE, graphics.COLOR_CHOSEN)
+	white := contrast_ratio(graphics.COLOR_WHITE, graphics.colors.chosen)
 	testing.expectf(t, white >= CODE_CONTRAST_LEAST, "white on the chosen row: %.2f; at least %.1f", white, CODE_CONTRAST_LEAST)
-	matched := contrast_ratio(graphics.COLOR_CHOSEN, graphics.COLOR_WHITE)
+	matched := contrast_ratio(graphics.colors.chosen, graphics.COLOR_WHITE)
 	testing.expectf(t, matched >= CODE_CONTRAST_LEAST, "a matched character of the chosen row: %.2f; at least %.1f", matched, CODE_CONTRAST_LEAST)
 	// The chosen color is the title blue at 96 percent: a chosen row is
 	// still read as the blue of the desktop.
-	testing.expect_value(t, graphics.Color(graphics.COLOR_CHOSEN), graphics.shade(graphics.COLOR_TITLE, 96))
+	testing.expect_value(t, graphics.Color(graphics.colors.chosen), graphics.shade(graphics.colors.title, 96))
 	// The site and the terminal read one table: the colors of a type and
 	// of a literal on a dark surface.
-	testing.expect_value(t, code_kind_color(.Type, 0), graphics.code_class_color(.Type, false))
-	testing.expect_value(t, code_kind_color(.Number, 0), graphics.code_class_color(.Literal, false))
+	testing.expect_value(t, code_kind_color(.Type, 0), graphics.code_class_color(.Type, graphics.appearance))
+	testing.expect_value(t, code_kind_color(.Number, 0), graphics.code_class_color(.Literal, graphics.appearance))
 	// A text still typed has the color of a text: no change at each key.
 	testing.expect_value(t, code_kind_color(.Text_Unfinished, 0), code_kind_color(.Text, 0))
 	// A kind past the known ones is plain.

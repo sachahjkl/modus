@@ -2483,7 +2483,7 @@ Do not use: dropdown, popup, autocomplete menu, suggestions.
 
 The chosen row is the one line of a list, a menu or a completion list that Enter or a press takes.
 
-It is drawn in the chosen blue `COLOR_CHOSEN` with its text in white, on every display of the system.
+It is drawn in the chosen blue `colors.chosen` with its text in white, on every display of the system.
 
 The rules: `docs/DESIGN.md`, "The chosen row".
 
@@ -2545,9 +2545,9 @@ Do not use: span, segment, chunk.
 
 ### Style
 
-A style says what a run of text is and how to show it (8 bytes): a tone, flags (end of the line, own color, reverse), a code kind and a color.
+A style says what a run of text is and how to show it (8 bytes): a tone, flags (end of the line, own color, reverse), a code kind, a value kind and a color.
 
-The zero style is plain text. The color of a run is its own color with the flag Color; else the color of its code kind, when it has one; else the color of its tone.
+The zero style is plain text. The color of a run is its own color with the flag Color; else the color of its value kind, when it has one; else the color of its code kind, when it has one; else the color of its tone. The terminal chooses each color but the own color in the appearance in force when it draws, so a line written before a change of the appearance takes the colors of the new one: the console sends the value kind of a value, not its color.
 
 Do not use: attribute, SGR, escape code.
 
@@ -4759,7 +4759,7 @@ Do not use: scroll event, wheel click, wheel delta.
 
 The scroll bar track is the part of a scroll bar between its two arrow buttons, on which the thumb moves.
 
-Its length stands for the whole content. A press on it, before or after the thumb, moves the view by one page toward the pointer. It has a border of 1 pixel and a gradient across it. The word is the word of the design rules for the empty part of a bar (`COLOR_TRACK`), and of the parts of a scroll bar in a style sheet.
+Its length stands for the whole content. A press on it, before or after the thumb, moves the view by one page toward the pointer. It has a border of 1 pixel and a gradient across it. The word is the word of the design rules for the empty part of a bar (`colors.track`), and of the parts of a scroll bar in a style sheet.
 
 The scroll bar track is not the whole bar: the arrow buttons are outside it.
 
@@ -5127,7 +5127,7 @@ Do not use: proportional font cache.
 
 ### Setting
 
-A setting is one choice of the principal of the machine that each program follows: the font, the order of the subpixel bands, the pointer theme, the grid fit or the layout of the keyboard.
+A setting is one choice of the principal of the machine that each program follows: the font, the order of the subpixel bands, the pointer theme, the grid fit, the layout of the keyboard or the appearance.
 
 A setting is one value of the settings page, with 0 as its default:
 
@@ -5135,7 +5135,8 @@ A setting is one value of the settings page, with 0 as its default:
 - `subpixel_order`: `rgb`, `bgr` or `none`;
 - `pointer_theme`: `owner` or `system`;
 - `grid_fit`: `on` or `off`;
-- `keyboard_layout`: `us` or `french`.
+- `keyboard_layout`: `us` or `french`;
+- `appearance`: `auto`, `dark` or `light`.
 
 The program `settings` is the one writer. It shows each setting as a row of buttons, and it exports `settings.set(name, value)` and `settings.get(name)`, so the console and `modustool call` change a setting too. A caller that does not act for the principal gets `No_Grant`. A change takes effect while programs run: the compositor sees it, draws its screen again and sends `Settings_Changed` to each window. The values survive a stop: `settings` keeps them as one record in its private store, and its boot pass writes them on the page at the start.
 
@@ -5173,11 +5174,41 @@ The root service creates the page at the start. The program `settings` receives 
 
 A write makes the change count odd while it lasts; a reader reads again until it sees one even count (`settings.read`), and after 64 reads takes the defaults. The compositor waits on the change count as a word wait. A value that the page does not know reads as 0: the worst that a writer can do to another program is to change a look.
 
-It is not a registry and not a file: it is shared memory with one writer, and its record in the private store of `settings` is the copy that survives a stop.
+It is not a registry and not a file: it is shared memory with one writer of the values, and its record in the private store of `settings` is the copy that survives a stop. Beside the values it holds the appearance in force, one word that the program `settings` writes with the values and the root service writes alone at an edge of the rule of the day.
 
 The design: `docs/FONTS.md`, "7. The setting", and "Who can write a cache".
 
 Do not use: registry, config file, dconf.
+
+### Appearance
+
+An appearance is one value of each color token: the desktop has two, dark and light.
+
+The dark appearance is the one of the boot display: light text on a dark background. The light appearance is the light form of the site: dark text on the light background of the mark, white cards, each concept at a darker shade of its accent. The blue of the title bar, the chosen blue and the red of the close button are the same in both. The setting `appearance` chooses `dark`, `light`, or `auto`: the light appearance from 07:00 to 19:00 of the local time and the dark one at night. A picture keeps its pixels in both, and the boot display is always dark.
+
+The design: `src/md/features/appearance.md`, and `docs/DESIGN.md`, "The appearances".
+
+Do not use: theme (for this: a pointer theme is a set of pointer pictures), dark mode, light mode, skin.
+
+### Appearance in force
+
+The appearance in force is the appearance, dark or light, that each program draws now.
+
+It is one word of the settings page. With the setting `dark` or `light` it is that value; with `auto` it is the value of the rule of the day at this moment, which `src/library/support/appearance` computes from the date page. The program `settings` writes it with each change of the values, and the root service writes it at 07:00 and 19:00 of the local time. A program reads it at each frame through `src/library/support/display`, which gives it to `graphics.appearance_use`; the compositor sends `Settings_Changed` to each window when it changes, so each window draws once.
+
+The design: `src/md/features/appearance.md`.
+
+Do not use: current theme, active mode.
+
+### Color token
+
+A color token is a named color of the design rules that has one value in each appearance: a surface, a concept or a part of the desktop.
+
+`graphics.Color_Tokens` holds each token; `graphics.colors` holds their values in the appearance in force of a program, so a drawer writes `graphics.colors.text` and draws the text of the dark or of the light appearance. The `DARK_` constants of the package are the values of the dark appearance, for constant tables and for what is always dark (the boot display, the mark). White, black and the ink of a text on white are not tokens: they are the same in both appearances.
+
+The design: `src/md/features/appearance.md`, and `src/library/support/graphics/rules.odin`.
+
+Do not use: palette color (the palette is a panel of the desktop), design token, swatch.
 
 ### Monospace font
 

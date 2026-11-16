@@ -751,26 +751,26 @@ case_of_the_cost :: proc "contextless" (load: ^Child, other: ^Child) {
 interface_draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "KERNEL EVENTS", "the kernel records its own work by a table of rules, into one ring for each processor", graphics.COLOR_KERNEL)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "KERNEL EVENTS", "the kernel records its own work by a table of rules, into one ring for each processor", graphics.colors.kernel)
 	column := interface.column_of(content)
 	for &item in cases {
 		value := "not run yet"
-		color: graphics.Color = graphics.COLOR_DIM
+		color: graphics.Color = graphics.colors.dim
 		if item.ran {
 			value = string(item.value[:item.value_length])
-			color = item.right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED
+			color = item.right ? graphics.colors.program : graphics.colors.failed
 		}
 		interface.label_value_line(&frame, interface.column_take(&column, LINE), item.name, value, color, 380)
 	}
 	_ = interface.column_take(&column, LINE)
 	line: [96]u8
 	kinds := system.format(line[:], shown.kinds[.Operation], " operations, ", shown.kinds[.Switch], " switches, ", shown.kinds[.Fault], " faults, ", shown.kinds[.Lock_Wait], " waits for a lock")
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "records read", kinds, graphics.COLOR_KERNEL, 380)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "records read", kinds, graphics.colors.kernel, 380)
 	longest_line: [96]u8
 	longest := system.format(longest_line[:], operation_name(shown.longest_operation), ", ", nanoseconds_of(shown.longest), " ns")
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "the longest operation", shown.longest == 0 ? string("none yet") : longest, graphics.COLOR_KERNEL, 380)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "the longest operation", shown.longest == 0 ? string("none yet") : longest, graphics.colors.kernel, 380)
 	lost_line: [64]u8
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "records lost", system.format(lost_line[:], shown_lost), graphics.COLOR_KERNEL, 380)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "records lost", system.format(lost_line[:], shown_lost), graphics.colors.kernel, 380)
 	interface.window_frame_end(&drawing, &frame, window)
 }
 

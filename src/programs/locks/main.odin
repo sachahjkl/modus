@@ -361,10 +361,10 @@ locks_text :: proc "contextless" (buffer: []u8, locks: [op.LOCK_KIND_CAPACITY]op
 }
 
 row :: proc "contextless" (table: ^interface.Draw_Table, y: int, label: string, values: []u64) {
-	interface.draw_text(table, LEFT, y, label, graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, label, graphics.colors.dim)
 	line: [48]u8
 	for value, index in values {
-		interface.draw_text(table, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], value), graphics.COLOR_TEXT)
+		interface.draw_text(table, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], value), graphics.colors.text)
 	}
 }
 
@@ -379,76 +379,76 @@ draw :: proc "contextless" (window: ^display.Window) {
 }
 
 draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	y := LEFT
 	measured := system.measure_run()
-	interface.draw_text(table, LEFT, y, measured ? "each locker works on its own objects: it waits only if the kernel makes it wait." : "each locker works on its own objects. rates in one second: run `modustool measure`.", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, measured ? "each locker works on its own objects: it waits only if the kernel makes it wait." : "each locker works on its own objects. rates in one second: run `modustool measure`.", graphics.colors.dim)
 	y += LINE + GAP
-	interface.draw_text(table, LEFT, y, measured ? "in one second, all lockers" : "in the check, all lockers", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, measured ? "in one second, all lockers" : "in the check, all lockers", graphics.colors.dim)
 	for active, index in counts {
 		line: [24]u8
-		interface.draw_text(table, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], u64(active), active == 1 ? " locker" : " lockers"), graphics.COLOR_DIM)
+		interface.draw_text(table, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], u64(active), active == 1 ? " locker" : " lockers"), graphics.colors.dim)
 	}
 	y += LINE
-	interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
+	interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.colors.card_top)
 	row(table, y, "kernel entries", entry_rates[:])
 	y += LINE
 	row(table, y, "pages on first use", fault_rates[:])
 	y += LINE + GAP
-	interface.draw_text(table, LEFT, y, "word wait, two threads", graphics.COLOR_DIM)
-	interface.draw_text(table, COLUMN_X, y, "alone", graphics.COLOR_DIM)
-	interface.draw_text(table, COLUMN_X + COLUMN_WIDTH, y, "2 lockers enter", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, "word wait, two threads", graphics.colors.dim)
+	interface.draw_text(table, COLUMN_X, y, "alone", graphics.colors.dim)
+	interface.draw_text(table, COLUMN_X + COLUMN_WIDTH, y, "2 lockers enter", graphics.colors.dim)
 	y += LINE
-	interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
+	interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.colors.card_top)
 	row(table, y, "wakes", {pairs_alone, pairs_loaded})
 	y += LINE + GAP
-	interface.draw_text(table, LEFT, y, "waits of takes", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, "waits of takes", graphics.colors.dim)
 	for name, index in ([3]string{"4 lockers, entries", "4 lockers, faults", "word wait"}) {
-		interface.draw_text(table, LOCK_X + index * LOCK_COLUMN_WIDTH, y, name, graphics.COLOR_DIM)
+		interface.draw_text(table, LOCK_X + index * LOCK_COLUMN_WIDTH, y, name, graphics.colors.dim)
 	}
 	y += LINE
 	for kind in op.Lock_Kind {
 		if int(kind) % 2 == 0 {
-			interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
+			interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.colors.card_top)
 		}
-		interface.draw_text(table, LEFT, y, op.LOCK_KIND_NAMES[kind], graphics.COLOR_DIM)
+		interface.draw_text(table, LEFT, y, op.LOCK_KIND_NAMES[kind], graphics.colors.dim)
 		line: [48]u8
 		for locks, index in ([3][op.LOCK_KIND_CAPACITY]op.Lock_Count{entry_locks, fault_locks, pair_locks}) {
 			count := locks[kind]
-			interface.draw_text(table, LOCK_X + index * LOCK_COLUMN_WIDTH, y, system.format(line[:], count.waits, " of ", count.takes), graphics.COLOR_TEXT)
+			interface.draw_text(table, LOCK_X + index * LOCK_COLUMN_WIDTH, y, system.format(line[:], count.waits, " of ", count.takes), graphics.colors.text)
 		}
 		y += LINE
 	}
 	y += GAP
 	// The frame cache of each processor (Processor_Report): a stack of free
 	// frames that pages on first use take with no frame lock.
-	interface.draw_text(table, LEFT, y, "frame cache", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, "frame cache", graphics.colors.dim)
 	for name, index in ([4]string{"frames now", "batches taken", "batches given", "drains"}) {
-		interface.draw_text(table, LOCK_X + index * (LOCK_COLUMN_WIDTH * 3 / 4), y, name, graphics.COLOR_DIM)
+		interface.draw_text(table, LOCK_X + index * (LOCK_COLUMN_WIDTH * 3 / 4), y, name, graphics.colors.dim)
 	}
 	y += LINE
 	for index in 0 ..< CACHE_ROWS {
 		cache := caches[index]
 		if index % 2 == 0 {
-			interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
+			interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.colors.card_top)
 		}
 		cache_line: [32]u8
-		interface.draw_text(table, LEFT, y, system.format(cache_line[:], "processor ", u64(index)), graphics.COLOR_DIM)
+		interface.draw_text(table, LEFT, y, system.format(cache_line[:], "processor ", u64(index)), graphics.colors.dim)
 		for value, column in ([4]u64{cache.cache_frames, cache.cache_batches_taken, cache.cache_batches_given, cache.cache_drains}) {
-			interface.draw_text(table, LOCK_X + column * (LOCK_COLUMN_WIDTH * 3 / 4), y, system.format(cache_line[:], value), graphics.COLOR_TEXT)
+			interface.draw_text(table, LOCK_X + column * (LOCK_COLUMN_WIDTH * 3 / 4), y, system.format(cache_line[:], value), graphics.colors.text)
 		}
 		y += LINE
 	}
 	y += GAP
 	line: [64]u8
-	interface.draw_text(table, LEFT, y, "programs stopped while they ran", graphics.COLOR_DIM)
-	interface.draw_text(table, COLUMN_X, y, system.format(line[:], stress_started), graphics.COLOR_TEXT)
+	interface.draw_text(table, LEFT, y, "programs stopped while they ran", graphics.colors.dim)
+	interface.draw_text(table, COLUMN_X, y, system.format(line[:], stress_started), graphics.colors.text)
 	y += LINE
 	if done {
 		right := entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right
-		interface.draw_text(table, LEFT, y, right ? "the counts add up, no wake was lost, stopped programs returned all" : "a count is wrong", right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
+		interface.draw_text(table, LEFT, y, right ? "the counts add up, no wake was lost, stopped programs returned all" : "a count is wrong", right ? graphics.colors.program : graphics.colors.failed)
 	} else {
-		interface.draw_text(table, LEFT, y, measured ? "measures in progress" : "checks in progress", graphics.COLOR_DIM)
+		interface.draw_text(table, LEFT, y, measured ? "measures in progress" : "checks in progress", graphics.colors.dim)
 	}
 }
 

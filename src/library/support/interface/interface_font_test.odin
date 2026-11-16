@@ -102,19 +102,19 @@ build_labels :: proc(table: ^Draw_Table, seed: u32, changed: int) {
 	state := seed
 	part := 0
 	draw_table_clear(table)
-	draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+	draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
 	card_state := Interface_State{}
 	card_input := Input{}
 	frame := Frame{table = table, state = &card_state, input = &card_input}
 	title := words[pick(&state, &part, changed) % len(words)]
 	caption := words[pick(&state, &part, changed) % len(words)]
-	card(&frame, {4, 4, 312, 72}, title, caption, graphics.COLOR_KERNEL, "12")
+	card(&frame, {4, 4, 312, 72}, title, caption, graphics.colors.kernel, "12")
 	x := 8
 	for _ in 0 ..< 6 {
 		chosen := pick(&state, &part, changed)
 		word := words[chosen % len(words)]
 		font := (chosen / 16) % 4 == 0 ? FONT_INTERFACE_BOLD : FONT_INTERFACE
-		color := (chosen / 64) % 3 == 0 ? graphics.COLOR_DIM : graphics.COLOR_TEXT
+		color := (chosen / 64) % 3 == 0 ? graphics.colors.dim : graphics.colors.text
 		after := draw_text(table, x, 40, word, u32(color), font)
 		// The next label starts at the end of this one, or 1 or 2 pixels
 		// before it: their ink margins overlap.
@@ -124,15 +124,15 @@ build_labels :: proc(table: ^Draw_Table, seed: u32, changed: int) {
 	for row in 0 ..< 3 {
 		chosen := pick(&state, &part, changed)
 		right := 200 + chosen % 7
-		draw_text_right(table, right, 80 + row * 18, words[(chosen / 8) % len(words)], graphics.COLOR_TEXT, FONT_INTERFACE)
+		draw_text_right(table, right, 80 + row * 18, words[(chosen / 8) % len(words)], graphics.colors.text, FONT_INTERFACE)
 		next := pick(&state, &part, changed)
-		draw_text(table, right + 4 - next % 3, 80 + row * 18, words[(next / 4) % len(words)], graphics.COLOR_PROGRAM, FONT_INTERFACE)
+		draw_text(table, right + 4 - next % 3, 80 + row * 18, words[(next / 4) % len(words)], graphics.colors.program, FONT_INTERFACE)
 	}
 	label := words[pick(&state, &part, changed) % len(words)]
 	value := words[pick(&state, &part, changed) % len(words)]
 	label_value_line(&frame, {8, 140, 300, 16}, label, value)
 	button(&frame, {8, 164, 140, 24}, identity("press"), words[pick(&state, &part, changed) % len(words)])
-	draw_text(table, 160, 168, words[pick(&state, &part, changed) % len(words)], graphics.COLOR_TEXT, {kind = .Interface, scale = 2})
+	draw_text(table, 160, 168, words[pick(&state, &part, changed) % len(words)], graphics.colors.text, {kind = .Interface, scale = 2})
 }
 
 // The damage of a frame in the interface font, drawn as a window draws it
@@ -168,7 +168,7 @@ damage_of_interface_text_equals_the_whole_frame :: proc(t: ^testing.T) {
 				interface_records += 1
 			}
 		}
-		graphics.clear(partial_canvas, graphics.COLOR_BACKGROUND)
+		graphics.clear(partial_canvas, graphics.colors.background)
 		execute(&before, partial_canvas)
 		damage: Damage
 		damage_by_difference(&before, &now, &damage)
@@ -176,7 +176,7 @@ damage_of_interface_text_equals_the_whole_frame :: proc(t: ^testing.T) {
 			damaged_frames += 1
 		}
 		draw_damage_on_surface(&now, partial_canvas, damage.rectangles[:damage.count])
-		graphics.clear(whole_canvas, graphics.COLOR_BACKGROUND)
+		graphics.clear(whole_canvas, graphics.colors.background)
 		execute(&now, whole_canvas)
 		if string(transmute([]u8)partial) != string(transmute([]u8)whole) {
 			differing_frames += 1
@@ -216,9 +216,9 @@ no_element_passes_its_box_in_either_font :: proc(t: ^testing.T) {
 		draw: proc(frame: ^Frame, area: Area),
 	}
 	cases := [?]Element_Case {
-		{"card", {8, 8, 200, 80}, proc(frame: ^Frame, area: Area) {card(frame, area, LONG, LONG, graphics.COLOR_KERNEL, "12 345")}},
+		{"card", {8, 8, 200, 80}, proc(frame: ^Frame, area: Area) {card(frame, area, LONG, LONG, graphics.colors.kernel, "12 345")}},
 		{"label and value at the right", {8, 8, 200, 16}, proc(frame: ^Frame, area: Area) {label_value_line(frame, area, LONG, "1 234 567")}},
-		{"label and value at a column", {8, 8, 200, 16}, proc(frame: ^Frame, area: Area) {label_value_line(frame, area, LONG, LONG, graphics.COLOR_TEXT, 96)}},
+		{"label and value at a column", {8, 8, 200, 16}, proc(frame: ^Frame, area: Area) {label_value_line(frame, area, LONG, LONG, graphics.colors.text, 96)}},
 		{"button", {8, 8, 120, 24}, proc(frame: ^Frame, area: Area) {button(frame, area, identity("button"), LONG)}},
 		{"list", {8, 8, 160, 72}, proc(frame: ^Frame, area: Area) {
 				names := [?]string{LONG, "WWWWWWWWWWWWWWWWWWWWWW", "short"}
@@ -235,8 +235,8 @@ no_element_passes_its_box_in_either_font :: proc(t: ^testing.T) {
 				row_split(area, sizes[:], cells[:], 8)
 				table_header(frame, cells[:], {LONG, LONG, "bytes"}, {.Left, .Right, .Right})
 			}},
-		{"cell text in the interface font", {8, 8, 100, 24}, proc(frame: ^Frame, area: Area) {cell_text(frame, area, LONG, graphics.COLOR_TEXT, .Right, FONT_INTERFACE)}},
-		{"cell text in the font of the cells", {8, 8, 100, 24}, proc(frame: ^Frame, area: Area) {cell_text(frame, area, LONG, graphics.COLOR_TEXT)}},
+		{"cell text in the interface font", {8, 8, 100, 24}, proc(frame: ^Frame, area: Area) {cell_text(frame, area, LONG, graphics.colors.text, .Right, FONT_INTERFACE)}},
+		{"cell text in the font of the cells", {8, 8, 100, 24}, proc(frame: ^Frame, area: Area) {cell_text(frame, area, LONG, graphics.colors.text)}},
 		{"text input", {8, 8, 120, 24}, proc(frame: ^Frame, area: Area) {
 				typed: [64]u8
 				count := copy(typed[:], LONG)
@@ -281,24 +281,24 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 	defer free(without_font)
 	table := font_table_of(with_font, &font.font)
 	plain := font_table_of(without_font, nil)
-	after := draw_text(&table, 10, 0, "To LT", graphics.COLOR_TEXT, FONT_INTERFACE)
+	after := draw_text(&table, 10, 0, "To LT", graphics.colors.text, FONT_INTERFACE)
 	testing.expect_value(t, table.records[0].kind, Draw_Kind.Interface_Text)
 	testing.expect_value(t, after, 10 + text_measured_width(&table, FONT_INTERFACE, "To LT"))
 	margin := int(table.records[0].second_color)
 	testing.expect_value(t, margin, graphics.PROPORTIONAL_INK_MARGIN)
 	testing.expect_value(t, int(table.records[0].x), 10 - margin)
-	plain_after := draw_text(&plain, 10, 0, "To LT", graphics.COLOR_TEXT, FONT_INTERFACE)
+	plain_after := draw_text(&plain, 10, 0, "To LT", graphics.colors.text, FONT_INTERFACE)
 	testing.expect_value(t, plain.records[0].kind, Draw_Kind.Text)
 	testing.expect_value(t, plain_after, 10 + 5 * graphics.CELL_WIDTH)
 	long: [INTERFACE_TEXT_LIMIT + 1]u8
 	for &byte in long {
 		byte = 'a'
 	}
-	draw_text(&table, 0, 20, string(long[:]), graphics.COLOR_TEXT, FONT_INTERFACE)
+	draw_text(&table, 0, 20, string(long[:]), graphics.colors.text, FONT_INTERFACE)
 	testing.expect_value(t, table.records[1].kind, Draw_Kind.Text)
 	// A text that ends at a place: its origin is at a third of a pixel, and
 	// its measured box ends at the place, rounded up.
-	draw_text_right(&table, 100, 40, "Ty", graphics.COLOR_TEXT, FONT_INTERFACE)
+	draw_text_right(&table, 100, 40, "Ty", graphics.colors.text, FONT_INTERFACE)
 	record := table.records[2]
 	testing.expect(t, record.text_origin_thirds <= 2)
 	testing.expect(t, int(record.x + record.width) - int(record.second_color) <= 101)
@@ -326,16 +326,16 @@ hostile_interface_text_records_draw_nothing :: proc(t: ^testing.T) {
 	table := font_table_of(memory, &font.font)
 	copy(table.text[:], "To LT")
 	table.text_count = 5
-	good := Draw_Record{kind = .Interface_Text, text_scale = 1, first_color = graphics.COLOR_TEXT, second_color = 2, x = 0, y = 0, width = 60, height = 16, text_start = 0, text_count = 5}
+	good := Draw_Record{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = 2, x = 0, y = 0, width = 60, height = 16, text_start = 0, text_count = 5}
 	hostile := [?]Draw_Record {
-		{kind = .Interface_Text, text_scale = 1, first_color = graphics.COLOR_TEXT, second_color = 2, width = 60, height = 16, text_start = 3, text_count = 5},
-		{kind = .Interface_Text, text_scale = 1, first_color = graphics.COLOR_TEXT, second_color = 2, width = 60, height = 16, text_start = max(u32), text_count = max(u32)},
-		{kind = .Interface_Text, text_scale = 1, text_origin_thirds = 3, first_color = graphics.COLOR_TEXT, second_color = 2, width = 60, height = 16, text_count = 5},
-		{kind = .Interface_Text, text_scale = 1, first_color = graphics.COLOR_TEXT, second_color = max(u32), width = 60, height = 16, text_count = 5},
-		{kind = .Interface_Text, text_scale = 1, first_color = graphics.COLOR_TEXT, second_color = INK_MARGIN_LIMIT + 1, width = 60, height = 16, text_count = 5},
-		{kind = .Interface_Text, text_scale = 0, first_color = graphics.COLOR_TEXT, second_color = 2, width = 60, height = 16, text_count = 5},
-		{kind = .Interface_Text, text_scale = 4, first_color = graphics.COLOR_TEXT, second_color = 2, width = 60, height = 16, text_count = 5},
-		{kind = .Interface_Text, text_scale = 1, first_color = graphics.COLOR_TEXT, second_color = 2, x = max(i32), y = max(i32), width = max(i32), height = max(i32), text_count = 5},
+		{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = 2, width = 60, height = 16, text_start = 3, text_count = 5},
+		{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = 2, width = 60, height = 16, text_start = max(u32), text_count = max(u32)},
+		{kind = .Interface_Text, text_scale = 1, text_origin_thirds = 3, first_color = graphics.colors.text, second_color = 2, width = 60, height = 16, text_count = 5},
+		{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = max(u32), width = 60, height = 16, text_count = 5},
+		{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = INK_MARGIN_LIMIT + 1, width = 60, height = 16, text_count = 5},
+		{kind = .Interface_Text, text_scale = 0, first_color = graphics.colors.text, second_color = 2, width = 60, height = 16, text_count = 5},
+		{kind = .Interface_Text, text_scale = 4, first_color = graphics.colors.text, second_color = 2, width = 60, height = 16, text_count = 5},
+		{kind = .Interface_Text, text_scale = 1, first_color = graphics.colors.text, second_color = 2, x = max(i32), y = max(i32), width = max(i32), height = max(i32), text_count = 5},
 	}
 	pixels: [64 * 16]graphics.Color
 	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = 64, height = 16, stride = 64}

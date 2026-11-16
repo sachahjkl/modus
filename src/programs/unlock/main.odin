@@ -1552,7 +1552,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	// What the window asks for: the passphrase of a named principal, the
 	// machine passphrase or the recovery key of principal 0, or what it
 	// shows: a new recovery key. The widest line, the message after a new
@@ -1608,9 +1608,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 		prompt = "change  "
 		hint = "enter: done"
 	}
-	x := interface.draw_text(table, 12, 12, label, graphics.COLOR_DIM)
-	interface.draw_text(table, x, 12, subject, graphics.COLOR_TEXT)
-	x = interface.draw_text(table, 12, 48, prompt, graphics.COLOR_DIM)
+	x := interface.draw_text(table, 12, 12, label, graphics.colors.dim)
+	interface.draw_text(table, x, 12, subject, graphics.colors.text)
+	x = interface.draw_text(table, 12, 48, prompt, graphics.colors.dim)
 	of_the_machine_tpm := mode == .Machine_Recovery || mode == .Recovery_Shown
 	// The keys of the named principal are sealed by the TPM when its file
 	// has that form, or when a creation will give it that form.
@@ -1626,37 +1626,37 @@ draw :: proc "contextless" (window: ^display.Window) {
 		// after a prompt of 14 cells fit in the window. Its element name
 		// gives a machine test its place.
 		shown := string(recovery_text[:])
-		interface.draw_text(table, x, 48, shown, graphics.COLOR_TEXT)
+		interface.draw_text(table, x, 48, shown, graphics.colors.text)
 		interface.element_name(&frame, {x, 48, len(shown) * graphics.CELL_WIDTH, graphics.CELL_HEIGHT}, "recovery_key")
 	case .Change_Result:
 		// Nothing is typed: the sentence of the end is the message below.
 	case .Machine_Recovery, .Principal_Recovery:
 		// The recovery key typed is drawn: it is copied from paper, and its
 		// user checks it. At most RECOVERY_TYPED_LIMIT cells: it fits.
-		end := interface.draw_text(table, x, 48, string(typed[:typed_count]), graphics.COLOR_TEXT)
-		interface.draw_rectangle(table, end + 2, 48, 2, 16, graphics.COLOR_TEXT)
+		end := interface.draw_text(table, x, 48, string(typed[:typed_count]), graphics.colors.text)
+		interface.draw_rectangle(table, end + 2, 48, 2, 16, graphics.colors.text)
 	case:
 		// One dot for each character typed: the passphrase itself is never
 		// drawn.
 		dots := text_encoding.character_count(typed[:typed_count])
 		for index in 0 ..< dots {
-			interface.draw_rectangle(table, x + 2 + index * 10, 54, 6, 6, graphics.COLOR_TEXT)
+			interface.draw_rectangle(table, x + 2 + index * 10, 54, 6, 6, graphics.colors.text)
 		}
-		interface.draw_rectangle(table, x + 2 + dots * 10, 48, 2, 16, graphics.COLOR_TEXT)
+		interface.draw_rectangle(table, x + 2 + dots * 10, 48, 2, 16, graphics.colors.text)
 	}
 	if message != "" {
-		interface.draw_text(table, 12, 84, message, message_failed ? graphics.COLOR_FAILED : graphics.COLOR_PROGRAM)
+		interface.draw_text(table, 12, 84, message, message_failed ? graphics.colors.failed : graphics.colors.program)
 	}
 	switch {
 	case of_the_machine_tpm:
-		interface.draw_text(table, 12, 116, "sealed by the TPM to PCR 7 and 11, with a copy for recovery", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, 116, "sealed by the TPM to PCR 7 and 11, with a copy for recovery", graphics.colors.dim)
 	case of_the_principal_tpm:
 		// 62 cells of 8 pixels after a margin of 12: it fits in 520 pixels.
-		interface.draw_text(table, 12, 116, "sealed by the TPM with the passphrase, with a copy for recovery", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, 116, "sealed by the TPM with the passphrase, with a copy for recovery", graphics.colors.dim)
 	case:
-		interface.draw_text(table, 12, 116, "no TPM seal: the passphrase alone protects the keys", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, 116, "no TPM seal: the passphrase alone protects the keys", graphics.colors.dim)
 	}
-	interface.draw_text(table, 12, HEIGHT - 26, hint, graphics.COLOR_DIM)
+	interface.draw_text(table, 12, HEIGHT - 26, hint, graphics.colors.dim)
 	interface.window_frame_end(&drawing, &frame, window)
 }
 

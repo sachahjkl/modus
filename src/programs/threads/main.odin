@@ -169,7 +169,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for &worker, index in workers {
 		// A square shows the background until its thread draws it.
 		square_pictures[index] = {pixels = raw_data(square_pixels[index][:]), width = SQUARE, height = SQUARE, stride = SQUARE}
-		graphics.clear(square_pictures[index], graphics.COLOR_BACKGROUND)
+		graphics.clear(square_pictures[index], graphics.colors.background)
 		worker.number = index
 		worker.canvas = square_pictures[index]
 		if !worker_start(index) {
@@ -200,7 +200,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		drawn := 0
 		frame := interface.window_frame_begin(&drawing, &window)
 		table := frame.table
-		interface.draw_text(table, MARGIN, 8, "One program. Each square is one thread.", graphics.COLOR_TEXT)
+		interface.draw_text(table, MARGIN, 8, "One program. Each square is one thread.", graphics.colors.text)
 		for &worker, index in workers {
 			x := MARGIN + (index % 2) * (SQUARE + MARGIN)
 			y := HEADER + MARGIN + (index / 2) * (SQUARE + LABEL + MARGIN)
@@ -209,11 +209,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			frames := intrinsics.volatile_load(&worker.frames)
 			interface.draw_picture(table, x, y, square_pictures[index], u32(frames))
 			y += SQUARE
-			after := interface.draw_text(table, x, y + 3, "thread ", graphics.COLOR_TEXT)
-			after = interface.draw_unsigned(table, after, y + 3, u64(index + 1), graphics.COLOR_TEXT)
+			after := interface.draw_text(table, x, y + 3, "thread ", graphics.colors.text)
+			after = interface.draw_unsigned(table, after, y + 3, u64(index + 1), graphics.colors.text)
 			if worker.runs {
-				after = interface.draw_text(table, after, y + 3, "  frame ", graphics.COLOR_DIM)
-				interface.draw_unsigned(table, after, y + 3, frames, graphics.COLOR_DIM)
+				after = interface.draw_text(table, after, y + 3, "  frame ", graphics.colors.dim)
+				interface.draw_unsigned(table, after, y + 3, frames, graphics.colors.dim)
 			} else {
 				interface.draw_text(table, after, y + 3, "  stopped", COLOR_STOPPED)
 			}

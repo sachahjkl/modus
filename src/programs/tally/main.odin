@@ -151,12 +151,12 @@ draw :: proc "contextless" (window: ^display.Window, service: ^system.Service) {
 }
 
 draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^system.Service) {
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	buffer: [24]u8
-	x := interface.draw_text(table, 12, 10, "count ", graphics.COLOR_DIM)
+	x := interface.draw_text(table, 12, 10, "count ", graphics.colors.dim)
 	x = interface.draw_text(table, x, 10, system.format(buffer[:], count), COLOR_COUNT)
-	x = interface.draw_text(table, x + 24, 10, "adds ", graphics.COLOR_DIM)
-	interface.draw_text(table, x, 10, system.format(buffer[:], calls), graphics.COLOR_TEXT)
+	x = interface.draw_text(table, x + 24, 10, "adds ", graphics.colors.dim)
+	interface.draw_text(table, x, 10, system.format(buffer[:], calls), graphics.colors.text)
 	interface.draw_rectangle(table, 12, 32, WIDTH - 24, 1, 0x30363C)
 	// The notes, the last one first.
 	for row in 0 ..< min(calls, NOTE_CAPACITY) {
@@ -167,14 +167,14 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^syst
 			interface.draw_text(table, 12, y, "+", COLOR_PLUS)
 		}
 		interface.draw_text(table, item.amount >= 0 ? 20 : 12, y, amount, item.amount >= 0 ? COLOR_PLUS : COLOR_MINUS)
-		interface.draw_text(table, 92, y, string(item.text[:item.count]), row == 0 ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
+		interface.draw_text(table, 92, y, string(item.text[:item.count]), row == 0 ? graphics.colors.text : graphics.colors.dim)
 	}
 	interface.draw_rectangle(table, 12, HEIGHT - 30, WIDTH - 24, 1, 0x30363C)
-	x = interface.draw_text(table, 12, HEIGHT - 22, "space: add 1", graphics.COLOR_DIM)
-	x = interface.draw_text(table, x + 24, HEIGHT - 22, "callers ", graphics.COLOR_DIM)
-	x = interface.draw_text(table, x, HEIGHT - 22, system.format(buffer[:], u64(service.connected)), graphics.COLOR_TEXT)
-	x = interface.draw_text(table, x + 16, HEIGHT - 22, "calls ", graphics.COLOR_DIM)
-	interface.draw_text(table, x, HEIGHT - 22, system.format(buffer[:], service.calls), graphics.COLOR_TEXT)
+	x = interface.draw_text(table, 12, HEIGHT - 22, "space: add 1", graphics.colors.dim)
+	x = interface.draw_text(table, x + 24, HEIGHT - 22, "callers ", graphics.colors.dim)
+	x = interface.draw_text(table, x, HEIGHT - 22, system.format(buffer[:], u64(service.connected)), graphics.colors.text)
+	x = interface.draw_text(table, x + 16, HEIGHT - 22, "calls ", graphics.colors.dim)
+	interface.draw_text(table, x, HEIGHT - 22, system.format(buffer[:], service.calls), graphics.colors.text)
 }
 
 // The entry of tally: it runs only when tally is a program (`start` or

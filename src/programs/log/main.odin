@@ -234,7 +234,7 @@ joined_text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, join
 				continue
 			}
 			left = graphics.text(canvas, left, line_y, text[at:start], plain)
-			left = graphics.text(canvas, left, line_y, text[start:end], graphics.value_kind_color(run.kind, false, plain))
+			left = graphics.text(canvas, left, line_y, text[start:end], graphics.value_kind_color(run.kind, graphics.appearance, plain))
 			at = end
 		}
 		graphics.text(canvas, left, line_y, text[at:line_end], plain)
@@ -269,13 +269,13 @@ take :: proc "contextless" (record: ^system.Log_Record) {
 // value kinds, and the last records. A text drops the start that repeats
 // its program and its channel (`repeated_start`).
 draw :: proc "contextless" (canvas: graphics.Canvas) {
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.colors.background)
 	graphics.fill(canvas, MARGIN, MARGIN - 4, WIDTH - 2 * MARGIN, 2, COLOR_ACCENT)
 	x := graphics.text(canvas, MARGIN, MARGIN, "the log  ", COLOR_ACCENT)
-	x = graphics.unsigned(canvas, x, MARGIN, row_count, graphics.COLOR_TEXT)
-	x = graphics.text(canvas, x, MARGIN, " records read, ", graphics.COLOR_DIM)
-	x = graphics.unsigned(canvas, x, MARGIN, lost, lost == 0 ? graphics.COLOR_TEXT : level_colors[.Error])
-	x = graphics.text(canvas, x, MARGIN, " lost    ", graphics.COLOR_DIM)
+	x = graphics.unsigned(canvas, x, MARGIN, row_count, graphics.colors.text)
+	x = graphics.text(canvas, x, MARGIN, " records read, ", graphics.colors.dim)
+	x = graphics.unsigned(canvas, x, MARGIN, lost, lost == 0 ? graphics.colors.text : level_colors[.Error])
+	x = graphics.text(canvas, x, MARGIN, " lost    ", graphics.colors.dim)
 	for count, level in level_counts {
 		names := [system.Log_Level]string {
 			.Info    = "info ",
@@ -284,12 +284,12 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 			.Error   = "error ",
 		}
 		graphics.fill(canvas, x, MARGIN + 4, 8, 8, level_colors[level])
-		x = graphics.text(canvas, x + 12, MARGIN, names[level], graphics.COLOR_DIM)
-		x = graphics.unsigned(canvas, x, MARGIN, count, graphics.COLOR_TEXT) + 16
+		x = graphics.text(canvas, x + 12, MARGIN, names[level], graphics.colors.dim)
+		x = graphics.unsigned(canvas, x, MARGIN, count, graphics.colors.text) + 16
 	}
 
 	// The channels, with the count of records of each one.
-	x = graphics.text(canvas, MARGIN, MARGIN + LINE, "channels ", graphics.COLOR_DIM)
+	x = graphics.text(canvas, MARGIN, MARGIN + LINE, "channels ", graphics.colors.dim)
 	y := MARGIN + LINE
 	for &channel in channels[:channel_count] {
 		name := system.name_of(channel.name[:])
@@ -302,18 +302,18 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 			y += LINE
 		}
 		graphics.fill(canvas, x - 4, y, width - 8, LINE, COLOR_PANEL)
-		after := graphics.text(canvas, x, y, name, graphics.COLOR_TEXT)
+		after := graphics.text(canvas, x, y, name, graphics.colors.text)
 		graphics.unsigned(canvas, after + 8, y, channel.count, COLOR_ACCENT)
 		x += width
 	}
 
 	top := MARGIN + TOP_LINES * LINE
-	graphics.text(canvas, MARGIN, top - LINE, "time (s)", graphics.COLOR_DIM)
-	graphics.text(canvas, MARGIN + COLUMN_PROGRAM, top - LINE, "program", graphics.COLOR_DIM)
-	graphics.text(canvas, MARGIN + COLUMN_CHANNEL, top - LINE, "channel", graphics.COLOR_DIM)
-	x = graphics.text(canvas, MARGIN + COLUMN_TEXT, top - LINE, "text   ", graphics.COLOR_DIM)
+	graphics.text(canvas, MARGIN, top - LINE, "time (s)", graphics.colors.dim)
+	graphics.text(canvas, MARGIN + COLUMN_PROGRAM, top - LINE, "program", graphics.colors.dim)
+	graphics.text(canvas, MARGIN + COLUMN_CHANNEL, top - LINE, "channel", graphics.colors.dim)
+	x = graphics.text(canvas, MARGIN + COLUMN_TEXT, top - LINE, "text   ", graphics.colors.dim)
 	for kind, index in legend_kinds {
-		x = graphics.text(canvas, x, top - LINE, legend_names[index], graphics.value_kind_color(kind, false)) + 16
+		x = graphics.text(canvas, x, top - LINE, legend_names[index], graphics.value_kind_color(kind, graphics.appearance)) + 16
 	}
 	// The texts of the records that the window holds: a record whose text
 	// continues is one text with the records after it.
@@ -348,13 +348,13 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		}
 		graphics.fill(canvas, MARGIN - 4, y, 3, height, level_colors[record.level])
 		milliseconds := record.time / 1000
-		x = graphics.unsigned(canvas, MARGIN + 4, y, milliseconds / 1000, graphics.COLOR_DIM, 4)
-		x = graphics.text(canvas, x, y, ".", graphics.COLOR_DIM)
-		graphics.unsigned(canvas, x, y, milliseconds % 1000, graphics.COLOR_DIM, 3)
-		lines_draw(canvas, MARGIN + COLUMN_PROGRAM, y, NAME_ROOM, system.name_of(record.name[:]), record.program == 0 ? graphics.COLOR_TEXT : program_colors[record.program % len(program_colors)])
-		lines_draw(canvas, MARGIN + COLUMN_CHANNEL, y, CHANNEL_ROOM, system.name_of(record.channel[:]), graphics.COLOR_DIM)
+		x = graphics.unsigned(canvas, MARGIN + 4, y, milliseconds / 1000, graphics.colors.dim, 4)
+		x = graphics.text(canvas, x, y, ".", graphics.colors.dim)
+		graphics.unsigned(canvas, x, y, milliseconds % 1000, graphics.colors.dim, 3)
+		lines_draw(canvas, MARGIN + COLUMN_PROGRAM, y, NAME_ROOM, system.name_of(record.name[:]), record.program == 0 ? graphics.colors.text : program_colors[record.program % len(program_colors)])
+		lines_draw(canvas, MARGIN + COLUMN_CHANNEL, y, CHANNEL_ROOM, system.name_of(record.channel[:]), graphics.colors.dim)
 		join(joined, group)
-		joined_text_draw(canvas, MARGIN + COLUMN_TEXT, y, joined, record.level == .Error ? level_colors[.Error] : graphics.COLOR_TEXT)
+		joined_text_draw(canvas, MARGIN + COLUMN_TEXT, y, joined, record.level == .Error ? level_colors[.Error] : graphics.colors.text)
 		y += height
 	}
 }

@@ -23,11 +23,11 @@ table_of :: proc(memory: ^Tables) -> Draw_Table {
 build_window :: proc(table: ^Draw_Table, state: ^Interface_State, input: ^Input, number: u64, moved: bool) {
 	frame := frame_begin(table, state, input)
 	background(&frame, {0, 0, 320, 200})
-	content := card(&frame, {8, 8, 304, 184}, "CARD", "a caption", graphics.COLOR_KERNEL, "3")
+	content := card(&frame, {8, 8, 304, 184}, "CARD", "a caption", graphics.colors.kernel, "3")
 	column := column_of(content)
 	builder: Text_Builder
 	label_value_line(&frame, column_take(&column, TABLE_LINE), "a number", number_text(&builder, number))
-	bar(&frame, column_take(&column, 8), number, 100, graphics.COLOR_PROGRAM)
+	bar(&frame, column_take(&column, 8), number, 100, graphics.colors.program)
 	line := column_take(&column, TABLE_LINE)
 	if moved {
 		line.x += 8
@@ -174,7 +174,7 @@ draw_text_wrapped_places_each_line_under_the_line_before :: proc(t: ^testing.T) 
 	memory: Tables
 	table := table_of(&memory)
 	TEXT :: "fault::three + 0x4 in fault (src/programs/fault/main.odin:15)"
-	count := draw_text_wrapped(&table, 40, 100, 24 * 8, TEXT, graphics.COLOR_TEXT)
+	count := draw_text_wrapped(&table, 40, 100, 24 * 8, TEXT, graphics.colors.text)
 	testing.expect_value(t, count, text_wrapped_line_count(&table, {}, TEXT, 24 * 8))
 	testing.expect_value(t, count, 3)
 	testing.expect_value(t, table.record_count, 3)
@@ -186,7 +186,7 @@ draw_text_wrapped_places_each_line_under_the_line_before :: proc(t: ^testing.T) 
 	}
 	// At scale 2 a character is 16 pixels wide and a line 32 pixels high.
 	table.record_count, table.text_count = 0, 0
-	count = draw_text_wrapped(&table, 0, 0, 10 * 16, "one two three four", graphics.COLOR_TEXT, FONT_MEDIUM)
+	count = draw_text_wrapped(&table, 0, 0, 10 * 16, "one two three four", graphics.colors.text, FONT_MEDIUM)
 	testing.expect_value(t, count, 2)
 	testing.expect_value(t, int(table.records[1].y), 32)
 }
@@ -236,7 +236,7 @@ label_value_lines_takes_the_lines_of_its_longest_text :: proc(t: ^testing.T) {
 	// A row of a table: one line has the height of a line of a table, and
 	// its text is in the middle of that height.
 	before := table.record_count
-	count, drawn = label_value_lines(&frame, &column, "name", "value", 96, graphics.COLOR_TEXT, TABLE_LINE)
+	count, drawn = label_value_lines(&frame, &column, "name", "value", 96, graphics.colors.text, TABLE_LINE)
 	testing.expect_value(t, count, 1)
 	testing.expect_value(t, column.used, 4 * LINE + TABLE_LINE)
 	testing.expect_value(t, int(table.records[before].y), 8 + 4 * LINE + (TABLE_LINE - LINE) / 2)
@@ -269,7 +269,7 @@ case_lines_has_a_band_as_high_as_its_answer :: proc(t: ^testing.T) {
 	column := column_of({16, 0, 400, 200})
 	// The answer has the box from 200 to 400: 25 characters.
 	ANSWER :: "refused: the argument address, 10.0.2.2 port 9, is not the remote of the grant"
-	count, drawn := case_lines(&frame, &column, 0, "UDP to 10.0.2.2 port 9", ANSWER, 200, graphics.COLOR_DIM, graphics.COLOR_PROGRAM)
+	count, drawn := case_lines(&frame, &column, 0, "UDP to 10.0.2.2 port 9", ANSWER, 200, graphics.colors.dim, graphics.colors.program)
 	testing.expect(t, drawn)
 	testing.expect_value(t, count, text_wrapped_line_count(&table, {}, ANSWER, 200))
 	testing.expect(t, count >= 4)
@@ -297,7 +297,7 @@ case_lines_has_a_band_as_high_as_its_answer :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(joined[:length]), ANSWER)
 	// The case after it has no band, and starts under the band.
 	before := table.record_count
-	case_lines(&frame, &column, 1, "ARP", "answered", 200, graphics.COLOR_DIM, graphics.COLOR_PROGRAM)
+	case_lines(&frame, &column, 1, "ARP", "answered", 200, graphics.colors.dim, graphics.colors.program)
 	testing.expect_value(t, table.records[before].kind, Draw_Kind.Text)
 	testing.expect_value(t, int(table.records[before].y), int(band.height) + (TABLE_LINE - LINE) / 2)
 }
@@ -348,11 +348,11 @@ one_number_damages_its_place :: proc(t: ^testing.T) {
 text_at_another_place_is_equal :: proc(t: ^testing.T) {
 	first, second: Tables
 	before, now := table_of(&first), table_of(&second)
-	draw_text(&before, 0, 0, "same", graphics.COLOR_TEXT)
-	draw_text(&now, 0, 30, "other", graphics.COLOR_TEXT)
+	draw_text(&before, 0, 0, "same", graphics.colors.text)
+	draw_text(&now, 0, 30, "other", graphics.colors.text)
 	draw_table_clear(&now)
 	now.text_count = 7 // The text of the run starts at another place.
-	draw_text(&now, 0, 0, "same", graphics.COLOR_TEXT)
+	draw_text(&now, 0, 0, "same", graphics.colors.text)
 	damage: Damage
 	damage_by_difference(&before, &now, &damage)
 	testing.expect_value(t, damage.count, 0)
@@ -600,43 +600,43 @@ damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
 		build: Case_Builder,
 	} {
 		{"a clip that changes", proc(table: ^Draw_Table, variant: int) {
-				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
 				draw_clip(table, 10, 10, variant == 0 ? 100 : 60, 50)
-				draw_rectangle(table, 0, 0, 200, 100, graphics.COLOR_KERNEL)
+				draw_rectangle(table, 0, 0, 200, 100, graphics.colors.kernel)
 				draw_clip(table, 0, 0, 0, 0)
-				draw_rectangle(table, 150, 150, 20, 20, graphics.COLOR_PROGRAM)
+				draw_rectangle(table, 150, 150, 20, 20, graphics.colors.program)
 			}},
 		{"horizontal gradients", proc(table: ^Draw_Table, variant: int) {
-				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
-				draw_horizontal_gradient(table, 5, 5, 300, 24, graphics.COLOR_TITLE, variant == 0 ? graphics.COLOR_TITLE_END : graphics.COLOR_FAILED)
-				draw_horizontal_gradient(table, -40, 60, 700, 3, graphics.COLOR_TEXT, graphics.COLOR_DIM)
+				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
+				draw_horizontal_gradient(table, 5, 5, 300, 24, graphics.colors.title, variant == 0 ? graphics.colors.title_end : graphics.colors.failed)
+				draw_horizontal_gradient(table, -40, 60, 700, 3, graphics.colors.text, graphics.colors.dim)
 			}},
 		{"text at the scales 1, 2 and 3", proc(table: ^Draw_Table, variant: int) {
-				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
-				draw_text(table, 4, 4, variant == 0 ? "one" : "two", graphics.COLOR_TEXT)
-				draw_text(table, 4, 30, variant == 0 ? "12" : "13", graphics.COLOR_TEXT, FONT_MEDIUM)
-				draw_text(table, 4, 70, variant == 0 ? "45" : "46", graphics.COLOR_TEXT, FONT_LARGE)
+				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
+				draw_text(table, 4, 4, variant == 0 ? "one" : "two", graphics.colors.text)
+				draw_text(table, 4, 30, variant == 0 ? "12" : "13", graphics.colors.text, FONT_MEDIUM)
+				draw_text(table, 4, 70, variant == 0 ? "45" : "46", graphics.colors.text, FONT_LARGE)
 			}},
 		{"records outside the surface", proc(table: ^Draw_Table, variant: int) {
-				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
-				draw_rectangle(table, -50 + variant * 7, -20, 80, 60, graphics.COLOR_MEMORY)
-				draw_rectangle(table, 300, 190 - variant * 3, 100, 100, graphics.COLOR_MACHINE)
-				draw_text(table, -12 + variant, 190, "edge", graphics.COLOR_TEXT)
+				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
+				draw_rectangle(table, -50 + variant * 7, -20, 80, 60, graphics.colors.memory)
+				draw_rectangle(table, 300, 190 - variant * 3, 100, 100, graphics.colors.machine)
+				draw_text(table, -12 + variant, 190, "edge", graphics.colors.text)
 				draw_point_grid(table, -30, -30, 400, 300)
 			}},
 		{"a record of one line", proc(table: ^Draw_Table, variant: int) {
-				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
-				draw_rectangle(table, 10, 100 + variant, 300, 1, graphics.COLOR_TEXT)
-				draw_vertical_gradient(table, 10, 120, 300, 1, graphics.COLOR_KERNEL, graphics.COLOR_FAILED)
+				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
+				draw_rectangle(table, 10, 100 + variant, 300, 1, graphics.colors.text)
+				draw_vertical_gradient(table, 10, 120, 300, 1, graphics.colors.kernel, graphics.colors.failed)
 			}},
 		{"more than 8 rectangles of damage", proc(table: ^Draw_Table, variant: int) {
-				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
 				for index in 0 ..< 12 {
-					draw_rectangle(table, (index % 4) * 80 + 4, (index / 4) * 64 + 4, 10, 10, variant == 0 ? graphics.COLOR_KERNEL : graphics.Color(graphics.COLOR_PROGRAM + u32(index)))
+					draw_rectangle(table, (index % 4) * 80 + 4, (index / 4) * 64 + 4, 10, 10, variant == 0 ? graphics.colors.kernel : graphics.Color(graphics.colors.program + u32(index)))
 				}
 			}},
 		{"a table that is full", proc(table: ^Draw_Table, variant: int) {
-				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+				draw_rectangle(table, 0, 0, 320, 200, graphics.colors.background)
 				for index in 0 ..< 400 {
 					draw_rectangle(table, index % 300, (index * 7) % 190, 4, 4, graphics.Color(index * 977 + variant))
 				}
@@ -771,18 +771,18 @@ coordinates_are_cut_to_i32 :: proc(t: ^testing.T) {
 a_gone_record_leaves_no_pixel :: proc(t: ^testing.T) {
 	first, second: Tables
 	before, now := table_of(&first), table_of(&second)
-	draw_rectangle(&before, 0, 0, 10, 10, graphics.COLOR_BACKGROUND)
-	draw_rectangle(&before, 50, 50, 20, 20, graphics.COLOR_FAILED)
-	draw_rectangle(&now, 0, 0, 10, 10, graphics.COLOR_BACKGROUND)
+	draw_rectangle(&before, 0, 0, 10, 10, graphics.colors.background)
+	draw_rectangle(&before, 50, 50, 20, 20, graphics.colors.failed)
+	draw_rectangle(&now, 0, 0, 10, 10, graphics.colors.background)
 	pixels := make([]graphics.Color, 320 * 200)
 	defer delete(pixels)
 	canvas := graphics.Canvas{pixels = raw_data(pixels), width = 320, height = 200, stride = 320}
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.colors.background)
 	execute(&before, canvas)
 	damage: Damage
 	damage_by_difference(&before, &now, &damage)
 	draw_damage_on_surface(&now, canvas, damage.rectangles[:damage.count])
-	testing.expect_value(t, pixels[60 * 320 + 60], graphics.COLOR_BACKGROUND)
+	testing.expect_value(t, pixels[60 * 320 + 60], graphics.colors.background)
 }
 
 // A picture record: the difference sees a new generation, and the frame in
@@ -798,10 +798,10 @@ picture_and_folded_gap :: proc(t: ^testing.T) {
 	picture := graphics.Canvas{pixels = raw_data(cells[:]), width = 16, height = 8, stride = 16}
 	memories := [][]graphics.Color{cells[:]}
 	before.picture_memories, now.picture_memories = memories, memories
-	draw_rectangle(&before, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+	draw_rectangle(&before, 0, 0, 320, 200, graphics.colors.background)
 	draw_picture(&before, 40, 40, picture, 1)
 	draw_folded_gap(&before, 100, 100, 40, 24)
-	draw_rectangle(&now, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+	draw_rectangle(&now, 0, 0, 320, 200, graphics.colors.background)
 	draw_picture(&now, 40, 40, picture, 2)
 	draw_folded_gap(&now, 100, 100, 40, 24)
 	damage: Damage
@@ -883,7 +883,7 @@ card_caption_stays_inside :: proc(t: ^testing.T) {
 	state: Interface_State
 	input: Input
 	frame := frame_begin(&table, &state, &input)
-	card(&frame, {8, 8, 200, 100}, "SLOTS", "Program_Report and a long caption", graphics.COLOR_PROGRAM, "34")
+	card(&frame, {8, 8, 200, 100}, "SLOTS", "Program_Report and a long caption", graphics.colors.program, "34")
 	for record in table.records[:table.record_count] {
 		if record.kind == .Text {
 			testing.expectf(t, int(record.x + record.width) <= 8 + 200 - 16 + 1, "a text ends at %d, past the border", record.x + record.width)
@@ -1166,7 +1166,7 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 		}
 
 		// The reference: the frame drawn whole.
-		graphics.clear(canvas_of(&whole), graphics.COLOR_BACKGROUND)
+		graphics.clear(canvas_of(&whole), graphics.colors.background)
 		execute(&now, canvas_of(&whole))
 
 		// The frame as window_frame_end draws it.
@@ -1358,9 +1358,9 @@ line_damage_holds_each_changed_pixel :: proc(t: ^testing.T) {
 			now.records[0] = before.records[0]
 		}
 		before_pixels, now_pixels: [SIDE * SIDE]graphics.Color
-		graphics.clear(whole_canvas(&before_pixels), graphics.COLOR_BACKGROUND)
+		graphics.clear(whole_canvas(&before_pixels), graphics.colors.background)
 		execute(&before, whole_canvas(&before_pixels))
-		graphics.clear(whole_canvas(&now_pixels), graphics.COLOR_BACKGROUND)
+		graphics.clear(whole_canvas(&now_pixels), graphics.colors.background)
 		execute(&now, whole_canvas(&now_pixels))
 		damage: Damage
 		damage_by_difference(&before, &now, &damage)
@@ -1471,13 +1471,13 @@ screen_after_damage :: proc(before, now: ^Draw_Table) -> bool {
 	whole := make([]graphics.Color, 320 * 200)
 	defer delete(whole)
 	canvas := graphics.Canvas{pixels = raw_data(surface), width = 320, height = 200, stride = 320}
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.colors.background)
 	execute(before, canvas)
 	damage: Damage
 	damage_by_difference(before, now, &damage)
 	draw_damage_on_surface(now, canvas, damage.rectangles[:damage.count])
 	whole_canvas := graphics.Canvas{pixels = raw_data(whole), width = 320, height = 200, stride = 320}
-	graphics.clear(whole_canvas, graphics.COLOR_BACKGROUND)
+	graphics.clear(whole_canvas, graphics.colors.background)
 	execute(now, whole_canvas)
 	return string(transmute([]u8)surface) == string(transmute([]u8)whole)
 }
@@ -1581,7 +1581,7 @@ text_grid_in_rectangles_equals_whole :: proc(t: ^testing.T) {
 	defer delete(parts)
 	whole_canvas := graphics.Canvas{pixels = raw_data(whole), width = 320, height = 200, stride = 320}
 	parts_canvas := graphics.Canvas{pixels = raw_data(parts), width = 320, height = 200, stride = 320}
-	graphics.clear(whole_canvas, graphics.COLOR_BACKGROUND)
+	graphics.clear(whole_canvas, graphics.colors.background)
 	execute(&tables.now, whole_canvas)
 	graphics.clear(parts_canvas, 0x123456)
 	// Rectangles of 5 x 7 pixels, smaller than a cell, that cover the surface.
@@ -1664,10 +1664,10 @@ clip_that_changes_kind :: proc(t: ^testing.T) {
 	first, second: Tables
 	before, now := table_of(&first), table_of(&second)
 	draw_clip(&before, 10, 10, 60, 40)
-	draw_rectangle(&before, 0, 0, 200, 100, graphics.COLOR_KERNEL)
+	draw_rectangle(&before, 0, 0, 200, 100, graphics.colors.kernel)
 	draw_clip(&before, 0, 0, 0, 0)
-	draw_rectangle(&now, 10, 10, 60, 40, graphics.COLOR_PROGRAM)
-	draw_rectangle(&now, 0, 0, 200, 100, graphics.COLOR_KERNEL)
+	draw_rectangle(&now, 10, 10, 60, 40, graphics.colors.program)
+	draw_rectangle(&now, 0, 0, 200, 100, graphics.colors.kernel)
 	draw_clip(&now, 0, 0, 0, 0)
 	testing.expect(t, screen_after_damage(&before, &now), "a clip that becomes a rectangle")
 	testing.expect(t, screen_after_damage(&now, &before), "a rectangle that becomes a clip")
@@ -1675,10 +1675,10 @@ clip_that_changes_kind :: proc(t: ^testing.T) {
 	draw_table_clear(&now)
 	draw_clip(&before, 0, 0, 100, 100)
 	draw_clip(&before, 50, 50, 100, 100)
-	draw_rectangle(&before, 0, 0, 320, 200, graphics.COLOR_KERNEL)
+	draw_rectangle(&before, 0, 0, 320, 200, graphics.colors.kernel)
 	draw_clip(&now, 0, 0, 100, 100)
 	draw_clip(&now, 20, 20, 100, 100)
-	draw_rectangle(&now, 0, 0, 320, 200, graphics.COLOR_KERNEL)
+	draw_rectangle(&now, 0, 0, 320, 200, graphics.colors.kernel)
 	testing.expect(t, screen_after_damage(&before, &now), "the second of two clips changes")
 }
 
@@ -1856,7 +1856,7 @@ window_frame_end_shows_each_frame_whole :: proc(t: ^testing.T) {
 			testing.expect(t, drawing.now.full)
 			full_tables += 1
 		}
-		graphics.clear(canvas_of(&whole), graphics.COLOR_BACKGROUND)
+		graphics.clear(canvas_of(&whole), graphics.colors.background)
 		execute(&drawing.now, canvas_of(&whole))
 
 		if late {
@@ -1970,7 +1970,7 @@ kind_icon_is_its_cells_at_each_cell_size :: proc(t: ^testing.T) {
 	for icon in icons {
 		for cell_size in 1 ..= 3 {
 			draw_table_clear(&table)
-			draw_kind_icon(&table, LEFT, TOP, icon, cell_size, graphics.COLOR_PROGRAM)
+			draw_kind_icon(&table, LEFT, TOP, icon, cell_size, graphics.colors.program)
 			testing.expect(t, !table.full && table.record_count <= kind_icons.RECTANGLE_LIMIT)
 			pixels: [SIDE * SIDE]graphics.Color
 			execute(&table, {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
@@ -1978,7 +1978,7 @@ kind_icon_is_its_cells_at_each_cell_size :: proc(t: ^testing.T) {
 			for y in 0 ..< SIDE {
 				for x in 0 ..< SIDE {
 					set := x >= LEFT && y >= TOP && kind_icons.cell_is_set(icon, (x - LEFT) / cell_size, (y - TOP) / cell_size)
-					expected := set ? graphics.Color(graphics.COLOR_PROGRAM) : graphics.Color(0)
+					expected := set ? graphics.Color(graphics.colors.program) : graphics.Color(0)
 					wrong += pixels[y * SIDE + x] == expected ? 0 : 1
 				}
 			}
@@ -1987,8 +1987,8 @@ kind_icon_is_its_cells_at_each_cell_size :: proc(t: ^testing.T) {
 	}
 	// No icon and no cell size: no record.
 	draw_table_clear(&table)
-	draw_kind_icon(&table, 0, 0, nil, 1, graphics.COLOR_PROGRAM)
-	draw_kind_icon(&table, 0, 0, icons[0], 0, graphics.COLOR_PROGRAM)
+	draw_kind_icon(&table, 0, 0, nil, 1, graphics.colors.program)
+	draw_kind_icon(&table, 0, 0, icons[0], 0, graphics.colors.program)
 	testing.expect_value(t, table.record_count, 0)
 }
 
@@ -2006,9 +2006,9 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	module_icon := kind_icons.cells_of_value_kind(.Module)
 	rows := [?]List_Row {
 		{kind = .Heading, name = "windows"},
-		{name = "console", icon = window_icon, icon_color = graphics.COLOR_TITLE, right_text = "window"},
+		{name = "console", icon = window_icon, icon_color = graphics.colors.title, right_text = "window"},
 		// The bytes 0, 1 and 3 matched: two runs.
-		{name = "plasma", matched_places = 0b1011, icon = module_icon, icon_color = graphics.COLOR_PROGRAM, right_text = "program"},
+		{name = "plasma", matched_places = 0b1011, icon = module_icon, icon_color = graphics.colors.program, right_text = "program"},
 		{name = "paint", right_text = "program"},
 	}
 	icon_y :: proc(row: int) -> int {
@@ -2020,7 +2020,7 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	testing.expect_value(t, shown, 4)
 	testing.expect(t, has_text(&table, "windows") && has_text(&table, "console") && has_text(&table, "plasma") && has_text(&table, "paint"))
 	// The chosen row: one fill of its whole line, its hint and not its kind.
-	count, fill := rectangles_of_color(&table, graphics.COLOR_CHOSEN)
+	count, fill := rectangles_of_color(&table, graphics.colors.chosen)
 	testing.expect_value(t, count, 1)
 	testing.expect_value(t, fill.y, 2 * TABLE_LINE)
 	testing.expect_value(t, fill.width, 320)
@@ -2031,7 +2031,7 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	for record in table.records[:table.record_count] {
 		if is_text_kind(record.kind) && string(table.text[record.text_start:][:record.text_count]) == "program" {
 			words += 1
-			testing.expect_value(t, record.first_color, u32(graphics.COLOR_DIM))
+			testing.expect_value(t, record.first_color, u32(graphics.colors.dim))
 			testing.expect_value(t, int(record.x + record.width), 320 - LIST_ROW_RIGHT_MARGIN)
 		}
 	}
@@ -2041,13 +2041,13 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	// the name; the one of the chosen row is white, and no rectangle has
 	// its own color. A row with no icon draws none.
 	pixels: int
-	count, pixels = rectangles_in_box(&table, graphics.COLOR_TITLE, LIST_ROW_ICON_X, icon_y(1), LIST_ROW_ICON_SIZE, LIST_ROW_ICON_SIZE)
+	count, pixels = rectangles_in_box(&table, graphics.colors.title, LIST_ROW_ICON_X, icon_y(1), LIST_ROW_ICON_SIZE, LIST_ROW_ICON_SIZE)
 	testing.expect_value(t, pixels, set_cells_of(window_icon))
-	all_of_color, _ := rectangles_of_color(&table, graphics.COLOR_TITLE)
+	all_of_color, _ := rectangles_of_color(&table, graphics.colors.title)
 	testing.expect_value(t, all_of_color, count)
 	_, pixels = rectangles_in_box(&table, graphics.COLOR_WHITE, LIST_ROW_ICON_X, icon_y(2), LIST_ROW_ICON_SIZE, LIST_ROW_ICON_SIZE)
 	testing.expect_value(t, pixels, set_cells_of(module_icon))
-	count, _ = rectangles_of_color(&table, graphics.COLOR_PROGRAM)
+	count, _ = rectangles_of_color(&table, graphics.colors.program)
 	testing.expect_value(t, count, 0)
 	for record in table.records[:table.record_count] {
 		if record.kind == .Rectangle && int(record.y) >= 3 * TABLE_LINE {
@@ -2078,15 +2078,15 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	frame = frame_begin(&table, &state, &input)
 	list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = 1, total = len(rows)})
 	frame_end(&frame)
-	count, _ = rectangles_of_color(&table, graphics.COLOR_CHOSEN)
+	count, _ = rectangles_of_color(&table, graphics.colors.chosen)
 	testing.expect_value(t, count, 1) // The fill of the row.
-	count, _ = rectangles_of_color(&table, graphics.COLOR_TITLE)
+	count, _ = rectangles_of_color(&table, graphics.colors.title)
 	testing.expect_value(t, count, 0)
 	_, pixels = rectangles_in_box(&table, graphics.COLOR_WHITE, LIST_ROW_ICON_X, icon_y(1), LIST_ROW_ICON_SIZE, LIST_ROW_ICON_SIZE)
 	testing.expect_value(t, pixels, set_cells_of(window_icon))
 	// The row of the question: the same white icon on the red of the act.
 	frame = frame_begin(&table, &state, &input)
-	list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = 2, chosen_color = graphics.COLOR_STOP_PROGRAM, total = len(rows)})
+	list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = 2, chosen_color = graphics.colors.stop_program, total = len(rows)})
 	frame_end(&frame)
 	_, pixels = rectangles_in_box(&table, graphics.COLOR_WHITE, LIST_ROW_ICON_X, icon_y(2), LIST_ROW_ICON_SIZE, LIST_ROW_ICON_SIZE)
 	testing.expect_value(t, pixels, set_cells_of(module_icon))
@@ -2094,7 +2094,7 @@ list_of_rows_draws_icons_matches_and_the_choice :: proc(t: ^testing.T) {
 	frame = frame_begin(&table, &state, &input)
 	list_of_rows(&frame, {0, 0, 320, 96}, rows[:], {chosen = -1, total = len(rows)})
 	frame_end(&frame)
-	count, _ = rectangles_of_color(&table, graphics.COLOR_KERNEL)
+	count, _ = rectangles_of_color(&table, graphics.colors.kernel)
 	testing.expect_value(t, count, 2)
 }
 
@@ -2115,7 +2115,7 @@ list_of_rows_draws_the_rows_of_its_area :: proc(t: ^testing.T) {
 	frame_end(&frame)
 	testing.expect_value(t, shown, 3)
 	// The fill of the chosen row stops before the bar.
-	count, fill := rectangles_of_color(&table, graphics.COLOR_CHOSEN)
+	count, fill := rectangles_of_color(&table, graphics.colors.chosen)
 	testing.expect_value(t, count, 1)
 	testing.expect_value(t, int(fill.width), 320 - LIST_ROW_SCROLL_WIDTH)
 	// The scroll bar: its track over the height of the rows, and its thumb
@@ -2157,7 +2157,7 @@ text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
 	}
 	caret_of :: proc(table: ^Draw_Table) -> Draw_Record {
 		for record in table.records[:table.record_count] {
-			if record.kind == .Rectangle && record.first_color == u32(graphics.COLOR_TITLE) && record.height != 2 {
+			if record.kind == .Rectangle && record.first_color == u32(graphics.colors.title) && record.height != 2 {
 				return record
 			}
 		}
@@ -2165,8 +2165,8 @@ text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
 	}
 	build(&table, &state, &input, "", 0, 2)
 	// The field, then its line, from edge to edge.
-	testing.expect_value(t, table.records[0], Draw_Record{kind = .Rectangle, x = 32, y = 16, width = 320, height = 46, first_color = graphics.COLOR_TRACK})
-	testing.expect_value(t, table.records[1], Draw_Record{kind = .Rectangle, x = 32, y = 62, width = 320, height = 2, first_color = graphics.COLOR_TITLE})
+	testing.expect_value(t, table.records[0], Draw_Record{kind = .Rectangle, x = 32, y = 16, width = 320, height = 46, first_color = graphics.colors.track})
+	testing.expect_value(t, table.records[1], Draw_Record{kind = .Rectangle, x = 32, y = 62, width = 320, height = 2, first_color = graphics.colors.title})
 	testing.expect(t, has_text(&table, "type here"))
 	caret := caret_of(&table)
 	testing.expect_value(t, int(caret.x), 32 + TEXT_INPUT_LINE_MARGIN)
