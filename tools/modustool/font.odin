@@ -11,7 +11,8 @@ import "modus:contract/glyph_cache"
 // The result is in the repository, so that a build does not need the BDF file.
 // It holds the characters of a glyph cache, in the order of their character
 // index (glyph_cache.character_index): ASCII 32 to 126, then the Latin-1
-// Supplement.
+// Supplement, then the added characters. Spleen 8x16 2.1.0 draws the euro
+// sign; a character that the BDF file lacks stops the command.
 
 FONT_SOURCE_VARIABLE :: "FONT_SOURCE"
 FONT_OUTPUT :: SOURCE_FOLDER_SUPPORT + "/graphics/font.odin"

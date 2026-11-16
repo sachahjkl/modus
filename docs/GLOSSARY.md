@@ -4970,7 +4970,7 @@ Do not use: tofu, missing glyph, question mark (for this).
 
 A font is a set of glyphs of one design, with the measures that place them side by side.
 
-The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126 and the Latin-1 Supplement, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs once on the host and never in a program.
+The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126, the Latin-1 Supplement and the euro sign, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs once on the host and never in a program.
 
 The system has three fonts:
 
@@ -4990,7 +4990,7 @@ A glyph is the form of one character in one font.
 
 The character is the number (the byte 0x30 is the character `0`); the glyph is the drawing of it. One character can have several glyphs in one font: Paper Mono has a plain zero (glyph 294) and a slashed zero (glyph 304), and a font feature chooses between them. A glyph has an outline and an advance; in a glyph cache it is a box of words of coverage.
 
-The system has glyphs for the characters 32 to 126 and the Latin-1 Supplement (U+00A0 to U+00FF) only. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
+The system has glyphs for the characters 32 to 126, the Latin-1 Supplement (U+00A0 to U+00FF) and the euro sign U+20AC only. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
 
 The design: `docs/FONTS.md`, "5. The glyph cache".
 
@@ -5046,11 +5046,11 @@ Do not use: hinting (alone), autohint.
 
 ### Glyph cache
 
-A glyph cache is a file that holds the glyphs of one font already drawn, as words of coverage, for each character 32 to 126 and U+00A0 to U+00FF at each scale of the grid.
+A glyph cache is a file that holds the glyphs of one font already drawn, as words of coverage, for each character 32 to 126, each character U+00A0 to U+00FF and the euro sign at each scale of the grid.
 
 A glyph cache moves all the work of a font out of the programs. The modus tool builds it at the build (`vector_font.glyph_cache_build`) and puts it in the boot image as a resource. The root service checks its hash once at the start, and maps it read-only at a fixed range in each program with a surface, each terminal and the compositor. A program validates it once (`glyph_cache.validate`: about 7 µs), then each draw reads the words of a glyph with no other check. A glyph from the cache costs about 109 ns at scale 1 over a flat color on the host.
 
-The format is `src/library/contract/glyph_cache`, version 3: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. Each table keys a character by its character index. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
+The format is `src/library/contract/glyph_cache`, version 4: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. Each table keys a character by its character index. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
 
 The cache has a fixed capacity and holds every glyph that the grid can draw, so it never fills on demand and never evicts. It is not an atlas of a GPU and not a cache that a program fills: no program writes it, and its address and its size never come from another program.
 
@@ -5058,11 +5058,21 @@ The design: `docs/FONTS.md`, "5. The glyph cache", and "Who can write a cache".
 
 Do not use: atlas, texture cache, glyph bitmap.
 
+### Added character
+
+An added character is a character past U+00FF that each font of the system draws, named one by one in a list of the glyph cache contract.
+
+The fonts hold two ranges, ASCII 32 to 126 and the Latin-1 Supplement, and the added characters. Today the list holds the euro sign U+20AC alone, which AltGr with `e` types on the layout of France. The list is `glyph_cache.added_characters`, in the order of the code points. A character joins it only if each font of the system has a glyph for it: a range past U+00FF would hold thousands of characters that the fonts lack. Each change of the list is a new version of the glyph cache. An added character is not a character that a font draws with the glyph of another character: the build refuses a font that lacks one.
+
+The design: `src/md/data/text_encoding.md`.
+
+Do not use: extra character, extended range.
+
 ### Character index
 
-A character index is the number of a character in each table of a font of the system: 0 to 94 for the characters 32 to 126, then 95 to 190 for U+00A0 to U+00FF.
+A character index is the number of a character in each table of a font of the system: 0 to 94 for the characters 32 to 126, then 95 to 190 for U+00A0 to U+00FF, then 191 and up for the added characters.
 
-The fonts hold these two ranges and no other character, so 191 numbers name each character that a font draws, with no hole: the control characters 127 to 159 between the ranges have no number. A glyph cache keys its glyphs, its advances and its pairs by it, the Spleen data of `src/library/support/graphics` keys its glyphs by it, and a placed glyph of text shaping is one. `glyph_cache.character_index` gives the number of a code point, and `glyph_cache.character_of_index` the code point of a number. A code point outside both ranges has no character index: it draws the replacement glyph.
+The fonts hold these two ranges and the added characters, and no other character, so 192 numbers name each character that a font draws, with no hole: the control characters 127 to 159 between the ranges have no number, and the characters between U+00FF and an added character have none. A glyph cache keys its glyphs, its advances and its pairs by it, the Spleen data of `src/library/support/graphics` keys its glyphs by it, and a placed glyph of text shaping is one. `glyph_cache.character_index` gives the number of a code point, and `glyph_cache.character_of_index` the code point of a number. Another code point has no character index: it draws the replacement glyph.
 
 The design: `src/md/data/text_encoding.md`.
 
@@ -5121,7 +5131,7 @@ Do not use: compose key (for this), accent key, modifier (for this).
 
 AltGr is the right Alt key of the keyboard, which gives the third level of the layout of France: a third character of a key, after the character without Shift and the character with Shift.
 
-With the layout of France, AltGr with the keys of the row of the digits gives `#`, `{`, `[`, `|`, `\`, `^`, `@`, `]` and `}`, as an AZERTY keyboard prints them on the right side of the keys; with the key of `$` it gives `¤`. AltGr with the key of 2 or of 7 is a dead key: the tilde or the grave accent. Shift with AltGr gives the third level too. A key with no character on the third level, as a letter, gives none: AltGr with `e` gives no euro sign, because the fonts do not draw it. AltGr is the scan code 0x38 after the prefix 0xE0; the left Alt key and Control with Alt are not AltGr. With the layout of the United States, AltGr changes no character. The input service keeps the state of AltGr; the key record carries the character that the third level gives, and no modifier bit of AltGr.
+With the layout of France, AltGr with the keys of the row of the digits gives `#`, `{`, `[`, `|`, `\`, `^`, `@`, `]` and `}`, as an AZERTY keyboard prints them on the right side of the keys; with the key of `$` it gives `¤`, and with the key of `e` the euro sign €. AltGr with the key of 2 or of 7 is a dead key: the tilde or the grave accent. Shift with AltGr gives the third level too. A key with no character on the third level, as a letter other than `e`, gives none. AltGr is the scan code 0x38 after the prefix 0xE0; the left Alt key and Control with Alt are not AltGr. With the layout of the United States, AltGr changes no character. The input service keeps the state of AltGr; the key record carries the character that the third level gives, and no modifier bit of AltGr.
 
 The design: `src/md/features/keyboard_layout.md`.
 
@@ -5307,7 +5317,7 @@ Do not use: subpixel offset, bucket.
 
 The spacing is the two tables that text shaping reads for one font at one scale: the advances of the characters of a glyph cache and the pair adjustments, in 1/64 of a pixel.
 
-`text_shaping.spacing_of` takes them from a validated glyph cache: 191 advances by character index and the sorted pairs (`glyph_cache.Pair_Entry`). The caller then passes them to `shape_text` or `measure_texts` as tables. So the module of text shaping holds no font, and an isolated call receives the spacing in its call region like the text.
+`text_shaping.spacing_of` takes them from a validated glyph cache: 192 advances by character index and the sorted pairs (`glyph_cache.Pair_Entry`). The caller then passes them to `shape_text` or `measure_texts` as tables. So the module of text shaping holds no font, and an isolated call receives the spacing in its call region like the text.
 
 The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
