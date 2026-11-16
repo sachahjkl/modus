@@ -1,6 +1,7 @@
 package root
 
 import "modus:contract/block"
+import "modus:support/bochs_display"
 import "modus:contract/entropy_service"
 import "modus:contract/frame"
 import op "modus:contract/operation"
@@ -220,6 +221,66 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		system.log_in("devices", .Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(place.device), " of the bus ", u64(place.bus), ", behind a bridge")
 	}
 	return driver, ring_memory, .Ok
+}
+
+// The display registers of the standard VGA, mapped while the compositor
+// flips between two screen pages: a failure of the start shows the page 0
+// again, where this service draws the boot display
+// (src/md/infrastructure/whole_frame.md). nil: the compositor writes the
+// framebuffer of the firmware, and the display always shows the page 0.
+display_registers_address: rawptr
+display_screen_height: int
+
+// display_open finds the standard VGA of the machine and gives what the
+// compositor needs to flip between two screen pages: the memory of the two
+// pages, which starts with the framebuffer of the firmware, and the memory
+// of the registers of the VGA. It gives 0 and 0, with one line, when the
+// machine has no such device or when its mode holds no two pages: the
+// compositor then gets the framebuffer of the firmware.
+display_open :: proc "contextless" (framebuffer_address, width, height, pixels_per_line: u64) -> (pages_memory, registers: system.Handle) {
+	if framebuffer_address == 0 || configuration_open() != .Ok {
+		return 0, 0
+	}
+	place := pci.Place{device = bochs_display.PLACE_DEVICE}
+	identity := pci.read_32(place, 0)
+	if identity & 0xFFFF != bochs_display.VENDOR || identity >> 16 != bochs_display.DEVICE {
+		system.log_in("devices", .Info, "root: no standard VGA at the place ", u64(bochs_display.PLACE_DEVICE), " of the bus: the compositor writes the screen page that the display shows")
+		return 0, 0
+	}
+	bars := pci.bars(place)
+	video := bars[bochs_display.VIDEO_MEMORY_BAR]
+	registers_range := bars[bochs_display.REGISTERS_BAR]
+	page_bytes := pixels_per_line * height * size_of(u32)
+	if video.address != framebuffer_address || video.size < bochs_display.PAGE_COUNT * page_bytes || registers_range.size < bochs_display.DISPLAY_REGISTERS_OFFSET + size_of([bochs_display.Register]u16) {
+		system.log_in("devices", .Info, "root: the standard VGA does not hold the framebuffer of the firmware and two screen pages: the compositor writes the screen page that the display shows")
+		return 0, 0
+	}
+	status: system.Status
+	registers, _, status = device_handle(.Memory, registers_range.address, 1)
+	if status != .Ok {
+		return 0, 0
+	}
+	address, map_status := system.memory_map(registers, {.Write})
+	if map_status != .Ok {
+		system.close(registers)
+		return 0, 0
+	}
+	display_registers := rawptr(uintptr(address) + bochs_display.DISPLAY_REGISTERS_OFFSET)
+	if bochs_display.screen_pages(display_registers, width, height, pixels_per_line) < bochs_display.PAGE_COUNT {
+		system.log_in("devices", .Info, "root: the display registers of the standard VGA do not say the mode of the framebuffer of the firmware with two screen pages: the compositor writes the screen page that the display shows")
+		system.memory_unmap(address)
+		system.close(registers)
+		return 0, 0
+	}
+	pages_memory, _, status = device_handle(.Display_Memory, video.address, (bochs_display.PAGE_COUNT * page_bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+	if status != .Ok {
+		system.memory_unmap(address)
+		system.close(registers)
+		return 0, 0
+	}
+	display_registers_address = display_registers
+	display_screen_height = int(height)
+	return pages_memory, registers
 }
 
 // driver_end takes the device back from a block service that stopped: the

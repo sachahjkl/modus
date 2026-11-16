@@ -2957,6 +2957,8 @@ A device service drives its device by reads and writes of its registers. Device 
 
 The root service makes it with `Device_Create`, the kind `Memory`, a physical address (a multiple of 4096) and a count of pages. This needs the machine handle with the right **Devices**, which only the root service holds. The kernel refuses a range that meets memory that the firmware gave as free or as loaded, so device memory never reaches the memory of a program or of the kernel. The result is a memory handle with **Give**, **Read** and **Write**. The root service reads the base address registers of the device on the bus, makes one device memory object for each of them, and gives each to the device service in its context (the roles `GRANT_BAR + n` of `src/library/support/pci`). A mapping of it uses no cache, because a read of a register has an effect and must reach the device each time.
 
+The kind `Display_Memory` makes the same object over the video memory of a display, which holds its screen pages. Its mapping has the page attribute of the framebuffer of the firmware, not "no cache": a read of a pixel has no effect, and a write of each pixel to the device would make each frame slow. The kernel accepts it only for a range that holds the address of the framebuffer of the firmware, and gives it no requester for the IOMMU.
+
 Device memory is not the memory that a device reads and writes for data: that is ordinary memory made `Contiguous`, such as the data region or the memory of the queues. It pays nothing from a budget, because it is not memory.
 
 The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
@@ -4467,15 +4469,41 @@ It is a rule of the system for every window, and a program writes no code for it
 
 The compositor counts, for each window, the `Present` records that named the picture that it already read: `pictures_drawn_again` in a row of `compositor.windows()`. It is 0 for a program that keeps the rule. The rule does not stop a hostile program, which holds the right to write both pictures: such a program spoils its own window, and no other.
 
+The rule holds for the frames of the compositor too: on a display with two screen pages, the compositor writes the page that the display does not show, then a page flip shows the frame whole (`frames_on_the_shown_page` is 0 in the row of `compositor.screen()`).
+
 The design: `src/md/infrastructure/whole_frame.md`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: tear-free, double buffering, vertical synchronization.
+
+### Screen page
+
+A screen page is one whole screen in the video memory of the display: the display shows one screen page at a time.
+
+The standard VGA of the test machine has 16 MiB of video memory, and a screen of 1024 by 768 pixels takes 3 MiB, so it holds two screen pages. The page 0 is the framebuffer of the firmware. The compositor writes each frame into the page that the display does not show, then a page flip shows it. A screen page holds the frame of two frames before: the compositor keeps, for each page, the rectangles where it differs from its frame in memory, as the window layer does for the two pictures of a surface. On a display with no page flip, the compositor has one screen page, and writes the page that the display shows.
+
+A screen page is not a picture: a picture is in the memory of a surface of a program, and the compositor reads it.
+
+The design: `src/md/infrastructure/whole_frame.md`.
+
+Do not use: back buffer, front buffer, framebuffer (for the page 1).
+
+### Page flip
+
+A page flip is the one write of a display register that makes the display show another screen page.
+
+The compositor writes the first line of the page in the register `Offset_Y` of the display registers of Bochs, then reads it back: a value that differs says that the display refused the page, and the compositor goes back to one screen page with one line on the log. On the standard VGA of QEMU, the flip takes effect when the write returns, so the page that the display showed before is free at once. A real display takes the new page at its next vertical blank, which this form does not wait for. `compositor.screen()` counts the flips in `page_flips`.
+
+A page flip is not a `Present`: a `Present` names the picture of a surface that the compositor reads next; a page flip names the screen page that the display shows.
+
+The design: `src/md/infrastructure/whole_frame.md`.
+
+Do not use: buffer swap, vsync.
 
 ### Compositor
 
 The compositor is the service that owns the display: it combines the surfaces of the programs into the framebuffer and routes the input to the program that has the focus.
 
-The compositor is the one program that writes the screen. The root service gives it the framebuffer, a ring to the input service, and a ring to each program with a surface (`Client_Add`). It draws the background, the bar, each window (a title bar over the surface of its program, with a border), the two menus of the bar, the palette and the pointer. It draws again only the damage rectangles of a frame. It sends each key to the program in front, and each pointer event over a surface to the program of that surface, in the coordinates of the surface.
+The compositor is the one program that writes the screen. The root service gives it the framebuffer, or the two screen pages of the display with its display registers, a ring to the input service, and a ring to each program with a surface (`Client_Add`). It draws the background, the bar, each window (a title bar over the surface of its program, with a border), the two menus of the bar, the palette and the pointer. It draws again only the damage rectangles of a frame, and puts each frame on the screen by a page flip. It sends each key to the program in front, and each pointer event over a surface to the program of that surface, in the coordinates of the surface.
 
 In the first version, it is also the desktop shell: it starts a program from its menus or the palette by the command `Start` to the root service, and it stops a program when its window closes. It serves exports, such as `compositor.pointer()`, which the machine tests read through the remote service.
 
