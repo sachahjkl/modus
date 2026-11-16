@@ -2340,7 +2340,11 @@ scenario := [?]Step {
 	// replacements of the machine when it starts it.
 	{kind = .Launch, text = "imports"},
 	{kind = .Wait, text = "compositor: surface imports", any_order = true},
-	{kind = .Wait, text = "imports: ok, 12 cases"},
+	// A program cannot change the module record that its starter wrote:
+	// not remove it, not replace it, not unmap or map at its addresses. Its
+	// own load is a record of the writer program.
+	{kind = .Wait, text = "imports: the module record of the root service: 4 of 4 changes refused with Starter_Module, writer starter; calendar, loaded by this program: writer program"},
+	{kind = .Wait, text = "imports: ok, 13 cases"},
 	{kind = .Wait, text = "imports: a call through an import slot: "},
 	{kind = .Wait, text = "imports: the bind of agenda: "},
 	{kind = .Wait, text = "imports: two programs import calendar at two places: one copy of its code, "},

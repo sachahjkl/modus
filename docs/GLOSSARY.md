@@ -380,7 +380,7 @@ Do not use: backtrace, call stack (for this), unwind.
 
 ### Module record
 
-A module record is what the kernel keeps of one module in a program (`op.Module_Record`, 80 bytes): its base address, its size, its hash, and the hash that a replacement put it in place of.
+A module record is what the kernel keeps of one module in a program (`op.Module_Record`, 88 bytes): its base address, its size, its hash, the hash that a replacement put it in place of, and its module writer.
 
 The loader writes the record with `Program_Module` after it mapped the module. The kernel does not read the module: the record is what the loader asserts. The kernel uses it to name the module of a fault address and of each frame of a stack trace, and `Inspect` gives the records of a program. A program has at most 16 module records.
 
@@ -389,6 +389,20 @@ The module records of a program that runs are its identity: `manual.running()` a
 The design: `docs/MODULE_CONTRACT.md`, "Loading".
 
 Do not use: link map entry, loaded image list.
+
+### Module writer
+
+The module writer of a module record is the party that wrote it: the program itself (`program`), or a holder of its program handle with Control, its starter (`starter`).
+
+The kernel writes it at each `Program_Module` (`op.Module_Writer`), from the caller and the target: the value that the caller passes is not read. A program cannot replace or remove a record of the writer `starter`, and cannot map or unmap memory at its addresses: the kernel refuses with `No_Right` and the error kind `Starter_Module`. So a record of the writer `starter` names the code that the starter put there, and a record of the writer `program` is what the program says of itself. `inspect.modules()`, `manual.running()` and `program_modules()` show it in the field `writer`. A program never holds Control over itself: `Handle_Give` removes Control and Give from a program handle that goes to the program that it names, so a program cannot pass the authority of its starter to a child.
+
+Example: the root service starts `imports`, and the record of its module has the writer `starter`; `imports` loads `calendar` in its own memory, and that record has the writer `program`.
+
+It is not the `system.Writer` of a text, which writes bytes into a buffer.
+
+The design: `docs/MODULE_CONTRACT.md`, "The writer of a module record".
+
+Do not use: owner, author.
 
 ### Table
 

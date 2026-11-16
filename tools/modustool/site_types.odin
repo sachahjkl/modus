@@ -152,6 +152,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Operation", type_info_of(op.Operation)},
 		{"operation", "Strategy", type_info_of(op.Strategy)},
 		{"operation", "Module_Record", type_info_of(op.Module_Record)},
+		{"operation", "Module_Writer", type_info_of(op.Module_Writer)},
 		{"operation", "Stop_Report", type_info_of(op.Stop_Report)},
 		{"operation", "Stop_Frame", type_info_of(op.Stop_Frame)},
 		{"operation", "Module_Report", type_info_of(op.Module_Report)},

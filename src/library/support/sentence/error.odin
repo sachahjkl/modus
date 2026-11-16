@@ -416,6 +416,15 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, " with ")
 		write_part(writer, record.limit)
 		write_part(writer, " bytes, is a part of a mapping whose protection changes only whole (device memory, large pages), or of a thread area")
+	case .Starter_Module:
+		subject(writer, record, argument)
+		write_part(writer, ", ")
+		write_number(writer, u64(record.value))
+		write_part(writer, ", is in the module at ")
+		write_number(writer, u64(record.limit))
+		write_part(writer, " with ")
+		amount(writer, record.found, "bytes")
+		write_part(writer, ", which the starter of the program recorded: only a holder of the program handle changes it")
 	case .Refused:
 		write_part(writer, "refused with the status ")
 		write_part(writer, record.found)
