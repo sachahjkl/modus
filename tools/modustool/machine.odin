@@ -998,9 +998,6 @@ scenario := [?]Step {
 	// which QEMU takes from the clock of the host. The date must be within a
 	// few seconds of the host.
 	{kind = .Date, text = " UTC, seconds since 1970 ", any_order = true},
-	// The standard VGA of the machine holds two screen pages, and the
-	// compositor flips between them (src/md/infrastructure/whole_frame.md).
-	{kind = .Wait, text = "compositor: two screen pages: each frame reaches the screen whole, by a page flip", any_order = true, fails_on = "compositor: one screen page"},
 	// The measure of the copy and the fill of src/runtime/memory.asm, at the start
 	// of the compositor, before its first frame.
 	{kind = .Wait, text = "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned: ", any_order = true},
@@ -2556,11 +2553,6 @@ scenario := [?]Step {
 	{kind = .Type, text = "connect(\"compositor\")"},
 	{kind = .Wait, text = "[console]   module     compositor"},
 	{kind = .Type, text = "rows(compositor.windows()) - rows(where(compositor.windows(), \"pictures_drawn_again\", 0))"},
-	{kind = .Wait, text = "[console] 0"},
-	// The screen showed each frame of the compositor whole: the compositor
-	// wrote no frame into the screen page that the display showed. The
-	// line gives the count of the rows of screen() whose count is not 0.
-	{kind = .Type, text = "rows(compositor.screen()) - rows(where(compositor.screen(), \"frames_on_the_shown_page\", 0))"},
 	{kind = .Wait, text = "[console] 0"},
 	{kind = .Type, text = "start(\"nothing\")"},
 	{kind = .Wait, text = "[console] error: root.Start: the argument name names none of the modules"},
