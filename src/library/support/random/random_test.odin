@@ -234,3 +234,105 @@ a_key_asks_for_a_least_seed_strength :: proc(t: ^testing.T) {
 	testing.expect(t, !fill_for_a_key(&empty, key[:], .Weak, &error))
 	testing.expect_value(t, error.kind, i64(errors.Kind.Seed_Too_Weak))
 }
+
+// The bytes of an entropy device go into the key of the generator. A read
+// with no byte, a read of zeros or of one other value, and a read that
+// comes again count as contributing nothing: the key stays as it was, and
+// the report counts each one as refused.
+@(test)
+a_device_read_that_adds_nothing_leaves_the_key :: proc(t: ^testing.T) {
+	seed := seed_of(11)
+	generator: Generator
+	testing.expect(t, generator_seed(&generator, &seed, .Processor))
+	report := Entropy_Report{strength = .Processor, device_present = true}
+	mixing: Device_Mixing
+	key_before := generator.key
+
+	zeros: [32]u8
+	testing.expect_value(t, device_bytes_mix(&generator, &mixing, zeros[:], &report), Device_Read_Outcome.One_Value)
+	testing.expect(t, generator.key == key_before)
+	ones: [32]u8
+	for &byte in ones {
+		byte = 0xFF
+	}
+	testing.expect_value(t, device_bytes_mix(&generator, &mixing, ones[:], &report), Device_Read_Outcome.One_Value)
+	testing.expect_value(t, device_bytes_mix(&generator, &mixing, nil, &report), Device_Read_Outcome.Empty)
+	one_byte := [1]u8{0x5A}
+	testing.expect_value(t, device_bytes_mix(&generator, &mixing, one_byte[:], &report), Device_Read_Outcome.One_Value)
+	testing.expect(t, generator.key == key_before)
+	testing.expect_value(t, report.device_bytes, 0)
+	testing.expect_value(t, report.device_reads_refused, 4)
+
+	// A read with two values is mixed: the key changes, and the bytes count.
+	good: [32]u8
+	for &byte, index in good {
+		byte = u8(index * 37 + 3)
+	}
+	testing.expect_value(t, device_bytes_mix(&generator, &mixing, good[:], &report), Device_Read_Outcome.Mixed)
+	testing.expect(t, generator.key != key_before)
+	testing.expect_value(t, report.device_bytes, u32(len(good)))
+	// The same read again adds nothing.
+	key_after_good := generator.key
+	testing.expect_value(t, device_bytes_mix(&generator, &mixing, good[:], &report), Device_Read_Outcome.Repeated)
+	testing.expect(t, generator.key == key_after_good)
+	testing.expect_value(t, report.device_reads_refused, 5)
+	// Another good read is mixed: the key moves again.
+	good[0] ~= 1
+	testing.expect_value(t, device_bytes_mix(&generator, &mixing, good[:], &report), Device_Read_Outcome.Mixed)
+	testing.expect(t, generator.key != key_after_good)
+	testing.expect_value(t, report.device_bytes, u32(2 * len(good)))
+	// The device does not change what the system claims.
+	testing.expect_value(t, report.strength, Seed_Strength.Processor)
+	testing.expect_value(t, seed_strength(&generator), Seed_Strength.Processor)
+}
+
+// Two generators with one seed draw different bytes after one of them
+// mixed the bytes of a device: the stream depends on the device too.
+@(test)
+the_stream_depends_on_the_device_bytes :: proc(t: ^testing.T) {
+	first_seed, second_seed := seed_of(13), seed_of(13)
+	with_device, without_device: Generator
+	testing.expect(t, generator_seed(&with_device, &first_seed, .Entropy))
+	testing.expect(t, generator_seed(&without_device, &second_seed, .Entropy))
+	report: Entropy_Report
+	mixing: Device_Mixing
+	bytes: [32]u8
+	for &byte, index in bytes {
+		byte = u8(index + 1)
+	}
+	testing.expect_value(t, device_bytes_mix(&with_device, &mixing, bytes[:], &report), Device_Read_Outcome.Mixed)
+	first, second: [64]u8
+	fill(&with_device, first[:])
+	fill(&without_device, second[:])
+	testing.expect(t, first != second)
+}
+
+// The report goes to the program `randomness` through the values 0 to 7
+// of its context, the facts of the entropy device with it.
+@(test)
+the_report_goes_through_the_context_values :: proc(t: ^testing.T) {
+	sent := Entropy_Report {
+		rdseed_present       = true,
+		rdrand_present       = true,
+		rdseed_good          = PROCESSOR_VALUES,
+		rdseed_refused       = 2,
+		rdrand_good          = PROCESSOR_VALUES,
+		rdrand_refused       = 1,
+		jitter_samples       = JITTER_SAMPLES,
+		jitter_distinct      = 200,
+		device_present       = true,
+		device_bytes         = 64,
+		device_reads_refused = 3,
+		strength             = .Entropy,
+	}
+	values: [op.CONTEXT_VALUES]u64
+	report_values_write(&sent, &values)
+	received := report_values_read(&values)
+	testing.expect(t, received == sent)
+	// With no device, the window reads "absent".
+	sent.device_present, sent.device_bytes, sent.device_reads_refused = false, 0, 0
+	report_values_write(&sent, &values)
+	received = report_values_read(&values)
+	testing.expect(t, !received.device_present)
+	testing.expect_value(t, received.device_bytes, 0)
+}

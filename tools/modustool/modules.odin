@@ -162,6 +162,7 @@ module_builds := [?]Module_Build {
 	{name = "frame", source = PROGRAM_SOURCES + "frame", image = true},
 	{name = "iommu_device", source = PROGRAM_SOURCES + "iommu_device", image = true},
 	{name = "tpm", source = PROGRAM_SOURCES + "tpm", image = true},
+	{name = "entropy", source = PROGRAM_SOURCES + "entropy", image = true},
 	{name = "iommu", source = PROGRAM_SOURCES + "iommu", image = true},
 	{name = "network", source = PROGRAM_SOURCES + "network", image = true},
 	{name = "net", source = PROGRAM_SOURCES + "net", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},

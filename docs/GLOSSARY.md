@@ -5077,11 +5077,21 @@ Do not use: preference, option, configuration.
 
 A dead key is a key of a layout of the keyboard that gives no character itself, and puts its accent on the character of the next key.
 
-The layout of France has two: the key right of P gives the circumflex, and with Shift the diaeresis. `^` then `e` gives ê, and `¨` then `i` gives ï, because the words of French need â, ê, î, ô, û, ë, ï and ü and the keyboard has no other key for them. A space after a dead key gives the accent alone; a key with no accented form gives the accent, then its own character, as two key records; Shift and Control keep the accent waiting. The input service keeps the accent that waits, and the tables are in `src/library/support/keyboard_layout`.
+The layout of France has four: the key right of P gives the circumflex, and with Shift the diaeresis; with AltGr, the key of 2 gives the tilde and the key of 7 the grave accent. `^` then `e` gives ê, `¨` then `i` gives ï, and `` ` `` then Shift `a` gives À, because the words of French need â, ê, î, ô, û, ë, ï, ü and the capitals with a grave accent, and the keyboard has no other key for them. A space after a dead key gives the accent alone; a key with no accented form gives the accent, then its own character, as two key records; Shift, Control and AltGr keep the accent waiting. The input service keeps the accent that waits, and the tables are in `src/library/support/keyboard_layout`.
 
 The design: `src/md/features/keyboard_layout.md`.
 
 Do not use: compose key (for this), accent key, modifier (for this).
+
+### AltGr
+
+AltGr is the right Alt key of the keyboard, which gives the third level of the layout of France: a third character of a key, after the character without Shift and the character with Shift.
+
+With the layout of France, AltGr with the keys of the row of the digits gives `#`, `{`, `[`, `|`, `\`, `^`, `@`, `]` and `}`, as an AZERTY keyboard prints them on the right side of the keys; with the key of `$` it gives `¤`. AltGr with the key of 2 or of 7 is a dead key: the tilde or the grave accent. Shift with AltGr gives the third level too. A key with no character on the third level, as a letter, gives none: AltGr with `e` gives no euro sign, because the fonts do not draw it. AltGr is the scan code 0x38 after the prefix 0xE0; the left Alt key and Control with Alt are not AltGr. With the layout of the United States, AltGr changes no character. The input service keeps the state of AltGr; the key record carries the character that the third level gives, and no modifier bit of AltGr.
+
+The design: `src/md/features/keyboard_layout.md`.
+
+Do not use: Option, level-3 shift, compose key (for this).
 
 ### Settings page
 
@@ -5391,7 +5401,7 @@ The entropy report is the record of what the root service found when it gathered
 root: the random seed of the system, strength entropy (rdseed): rdseed present, N good values, N refused; rdrand present, N good, N refused; the cycle counter, N samples, N distinct low bytes
 ```
 
-It also gives the facts to the program `randomness` in its context values 0 to 7, which shows them in its window.
+It also gives the facts to the program `randomness` in its context values 0 to 7, which shows them in its window. With them go the facts of the entropy device: whether the machine has one, the bytes that the root service mixed in after the gathering, and the reads that it refused.
 
 The report says what the sources gave. It does not estimate the entropy of the bytes: the system does not test the output of `rdseed` or `rdrand` for quality.
 
@@ -5415,9 +5425,43 @@ Each program knows the strength of its seed: the starter writes it in the contex
 
 `modustool test random` runs a machine with no `rdrand` and no `rdseed`: its log and its window say "weak (the cycle counter only)" in the color of a failure.
 
+The entropy device does not change the strength: it adds bytes and no claim.
+
 The design: `docs/RANDOMNESS.md`, "3. The seed of the system, and what is claimed".
 
 Do not use: security level.
+
+### Entropy device
+
+The entropy device is the random device of virtio that the machine can have (`virtio-rng-pci` in QEMU): one more source of the seed of the system, never the only one.
+
+The root service looks for it at the place 19 of bus 0. When it is there, the root service starts the entropy service and mixes two reads of 32 bytes into its random generator with `random.device_bytes_mix`: the bytes go into the key with the bytes of the processor, and never replace them. A read with no byte, a read whose bytes all have one value, and a read equal to the read before add nothing: the key stays as it was, and the read counts as refused, as does a read that the entropy service answered with an error. These checks find a broken device; they do not protect against a hostile one. The mix does: the old key is always an input of the new one. The seed strength does not change. A machine with no entropy device starts with the sources of the processor, and the log says so.
+
+The design: `src/md/features/entropy_device.md`, and `docs/RANDOMNESS.md`, "3. The seed of the system, and what is claimed".
+
+Do not use: RNG device, hardware RNG, /dev/random.
+
+### Entropy service
+
+The entropy service is the program `entropy`: the device service of the entropy device, with the root service as its one client.
+
+It has the registers of the device, one message interrupt, the memory of its queue, the machine with the right Physical, a copy of the configuration of the device, and the entropy ring. The ring has one command, `Read`, of 1 to 48 bytes; its completion carries the bytes in its values, at most the count asked, whatever length the device says (`src/library/contract/entropy_service`). It answers one command at a time, and erases its buffer after each answer. It does not test the bytes: the root service refuses a read that adds nothing. Its log has `entropy: ok, a queue of <size>`.
+
+The design: `src/md/features/entropy_device.md`.
+
+Do not use: rng driver, entropy daemon.
+
+### Entropy ring
+
+The entropy ring is the ring between the entropy service and its one client, the root service: one command record is one read of the entropy device, and its completion record carries the bytes.
+
+It has the capacity of the smallest ring, 32 records (`RING_CAPACITY` of `src/library/contract/entropy_service`). The root service makes it and gives it to the service as the role 0 of its context. The one command is `Read`, with a count of 1 to 48 bytes. The completion carries the count that the device gave, at most the count asked, then the bytes in its six other values, 8 in each; so the ring needs no region. The status is `Ok`, `Bad_Command` or `Device_Error`; when it is not `Ok`, the values are an error record. The service answers one command at a time, in order.
+
+An entropy ring is not a queue of the device: the device has its own queue, which only the entropy service sees.
+
+The design: `src/md/features/entropy_device.md`.
+
+Do not use: random ring.
 
 ### Cryptography module
 
@@ -6032,7 +6076,7 @@ Do not use: slot, PCR (alone, for this register).
 
 The TPM service is the program `tpm`: the device service of the TPM of the machine, which seals 32 secret bytes to the values of PCR 7 and PCR 11 and unseals them only while those registers hold the same values.
 
-The root service starts it at boot, before `unlock`, only when the trust record says `Measured`. It gives it the page of the registers of the CRB interface of the TPM (`0xFED40000`), a ring and a region of one page; `unlock` gets the same ring and region with the start grant `Tpm`. The ring has two commands, `Seal` and `Unseal` (`src/library/contract/tpm_service`). The service builds each command of TPM 2.0 itself, so no client extends a register or clears the TPM. Each request makes the storage key from the owner hierarchy and flushes it after: the TPM keeps no object of the system.
+The root service starts it at boot, before `unlock`, only when the trust record says `Measured`. It gives it the page of the registers of the CRB interface of the TPM (`0xFED40000`), a ring and a region of one page; `unlock` gets the same ring and region with the start grant `Tpm`. The ring has two commands, `Seal` and `Unseal` (`src/library/contract/tpm_service`). The service builds each command of TPM 2.0 itself, so no client extends a register or clears the TPM. Each request makes the storage key from the owner hierarchy and flushes it after: the TPM keeps no object of the system. At its start it writes the count limits of the TPM on the log; before the first use of a passphrase, it sets the lockout authorization value when the TPM has an empty one.
 
 It is not a driver in the kernel, and the boot program does not use it: the boot program talks to the TPM through the firmware, before the kernel starts.
 
@@ -6068,13 +6112,25 @@ Do not use: backup key, reset key, PIN, recovery password.
 
 An authorization value is the secret that a sealed object needs beside its policy: the TPM compares it at each unseal, counts each wrong one, and refuses each try for a time after too many.
 
-The keys of a named principal use it. The value is keyed BLAKE2b of the key that Argon2id derives from the passphrase, so a reader of the bus of the TPM still runs Argon2id for each guess. The policy of the object is `TPM2_PolicyPCR` then `TPM2_PolicyPassword`, and its attribute `noDA` is clear. A wrong value answers `TPM_RC_AUTH_FAIL`, which the TPM counted; after too many (three on the test machines), each try answers `TPM_RC_LOCKOUT`, and the window of `unlock` asks for the recovery key. The TPM service sends `TPM2_Shutdown` after each use that is not a counted failure, so a stop of the machine after a right passphrase counts no failure. The count limits the rate of the tries only while the lockout hierarchy of the TPM has an authorization value that the attacker does not know; modus sets none yet. The machine key has none.
+The keys of a named principal use it. The value is keyed BLAKE2b of the key that Argon2id derives from the passphrase, so a reader of the bus of the TPM still runs Argon2id for each guess. The policy of the object is `TPM2_PolicyPCR` then `TPM2_PolicyPassword`, and its attribute `noDA` is clear. A wrong value answers `TPM_RC_AUTH_FAIL`, which the TPM counted; after too many (three on the test machines), each try answers `TPM_RC_LOCKOUT`, and the window of `unlock` asks for the recovery key. The TPM service sends `TPM2_Shutdown` after each use that is not a counted failure, so a stop of the machine after a right passphrase counts no failure. The count limits the rate of the tries only while the lockout hierarchy of the TPM has an authorization value that the attacker does not know: the lockout authorization value. The machine key has none.
 
 It is not the passphrase itself, and not a hash of it that is kept: nothing of it is on the disk.
 
 The design: `src/md/features/tpm_sealed_principal_keys.md`; `docs/PRINCIPALS.md`, "The keys sealed by the TPM".
 
 Do not use: PIN, password (for this), TPM password.
+
+### Lockout authorization value
+
+The lockout authorization value is the authorization value of the lockout hierarchy of the TPM: the one secret that resets the count of the wrong authorization values, changes its limits, or clears the TPM through that hierarchy.
+
+`TPM2_DictionaryAttackLockReset` and `TPM2_DictionaryAttackParameters` need it, and no PCR. A new or cleared TPM has an empty one, and then any system on the machine resets the count of the wrong passphrases of a named principal. Before the first seal or unseal with a passphrase in a run, the TPM service reads the bit `lockoutAuthSet`; when it is clear, the service sets 32 random bytes with `TPM2_HierarchyChangeAuth` and erases them. No program, file or store keeps the value: nothing in the system may reset the count. A value that is set already stays: the service cannot tell if an earlier start of this system set it or another system did. A clear of the TPM then needs the platform hierarchy, from the menu of the firmware. The TPM has one count for all the systems of the machine, so the first system that sets the value owns its reset for all.
+
+It is not the authorization value of a sealed object, and not a key of a principal. Nobody types it, and no window shows it.
+
+The design: `src/md/features/tpm_sealed_principal_keys.md`, "The lockout authorization value"; `docs/PRINCIPALS.md`, "The keys sealed by the TPM".
+
+Do not use: lockout password, lockout PIN.
 
 ### TPM secret
 
@@ -6119,6 +6175,68 @@ The pair is `resources/keys/test_firmware_signing_key.pem` and `.crt`; `modustoo
 The design: `docs/TRUSTED_BOOT.md`, "7. Secure Boot".
 
 Do not use: development certificate.
+
+### Key folder
+
+The key folder is the folder outside the repository that holds the keys of the publisher of the system: the signing key, the firmware signing key and its certificate, and the release signing key.
+
+`modustool key new <folder>` makes it, each private file readable by its owner only, in a folder that only its owner can open. `modustool key write <folder>` makes the same folder from the four secrets of the workflow of a release. `SYSTEM_SIGNING_KEY` names the signing key in it, and the tool finds the other keys beside it.
+
+The design: `docs/TRUSTED_BOOT.md`, "5. The signing key".
+
+Do not use: keyring, key store, vault.
+
+### Release signing key
+
+The release signing key is the Ed25519 key pair of the publisher of the system whose private key signs the checksum list of the files of a release.
+
+It answers one question: do these downloaded files come from the publisher of the system? It signs no system: the signing key does. No machine holds it, so a new release signing key changes no machine. Its seed is `release_signing_key` in the key folder; its public key is `resources/keys/release_signing_key.public`, and the site publishes it. A key text is 32 bytes in base64url with no padding, the form of the package `signing` of gui_toolkit. `modustool release image` refuses a release signing key whose public key is not the file of the repository.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: release key, download key, GPG key.
+
+### Checksum list
+
+The checksum list is the file `SHA256SUMS.txt` of a release: one line for each published file, its SHA-256 in 64 lowercase hexadecimal digits, two spaces and its name.
+
+It has the form that `sha256sum -c` reads. Its line names the compressed image, the file that a principal downloads. The release signature covers it, so the image needs no signature of its own. Example: `3f0c...e1  modus-0.93.0-x86_64.img.zst`.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: manifest, hash file, digest list.
+
+### Release signature
+
+The release signature is the Ed25519 signature, by the release signing key, of the release signature context and the checksum list: the file `SHA256SUMS.txt.sig`, in base64url with no padding.
+
+The release signature context is the bytes `modus release checksums 1` and an end of line. It binds the signature to this one use: a signature that the key makes for another message is never a release signature, and a signature of the checksum list alone does not verify. `modustool verify` checks it before it reads a line of the list; OpenSSL 3 checks it with no tool (`docs/INSTALL.md`, "2. Verify the files").
+
+It is not a description signature: that one signs a system description, with the signing key.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: detached signature (for this), checksum signature.
+
+### Release volume
+
+The release volume is the boot volume that a release publishes: the main boot image, the kernel of the tests, and the boot program signed with the firmware signing key, signed with the keys of the publisher of the system.
+
+Only `modustool release image` builds it, as `build/boot_volume_release.img`, after a whole build: it is not in the list of the volumes of the build, and no test boots it. Its form is the form of the volume of the machine of Secure Boot of the tests, with other keys.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: production volume, installer.
+
+### Release image
+
+The release image is the disk image that a release publishes: a GPT disk whose one partition, the EFI system partition, is the release volume, compressed with zstd.
+
+A principal writes it to a USB key with `dd` (`docs/INSTALL.md`, "3. Write the USB key"). The boot volume of the tests has no partition table; the release image has one, because the firmware of a real machine reads a GPT disk. The GUIDs of the disk come from the hash of the volume, so one volume gives one disk. File: `modus-<release number>-x86_64.img.zst`.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: ISO, installer, live image.
 
 ## Project
 
@@ -6196,11 +6314,11 @@ Do not use: release notes (for the file), history, news.
 
 A release is one section of the changelog, with a release number, a release time and the entries of its changes, on one commit of `master` that carries its release tag.
 
-A release marks a state of `master` that passed its checks. `modustool ship` makes it: `modustool changelog release` moves the fragments of `changelog.d/` into a new section `## [<number>] - <yyyy-mm-dd hh:mm>`, deletes them, writes the release number in `src/library/contract/release` and the release link of the section; then `ship` commits, tags the commit, and pushes the commit and the tag at once. Example: `## [0.93.0] - 2026-11-15 18:48`. The parts of a section are Added, Changed, Deprecated, Removed, Fixed and Security. On the site each release has the anchor `release-<number>` and links to each news entry that names it.
+A release marks a state of `master` that passed its checks. `modustool ship` makes it: `modustool changelog release` moves the fragments of `changelog.d/` into a new section `## [<number>] - <yyyy-mm-dd hh:mm>`, deletes them, writes the release number in `src/library/contract/release` and the release link of the section; then `ship` commits, tags the commit, and pushes the commit and the tag at once. Example: `## [0.93.0] - 2026-11-15 18:48`. The parts of a section are Added, Changed, Deprecated, Removed, Fixed and Security. On the site each release has the anchor `release-<number>` and links to each news entry that names it. The push of its release tag starts the release workflow, which publishes its release image, its checksum list and its release signature.
 
 It is not a version: a stored object of the system has versions. It is not a build: many builds come between two releases. Its tag is not the release: it is the name of its commit in git.
 
-The design: `src/md/infrastructure/releases.md`; `docs/TOOLS.md`, "The release"; `docs/SITE.md`, "The pages".
+The design: `src/md/infrastructure/releases.md`; `src/md/infrastructure/release_image.md`; `docs/TOOLS.md`, "The release"; `docs/SITE.md`, "The pages".
 
 Do not use: version (a stored object has versions), tag, build.
 
@@ -6938,6 +7056,26 @@ It holds no logic: each step calls `modustool` or an action pinned by its versio
 The design: `docs/SITE.md`, "How the site is published".
 
 Do not use: pipeline, CI job, deploy script.
+
+### Release workflow
+
+The release workflow is the workflow of GitHub Actions `.github/workflows/release.yml`, which publishes the release image, the checksum list and the release signature of a release at each push of a tag `v<release number>`.
+
+It holds no logic: each step calls `modustool`, Nix or an action pinned by the commit of its version. A first job runs `nix flake check` of the tagged commit. A second job, the one that reads the keys, from the GitHub environment `release` that only a tag `v*` may use, checks that the tag names the release number (`modustool release tag-check`), writes the key folder (`modustool key write`) and makes the files (`modustool release image`). A third job, with no key, creates the release of the tag with the files and with the notes of the release from `CHANGELOG.md`. A failed check, a refused key or a failed build stops the run, and nothing is published.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: release pipeline, deploy script.
+
+### Check workflow
+
+The check workflow is the workflow of GitHub Actions `.github/workflows/ci.yml`, which runs `nix flake check` at each push.
+
+It holds no logic: one step calls Nix. `nix flake check` runs the hooks and `modustool check` in an empty folder, with the machine tests. A newer push of the same branch cancels an older run.
+
+The design: `docs/TOOLS.md`, "The commands of the tool".
+
+Do not use: CI pipeline, build job.
 
 ### Full check
 

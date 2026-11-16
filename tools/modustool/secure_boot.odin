@@ -110,6 +110,10 @@ boot_program_sign :: proc(signature: Firmware_Signature, program_path, signed_pa
 	key := firmware_signing_key_find() or_return
 	_ = os.remove(signed_path)
 	run({"sbsign", "--key", key.key_path, "--cert", key.certificate_path, "--output", signed_path, program_path}) or_return
+	// A private key that does not belong to its certificate gives a
+	// signature that the enrolled certificate does not verify: the firmware
+	// would refuse the boot program on every machine.
+	run({"sbverify", "--cert", key.certificate_path, signed_path}) or_return
 	if signature == .Signed_Then_Changed {
 		program := read_file(signed_path) or_return
 		// The middle of the file is in the boot image that the boot program

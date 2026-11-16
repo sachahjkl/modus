@@ -35,7 +35,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 
 | Page | Generated from |
 |---|---|
-| `index.html`, the home | The mark (`src/library/support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the line of time of the start from the lines `kernel: boot: ...` of `build/test_output.txt` or of the measure record (see "The measure record"), the tiles of the boot image (see "The tiles of the boot image"), the charts of the measures, the carousel of the pictures of the gallery table that the home shows (see "The carousel of the home"), the band of the newest release of `CHANGELOG.md`; see "The home" |
+| `index.html`, the home | The mark (`src/library/support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the line of time of the start from the lines `kernel: boot: ...` of `build/test_output.txt` or of the measure record (see "The measure record"), the tiles of the boot image (see "The tiles of the boot image"), the charts of the measures, the carousel of the pictures of the gallery table that the home shows (see "The carousel of the home"), the band of the newest release of `CHANGELOG.md`, the download section (see "The download section"); see "The home" |
 | `gallery/`, the gallery | The gallery table and the pictures of `docs/screenshots`; see "The gallery" |
 | `pictures/thumbnails/<name>.png` | The thumbnail of each picture of the gallery; see "The thumbnails" |
 | `docs/`, the docs home | See "The docs home" |
@@ -373,7 +373,7 @@ With the script, the chart follows the field:
 
 The owner looked at the home on 2026-11-14 and asked for six changes: the text of a news card with no picture at its top; a line of time in the place of the boxes of the start ("Soit on affiche une timeline [...] avec des informations riches, mais là l'espèce de boîte c'est nul"); a chart or nothing for the measures ("Soit on fait des rapports de statistiques qu'on affiche sur un graphe ou des histogrammes [...], soit on n'affiche rien"); a newest release that is worth a look ("le texte tout plat comme ça, c'est pas très aguicheur [...] il y a un manque d'emphase sur les mots"); an animation at a click on the heron; and the states of the buttons ("The states of a control"). The code is `tools/modustool/site_home.odin`; its host tests are `site_home_test.odin`; the intent is `src/md/features/site_home.md`.
 
-The home does the tour: it shows the system. From its top: the head (the heron, the name, the tagline, the doors), the news, "What it is", the line of time of the start, the tiles of the boot image, the charts of the measures, the carousel, the band of the newest release.
+The home does the tour: it shows the system. From its top: the head (the heron, the name, the tagline, the doors), the news, "What it is", the line of time of the start, the tiles of the boot image, the charts of the measures, the carousel, the band of the newest release, the download section.
 
 ### The rule of a card
 
@@ -443,6 +443,14 @@ No history: the measure record holds the numbers of one run, the last full check
 One card in the color of a version: the number of the release as its one large value (32 pixels, the value kind Version), then on the same line its release time in UTC and the count of its changes, the numbers in the text color and the monospace font, the words in the dim color. Then its first 4 changes (`SITE_RELEASE_BAND_CHANGE_COUNT`), each with its type in the dim color and its bold summary as a link to the change on the page of the releases (`release-<number>-change-<place>`). Then "And N more changes in this release.", a link to all the releases, and the line of the roadmap.
 
 The summary of a change is the bold words at its start (`site_change_summary`); a change with none gives its first sentence.
+
+### The download section
+
+One card after the band of the newest release, and the same card on the page of the releases, after its first paragraphs (`tools/modustool/site_download.odin`). It starts with the list of the three files of the newest release, each a link to the file on the release of the tag `v<number>` of the repository: the release image, the checksum list and the release signature. No sentence comes before the list: the band above the card, or the heading of the release, gives the number, and each link holds the tag. Then the release signing key, as text in a code span that breaks at any character, with links to its two files in the site. Then the certificate of the firmware signing key, with links to its DER and PEM files. Then the command of the tool that verifies the files, and a link to the guide `docs/INSTALL.md`, "2. Verify the files".
+
+- **The files of the site**: `release_signing_key.public` and `release_signing_key.pem` from `resources/keys/release_signing_key.public`, `firmware_signing_key.crt` and `firmware_signing_key.cer` (DER) from `resources/keys/firmware_signing_key.crt`. A file of another form stops the command.
+- **With no release signing key** in the repository, the card has one line: "No release publishes a disk image yet." It names no file and links no steps for files that do not exist.
+- **What the site cannot know.** The site makes no request to another server, so it does not see whether the release workflow published the files. The links name the newest release of the changelog: they end on no file until the release workflow of its tag ends, and forever for a release that was made before the release signing key existed or whose workflow failed.
 
 ### A press on the heron
 
