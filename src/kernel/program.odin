@@ -4,6 +4,7 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modus:contract/processor_counters"
 
 // The objects, the handle tables, the programs and the scheduler
 // (docs/ARCHITECTURE.md, "Handle table"; docs/ARCHITECTURE.md, "Scheduler").
@@ -104,7 +105,7 @@ RIGHTS_PROGRAM :: op.Rights{.Give, .Read, .Control, .Debug}
 RIGHTS_THREAD :: op.Rights{.Give, .Read, .Write, .Control, .Inspect}
 RIGHTS_PORTS :: op.Rights{.Give}
 RIGHTS_INTERRUPT :: op.Rights{.Give, .Read}
-RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop, .Physical, .Schedule, .Events}
+RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop, .Physical, .Schedule, .Events, .Counters}
 RIGHTS_BUDGET :: op.Rights{.Give, .Read, .Spend, .Commit}
 RIGHTS_LOG :: op.Rights{.Give, .Write}
 
@@ -192,6 +193,13 @@ Thread :: struct #align (64) {
 	// byte that they have already, and no read of another line. Written
 	// with `processors`.
 	placement_restricted: bool,
+	// The thread counts the events of the processor for its own code
+	// (thread_counters.odin): the processor that takes it turns its
+	// counters on, the processor that leaves it adds them to
+	// `counter_totals`. In this line so that a switch to a thread that does
+	// not count reads no other line for it. Only the processor that runs
+	// the thread writes it: the thread in its own kernel entry.
+	counting: bool,
 	frame:        Frame,
 	extended_state: Extended_State_Area, // Complete while the thread is on no processor: schedule saves it when a processor leaves the thread, and restores it when a processor takes it (docs/ARCHITECTURE.md, "The extended state of the processor").
 	program:      u32,
@@ -294,9 +302,15 @@ Thread :: struct #align (64) {
 	// lock).
 	processors:       u64,
 	processors_limit: u64,
+	// The counts of the thread up to its last leave of a processor, while
+	// `counting` is true (thread_counters.odin). The processor that runs
+	// the thread reads and writes them: the release of the run lock at the
+	// leave orders them before the take of another processor.
+	counter_totals: [processor_counters.Event]u64,
 }
 
 #assert(offset_of(Thread, placed) < 64)
+#assert(offset_of(Thread, counting) < 64)
 #assert(offset_of(Thread, has_breakpoints) < 64)
 #assert(offset_of(Thread, placement_restricted) < 64)
 // One bit of a set of processors for each processor that runs threads.

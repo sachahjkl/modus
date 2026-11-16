@@ -171,6 +171,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Thread_Schedule", type_info_of(op.Thread_Schedule)},
 		{"operation", "Program_Schedule", type_info_of(op.Program_Schedule)},
 		{"operation", "Thread_Placement", type_info_of(op.Thread_Placement)},
+		{"operation", "Thread_Counters", type_info_of(op.Thread_Counters)},
 		{"operation", "Thread_Breakpoint_Kind", type_info_of(op.Thread_Breakpoint_Kind)},
 		{"operation", "Thread_Breakpoint", type_info_of(op.Thread_Breakpoint)},
 		{"operation", "Thread_Breakpoints", type_info_of(op.Thread_Breakpoints)},

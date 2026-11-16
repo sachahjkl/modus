@@ -1406,11 +1406,25 @@ Do not use: dropped events, overrun count.
 
 ### Performance counter
 
-A performance counter is a register of the processor that counts cycles or retired instructions.
+A performance counter is a register of the processor that counts one event of the processor, such as the cycles, the retired instructions or the cache misses.
 
-The kernel detects the counters at boot and writes one line of the log. It programs none yet: an event record carries the cycle counter only.
+The kernel programs four of them (the general counters 0 to 3) for a thread that asks, as the thread counters, and counts in user mode only. The plan of each vendor comes from `CPUID` at boot, and the line of the boot names it. An event record carries the cycle counter only, not a performance counter.
+
+The design: `docs/ARCHITECTURE.md`, "The counters of a thread".
 
 Do not use: PMC, PMU counter.
+
+### Thread counters
+
+The thread counters are the counts of four events of the processor for the code of one thread, in user mode only, since its last start (`op.Thread_Counters`): the instructions retired, the cycles, the cache misses and the branch misses.
+
+A developer measures with them the cost of a data layout, and not only its time. The calling thread starts and reads them with two commands of thread control, through the machine handle with the right **Counters**, and stops them with a third, which needs no right; the root service gives that right by the start grant `Counters`, because a count of the misses of a shared cache measures what other programs do. The kernel keeps the counts of a thread when it leaves a processor, so no count of another thread or of the kernel reaches it. A machine with no counters that the kernel uses gives `Unsupported`. The cache misses are of the last level cache on Intel and of the L2 cache on AMD: compare two counts on one machine only.
+
+Example: `system.thread_counters_start(machine)`, a loop, then `system.thread_counters_read(machine)` gives at least one instruction retired for each turn of the loop.
+
+The design: `docs/ARCHITECTURE.md`, "The counters of a thread".
+
+Do not use: perf counters, hardware counters, PMU sample.
 
 ### Service
 
@@ -1678,7 +1692,7 @@ Do not use: siginfo, fault message.
 
 Thread control is the kernel operation `Thread_Control`: it stops a thread, reads and writes its registers and its extended state, and resumes it.
 
-No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Two more commands read and write the thread schedule of a thread that is not held, with their own rights: `Read_Schedule` and `Write_Schedule`. Two more do the same for its thread placement: `Read_Placement` and `Write_Placement`. Two more read and write the program schedule of a program, through the machine handle only: `Read_Program_Schedule` and `Write_Program_Schedule`. Three more serve a debugger: `Read_Breakpoints` and `Write_Breakpoints` for the breakpoints of a held thread, and `Read_Memory` for the bytes of the program of a thread.
+No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Two more commands read and write the thread schedule of a thread that is not held, with their own rights: `Read_Schedule` and `Write_Schedule`. Two more do the same for its thread placement: `Read_Placement` and `Write_Placement`. Two more read and write the program schedule of a program, through the machine handle only: `Read_Program_Schedule` and `Write_Program_Schedule`. Three more serve a debugger: `Read_Breakpoints` and `Write_Breakpoints` for the breakpoints of a held thread, and `Read_Memory` for the bytes of the program of a thread. Three more count the events of the processor for the calling thread, through the machine handle with **Counters**: `Start_Counters`, `Read_Counters` and `Stop_Counters` (the thread counters).
 
 Who can act on a thread:
 
@@ -1865,7 +1879,7 @@ Do not use: page list, radix tree.
 
 A right is one kind of operation that a handle permits on its object.
 
-The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spend, Physical, Schedule, Commit, Events and Debug. Each one means something for each kind of object: Read on a memory object is a mapping that reads, Read on a program is the reading of its state, Control on a program starts and stops it. A new object has each right of its kind. `Handle_Give` copies a handle with a part of its rights; no operation adds a right.
+The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spend, Physical, Schedule, Commit, Events, Debug and Counters. Each one means something for each kind of object: Read on a memory object is a mapping that reads, Read on a program is the reading of its state, Control on a program starts and stops it. A new object has each right of its kind. `Handle_Give` copies a handle with a part of its rights; no operation adds a right.
 
 Narrow rights let a program give exactly what another needs: Commit is the part of Spend that pays pages of an object, and Inspect on a thread holds and reads it without Write. Debug on a program makes its holder the debugger of that one program.
 
@@ -1989,7 +2003,7 @@ The root service decides the start grants of a program from its name (`grants_of
 
 The name of a start grant is the name of its member, with its capital letters: `Store`, `Serve`, `System_Part`. The log of the root service, the sentence of an error record, the site and the guides write it so.
 
-A start grant is not a recorded grant, which is a handle that the root service gave and can end. A recorded grant has a name in lower case (`store`, `machine`), which `grants()` shows and `revoke` takes. Several start grants are one recorded grant: `Inspect`, `Stop`, `Schedule` and `Events` are rights of the one handle `machine`. A start grant such as `Serve` has no recorded grant, and the recorded grants `log` and `debug` have no start grant.
+A start grant is not a recorded grant, which is a handle that the root service gave and can end. A recorded grant has a name in lower case (`store`, `machine`), which `grants()` shows and `revoke` takes. Several start grants are one recorded grant: `Inspect`, `Stop`, `Schedule`, `Events` and `Counters` are rights of the one handle `machine`. A start grant such as `Serve` has no recorded grant, and the recorded grants `log` and `debug` have no start grant.
 
 Example: `debug("notes")` in the console prints "debugger.attach: the caller has no grant for this: the debug access to this program: the grant Store of the program refuses it".
 

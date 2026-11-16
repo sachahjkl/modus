@@ -464,7 +464,7 @@ The shared file system (property 8) is one case. This property lists the other c
 | 14 | A library or plugin gets all the access of its host program | Isolation inside a program (property 15). An untrusted module runs as its own program |
 | 15 | An update or an installer runs code with full access | No installer. A module is data identified by hash. It runs only in the sandbox (properties 8, 11) |
 | 16 | A program consumes all memory, processor time or storage | Each resource is a handle with a limit. A program divides its limit among its children |
-| 17 | Precise clocks and shared caches leak data between programs (side channels) | Not solved by handles. Reduce: a precise clock is a grant; the scheduler can keep two programs off the same core |
+| 17 | Precise clocks and shared caches leak data between programs (side channels) | Not solved by handles. Reduce: a precise clock is a grant; the counters of the processor are a grant (the right `Counters`), and count only the user code of the thread that asks; the scheduler can keep two programs off the same core |
 | 18 | One administrator account can do everything | No root. The root service holds all handles at boot and gives them out. The principal, present at the machine, is the only source of new grants |
 
 - **Test for every new interface**: "Can a program with zero handles use it?" If yes, the interface is a defect.
