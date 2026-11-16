@@ -1,0 +1,54 @@
+# The deepest stack of the kernel
+
+Each processor has one kernel stack of 16 pages (`op.KERNEL_STACK_PAGES`), between guard pages. A chain of calls that is deeper than the stack stops the machine at the guard page. The build measures the frame of each procedure of the kernel and the deepest chain of calls from each place where the kernel starts on that stack. It prints the measure at each build, and it fails when less than a named margin stays free. The guide is [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The deepest stack of the kernel".
+
+## Purpose
+
+The source does not show the size of a frame. The compiler inlines procedures into their callers, and a frame holds the locals of every branch that it inlined: `execute` is one large frame. A command with a table of error details runs its operation under two frames of `execute` ([features/kernel_error_details.md](../features/kernel_error_details.md)). Without a measure, the room that is left on the stack is not known, and a change that adds a deep chain is found only when a machine stops at the guard page.
+
+## Constraints
+
+- **The measure reads what the processor runs.** The frames are those of the code that `llc` made, after the inlining, not an estimate from the source.
+- **No chain is left out in silence.** A procedure that a chain reaches and whose frame is not known, a call whose target is not known, and a recursion with no stated bound stop the build. A stated rule names each exception, with its reason.
+- **The tool only.** No other program reads the kernel: the tool reads the files that the build makes, with the Odin standard library.
+- **No cost in the kernel.** The measure changes no byte of the module file of the kernel.
+
+## The chosen form
+
+- **The frame of a compiled procedure.** `llc` writes the section `.stack_sizes` with `-stack-size-section` (the kernel only): for each procedure, its address and the bytes of its frame. The frame holds the saved frame pointer, the saved registers, the locals and the argument area of each call that it makes; it does not hold the return address that its caller pushed. The link keeps the section and writes the address of each procedure in it, so the tool reads it from the linked file. The section is not in a segment: the module file does not change.
+- **The frame of a procedure of assembly.** `nasm` writes no frame. The tool has one table of the assembly procedures that compiled code calls (`assembly_frames` of `kernel_stack_rules`, in `tools/modustool/kernel_stack.odin`): the bytes that each one pushes, read from its source. A procedure that a chain reaches and that has no frame from `llc` and no row stops the build.
+- **The calls.** The tool reads the listing of the linked kernel that the check of the vector instructions already makes (`llvm-objdump -d`). A `call` to the start of a procedure is a call: the frame of the caller and a return address stay under the callee. A jump to the start of another procedure is a tail call: the callee takes the place of the frame of the caller. A jump inside a procedure is not a call. A call to an address where no procedure starts stops the build.
+- **The labels of assembly.** A label `name.label` of `nasm` is a symbol, so the listing shows it as the start of a procedure. A name of that form that follows the procedure `name`, at an address with no frame from `llc`, is a label inside it. Two names at one address are one procedure (`memcpy` is `copy_bytes_without_overlap`).
+- **The indirect calls.** The listing shows a call through a register (`callq *%rax`) with no target. A procedure that a chain reaches and that has an indirect call stops the build, unless the table `indirect_calls` names it with the procedures that the call can reach. The kernel has one: the self test calls data and the code of a program, to prove that the processor refuses them. The call reaches no procedure of the kernel: the processor faults at its first instruction.
+- **The recursion.** A cycle of calls has no depth. Only a procedure that calls itself, with a row of the table `recursions`, is allowed: the row gives the most levels of it on one chain. `execute` has two: its default branch runs the operation of a command with a table of error details once more, and that run has no table bit. The overflow of the self test calls itself until the guard page, on purpose: its row has no level, and the measure leaves out the calls into it. Any other cycle stops the build with its procedures.
+- **The entries.** The kernel starts on the kernel stack at these places, each with the bytes that are on the stack before its first instruction (the table `entries`):
+  - `kernel_interrupt` from a program (a `syscall`, an interrupt or an exception of a program): the frame of 22 values that the entry pushes from the top, and a return address.
+  - `kernel_interrupt` after a return that the processor refused: the fault of the `iretq` of `resume` pushes its frame under the five values of the return, 48 bytes under the top after the alignment to 16 bytes.
+  - `first_run`, `schedule_from_the_top` and `processor_entry`: `stack_switch` or the start code pushes a null return address at the top.
+  The procedure `entry` runs on the stack of the boot program, not on a kernel stack. Its chains are not measured; what it reaches counts as reached.
+- **An interrupt over the kernel.** The kernel runs with interrupts off, except in `idle_wait`. So one interrupt of the machine can come over a chain of the kernel: at the deepest chain to `idle_wait`, the processor aligns the stack (8 bytes at most), pushes the frame of the interrupt, and runs `kernel_interrupt`. A handler of an interrupt of the kernel returns with no wait, so there is no second level. The measure takes the deepest chain of `kernel_interrupt` as a bound of that handler.
+- **The measure and the check.** The measure is the largest of the entries and of the interrupt at the idle wait. The build fails when less than 4 pages of the 16 stay free (`KERNEL_STACK_LEAST_FREE_PAGES`). The margin is for what the listing does not show: a push of an argument outside the frame, and an indirect jump that is a tail call. The line names the deepest chain.
+- **Each procedure is reached.** A compiled procedure that no entry and no `entry` reaches is an entry that the tables do not know (a new procedure of `stack_switch`), or code of the compiler that no code calls. The first stops the build; the second has a row of the table `not_run`, with its reason.
+- **Where it runs.** The compile step of each kernel module runs the check after the link, beside the check of the vector instructions, and writes the measure lines in `build/modules/<name>/kernel_stack.measure`, an output of the step. Each build prints them, also for a kept kernel.
+
+## Refused forms
+
+- **The call graph from the relocations of the objects.** A call between two procedures of one section has no relocation (the assembly), and a call through a register has none. The listing shows both, and the build makes it already.
+- **The call graph from the LLVM IR.** `llc` adds calls that the IR does not have (the copies of records become calls of `memcpy`), and the IR does not have the frames.
+- **The frame from the prologue in the listing.** A prologue has several forms (`push`, `sub`, a probe of the stack); `llc` knows the frame and writes it.
+- **A measure on a machine** (fill the stack with a pattern, read the deepest written byte after a test). It measures the chains that a test runs, not the deepest one, and a machine test is not a build.
+- **One kernel stack per thread, or a larger stack, before a measure.** The size of a stack is chosen from a measure, not before it.
+- **Every fault of the kernel in the check.** An exception of the kernel stops the machine, so the line prints the bound of a fault over the deepest chain and does not check it. If that report passes the guard page, the processor reports a double fault on its own stack.
+
+## Subtle points
+
+- **The return address.** The frame of `llc` does not hold the return address that the call pushed: each call on a chain adds 8 bytes. A tail call adds none, and the frame of its caller is gone.
+- **The bound is above the real depth.** A chain of the graph can be a chain that no input runs. The deepest chain of `kernel_interrupt` is the bound of each handler, also of a handler of an interrupt of the kernel, which runs a short part of it.
+- **A frame that is not fixed.** `llc` writes no frame for a procedure with an `alloca` of a variable size. Such a procedure has no frame from `llc`, so the build stops when a chain reaches it.
+- **The interrupt stacks.** The line also prints the bound of `kernel_interrupt` with its frame against the interrupt stacks: 2 pages for the non-maskable interrupt and the machine check, 4 for the double fault. It is not checked: on those stacks only the report of a stop runs, which the bound does not tell apart.
+- **Two kernels.** `kernel` and `kernel_without_return_check` are measured each.
+- **Names.** Odin gives a nested procedure a number (`kernel::self_test.overflow-11736`) that changes with the source. A row names it without the number: a row matches a symbol that is its name, or its name, `-` and digits.
+
+## State
+
+Built: the read of `.stack_sizes`, the listing, the tables, the check with its margin, the measure lines at each build, and a host test with a listing and a linked file that the test writes, whose depths are known. Left: a push of an argument outside the frame is not seen; an indirect jump is taken as a jump inside its procedure.

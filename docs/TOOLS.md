@@ -905,7 +905,7 @@ A build keeps the outputs of an earlier build when their inputs are the same. Th
 
 | Step | What it runs | What it gives | What it reads of an import |
 |---|---|---|---|
-| The compile step | The compiler, `llc`, the assembler and the link | The linked file, `build/modules/<name>/linked.elf` | Nothing |
+| The compile step | The compiler, `llc`, the assembler and the link | The linked file, `build/modules/<name>/linked.elf`; for a kernel, also its measure lines, `build/modules/<name>/kernel_stack.measure` ("The deepest stack of the kernel") | Nothing |
 | The conversion | The tool only: no compiler | The module file, and its debug object | The whole file: its hash goes into the import table, and the number of each export that a slot names comes from it |
 
 A source names an export of an import in a `foreign` block: a name, the parameters and the result, written by hand in the source of the importer. No file of the import stands behind it. The compiler makes a call to a symbol that is not defined, and the link leaves the symbol not defined (`ld.lld -shared`, with no file of the import on its command). So the linked file of an importer is the same for every file of its import, and the build key of the compile step holds no import. A change of the body of an export of a library compiles the library, and only converts each module that imports it.
@@ -1011,6 +1011,40 @@ A volume that a command does not need is not built and not checked. It stays wit
 **The measure.** Each `build` prints its measure, lines that start with `modustool: measure: the build`: the whole time, the time of the hash of the input files with their count and their bytes, the time of the modules with the count of the modules built, converted and kept (and in it the time of the compile steps, the time of the conversions, the checks and the writes of the records; the time of a step is the time on the clock from the start of its first process to the end of its last one, in each level, with several processes at once), then one line for each later step: the debug image, the pointer themes, the glyph caches, the link pages of the manual, the four boot images, the checks and the writes of the build records of the boot volumes, and the boot volumes in all. One line gives the count of the volumes built, kept and not needed by the command, with the count of volume processes at once; then one line for each built volume gives the whole time of its process. The last line gives the budget that each module asks for, from the table `Budget` of its file, each module one time, kept modules too: its pages, its programs and its threads (`MODULE_CONTRACT.md`, "The budget that a module asks for"). The process of a volume prints its own line, `modustool: measure: the build of the boot volume <name>`: the signed boot image, the compiler of the boot program, the assembler with the link and the firmware signature, and the volume file. Each number is a measure: nothing reads one.
 
 One whole build before the incremental build, on a host with 16 processors, read in the times of the files that it wrote: 83 s from the first LLVM IR file to the last module (84 modules, one compiler process for each processor), under 1 s for the debug image, the pointer themes and the three boot images, then 51 s for the 18 boot volumes, one after the other, 2.8 s each.
+
+### The deepest stack of the kernel
+
+Each processor has one kernel stack of 16 pages (65 536 bytes, `op.KERNEL_STACK_PAGES`), between guard pages (`GLOSSARY.md`: kernel stack, deepest chain). The compile step of each kernel module measures the deepest chain of calls on it, after the check of the vector instructions. The design is in `src/md/infrastructure/kernel_stack_depth.md`.
+
+**What the tool reads.**
+
+| What | Where it comes from |
+|---|---|
+| The frame of each compiled procedure | The section `.stack_sizes` of the linked file: `llc -stack-size-section` writes the address and the bytes of each frame. No segment holds the section, so the module file does not change |
+| The frame of each procedure of assembly that compiled code calls | The table `assembly_frames` of `kernel_stack_rules` in `tools/modustool/kernel_stack.odin`: the bytes that it pushes, read from its source |
+| The calls | The listing of `llvm-objdump -d` of the linked kernel, which the check of the vector instructions reads too: a `call` to the start of a procedure is a call, a jump to the start of another procedure is a tail call |
+| The places where the kernel starts on the stack | The table `entries` of `kernel_stack_rules`: `kernel_interrupt` from a program (the frame of 22 values and a return address above it), `kernel_interrupt` after a return that the processor refused (48 bytes more), `first_run`, `schedule_from_the_top` and `processor_entry` (a null return address) |
+
+**The rules that the listing cannot give.** Each one is a row of a table, with its reason:
+
+- A call through a register: the table of the indirect calls names its procedure and what it reaches (the self test, which reaches no procedure of the kernel).
+- A procedure that calls itself: the table of the recursions gives the most levels of it on one chain. `execute` has two: a command with a table of error details runs its operation under two frames of `execute`. The overflow of the self test has none: the measure leaves it out.
+- A compiled procedure that no entry reaches: a row of the table of the procedures that no code calls (the conversions of 16-bit floating point numbers that Odin adds).
+
+The measure stops the build with a line that names the procedure when a chain reaches a procedure with no frame, when a call goes to an address where no procedure starts, when a reached procedure has an indirect call or calls itself with no row, when a cycle passes through several procedures, and when a compiled procedure has no row and no entry reaches it.
+
+**One interrupt over the kernel.** The kernel takes an interrupt of the machine only in `idle_wait`. The measure adds, to the deepest chain to `idle_wait`, 8 bytes of alignment, the frame of the interrupt, a return address and the deepest chain of `kernel_interrupt`.
+
+**The check.** The build fails when less than 4 pages (16 384 bytes, `KERNEL_STACK_LEAST_FREE_PAGES`) of the kernel stack stay free after the deepest chain, the entries and the interrupt at the idle wait together. The margin is for what the listing does not show: a push of an argument outside a frame, and an indirect jump that is a tail call.
+
+**The measure lines.** The step writes two lines in `build/modules/<name>/kernel_stack.measure`, and each build prints them, a kept kernel too, for `kernel` and for `kernel_without_return_check`:
+
+```
+modustool: measure: the kernel stack of kernel: the deepest chain uses ... of 65536 bytes, ... bytes free, and the build fails under 16384 bytes free: an interrupt at the idle wait over kernel_interrupt -> ... -> idle_wait (... bytes), then kernel_interrupt -> ... -> kernel::execute (2 levels) -> ...
+modustool: measure: the kernel stack of kernel: each entry: an entry from a program ... bytes, ...; an interrupt at the idle wait ... bytes; a fault of the kernel over the deepest chain ... bytes (not checked); kernel_interrupt with its frame ... bytes, on an interrupt stack of 8192 bytes and on the stack of the double fault of 16384 bytes (not checked)
+```
+
+The first line names the deepest chain, procedure by procedure. A fault of the kernel stops the machine, so its bound is printed and not checked: if its report passes the guard page, the processor reports a double fault on its own stack. The bound of `kernel_interrupt` on an interrupt stack is printed and not checked too: only the report of a stop runs there, and the bound holds each path of `kernel_interrupt`.
 
 ### The hashes of the modules of two builds
 

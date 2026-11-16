@@ -900,6 +900,26 @@ The design: `docs/ARCHITECTURE.md`, "The return to a program".
 
 Do not use: IST, exception stack, NMI stack.
 
+### Kernel stack
+
+A kernel stack is the stack of 16 pages of one processor where the kernel runs each entry from a program, each interrupt that it takes and each operation.
+
+Each entry from a program starts at its top, and no entry continues an earlier one. A guard page is before it and after it. The build measures the deepest chain of calls on it and fails when less than 4 pages stay free. It is not an interrupt stack: those hold the frames of the exceptions that can come when no stack is safe.
+
+The design: `src/md/infrastructure/kernel_stack_depth.md`; `docs/TOOLS.md`, "The deepest stack of the kernel".
+
+Do not use: thread stack (for this), system stack.
+
+### Deepest chain
+
+The deepest chain is the chain of calls of the kernel that uses the most bytes of a kernel stack, from a place where the kernel starts on it.
+
+The tool computes it at each build from the frame of each procedure that `llc` writes and from the calls of the listing of the linked kernel, with stated rules for what the listing cannot show: the indirect calls, the bounded recursions such as the two frames of `execute`, and one interrupt over the idle wait. Each build prints it, procedure by procedure, in a measure line. It is a bound: a chain of the graph can be a chain that no input runs.
+
+The design: `src/md/infrastructure/kernel_stack_depth.md`.
+
+Do not use: stack depth (for the chain), call stack (for this), worst-case stack.
+
 ### Direct map
 
 The direct map is the part of the kernel half of the addresses that shows all physical memory.
