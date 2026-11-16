@@ -39,6 +39,21 @@ pointer_theme_builds := [?]Pointer_Theme_Build {
 	{resource = pointer_pictures.RESOURCE_OF_THE_SYSTEM, manifest = "resources/pointers/system.manifest", output = POINTER_BUILD_FOLDER + "/system.pointers"},
 }
 
+// The build makes the theme of the owner when its source is there. The
+// command `release image` sets this to false: the license of that theme
+// does not allow a public download, so a release image holds the theme of
+// the system only (src/md/infrastructure/release_image.md).
+build_pointer_theme_of_the_owner := true
+
+// pointer_theme_source_of_the_build gives the Xcursor folder for the theme
+// of the owner, or "" when this build makes the theme of the system only.
+pointer_theme_source_of_the_build :: proc() -> string {
+	if !build_pointer_theme_of_the_owner {
+		return ""
+	}
+	return os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator)
+}
+
 // A theme file that the build made: a resource of the boot image.
 Resource_File :: struct {
 	name: string,
@@ -60,6 +75,10 @@ build_pointer_themes :: proc(source: string, print_tables: bool) -> (resources: 
 	}
 	list := make([dynamic]Resource_File, context.temp_allocator)
 	for build in pointer_theme_builds {
+		if build.needs_source && !build_pointer_theme_of_the_owner {
+			fmt.printfln("modustool: pointers: a release image holds the theme of the system only: the boot image has no %s", build.resource)
+			continue
+		}
 		if build.needs_source && source == "" {
 			fmt.printfln("modustool: pointers: %s is not set: the boot image has no %s, only the theme of the system", POINTER_THEME_SOURCE_VARIABLE, build.resource)
 			continue

@@ -4842,9 +4842,9 @@ A pointer theme is the pointer pictures of each pointer shape, with a name, a li
 The system has two themes:
 
 - the theme of the system (`resources/pointers/system.manifest`): the 15 shapes as grids of squares of 2 pixels, in the style of the arrow of the design rules. It is always in the boot image, as the resource `pointers_system`.
-- the Posy theme, "Posy's Cursor", from the build input `posy-cursors`: the tool converts it at each build into the resource `pointers_posy`. No file of it is in the repository.
+- the Posy theme, "Posy's Cursor", from the build input `posy-cursors` of the default development shell: the tool converts it at each build into the resource `pointers_posy`. No file of it is in the repository, and no release image holds it: its license allows no public download.
 
-The Posy theme is the default when the build has its input; the theme of the system is the fallback. The setting `pointer_theme` chooses one of them.
+The Posy theme is the default when the build has its input; the theme of the system is the fallback, and the one theme of a release image. The setting `pointer_theme` chooses one of them.
 
 A pointer theme is not an icon theme: it holds the pictures of the pointer only.
 
@@ -6276,7 +6276,7 @@ Do not use: production volume, installer.
 
 The release image is the disk image that a release publishes: a GPT disk whose one partition, the EFI system partition, is the release volume, compressed with zstd.
 
-A principal writes it to a USB key with `dd` (`docs/INSTALL.md`, "3. Write the USB key"). The boot volume of the tests has no partition table; the release image has one, because the firmware of a real machine reads a GPT disk. The GUIDs of the disk come from the hash of the volume, so one volume gives one disk. File: `modus-<release number>-x86_64.img.zst`.
+A principal writes it to a USB key with `dd` (`docs/INSTALL.md`, "3. Write the USB key"). The boot volume of the tests has no partition table; the release image has one, because the firmware of a real machine reads a GPT disk. The GUIDs of the disk come from the hash of the volume, so one volume gives one disk. Its only pointer theme is the theme of the system: a release image never holds the Posy theme. File: `modus-<release number>-x86_64.img.zst`.
 
 The design: `src/md/infrastructure/release_image.md`.
 

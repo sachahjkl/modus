@@ -15,6 +15,7 @@ The guide for a reader is [`docs/INSTALL.md`](../../../docs/INSTALL.md), "1. The
 - **A published volume is never a test volume.** A volume that the test signing key signed, the boot image of a measure run, and any boot image that a test changed must never reach a release. A volume of the test signing key starts any system that anyone signs: its private key is published.
 - **The production keys come from the environment.** They never enter the repository. The release command refuses to run with no key of the publisher: it never falls back to the test keys, as `build` does.
 - **The release ships the bytes that the tests ran.** The modules and the kernel of the image are those of the build that the machine tests boot: the build with the checks of the kernel. No other kind of build exists for a release.
+- **A published image holds only what the system may redistribute.** The Posy pointer theme is under CC-BY-NC-4.0: nixpkgs marks it not redistributable, and a NonCommercial license is not the permissive license of the reuse rule of [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md). A release image holds the pointer theme of the system only, under the license of the repository. A build of a developer may keep the Posy theme.
 - **The tool uses the Odin standard library only**, with the source library of the system (`AGENTS.md`). The compression runs a program of the development shell, as the signature of the boot program runs `sbsign`.
 
 ## The chosen form
@@ -35,6 +36,18 @@ The disk GUID and the partition GUID come from the BLAKE3 hash of the volume, wi
 ### The release volume is built by the release command only
 
 The release volume is not in the list of the volumes of the build (`boot_volumes`): no test boots it, and a test build does not pay for a volume that only a release needs. `modustool release image` makes a whole build of the modules and the boot images, then builds the release volume in its own process, with no build record. A kept module could come from another state of the work tree; a whole build cannot.
+
+### The pointer theme of a release: the theme of the system only
+
+The build makes the Posy theme when the variable `POINTER_THEME_SOURCE` names its Xcursor folder ([`docs/POINTERS.md`](../../../docs/POINTERS.md), "5. The two themes"). Three parts keep it out of a release:
+
+- **The release build makes no Posy theme.** `modustool release image` makes the pointer themes with no source folder, whatever the environment holds: its boot image has the resource `pointers_system` and no `pointers_posy`. The compositor then uses the theme of the system, by the path that it already takes when a build has no input.
+- **The packaging refuses a pointer theme of others.** With `Publisher_Keys_Only`, each resource of the boot image of the volume that starts with the magic of a pointer theme file must pass `pointer_pictures.validate`, and the license of its header must be the license of the repository, read from `LICENSE`. A resource named `pointers_posy` is refused by its name too. The check reads the bytes, so a theme of others under another name is refused.
+- **The Nix environment of a release has no Posy input.** The flake gives `POINTER_THEME_SOURCE` to the default development shell only. The checks of the flake and the shell `release`, which the release workflow uses, do not name the package `posy-cursors`, so the release workflow never fetches it.
+
+So the checks of the flake test the boot image that a release ships: the same modules, the same kernel and the same resources. A build in the default development shell, and its pictures (`modustool screenshots`), keep the Posy theme.
+
+The machine test runs with one theme or two. The window `pointers` puts the button of the theme of the system first and writes its line at each press, so one press at one place shows the theme of the system in both builds. The test of the setting `pointer_theme` waits for the line of the changed setting, not for the line "the pointer theme in use": with one theme, the compositor changes no theme and writes no such line.
 
 ### The files of a release
 
@@ -82,7 +95,8 @@ After the build, the packaging checks the files that the build of the volume wro
 
 - the file `<volume>.signed_by` must be the text of the key of the publisher; the text of the test signing key is refused, and so is a missing file;
 - the boot image of the volume must hold each module and each resource of the boot image of the build (`build/boot.image`), with the same name and the same BLAKE3 hash of its bytes, in the same order, then only the three resources that the build of a volume adds: the replacement list, the system description and its signature. A boot image that holds another build of a module under the same name passes a check of the names; its bytes differ. The boot image of a measure run has one resource more. A module that a test changed has other bytes;
-- the system description of the volume must name the BLAKE3 hash of the kernel module of the build for the kernel. The boot program refuses a kernel with another hash at each start, so the kernel of the volume is the kernel of the build.
+- the system description of the volume must name the BLAKE3 hash of the kernel module of the build for the kernel. The boot program refuses a kernel with another hash at each start, so the kernel of the volume is the kernel of the build;
+- with `Publisher_Keys_Only`, the boot image must hold no resource `pointers_posy`, and each pointer theme file in it must be valid and under the license of the repository. The machine test packages a volume with `Test_Keys_Allowed`: a developer runs it in a build that may hold the Posy theme.
 
 The check reads the signed boot image beside the volume, not the volume itself: inside the volume the boot image is in the boot program, and the tool has no reader of a boot program. The release command builds the volume and the files beside it in one call, so they cannot come from two builds there.
 
@@ -99,7 +113,7 @@ A principal with no tool verifies with OpenSSL 3 and `sha256sum` ([`docs/INSTALL
 The release workflow, `.github/workflows/release.yml`, runs on a tag `v*`. Each step calls the tool, Nix or an action. It has three jobs:
 
 1. `check`: `nix flake check` of the tagged commit, with no secret. The release ships the bytes that the tests ran, so it waits for a green full check. This costs the time of a full check at each release; a release is seldom.
-2. `build`: the environment `release`, `contents: read`. `release tag-check <tag>` (the tag must be `v` and `RELEASE_NUMBER`), `key write`, `release image`, then an artifact with `dist/` and the notes. `release image` empties `dist/` first, so no file of an older release goes with the new one. It takes the notes from the command `changelog notes`, which it runs, so the section of a release has one writer.
+2. `build`: the environment `release`, `contents: read`. Each step runs in the development shell `release` (`nix develop .#release`), which has no Posy input. `release tag-check <tag>` (the tag must be `v` and `RELEASE_NUMBER`), `key write`, `release image`, then an artifact with `dist/` and the notes. `release image` empties `dist/` first, so no file of an older release goes with the new one. It takes the notes from the command `changelog notes`, which it runs, so the section of a release has one writer.
 3. `publish`: `contents: write`, no key, no code of the repository: `gh release create <tag> --verify-tag --notes-file build/release_notes.md` with the files of the artifact.
 
 Each action is pinned by the commit of its version, with the version in a comment: a moved tag of an action cannot change the code that runs beside the keys. No cache action runs in the release workflow: its daemon and its post step would run while the keys are on the disk. The runner is a hosted runner, which is discarded after the job with the key folder; a runner that stays would keep the keys.
@@ -114,6 +128,11 @@ Each action is pinned by the commit of its version, with the version in a commen
 - **The release signing key as the signing key.** A key that decides which system a machine starts would sign files on a host for downloads, and its replacement would need a new boot program on each machine.
 - **The key values in the workflow file, or a script that writes them.** The repository has no script, and a workflow step calls the tool.
 - **A release from the measure build.** Its kernel has no checks and is not the kernel that the tests ran.
+- **The Posy theme in a release image.** CC-BY-NC-4.0 allows a share for a non-commercial purpose only, and the publisher of the system cannot control the use of a public download. nixpkgs marks the package not redistributable.
+- **A refusal by the name `pointers_posy` alone.** A name is a field of the build: a renamed resource would pass. The license in the header of the theme file is a fact of its bytes.
+- **A refusal by the hash of the Posy theme file.** The hash changes with each change of the converter or of the manifest, and the release environment has no Posy theme to hash.
+- **The checks of the flake with the Posy theme, and a release without it.** The release would then ship a set of resources that no check of the flake booted.
+- **Unset `POINTER_THEME_SOURCE` in the release command.** A change of the environment of the process is a hidden effect. A variable of the build, as `build_whole`, says it in the code.
 
 ## Subtle points
 
@@ -124,6 +143,6 @@ Each action is pinned by the commit of its version, with the version in a commen
 
 ## State
 
-Built: the release volume, the GPT disk, the files of a release, the refusals, `verify`, `key write`, the workflow of a release, the check of each push, the download section of the site, the host tests, and a machine of `test trusted_boot` that starts the decompressed image.
+Built: the release volume, the GPT disk, the files of a release, the refusals, the pointer theme of the system only in a release, `verify`, `key write`, the workflow of a release, the check of each push, the download section of the site, the host tests, and a machine of `test trusted_boot` that starts the decompressed image.
 
 Left: the keys of the publisher and the first published image; a start of the image on a real machine with the certificate enrolled (`ROADMAP.md`).

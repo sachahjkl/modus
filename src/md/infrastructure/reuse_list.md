@@ -38,7 +38,7 @@ The rules of the check, as a guide: [`docs/TOOLS.md`](../../../docs/TOOLS.md), "
 
 - A test file is not shipped. A file whose name holds `_test`, or whose first line is `#+build !freestanding`, is not read for imports: test vectors from an RFC are facts in a test, not a reused work.
 - The theme of the system (`resources/pointers/system.manifest`), the font of the name of the mark and the pictures of the mark are works of the system, under the license of the repository. They are not rows.
-- The Posy theme is not in the repository, but the boot image holds it when the build has its input. Its place is its manifest, which is also its notice.
+- The Posy theme is not in the repository and not in a published image ([release_image.md](release_image.md)). The boot image of a development build holds it when the build has its input, so the system ships it to a developer, and it is a row. Its place is its manifest, which is also its notice.
 - The portraits are rows one by one: the credits file can hold a picture under one license and a picture with none.
 - `site_spdx_names` of the site translates the words of a record into an identifier. A record whose words have no translation gives no identifier, and the check then compares nothing for that row: add the translation, or write the identifier in the record.
 - The fiat-crypto field arithmetic is a row of its own, because Odin took it under another license (BSD-1-Clause) than the rest of `core:crypto` (Zlib).

@@ -2787,7 +2787,10 @@ scenario := [?]Step {
 	// The pointer pictures (docs/POINTERS.md): the shape that the compositor
 	// chooses for what is under the pointer, and the shape that a program
 	// asks for over its own surface. The window of pointers shows each
-	// shape of the theme of the owner, then of the theme of the system.
+	// shape of the theme of the owner when the build has it (the default
+	// development shell), then of the theme of the system, which the checks
+	// of the flake and a release image hold alone. Its first button is the
+	// theme of the system in both cases.
 	{kind = .Launch, text = "pointers"},
 	{kind = .Wait, text = "pointers: ok, ", any_order = true},
 	{kind = .Wait, text = "compositor: surface pointers"},
@@ -2799,7 +2802,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "pointers"},
 	{kind = .Point, inside_window = "pointers", x = 2 + 16 + 60, y = 24 + 216 + 60, text = "arrow"}, // The tile of arrow.
 	{kind = .Point, inside_window = "pointers", x = 2 + 592 + 60, y = 24 + 216 + 60, text = "move"}, // The tile of move.
-	{kind = .Click, inside_window = "pointers", x = 300, y = 60}, // The second button: the theme of the system.
+	{kind = .Click, inside_window = "pointers", x = 100, y = 60}, // The first button: the theme of the system.
 	{kind = .Wait, text = "pointers: the theme pointers_system is shown"},
 	{kind = .Point, inside_window = "pointers", x = 2 + 784 + 60, y = 24 + 368 + 60, text = "help"}, // The tile of help, in the theme of the system.
 	{kind = .Shot, text = "pointers_system"},
@@ -2847,7 +2850,6 @@ scenario := [?]Step {
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us"},
 	{kind = .Shot, text = "font_without_grid_fit"},
 	{kind = .Call, text = "settings.set(\"pointer_theme\", \"system\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the pointer theme in use: System", any_order = true}, // Written before the line of the change.
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme system, grid fit off, keyboard layout us; "},
 	{kind = .Point, inside_window = "settings", x = 100, y = 12, text = "move"}, // The title bar, in the theme of the system.
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"bgr\")", expected = "1"},

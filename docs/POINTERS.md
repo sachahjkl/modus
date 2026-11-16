@@ -224,12 +224,13 @@ shape arrow hot 0 0
 ## 5. The two themes
 
 - **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as grids of squares, in the style of the arrow of `DESIGN.md`, at the sizes 24 (squares of 2 pixels) and 48 (squares of 4 pixels, for a later screen with twice the pixels). `wait` and `busy_with_arrow` have 4 frames of 250 ms. Its file has 42 pictures. It is always in the boot image, as the resource `pointers_system`.
-- **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64). Its file has 178 pictures: `grab` and `grabbing` come from one file of the theme and share their pictures.
+- **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The default development shell of the flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The checks of the flake and the shell `release` do not: they build the theme of the system only. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64). Its file has 178 pictures: `grab` and `grabbing` come from one file of the theme and share their pictures.
 - **The choice of the compositor**: the Posy theme is the default when the build has its input; the theme of the system is the fallback.
   - The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `src/programs/root/resources.odin`: the one place of this order).
   - For each one, the root service checks the hash of the resource and maps it read-only in the compositor. It writes the address and the size of the first in the values 6 and 7 of the context of the compositor, and those of the second in the values 18 and 19 (`MODULE_CONTRACT.md`, "6. The context").
   - The compositor validates each file once. The setting `pointer_theme` of the principal chooses one of them while the compositor runs: `owner` is the first theme that the boot image has, `system` is the theme of the system (`docs/FONTS.md`, "7. The setting"). The compositor writes `compositor: the pointer theme in use: <name>` on the log at each change.
   - With no build input, the tool prints that `POINTER_THEME_SOURCE` is not set and makes the theme of the system only. The system works the same.
+  - `modustool release image` makes the theme of the system only, whatever `POINTER_THEME_SOURCE` names, and refuses to package a boot image with a pointer theme under another license than the license of the repository (section 7).
 - **How a resource enters the boot image and reaches a program**: `docs/ARCHITECTURE.md`, U2b.
 
 ## 6. The license of the Posy theme
@@ -248,8 +249,14 @@ What follows for this repository: property 2 of the objective of `PROPERTIES.md`
 1. **Posy's Cursor is a build input.** The flake fetches it, the tool converts it at build time, and no file of the theme and no file made from its pixels enters the repository.
 2. **It is the default pointer theme when the build input is there.** The theme of the system is the fallback.
 3. The pointer picture is the one picture of the desktop with smooth edges and transparency (`DESIGN.md`, section 9, "Pointer"): this follows from 1 and 2.
+4. **No release image holds it.** A release image is a public download, and the publisher of the system cannot keep its use non-commercial. Its pointer theme is the theme of the system, under the license of the repository. Three parts keep the Posy theme out:
+   - `modustool release image` makes the theme of the system only;
+   - the packaging of a release refuses a boot image with the resource `pointers_posy`, or with a pointer theme file whose header names another license than the license of `LICENSE`;
+   - the release workflow runs in the shell `release` of the flake, which does not name the package `posy-cursors`, and the checks of the flake do not name it either. So the workflow never fetches the theme, and the checks boot the resources that a release ships.
 
-A commercial use of the system needs another default theme (CC BY-NC 4.0, section 2(a)(1)), or a license from Michiel de Boer.
+   The design is in `src/md/infrastructure/release_image.md`.
+
+A build of a developer, in the default development shell, keeps the Posy theme. A commercial use of such a build needs another default theme (CC BY-NC 4.0, section 2(a)(1)), or a license from Michiel de Boer.
 
 ## 8. Measures
 

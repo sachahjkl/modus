@@ -104,7 +104,10 @@
     # package of nixpkgs, pinned by flake.lock. Its license is CC-BY-NC-4.0,
     # which nixpkgs marks unfree and not redistributable: this one package is
     # allowed by its name. The repository holds no file of the theme: the
-    # tool converts it at each build into build/pointers.
+    # tool converts it at each build into build/pointers. Only the default
+    # development shell names it: the checks and the shell of a release do
+    # not, so a release image never holds it and the release workflow never
+    # fetches it (src/md/infrastructure/release_image.md).
     pointerTheme =
       (import inputs.nixpkgs {
         inherit system;
@@ -135,7 +138,11 @@
       OVMF_FULL_VARS = "${pkgs.OVMFFull.fd}/FV/OVMF_VARS.fd";
       # The source of the font, for the command "font" of modustool.
       FONT_SOURCE = "${pkgs.spleen}/share/fonts/misc/spleen-8x16.bdf";
-      # The Xcursor folder of the pointer theme of the owner, for the build.
+    };
+
+    # The Xcursor folder of the pointer theme of the owner, for the build in
+    # the default development shell only.
+    ownerPointerTheme = {
       POINTER_THEME_SOURCE = "${pointerTheme}/share/icons/Posy_Cursor/cursors";
     };
 
@@ -238,7 +245,17 @@
           inherit (preCommitCheck) shellHook;
         }
         // firmware
+        // ownerPointerTheme
         // vectorFontSources);
+
+      # The shell of the release workflow: the build tools and the firmware,
+      # with no pointer theme of the owner and no hook. `modustool release
+      # image` makes the theme of the system only in any shell; this shell
+      # also keeps the workflow from fetching the theme of the owner.
+      release = pkgs.mkShell ({
+          packages = buildTools ++ [modustool];
+        }
+        // firmware);
 
       # The shell of a developer who builds a module of their own project:
       # the build tools and the command "modustool", with no hook of this
