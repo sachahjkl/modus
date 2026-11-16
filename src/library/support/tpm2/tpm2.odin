@@ -54,6 +54,12 @@ COMMAND_POLICY_PCR :: u32(0x0000_017F)
 COMMAND_POLICY_GET_DIGEST :: u32(0x0000_0189)
 COMMAND_POLICY_PASSWORD :: u32(0x0000_018C)
 COMMAND_SHUTDOWN :: u32(0x0000_0145)
+COMMAND_HIERARCHY_CHANGE_AUTH :: u32(0x0000_0129)
+COMMAND_GET_CAPABILITY :: u32(0x0000_017A)
+// The service never sends it: it resets the count of the wrong
+// authorization values. The tool sends it from the host, as another system
+// on the machine can, to show that the TPM refuses it.
+COMMAND_DICTIONARY_ATTACK_LOCK_RESET :: u32(0x0000_0139)
 // TPM2_PolicyPassword extends the policy with the code of
 // TPM2_PolicyAuthValue, not with its own code: either command then
 // satisfies the same policy (TPM 2.0 part 3, TPM2_PolicyPassword).
@@ -67,6 +73,24 @@ SHUTDOWN_CLEAR :: u16(0x0000)
 HANDLE_OWNER :: u32(0x4000_0001) // The owner hierarchy: the parent of the storage key.
 HANDLE_NULL :: u32(0x4000_0007) // No key and no bind for a session.
 HANDLE_PASSWORD :: u32(0x4000_0009) // The session of a password: here, the empty password of the owner and of the storage key.
+HANDLE_LOCKOUT :: u32(0x4000_000A) // The lockout hierarchy: its value guards the count of the wrong authorization values.
+
+// The capability of the properties of the TPM (TPM_CAP_TPM_PROPERTIES), and
+// the properties that the service reads (part 2, TPM_PT).
+CAPABILITY_TPM_PROPERTIES :: u32(0x0000_0006)
+PROPERTY_PERMANENT :: u32(0x0000_0200) // The bits of TPMA_PERMANENT.
+// Four properties in a row: the failures counted now, the failures before
+// a lockout, the seconds after which the TPM forgives one failure, and the
+// seconds that the lockout hierarchy waits after a wrong value of its own.
+PROPERTY_LOCKOUT_COUNTER :: u32(0x0000_020E)
+PROPERTY_MAXIMUM_AUTHORIZATION_FAILURES :: u32(0x0000_020F)
+PROPERTY_LOCKOUT_INTERVAL :: u32(0x0000_0210)
+PROPERTY_LOCKOUT_RECOVERY :: u32(0x0000_0211)
+COUNT_LIMIT_PROPERTIES :: int(PROPERTY_LOCKOUT_RECOVERY - PROPERTY_LOCKOUT_COUNTER + 1)
+
+// The bit lockoutAuthSet of TPMA_PERMANENT: the lockout hierarchy has an
+// authorization value that is not empty.
+PERMANENT_LOCKOUT_AUTHORIZATION_SET :: u32(1 << 2)
 
 // The algorithms.
 ALGORITHM_AES :: u16(0x0006)
@@ -382,6 +406,49 @@ shutdown_command :: proc "contextless" (buffer: []u8) -> int {
 	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_SHUTDOWN)
 	put_u16(&command_writer, SHUTDOWN_CLEAR)
 	return end(&command_writer)
+}
+
+// properties_command builds TPM2_GetCapability of count properties of the
+// TPM from the property first.
+properties_command :: proc "contextless" (buffer: []u8, first: u32, count: u32) -> int {
+	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_GET_CAPABILITY)
+	put_u32(&command_writer, CAPABILITY_TPM_PROPERTIES)
+	put_u32(&command_writer, first)
+	put_u32(&command_writer, count)
+	return end(&command_writer)
+}
+
+// lockout_authorization_change_command builds TPM2_HierarchyChangeAuth of
+// the lockout hierarchy, with the empty value in the password session: the
+// service sends it only when the bit lockoutAuthSet is clear. new_value has
+// 1 to AUTHORIZATION_VALUE_SIZE bytes: an empty one changes nothing, and a
+// TPM takes no value longer than the digest of its hash.
+lockout_authorization_change_command :: proc "contextless" (buffer: []u8, new_value: []u8) -> int {
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_HIERARCHY_CHANGE_AUTH)
+	if len(new_value) == 0 || len(new_value) > AUTHORIZATION_VALUE_SIZE {
+		return 0
+	}
+	put_u32(&command_writer, HANDLE_LOCKOUT)
+	put_password_session(&command_writer)
+	put_sized(&command_writer, new_value)
+	return end(&command_writer)
+}
+
+// dictionary_attack_lock_reset_command builds
+// TPM2_DictionaryAttackLockReset with the empty value of the lockout
+// hierarchy. See COMMAND_DICTIONARY_ATTACK_LOCK_RESET: only the tool sends
+// it.
+dictionary_attack_lock_reset_command :: proc "contextless" (buffer: []u8) -> int {
+	command_writer := begin(buffer, TAG_SESSIONS, COMMAND_DICTIONARY_ATTACK_LOCK_RESET)
+	put_u32(&command_writer, HANDLE_LOCKOUT)
+	put_password_session(&command_writer)
+	return end(&command_writer)
+}
+
+// lockout_authorization_set says if the bits of TPM_PT_PERMANENT say that
+// the lockout hierarchy has an authorization value.
+lockout_authorization_set :: proc "contextless" (permanent: u32) -> bool {
+	return permanent & PERMANENT_LOCKOUT_AUTHORIZATION_SET != 0
 }
 
 // create_sealed_command builds TPM2_Create of a keyed-hash object under the
@@ -795,6 +862,50 @@ unseal_answer :: proc "contextless" (answer: []u8) -> (secret: []u8, code: u32, 
 status_answer :: proc "contextless" (answer: []u8) -> (code: u32, problem: Answer_Problem) {
 	_, code, problem = answer_begin(answer)
 	return
+}
+
+// properties_answer reads the answer of TPM2_GetCapability of the
+// properties of the TPM: the values of the properties first, first + 1, and
+// so on, one for each place of values. The TPM gives the properties that it
+// has from first on, in order. Each property asked must be in its place,
+// the list must hold no other one, and no byte may follow it; else no value
+// is given. The count of the list comes from the device: it is compared,
+// never used as a bound.
+properties_answer :: proc "contextless" (answer: []u8, first: u32, values: []u32) -> (code: u32, problem: Answer_Problem) {
+	for &value in values {
+		value = 0
+	}
+	reader: Answer_Reader
+	reader, code, problem = answer_begin(answer)
+	if problem != .None {
+		return code, problem
+	}
+	// The command has no session, so the answer has none: no size of the
+	// parameters comes before them.
+	more_data := take_bytes(&reader, 1)
+	capability := take_u32(&reader)
+	count := take_u32(&reader)
+	if reader.failed || answer[0] != u8(TAG_NO_SESSIONS >> 8) || answer[1] != u8(TAG_NO_SESSIONS & 0xFF) || more_data[0] > 1 || capability != CAPABILITY_TPM_PROPERTIES || u64(count) != u64(len(values)) {
+		return code, .Malformed
+	}
+	for index in 0 ..< len(values) {
+		property := take_u32(&reader)
+		value := take_u32(&reader)
+		if reader.failed || property != first + u32(index) {
+			for &item in values {
+				item = 0
+			}
+			return code, .Malformed
+		}
+		values[index] = value
+	}
+	if reader.place != len(answer) {
+		for &item in values {
+			item = 0
+		}
+		return code, .Malformed
+	}
+	return code, .None
 }
 
 // area_fits checks an area that a record of a key keeps and that the
