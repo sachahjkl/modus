@@ -85,6 +85,25 @@ MODE_CHANGE_PASSPHRASE :: 5
 // after its current passphrase, and show it one time.
 MODE_NEW_RECOVERY_KEY :: 6
 
+// mode_words names what a start of `unlock` with a MODE_ value runs for:
+// the root service writes it on the line of a lock, which stops `unlock`
+// whatever its mode (src/md/features/tpm_sealed_principal_keys.md).
+mode_words :: proc "contextless" (mode: u64) -> string {
+	switch mode {
+	case MODE_CREATE_PRINCIPAL:
+		return "the creation of a principal"
+	case MODE_SET_MACHINE_PASSPHRASE:
+		return "the machine passphrase that is set"
+	case MODE_SEAL_MACHINE_KEY:
+		return "the machine key that the TPM seals"
+	case MODE_CHANGE_PASSPHRASE:
+		return "a change of the passphrase"
+	case MODE_NEW_RECOVERY_KEY:
+		return "a new recovery key"
+	}
+	return "an unlock"
+}
+
 // Change_Problem says why a file cannot take a change that a principal
 // asks for, before the window asks for any passphrase.
 Change_Problem :: enum u8 {
