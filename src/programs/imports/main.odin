@@ -350,7 +350,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		table: system.Prepared_Modules
 		values: [op.CONTEXT_VALUES]u64
 		values[VALUE_CHILD] = 1
-		amounts := system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 10_000, log_records = 10}
+		amounts := system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 10_000, log_records = system.LOG_RECORDS_OF_A_LINE}
 		own := system.image_find(image, "imports")
 		first_program, first_status := system.program_start(own, "imports child", {}, random.values_with_seed(&program_generator, values), amounts, nil, &table, {image = image}, &error)
 		second_program, second_status := system.program_start(agenda, "agenda", {}, random.values_with_seed(&program_generator, {}), amounts, nil, &table, {image = image}, &error)

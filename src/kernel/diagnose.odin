@@ -269,8 +269,9 @@ read_budget_rights :: proc "contextless" (program: ^Program, handle: u64) -> (ri
 // with the right Read, because the count tells of the other programs that
 // the budget pays for; held is false otherwise. Lock: the program lock
 // only. The handle keeps the budget live; program.budget changes only when
-// that budget ends (an atomic store), and the limit of a live budget never
-// changes: no other lock is needed. The count is atomic.
+// that budget ends (an atomic store). The limit changes when a budget comes
+// from it or ends, under the frame lock, and is read once, as Log reads it.
+// The count is atomic.
 @(private = "file")
 read_log_count :: proc "contextless" (program: ^Program) -> (logged, limit: u64, held: bool) {
 	at, taken := caller_lock(program)
@@ -287,7 +288,7 @@ read_log_count :: proc "contextless" (program: ^Program) -> (logged, limit: u64,
 	word := intrinsics.atomic_load(&budgets[budget].logged)
 	second := intrinsics.atomic_load(&time_milliseconds) / LOG_PERIOD
 	logged = word >> 32 == second ? word & 0xFFFF_FFFF : 0
-	return logged, budgets[budget].amounts.log_records, true
+	return logged, intrinsics.atomic_load(&budgets[budget].amounts.log_records), true
 }
 
 // read_protect_range says if one mapping of the program holds a range of
@@ -766,9 +767,10 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	if operation == .Log {
 		// The limit of the budget of the program. Its counts only with a
 		// handle with Read, so that a program without it learns nothing of
-		// another program; a budget above it is never described: when
-		// the budget of the program is not over its limit now, a budget above
-		// refused, or a new second started, and the record is Refused.
+		// another program. Only that budget counts the record: when it is
+		// not over its limit now, a new second started, a budget that came
+		// from it ended, or the text took more records than were left, and
+		// the record is Refused.
 		logged, limit, held := read_log_count(program)
 		if !held {
 			record_set(record, .Budget_Hidden, .Log_Records, 0, 0, 1, 0)

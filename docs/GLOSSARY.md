@@ -960,13 +960,23 @@ Do not use: negative test, lkdtm.
 
 A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a program (its name, its program slot and its program serial), the own number of the record among the records of its program, a thread, a level, a channel, a text and the value runs of the text.
 
-A program writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the program and the thread, so a program cannot write a record in the name of another one. The text has 152 bytes at most per record; a longer text continues in the next record. The serial port prints the text only. The budget of the program limits its log records in each second.
+A program writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the program and the thread, so a program cannot write a record in the name of another one. The text has 152 bytes at most per record; a longer text continues in the next record. The serial writer prints the text of the records on the serial port after the operation, so a `Log` never waits for the serial port. The budget of the program holds its log records of each second, and counts only its own.
 
 A program with the grant to read the log serves the records as a table: `log.records(after)`, and their value runs: `log.value_runs(after)`. Each caller receives the records of its log scope: the whole log, or its own records. A starter reads the records of a child with `log.program_records(program, after)` and `log.program_value_runs(program, after)`, where it lends the program handle of the child.
 
 The design: `docs/TOOLS.md`, "The log".
 
 Do not use: log line, message.
+
+### Serial writer
+
+The serial writer is the one processor that writes the serial port at a time: the drain of the log at the tick of any processor or in a long wait for a lock, the flush before the machine stops, or the report of a fault of the kernel.
+
+The operation `Log` writes the records of the log only, under the log lock. At each tick, a processor writes the lines of the records that the serial port does not have yet, in their order, for at most 100 µs and only while the device takes bytes, as a reader of the whole log reads them. So a `Log` never waits for the lines of other programs, and its time tells it nothing of what they wrote. The records of each second of the machine and of the kernel are half of the whole log, so the log never writes over a record that the drain did not reach while the device keeps their rate. A record that the log wrote over before the drain reached it gets one line with the count on the serial port, and every scenario of the tool fails on it. A processor takes the serial writer with a compare and exchange: the tick does not wait for it, the flush and the report wait a bounded time. It is not a lock of the lock order.
+
+The design: `src/md/features/log_side_channels.md`.
+
+Do not use: serial lock, console driver, printk.
 
 ### Value run
 
@@ -1963,7 +1973,7 @@ Do not use: permission, privilege, mode.
 
 ### Budget
 
-A budget is an object that holds pages, program slots and thread slots, and has two limits in time: processor time and log records; it pays for each object that a program creates.
+A budget is an object that holds pages, program slots, thread slots and the log records of each second, and has one limit in time, processor time; it pays for each object that a program creates.
 
 A budget makes every cost visible and bounded. No operation creates an object from nothing: `Memory_Create`, `Program_Create` and `Thread_Create` take a budget handle with the right Spend, and the budget pays. When an object ends, what it used returns to the budget that paid. A program moves a part of its budget to a new budget with `Budget_Create`, and gives that one to a child: the child can never use more.
 
@@ -1977,9 +1987,9 @@ Do not use: quota, limit, cgroup, job.
 
 ### Limit
 
-A limit is a property of a budget for time: the microseconds of processor time, or the log records, that the budget can use in each second.
+A limit is a property of a budget for time: the microseconds of processor time that the budget can use in each second.
 
-Time does not return, so it does not move as pages do. A limit holds for the budget and for each budget that came from it: what a thread uses counts in its budget and in each budget above. A new budget has a limit that is not above the limit of the budget that it came from. With the limit 0 a budget has no time: its threads do not run.
+Time does not return, so it does not move as pages do. A limit holds for the budget and for each budget that came from it: what a thread uses counts in its budget and in each budget above. A new budget has a limit that is not above the limit of the budget that it came from. With the limit 0 a budget has no time: its threads do not run. The log records of each second are not a limit: they move to a new budget as pages do, and a budget counts only its own records, so a refused record tells a program nothing of what the others wrote (`src/md/features/log_side_channels.md`).
 
 Do not use: quota, cap, bandwidth, rate limit.
 
@@ -1987,7 +1997,7 @@ Do not use: quota, cap, bandwidth, rate limit.
 
 A budget request is the pages, the programs and the threads that a module asks for its program: the table `Budget` of its file (`module.Budget_Request`).
 
-The source states its stated budget, and the build adds the counted parts and writes the table, so the hash of the module names it. It is never a grant: the starter decides, by its least budget and its largest budget, and can widen or limit it with a budget exception. A part that is 0, or a file with no table, asks for the least budget. Processor time and log records are not in it: they are limits that the starter sets.
+The source states its stated budget, and the build adds the counted parts and writes the table, so the hash of the module names it. It is never a grant: the starter decides, by its least budget and its largest budget, and can widen or limit it with a budget exception. A part that is 0, or a file with no table, asks for the least budget. Processor time and log records are not in it: the starter sets them, a limit of processor time and the log records of each second that it gives from its own.
 
 Example: the stated budget `{working_memory_pages = 2536, threads = 1, window_width = WIDTH, window_height = HEIGHT}` of a module of 117 pages with its imports and a window of 1000 x 704 asks for 2536 + 117 + 68 + 1375 = 4096 pages, no child, and one thread.
 

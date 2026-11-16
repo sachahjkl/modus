@@ -171,9 +171,6 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if v[3] > u64(max(op.Log_Level)) {
 			return .Bad_Operation
 		}
-		if !budget_log(program.budget) {
-			return .No_Budget
-		}
 		// The channel: the characters before the first one that is not a
 		// character of a text.
 		channel := transmute([op.LOG_CHANNEL_CAPACITY]u8)[2]u64{v[4], v[5]}
@@ -190,6 +187,12 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// hide a line. Each byte of an invalid sequence becomes "?" in the copy, which
 		// keeps each offset of the value runs.
 		text_encoding.invalid_sequences_replace(log_text[:v[2]])
+		// A Log spends the records that its text takes, counted in the copy
+		// as log_record cuts it: the amount bounds the lines of the serial
+		// port, and a text of 4096 bytes is 27 records.
+		if !budget_log(program.budget, log_records_of_text(log_text[:v[2]])) {
+			return .No_Budget
+		}
 		// The value runs: checked once, in the copy of this processor. Runs
 		// that do not fit the text leave the record plain; the text is whole.
 		log_runs := processor_self().log_runs[:v[6]]
@@ -197,8 +200,18 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if !value_kinds.value_runs_check(log_runs, int(v[2])) {
 			log_runs = nil
 		}
+		// The records only, under the log lock: the serial writer writes
+		// their line on the serial port after it. A Log that waited
+		// for the serial port would learn from its own time how much the
+		// other programs wrote (src/md/features/log_side_channels.md).
 		taken := log_take()
-		defer log_free(taken)
+		if taken && log_head != nil {
+			log_record(program_index, intrinsics.atomic_load(&program.serial), program, index, name, channel[:channel_count], op.Log_Level(v[3]), log_text[:v[2]], log_runs)
+			log_free(taken)
+			serial_drain_before_the_tick()
+			return .Ok
+		}
+		// No memory of the log: the serial port only.
 		log_bytes({'['})
 		log_bytes(name)
 		if channel_count != 0 {
@@ -208,7 +221,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		log_bytes({']', ' '})
 		log_bytes(log_text[:v[2]])
 		log_bytes({'\r', '\n'})
-		log_record(program_index, intrinsics.atomic_load(&program.serial), program, index, name, channel[:channel_count], op.Log_Level(v[3]), log_text[:v[2]], log_runs)
+		log_free(taken)
 		return .Ok
 
 	case .Log_Read:

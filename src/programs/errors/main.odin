@@ -666,7 +666,7 @@ last_fault: system.Handle // The program fault of the last run of its case.
 // calls deep, and reads its stop report: the stack trace.
 case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "fault"), "fault", {}, random.values_with_seed(&program_generator, {}), {pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 10}, nil, nil, {image = image}, &error)
+	program, status := system.program_start(system.image_find(image, "fault"), "fault", {}, random.values_with_seed(&program_generator, {}), {pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = system.LOG_RECORDS_OF_A_LINE}, nil, nil, {image = image}, &error)
 	if status != .Ok {
 		system.write_part(writer, "the program fault did not start")
 		return false

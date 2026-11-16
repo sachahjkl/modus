@@ -127,3 +127,48 @@ the_places_of_an_own_log_ring :: proc(t: ^testing.T) {
 	testing.expect_value(t, wrap_page, 0)
 	testing.expect_value(t, wrap_offset, 0)
 }
+
+// The rate that the drain of the serial port needs: each record of the
+// machine and of the kernel with its longest line, and two seconds back to
+// back fit the whole log.
+@(test)
+the_records_of_a_second_fit_the_whole_log :: proc(t: ^testing.T) {
+	testing.expect_value(t, LOG_SERIAL_BYTES_OF_A_SECOND, (LOG_RECORDS_OF_THE_MACHINE + LOG_RECORDS_OF_THE_KERNEL) * LOG_SERIAL_LINE_BYTES_MOST)
+	// Two seconds back to back fit the whole log, with the records of the kernel.
+	testing.expect(t, 2 * (LOG_RECORDS_OF_THE_MACHINE + LOG_RECORDS_OF_THE_KERNEL) < LOG_RECORD_CAPACITY)
+}
+
+// The head of a line of the serial port: the name and the channel of a
+// program in brackets, the name alone with no channel, nothing for the
+// kernel and for a record that continues a line. A name and a channel that
+// fill their whole fields have no zero after them, and still fit.
+@(test)
+the_head_of_a_line_of_the_serial_port :: proc(t: ^testing.T) {
+	head: [LOG_LINE_HEAD_CAPACITY]u8
+	record := Log_Record{program = 3}
+	copy(record.name[:], "console")
+	copy(record.channel[:], "shell")
+	count := log_line_head(&record, false, &head)
+	testing.expect_value(t, string(head[:count]), "[console:shell] ")
+	testing.expect_value(t, log_line_head(&record, true, &head), 0)
+
+	record.channel = {}
+	count = log_line_head(&record, false, &head)
+	testing.expect_value(t, string(head[:count]), "[console] ")
+
+	kernel := Log_Record{}
+	copy(kernel.name[:], "kernel")
+	copy(kernel.channel[:], "boot")
+	testing.expect_value(t, log_line_head(&kernel, false, &head), 0)
+
+	for &byte_value in record.name {
+		byte_value = 'n'
+	}
+	for &byte_value in record.channel {
+		byte_value = 'c'
+	}
+	count = log_line_head(&record, false, &head)
+	testing.expect_value(t, count, LOG_LINE_HEAD_CAPACITY)
+	testing.expect_value(t, head[1 + LOG_NAME_BYTES], u8(':'))
+	testing.expect_value(t, head[LOG_LINE_HEAD_CAPACITY - 2], u8(']'))
+}

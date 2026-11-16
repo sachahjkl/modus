@@ -1438,7 +1438,7 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = ROLE_TAG | u64(role)
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "fault_ring"), "fault_ring child", grants, random.values_with_seed(&program_generator, values), {pages = CHILD_PAGES, programs = 1, threads = CHILD_THREADS, processor = 500_000, log_records = 20}, mappings[:], nil, {image = image}, &error)
+	program, status := system.program_start(system.image_find(image, "fault_ring"), "fault_ring child", grants, random.values_with_seed(&program_generator, values), {pages = CHILD_PAGES, programs = 1, threads = CHILD_THREADS, processor = 500_000, log_records = system.LOG_RECORDS_OF_A_LINE}, mappings[:], nil, {image = image}, &error)
 	if status != .Ok {
 		buffer: [512]u8
 		lines := system.Writer{buffer = buffer[:]}

@@ -163,7 +163,7 @@ case_run :: proc "contextless" (item: ^Case) {
 	values[VALUE_ROLE] = u64(item.role)
 	values[VALUE_WITH_AVX] = with_avx ? 1 : 0
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "return_fault"), "return_fault child", grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 1, processor = 200_000, log_records = 10}, nil, nil, {image = image}, &error)
+	program, status := system.program_start(system.image_find(image, "return_fault"), "return_fault child", grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 1, processor = 200_000, log_records = system.LOG_RECORDS_OF_A_LINE}, nil, nil, {image = image}, &error)
 	if status != .Ok {
 		system.log("return_fault: ", item.name, ": the child did not start")
 		return

@@ -1,5 +1,6 @@
 package system
 
+import "base:intrinsics"
 import op "modus:contract/operation"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
@@ -71,9 +72,9 @@ LOG_PART_SIZE :: 512
 //
 // The text is UTF-8: the kernel writes "?" in place of each byte of an invalid sequence
 // of it, a control character included (src/library/contract/text_encoding). A
-// program with no log handle writes nothing; the kernel refuses a line above
-// the log limit of the budget, and the line is lost: `budget_used` counts
-// the lines that the kernel refused.
+// program with no log handle writes nothing. A line above the log records
+// of each second of the budget is dropped and counted, and one record says
+// the count before the next line (log_call): it never waits.
 //
 // ```odin
 // system.log_in("storage", .Warning, "storage: the block ", block, " has a wrong check")
@@ -144,7 +145,59 @@ log_send :: proc "contextless" (handle: Handle, text: []u8, runs: []value_kinds.
 	if run_count > 0 {
 		copy(area[count:], ([^]u8)(raw_data(runs))[:run_count * RUN_SIZE])
 	}
-	call(.Log, u64(handle), u64(uintptr(&area[0])), u64(count), u64(level), packed[0], packed[1], u64(run_count))
+	log_call(handle, &area[0], count, level, packed, run_count)
+}
+
+// The records of the longest line that log_in gives the kernel in one call.
+// A program that writes needs at least this many log records of each
+// second; a starter gives a child no fewer.
+LOG_RECORDS_OF_A_LINE :: (LOG_PART_SIZE + op.LOG_TEXT_CAPACITY - op.LOG_CHARACTER_TAIL_MOST - 1) / (op.LOG_TEXT_CAPACITY - op.LOG_CHARACTER_TAIL_MOST)
+#assert(LOG_RECORDS_OF_A_LINE == 4)
+
+// The lines of this program that the kernel refused for its log limit, and
+// that no note has said yet: one count for each thread of the program.
+log_lines_refused: u64
+
+// log_call gives one line to the kernel, and never waits: a thread with a
+// deadline (a frame loop, a key path, a lock held) writes at once or
+// counts. A line that the kernel refuses with No_Budget is dropped and
+// counted. Before the next line, while lines are counted, one record says
+// their count, inside the amount: no line is dropped in silence
+// (src/md/features/log_side_channels.md). A line longer than the whole
+// amount, and each line of a budget with 0 records, are counted the same
+// way; the kernel counts each refused record in the budget too
+// (`budget_used`), which the starter reads.
+@(private = "file")
+log_call :: proc "contextless" (handle: Handle, text: ^u8, count: int, level: op.Log_Level, packed: [2]u64, run_count: int) {
+	if refused := intrinsics.atomic_load(&log_lines_refused); refused != 0 {
+		note: [64]u8
+		digits: [20]u8
+		note_count := copy(note[:], format_decimal(digits[:], refused))
+		note_count += copy(note[note_count:], " lines of this program were refused by its log limit")
+		if _, status := call(.Log, u64(handle), u64(uintptr(&note[0])), u64(note_count), u64(op.Log_Level.Warning), 0, 0, 0); status == .Ok {
+			intrinsics.atomic_sub(&log_lines_refused, refused)
+		}
+	}
+	if _, status := call(.Log, u64(handle), u64(uintptr(text)), u64(count), u64(level), packed[0], packed[1], u64(run_count)); status == .No_Budget {
+		intrinsics.atomic_add(&log_lines_refused, 1)
+	}
+}
+
+// format_decimal writes a number in decimal at the end of `digits`, and
+// gives the digits that it wrote.
+@(private = "file")
+format_decimal :: proc "contextless" (digits: []u8, value: u64) -> []u8 {
+	digit_count := 0
+	rest := value
+	for digit_count < len(digits) {
+		digits[len(digits) - 1 - digit_count] = u8('0' + rest % 10)
+		digit_count += 1
+		rest /= 10
+		if rest == 0 {
+			break
+		}
+	}
+	return digits[len(digits) - digit_count:]
 }
 
 // LOG_CALL_LIMIT is the bytes of text that the kernel takes in one Log call:
@@ -173,7 +226,7 @@ log_text :: proc "contextless" (text: string) {
 		// slice with no address.
 		copied: [LOG_CALL_LIMIT]u8
 		count := copy(copied[:], part)
-		call(.Log, u64(handle), u64(uintptr(raw_data(copied[:]))), u64(count), u64(op.Log_Level.Info), 0, 0)
+		log_call(handle, &copied[0], count, .Info, {}, 0)
 		if len(rest) == 0 {
 			break
 		}

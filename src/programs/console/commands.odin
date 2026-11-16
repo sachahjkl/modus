@@ -128,6 +128,11 @@ Sandbox :: struct {
 }
 
 SANDBOX_CAPACITY :: 12
+// The log records of each second of the call host of a sandbox: one line
+// of system.log. The console gives them from its own 72 (the root service,
+// LOG_RECORDS_OF_CONSOLE): the twelve call hosts take 48, and the console
+// keeps 24 for its own lines.
+SANDBOX_LOG_RECORDS :: system.LOG_RECORDS_OF_A_LINE
 FILE_CAPACITY :: system.MODULE_SPACE_CAPACITY + system.IMPORT_CAPACITY
 
 // A sandbox with no name is free.
@@ -1721,7 +1726,7 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	}
 	status: system.Status
 	load_error = {}
-	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, grants, random.values_with_seed(&program_generator, values), {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = 100}, mappings[:sandbox.file_count + 1], &prepared)
+	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, grants, random.values_with_seed(&program_generator, values), {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = SANDBOX_LOG_RECORDS}, mappings[:sandbox.file_count + 1], &prepared)
 	if status != .Ok {
 		return status
 	}

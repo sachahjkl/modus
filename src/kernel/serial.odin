@@ -76,10 +76,58 @@ log_region: u32
 #assert(PROGRAM_CAPACITY <= 1 << 8)
 #assert(THREAD_TABLE_CAPACITY <= 1 << 8)
 log_serial_only: bool // The kernel reports its own fault: it takes no lock, and writes the serial port only.
-// The log lock protects the serial port, the records of the log and their
-// counter, and the own log ring of each program with its count and its
-// frames (docs/ARCHITECTURE.md, "Locks of the kernel").
+// The log lock protects the records of the log and their counter, and the
+// own log ring of each program with its count and its frames
+// (docs/ARCHITECTURE.md, "Locks of the kernel"). It does not protect the
+// serial port: a Log that waited for the serial port under it would learn
+// how much the other programs wrote (src/md/features/log_side_channels.md).
 log_lock: Lock
+
+// The serial port has one writer at a time: the drain at the tick of any
+// processor or in a long wait for a lock, the flush before the machine
+// stops, or the report of a fault of the kernel. 0: no writer; else the
+// identifier of the local interrupt controller of the writer, plus one. It
+// is not a lock of the lock order: the tick does not wait for it, the flush
+// and the report wait a bounded time, and its holder takes no lock.
+serial_writer: u32
+// Only the serial writer reads and writes the globals below, so a line that
+// one processor begins another one ends, in the order of the records.
+serial_next: u64 // The number of the next record of the whole log for the serial port.
+serial_line_open: bool // The last line in serial_line continues in the next record.
+serial_copy: op.Log_Record // The copy of a record that the drain checks before it writes it.
+// The bytes of the line of one record, or of the line of a count of lost
+// records, that wait for the device: serial_line[serial_line_written:serial_line_count].
+serial_line: [op.LOG_SERIAL_LINE_BYTES_MOST]u8
+serial_line_count: int
+serial_line_written: int
+// The bytes that the drain of a tick wrote, and the cycles that it took,
+// for the one line of its measure.
+serial_measured_bytes: u64
+serial_measured_cycles: u64
+// 0: the measure is not ready; 1: ready, the next tick writes it; 2: written.
+serial_measure_state: u32
+// A tick drains the log from the first tick on. Before it, each writer of a
+// record drains at once: the timer does not run yet, and a hang of the
+// start must still show its lines.
+serial_tick_drains: bool
+
+// The time that one drain of a tick or of a wait for a lock writes at most,
+// by the cycle counter, whatever bytes it wrote: interrupts are off for no
+// longer than that, a tenth of a tick, so a device interrupt and the thread
+// that the tick interrupts wait at most that. A bound in bytes bounds no
+// time: a port write that exits to QEMU costs 2 to 10 us. The drain keeps
+// op.LOG_SERIAL_BYTES_OF_A_SECOND, 210 738 bytes, while a byte costs less
+// than about 0.47 us on one processor; the line of the measure says what
+// the device of the machine keeps.
+SERIAL_MICROSECONDS_OF_A_TICK :: 100
+// The queue of the device: the bytes that the drain writes when the line
+// status says that the transmit register is empty.
+SERIAL_QUEUE_BYTES :: 16
+// The line status register and its bit "the transmit register is empty".
+SERIAL_LINE_STATUS :: SERIAL_PORT + 5
+SERIAL_TRANSMIT_EMPTY :: 0x20
+// The bytes after which the drain writes its measured rate once.
+SERIAL_MEASURE_BYTES :: 64 * 1024
 
 // The processor that reports a fault of the kernel: its identifier plus one,
 // or 0 when no processor reports.
@@ -102,11 +150,14 @@ log_fault_report_depth: u32
 // Without this procedure, the report and a line that another processor
 // writes arrive as mixed bytes, and nobody can read the fault.
 //   - A second processor that has a fault of its own stops: one report.
-//   - A processor that starts a line after this stops in log_take.
-//   - A processor that is in the middle of a line ends it: the reporter
-//     waits until the log lock has no holder and no waiter, a bounded time.
-//     When the reporter holds the log lock itself, or when the wait ends by
-//     its bound, the report starts on a new line and says so.
+//   - A processor that starts a record after this stops in log_take.
+//   - The drain of the log ends its record: the reporter waits for the
+//     serial writer, a bounded time, and keeps it. It then writes the
+//     records that the log holds and the serial port does not have yet:
+//     the lines before a fault are often its cause. When the reporter is
+//     the serial writer itself, when the wait ends by its bound, or when
+//     the last record continues in one that no processor wrote, the
+//     report starts on a new line and says so.
 //   - A fault inside the report: one fixed line, and the machine stops.
 fault_report_begin :: proc "contextless" () {
 	if !lock_ready {
@@ -126,27 +177,11 @@ fault_report_begin :: proc "contextless" () {
 		log_bytes(transmute([]u8)string("\r\nkernel: a fault inside the report of a fault of the kernel\r\n"))
 		machine_stop(2)
 	}
-	// The record of this processor, by its identifier and not by gs.
-	holds_the_log_lock := false
-	for cpu in processors[:min(processor_count, PROCESSOR_CAPACITY)] {
-		if cpu != nil && cpu.apic_id == identifier {
-			holds_the_log_lock = cpu.held[.Log] != 0
-		}
-	}
 	line_is_whole := false
-	if !holds_the_log_lock {
-		limit := cycles_now() + cycle_frequency / 1000 * FAULT_REPORT_WAIT_MILLISECONDS
-		for {
-			if intrinsics.atomic_load(&log_lock.serving) == intrinsics.atomic_load(&log_lock.next) {
-				line_is_whole = true
-				break
-			}
-			// Before the timer is measured the frequency is 0: no wait.
-			if cycles_now() >= limit {
-				break
-			}
-			intrinsics.cpu_relax()
-		}
+	if intrinsics.atomic_load(&serial_writer) != self && serial_writer_take(self, FAULT_REPORT_WAIT_MILLISECONDS) {
+		// The reporter keeps the serial writer: no drain writes after this.
+		serial_drain_all()
+		line_is_whole = !serial_line_open
 	}
 	if !line_is_whole {
 		log_bytes(transmute([]u8)string("\r\nkernel: the line above is cut: the report of a fault of the kernel starts here\r\n"))
@@ -276,11 +311,332 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log
 		run_count = value_kinds.value_runs_cut(runs[:], run_count, mark_start)
 	}
 	taken := log_take()
+	if taken && log_head != nil {
+		name := KERNEL_NAME
+		if kernel_log_fits(log_records_of_text(buffer[:count])) {
+			log_record(0, 0, nil, 0, name[:], transmute([]u8)channel, level, buffer[:count], runs[:run_count])
+		}
+		log_free(taken)
+		serial_drain_before_the_tick()
+		return
+	}
+	// No memory of the log yet, or the report of a fault: the serial port
+	// only, at once.
 	log_bytes(buffer[:count])
 	log_bytes({'\r', '\n'})
-	name := KERNEL_NAME
-	log_record(0, 0, nil, 0, name[:], transmute([]u8)channel, level, buffer[:count], runs[:run_count])
 	log_free(taken)
+}
+
+// The records that the kernel wrote for itself in this second: the second
+// in the high 32 bits, the count in the low 32 bits, as Budget.logged. And
+// the lines of the kernel that were over its bound since the last note.
+// The log lock protects both.
+kernel_logged: u64
+kernel_log_lines_over: u64
+
+// kernel_log_fits says if a line of the kernel of `records` records fits
+// op.LOG_RECORDS_OF_THE_KERNEL in this second, and counts it. Before the
+// first tick, each writer drains its record at once and no bound is needed.
+// A line past the bound is counted; the next line that fits is preceded by
+// one record with that count, inside the bound. So the records of the
+// kernel and of the machine in two seconds back to back fit the whole log
+// (src/md/features/log_side_channels.md). The caller holds the log lock.
+@(private = "file")
+kernel_log_fits :: proc "contextless" (records: u64) -> bool {
+	if !intrinsics.atomic_load(&serial_tick_drains) {
+		return true
+	}
+	second := intrinsics.atomic_load(&time_milliseconds) / LOG_PERIOD
+	count := kernel_logged >> 32 == second ? kernel_logged & 0xFFFF_FFFF : 0
+	note: u64 = kernel_log_lines_over > 0 ? 1 : 0
+	if count + note + records > op.LOG_RECORDS_OF_THE_KERNEL {
+		kernel_log_lines_over += 1
+		return false
+	}
+	if note != 0 {
+		text: [96]u8
+		digits: [20]u8
+		text_count := copy(text[:], "kernel: ")
+		text_count += copy(text[text_count:], decimal_digits(&digits, kernel_log_lines_over))
+		text_count += copy(text[text_count:], " lines of the kernel were over its limit of 64 records in each second")
+		name := KERNEL_NAME
+		log_record(0, 0, nil, 0, name[:], nil, .Warning, text[:text_count], nil)
+		kernel_log_lines_over = 0
+	}
+	kernel_logged = second << 32 | (count + note + records)
+	return true
+}
+
+// decimal_digits writes a number in decimal at the end of `digits`, and
+// gives the digits that it wrote.
+@(private = "file")
+decimal_digits :: proc "contextless" (digits: ^[20]u8, value: u64) -> []u8 {
+	digit_count := 0
+	rest := value
+	for {
+		digits^[len(digits^) - 1 - digit_count] = u8('0' + rest % 10)
+		digit_count += 1
+		rest /= 10
+		if rest == 0 {break}
+	}
+	return digits^[len(digits^) - digit_count:]
+}
+
+#assert(op.LOG_RECORDS_OF_THE_KERNEL == 64) // The text of the note says it.
+
+// serial_writer_take makes this processor the serial writer. self is the
+// identifier of its local interrupt controller plus one. It waits at most
+// wait_milliseconds for another writer; 0: it does not wait. Before the
+// first processor has its record, one processor runs, and it takes nothing.
+serial_writer_take :: proc "contextless" (self: u32, wait_milliseconds: u64) -> bool {
+	if !lock_ready {
+		return true
+	}
+	// Before the timer is measured the frequency is 0: no wait.
+	limit := cycles_now() + cycle_frequency / 1000 * wait_milliseconds
+	for {
+		if _, taken := intrinsics.atomic_compare_exchange_strong(&serial_writer, 0, self); taken {
+			return true
+		}
+		if cycles_now() >= limit {
+			return false
+		}
+		intrinsics.cpu_relax()
+	}
+}
+
+serial_writer_free :: proc "contextless" () {
+	intrinsics.atomic_store(&serial_writer, 0)
+}
+
+// serial_drain writes on the serial port the records of the whole log from
+// serial_next up to the record before `until`, in their order, and gives
+// the bytes that it wrote. The caller is the serial writer. It reads the
+// log as a reader of the whole log does, with no log lock, so no Log waits
+// for the serial port (serial_line_next).
+//
+// With a processor (a tick, a long wait for a lock), it writes only while
+// the device takes bytes: SERIAL_QUEUE_BYTES when the transmit register is
+// empty, and it leaves when it is not, or after
+// SERIAL_MICROSECONDS_OF_A_TICK, so it never spins with interrupts off;
+// between two writes it answers processor_sync, and it leaves when the
+// machine stops, for the flush. With no processor (the flush, a report, the
+// start), it waits for the device and has no bound: those end the machine
+// or run alone.
+@(private = "file")
+serial_drain :: proc "contextless" (until: u64, cpu: ^Processor) -> (bytes: int) {
+	if log_head == nil {
+		return 0
+	}
+	// Before the timer is measured the frequency is 0: one burst.
+	deadline := cycles_now() + cycle_frequency / 1_000_000 * SERIAL_MICROSECONDS_OF_A_TICK
+	for {
+		if serial_line_written == serial_line_count && !serial_line_next(until) {
+			return bytes
+		}
+		if cpu == nil {
+			for port_read_8(SERIAL_LINE_STATUS) & SERIAL_TRANSMIT_EMPTY == 0 {
+				intrinsics.cpu_relax()
+			}
+		} else {
+			if cycles_now() >= deadline || intrinsics.atomic_load(&machine_stopping) {
+				return bytes
+			}
+			sync_acknowledge(cpu)
+			if port_read_8(SERIAL_LINE_STATUS) & SERIAL_TRANSMIT_EMPTY == 0 {
+				return bytes
+			}
+		}
+		// The queue of the device is empty: up to SERIAL_QUEUE_BYTES go with
+		// no look at the line status. The drain of a processor looks at the
+		// time before each byte, so it ends within one port write of its
+		// bound; the byte that it did not write waits in serial_line.
+		burst := min(SERIAL_QUEUE_BYTES, serial_line_count - serial_line_written)
+		for _ in 0 ..< burst {
+			if cpu != nil && cycles_now() >= deadline {
+				break
+			}
+			port_write_8(SERIAL_PORT, serial_line[serial_line_written])
+			serial_line_written += 1
+			bytes += 1
+		}
+	}
+}
+
+// serial_line_next puts the line of the next record before `until` in
+// serial_line, or the line of the count of the records that the log wrote
+// over before the drain reached them. false: no record is left. It copies a
+// record, and keeps the copy only if the kernel did not start to write over
+// it (op.log_first_kept, op.log_copy_kept): a torn copy shows as a loss on
+// the next turn, never as a line.
+@(private = "file")
+serial_line_next :: proc "contextless" (until: u64) -> bool {
+	for serial_next < until {
+		next, lost := op.log_first_kept(serial_next, intrinsics.atomic_load(&log_head.written))
+		if lost != 0 {
+			serial_lost_line(lost)
+			serial_next = next
+			return true
+		}
+		serial_copy = log_records[serial_next % op.LOG_RECORD_CAPACITY]
+		// The second load of `written` comes after the copy.
+		intrinsics.atomic_thread_fence(.Acquire)
+		if !op.log_copy_kept(serial_next, intrinsics.atomic_load(&log_head.written)) {
+			continue
+		}
+		serial_record_line(&serial_copy)
+		serial_next += 1
+		return true
+	}
+	return false
+}
+
+// serial_line_put adds bytes to serial_line.
+@(private = "file")
+serial_line_put :: proc "contextless" (bytes: []u8) {
+	serial_line_count += copy(serial_line[serial_line_count:], bytes)
+}
+
+// serial_record_line puts in serial_line the part of a line that one record
+// holds. The text of a record is UTF-8 with no control character, a name
+// and a channel are checked when the kernel takes them: a record cannot
+// forge or hide a line of the serial port.
+@(private = "file")
+serial_record_line :: proc "contextless" (record: ^op.Log_Record) {
+	head: [op.LOG_LINE_HEAD_CAPACITY]u8
+	head_count := op.log_line_head(record, serial_line_open, &head)
+	text_count := min(int(record.text_count), op.LOG_TEXT_CAPACITY)
+	serial_line_count, serial_line_written = 0, 0
+	serial_line_put(head[:head_count])
+	serial_line_put(record.text[:text_count])
+	serial_line_open = record.more != 0
+	if !serial_line_open {
+		serial_line_put({'\r', '\n'})
+	}
+}
+
+// serial_lost_line puts in serial_line the line of the records that the log
+// wrote over before the drain reached them. It ends the line that one of
+// them began. Each scenario of the tool fails on this line.
+@(private = "file")
+serial_lost_line :: proc "contextless" (lost: u64) {
+	serial_line_count, serial_line_written = 0, 0
+	if serial_line_open {
+		serial_line_put({'\r', '\n'})
+		serial_line_open = false
+	}
+	digits: [20]u8
+	digit_count := 0
+	rest := lost
+	for {
+		digits[len(digits) - 1 - digit_count] = u8('0' + rest % 10)
+		digit_count += 1
+		rest /= 10
+		if rest == 0 {break}
+	}
+	serial_line_put(transmute([]u8)string("kernel: "))
+	serial_line_put(digits[len(digits) - digit_count:])
+	serial_line_put(transmute([]u8)string(" records of the log did not reach the serial port\r\n"))
+}
+
+// serial_drain_all writes each record that the log holds now and the serial
+// port does not have yet, and waits for the device. The caller is the
+// serial writer: the flush, a report, or a writer before the first tick.
+serial_drain_all :: proc "contextless" () {
+	if log_head != nil {
+		_ = serial_drain(intrinsics.atomic_load(&log_head.written), nil)
+	}
+}
+
+// serial_drain_of_a_processor is the drain of a tick of any processor, and
+// of a wait for a lock past LOCK_WAIT_BEFORE_DRAIN_MILLISECONDS. It does not
+// wait for the serial writer: when another drain, the flush or a report
+// holds it, that one writes. So a hang of one processor does not silence
+// the lines of the others.
+serial_drain_of_a_processor :: proc "contextless" (cpu: ^Processor) {
+	if log_head == nil || intrinsics.atomic_load(&log_serial_only) || !serial_writer_take(cpu.apic_id + 1, 0) {
+		return
+	}
+	// A report that began after the look above keeps its writer, and this
+	// drain gives it back at once.
+	if !intrinsics.atomic_load(&log_serial_only) {
+		started := cycles_now()
+		written := serial_drain(intrinsics.atomic_load(&log_head.written), cpu)
+		// The measure counts only the drains that wrote: the rate that the
+		// drain keeps while it has lines.
+		if written > 0 && intrinsics.atomic_load(&serial_measure_state) == 0 {
+			intrinsics.atomic_add(&serial_measured_cycles, cycles_now() - started)
+			if intrinsics.atomic_add(&serial_measured_bytes, u64(written)) + u64(written) >= SERIAL_MEASURE_BYTES {
+				intrinsics.atomic_store(&serial_measure_state, 1)
+			}
+		}
+	}
+	serial_writer_free()
+}
+
+// serial_tick is the drain of the tick of a processor, then the one line of
+// the measure of the drain, after the serial writer is free: that line is a
+// record of the log, written under the log lock, which no holder of the
+// serial writer takes.
+serial_tick :: proc "contextless" (cpu: ^Processor) {
+	// A load first: each Log reads this word, and a store at each tick of
+	// each processor would take its line of the cache from them.
+	if !intrinsics.atomic_load(&serial_tick_drains) {
+		intrinsics.atomic_store(&serial_tick_drains, true)
+	}
+	serial_drain_of_a_processor(cpu)
+	if _, ready := intrinsics.atomic_compare_exchange_strong(&serial_measure_state, 1, 2); ready {
+		bytes := intrinsics.atomic_load(&serial_measured_bytes)
+		cycles := max(intrinsics.atomic_load(&serial_measured_cycles), 1)
+		frequency := max(cycle_frequency, 1)
+		rate := bytes * frequency / cycles
+		// What one processor keeps when it writes SERIAL_MICROSECONDS_OF_A_TICK at each tick.
+		at_the_ticks := rate * SERIAL_MICROSECONDS_OF_A_TICK * TICKS_PER_SECOND / 1_000_000
+		log("kernel: the drain of the serial port wrote ", Size{bytes, .Bytes}, " in ", Duration{cycles * 1_000_000 / frequency, .Microseconds}, " of writing: ", rate, " bytes each second while it writes, ", at_the_ticks, " at 100 us of each tick of one processor; the log of the machine needs at most ", u64(op.LOG_SERIAL_BYTES_OF_A_SECOND))
+	}
+}
+
+#assert(SERIAL_MICROSECONDS_OF_A_TICK == 100) // The line of the measure says it.
+
+// serial_drain_before_the_tick drains the log at once until a tick does
+// it. The caller holds no log lock.
+serial_drain_before_the_tick :: proc "contextless" () {
+	if intrinsics.atomic_load(&serial_tick_drains) {
+		return
+	}
+	self: u32 = 0
+	if lock_ready {
+		self = apic_id() + 1
+	}
+	if !serial_writer_take(self, 0) {
+		return
+	}
+	if !intrinsics.atomic_load(&log_serial_only) {
+		serial_drain_all()
+	}
+	serial_writer_free()
+}
+
+// serial_flush writes each record that the serial port does not have yet,
+// before the machine stops: the last line of a test reaches the host. The
+// report of a fault drained the log already, and writes no record after. It
+// waits at most FAULT_REPORT_WAIT_MILLISECONDS for another writer: a drain
+// of a processor gives the writer back within a tick, so a writer that
+// keeps it longer stopped with the machine, and the flush takes it. It
+// writes at most the whole log, LOG_RECORD_CAPACITY lines.
+serial_flush :: proc "contextless" () {
+	if log_head == nil || intrinsics.atomic_load(&log_serial_only) {
+		return
+	}
+	self: u32 = 0
+	if lock_ready {
+		self = apic_id() + 1
+	}
+	if !serial_writer_take(self, FAULT_REPORT_WAIT_MILLISECONDS) {
+		intrinsics.atomic_store(&serial_writer, self)
+	}
+	serial_drain_all()
+	serial_writer_free()
 }
 
 // own_log_ring_take takes the frames of the own log ring of a new program,
@@ -353,6 +709,27 @@ own_log_ring_copy :: proc "contextless" (owner: ^Program, serial: u64, after: u3
 own_log_record :: proc "contextless" (owner: ^Program, number: u64) -> ^op.Log_Record {
 	page, offset := op.own_log_place(number)
 	return direct(owner.log_ring_frames[page] + offset, op.Log_Record)
+}
+
+// log_records_of_text gives the records that log_record writes for a text:
+// it cuts the text as log_record does, after a whole character, and an
+// empty text is one record. Log spends this many records of its budget.
+log_records_of_text :: proc "contextless" (text: []u8) -> u64 {
+	records: u64 = 0
+	rest := text
+	for {
+		part := rest[:min(len(rest), op.LOG_TEXT_CAPACITY)]
+		if len(part) < len(rest) {
+			if whole := text_encoding.complete_characters(part); whole > 0 {
+				part = part[:whole]
+			}
+		}
+		rest = rest[len(part):]
+		records += 1
+		if len(rest) == 0 {
+			return records
+		}
+	}
 }
 
 // log_record adds a text to the memory object of the log: one record, or
@@ -441,6 +818,9 @@ machine_stop :: proc "contextless" (code: u8) -> ! {
 			}
 		}
 	}
+	// The tick no longer drains the log after this: the records that the
+	// serial port does not have yet go now, the last line of a test too.
+	serial_flush()
 	port_write_8(DEBUG_EXIT_PORT, code)
 	processor_stop()
 }

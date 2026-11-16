@@ -506,7 +506,11 @@ budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) ->
 			from.amounts.pages -= amounts.pages
 			from.amounts.programs -= amounts.programs
 			from.amounts.threads -= amounts.threads
+			// Log reads it with no lock (budget_log).
+			intrinsics.atomic_sub(&from.amounts.log_records, amounts.log_records)
 			budget = {live = true, parent = parent, amounts = amounts}
+			// The count of this second moves with the log records.
+			budget_log_count_to_child(parent, u32(slot + 1))
 			return u32(slot + 1), .Ok
 		}
 	}
@@ -529,6 +533,7 @@ budget_release :: proc "contextless" (index: u32) {
 	budgets[parent].amounts.pages += budget.amounts.pages
 	budgets[parent].amounts.programs += budget.amounts.programs
 	budgets[parent].amounts.threads += budget.amounts.threads
+	intrinsics.atomic_add(&budgets[parent].amounts.log_records, budget.amounts.log_records)
 	for &region in regions {
 		if region.page_count != 0 && region.budget == index {
 			region.budget = parent
@@ -549,6 +554,9 @@ budget_release :: proc "contextless" (index: u32) {
 			intrinsics.atomic_store(&other.parent, parent)
 		}
 	}
+	// After its programs and threads moved: the records that it wrote in
+	// this second stay spent in its parent.
+	budget_log_count_to_parent(index, parent)
 	budget^ = {ended = true, parent = parent}
 }
 
@@ -2028,6 +2036,14 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 				}
 			}
 		}
+		// The lines of the log go to the serial port here, not in Log. Each
+		// processor tries, so a hang of one does not silence the others.
+		// The thread that this tick interrupts was charged above: the time
+		// of the drain moves the start of its next charge, so no budget pays
+		// for the lines of others.
+		drain_start := cycles_now()
+		serial_tick(cpu)
+		cpu.charged_from += cycles_now() - drain_start
 		apic_write(APIC_END, 0)
 	case frame.vector == VECTOR_WAKE || frame.vector == VECTOR_SYNC:
 		// A thread that woke on another processor preempts the thread
