@@ -10,10 +10,11 @@
 //   on the path: odin, lld-link, ld.lld, nasm, qemu-system-x86_64, swtpm
 //   OVMF_CODE, OVMF_VARS: the UEFI firmware image and its variable store
 //   OVMF_TPM_CODE, OVMF_TPM_VARS: the same firmware with a TPM driver and
-//     no system management mode, for the machines of the measure and of
-//     the machine key sealed by the TPM
-//   OVMF_FULL_CODE, OVMF_FULL_VARS: the firmware with Secure Boot (and system
-//     management mode), for the machines of Secure Boot
+//     no system management mode, for the machines of the measure and the
+//     machine of the TPM with Secure Boot off
+//   OVMF_FULL_CODE, OVMF_FULL_VARS: the firmware with Secure Boot, a TPM
+//     driver and system management mode, for the machines of Secure Boot
+//     and the machines of the keys sealed by the TPM
 //   SYSTEM_SIGNING_KEY (not set by the shell): the private key of the
 //     principal that signs the system description; with none,
 //     the test signing key of resources/keys (system_description.odin).
@@ -156,12 +157,6 @@ BOOT_VOLUME_STATED_HASH :: BUILD_FOLDER + "/boot_volume_stated_hash.img"
 // changed after the signature (secure_boot.odin).
 BOOT_VOLUME_SECURE_BOOT :: BUILD_FOLDER + "/boot_volume_secure_boot.img"
 BOOT_VOLUME_SECURE_BOOT_CHANGED :: BUILD_FOLDER + "/boot_volume_secure_boot_changed.img"
-// The volumes of the test of the seal by the TPM: the boot image whose
-// root service seals with no Secure Boot (BOOT_IMAGE_SEAL_TEST), and the
-// same with one byte of the module lonely changed before the description
-// was made: another system, another PCR 11.
-BOOT_VOLUME_SEAL_TEST :: BUILD_FOLDER + "/boot_volume_seal_test.img"
-BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM :: BUILD_FOLDER + "/boot_volume_seal_test_other_system.img"
 // The path where the firmware looks for the boot program of a disk.
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
 FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
@@ -1156,7 +1151,7 @@ Machine_Iommu :: enum {
 	Amd,
 }
 
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false) -> (command: []string, ok: bool) {
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false) -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -1171,7 +1166,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	code_variable, variables_variable, variables_copy := "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES
 	switch firmware {
 	case .Usual:
-	case .With_Tpm:
+	case .With_Tpm_Driver:
 		code_variable, variables_variable, variables_copy = "OVMF_TPM_CODE", "OVMF_TPM_VARS", FIRMWARE_TPM_VARIABLES
 	case .With_Secure_Boot:
 		code_variable, variables_variable, variables_copy = "OVMF_FULL_CODE", "OVMF_FULL_VARS", FIRMWARE_FULL_VARIABLES
@@ -1316,7 +1311,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// table.
 		append(&list, "-device", fmt.tprintf("virtio-rng-pci,disable-legacy=on,vectors=2,addr=0x%x%s", pci.ENTROPY_DEVICE, virtio_iommu))
 	}
-	if firmware != .Usual {
+	if firmware != .Usual || tpm_device {
 		if test_output == "" {
 			fmt.eprintln("modustool: a machine with a TPM or with Secure Boot runs only as a test machine, with its own files")
 			return nil, false
@@ -1330,11 +1325,12 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// system management mode.
 		append(&list, "-global", "driver=cfi.pflash01,property=secure,value=on")
 	}
-	if firmware == .With_Tpm {
+	if tpm_device {
 		// The software TPM that machine_test starts (trusted_boot_scenario.odin),
 		// through the socket of this machine, on the CRB interface: the
 		// command and its answer are in a buffer of memory, not moved byte
-		// by byte through one register.
+		// by byte through one register. The device does not depend on the
+		// firmware: the firmware with Secure Boot has a TPM driver too.
 		append(&list, "-chardev", strings.concatenate({"socket,id=tpm_socket,path=", tpm_socket_of(test_output)}, context.temp_allocator))
 		append(&list, "-tpmdev", "emulator,id=tpm,chardev=tpm_socket", "-device", "tpm-crb,tpmdev=tpm")
 		// The trace of QEMU for the TPM, with the time of each line: when the
