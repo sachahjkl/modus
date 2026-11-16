@@ -50,8 +50,9 @@
 // the name of another program: the kernel sets the program, the thread and
 // the time of each record.
 //
-// **Its exports** (`exports.odin`): `records` and `value_runs`, to a caller
-// that [acts for the principal](term:acts-for-the-principal).
+// **Its exports** (`exports.odin`): `records` and `value_runs`: the whole
+// log to a caller that [acts for the principal](term:acts-for-the-principal),
+// and its [own records](term:own-records) to each other caller.
 //
 // ```
 // connect("log")

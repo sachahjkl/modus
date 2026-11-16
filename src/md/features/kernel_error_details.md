@@ -33,7 +33,7 @@ A program that builds a command from values of a principal (the console, a test,
 
 The claim "no added instruction" is a claim about the source: no line on the path of a command with no table changed, except the event point of an operation, which removes the bit from the kind it records, and runs only when a rule of the kernel events observes operations. The machine code of `execute` can still change: its default branch now calls `execute`, so the compiler can save other registers in its prologue or give it another frame. The evidence is the measure line of the program `errors`, printed and never compared: a command that succeeds with no table and with a table, and a command that is refused with no table and with a table. The time of a command with a table that succeeds shows the cost of the second call of `execute`, which only a program that asks for details pays.
 
-**The second frame of `execute`.** A command with a table runs its operation under two frames of `execute` on the kernel stack (16 pages). `execute` is large, and its frame holds the locals of each branch that the compiler inlined. No check of the tool measures the frames of the kernel: the size of that frame is not known, and a check of the deepest stack of the kernel is planned work (`ROADMAP.md`).
+**The second frame of `execute`.** A command with a table runs its operation under two frames of `execute` on the kernel stack (16 pages). `execute` is large, and its frame holds the locals of each branch that the compiler inlined. The build measures it: the frame of `execute` comes from `llc`, its table of recursions allows two levels of `execute` on one chain, and each build prints the deepest chain of the kernel stack with the bytes that stay free. The build fails when less than 4 of the 16 pages stay free ([infrastructure/kernel_stack_depth.md](../infrastructure/kernel_stack_depth.md)).
 
 ## Refused forms
 
@@ -55,4 +55,4 @@ The claim "no added instruction" is a claim about the source: no line on the pat
 
 ## State
 
-Built: the bit, the default branch, `diagnose_command`, the pure checks with their host tests, `system.call_with_error_details`, the machine check of the program `errors` and its measures. Left: a measure of the frame of `execute` (`ROADMAP.md`); the wrappers of `system` (`memory_create`, `memory_map`, ...) take an error record and no table; a program that wants the details calls `system.call_with_error_details`.
+Built: the bit, the default branch, `diagnose_command`, the pure checks with their host tests, `system.call_with_error_details`, the machine check of the program `errors` and its measures, the measure of the two frames of `execute` at each build. Left: the wrappers of `system` (`memory_create`, `memory_map`, ...) take an error record and no table; a program that wants the details calls `system.call_with_error_details`.

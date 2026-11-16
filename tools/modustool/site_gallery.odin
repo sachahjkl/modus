@@ -155,6 +155,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "module_information.png", group = .Modules, guide = "docs/MODULE_CONTRACT.md", caption = "The page of one module in the manual: its file, its exports, who imports it, the programs that run it and its documentation."},
 	{file = "manual.png", group = .Modules, guide = "docs/MODULE_CONTRACT.md", caption = "The manual shows the documentation that each module carries in its file."},
 	{file = "manual_link.png", group = .Modules, guide = "docs/MODULE_CONTRACT.md", caption = "The manual with the focus on a link of a page: Tab moves the focus, Enter opens the link, and Backspace goes back."},
+	{file = "manual_declaration.png", group = .Modules, guide = "docs/MODULE_CONTRACT.md", caption = "The manual on a procedure of a support package that no module describes: its file, its line of Odin and its comment."},
 	{file = "manual_tables.png", group = .Modules, guide = "docs/MODULE_CONTRACT.md", caption = "The manual on the module sample: the exports that take and give tables, each with its signature and its text."},
 	{file = "interface_module.png", group = .Modules, guide = "docs/INTERFACE.md", caption = "The interface package as a module: the same draw table as the package compiled in, and the time of one frame in each way."},
 

@@ -957,7 +957,7 @@ Module_Steps :: struct {
 	// (built_files). The compile key and the linked file are added to them
 	// (module_convert_key).
 	convert_inputs:      Build_Key_Inputs,
-	compile_outputs:     []string, // The linked file.
+	compile_outputs:     []string, // The linked file; for a kernel, then its measure of the kernel stack.
 	convert_outputs:     []string, // The module file, and its debug object.
 }
 
@@ -1112,9 +1112,14 @@ module_convert_key_inputs :: proc(build: Module_Build) -> Build_Key_Inputs {
 // module_steps_of gives the two steps of a module of the table, in the
 // folder of this build.
 module_steps_of :: proc(build: Module_Build) -> (steps: Module_Steps, ok: bool) {
-	compile_outputs := make([]string, 1, context.temp_allocator)
+	compile_outputs := make([dynamic]string, context.temp_allocator)
 	// The test of the stack trace reads the symbols of the linked file.
-	compile_outputs[0] = module_linked_file(build.name)
+	append(&compile_outputs, module_linked_file(build.name))
+	// Each build prints the measure of the kernel stack, also for a kept
+	// kernel (kernel_stack.odin).
+	if build.kernel {
+		append(&compile_outputs, kernel_stack_measure_file(build.name))
+	}
 	convert_outputs := make([dynamic]string, context.temp_allocator)
 	append(&convert_outputs, module_path(build.name))
 	if debug_information {
@@ -1126,7 +1131,7 @@ module_steps_of :: proc(build: Module_Build) -> (steps: Module_Steps, ok: bool) 
 		convert_record_path = module_convert_record_path(build.name),
 		compile_inputs      = compile_inputs,
 		convert_inputs      = module_convert_key_inputs(build),
-		compile_outputs     = compile_outputs,
+		compile_outputs     = compile_outputs[:],
 		convert_outputs     = convert_outputs[:],
 	}
 	return steps, true

@@ -11,7 +11,9 @@
 // code is in the font of the cells, a list item has its mark and its indentation, and an example is a block. A
 // link is a colored name. A link that opens has a line under it: a link to a module, to an export or to a record of
 // the boot image, and a link to a term of the glossary or to a heading of a guide, whose
-// [link page](term:link-page) the boot image carries in the resource `manual_pages`. An address of another host is shown after its link, and does not open.
+// [link page](term:link-page) the boot image carries in the resource `manual_pages`. A declaration of the sources
+// that no module describes has its link page there too: [`system.word_wait`](system.word_wait) shows its line of
+// Odin and its comment. An address of another host is shown after its link, and does not open.
 // This program reads the file only: it **does not load the module**, and it does not start it.
 //
 // The page of a module also says how the module can be used. The system has *one kind of file* for a program, a

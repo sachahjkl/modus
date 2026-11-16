@@ -208,7 +208,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		log_bytes({']', ' '})
 		log_bytes(log_text[:v[2]])
 		log_bytes({'\r', '\n'})
-		log_record(program_index, index, name, channel[:channel_count], op.Log_Level(v[3]), log_text[:v[2]], log_runs)
+		log_record(program_index, intrinsics.atomic_load(&program.serial), &program.log_records_written, index, name, channel[:channel_count], op.Log_Level(v[3]), log_text[:v[2]], log_runs)
 		return .Ok
 
 	case .Memory_Create:

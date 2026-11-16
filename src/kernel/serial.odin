@@ -66,6 +66,11 @@ KERNEL_LOG_RUN_LIMIT :: 12
 
 log_head: ^op.Log_Head // nil before log_start.
 log_records: [^]op.Log_Record
+// A record keeps the slot of its program and of its thread in one byte
+// each, so that it has room for the program serial and the own number in
+// its 256 bytes.
+#assert(PROGRAM_CAPACITY <= 1 << 8)
+#assert(THREAD_TABLE_CAPACITY <= 1 << 8)
 log_serial_only: bool // The kernel reports its own fault: it takes no lock, and writes the serial port only.
 // The log lock protects the serial port, the records of the log and their
 // counter (docs/ARCHITECTURE.md, "Locks of the kernel").
@@ -269,7 +274,7 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log
 	log_bytes(buffer[:count])
 	log_bytes({'\r', '\n'})
 	name := KERNEL_NAME
-	log_record(0, 0, name[:], transmute([]u8)channel, level, buffer[:count], runs[:run_count])
+	log_record(0, 0, nil, 0, name[:], transmute([]u8)channel, level, buffer[:count], runs[:run_count])
 	log_free(taken)
 }
 
@@ -277,7 +282,14 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log
 // more if the text is long. Each record keeps the part of the value runs
 // that falls in its text; the runs are in order and inside the text
 // (value_kinds.value_runs_check). The caller holds the log lock.
-log_record :: proc "contextless" (program: u32, thread: u32, name: []u8, channel: []u8, level: op.Log_Level, text: []u8, runs: []value_kinds.Value_Run_In_Call) {
+//
+// The program slot and the program serial together name the program: the
+// log service gives a reader the records of its own program by the two
+// (src/md/features/log_reader_scope.md). `own_written` counts the records
+// of that program, under the log lock: each record takes the next own
+// number, so a reader of its own records numbers them with no count of the
+// records of other programs. nil for a record of the kernel.
+log_record :: proc "contextless" (program: u32, program_serial: u32, own_written: ^u32, thread: u32, name: []u8, channel: []u8, level: op.Log_Level, text: []u8, runs: []value_kinds.Value_Run_In_Call) {
 	if log_head == nil || log_serial_only {
 		return
 	}
@@ -294,15 +306,28 @@ log_record :: proc "contextless" (program: u32, thread: u32, name: []u8, channel
 		}
 		rest = rest[len(part):]
 		written := log_head.written
+		// The store of `written` for the record before must come before any
+		// store of this record: a reader that sees a byte of this record then
+		// sees the new `written`, and drops its copy (op.log_copy_kept).
+		// Between two calls the log lock orders them; inside one long text
+		// only this fence does. On x86 it only stops the compiler.
+		intrinsics.atomic_thread_fence(.Release)
+		own_number: u32
+		if own_written != nil {
+			own_number = own_written^
+			own_written^ += 1 // It wraps at 2^32: a reader compares own numbers by their distance.
+		}
 		record := &log_records[written % op.LOG_RECORD_CAPACITY]
 		record^ = {
-			sequence   = written,
-			time       = microseconds(cycles_now()),
-			program    = program,
-			thread     = thread,
-			level      = level,
-			more       = u8(len(rest) != 0),
-			text_count = u16(len(part)),
+			sequence       = written,
+			time           = microseconds(cycles_now()),
+			program        = u8(program),
+			thread         = u8(thread),
+			program_serial = program_serial,
+			own_number     = own_number,
+			level          = level,
+			more           = u8(len(rest) != 0),
+			text_count     = u16(len(part)),
 		}
 		copy(record.name[:len(record.name) - 1], name)
 		copy(record.channel[:], channel)

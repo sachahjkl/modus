@@ -271,17 +271,24 @@ hexadecimal :: proc(text: string) -> bool {
 	return len(text) > 0
 }
 
-// kernel_has_no_vector_instruction disassembles the linked kernel and
-// says if the check passes. It prints each refused instruction and each
-// problem.
-kernel_has_no_vector_instruction :: proc(linked: string) -> bool {
+// kernel_listing disassembles the linked kernel. The check of the vector
+// instructions and the measure of the kernel stack read the same listing
+// (kernel_stack.odin).
+kernel_listing :: proc(linked: string) -> (listing: string, ok: bool) {
 	command := [?]string{"llvm-objdump", "-d", "--no-show-raw-insn", "--x86-asm-syntax=att", linked}
 	state, standard_output, standard_error, error := os.process_exec({command = command[:]}, context.temp_allocator)
 	if error != nil || !state.exited || !state.success {
 		fmt.eprintfln("modustool: cannot disassemble %s with llvm-objdump: %v %s", linked, error, string(standard_error))
-		return false
+		return "", false
 	}
-	check := vector_check_listing(string(standard_output))
+	return string(standard_output), true
+}
+
+// kernel_has_no_vector_instruction says if the check passes on the listing
+// of the linked kernel. It prints each refused instruction and each
+// problem.
+kernel_has_no_vector_instruction :: proc(listing: string) -> bool {
+	check := vector_check_listing(listing)
 	if len(check.refused) == 0 && len(check.problems) == 0 {
 		return true
 	}

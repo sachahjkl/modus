@@ -902,6 +902,36 @@ The design: `docs/ARCHITECTURE.md`, "The return to a program".
 
 Do not use: IST, exception stack, NMI stack.
 
+### Kernel stack
+
+A kernel stack is the stack of 16 pages of one processor where the kernel runs each entry from a program, each interrupt that it takes and each operation.
+
+Each entry from a program starts at its top, and no entry continues an earlier one. A guard page is before it and after it. The build measures the deepest chain of calls on it and fails when less than 4 pages stay free. It is not an interrupt stack: those hold the frames of the exceptions that can come when no stack is safe.
+
+The design: `src/md/infrastructure/kernel_stack_depth.md`; `docs/TOOLS.md`, "The deepest stack of the kernel".
+
+Do not use: thread stack (for this), system stack.
+
+### Deepest chain
+
+The deepest chain is the chain of calls of the kernel that uses the most bytes of a kernel stack, from a place where the kernel starts on it.
+
+The tool computes it at each build from the frame of each procedure that `llc` writes and from the calls of the listing of the linked kernel, with stated rules for what the listing cannot show: the indirect calls, the bounded recursions such as the two frames of `execute`, and one interrupt over the idle wait. Each build prints it, procedure by procedure, in a measure line. It is a bound: a chain of the graph can be a chain that no input runs.
+
+The design: `src/md/infrastructure/kernel_stack_depth.md`.
+
+Do not use: stack depth (for the chain), call stack (for this), worst-case stack.
+
+### Cycle break
+
+A cycle break is a stated rule of the measure of the kernel stack: below one procedure, no chain runs a named other procedure again, so a cycle of calls through them has a depth.
+
+The listing of the kernel shows a cycle when a procedure can reach itself through others, and a cycle has no depth. A state of the kernel can cut it: `lock_order_broken` logs, and the log takes a lock, but it starts the report of a fault first, and from then the log takes no lock. The row names the two procedures and its reason in the source of the tool; the measure takes the depth of the first with the second left out, and a cycle with no row stops the build.
+
+The design: `src/md/infrastructure/kernel_stack_depth.md`.
+
+Do not use: cycle exception, recursion bound (for this).
+
 ### Direct map
 
 The direct map is the part of the kernel half of the addresses that shows all physical memory.
@@ -928,11 +958,11 @@ Do not use: negative test, lkdtm.
 
 ### Log record
 
-A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a program, a thread, a level, a channel, a text and the value runs of the text.
+A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a program (its name, its program slot and its program serial), the own number of the record among the records of its program, a thread, a level, a channel, a text and the value runs of the text.
 
 A program writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the program and the thread, so a program cannot write a record in the name of another one. The text has 152 bytes at most per record; a longer text continues in the next record. The serial port prints the text only. The budget of the program limits its log records in each second.
 
-A program with the grant to read the log serves the records as a table: `log.records(after)`, and their value runs: `log.value_runs(after)`.
+A program with the grant to read the log serves the records as a table: `log.records(after)`, and their value runs: `log.value_runs(after)`. Each caller receives the records of its log scope: the whole log, or its own records.
 
 The design: `docs/TOOLS.md`, "The log".
 
@@ -983,6 +1013,36 @@ A level says how much a log record matters: Info, Debug, Warning or Error.
 Info is 0, the default. Debug is for the reader who looks for a fault.
 
 Do not use: severity, priority.
+
+### Own records
+
+The own records of a program are the log records that the kernel wrote for the `Log` operations of that program: the records with its program slot and its program serial.
+
+The kernel sets the slot and the serial of each record (`op.Log_Record.program`, `op.Log_Record.program_serial`), so a program cannot write a record in the name of another one. The two numbers together name one program: a new program in the same slot has another serial, and does not read the records of the program before it. A record that another program wrote about this program, such as the line "root: started log_reader" of the root service, is not one of its own records. A caller of the log service that does not act for the principal receives its own records only.
+
+The design: `src/md/features/log_reader_scope.md`.
+
+Do not use: my log, private log, log of a program (for this).
+
+### Own number
+
+The own number of a log record is its place among the records of its program: 0 for the first record that the program wrote, 1 for the next one (`op.Log_Record.own_number`).
+
+The kernel counts the records of each program and writes the count in each record. A reader of its own records receives the own number as the number of each row, gives `after` in own numbers, and its count `lost` is a gap in its own numbers: it receives no number or count of the records of other programs. The one ring still lets their records push its own records out. A reader of the whole log receives the number of the record in the whole log. The own number has 32 bits and starts again from 0 after 2^32 records; two own numbers are compared by their distance.
+
+The design: `src/md/features/log_reader_scope.md`.
+
+Do not use: local sequence, private number, cursor (for this).
+
+### Log scope
+
+The log scope of a connection to the log service is the set of log records that its caller receives from `log.records(after)` and `log.value_runs(after)`: the whole log, or its own records.
+
+The root service writes it in the grant of the connection, and the log service, which holds the memory of the log, chooses the records; the reader never maps that memory. A caller that acts for the principal, such as the console or `remote`, receives the whole log. Each other caller receives its own records: the amount of its grant names its program slot and its program serial (`modus:contract/log_scope`). A program with no connection to the log service reads no record through it. A log scope never names a channel: a channel is a name that the writer chooses, not a fact that the kernel sets.
+
+The design: `src/md/features/log_reader_scope.md`.
+
+Do not use: log permission, log view, log access level.
 
 ### Lock of the kernel
 
@@ -1408,11 +1468,25 @@ Do not use: dropped events, overrun count.
 
 ### Performance counter
 
-A performance counter is a register of the processor that counts cycles or retired instructions.
+A performance counter is a register of the processor that counts one event of the processor, such as the cycles, the retired instructions or the cache misses.
 
-The kernel detects the counters at boot and writes one line of the log. It programs none yet: an event record carries the cycle counter only.
+The kernel programs four of them (the general counters 0 to 3) for a thread that asks, as the thread counters, and counts in user mode only. The plan of each vendor comes from `CPUID` at boot, and the line of the boot names it. An event record carries the cycle counter only, not a performance counter.
+
+The design: `docs/ARCHITECTURE.md`, "The counters of a thread".
 
 Do not use: PMC, PMU counter.
+
+### Thread counters
+
+The thread counters are the counts of four events of the processor for the code of one thread, in user mode only, since its last start (`op.Thread_Counters`): the instructions retired, the cycles, the cache misses and the branch misses.
+
+A developer measures with them the cost of a data layout, and not only its time. The calling thread starts and reads them with two commands of thread control, through the machine handle with the right **Counters**, and stops them with a third, which needs no right; the root service gives that right by the start grant `Counters`, because a count of the misses of a shared cache measures what other programs do. The kernel keeps the counts of a thread when it leaves a processor, so no count of another thread or of the kernel reaches it. A machine with no counters that the kernel uses gives `Unsupported`. The cache misses are of the last level cache on Intel and of the L2 cache on AMD: compare two counts on one machine only.
+
+Example: `system.thread_counters_start(machine)`, a loop, then `system.thread_counters_read(machine)` gives at least one instruction retired for each turn of the loop.
+
+The design: `docs/ARCHITECTURE.md`, "The counters of a thread".
+
+Do not use: perf counters, hardware counters, PMU sample.
 
 ### Service
 
@@ -1680,7 +1754,7 @@ Do not use: siginfo, fault message.
 
 Thread control is the kernel operation `Thread_Control`: it stops a thread, reads and writes its registers and its extended state, and resumes it.
 
-No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Two more commands read and write the thread schedule of a thread that is not held, with their own rights: `Read_Schedule` and `Write_Schedule`. Two more do the same for its thread placement: `Read_Placement` and `Write_Placement`. Two more read and write the program schedule of a program, through the machine handle only: `Read_Program_Schedule` and `Write_Program_Schedule`. Three more serve a debugger: `Read_Breakpoints` and `Write_Breakpoints` for the breakpoints of a held thread, and `Read_Memory` for the bytes of the program of a thread.
+No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Two more commands read and write the thread schedule of a thread that is not held, with their own rights: `Read_Schedule` and `Write_Schedule`. Two more do the same for its thread placement: `Read_Placement` and `Write_Placement`. Two more read and write the program schedule of a program, through the machine handle only: `Read_Program_Schedule` and `Write_Program_Schedule`. Three more serve a debugger: `Read_Breakpoints` and `Write_Breakpoints` for the breakpoints of a held thread, and `Read_Memory` for the bytes of the program of a thread. Three more count the events of the processor for the calling thread, through the machine handle with **Counters**: `Start_Counters`, `Read_Counters` and `Stop_Counters` (the thread counters).
 
 Who can act on a thread:
 
@@ -1867,7 +1941,7 @@ Do not use: page list, radix tree.
 
 A right is one kind of operation that a handle permits on its object.
 
-The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spend, Physical, Schedule, Commit, Events and Debug. Each one means something for each kind of object: Read on a memory object is a mapping that reads, Read on a program is the reading of its state, Control on a program starts and stops it. A new object has each right of its kind. `Handle_Give` copies a handle with a part of its rights; no operation adds a right.
+The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spend, Physical, Schedule, Commit, Events, Debug and Counters. Each one means something for each kind of object: Read on a memory object is a mapping that reads, Read on a program is the reading of its state, Control on a program starts and stops it. A new object has each right of its kind. `Handle_Give` copies a handle with a part of its rights; no operation adds a right.
 
 Narrow rights let a program give exactly what another needs: Commit is the part of Spend that pays pages of an object, and Inspect on a thread holds and reads it without Write. Debug on a program makes its holder the debugger of that one program.
 
@@ -1991,7 +2065,7 @@ The root service decides the start grants of a program from its name (`grants_of
 
 The name of a start grant is the name of its member, with its capital letters: `Store`, `Serve`, `System_Part`. The log of the root service, the sentence of an error record, the site and the guides write it so.
 
-A start grant is not a recorded grant, which is a handle that the root service gave and can end. A recorded grant has a name in lower case (`store`, `machine`), which `grants()` shows and `revoke` takes. Several start grants are one recorded grant: `Inspect`, `Stop`, `Schedule` and `Events` are rights of the one handle `machine`. A start grant such as `Serve` has no recorded grant, and the recorded grants `log` and `debug` have no start grant.
+A start grant is not a recorded grant, which is a handle that the root service gave and can end. A recorded grant has a name in lower case (`store`, `machine`), which `grants()` shows and `revoke` takes. Several start grants are one recorded grant: `Inspect`, `Stop`, `Schedule`, `Events` and `Counters` are rights of the one handle `machine`. A start grant such as `Serve` has no recorded grant, and the recorded grants `log` and `debug` have no start grant.
 
 Example: `debug("notes")` in the console prints "debugger.attach: the caller has no grant for this: the debug access to this program: the grant Store of the program refuses it".
 
@@ -4085,6 +4159,18 @@ The design: `docs/STORAGE.md`, "3.3 The commit and the open".
 
 Do not use: transaction (for this), save, sync.
 
+### Commit read back
+
+The commit read back is the step of each commit in which the storage service reads back from the device each block that the commit wrote, before its root, and then its root, and compares the bytes with the bytes that it wrote.
+
+It finds a dropped write while the root before the commit is still whole, before the next commit can write over the blocks that this root names. If the bytes differ, the service refuses the commit (`Device`, unit `Dropped_Writes`), keeps the state of the root before, and writes one line; the objects read as they were before the commit, with no restart. Because the blocks are read before the root, a commit with a dropped block never has a root on the disk. It costs one read for each block that the commit wrote and one for its root; `stores()` gives the commits refused, the blocks read back and their time as a measure. The erase of versions uses the read back of its commit, and reads back its second root and its zeros too.
+
+It is not a check of the medium: a device that answers the read from the cache that lost the write passes it, and the check of the open at the next start is the guard for that. It is not the check of a block at a read either: it compares all the bytes with the bytes that the commit wrote.
+
+The design: `src/md/features/dropped_write.md`.
+
+Do not use: write check, readback.
+
 ### Generation
 
 A generation is the number of a commit: each commit has the generation of the commit before it plus 1, on the whole disk.
@@ -4139,7 +4225,7 @@ Do not use: corrupt file, bad sector.
 
 A dropped write is a write that the disk answers with Ok and does not keep.
 
-The device reports no error, so the storage service learns of a dropped write only at the next read of the block: its bytes do not have their check. At the start, the open then refuses the newest commit and uses the root before it, when that root names no wrong block: the objects read as they were at the commit before, and the log has the line "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used". A commit after the dropped one names the same wrong block, so both roots are then damaged and the object reads `Damaged`. The test device of the modus tool drops the write of a block that starts with a marker text (`modustool test power`).
+The device reports no error, so the storage service learns of a dropped write only at a read of the block. The commit read back of the commit reads it first: the service then refuses the commit, keeps the state of the root before, and the objects read as they were at the commit before, with no restart. After a loss of power before the read back, the open refuses the newest commit and uses the root before it, when that root names no wrong block, with the line "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used". A device that answers the read back from the cache that lost the write hides the drop: a commit after it names the same wrong block, so both roots are then damaged and the object reads `Damaged`. The test device of the modus tool drops the write of a block that starts with a marker text (`modustool test power`).
 
 A dropped write is not a loss of power: the machine runs on, and the write before and after it reach the disk. It is not a torn write either: no part of the block reaches the disk.
 
@@ -5421,9 +5507,9 @@ Do not use: run (alone), token, inline.
 
 ### Link page
 
-A link page is a page of the program `manual` for the target of a link that is no module: a term of the glossary, or a heading of a guide.
+A link page is a page of the program `manual` for the target of a link that no module describes: a term of the glossary, a heading of a guide, or a declaration of the sources.
 
-The documentation of a module links terms and headings of the guides, and the manual reads only the boot image. So the build writes the page of each such target that the modules of the image link, with the headings under each heading, in the resource `manual_pages` (`src/library/contract/manual_pages`). The page of a term is its name, its short definition and its explanation. The page of a heading is its text up to the next heading, then a link to each heading under it. Example: on the page of the module `manual`, the link "the description tables" opens the link page `docs/MODULE_CONTRACT.md#description-tables`. A link page is not a copy of the site: it holds no picture, and a table is a list.
+The documentation of a module links terms, headings of the guides and declarations of the support packages, and the manual reads only the boot image. So the build writes the page of each such target that the modules of the image link, with the headings under each heading, in the resource `manual_pages` (`src/library/contract/manual_pages`). The page of a term is its name, its short definition and its explanation. The page of a heading is its text up to the next heading, then a link to each heading under it. The page of a declaration is its package and its name, its kind, its file and its line, its one line of Odin and its comment, from the declaration index; the link `system.word_wait` opens one. Example: on the page of the module `manual`, the link "the description tables" opens the link page `docs/MODULE_CONTRACT.md#description-tables`. A link page is not a copy of the site: it holds no picture, and a table is a list.
 
 The design: `src/md/features/manual_links.md`.
 
@@ -7092,7 +7178,7 @@ Do not use: value type, badge, chip, tag (for this).
 
 The declaration index is the list of every top-level declaration of the sources of the system, which `modustool site` reads with the parser of Odin so that a code span can link to what it names.
 
-It reads each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/modules` and `src/programs` (not the tests and not the tool). For each procedure, type, constant and global variable it keeps its package, its file and line, its kind, its one line of Odin and the first sentence of its comment. A code span of a guide, a news entry, the glossary or a source comment whose whole text is a name (`blend_coverage_row`, `graphics.text_proportional`) then becomes a link with a declaration card. When several declarations share the name, the folder that the text around the span names chooses one.
+It reads each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/modules` and `src/programs` (not the tests and not the tool). For each procedure, type, constant and global variable it keeps its package, its file and line, its kind, its one line of Odin, the first sentence of its comment and its whole comment. The build reads the part of the index that holds the names that the modules of the boot image link: a declaration that no module describes gets its link page from it. A code span of a guide, a news entry, the glossary or a source comment whose whole text is a name (`blend_coverage_row`, `graphics.text_proportional`) then becomes a link with a declaration card. When several declarations share the name, the folder that the text around the span names chooses one.
 
 It is not a symbol table of an object file, and its entries are not symbols: a symbol is a documented thing of a reference page.
 

@@ -62,6 +62,7 @@ Site_Declaration :: struct {
 	kind:           Site_Declaration_Kind,
 	signature:      string, // One line of Odin, with no body and no comment.
 	first_sentence: string, // Of the comment above it, or of its line; or "".
+	comment:        string, // The Markdown of the comment above it, or of its line; or "". The manual shows it whole.
 }
 
 // The declaration index: each declaration, the declarations of each name,
@@ -243,6 +244,7 @@ site_declarations_of_statements :: proc(list: ^[dynamic]Site_Declaration, statem
 					kind = site_declaration_kind_of(identifier.name, item.is_mutable, value),
 					signature = site_declaration_signature(source, item, value),
 					first_sentence = first,
+					comment = description,
 				})
 			}
 		}
@@ -303,6 +305,16 @@ site_declarations_of_file :: proc(path, source: string) -> (found: []Site_Declar
 // of the system checks its sources.
 site_declarations_read :: proc(site: ^Site) -> bool {
 	site.declarations = site_declaration_index_make()
+	return site_declaration_index_fill(&site.declarations, nil)
+}
+
+// site_declaration_index_fill adds the declarations of the sources of the
+// system to an index. With names, it parses only the files whose text holds
+// one of them: a file that does not hold a name cannot declare it, so the
+// index holds each declaration of these names, and a name resolves as it
+// does in the whole index (src/md/features/manual_links.md, "The chosen
+// form").
+site_declaration_index_fill :: proc(index: ^Site_Declaration_Index, names: []string) -> bool {
 	paths := make([dynamic]string, context.temp_allocator)
 	folders := SITE_DECLARATION_FOLDERS
 	for folder in folders {
@@ -311,22 +323,35 @@ site_declarations_read :: proc(site: ^Site) -> bool {
 	for path in paths {
 		source, read_ok := site_read_quiet(path)
 		if !read_ok {
-			fmt.eprintfln("modustool: site: cannot read %s", path)
+			fmt.eprintfln("modustool: cannot read %s", path)
 			return false
+		}
+		if names != nil && !site_text_holds_one_of(source, names) {
+			continue
 		}
 		found, parsed := site_declarations_of_file(path, source)
 		if !parsed {
-			site.declarations.files_not_parsed += 1
-			if site.declarations.first_file_not_parsed == "" {
-				site.declarations.first_file_not_parsed = path
+			index.files_not_parsed += 1
+			if index.first_file_not_parsed == "" {
+				index.first_file_not_parsed = path
 			}
 			continue
 		}
 		for declaration in found {
-			site_declaration_add(&site.declarations, declaration)
+			site_declaration_add(index, declaration)
 		}
 	}
 	return true
+}
+
+// site_text_holds_one_of tells whether a text holds one of these names.
+site_text_holds_one_of :: proc(text: string, names: []string) -> bool {
+	for name in names {
+		if strings.contains(text, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // The forms of a code span that can name a declaration: a name, a name
