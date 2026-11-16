@@ -19,7 +19,7 @@ The terms are in `GLOSSARY.md`: pointer, pointer shape, pointer picture, hot spo
 
 **An example.** The compositor chooses the shape `move` while the pointer drags a window by its title bar, and blends its picture at its hot spot. The program `pointers` shows each shape of each theme.
 
-![The pointer pictures: each shape of the pointer theme of the system, at 24 and 48 pixels, with the lines of its hot spot](screenshots/pointers_system.png)
+![The pointer pictures: each shape of the pointer theme of the system, in the dark form and in the light form at 24 and 48 pixels, with the lines of its hot spot](screenshots/pointers_system.png)
 
 ## 1. What exists
 
@@ -114,6 +114,7 @@ Two programs ask today: `terminal` and `pointers` (the shape of the tile under t
 ### How the compositor draws the pointer
 
 - **The size.** The compositor asks for the nominal size 24 (`POINTER_NOMINAL_SIZE`). `pointer_pictures.choose` gives the smallest size of the shape that is at least the size asked, else its largest size: 24 for the theme of the system, 32 for the Posy theme.
+- **The form.** A theme can hold a dark form, for a dark desktop, and a light form, for a light desktop (section 3). The compositor takes the form of the appearance in force (`pointer_form_in_force` in `src/programs/compositor/pointer_picture.odin`), and writes `compositor: the pointer form in use: light` on the log at each change. Until the settings page holds the appearance in force, it takes the dark form. A theme with one form gives it for both.
 - **A shape that the theme does not have** is drawn as the arrow. Every valid theme has the arrow.
 - **The place.** The picture is drawn with its hot spot at the place of the pointer: its top left corner is the place less the hot spot. A press acts at the place of the pointer.
 - **The blend.** `graphics.blend_premultiplied_alpha` blends the picture over the frame (`docs/SIMD.md`, "4. The compositor").
@@ -127,14 +128,15 @@ Two programs ask today: `terminal` and `pointers` (the shape of the tile under t
 
 ```
 Header           512 bytes  at 0
-Shape_Entry      16 bytes   x shape_count, at 512
+Shape_Entry      16 bytes   x shape_count x form_count, at 512
 Picture_Entry    32 bytes   x picture_count, after the shapes
 (zero bytes to a multiple of 64)
 pixels           u32 each   at pixel_offset, pixel_size bytes
 ```
 
-- **Header**: `magic` (the bytes "POINTERS"), `version` (1), `shape_count`, `picture_count`, a reserved word of 0, `pixel_offset`, `pixel_size`, `file_size`, `theme_name` (32 bytes), `license` (32 bytes, an SPDX identifier), `attribution` (400 bytes). The texts are ASCII 32 to 126 followed by zero bytes, so that the font of the system shows them. The name and the license are not empty; the attribution can be.
+- **Header**: `magic` (the bytes "POINTERS"), `version` (2), `shape_count` (the shapes of one form), `picture_count`, `form_count` (1 or 2), `pixel_offset`, `pixel_size`, `file_size`, `theme_name` (32 bytes), `license` (32 bytes, an SPDX identifier), `attribution` (400 bytes). The texts are ASCII 32 to 126 followed by zero bytes, so that the font of the system shows them. The name and the license are not empty; the attribution can be.
 - **Shape_Entry**: `shape` (the number of the enum), `first_picture`, `size_count`, `frame_count`. The pictures of a shape are `size_count * frame_count` entries from `first_picture`: the frames of the smallest size, then of the next. Two shapes can name the same pictures (two names, one file, as the links of an Xcursor theme).
+- **Forms**: the shape table holds `shape_count` entries for each form, the dark form first (`Pointer_Form`: `Dark` 0, `Light` 1). Each form has its own entries and can name its own pictures; two forms can also name the same pictures. `choose`, `shape_entries` and `shape_entry_of` take the form; a theme with one form gives that form for both.
 - **Picture_Entry**: `nominal_size`, `width`, `height`, `hot_spot_x`, `hot_spot_y`, `delay_milliseconds` (0 for a shape with one frame), `pixel_offset` (from the start of the pixels).
 - **Pixels**: 0xAARRGGBB with premultiplied alpha, the form of an Xcursor file and the form of a canvas of `src/library/support/graphics` (0x00RRGGBB) plus alpha in the high byte. The blend reads the alpha from the same word and adds the source to the destination with no conversion. Straight alpha needs three more multiplications for each pixel.
 
@@ -142,7 +144,8 @@ pixels           u32 each   at pixel_offset, pixel_size bytes
 
 | Limit | Value |
 |---|---|
-| Shapes of one file | 1 to 256 (`SHAPE_COUNT_LIMIT`); the enum has 15 today |
+| Shapes of one form | 1 to 256 (`SHAPE_COUNT_LIMIT`); the enum has 15 today |
+| Forms of one file | 1 to 2 (`FORM_COUNT_LIMIT`) |
 | Pictures of one file | 1 to 65 536 (`PICTURE_COUNT_LIMIT`) |
 | Nominal sizes of one shape | 1 to 8 (`SIZE_COUNT_LIMIT`) |
 | Frames of one shape | 1 to 256 (`FRAME_COUNT_LIMIT`) |
@@ -152,8 +155,8 @@ pixels           u32 each   at pixel_offset, pixel_size bytes
 **The validation** (`pointer_pictures.validate`) is one function that the tool and the compositor run. The tool runs it on each file that it makes, before it writes it. The compositor does not trust the file, also from the root service: it runs the validation once at its start, and it uses a file only after that. The validation checks:
 
 - **The file**: at least the size of the header, and its address on a multiple of 8 bytes.
-- **The header**: the magic, the version, `file_size` equal to the size of the file, the two counts in their limits, `pixel_offset` exactly at the first multiple of 64 after the tables, `pixel_size` to the end of the file and a multiple of 4, and the three texts.
-- **The shapes**: each number in the enum, the numbers in increasing order with no repeat, the arrow present, 1 to 8 sizes and 1 to 256 frames, and the range of the pictures inside the picture table.
+- **The header**: the magic, the version, `file_size` equal to the size of the file, the three counts in their limits, `pixel_offset` exactly at the first multiple of 64 after the tables, `pixel_size` to the end of the file and a multiple of 4, and the three texts.
+- **The shapes**: in each form, each number in the enum, the numbers in increasing order with no repeat, the arrow present; 1 to 8 sizes and 1 to 256 frames, and the range of the pictures inside the picture table.
 - **The sizes and the frames of a shape**: the same nominal size for the frames of one size, an increasing nominal size from one size to the next, a delay of 1 to 60 000 ms for each frame of an animation and 0 for a shape with one frame.
 - **Each picture**: its nominal size, its width and its height from 1 to 256, its hot spot inside it, its pixels inside the pixel area and at an offset that is a multiple of 4.
 - **The pixels**: each pixel premultiplied (no channel above its alpha).
@@ -180,7 +183,10 @@ statement = "theme" text                    the name of the theme: 1 to 31 chara
 option    = "hot" number number             the hot spot: in pixels of the smallest size
           | "sizes" number { number }       the sizes of this shape, in place of the default
 source    = file name                       a file of the Xcursor folder; the first one that exists is used
-paint     = "dark" | "light" | "clear"      the dark edge color, the light fill color, or transparent
+paint     = "fill" [ "inside" ]             the fill color of each form; "inside": no edge
+          | "accent" token [ "inside" ]     an accent: "title", "stop_program" or "boot_program"
+          | "edge"                          the edge color of each form, with no edge of its own
+          | "clear"                         transparent, with an edge around the hole
 contour   = "contour" point { "line" point | "curve" point point }   a closed contour: a line or a quadratic
                                             curve (control point, then end) to each point, then back to its start
           | "circle" point coordinate       a circle: its centre and its radius
@@ -197,10 +203,21 @@ coordinate = digits [ "." digits ]          units: 1 to 3 digits, then at most 3
 **An outline** is closed contours of lines and quadratic curves, in layers (the design: `src/md/features/vector_pointers.md`).
 
 - **The unit** is a pixel of the first size of the shape. Each point and each circle is inside the square of that size, from 0 to the size. An integer coordinate is the corner of a pixel: a level or upright edge on it is sharp at that size and at each multiple of it.
-- **A layer** paints its contours over the layers before it: `dark` (`0x000000`), `light` (`0xFFFFFF`), or `clear`, which makes them transparent. The contours of one layer are a union: the tool adds each contour in one direction, so two contours that overlap never cancel. A layer has a contour at least, and a contour two segments at least.
+- **A layer** paints its contours over the layers before it, by role: a paint names a role, and each form gives the role its color. The contours of one layer are a union: the tool adds each contour in one direction, so two contours that overlap never cancel. A layer has a contour at least, and a contour two segments at least.
+- **The edge is 1 pixel at every size, inside the contours.** For `fill` and `accent`, the tool paints the contours in the edge color, then the contours moved in by 1 pixel in the color of the layer: the contours are the whole shape, and a larger size has a finer edge, not a thicker one. `inside` paints the contours with no edge, for a part on the fill. `edge` paints the edge color as drawn: the line between two parts. `clear` paints the edge color on its contours moved out by 1 pixel, then makes its contours transparent: a hole has an edge too.
+- **Joins.** Two contours of one layer that must join overlap by 2 units: their moved contours meet. A part thinner than 2 units has no fill: its moved contour is inside out, and the tool drops it.
+- **The forms.** A manifest with an outline makes two forms: the dark form (fill white, edge `COLOR_BACKGROUND`) and the light form (fill `COLOR_BACKGROUND`, edge white). A shape from a source keeps its pictures in both forms.
+- **The accents** are tokens of the design rules, by the name of their constant in `src/library/support/graphics` without `COLOR_`. Each token has a value for a dark surround and one for a light surround; an accent takes the value for the color around it, the fill for `inside`, else the edge. No manifest holds a color value.
+
+  | Token | Dark surround | Light surround |
+  |---|---|---|
+  | `title`, the blue of the focus | `COLOR_TITLE` | `COLOR_TITLE` at 85 % (`graphics.shade`) |
+  | `stop_program`, the red of "stop a program" | `COLOR_STOP_PROGRAM_POINTER_OVER` | `COLOR_STOP_PROGRAM` |
+  | `boot_program`, the amber of a match | `COLOR_BOOT_PROGRAM` | `COLOR_BOOT_PROGRAM` at 50 %, as on the light form of the site |
+
 - **Frames.** The layers before the first `frame` are in every frame. Each `frame` adds the layers after it, over those. An animation has two frames at least.
 - **The option `hot`** is required, and inside the square.
-- **The drawing.** At each size, the tool draws each layer with the rasterizer of the vector font (`src/library/support/vector_font`): the exact coverage of each pixel, from 0 to 255, then the paint over the pixel with that weight, in premultiplied integers. The pictures of one size have one box: the pixels that some frame draws, and the hot spot.
+- **The drawing.** At each size and in each form, the tool draws each layer with the rasterizer of the vector font (`src/library/support/vector_font`): the exact coverage of each pixel, from 0 to 255, then the paint over the pixel with that weight, in premultiplied integers. The pictures of one size have one box: the pixels that some frame draws, and the hot spot.
 - An error gives the file, the line, the column, and what was expected: `resources/pointers/posy.manifest:12:7: expected a pointer shape name such as "arrow"; found "arow"`.
 - No JSON, no TOML: the system has no general parser and needs none.
 
@@ -216,43 +233,37 @@ shape text                          text xterm
 shape wait                          wait watch sizes 32
 ```
 
-**An example with an outline**, the arrow of `resources/pointers/system.manifest`. The dark contour is the whole arrow; the light contour is the same arrow moved in by 1 unit, so a dark edge of 1 pixel at 24 goes around the fill. The left side is on the integer 1 and the wing on the integer 13: both stay sharp. The point is the corner 1,1, and the hot spot is the pixel 1,1:
+**An example with an outline**, the arrow of `resources/pointers/system.manifest`. The contour is the whole arrow; the tool draws the edge of 1 pixel inside it. The left side is on the integer 1 and the wing on the integer 13: both stay sharp. The point is the corner 1,1, and the hot spot is the pixel 1,1:
 
 ```
 shape arrow hot 1 1
-layer dark
-contour 1 1 line 1 18 line 5 14 line 8 20 line 11.6 18.2 line 9 13 line 13 13
-layer light
-contour 2 3.414 line 2 15.586 line 5.274 12.312 line 8.447 18.658 line 10.258 17.753 line 7.382 12 line 10.586 12
+layer fill
+contour 1 1 line 1 17 line 5 13 line 7.89 19.5 line 10.63 18.28 line 8.28 13 line 11 13
 ```
 
-**An example with frames**, from `wait`: a ring with a hole, then a dark dot that is one eighth of a turn further in each frame.
+**An example with frames and an accent**, from `wait`: a thin ring with a hole, then a dot in the blue of the focus that is one eighth of a turn further in each frame.
 
 ```
 shape wait hot 11 11
-layer dark
-circle 11.5 11.5 9
-layer light
-circle 11.5 11.5 8
-layer dark
-circle 11.5 11.5 4.5
+layer fill
+circle 11.5 11.5 8.5
 layer clear
-circle 11.5 11.5 3.5
+circle 11.5 11.5 5
 frame 125
-layer dark
-circle 11.5 5.25 1.25
+layer accent title inside
+circle 11.5 4.75 1.5
 frame 125
-layer dark
-circle 15.919 7.081 1.25
+layer accent title inside
+circle 16.273 6.727 1.5
 ```
 
 **The command.** `modustool pointers` converts each manifest of `resources/pointers` to a pointer theme file in `build/pointers`, and prints a table of each theme: the shape, its source, its sizes, its frames and its bytes. It takes the Xcursor folder from the variable `POINTER_THEME_SOURCE` or from the path after the command. `modustool build` runs the same code.
 
 ## 5. The two themes
 
-- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as outlines (section 4), drawn for this system, at the sizes 24 and 48 (for a later screen with twice the pixels). Each shape is a light fill inside a dark edge of 1 pixel at 24. `wait` and `busy_with_arrow` have 8 frames of 125 ms: a dot turns once around a ring in one second. Its file has 58 pictures. It is always in the boot image, as the resource `pointers_system`.
-  - **Why a light fill in a dark edge.** The desktop, the cards and the windows are dark: there the light fill carries the contrast, 19 to 1 on the background of the desktop. Over a light text or picture, the dark edge carries it. On any background, black or white has at least 4.58 to 1. A dark fill in a light edge would show only a line of 1 pixel on the dark desktop.
-  - **Why 24 and 48 only.** The compositor asks for 24, and 48 is the size of a screen with twice the pixels. A size of an outline is one number of the statement `sizes`: a size for a scale of 1.25 or 1.5 is added when the system has such a scale. A multiple of 24 keeps each level and upright edge sharp.
+- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as outlines (section 4), drawn for this system, at the sizes 24 and 48 (for a later screen with twice the pixels), in two forms. Each shape has an edge of 1 pixel at both sizes. `wait` and `busy_with_arrow` have 8 frames of 125 ms: a dot turns once around a ring in one second. The accents: the blue of the focus on the dot of `wait` and `busy_with_arrow` and on the question mark of `help`, the red of "stop a program" on the slash of `forbidden`, the amber of a match on the dot at the hot spot of `crosshair`; the other shapes are neutral. Its file has 116 pictures. It is always in the boot image, as the resource `pointers_system`.
+  - **Why the fill carries the contrast.** The fill is the large part of a pointer. In the dark form it is white on the dark desktop, cards and windows: 19 to 1 on the background of the desktop. In the light form it is the dark of the desktop on the light surfaces: 17 to 1 on the light background of the site. The edge carries the contrast over a surface of the other kind: a light picture under the dark form, a dark picture under the light form.
+  - **Why 24 and 48 only.** The compositor asks for 24, and 48 is the size of a screen with twice the pixels. A size of 32 helps only a compositor that asks for it; the details are drawn for 24. A size of an outline is one number of the statement `sizes`: a size for a scale of 1.25 or 1.5 is added when the system has such a scale. A multiple of 24 keeps each level and upright edge sharp.
 - **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The default development shell of the flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The checks of the flake and the shell `release` do not: they build the theme of the system only. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64). Its file has 178 pictures: `grab` and `grabbing` come from one file of the theme and share their pictures.
 - **The choice of the compositor**: the Posy theme is the default when the build has its input; the theme of the system is the fallback.
   - The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `src/programs/root/resources.odin`: the one place of this order).

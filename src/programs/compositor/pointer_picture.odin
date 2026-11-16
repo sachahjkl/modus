@@ -53,6 +53,7 @@ pointer_arrow_without_theme := [?]string {
 POINTER_ARROW_SQUARE :: 2
 
 pointer_theme: []u8 // A theme file that pointer_pictures.validate accepted, or nil.
+pointer_form: pointer_pictures.Pointer_Form // The form of the theme for the appearance in force.
 pointer_shape: pointer_pictures.Pointer_Shape // The shape that the screen shows.
 pointer_chosen: pointer_pictures.Chosen // Its picture, which the next frame draws.
 pointer_drawn: Rectangle // The rectangle of the picture on the screen.
@@ -98,6 +99,27 @@ pointer_theme_open :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	pointer_blend_measure()
+}
+
+// pointer_form_in_force gives the form of the pointer for the appearance in
+// force: the dark form on a dark desktop, the light form on a light one
+// (docs/POINTERS.md, "5. The two themes"). The settings page does not hold
+// the appearance in force yet, so this is the dark form; the read of that
+// field of the page goes here, and nowhere else.
+pointer_form_in_force :: proc "contextless" (choice: settings.Choice) -> pointer_pictures.Pointer_Form {
+	_ = choice
+	return .Dark
+}
+
+// pointer_form_choose takes a form and draws the pointer again with it.
+pointer_form_choose :: proc "contextless" (form: pointer_pictures.Pointer_Form) {
+	if form == pointer_form {
+		return
+	}
+	pointer_form = form
+	pointer_drawn_valid = false // The next update chooses its picture in the new form.
+	pointer_update(0)
+	system.log_in("surfaces", .Info, "compositor: the pointer form in use: ", form == .Light ? "light" : "dark")
 }
 
 // pointer_theme_choose takes the theme of the setting: the first theme of
@@ -184,7 +206,7 @@ pointer_update :: proc "contextless" (now: u64) {
 	shape := pointer_shape_under()
 	chosen := pointer_chosen
 	if pointer_theme != nil && (shape != pointer_shape || !pointer_drawn_valid || (chosen.next_frame != 0 && now >= chosen.next_frame)) {
-		chosen = pointer_pictures.choose(pointer_theme, shape, POINTER_NOMINAL_SIZE, now)
+		chosen = pointer_pictures.choose(pointer_theme, pointer_form, shape, POINTER_NOMINAL_SIZE, now)
 	}
 	place := pointer_rectangle(chosen)
 	if pointer_drawn_valid && place == pointer_drawn && shape == pointer_shape && chosen.picture == pointer_chosen.picture {
@@ -278,7 +300,7 @@ pointer_frame_end :: proc "contextless" () {
 // nanoseconds for one picture, and a copy of the same size with no alpha.
 pointer_blend_measure :: proc "contextless" () {
 	ROUNDS :: 2000
-	chosen := pointer_pictures.choose(pointer_theme, .Arrow, POINTER_NOMINAL_SIZE, 0)
+	chosen := pointer_pictures.choose(pointer_theme, pointer_form, .Arrow, POINTER_NOMINAL_SIZE, 0)
 	picture := graphics.Canvas{pixels = raw_data(chosen.pixels), width = int(chosen.picture.width), height = int(chosen.picture.height), stride = int(chosen.picture.width)}
 	start := system.nanoseconds()
 	for round in 0 ..< ROUNDS {

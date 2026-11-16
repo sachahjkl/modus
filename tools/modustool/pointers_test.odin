@@ -2,6 +2,7 @@ package modustool
 
 import "modus:contract/pointer_pictures"
 import "modus:support/graphics"
+import "modus:support/mark"
 import "core:fmt"
 import "core:math"
 import "core:mem"
@@ -130,22 +131,35 @@ attribution first line,
 attribution second line
 sizes 4 8
 shape arrow hot 1 0
-layer dark
+layer edge
 contour 0 0 line 2 0 line 0 2   # a right triangle with legs of 2 units
 shape wait hot 0 0
-layer light
+layer fill inside
 contour 0 0 line 1 0 line 1 1 line 0 1
 frame 100
-layer dark
+layer edge
 contour 0 0 line 0.5 0 line 0.5 1 line 0 1
 frame 200
 layer clear
 contour 0 0 line 1 0 line 1 1 line 0 1
 `
 
+// painted gives a pixel after a paint of a color with a coverage over the
+// pixel before it, premultiplied: the rule of the tool, by hand.
+@(private = "file")
+painted :: proc(color: u32, covered: u32, before: u32) -> u32 {
+	paint := 0xFF000000 | color
+	result: u32 = 0
+	for shift in ([?]u32{0, 8, 16, 24}) {
+		result |= (((paint >> shift) & 0xFF) * covered + ((before >> shift) & 0xFF) * (255 - covered) + 127) / 255 << shift
+	}
+	return result
+}
+
 // The golden pixels of an outline: the exact coverage of each pixel, the
 // paint of each layer over the layers before, the box of the pictures of
-// one size with the hot spot in it, and the frames of an animation.
+// one size with the hot spot in it, the frames of an animation, and the
+// colors of each form.
 @(test)
 manifest_of_outlines_makes_a_valid_file :: proc(t: ^testing.T) {
 	manifest, problem := manifest_parse("test.manifest", OUTLINE_MANIFEST)
@@ -157,39 +171,74 @@ manifest_of_outlines_makes_a_valid_file :: proc(t: ^testing.T) {
 	testing.expect_value(t, pointer_pictures.validate(file).kind, pointer_pictures.Problem_Kind.None)
 	head := pointer_pictures.header(file)
 	testing.expect_value(t, pointer_pictures.text_of(head.theme_name[:]), "Test theme")
-	testing.expect_value(t, head.picture_count, 6) // The arrow at 2 sizes, wait at 2 sizes with 2 frames.
-	// The triangle at 4: the pixel 0,0 is whole, the pixels 1,0 and 0,1
-	// are cut by the slanted side in two halves, and 1,1 is outside. The
-	// box is 2 x 2; the hot spot 1,0 is in it.
-	half_dark := u32(128) << 24
-	full_dark := u32(0xFF) << 24 | POINTER_DARK_COLOR
-	chosen := pointer_pictures.choose(file, .Arrow, 4, 0)
-	testing.expect_value(t, chosen.picture.width, 2)
-	testing.expect_value(t, chosen.picture.height, 2)
-	testing.expect_value(t, chosen.picture.hot_spot_x, 1)
-	testing.expect_value(t, chosen.picture.hot_spot_y, 0)
-	golden := [4]u32{full_dark, half_dark, half_dark, 0}
-	for pixel, index in chosen.pixels {
-		testing.expectf(t, pixel == golden[index], "the pixel %d of the arrow at 4 is 0x%08x, not 0x%08x", index, pixel, golden[index])
+	testing.expect_value(t, head.form_count, u32(len(pointer_pictures.Pointer_Form)))
+	testing.expect_value(t, head.shape_count, 2)
+	// For each form: the arrow at 2 sizes, wait at 2 sizes with 2 frames.
+	testing.expect_value(t, head.picture_count, 6 * u32(len(pointer_pictures.Pointer_Form)))
+	for form in pointer_pictures.Pointer_Form {
+		edge := POINTER_FORM_COLORS[form].edge
+		fill := POINTER_FORM_COLORS[form].fill
+		// The triangle at 4: the pixel 0,0 is whole, the pixels 1,0 and 0,1
+		// are cut by the slanted side in two halves, and 1,1 is outside.
+		// The box is 2 x 2; the hot spot 1,0 is in it.
+		full, half := painted(edge, 255, 0), painted(edge, 128, 0)
+		chosen := pointer_pictures.choose(file, form, .Arrow, 4, 0)
+		testing.expect_value(t, chosen.picture.width, 2)
+		testing.expect_value(t, chosen.picture.height, 2)
+		testing.expect_value(t, chosen.picture.hot_spot_x, 1)
+		testing.expect_value(t, chosen.picture.hot_spot_y, 0)
+		golden := [4]u32{full, half, half, 0}
+		for pixel, index in chosen.pixels {
+			testing.expectf(t, pixel == golden[index], "%v: the pixel %d of the arrow at 4 is 0x%08x, not 0x%08x", form, index, pixel, golden[index])
+		}
+		// At 8 a unit is 2 pixels: the box is 4 x 4 and the hot spot is 2,0.
+		chosen = pointer_pictures.choose(file, form, .Arrow, 8, 0)
+		testing.expect_value(t, chosen.picture.width, 4)
+		testing.expect_value(t, chosen.picture.height, 4)
+		testing.expect_value(t, chosen.picture.hot_spot_x, 2)
+		testing.expect_value(t, chosen.pixels[0], full)
+		testing.expect_value(t, chosen.pixels[3], half)
+		testing.expect_value(t, chosen.pixels[15], 0)
+		// The first frame: half of the pixel in the edge color over the
+		// fill. The second: the pixel cleared, with the edge of 1 pixel
+		// around it; the box of the size holds both frames.
+		chosen = pointer_pictures.choose(file, form, .Wait, 4, 0)
+		testing.expect_value(t, chosen.picture.width, 2)
+		testing.expect_value(t, chosen.picture.delay_milliseconds, 100)
+		testing.expect_value(t, chosen.pixels[0], painted(edge, 128, painted(fill, 255, 0)))
+		testing.expect_value(t, chosen.pixels[3], 0)
+		chosen = pointer_pictures.choose(file, form, .Wait, 4, 150)
+		testing.expect_value(t, chosen.picture.delay_milliseconds, 200)
+		testing.expect_value(t, chosen.pixels[0], 0)
+		testing.expect_value(t, chosen.pixels[1], full)
+		testing.expect_value(t, chosen.pixels[3], full)
 	}
-	// At 8 a unit is 2 pixels: the box is 4 x 4 and the hot spot is 2,0.
-	chosen = pointer_pictures.choose(file, .Arrow, 8, 0)
-	testing.expect_value(t, chosen.picture.width, 4)
-	testing.expect_value(t, chosen.picture.height, 4)
-	testing.expect_value(t, chosen.picture.hot_spot_x, 2)
-	testing.expect_value(t, chosen.pixels[0], full_dark)
-	testing.expect_value(t, chosen.pixels[3], half_dark)
-	testing.expect_value(t, chosen.pixels[15], 0)
-	// The first frame: half of the pixel dark over the light pixel. The
-	// second: the pixel cleared, and the box keeps the size of the first.
-	chosen = pointer_pictures.choose(file, .Wait, 4, 0)
-	testing.expect_value(t, chosen.picture.width, 1)
-	testing.expect_value(t, chosen.picture.delay_milliseconds, 100)
-	testing.expect_value(t, chosen.pixels[0], 0xFF7F7F7F)
-	chosen = pointer_pictures.choose(file, .Wait, 4, 150)
-	testing.expect_value(t, chosen.picture.delay_milliseconds, 200)
-	testing.expect_value(t, chosen.picture.width, 1)
-	testing.expect_value(t, chosen.pixels[0], 0)
+	free_all(context.temp_allocator)
+}
+
+// The edge of a fill is 1 pixel at every size, inside the contour: a
+// square of 6 units has 1 pixel of edge at 8 and at 16, and the fill grows.
+@(test)
+outline_edge_is_one_pixel_at_each_size :: proc(t: ^testing.T) {
+	manifest, problem := manifest_parse("m", "theme T\nlicense MIT\nsizes 8 16\nshape arrow hot 1 1\nlayer fill\ncontour 1 1 line 7 1 line 7 7 line 1 7\n")
+	testing.expect_value(t, problem, "")
+	file, _, made_problem := pointer_theme_make(manifest, "")
+	testing.expect_value(t, made_problem, "")
+	for form in pointer_pictures.Pointer_Form {
+		edge, fill := painted(POINTER_FORM_COLORS[form].edge, 255, 0), painted(POINTER_FORM_COLORS[form].fill, 255, 0)
+		for size in ([?]u32{8, 16}) {
+			chosen := pointer_pictures.choose(file, form, .Arrow, size, 0)
+			side := int(size) * 6 / 8
+			testing.expect_value(t, int(chosen.picture.width), side)
+			testing.expect_value(t, chosen.picture.hot_spot_x, 0)
+			for y in 0 ..< side {
+				for x in 0 ..< side {
+					border := x == 0 || y == 0 || x == side - 1 || y == side - 1
+					testing.expectf(t, chosen.pixels[y * side + x] == (border ? edge : fill), "%v at %d: the pixel %d,%d is 0x%08x", form, size, x, y, chosen.pixels[y * side + x])
+				}
+			}
+		}
+	}
 	free_all(context.temp_allocator)
 }
 
@@ -197,13 +246,13 @@ manifest_of_outlines_makes_a_valid_file :: proc(t: ^testing.T) {
 // union: the tool adds each contour in one direction, so they do not cancel.
 @(test)
 outline_contours_of_one_layer_are_a_union :: proc(t: ^testing.T) {
-	text := "theme T\nlicense MIT\nsizes 4\nshape arrow hot 0 0\nlayer dark\ncontour 0 0 line 2 0 line 2 1 line 0 1\ncontour 0 0 line 0 2 line 1 2 line 1 0\n"
+	text := "theme T\nlicense MIT\nsizes 4\nshape arrow hot 0 0\nlayer edge\ncontour 0 0 line 2 0 line 2 1 line 0 1\ncontour 0 0 line 0 2 line 1 2 line 1 0\n"
 	manifest, problem := manifest_parse("m", text)
 	testing.expect_value(t, problem, "")
 	file, _, made_problem := pointer_theme_make(manifest, "")
 	testing.expect_value(t, made_problem, "")
-	chosen := pointer_pictures.choose(file, .Arrow, 4, 0)
-	full_dark := u32(0xFF) << 24 | POINTER_DARK_COLOR
+	chosen := pointer_pictures.choose(file, .Dark, .Arrow, 4, 0)
+	full_dark := painted(POINTER_FORM_COLORS[.Dark].edge, 255, 0)
 	golden := [4]u32{full_dark, full_dark, full_dark, 0}
 	testing.expect_value(t, len(chosen.pixels), 4)
 	for pixel, index in chosen.pixels {
@@ -216,11 +265,11 @@ outline_contours_of_one_layer_are_a_union :: proc(t: ^testing.T) {
 // it cuts each curve into lines at most 1/8 pixel from it.
 @(test)
 outline_circle_covers_its_area :: proc(t: ^testing.T) {
-	manifest, problem := manifest_parse("m", "theme T\nlicense MIT\nsizes 10\nshape arrow hot 5 5\nlayer light\ncircle 5 5 4\n")
+	manifest, problem := manifest_parse("m", "theme T\nlicense MIT\nsizes 10\nshape arrow hot 5 5\nlayer fill inside\ncircle 5 5 4\n")
 	testing.expect_value(t, problem, "")
 	file, _, made_problem := pointer_theme_make(manifest, "")
 	testing.expect_value(t, made_problem, "")
-	chosen := pointer_pictures.choose(file, .Arrow, 10, 0)
+	chosen := pointer_pictures.choose(file, .Dark, .Arrow, 10, 0) // The fill of the dark form is white.
 	testing.expect_value(t, chosen.picture.width, 8)
 	testing.expect_value(t, chosen.picture.height, 8)
 	sum := 0
@@ -254,9 +303,9 @@ system_theme_make :: proc(t: ^testing.T) -> (manifest: Manifest, file: []u8, ok:
 	return manifest, file, made_problem == ""
 }
 
-// Each shape of the enum is in the theme of the system, at each size of
-// the manifest, inside the square of its size with its hot spot, with an
-// opaque pixel; the two animated shapes have frames.
+// Each shape of the enum is in each form of the theme of the system, at
+// each size of the manifest, inside the square of its size with its hot
+// spot, with an opaque pixel; the two animated shapes have frames.
 @(test)
 system_pointer_theme_draws_each_shape :: proc(t: ^testing.T) {
 	manifest, file, ok := system_theme_make(t)
@@ -264,14 +313,15 @@ system_pointer_theme_draws_each_shape :: proc(t: ^testing.T) {
 		return
 	}
 	testing.expect_value(t, pointer_pictures.text_of(pointer_pictures.header(file).license[:]), "MIT")
+	testing.expect_value(t, pointer_pictures.header(file).form_count, u32(len(pointer_pictures.Pointer_Form)))
 	pictures := pointer_pictures.picture_entries(file)
 	for item in manifest.shapes {
 		name := pointer_pictures.SHAPE_NAMES[item.shape]
 		testing.expectf(t, len(item.sources) == 0, "%s is an outline", name)
 	}
-	for shape in pointer_pictures.Pointer_Shape {
+	for form in pointer_pictures.Pointer_Form do for shape in pointer_pictures.Pointer_Shape {
 		name := pointer_pictures.SHAPE_NAMES[shape]
-		entry, found := pointer_pictures.shape_entry_of(file, shape)
+		entry, found := pointer_pictures.shape_entry_of(file, form, shape)
 		testing.expectf(t, found, "the theme of the system has the shape %s", name)
 		if !found {
 			continue
@@ -307,15 +357,22 @@ system_pointer_theme_draws_each_shape :: proc(t: ^testing.T) {
 	free_all(context.temp_allocator)
 }
 
-// The red channel of a pixel from which it counts as light fill.
+// is_fill_pixel says if an opaque pixel has the color of the fill of a form:
+// white in the dark form, the dark of the desktop in the light form.
 @(private = "file")
-LIGHT_PIXEL_LEAST :: 192
+is_fill_pixel :: proc(pixel: u32, form: pointer_pictures.Pointer_Form) -> bool {
+	if pixel >> 24 < 192 {
+		return false
+	}
+	red := (pixel >> 16) & 0xFF
+	return form == .Dark ? red >= 192 : red <= 64
+}
 
-// The dark edge goes all around the light fill: no light pixel of any
+// The edge goes all around the fill, in each form: no fill pixel of any
 // picture touches a transparent pixel or the side of its picture. So the
-// edge of each shape shows on a light background as well.
+// edge of each shape shows on a background of the color of the fill.
 @(test)
-system_pointer_theme_has_a_dark_edge :: proc(t: ^testing.T) {
+system_pointer_theme_has_an_edge_around_its_fill :: proc(t: ^testing.T) {
 	// The alpha of a pixel, 0 outside the picture.
 	alpha_at :: proc(pixels: []u32, width, height, x, y: int) -> u32 {
 		if x < 0 || y < 0 || x >= width || y >= height {
@@ -328,7 +385,7 @@ system_pointer_theme_has_a_dark_edge :: proc(t: ^testing.T) {
 		return
 	}
 	pictures := pointer_pictures.picture_entries(file)
-	for entry in pointer_pictures.shape_entries(file) {
+	for form in pointer_pictures.Pointer_Form do for entry in pointer_pictures.shape_entries(file, form) {
 		name := pointer_pictures.shape_name(entry.shape)
 		for picture_index in entry.first_picture ..< entry.first_picture + entry.size_count * entry.frame_count {
 			picture := pictures[picture_index]
@@ -336,11 +393,11 @@ system_pointer_theme_has_a_dark_edge :: proc(t: ^testing.T) {
 			width, height := int(picture.width), int(picture.height)
 			for y in 0 ..< height {
 				for x in 0 ..< width {
-					if (pixels[y * width + x] >> 16) & 0xFF < LIGHT_PIXEL_LEAST {
+					if !is_fill_pixel(pixels[y * width + x], form) {
 						continue
 					}
 					touches := alpha_at(pixels, width, height, x - 1, y) == 0 || alpha_at(pixels, width, height, x + 1, y) == 0 || alpha_at(pixels, width, height, x, y - 1) == 0 || alpha_at(pixels, width, height, x, y + 1) == 0
-					testing.expectf(t, !touches, "%s, picture %d (size %d): the light pixel %d,%d touches a transparent pixel", name, picture_index, picture.nominal_size, x, y)
+					testing.expectf(t, !touches, "%v %s, picture %d (size %d): the fill pixel %d,%d touches a transparent pixel", form, name, picture_index, picture.nominal_size, x, y)
 				}
 			}
 		}
@@ -348,21 +405,107 @@ system_pointer_theme_has_a_dark_edge :: proc(t: ^testing.T) {
 	free_all(context.temp_allocator)
 }
 
-// The dark edge and the light fill differ strongly, and on any background
-// one of them stands out: each gray from black to white and each color of
-// the desktop.
+// Each form shows on the surfaces of its appearance: the fill has 7 to 1
+// at least on each of them, and the edge and the fill 15 to 1. Each accent
+// keeps 3 to 1 on the color around it: its value for a dark surround on the
+// dark of the desktop, its value for a light surround on white.
 @(test)
-pointer_colors_show_on_light_and_dark :: proc(t: ^testing.T) {
-	dark, light := graphics.Color(POINTER_DARK_COLOR), graphics.Color(POINTER_LIGHT_COLOR)
-	testing.expectf(t, site_contrast_ratio(dark, light) >= 15, "the edge and the fill: %.2f to 1", site_contrast_ratio(dark, light))
-	backgrounds := make([dynamic]graphics.Color, context.temp_allocator)
-	for gray in u32(0) ..= 255 {
-		append(&backgrounds, gray << 16 | gray << 8 | gray)
+pointer_colors_show_on_the_surfaces_of_each_form :: proc(t: ^testing.T) {
+	surfaces := [pointer_pictures.Pointer_Form][]graphics.Color {
+		.Dark  = {graphics.COLOR_BACKGROUND, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM, graphics.COLOR_TRACK, graphics.COLOR_TITLE_QUIET, graphics.COLOR_TITLE_END},
+		.Light = {graphics.COLOR_WHITE, graphics.Color(mark.BACKGROUND_LIGHT), graphics.COLOR_TEXT, site_light_colors().card_bottom, site_light_colors().track},
 	}
-	append(&backgrounds, graphics.COLOR_BACKGROUND, graphics.COLOR_CARD_TOP, graphics.COLOR_TRACK, graphics.COLOR_TEXT, graphics.COLOR_TITLE, graphics.COLOR_CHOSEN, graphics.COLOR_MACHINE, graphics.COLOR_WHITE)
-	for background in backgrounds {
-		best := max(site_contrast_ratio(dark, background), site_contrast_ratio(light, background))
-		testing.expectf(t, best >= 4.5, "on 0x%06x the pointer has %.2f to 1", background, best)
+	for form in pointer_pictures.Pointer_Form {
+		colors := POINTER_FORM_COLORS[form]
+		testing.expectf(t, site_contrast_ratio(colors.edge, colors.fill) >= 15, "%v: the edge and the fill: %.2f to 1", form, site_contrast_ratio(colors.edge, colors.fill))
+		for surface in surfaces[form] {
+			ratio := site_contrast_ratio(colors.fill, surface)
+			testing.expectf(t, ratio >= 7, "%v: the fill on 0x%06x has %.2f to 1", form, surface, ratio)
+		}
+	}
+	accents := pointer_accents()
+	for accent in accents {
+		on_dark := site_contrast_ratio(accent.on_dark, POINTER_DARK_COLOR)
+		on_light := site_contrast_ratio(accent.on_light, POINTER_LIGHT_COLOR)
+		testing.expectf(t, on_dark >= 3 && on_light >= 3, "the accent %s: %.2f to 1 on the dark, %.2f to 1 on white", accent.name, on_dark, on_light)
+	}
+}
+
+// The accents of the theme of the system, by shape: each other shape has
+// none. The arrow stays neutral.
+@(private = "file")
+SYSTEM_ACCENTS := [pointer_pictures.Pointer_Shape]string {
+	.Arrow                        = "",
+	.Text                         = "",
+	.Pointing_Hand                = "",
+	.Move                         = "",
+	.Grab                         = "",
+	.Grabbing                     = "",
+	.Wait                         = "title", // The dot that turns.
+	.Busy_With_Arrow              = "title", // The dot that turns.
+	.Forbidden                    = "stop_program", // The slash.
+	.Help                         = "title", // The question mark.
+	.Crosshair                    = "boot_program", // The dot at the hot spot.
+	.Resize_Left_Right            = "",
+	.Resize_Up_Down               = "",
+	.Resize_Top_Left_Bottom_Right = "",
+	.Resize_Top_Right_Bottom_Left = "",
+}
+
+// An accent is only on its parts: the manifest names the accent of the
+// table for each shape and no other, and each picture of a shape with an
+// accent has opaque pixels of a color that is not a mix of the edge and the
+// fill, which no picture of another shape has.
+@(test)
+system_pointer_theme_has_accents_on_their_parts_only :: proc(t: ^testing.T) {
+	manifest, file, ok := system_theme_make(t)
+	if !ok {
+		return
+	}
+	accents := pointer_accents()
+	for item in manifest.shapes {
+		named := make([dynamic]string, context.temp_allocator)
+		layers := make([dynamic]Outline_Layer, context.temp_allocator)
+		append(&layers, ..item.layers[:])
+		for frame in item.frames {
+			append(&layers, ..frame.layers[:])
+		}
+		for layer in layers {
+			if layer.paint == .Accent && !slice.contains(named[:], accents[layer.accent].name) {
+				append(&named, accents[layer.accent].name)
+			}
+		}
+		expected := SYSTEM_ACCENTS[item.shape]
+		right := expected == "" ? len(named) == 0 : len(named) == 1 && named[0] == expected
+		testing.expectf(t, right, "%s has the accents %v, not %q", pointer_pictures.SHAPE_NAMES[item.shape], named[:], expected)
+	}
+	// A pixel off the line from the dark to white: each channel at another
+	// part of its way from the dark to white.
+	off_the_line :: proc(pixel: u32) -> bool {
+		if pixel >> 24 != 0xFF {
+			return false
+		}
+		part :: proc(pixel: u32, shift: u32) -> f64 {
+			dark := f64((POINTER_DARK_COLOR >> shift) & 0xFF)
+			return (f64((pixel >> shift) & 0xFF) - dark) / (255 - dark)
+		}
+		red, green, blue := part(pixel, 16), part(pixel, 8), part(pixel, 0)
+		return max(red, green, blue) - min(red, green, blue) > 0.08
+	}
+	pictures := pointer_pictures.picture_entries(file)
+	for form in pointer_pictures.Pointer_Form do for entry in pointer_pictures.shape_entries(file, form) {
+		name := pointer_pictures.shape_name(entry.shape)
+		has_accent := SYSTEM_ACCENTS[pointer_pictures.Pointer_Shape(entry.shape)] != ""
+		for picture_index in entry.first_picture ..< entry.first_picture + entry.size_count * entry.frame_count {
+			picture := pictures[picture_index]
+			colored := 0
+			for pixel in pointer_pictures.pixels_of(file, picture) {
+				if off_the_line(pixel) {
+					colored += 1
+				}
+			}
+			testing.expectf(t, (colored > 0) == has_accent, "%v %s, picture %d (size %d): %d pixels of an accent", form, name, picture_index, picture.nominal_size, colored)
+		}
 	}
 	free_all(context.temp_allocator)
 }
@@ -391,13 +534,17 @@ system_pointer_theme_file_round_trip :: proc(t: ^testing.T) {
 	aligned, _ := mem.alloc_bytes(len(read), pointer_pictures.PIXEL_ALIGNMENT, context.temp_allocator)
 	copy(aligned, read)
 	testing.expect_value(t, pointer_pictures.validate(aligned).kind, pointer_pictures.Problem_Kind.None)
-	for shape in pointer_pictures.Pointer_Shape {
+	for form in pointer_pictures.Pointer_Form do for shape in pointer_pictures.Pointer_Shape {
 		for size in manifest.sizes {
-			chosen := pointer_pictures.choose(aligned, shape, size, 0)
+			chosen := pointer_pictures.choose(aligned, form, shape, size, 0)
 			testing.expect_value(t, chosen.shape, shape)
 			testing.expect_value(t, chosen.picture.nominal_size, size)
 		}
 	}
+	// The two forms have their own pictures of the arrow.
+	dark := pointer_pictures.choose(aligned, .Dark, .Arrow, manifest.sizes[0], 0)
+	light := pointer_pictures.choose(aligned, .Light, .Arrow, manifest.sizes[0], 0)
+	testing.expect(t, !slice.equal(dark.pixels, light.pixels), "the light form has its own arrow")
 	free_all(context.temp_allocator)
 }
 
@@ -410,26 +557,32 @@ manifest_errors_name_the_place :: proc(t: ^testing.T) {
 		sentence: string,
 	}
 	head :: "theme T\nlicense MIT\nsizes 12\n"
-	triangle :: "layer dark\ncontour 0 0 line 1 0 line 0 1\n"
+	triangle :: "layer edge\ncontour 0 0 line 1 0 line 0 1\n"
 	coordinate :: "a coordinate from 0 to 12 with at most 3 decimals"
+	paint :: "a paint \"fill\", \"accent\", \"edge\" or \"clear\""
+	accent :: "the name of an accent: \"title\", \"stop_program\" or \"boot_program\""
 	cases := [?]Case {
 		{"license MIT\n", "m:1:1: expected the statement \"theme\" first; found \"license\""},
 		{head + "shape arow hot 0 0\n", "m:4:7: expected a pointer shape name such as \"arrow\"; found \"arow\""},
 		{head + "shape arrow hot 0 0\n" + triangle + "shape arrow hot 0 0\n", "m:7:7: expected a shape that line 4 does not name; found \"arrow\""},
-		{head + "shape arrow hot 0 0\nlayer red\n", "m:5:7: expected one paint \"dark\", \"light\" or \"clear\"; found \"red\""},
-		{head + "shape arrow hot 0 0\nlayer dark light\n", "m:5:12: expected one paint \"dark\", \"light\" or \"clear\"; found \"light\""},
-		{head + "shape arrow hot 0 0\nlayer dark\ncontour 0 0 line 13 0\n", "m:6:18: expected " + coordinate + "; found \"13\""},
-		{head + "shape arrow hot 0 0\nlayer dark\ncontour 0.0005 0\n", "m:6:9: expected " + coordinate + "; found \"0.0005\""},
-		{head + "shape arrow hot 0 0\nlayer dark\ncontour 1. 0\n", "m:6:9: expected " + coordinate + "; found \"1.\""},
-		{head + "shape arrow hot 0 0\nlayer dark\ncontour 0\n", "m:6:10: expected " + coordinate + "; found the end of the line"},
-		{head + "shape arrow hot 0 0\nlayer dark\ncontour 0 0 move 1 1\n", "m:6:13: expected \"contour\", \"line\", \"curve\" or \"circle\"; found \"move\""},
-		{head + "shape arrow hot 0 0\nlayer dark\ncircle 2 6 3\n", "m:6:12: expected a radius above 0 that keeps the circle inside the square of 12 units; found \"3\""},
-		{head + "shape arrow hot 0 0\nlayer dark\ncircle 6 6 3 line 1 1\n", "m:6:14: expected a statement \"contour\" before \"line\"; found \"line\""},
+		{head + "shape arrow hot 0 0\nlayer red\n", "m:5:7: expected " + paint + "; found \"red\""},
+		{head + "shape arrow hot 0 0\nlayer\n", "m:5:6: expected " + paint + "; found the end of the line"},
+		{head + "shape arrow hot 0 0\nlayer accent\n", "m:5:13: expected " + accent + "; found the end of the line"},
+		{head + "shape arrow hot 0 0\nlayer accent 0x3F7CC4\n", "m:5:14: expected " + accent + "; found \"0x3F7CC4\""},
+		{head + "shape arrow hot 0 0\nlayer edge inside\n", "m:5:12: expected the end of the line; found \"inside\""},
+		{head + "shape arrow hot 0 0\nlayer fill inside more\n", "m:5:19: expected the end of the line; found \"more\""},
+		{head + "shape arrow hot 0 0\nlayer edge\ncontour 0 0 line 13 0\n", "m:6:18: expected " + coordinate + "; found \"13\""},
+		{head + "shape arrow hot 0 0\nlayer edge\ncontour 0.0005 0\n", "m:6:9: expected " + coordinate + "; found \"0.0005\""},
+		{head + "shape arrow hot 0 0\nlayer edge\ncontour 1. 0\n", "m:6:9: expected " + coordinate + "; found \"1.\""},
+		{head + "shape arrow hot 0 0\nlayer edge\ncontour 0\n", "m:6:10: expected " + coordinate + "; found the end of the line"},
+		{head + "shape arrow hot 0 0\nlayer edge\ncontour 0 0 move 1 1\n", "m:6:13: expected \"contour\", \"line\", \"curve\" or \"circle\"; found \"move\""},
+		{head + "shape arrow hot 0 0\nlayer edge\ncircle 2 6 3\n", "m:6:12: expected a radius above 0 that keeps the circle inside the square of 12 units; found \"3\""},
+		{head + "shape arrow hot 0 0\nlayer edge\ncircle 6 6 3 line 1 1\n", "m:6:14: expected a statement \"contour\" before \"line\"; found \"line\""},
 		{head + "shape arrow hot 0 0\nla\tyer\n", "m:5:3: expected a character of ASCII 32 to 126; found the byte 9"},
 		{head + "shape arrow hot 0 0\ncontour 0 0 line 1 0\n", "m:5:1: expected the statement \"layer\" before a contour; found \"contour\""},
-		{head + "shape arrow hot 0 0\nlayer dark\nline 1 0\n", "m:6:1: expected a statement \"contour\" before \"line\"; found \"line\""},
-		{head + "shape arrow hot 0 0\nlayer dark\ncontour 0 0 line 1 0\n", "m:6:1: expected a contour of 2 segments at least; found 1"},
-		{head + "shape arrow hot 0 0\nlayer dark\n", "m:5:1: expected a contour after the statement \"layer\"; found none"},
+		{head + "shape arrow hot 0 0\nlayer edge\nline 1 0\n", "m:6:1: expected a statement \"contour\" before \"line\"; found \"line\""},
+		{head + "shape arrow hot 0 0\nlayer edge\ncontour 0 0 line 1 0\n", "m:6:1: expected a contour of 2 segments at least; found 1"},
+		{head + "shape arrow hot 0 0\nlayer edge\n", "m:5:1: expected a contour after the statement \"layer\"; found none"},
 		{"theme T\nlicense MIT\nsizes 24 12\n", "m:3:10: expected a size larger than 24; found \"12\""},
 		{"theme T\nlicense MIT\nsizes\n", "m:3:6: expected a nominal size from 1 to 256; found the end of the line"},
 		{"theme T\nlicense MIT\nsizes 300\n", "m:3:7: expected a nominal size from 1 to 256; found \"300\""},
@@ -443,7 +596,7 @@ manifest_errors_name_the_place :: proc(t: ^testing.T) {
 		{head + "shape arrow hot 1 x\n", "m:4:19: expected a number from 0 to 255; found \"x\""},
 		{head + "shape arrow left/ptr\n", "m:4:13: expected a file name of letters, digits, \"_\" and \"-\"; found \"left/ptr\""},
 		{head + "shape arrow left_ptr hot 0 0 other\n", "m:4:30: expected an option \"hot\" or \"sizes\" after the options; found \"other\""},
-		{head + "shape arrow left_ptr\nlayer dark\n", "m:5:1: expected an outline only after a statement \"shape\" with no source; found \"layer\""},
+		{head + "shape arrow left_ptr\nlayer edge\n", "m:5:1: expected an outline only after a statement \"shape\" with no source; found \"layer\""},
 		{head + "colour red\n", "m:4:1: expected a statement \"theme\", \"license\", \"attribution\", \"sizes\", \"shape\", \"frame\", \"layer\", \"contour\", \"line\", \"curve\" or \"circle\"; found \"colour\""},
 		{"theme T\nlicense MIT\nshape arrow\n", "m:3:1: expected the statement \"sizes\" before the shapes; found \"shape\""},
 		{"theme T\nsizes 12\nshape arrow hot 0 0\n" + triangle, "m:6:1: expected the statement \"license\"; found the end of the file"},
@@ -475,10 +628,11 @@ manifest_of_sources_follows_the_links :: proc(t: ^testing.T) {
 	testing.expect_value(t, rows[0].source, "real")
 	testing.expect_value(t, rows[2].source, "real (shared)")
 	testing.expect_value(t, pointer_pictures.header(file).picture_count, 4) // arrow 2, text 2; move shares the arrow.
-	chosen := pointer_pictures.choose(file, .Move, 8, 0)
+	testing.expect_value(t, pointer_pictures.header(file).form_count, 1) // Pictures of a source have one form.
+	chosen := pointer_pictures.choose(file, .Dark, .Move, 8, 0)
 	testing.expect_value(t, chosen.picture.hot_spot_x, 4)
 	testing.expect_value(t, chosen.picture.hot_spot_y, 2)
-	chosen = pointer_pictures.choose(file, .Text, 8, 0)
+	chosen = pointer_pictures.choose(file, .Dark, .Text, 8, 0)
 	testing.expect_value(t, chosen.picture.hot_spot_x, 2) // The hot spot of the file.
 
 	manifest, _ = manifest_parse("m", "theme T\nlicense MIT\nsizes 4\nshape arrow outside\n")

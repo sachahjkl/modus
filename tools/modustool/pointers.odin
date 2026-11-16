@@ -1,8 +1,10 @@
 package modustool
 
 import "modus:contract/pointer_pictures"
+import "modus:support/graphics"
 import "modus:support/vector_font"
 import "core:fmt"
+import "core:math"
 import "core:mem"
 import "core:os"
 import "core:slice"
@@ -32,11 +34,70 @@ LINK_DEPTH_LIMIT :: 8
 // makes the same pixels.
 OUTLINE_COORDINATE_SCALE :: 1000
 OUTLINE_COORDINATE_DECIMALS :: 3
-// The two colors of an outline: a dark edge around a light fill. The light
-// fill carries the contrast on the dark desktop and windows, the dark edge
-// on a light picture or text (docs/POINTERS.md, "5. The two themes").
-POINTER_DARK_COLOR :: u32(0x000000)
-POINTER_LIGHT_COLOR :: u32(0xFFFFFF)
+// The two colors of an outline: the dark of the desktop and white. The dark
+// form has a white fill in a dark edge, for a dark desktop; the light form
+// a dark fill in a white edge, for a light desktop (docs/POINTERS.md, "5. The
+// two themes").
+POINTER_DARK_COLOR :: u32(graphics.COLOR_BACKGROUND)
+POINTER_LIGHT_COLOR :: u32(graphics.COLOR_WHITE)
+// The edge of an outline is 1 pixel at every size: drawn from the contours,
+// so a larger size has a finer edge, not a thicker one.
+OUTLINE_EDGE_SUBUNITS :: vector_font.SUBUNITS_PER_PIXEL
+
+// The fill and the edge of each form.
+Pointer_Form_Colors :: struct {
+	fill: u32,
+	edge: u32,
+}
+
+POINTER_FORM_COLORS := [pointer_pictures.Pointer_Form]Pointer_Form_Colors {
+	.Dark  = {fill = POINTER_LIGHT_COLOR, edge = POINTER_DARK_COLOR},
+	.Light = {fill = POINTER_DARK_COLOR, edge = POINTER_LIGHT_COLOR},
+}
+
+// An accent of a pointer: a color token of the design rules (the name of
+// its constant in modus:support/graphics, with no COLOR_), with its value
+// for a dark surround and for a light surround. An accent inside the fill
+// has the fill around it; an accent with an edge has the edge around it.
+// The value for a light surround is the value that the light form of the
+// site gives the token: a darker shade, which keeps 3 to 1 on white.
+Pointer_Accent :: struct {
+	name:     string,
+	on_dark:  u32,
+	on_light: u32,
+}
+
+// pointer_accents gives the tokens that a manifest can name.
+pointer_accents :: proc() -> [3]Pointer_Accent {
+	return {
+		// The blue of the title bar and of the focus.
+		{name = "title", on_dark = graphics.COLOR_TITLE, on_light = graphics.shade(graphics.COLOR_TITLE, 85)},
+		// The red of "stop a program": its bright form under the pointer on
+		// a dark surround, its deep form on a light one.
+		{name = "stop_program", on_dark = graphics.COLOR_STOP_PROGRAM_POINTER_OVER, on_light = graphics.COLOR_STOP_PROGRAM},
+		// The amber of a match, as the search of the site marks it.
+		{name = "boot_program", on_dark = graphics.COLOR_BOOT_PROGRAM, on_light = graphics.shade(graphics.COLOR_BOOT_PROGRAM, 50)},
+	}
+}
+
+// pointer_layer_color gives the color of a layer in a form: an accent takes
+// the value of its token for the color around it.
+pointer_layer_color :: proc(layer: Outline_Layer, form: pointer_pictures.Pointer_Form) -> u32 {
+	colors := POINTER_FORM_COLORS[form]
+	switch layer.paint {
+	case .Fill:
+		return colors.fill
+	case .Edge:
+		return colors.edge
+	case .Accent:
+		around := layer.inside ? colors.fill : colors.edge
+		accents := pointer_accents()
+		accent := accents[layer.accent]
+		return around == POINTER_DARK_COLOR ? accent.on_dark : accent.on_light
+	case .Clear:
+	}
+	return 0
+}
 
 // One pointer theme that the build makes.
 //   resource: its name in the resource table of the boot image.
@@ -228,11 +289,13 @@ xcursor_read :: proc(file: []u8, images: ^[dynamic]Xcursor_Image) -> string {
 
 // ---- The manifest ----
 
-// The paint of a layer of an outline: the dark or the light color over the
-// layers before it, or Clear, which makes its contours transparent again.
+// The paint of a layer of an outline, by its role: the fill and the edge of
+// the form, an accent, or Clear, which makes its contours transparent again.
+// The colors of a role are in each form (POINTER_FORM_COLORS).
 Outline_Paint :: enum u8 {
-	Dark,
-	Light,
+	Fill,
+	Accent,
+	Edge,
 	Clear,
 }
 
@@ -254,8 +317,12 @@ Outline_Contour :: struct {
 }
 
 // The contours of one paint. The contours of one layer are a union.
+//   accent: the place of its token in pointer_accents, for an accent.
+//   inside: a fill or an accent with no edge of its own, inside the fill.
 Outline_Layer :: struct {
 	paint:    Outline_Paint,
+	accent:   int,
+	inside:   bool,
 	contours: [dynamic]Outline_Contour,
 	line:     int,
 }
@@ -503,22 +570,47 @@ manifest_parse :: proc(path: string, text: string) -> (manifest: Manifest, probl
 			if shape == nil || len(shape.sources) > 0 {
 				return {}, fail(path, line_number, keyword.column, "an outline only after a statement \"shape\" with no source", quoted(keyword.text))
 			}
-			if len(words) != 2 {
-				column := len(words) > 2 ? words[2].column : len(statement) + 1
-				return {}, fail(path, line_number, column, "one paint \"dark\", \"light\" or \"clear\"", quoted(len(words) > 2 ? words[2].text : ""))
+			layer := Outline_Layer {
+				contours = make([dynamic]Outline_Contour, context.temp_allocator),
+				line     = line_number,
 			}
-			paint: Outline_Paint
-			switch words[1].text {
-			case "dark":
-				paint = .Dark
-			case "light":
-				paint = .Light
+			// The words after the paint: the token of an accent, then
+			// "inside" for a fill or an accent.
+			next := 2
+			switch len(words) > 1 ? words[1].text : "" {
+			case "fill":
+				layer.paint = .Fill
+			case "edge":
+				layer.paint = .Edge
 			case "clear":
-				paint = .Clear
+				layer.paint = .Clear
+			case "accent":
+				layer.paint = .Accent
+				known := false
+				accents := pointer_accents()
+				if len(words) > 2 {
+					for accent, index in accents {
+						if accent.name == words[2].text {
+							layer.accent = index
+							known = true
+						}
+					}
+				}
+				if !known {
+					return {}, fail(path, line_number, len(words) > 2 ? words[2].column : len(statement) + 1, "the name of an accent: \"title\", \"stop_program\" or \"boot_program\"", quoted(len(words) > 2 ? words[2].text : ""))
+				}
+				next = 3
 			case:
-				return {}, fail(path, line_number, words[1].column, "one paint \"dark\", \"light\" or \"clear\"", quoted(words[1].text))
+				return {}, fail(path, line_number, len(words) > 1 ? words[1].column : len(statement) + 1, "a paint \"fill\", \"accent\", \"edge\" or \"clear\"", quoted(len(words) > 1 ? words[1].text : ""))
 			}
-			append(outline_layers_now(shape), Outline_Layer{paint = paint, contours = make([dynamic]Outline_Contour, context.temp_allocator), line = line_number})
+			if next < len(words) && words[next].text == "inside" && (layer.paint == .Fill || layer.paint == .Accent) {
+				layer.inside = true
+				next += 1
+			}
+			if next < len(words) {
+				return {}, fail(path, line_number, words[next].column, "the end of the line", quoted(words[next].text))
+			}
+			append(outline_layers_now(shape), layer)
 		case "contour", "line", "curve", "circle":
 			if outline_problem := outline_statement_parse(path, line_number, words, len(statement) + 1, &manifest, shape); outline_problem != "" {
 				return {}, outline_problem
@@ -809,21 +901,181 @@ outline_contour_add :: proc(target: ^vector_font.Accumulation, item: Outline_Con
 	}
 }
 
-// outline_layer_draw draws one layer over a canvas of size x size
-// premultiplied pixels: the exact coverage of each pixel by the union of
-// the contours, then the paint over the pixel with that coverage.
+// One point of a contour in subunits, as a real number, for an offset.
 @(private = "file")
-outline_layer_draw :: proc(canvas: []u32, cells: []i32, coverage: []u8, layer: Outline_Layer, design, size: u32) {
+Offset_Point :: [2]f64
+
+@(private = "file")
+cross_of :: proc(first, second: Offset_Point) -> f64 {
+	return first.x * second.y - first.y * second.x
+}
+
+@(private = "file")
+direction_of :: proc(vector: Offset_Point) -> Offset_Point {
+	length := math.sqrt(vector.x * vector.x + vector.y * vector.y)
+	return length == 0 ? Offset_Point{} : vector / length
+}
+
+// outline_contour_offset_add adds one contour moved out by a distance in
+// subunits (inward for a negative distance) to an accumulation. Each side
+// moves along its normal; two sides meet where their moved lines cross, and
+// a curve keeps its control point where its two moved tangents cross: a
+// circle stays a circle. The arithmetic is IEEE double precision, whose
+// operations and square root are exact roundings: each machine makes the
+// same points. A contour that the move turns inside out (a part thinner
+// than twice the distance) adds nothing.
+@(private = "file")
+outline_contour_offset_add :: proc(target: ^vector_font.Accumulation, item: Outline_Contour, design, size: i64, distance: f64) {
+	scale := f64(size * vector_font.SUBUNITS_PER_PIXEL) / f64(design * OUTLINE_COORDINATE_SCALE)
+	point_of :: proc(value: [2]i64, factor: f64) -> Offset_Point {
+		return {f64(value.x) * factor, f64(value.y) * factor}
+	}
+	// The segments with the closing line, with no segment of length 0.
+	Piece :: struct {
+		from, control, to: Offset_Point,
+		curve:             bool,
+	}
+	pieces := make([dynamic]Piece, context.temp_allocator)
+	from := point_of(item.start, scale)
+	for index in 0 ..= len(item.segments) {
+		segment := index < len(item.segments) ? item.segments[index] : Outline_Segment{to = item.start}
+		to := point_of(segment.to, scale)
+		control := point_of(segment.control, scale)
+		if to != from || (segment.curve && control != from) {
+			append(&pieces, Piece{from = from, control = control, to = to, curve = segment.curve})
+		}
+		from = to
+	}
+	count := len(pieces)
+	if count < 2 {
+		return
+	}
+	// The tangent at the start and at the end of each piece, and the area
+	// of the control polygon: its sign says which side is outside.
+	starts := make([]Offset_Point, count, context.temp_allocator)
+	ends := make([]Offset_Point, count, context.temp_allocator)
+	area: f64 = 0
+	for piece, index in pieces {
+		if piece.curve {
+			starts[index] = direction_of(piece.control != piece.from ? piece.control - piece.from : piece.to - piece.from)
+			ends[index] = direction_of(piece.control != piece.to ? piece.to - piece.control : piece.to - piece.from)
+			area += cross_of(piece.from, piece.control) + cross_of(piece.control, piece.to)
+		} else {
+			starts[index] = direction_of(piece.to - piece.from)
+			ends[index] = starts[index]
+			area += cross_of(piece.from, piece.to)
+		}
+	}
+	side: f64 = area > 0 ? 1 : -1
+	outward :: proc(tangent: Offset_Point, sign: f64) -> Offset_Point {
+		return {tangent.y * sign, -tangent.x * sign}
+	}
+	// Where the moved line through a with the direction u crosses the moved
+	// line through b with the direction v; b when they are parallel.
+	crossing :: proc(a, u, b, v: Offset_Point) -> (Offset_Point, bool) {
+		turn := cross_of(u, v)
+		if abs(turn) < 1e-9 {
+			return b, false
+		}
+		return a + u * (cross_of(b - a, v) / turn), true
+	}
+	joins := make([]Offset_Point, count, context.temp_allocator)
+	limit := 4 * abs(distance) // A join no farther than this from its corner.
+	for index in 0 ..< count {
+		before := (index + count - 1) % count
+		corner := pieces[index].from
+		join, _ := crossing(corner + outward(ends[before], side) * distance, ends[before], corner + outward(starts[index], side) * distance, starts[index])
+		if reach := join - corner; reach.x * reach.x + reach.y * reach.y > limit * limit {
+			join = corner + direction_of(reach) * limit
+		}
+		joins[index] = join
+	}
+	// The moved contour, and its area: a sign that differs from the
+	// contour says that the move turned it inside out.
+	moved := make([]Piece, count, context.temp_allocator)
+	moved_area: f64 = 0
+	for piece, index in pieces {
+		start, end := joins[index], joins[(index + 1) % count]
+		control := (start + end) / 2
+		if piece.curve {
+			if found, ok := crossing(start, starts[index], end, ends[index]); ok {
+				control = found
+			}
+			moved_area += cross_of(start, control) + cross_of(control, end)
+		} else {
+			moved_area += cross_of(start, end)
+		}
+		moved[index] = Piece{from = start, control = control, to = end, curve = piece.curve}
+	}
+	if moved_area * area <= 0 {
+		return
+	}
+	// One direction for every contour of a layer: the union.
+	round :: proc(value: f64) -> i32 {
+		return i32(math.floor(value + 0.5))
+	}
+	for piece in moved {
+		a, b := piece.from, piece.to
+		if side < 0 {
+			a, b = b, a
+		}
+		if piece.curve {
+			vector_font.quadratic_add(target, round(a.x), round(a.y), round(piece.control.x), round(piece.control.y), round(b.x), round(b.y))
+		} else {
+			vector_font.line_add(target, round(a.x), round(a.y), round(b.x), round(b.y))
+		}
+	}
+}
+
+// outline_coverage gives the coverage of the union of the contours of a
+// layer, each moved out by a distance in subunits (0: as they are).
+@(private = "file")
+outline_coverage :: proc(cells: []i32, coverage: []u8, layer: Outline_Layer, design, size: u32, distance: i64) {
 	target, ok := vector_font.accumulation_of(cells, int(size), int(size))
 	if !ok {
 		return // The caller gives (size + 1) * size cells: this does not happen.
 	}
 	for item in layer.contours {
-		outline_contour_add(&target, item, i64(design), i64(size))
+		if distance == 0 {
+			outline_contour_add(&target, item, i64(design), i64(size))
+		} else {
+			outline_contour_offset_add(&target, item, i64(design), i64(size), f64(distance))
+		}
 	}
 	vector_font.coverage_finish(&target, coverage)
-	color := layer.paint == .Light ? POINTER_LIGHT_COLOR : POINTER_DARK_COLOR
-	paint := layer.paint == .Clear ? u32(0) : 0xFF000000 | color
+}
+
+// outline_layer_draw draws one layer in a form over a canvas of size x size
+// premultiplied pixels. A fill or an accent is its contours in the edge
+// color, then the same contours moved in by the edge in its color: the edge
+// is inside the contours, so the contours are the whole shape at every size
+// and the hot spot stays on them. An inside layer and the edge are their
+// contours in their color. A clear layer is the edge around its contours,
+// then its contours transparent.
+@(private = "file")
+outline_layer_draw :: proc(canvas: []u32, cells: []i32, coverage: []u8, layer: Outline_Layer, form: pointer_pictures.Pointer_Form, design, size: u32) {
+	edge := POINTER_FORM_COLORS[form].edge
+	switch {
+	case layer.paint == .Clear:
+		outline_coverage(cells, coverage, layer, design, size, OUTLINE_EDGE_SUBUNITS)
+		outline_paint(canvas, coverage, 0xFF000000 | edge)
+		outline_coverage(cells, coverage, layer, design, size, 0)
+		outline_paint(canvas, coverage, 0)
+	case layer.paint == .Edge || layer.inside:
+		outline_coverage(cells, coverage, layer, design, size, 0)
+		outline_paint(canvas, coverage, 0xFF000000 | pointer_layer_color(layer, form))
+	case:
+		outline_coverage(cells, coverage, layer, design, size, 0)
+		outline_paint(canvas, coverage, 0xFF000000 | edge)
+		outline_coverage(cells, coverage, layer, design, size, -OUTLINE_EDGE_SUBUNITS)
+		outline_paint(canvas, coverage, 0xFF000000 | pointer_layer_color(layer, form))
+	}
+}
+
+// outline_paint puts a premultiplied paint (0: transparent) over each pixel
+// of a canvas with the coverage of the pixel as its weight.
+@(private = "file")
+outline_paint :: proc(canvas: []u32, coverage: []u8, paint: u32) {
 	for &pixel, index in canvas {
 		covered := u32(coverage[index])
 		if covered == 0 {
@@ -843,11 +1095,11 @@ outline_layer_draw :: proc(canvas: []u32, cells: []i32, coverage: []u8, layer: O
 	}
 }
 
-// outline_pictures_add draws each frame of an outline at one size, and
-// adds its pictures. The pictures of one size have one box: the pixels
-// that a frame draws, and the hot spot.
+// outline_pictures_add draws each frame of an outline at one size in one
+// form, and adds its pictures. The pictures of one size have one box: the
+// pixels that a frame draws, and the hot spot.
 @(private = "file")
-outline_pictures_add :: proc(pictures: ^[dynamic]Made_Picture, item: Manifest_Shape, design, size: u32) {
+outline_pictures_add :: proc(pictures: ^[dynamic]Made_Picture, item: Manifest_Shape, design, size: u32, form: pointer_pictures.Pointer_Form) {
 	side := int(size)
 	frame_count := max(len(item.frames), 1)
 	cells := make([]i32, (side + 1) * side, context.temp_allocator)
@@ -856,11 +1108,11 @@ outline_pictures_add :: proc(pictures: ^[dynamic]Made_Picture, item: Manifest_Sh
 	for &canvas, frame_index in canvases {
 		canvas = make([]u32, side * side, context.temp_allocator)
 		for layer in item.layers {
-			outline_layer_draw(canvas, cells, coverage, layer, design, size)
+			outline_layer_draw(canvas, cells, coverage, layer, form, design, size)
 		}
 		if len(item.frames) > 0 {
 			for layer in item.frames[frame_index].layers {
-				outline_layer_draw(canvas, cells, coverage, layer, design, size)
+				outline_layer_draw(canvas, cells, coverage, layer, form, design, size)
 			}
 		}
 	}
@@ -977,7 +1229,7 @@ pointer_theme_make :: proc(manifest: Manifest, folder: string) -> (file: []u8, r
 			// An outline: a unit is a pixel of the first size.
 			entry.frame_count = u32(max(len(item.frames), 1))
 			for size in sizes {
-				outline_pictures_add(&pictures, item, sizes[0], size)
+				outline_pictures_add(&pictures, item, sizes[0], size, .Dark)
 			}
 			row.source = len(item.frames) > 0 ? "an outline, animated" : "an outline"
 		} else {
@@ -1062,6 +1314,39 @@ pointer_theme_make :: proc(manifest: Manifest, folder: string) -> (file: []u8, r
 		append(&table, row)
 	}
 
+	// The light form, when the theme has an outline: each outline drawn
+	// again in the colors of the light form; a shape from a source keeps
+	// its pictures, which have one form.
+	form_count := 1
+	for &item in ordered {
+		if len(item.sources) == 0 {
+			form_count = len(pointer_pictures.Pointer_Form)
+		}
+	}
+	if form_count > 1 {
+		dark_entries := slice.clone(shapes[:], context.temp_allocator)
+		for &item, index in ordered {
+			entry := dark_entries[index]
+			if len(item.sources) == 0 {
+				sizes := len(item.sizes) > 0 ? item.sizes[:] : manifest.sizes[:]
+				entry.first_picture = u32(len(pictures))
+				bytes_before := 0
+				for picture in pictures {
+					bytes_before += len(picture.pixels) * 4
+				}
+				for size in sizes {
+					outline_pictures_add(&pictures, item, sizes[0], size, .Light)
+				}
+				after := 0
+				for picture in pictures {
+					after += len(picture.pixels) * 4
+				}
+				table[index].bytes += after - bytes_before
+			}
+			append(&shapes, entry)
+		}
+	}
+
 	// The file: the header, the two tables, the pixels.
 	offset := pointer_pictures.pixel_offset_for(u64(len(shapes)), u64(len(pictures)))
 	pixel_size: u64 = 0
@@ -1072,7 +1357,7 @@ pointer_theme_make :: proc(manifest: Manifest, folder: string) -> (file: []u8, r
 	// Aligned: the validation reads the tables in place, as the compositor does.
 	file, _ = mem.alloc_bytes(int(offset + pixel_size), pointer_pictures.PIXEL_ALIGNMENT, context.temp_allocator)
 	head := (^pointer_pictures.Header)(raw_data(file))
-	head^ = {magic = pointer_pictures.MAGIC, version = pointer_pictures.VERSION, shape_count = u32(len(shapes)), picture_count = u32(len(pictures)), pixel_offset = offset, pixel_size = pixel_size, file_size = u64(len(file))}
+	head^ = {magic = pointer_pictures.MAGIC, version = pointer_pictures.VERSION, shape_count = u32(len(ordered)), picture_count = u32(len(pictures)), form_count = u32(form_count), pixel_offset = offset, pixel_size = pixel_size, file_size = u64(len(file))}
 	copy(head.theme_name[:], manifest.theme_name)
 	copy(head.license[:], manifest.license)
 	copy(head.attribution[:], manifest.attribution)

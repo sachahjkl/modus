@@ -518,7 +518,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	settings_told: settings.Choice
 	settings_told_once: bool
 	if display.settings_page != nil {
-		pointer_theme_choose(settings.pointer_theme_of(settings.read(display.settings_page)))
+		first_choice := settings.read(display.settings_page)
+		pointer_theme_choose(settings.pointer_theme_of(first_choice))
+		pointer_form_choose(pointer_form_in_force(first_choice)) // pointer_picture.odin
 	}
 
 	next_frame: u64
@@ -685,6 +687,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	display.text_settings_apply()
 	bar_layout_update()
 	pointer_theme_choose(settings.pointer_theme_of(choice)) // pointer_picture.odin
+	pointer_form_choose(pointer_form_in_force(choice))
 	told := 0
 	for &client in clients {
 		if client.ring.head != nil {

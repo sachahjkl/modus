@@ -1,265 +1,203 @@
 # The pointer theme of the system (docs/POINTERS.md, section 5), under the
 # license of the repository. Each shape is an outline: closed contours of
-# lines and quadratic curves in layers, a dark edge around a light fill. A
-# unit is a pixel at the size 24, so an integer coordinate is a pixel corner:
-# each straight edge that is level or upright is sharp at 24 and at 48. An
-# edge of 1 unit is the light contour moved out by 1 unit; on a slanted side
-# of 45 degrees the corner moves by 1.414. The option "hot" is the pixel that
-# points, at the size 24. The centre of a symmetric shape is the pixel 11.
+# lines and quadratic curves in layers. A contour of a layer "fill" or of an
+# accent is the whole shape: the tool draws an edge of 1 pixel inside it at
+# every size, then the fill. The theme file holds two forms: a white fill in
+# a dark edge for a dark desktop, a dark fill in a white edge for a light one.
+#
+# A unit is a pixel at the size 24: an integer coordinate is a pixel corner,
+# so each level and upright edge is sharp at 24 and at 48. A stroke is 3
+# units wide: 1 pixel of fill between two pixels of edge at 24. Two contours
+# of one layer that must join overlap by 2 units; two fingers overlap by 1,
+# so that 1 pixel of edge parts them at 24, and a line of edge of half a
+# unit parts them at 48. The option "hot" is the pixel that points, at 24.
+# The centre of a symmetric shape is the pixel 11.
 theme System
 license MIT
 attribution The pointer theme of the system, drawn as outlines in resources/pointers/system.manifest.
 
 sizes 24 48
 
-# A slanted arrow with a tail. The point is the corner 1,1.
+# A slanted arrow with a narrow tail; the side from the point to the wing is
+# steeper than 45 degrees.
 shape arrow hot 1 1
-layer dark
-contour 1 1 line 1 18 line 5 14 line 8 20 line 11.6 18.2 line 9 13 line 13 13
-layer light
-contour 2 3.414 line 2 15.586 line 5.274 12.312 line 8.447 18.658 line 10.258 17.753 line 7.382 12 line 10.586 12
+layer fill
+contour 1 1 line 1 17 line 5 13 line 7.89 19.5 line 10.63 18.28 line 8.28 13 line 11 13
 
-# An I-beam: a stem of 1 pixel between two bars.
+# An I-beam: a stem of 1 pixel, two small bars.
 shape text hot 11 11
-layer dark
-contour 7 3 line 16 3 line 16 6 line 7 6
+layer fill
+contour 8 3 line 15 3 line 15 6 line 8 6
+contour 8 17 line 15 17 line 15 20 line 8 20
 contour 10 4 line 13 4 line 13 19 line 10 19
-contour 7 17 line 16 17 line 16 20 line 7 20
-layer light
-contour 8 4 line 15 4 line 15 5 line 8 5
-contour 11 5 line 12 5 line 12 18 line 11 18
-contour 8 18 line 15 18 line 15 19 line 8 19
 
 # A hand: the index finger up, three fingers folded, the thumb at the left.
-# The tip of the index finger points.
-shape pointing_hand hot 7 2
-layer dark
-contour 5 14 line 5 3.5 curve 5 1 7.5 1 curve 10 1 10 3.5 line 10 14
-contour 9 14 line 9 8.5 curve 9 6 11.5 6 curve 14 6 14 8.5 line 14 14
-contour 13 14 line 13 9.5 curve 13 7 15.5 7 curve 18 7 18 9.5 line 18 14
-contour 17 14 line 17 11 curve 17 9 19 9 curve 21 9 21 11 line 21 14
-contour 5 11 line 21 11 line 21 17.414 line 18.414 20 line 7.586 20 line 5 17.414
-contour 6 12 line 4.5 12 curve 2 12 2 14.5 curve 2 17 4.5 17 line 6 17
-layer light
-contour 6 13 line 6 3.5 curve 6 2 7.5 2 curve 9 2 9 3.5 line 9 13
-contour 10 13 line 10 8.5 curve 10 7 11.5 7 curve 13 7 13 8.5 line 13 13
-contour 14 13 line 14 9.5 curve 14 8 15.5 8 curve 17 8 17 9.5 line 17 13
-contour 18 13 line 18 11 curve 18 10 19 10 curve 20 10 20 11 line 20 13
-contour 6 12 line 20 12 line 20 17 line 18 19 line 8 19 line 6 17
-contour 6 13 line 4.5 13 curve 3 13 3 14.5 curve 3 16 4.5 16 line 6 16
+shape pointing_hand hot 7 1
+layer fill
+contour 6 14 line 6 3 curve 6 1 8 1 curve 10 1 10 3 line 10 14
+contour 9 14 line 9 9 curve 9 7 11 7 curve 13 7 13 9 line 13 14
+contour 12 14 line 12 10 curve 12 8 14 8 curve 16 8 16 10 line 16 14
+contour 15 15 line 15 11.5 curve 15 10 16.5 10 curve 18 10 18 11.5 line 18 15
+contour 6 12 line 18 12 line 18 17 curve 18 20 15 20 line 9 20 curve 6 20 6 17
+contour 8 12 line 5 12 curve 3 12 3 14 curve 3 16 5 16 line 8 16
+layer edge
+contour 9.5 8 line 10 8 line 10 13 line 9.5 13
+contour 12.5 9 line 13 9 line 13 13 line 12.5 13
+contour 15.5 11 line 16 11 line 16 13 line 15.5 13
 
-# Four arrows from the centre.
+# Four arrows from the centre, with shafts of 1 pixel.
 shape move hot 11 11
-layer dark
+layer fill
 contour 10 4 line 13 4 line 13 19 line 10 19
 contour 4 10 line 19 10 line 19 13 line 4 13
-contour 11.5 0.086 line 17.414 6 line 5.586 6
-contour 11.5 22.914 line 17.414 17 line 5.586 17
-contour 0.086 11.5 line 6 5.586 line 6 17.414
-contour 22.914 11.5 line 17 5.586 line 17 17.414
-layer light
-contour 11 5 line 12 5 line 12 18 line 11 18
-contour 5 11 line 18 11 line 18 12 line 5 12
-contour 11.5 1.5 line 15 5 line 8 5
-contour 11.5 21.5 line 15 18 line 8 18
-contour 1.5 11.5 line 5 8 line 5 15
-contour 21.5 11.5 line 18 8 line 18 15
+contour 11.5 1.5 line 16 6 line 7 6
+contour 11.5 21.5 line 7 17 line 16 17
+contour 1.5 11.5 line 6 7 line 6 16
+contour 21.5 11.5 line 17 16 line 17 7
 
 # An open hand: four fingers up, the thumb at the left.
-shape grab hot 12 13
-layer dark
-contour 5 13 line 5 5.5 curve 5 3 7.5 3 curve 10 3 10 5.5 line 10 13
-contour 9 13 line 9 4.5 curve 9 2 11.5 2 curve 14 2 14 4.5 line 14 13
-contour 13 13 line 13 5.5 curve 13 3 15.5 3 curve 18 3 18 5.5 line 18 13
-contour 17 13 line 17 8 curve 17 6 19 6 curve 21 6 21 8 line 21 13
-contour 5 10 line 21 10 line 21 17.414 line 18.414 20 line 7.586 20 line 5 17.414
-contour 6 11 line 4.5 11 curve 2 11 2 13.5 curve 2 16 4.5 16 line 6 16
-layer light
-contour 6 12 line 6 5.5 curve 6 4 7.5 4 curve 9 4 9 5.5 line 9 12
-contour 10 12 line 10 4.5 curve 10 3 11.5 3 curve 13 3 13 4.5 line 13 12
-contour 14 12 line 14 5.5 curve 14 4 15.5 4 curve 17 4 17 5.5 line 17 12
-contour 18 12 line 18 8 curve 18 7 19 7 curve 20 7 20 8 line 20 12
-contour 6 11 line 20 11 line 20 17 line 18 19 line 8 19 line 6 17
-contour 6 12 line 4.5 12 curve 3 12 3 13.5 curve 3 15 4.5 15 line 6 15
+shape grab hot 11 13
+layer fill
+contour 5 13 line 5 7 curve 5 5 7 5 curve 9 5 9 7 line 9 13
+contour 8 13 line 8 5 curve 8 3 10 3 curve 12 3 12 5 line 12 13
+contour 11 13 line 11 6 curve 11 4 13 4 curve 15 4 15 6 line 15 13
+contour 14 13 line 14 8 curve 14 6 16 6 curve 18 6 18 8 line 18 13
+contour 5 11 line 18 11 line 18 17 curve 18 20 15 20 line 8 20 curve 5 20 5 17
+contour 7 12 line 4 12 curve 2 12 2 14 curve 2 16 4 16 line 7 16
+layer edge
+contour 8.5 6 line 9 6 line 9 12 line 8.5 12
+contour 11.5 5 line 12 5 line 12 12 line 11.5 12
+contour 14.5 7 line 15 7 line 15 12 line 14.5 12
 
-# A closed hand: the four knuckles at the top, the thumb at the left.
-shape grabbing hot 12 13
-layer dark
-contour 5 13 line 5 9.5 curve 5 7 7.5 7 curve 10 7 10 9.5 line 10 13
-contour 9 13 line 9 9.5 curve 9 7 11.5 7 curve 14 7 14 9.5 line 14 13
-contour 13 13 line 13 9.5 curve 13 7 15.5 7 curve 18 7 18 9.5 line 18 13
-contour 17 13 line 17 10 curve 17 8 19 8 curve 21 8 21 10 line 21 13
-contour 5 10 line 21 10 line 21 17.414 line 18.414 20 line 7.586 20 line 5 17.414
-contour 6 11 line 4.5 11 curve 2 11 2 13.5 curve 2 16 4.5 16 line 6 16
-layer light
-contour 6 12 line 6 9.5 curve 6 8 7.5 8 curve 9 8 9 9.5 line 9 12
-contour 10 12 line 10 9.5 curve 10 8 11.5 8 curve 13 8 13 9.5 line 13 12
-contour 14 12 line 14 9.5 curve 14 8 15.5 8 curve 17 8 17 9.5 line 17 12
-contour 18 12 line 18 10 curve 18 9 19 9 curve 20 9 20 10 line 20 12
-contour 6 11 line 20 11 line 20 17 line 18 19 line 8 19 line 6 17
-contour 6 12 line 4.5 12 curve 3 12 3 13.5 curve 3 15 4.5 15 line 6 15
+# A closed hand: four knuckles on the palm, the thumb at the left.
+shape grabbing hot 11 13
+layer fill
+contour 5 13 line 5 10 curve 5 8 7 8 curve 9 8 9 10 line 9 13
+contour 8 13 line 8 9 curve 8 7 10 7 curve 12 7 12 9 line 12 13
+contour 11 13 line 11 9 curve 11 7 13 7 curve 15 7 15 9 line 15 13
+contour 14 13 line 14 10 curve 14 8 16 8 curve 18 8 18 10 line 18 13
+contour 5 10 line 18 10 line 18 17 curve 18 20 15 20 line 8 20 curve 5 20 5 17
+contour 7 12 line 4 12 curve 2 12 2 14 curve 2 16 4 16 line 7 16
+layer edge
+contour 8.5 9 line 9 9 line 9 11 line 8.5 11
+contour 11.5 8 line 12 8 line 12 11 line 11.5 11
+contour 14.5 9 line 15 9 line 15 11 line 14.5 11
 
-# A ring with a hole. In each frame a dark dot is one eighth of a turn
-# further, clockwise: one turn in one second.
+# A thin ring. In each frame a dot in the blue of the focus is one eighth of
+# a turn further, clockwise: one turn in one second.
 shape wait hot 11 11
-layer dark
-circle 11.5 11.5 9
-layer light
-circle 11.5 11.5 8
-layer dark
-circle 11.5 11.5 4.5
+layer fill
+circle 11.5 11.5 8.5
 layer clear
-circle 11.5 11.5 3.5
+circle 11.5 11.5 5
 frame 125
-layer dark
-circle 11.5 5.25 1.25
+layer accent title inside
+circle 11.5 4.75 1.5
 frame 125
-layer dark
-circle 15.919 7.081 1.25
+layer accent title inside
+circle 16.273 6.727 1.5
 frame 125
-layer dark
-circle 17.75 11.5 1.25
+layer accent title inside
+circle 18.25 11.5 1.5
 frame 125
-layer dark
-circle 15.919 15.919 1.25
+layer accent title inside
+circle 16.273 16.273 1.5
 frame 125
-layer dark
-circle 11.5 17.75 1.25
+layer accent title inside
+circle 11.5 18.25 1.5
 frame 125
-layer dark
-circle 7.081 15.919 1.25
+layer accent title inside
+circle 6.727 16.273 1.5
 frame 125
-layer dark
-circle 5.25 11.5 1.25
+layer accent title inside
+circle 4.75 11.5 1.5
 frame 125
-layer dark
-circle 7.081 7.081 1.25
+layer accent title inside
+circle 6.727 6.727 1.5
 
 # The arrow, and a small ring at its lower right whose dot turns as in wait.
 shape busy_with_arrow hot 1 1
-layer dark
-contour 1 1 line 1 18 line 5 14 line 8 20 line 11.6 18.2 line 9 13 line 13 13
-layer light
-contour 2 3.414 line 2 15.586 line 5.274 12.312 line 8.447 18.658 line 10.258 17.753 line 7.382 12 line 10.586 12
-layer dark
-circle 18 18 5
-layer light
-circle 18 18 4
-layer dark
-circle 18 18 1.5
-frame 125
-layer dark
-circle 18 15.25 0.85
-frame 125
-layer dark
-circle 19.945 16.055 0.85
-frame 125
-layer dark
-circle 20.75 18 0.85
-frame 125
-layer dark
-circle 19.945 19.945 0.85
-frame 125
-layer dark
-circle 18 20.75 0.85
-frame 125
-layer dark
-circle 16.055 19.945 0.85
-frame 125
-layer dark
-circle 15.25 18 0.85
-frame 125
-layer dark
-circle 16.055 16.055 0.85
-
-# A ring with a slash from the upper left to the lower right. The ends of the
-# light slash join the light ring.
-shape forbidden hot 11 11
-layer dark
-circle 11.5 11.5 9
-layer light
-circle 11.5 11.5 8
-layer dark
-circle 11.5 11.5 5.5
+layer fill
+contour 1 1 line 1 17 line 5 13 line 7.89 19.5 line 10.63 18.28 line 8.28 13 line 11 13
+circle 18 18 5.5
 layer clear
-circle 11.5 11.5 4.5
-layer dark
-contour 16.273 13.799 line 13.799 16.273 line 6.727 9.201 line 9.201 6.727
-layer light
-contour 16.626 15.566 line 15.566 16.626 line 6.374 7.434 line 7.434 6.374
+circle 18 18 2
+frame 125
+layer accent title inside
+circle 18 14.25 1
+frame 125
+layer accent title inside
+circle 20.652 15.348 1
+frame 125
+layer accent title inside
+circle 21.75 18 1
+frame 125
+layer accent title inside
+circle 20.652 20.652 1
+frame 125
+layer accent title inside
+circle 18 21.75 1
+frame 125
+layer accent title inside
+circle 15.348 20.652 1
+frame 125
+layer accent title inside
+circle 14.25 18 1
+frame 125
+layer accent title inside
+circle 15.348 15.348 1
 
-# The arrow, and a question mark of strokes of 1 pixel at its right.
+# A thin ring, and a slash in the red of "stop a program" from the upper
+# left to the lower right; the ends of the slash reach the edge of the ring.
+shape forbidden hot 11 11
+layer fill
+circle 11.5 11.5 8.5
+layer clear
+circle 11.5 11.5 5.5
+layer accent stop_program
+contour 16.804 14.682 line 14.682 16.804 line 6.196 8.318 line 8.318 6.196
+
+# The arrow, and a question mark in the blue of the focus at its right.
 shape help hot 1 1
-layer dark
-contour 1 1 line 1 18 line 5 14 line 8 20 line 11.6 18.2 line 9 13 line 13 13
-contour 16 11 line 22 11 line 22 14 line 16 14
-contour 15 12 line 18 12 line 18 16 line 15 16
-contour 20 12 line 23 12 line 23 17 line 20 17
-contour 18 15 line 22 15 line 22 18 line 18 18
-contour 18 16 line 21 16 line 21 20 line 18 20
-contour 18 20 line 21 20 line 21 23 line 18 23
-layer light
-contour 2 3.414 line 2 15.586 line 5.274 12.312 line 8.447 18.658 line 10.258 17.753 line 7.382 12 line 10.586 12
-contour 17 12 line 21 12 line 21 13 line 17 13
-contour 16 13 line 17 13 line 17 15 line 16 15
-contour 21 13 line 22 13 line 22 16 line 21 16
-contour 19 16 line 21 16 line 21 17 line 19 17
-contour 19 17 line 20 17 line 20 19 line 19 19
-contour 19 21 line 20 21 line 20 22 line 19 22
+layer fill
+contour 1 1 line 1 17 line 5 13 line 7.89 19.5 line 10.63 18.28 line 8.28 13 line 11 13
+layer accent title
+contour 14.5 14 curve 14.5 10 18.5 10 curve 22.5 10 22.5 14 curve 22.5 16.5 20 17 line 20 20 line 17 20 line 17 16 curve 19.5 15.5 19.5 14 curve 19.5 13 18.5 13 curve 17.5 13 17.5 14
+contour 17 21 line 20 21 line 20 24 line 17 24
 
-# A cross of lines of 1 pixel with a gap around a centre dot.
+# Four arms of 1 pixel, and a dot in the amber of a match at the hot spot.
 shape crosshair hot 11 11
-layer dark
-contour 10 1 line 13 1 line 13 10 line 10 10
-contour 10 13 line 13 13 line 13 22 line 10 22
-contour 1 10 line 10 10 line 10 13 line 1 13
-contour 13 10 line 22 10 line 22 13 line 13 13
-contour 10 10 line 13 10 line 13 13 line 10 13
-layer light
-contour 11 2 line 12 2 line 12 9 line 11 9
-contour 11 14 line 12 14 line 12 21 line 11 21
-contour 2 11 line 9 11 line 9 12 line 2 12
-contour 14 11 line 21 11 line 21 12 line 14 12
-contour 11 11 line 12 11 line 12 12 line 11 12
+layer fill
+contour 10 1 line 13 1 line 13 8 line 10 8
+contour 10 15 line 13 15 line 13 22 line 10 22
+contour 1 10 line 8 10 line 8 13 line 1 13
+contour 15 10 line 22 10 line 22 13 line 15 13
+layer accent boot_program
+circle 11.5 11.5 2
 
 shape resize_left_right hot 11 11
-layer dark
+layer fill
 contour 4 10 line 19 10 line 19 13 line 4 13
-contour 0.086 11.5 line 6 5.586 line 6 17.414
-contour 22.914 11.5 line 17 5.586 line 17 17.414
-layer light
-contour 5 11 line 18 11 line 18 12 line 5 12
-contour 1.5 11.5 line 5 8 line 5 15
-contour 21.5 11.5 line 18 8 line 18 15
+contour 1.5 11.5 line 6 7 line 6 16
+contour 21.5 11.5 line 17 16 line 17 7
 
 shape resize_up_down hot 11 11
-layer dark
+layer fill
 contour 10 4 line 13 4 line 13 19 line 10 19
-contour 11.5 0.086 line 17.414 6 line 5.586 6
-contour 11.5 22.914 line 17.414 17 line 5.586 17
-layer light
-contour 11 5 line 12 5 line 12 18 line 11 18
-contour 11.5 1.5 line 15 5 line 8 5
-contour 11.5 21.5 line 15 18 line 8 18
+contour 11.5 1.5 line 16 6 line 7 6
+contour 11.5 21.5 line 7 17 line 16 17
 
 # The two diagonal arrows: heads with a level and an upright side, so that
-# these two sides stay sharp. Their centre is the corner 12,12.
+# these two sides stay sharp, and a shaft of 3 units across. Their centre is
+# the corner 12,12.
 shape resize_top_left_bottom_right hot 11 11
-layer dark
-contour 2 2 line 12.414 2 line 2 12.414
-contour 22 22 line 11.586 22 line 22 11.586
-contour 7.375 5.625 line 18.375 16.625 line 16.625 18.375 line 5.625 7.375
-layer light
+layer fill
 contour 3 3 line 10 3 line 3 10
 contour 21 21 line 14 21 line 21 14
-contour 6.375 5.625 line 18.375 17.625 line 17.625 18.375 line 5.625 6.375
+contour 5.25 3.75 line 20.25 18.75 line 18.75 20.25 line 3.75 5.25
 
 shape resize_top_right_bottom_left hot 12 11
-layer dark
-contour 22 2 line 11.586 2 line 22 12.414
-contour 2 22 line 12.414 22 line 2 11.586
-contour 16.625 5.625 line 5.625 16.625 line 7.375 18.375 line 18.375 7.375
-layer light
-contour 21 3 line 14 3 line 21 10
-contour 3 21 line 10 21 line 3 14
-contour 17.625 5.625 line 5.625 17.625 line 6.375 18.375 line 18.375 6.375
+layer fill
+contour 21 3 line 21 10 line 14 3
+contour 3 21 line 3 14 line 10 21
+contour 18.75 3.75 line 20.25 5.25 line 5.25 20.25 line 3.75 18.75

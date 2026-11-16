@@ -2,56 +2,66 @@
 
 ## Purpose
 
-The theme of the system is the pointer of every release image. It was 15 grids of squares of 2 pixels: each slanted side was a staircase, and a reader saw a pixelated pointer beside the smooth pointer of the Posy theme. This design draws each shape from outlines and draws them at the build with exact coverage, so the edges are smooth and the straight edges stay sharp.
+The theme of the system is the pointer of every release image. It was 15 grids of squares of 2 pixels: each slanted side was a staircase. This design draws each shape from outlines at the build with exact coverage, in two forms (one for a dark desktop, one for a light desktop), with a touch of an accent color on the parts that carry a meaning.
+
+What changed after the first outlines: the edge was a second contour drawn by hand and scaled with the size, so it was 2 pixels at 48 and the shapes looked coarse. The edge is now made by the tool, 1 pixel at every size, and the shapes are finer.
 
 ## Constraints
 
-- **The compositor does not change.** The pointer theme file already holds 8 bits of alpha for each pixel, premultiplied ([`docs/POINTERS.md`](../../../docs/POINTERS.md), "3. The format of the system: one pointer theme file"). A smooth edge is a value of alpha between 0 and 255, so the format, the validation, `choose` and the blend stay as they are.
-- **One rasterizer.** The system draws the outlines of its fonts with exact coverage in integers (`src/library/support/vector_font`, [`docs/FONTS.md`](../../../docs/FONTS.md), "4. Fixed point"). The pointers use the same code: no second rasterizer, no floating point, the same pixels on each machine.
-- **Text in the repository.** A shape is reviewed as a diff of a few lines. No picture file and no pixel goes in the repository.
-- **Own work under MIT.** Each shape is drawn for this system, not traced from a theme of another license.
-- **Readable on any background.** The pointer passes over the dark desktop, light text, pictures and the light form of the site.
+- **The compositor changes as little as possible.** It already blends 8 bits of premultiplied alpha. A form is one more argument of `choose`.
+- **One rasterizer.** The pictures are drawn with the exact coverage of `src/library/support/vector_font` ([`docs/FONTS.md`](../../../docs/FONTS.md), "4. Fixed point").
+- **Text in the repository.** A shape is a diff of a few lines, and a color is the name of a token of the design rules, never a value.
+- **Own work under MIT.** Each shape is drawn for this system.
+- **Readable on the surfaces of its appearance.** The dark form passes over the dark desktop and the cards; the light form over the light surfaces.
 
 ## The chosen form
 
-**The source is the manifest, with outlines in place of grids.** One grammar keeps the two sources of a theme: the files of an Xcursor theme, or outlines in the manifest ([`docs/POINTERS.md`](../../../docs/POINTERS.md), "4. The manifest"). An outline is the term of the glossary: closed contours of lines and quadratic curves, here in units of the design size.
+**The source is the manifest** ([`docs/POINTERS.md`](../../../docs/POINTERS.md), "4. The manifest"). An outline is the term of the glossary: closed contours of lines and quadratic curves, in units of a pixel at the first size of the shape (24), with up to three decimals kept as thousandths.
 
-- **The unit is a pixel of the first size of the shape** (24 for the theme of the system). A coordinate is a number of units with at most three decimals, kept as an integer of thousandths. The statements are `contour x y`, `line x y`, `curve cx cy x y` and `circle x y radius`; a contour closes itself.
-- **Layers in paint order.** `layer dark`, `layer light` and `layer clear` each start a layer: its contours, joined as a union, are painted over the layers before it, with the coverage of each pixel as the weight. `clear` makes its contours transparent: a hole in a ring is a clear circle, not a contour in the opposite direction.
-- **Frames.** The layers before the first `frame` are in each frame; each `frame <delay>` adds its own layers on top. An animation is a phase: the shape that moves is written once in each frame, the rest once for all frames.
-- **The hot spot** is a pixel at the design size; at another size it is that pixel times the ratio of the sizes.
-- **Every point is inside the square of the design size.** The parse refuses a coordinate or a circle outside it, so no picture is cut.
+**Layers by role, not by color.** A layer paints its contours over the layers before it:
 
-**The build** draws each layer of each frame at each size: the contours go to an accumulation of `vector_font` (`line_add`, `quadratic_add`), `coverage_finish` gives the coverage of each pixel from 0 to 255, and the paint goes over the pixel with that weight, in premultiplied integers. A channel never passes its alpha, so the result passes the validation. The pictures of one size share one box: the pixels that some frame draws, with the hot spot. The file is the pointer theme file of today.
+- `fill`: the fill color of the form, with an edge;
+- `accent <token>`: an accent, with an edge;
+- `fill inside`, `accent <token> inside`: no edge, for a part that lies on the fill (the dot of `wait`);
+- `edge`: the edge color, as drawn (the lines between two fingers);
+- `clear`: transparent, with an edge around the hole.
 
-**Two colors: a dark edge of 1 unit around a light fill**, black `0x000000` and white `0xFFFFFF`. The desktop, the cards and the windows of the system are dark: there the light fill carries the contrast (19 to 1 on `COLOR_BACKGROUND`) and the pointer is the brightest thing on the screen. Over white text, a light picture or the light form of the site, the dark edge carries it. For any background, black or white has at least 4.58 to 1, so one of the two stands out everywhere. The reverse (a dark fill with a light edge) puts a line of 1 pixel of light on the dark desktop: the pointer then reads as a thin outline over a dark shape.
+The contours of one layer are a union: the tool adds each contour in one direction, so two contours that overlap do not cancel.
 
-**Hinting by design.** The rasterizer does no grid fit for a pointer. The drawing does it: each level and upright edge is on an integer coordinate, so it falls on a pixel border at 24 and, at twice the size, at 48. A stroke of 1 pixel is drawn as a band between two integers; its centre line is then on a half unit. A symmetric shape has its centre on the middle of the pixel 11, so its stroke of 1 pixel is one whole column. A slanted side is smooth by its coverage; its edge is moved out by 1.414 units at 45 degrees, so the edge is 1 unit thick across.
+**The edge is made by the tool, inside the contour, 1 pixel at every size.** For a layer with an edge, the tool paints the contours in the edge color, then the same contours moved in by 1 pixel in the color of the layer. The contours are the whole shape at every size: the point of the arrow and the hot spot scale together, and only the edge stays thin. A move of a contour moves each side along its normal; two sides meet where their moved lines cross, and a curve keeps its control point where its two moved tangents cross, so a circle stays a circle. The arithmetic of the move is IEEE double precision: its operations are exact roundings, and each machine makes the same points. A contour that the move turns inside out adds nothing.
 
-**The sizes stay 24 and 48.** The compositor asks for 24 (`POINTER_NOMINAL_SIZE`); 48 is for a screen with twice the pixels. The system has no table of scales of 1.25 or 1.5 that would ask for 32 or 64. With outlines, a size is one number of the statement `sizes`: it is added when a scale asks for it, not before. Each size that is a multiple of 24 keeps the sharp edges.
+**Two consequences for a drawing.** Two contours of one layer that must join overlap by 2 units: their moved contours then meet. Two contours that overlap by 1 unit leave 1 pixel of edge between them at 24 and none at 48; a line of `edge` half a unit wide on the integer next to the overlap parts them at 48 by exactly 1 pixel, and adds nothing at 24. The fingers of the hands use this.
+
+**Two forms in one file.** The dark form has a white fill in a dark edge (the color of the desktop, `COLOR_BACKGROUND`); the light form a dark fill in a white edge. The fill is the large part, so it carries the contrast on the surfaces of its appearance: white has 19 to 1 on the dark desktop, the dark 17 to 1 on the light background. The edge separates the pointer from a surface of the other kind. The file holds one set of shape entries for each form (`form_count` in the header, which was a reserved word); a theme of sources, such as the Posy theme, has one form, which `choose` gives for both. A second resource for the light form was refused: the root service, the context values, the packaging of a release and the setting of the theme would each need a second path.
+
+**The accents are tokens of the design rules**, by the name of the constant without `COLOR_`: `title` (the blue of the focus), `stop_program` (the red of the close button), `boot_program` (the amber of a match). Each token has a value for a dark surround and a value for a light surround, the second a darker shade, as on the light form of the site. An accent takes the value for the color around it: an accent inside the fill has the fill around it, an accent with an edge has the edge. So the blue dot on the white ring of the dark form is the darker blue, and the blue question mark in its dark edge is the brighter blue. The accents are on the parts that mean something only: the dot that turns in `wait` and `busy_with_arrow`, the slash of `forbidden`, the question mark of `help`, the dot at the hot spot of `crosshair`. The arrow, the hands, the I-beam and the resize arrows stay neutral.
+
+**The compositor takes the form of the appearance in force.** One procedure of the compositor (`pointer_form_in_force`) reads the settings page; until the page holds the appearance in force, it gives the dark form. A change of the settings calls it again, as it calls the choice of the theme.
+
+**Hinting by design.** Each level and upright side is on an integer coordinate, so it is sharp at 24 and at 48. A stroke is 3 units wide: 1 pixel of fill between two pixels of edge at 24, 4 pixels of fill in 1 pixel of edge at 48. A symmetric shape has its centre on the pixel 11.
+
+**The sizes stay 24 and 48.** The compositor asks for 24. A size of 32 helps only a compositor that asks for 32, and no scale of the system does; the details are drawn for 24. A size is one number of the statement `sizes` when a scale needs it.
 
 ## Refused forms
 
-- **Grids of squares.** They are the fault that this design removes: a slanted side or a curve is a staircase at every size.
-- **SVG files and an SVG reader.** SVG brings XML, paths with arcs and cubic curves, transforms, styles and units. The tool would parse a large format to use one fifth of it, and a shape would be a file that a diff does not show well. The few statements of the manifest are the part that a pointer needs.
-- **PNG or other pictures drawn outside.** A picture is a result, not a source: a review sees no geometry, and a new size needs a new drawing.
-- **Cubic curves.** The rasterizer cuts quadratic curves. A circle is eight quadratic curves at 0.3 % of the radius, under 1/30 of a pixel here.
-- **A stroke statement.** A stroke needs an offset of curves, joins and caps: much code for one look. The edge is the light contour moved out by hand, which also lets each edge sit on the pixel grid.
-- **Holes by the direction of a contour.** A hole that depends on the order of the points fails without a sign. The tool adds each contour in one direction, so the contours of a layer are always a union, and a hole is a `clear` layer.
-- **A rotation of the frames by the tool.** A rotation by 45 degrees needs a sine and puts every point off the grid. A dot that moves around a ring from frame to frame is one circle for each frame.
-- **A second rasterizer, or a filter of a picture at 4 times the size.** A downscale gives an approximate coverage and adds code; the coverage of `vector_font` is exact for the cut polygon.
-- **A change of the pointer theme file or of the compositor.** The file already holds premultiplied alpha.
+- **Grids of squares.** A slanted side or a curve is a staircase at every size.
+- **An edge drawn by hand as a second contour.** It scales with the size: 2 pixels at 48. It also doubles each drawing.
+- **An edge outside the contour.** The contour of the fill would then be the shape, and the edge would add 1 pixel around it at every size: the point of the arrow would be at another place than the scaled hot spot at 48.
+- **Colors in the manifest.** A value in a manifest is a second table of colors. A token keeps one table.
+- **One value for each token.** A blue that has 3 to 1 on white has less on the dark of the desktop; the value depends on the color around it.
+- **A second resource for the light form.** See above.
+- **SVG files and an SVG reader, PNG pictures drawn outside, cubic curves, a stroke statement, holes by the direction of a contour, a rotation of the frames by the tool, a second rasterizer.** The first outlines refused them for the reasons that hold today: a large format for a small use, a result in place of a source, curves that the rasterizer does not cut, the joins and caps of a stroke, a hole that fails with no sign, points off the grid, approximate coverage.
 
 ## Subtle points
 
-- **The coverage is exact for the polygon of the cut points.** `quadratic_add` cuts a curve into lines at most 1/8 of a pixel from it. A small circle is up to 3 % under its area; the host test holds the bound.
-- **A union of layers of one paint, not a sum.** The coverage of two contours of one layer that overlap is clamped to a whole pixel: the overlap is not darker or lighter.
-- **The order of the layers is the drawing.** A light layer over a dark one is the fill inside the edge; a dark layer after it draws details on the fill (the dot of `wait`).
-- **The box of the picture is cropped**, with its hot spot in it. The pointer theme file stores fewer transparent pixels, and the compositor blends fewer.
-- **The compositor without a valid theme** still draws its own arrow of squares (`pointer_arrow_without_theme`): that path has no file to read.
+- **The coverage is exact for the polygon of the cut points**; a small circle is up to 3 % under its area.
+- **A part thinner than 2 units disappears** at 24 when its edge is made: its moved contour is inside out. Each stroke is 3 units wide.
+- **The join of a move is the crossing of two moved lines**, held to 4 pixels from its corner, so a sharp corner gives a long but finite point.
+- **The box of a picture is cropped**, with its hot spot in it, and one box serves the frames of one size.
+- **The compositor without a valid theme** still draws its own arrow of squares (`pointer_arrow_without_theme`).
 
 ## State
 
-Built: the outline statements of the manifest and their errors, the drawing at the build with the rasterizer of `vector_font`, the 15 shapes of the theme of the system at 24 and 48 (`wait` and `busy_with_arrow` with 8 frames of 125 ms), and the host tests: golden coverage, the union of contours, the area of a circle, each shape inside its square with its hot spot, the dark edge around each light pixel, the contrast of the two colors, the round trip of the file.
+Built: the roles of the layers and the accent tokens, the edge of 1 pixel made by the tool, the two forms in the theme file and in `choose`, the form in the compositor with the dark form until the settings page holds the appearance in force, both forms in the program `pointers`, the 15 shapes at 24 and 48, and the host tests: golden coverage in both forms, the edge of 1 pixel at two sizes, the union, the area of a circle, each shape in each form inside its square, the edge around each fill pixel, the contrast of each form on its surfaces and of each accent on its surround, the accents on their parts only, the round trip of the file.
 
-Left: nothing of this design.
+Left: the read of the appearance in force in `pointer_form_in_force`, when the settings page holds it.
