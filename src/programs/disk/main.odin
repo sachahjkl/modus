@@ -74,9 +74,6 @@ ENTRIES_X :: RATE_X + BAR_WIDTH + 90
 WIDTH :: ENTRIES_X + BAR_WIDTH + 70
 HEIGHT :: 12 + 4 * LINE + len(measures) * LINE + 3 * LINE + 12
 
-COLOR_RATE :: 0x58D878
-COLOR_ENTRIES :: 0xE0A040
-
 Measure :: struct {
 	write:   bool,
 	depth:   u32, // Requests in flight.
@@ -291,8 +288,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_text(table, 92, y, measure.blocks == 1 ? "block" : "blocks", graphics.colors.dim)
 		interface.draw_unsigned(table, 156, y, u64(measure.depth), graphics.colors.text)
 		if measure.done {
-			bar(table, RATE_X, y, measured ? measure.rate : measure.requests - measure.errors, most_rate, measure.errors == 0 ? COLOR_RATE : graphics.colors.failed)
-			bar(table, ENTRIES_X, y, measure.client + measure.service, most_entries, COLOR_ENTRIES)
+			bar(table, RATE_X, y, measured ? measure.rate : measure.requests - measure.errors, most_rate, measure.errors == 0 ? graphics.colors.program : graphics.colors.failed)
+			bar(table, ENTRIES_X, y, measure.client + measure.service, most_entries, graphics.colors.kernel)
 		} else {
 			interface.draw_text(table, RATE_X, y, "...", graphics.colors.dim)
 		}
@@ -300,7 +297,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	y += LINE / 2
 	if checked {
-		interface.draw_text(table, 12, y, wrong == 0 ? "write, flush, read back: 128 blocks, 0 wrong" : "write, flush, read back: WRONG", wrong == 0 ? COLOR_RATE : graphics.colors.failed)
+		interface.draw_text(table, 12, y, wrong == 0 ? "write, flush, read back: 128 blocks, 0 wrong" : "write, flush, read back: WRONG", wrong == 0 ? graphics.colors.program : graphics.colors.failed)
 	}
 	if !measured {
 		interface.draw_text(table, 12, y + LINE, "the blocks in one second are a measure: run `modustool measure disk`.", graphics.colors.dim)

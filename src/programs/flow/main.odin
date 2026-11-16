@@ -68,9 +68,6 @@ WIDTH :: 878
 HEIGHT :: 240
 #assert(HEIGHT == 12 + 3 * LINE + len(measures) * LINE + 2 * LINE + 12)
 
-COLOR_RATE :: 0x58D878
-COLOR_ENTRIES :: 0xE0A040
-
 Measure :: struct {
 	capacity: u32,
 	spin:     bool,
@@ -228,8 +225,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_unsigned(table, 12, y, u64(measure.capacity), graphics.colors.text)
 		interface.draw_text(table, 92, y, measure.spin ? "read counters" : "nothing", graphics.colors.text)
 		if measure.done {
-			bar(table, RATE_X, y, measured ? measure.rate : measure.received - measure.lost, most_rate, measure.lost == 0 ? COLOR_RATE : graphics.colors.failed)
-			bar(table, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
+			bar(table, RATE_X, y, measured ? measure.rate : measure.received - measure.lost, most_rate, measure.lost == 0 ? graphics.colors.program : graphics.colors.failed)
+			bar(table, ENTRIES_X, y, measure.entries, most_entries, graphics.colors.kernel)
 		} else {
 			interface.draw_text(table, RATE_X, y, "...", graphics.colors.dim)
 		}

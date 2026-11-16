@@ -61,10 +61,6 @@ START_RECORDS :: 5
 CELL :: 8 // The side of a record in the picture.
 SHOWN_RECORDS :: 9 // Records of a ring that the picture shows as squares.
 
-COLOR_RING :: 0x3A4654
-COLOR_NODE :: 0x1B2530
-COLOR_BLOCKED :: 0xF0A040
-COLOR_STOPPED :: 0xD05050
 
 Node :: struct {
 	program:        system.Handle, // 0: the program does not run.
@@ -87,8 +83,13 @@ added: int
 centers := [relay.NODE_COUNT][2]int{{360, 84}, {540, 180}, {540, 356}, {360, 452}, {180, 356}, {180, 180}}
 @(rodata)
 work_times := [relay.NODE_COUNT]u64{260, 420, 180, 700, 240, 340}
-@(rodata)
-record_colors := [?]graphics.Color{0x58B8F0, 0xF0C050, 0xE06890, 0x70D890, 0xB088F0, 0xF08850, 0x60D8D0, 0xD8D860}
+
+// series_color gives the color of a series number of a record. The number
+// comes from a node, another program: it is taken modulo the count of the
+// series, never used as it is.
+series_color :: proc "contextless" (number: u64) -> graphics.Color {
+	return graphics.colors.series[number % graphics.SERIES_COLOR_COUNT]
+}
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log("rings: ", text)
@@ -136,8 +137,7 @@ toggle :: proc "contextless" (index: int) {
 // add gives a new record to a node, through its control ring.
 add :: proc "contextless" (index: int) {
 	node := &nodes[index]
-	colors := record_colors
-	if system.send(&node.control.commands, ring.Record{kind = relay.RECORD, values = {0 = u64(colors[added % len(colors)])}}) {
+	if system.send(&node.control.commands, ring.Record{kind = relay.RECORD, values = {0 = u64(added % graphics.SERIES_COLOR_COUNT)}}) {
 		added += 1
 	}
 }
@@ -333,7 +333,8 @@ draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
 	for &node, index in nodes {
 		from := centers[index]
 		to := centers[(index + 1) % relay.NODE_COUNT]
-		interface.draw_line(table, from.x, from.y, to.x, to.y, 2, COLOR_RING)
+		// A ring is a line of less weight than the nodes and the records.
+		interface.draw_line(table, from.x, from.y, to.x, to.y, 2, graphics.colors.dim)
 		first, count := pending(&node.after.commands)
 		// The oldest record is next to the node that reads the ring.
 		length := abs(to.x - from.x) + abs(to.y - from.y)
@@ -345,12 +346,12 @@ draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
 			x := from.x + (to.x - from.x) * along / 256
 			y := from.y + (to.y - from.y) * along / 256
 			interface.draw_rectangle(table, x - CELL / 2 - 1, y - CELL / 2 - 1, CELL + 2, CELL + 2, graphics.colors.background)
-			interface.draw_rectangle(table, x - CELL / 2, y - CELL / 2, CELL, CELL, graphics.Color(record.values[0]) & 0xFFFFFF)
+			interface.draw_rectangle(table, x - CELL / 2, y - CELL / 2, CELL, CELL, series_color(record.values[0]))
 		}
 		// The number of records in the ring, beside the middle of the line.
 		middle_x := (from.x + to.x) / 2 + (to.y - from.y) / 7 - 20
 		middle_y := (from.y + to.y) / 2 - (to.x - from.x) / 7 - 8
-		color: graphics.Color = count == ring.CAPACITY ? COLOR_BLOCKED : graphics.colors.dim
+		color := count == ring.CAPACITY ? graphics.colors.warning : graphics.colors.dim
 		x := interface.draw_unsigned(table, middle_x, middle_y, u64(count), color)
 		interface.draw_text(table, x, middle_y, "/32", color)
 	}
@@ -359,28 +360,33 @@ draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
 		center := centers[index]
 		x, y := center.x - NODE_SIZE / 2, center.y - NODE_SIZE / 2
 		state := node.state^ // One copy: the node writes this record.
-		border: graphics.Color = graphics.colors.program
+		// A node runs, is blocked by a full ring, or is stopped. A stopped
+		// node is there and cannot be used: its border is the color of what
+		// is not usable, which is not a text, so its word is the dim text.
+		border := graphics.colors.program
+		status_color := graphics.colors.program
 		status := "waits"
 		switch {
 		case node.program == 0:
-			border, status = COLOR_STOPPED, "stopped"
+			border, status_color, status = graphics.colors.not_usable, graphics.colors.dim, "stopped"
 		case state.blocked != 0:
-			border, status = COLOR_BLOCKED, "ring full"
+			border, status_color, status = graphics.colors.warning, graphics.colors.warning, "ring full"
 		case state.holding != 0:
 			status = "works"
 		}
-		interface.draw_rectangle(table, x, y, NODE_SIZE, NODE_SIZE, COLOR_NODE)
+		// A node is a card: one subject.
+		interface.draw_rectangle(table, x, y, NODE_SIZE, NODE_SIZE, graphics.colors.card_top)
 		interface.draw_outline(table, x, y, NODE_SIZE, NODE_SIZE, 2, border)
 		after := interface.draw_text(table, x + 8, y + 6, "node ", graphics.colors.text)
 		interface.draw_unsigned(table, after, y + 6, u64(index + 1), graphics.colors.text)
-		interface.draw_text(table, x + 8, y + 24, status, border)
+		interface.draw_text(table, x + 8, y + 24, status, status_color)
 		if state.holding != 0 {
 			// The record, and the part of the work that is done.
-			interface.draw_rectangle(table, x + 8, y + 46, 14, 14, graphics.Color(state.color) & 0xFFFFFF)
+			interface.draw_rectangle(table, x + 8, y + 46, 14, 14, series_color(u64(state.series)))
 			span := max(state.release - state.since, 1)
 			done := min(now - min(state.since, now), span)
-			interface.draw_rectangle(table, x + 28, y + 50, NODE_SIZE - 36, 6, COLOR_RING)
-			interface.draw_rectangle(table, x + 28, y + 50, int(done * (NODE_SIZE - 36) / span), 6, graphics.Color(state.color) & 0xFFFFFF)
+			interface.draw_rectangle(table, x + 28, y + 50, NODE_SIZE - 36, 6, graphics.colors.track)
+			interface.draw_rectangle(table, x + 28, y + 50, int(done * (NODE_SIZE - 36) / span), 6, series_color(u64(state.series)))
 		}
 		interface.draw_unsigned(table, x + 8, y + NODE_SIZE - 22, state.passed, graphics.colors.dim)
 		interface.draw_unsigned(table, x + NODE_SIZE - 8 - 5 * graphics.CELL_WIDTH, y + NODE_SIZE - 22, work_times[index], graphics.colors.dim, 3)

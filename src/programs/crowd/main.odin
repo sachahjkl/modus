@@ -75,10 +75,6 @@ WIDTH :: 886
 HEIGHT :: 264
 #assert(HEIGHT == 12 + 3 * LINE + len(measures) * LINE + 2 * LINE + 12)
 
-COLOR_RATE :: 0x58D878
-COLOR_LOCK :: 0x5890E0
-COLOR_ENTRIES :: 0xE0A040
-
 Measure :: struct {
 	writers:   int,
 	readers:   int,
@@ -343,13 +339,16 @@ draw :: proc "contextless" (window: ^display.Window) {
 		if index % 2 == 0 {
 			interface.draw_rectangle(table, 6, y - 4, WIDTH - 12, LINE, graphics.colors.card_top)
 		}
-		interface.draw_text(table, 12, y, measure.with_lock ? "lock" : "shared", measure.with_lock ? COLOR_LOCK : graphics.colors.text)
+		interface.draw_text(table, 12, y, measure.with_lock ? "lock" : "shared", graphics.colors.text)
 		interface.draw_unsigned(table, 84, y, u64(measure.writers), graphics.colors.text)
 		interface.draw_unsigned(table, 156, y, u64(measure.readers), graphics.colors.text)
 		if measure.done {
 			interface.draw_unsigned(table, 228, y, measure.wrong, measure.wrong == 0 ? graphics.colors.dim : graphics.colors.failed)
-			bar(table, RATE_X, y, measured ? measure.rate : measure.read, most_rate, measure.wrong != 0 ? graphics.colors.failed : measure.with_lock ? COLOR_LOCK : COLOR_RATE)
-			bar(table, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
+			// The records that the program moves, in its color; the run
+			// with one lock is the comparison, of less weight: the dim
+			// color. The kernel entries in the color of the kernel.
+			bar(table, RATE_X, y, measured ? measure.rate : measure.read, most_rate, measure.wrong != 0 ? graphics.colors.failed : measure.with_lock ? graphics.colors.dim : graphics.colors.program)
+			bar(table, ENTRIES_X, y, measure.entries, most_entries, graphics.colors.kernel)
 		} else {
 			interface.draw_text(table, RATE_X, y, "...", graphics.colors.dim)
 		}

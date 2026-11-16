@@ -25,9 +25,7 @@ value_contrast_ratio :: proc(first, second: Color) -> f64 {
 
 // Each value kind keeps its contrast on the surfaces where a program draws
 // values, in each appearance: the background and the two colors of a card.
-// In the dark appearance the band of every second row of the program log
-// (0x131B26) is darker than the top of a card, so the top of a card is the
-// harder case there.
+// The band of every second row of the program log is the top of a card.
 @(test)
 value_colors_keep_their_contrast :: proc(t: ^testing.T) {
 	for of in Appearance {
@@ -40,11 +38,6 @@ value_colors_keep_their_contrast :: proc(t: ^testing.T) {
 				testing.expectf(t, ratio >= TEXT_CONTRAST_LEAST, "%v appearance: the value kind %v (%06x) on %06x: a contrast of %.2f; at least %.1f", of, kind, u32(color), u32(surface), ratio, TEXT_CONTRAST_LEAST)
 			}
 		}
-	}
-	for kind in value_kinds.Value_Kind {
-		color := value_kind_color(kind, .Dark)
-		ratio := value_contrast_ratio(color, 0x131B26)
-		testing.expectf(t, ratio >= TEXT_CONTRAST_LEAST, "the value kind %v (%06x) on the band of the log: a contrast of %.2f; at least %.1f", kind, u32(color), ratio, TEXT_CONTRAST_LEAST)
 	}
 }
 

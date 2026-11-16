@@ -53,8 +53,6 @@ FRAME_TIME :: 33
 WORKER_COUNT :: 4
 ITERATIONS :: 28
 
-COLOR_STOPPED :: 0xD05050
-
 // The parameter record of one thread. The thread writes `frames`; the first
 // thread reads it.
 Worker :: struct {
@@ -215,7 +213,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				after = interface.draw_text(table, after, y + 3, "  frame ", graphics.colors.dim)
 				interface.draw_unsigned(table, after, y + 3, frames, graphics.colors.dim)
 			} else {
-				interface.draw_text(table, after, y + 3, "  stopped", COLOR_STOPPED)
+				// A stopped thread is not a failure: the principal stopped
+				// it. The word, in the text color, has more weight than
+				// the dim count of frames of a thread that runs.
+				interface.draw_text(table, after, y + 3, "  stopped", graphics.colors.text)
 			}
 			if frames > 0 {
 				drawn += 1
