@@ -39,8 +39,10 @@ import op "modus:contract/operation"
 import "modus:support/system"
 
 // The program itself and the region of the reads: 180 pages, as the other
-// small programs that hold no window, and the pages of the region.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180 + REGION_PAGES, programs = 1, threads = 1}
+// small programs that hold no window, and the pages of the region. The
+// tool reads a literal only, so the assert ties it to the region.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 692, programs = 1, threads = 1}
+#assert(MODULE_BUDGET.working_memory_pages == 180 + REGION_PAGES)
 
 // The turns of the loop of case 3, and the least count of instructions that
 // the loop retires: each turn retires at least its store, whatever the
