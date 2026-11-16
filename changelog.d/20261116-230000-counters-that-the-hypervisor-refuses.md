@@ -1,0 +1,3 @@
+type: Changed
+
+**A machine whose hypervisor refuses the counters that it lists still starts**: each processor tries each access to the registers of the performance counters once at its start, before any thread runs, and a protection fault of that access is an outcome and not a stop of the machine. When the processor refuses an access, when a counter does not keep the value that the kernel wrote, or when the firmware left a counter on for another user, the kernel uses no counters, names the register on the line of the boot, and the commands of the thread counters give `Unsupported`. The self test 7 of the kernel proves the way back from a refused register on the test machine.

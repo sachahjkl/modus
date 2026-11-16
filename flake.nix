@@ -217,6 +217,11 @@
           fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./ROADMAP.md ./changelog.d ./news ./README.md ./AGENTS.md ./LICENSE (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "md") ./docs) ./docs/screenshots (inputs.nixpkgs.lib.fileset.maybeMissing ./docs/films) ./resources ./src ./tools ./.project];
         };
         nativeBuildInputs = buildTools ++ [modustool];
+        # /dev/kvm in the sandbox. Without it QEMU falls back to TCG, which
+        # takes every register write: the self test of a refused register
+        # then fails, and the thread counters have nothing to try
+        # (src/md/features/processor_counters.md).
+        requiredSystemFeatures = ["kvm"];
         buildPhase = ''
           export HOME=$TMPDIR
           mkdir -p build

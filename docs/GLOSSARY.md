@@ -950,9 +950,9 @@ Do not use: extent, VMA.
 
 ### Self test
 
-A self test is a boot of the machine in which the kernel does one thing that its page tables must refuse, to prove that the processor refuses it.
+A self test is a boot of the machine in which the kernel does one thing that the processor must refuse, to prove that the processor refuses it.
 
-The tests are a stack overflow, a write to the code of the kernel and to its view in the direct map, a run of data, and a read and a run of memory of a program from the kernel. The expected fault stops the machine with its report, and the machine test checks that report.
+Six tests are of the page tables: a stack overflow, a write to the code of the kernel and to its view in the direct map, a run of data, and a read and a run of memory of a program from the kernel. The expected fault stops the machine with its report, and the machine test checks that report. The seventh is a register trial that writes an address that is not canonical to `IA32_KERNEL_GS_BASE`: the kernel goes on after the refusal, says so, and stops the machine with the code 0. It needs KVM: QEMU with TCG takes that write.
 
 Do not use: negative test, lkdtm.
 
@@ -1482,11 +1482,23 @@ Do not use: dropped events, overrun count.
 
 A performance counter is a register of the processor that counts one event of the processor, such as the cycles, the retired instructions or the cache misses.
 
-The kernel programs four of them (the general counters 0 to 3) for a thread that asks, as the thread counters, and counts in user mode only. The plan of each vendor comes from `CPUID` at boot, and the line of the boot names it. An event record carries the cycle counter only, not a performance counter.
+The kernel programs four of them (the general counters 0 to 3) for a thread that asks, as the thread counters, and counts in user mode only. The plan of each vendor comes from `CPUID` at boot, each processor takes the trial of their registers at its start, and the line of the boot names the plan and the trial. An event record carries the cycle counter only, not a performance counter.
 
 The design: `docs/ARCHITECTURE.md`, "The counters of a thread".
 
 Do not use: PMC, PMU counter.
+
+### Register trial
+
+A register trial is one access of the kernel to a model-specific register that the processor can refuse with a protection fault, after which the kernel goes on and knows of the refusal.
+
+A hypervisor can list a register in `CPUID` and refuse each access to it, and any other protection fault of the kernel stops the machine. So at the start of each processor, before any thread runs, the kernel takes each access of the counter plan once as a register trial (`model_specific_register_trial_read` and `model_specific_register_trial_write` in `src/kernel/processor.asm`). `kernel_interrupt` knows the address of the one `rdmsr` or `wrmsr` of each: a protection fault there goes on at a refusal label, which gives false. A refused register is an outcome: the machine then has no thread counters. It is not a way to read any register: only the kernel makes a register trial, and no program asks for one.
+
+Example: on a hypervisor that refuses the counters that it lists, the line of the boot ends with "the processor refused a trial access with a protection fault, to the register 00000000c0010200; a command of the thread counters gives Unsupported".
+
+The design: `docs/ARCHITECTURE.md`, "The counters of a thread".
+
+Do not use: safe MSR access, rdmsr_safe, exception fixup.
 
 ### Thread counters
 
