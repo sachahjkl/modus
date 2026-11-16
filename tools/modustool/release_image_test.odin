@@ -202,7 +202,7 @@ a_volume_of_a_test_is_never_packaged :: proc(t: ^testing.T) {
 // a license, as the build makes one from a manifest.
 @(private = "file")
 release_test_pointer_theme :: proc(t: ^testing.T, license: string) -> []u8 {
-	text := fmt.tprintf("theme Small\nlicense %s\nattribution a theme of a test\nsizes 12\nshape arrow hot 0 0\n|X\n", license)
+	text := fmt.tprintf("theme Small\nlicense %s\nattribution a theme of a test\nsizes 12\nshape arrow hot 0 0\nlayer dark\ncontour 0 0 line 2 0 line 0 2\n", license)
 	manifest, problem := manifest_parse("release_test.manifest", text)
 	testing.expect_value(t, problem, "")
 	file, _, made_problem := pointer_theme_make(manifest, "")

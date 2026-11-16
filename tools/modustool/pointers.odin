@@ -1,6 +1,7 @@
 package modustool
 
 import "modus:contract/pointer_pictures"
+import "modus:support/vector_font"
 import "core:fmt"
 import "core:mem"
 import "core:os"
@@ -12,8 +13,11 @@ import "core:time"
 // The pointer themes (docs/POINTERS.md). The command "pointers" reads a
 // pointer manifest of resources/pointers, and for a manifest with sources
 // the folder of an Xcursor theme, and writes one pointer theme file for
-// each theme in build/pointers. `build` runs the same code: each theme file
-// is a resource of the boot image.
+// each theme in build/pointers. A shape with no source is an outline: the
+// tool draws its contours at each size with the rasterizer of the vector font,
+// so the theme of the system has smooth edges and no pixel in the
+// repository. `build` runs the same code: each theme file is a resource of
+// the boot image.
 //
 // The folder of the theme of the owner comes from the flake: the variable
 // POINTER_THEME_SOURCE, or a path after the command. With neither, the
@@ -21,8 +25,18 @@ import "core:time"
 
 POINTER_THEME_SOURCE_VARIABLE :: "POINTER_THEME_SOURCE"
 POINTER_BUILD_FOLDER :: BUILD_FOLDER + "/pointers"
+SYSTEM_POINTER_MANIFEST :: "resources/pointers/system.manifest" // The outlines of the theme of the system.
 LINK_DEPTH_LIMIT :: 8
-GRID_SQUARES_LIMIT :: 12 // The squares of a line of a grid, and its lines. A square is size / 12 pixels.
+// A coordinate of an outline is a number of units with at most three
+// decimals, kept in thousandths: integers only, so that every machine
+// makes the same pixels.
+OUTLINE_COORDINATE_SCALE :: 1000
+OUTLINE_COORDINATE_DECIMALS :: 3
+// The two colors of an outline: a dark edge around a light fill. The light
+// fill carries the contrast on the dark desktop and windows, the dark edge
+// on a light picture or text (docs/POINTERS.md, "5. The two themes").
+POINTER_DARK_COLOR :: u32(0x000000)
+POINTER_LIGHT_COLOR :: u32(0xFFFFFF)
 
 // One pointer theme that the build makes.
 //   resource: its name in the resource table of the boot image.
@@ -36,7 +50,7 @@ Pointer_Theme_Build :: struct {
 
 pointer_theme_builds := [?]Pointer_Theme_Build {
 	{resource = pointer_pictures.RESOURCE_OF_THE_OWNER, manifest = "resources/pointers/posy.manifest", output = POINTER_BUILD_FOLDER + "/posy.pointers", needs_source = true},
-	{resource = pointer_pictures.RESOURCE_OF_THE_SYSTEM, manifest = "resources/pointers/system.manifest", output = POINTER_BUILD_FOLDER + "/system.pointers"},
+	{resource = pointer_pictures.RESOURCE_OF_THE_SYSTEM, manifest = SYSTEM_POINTER_MANIFEST, output = POINTER_BUILD_FOLDER + "/system.pointers"},
 }
 
 // The build makes the theme of the owner when its source is there. The
@@ -214,10 +228,43 @@ xcursor_read :: proc(file: []u8, images: ^[dynamic]Xcursor_Image) -> string {
 
 // ---- The manifest ----
 
-// One frame of a grid: its delay and its lines of squares.
-Grid_Frame :: struct {
-	delay: u32,
-	lines: [dynamic]string,
+// The paint of a layer of an outline: the dark or the light color over the
+// layers before it, or Clear, which makes its contours transparent again.
+Outline_Paint :: enum u8 {
+	Dark,
+	Light,
+	Clear,
+}
+
+// One piece of a contour: a line to a point, or a quadratic curve with its
+// control point. Coordinates are in thousandths of a unit.
+Outline_Segment :: struct {
+	control: [2]i64,
+	to:      [2]i64,
+	curve:   bool,
+}
+
+// A closed contour: from its start through its segments, and a line back
+// to its start.
+Outline_Contour :: struct {
+	start:       [2]i64,
+	segments:    [dynamic]Outline_Segment,
+	line:        int, // The line of its statement, for the errors after the parse.
+	from_circle: bool, // A statement "circle" made it: "line" and "curve" add nothing to it.
+}
+
+// The contours of one paint. The contours of one layer are a union.
+Outline_Layer :: struct {
+	paint:    Outline_Paint,
+	contours: [dynamic]Outline_Contour,
+	line:     int,
+}
+
+// One frame of an animated outline: its delay, and the layers that it adds
+// over the layers of every frame.
+Outline_Frame :: struct {
+	delay:  u32,
+	layers: [dynamic]Outline_Layer,
 }
 
 Manifest_Shape :: struct {
@@ -227,8 +274,8 @@ Manifest_Shape :: struct {
 	hot_spot:     [2]u32,
 	has_hot_spot: bool,
 	sizes:        [dynamic]u32, // Empty: the sizes of the manifest.
-	frames:       [dynamic]Grid_Frame, // Empty for a shape with sources.
-	has_frames:   bool, // The grid has statements "frame": an animation.
+	layers:       [dynamic]Outline_Layer, // An outline: the layers of every frame, before the first "frame".
+	frames:       [dynamic]Outline_Frame, // An animated outline: two frames at least. Empty: one frame.
 }
 
 Manifest :: struct {
@@ -265,6 +312,17 @@ words_of :: proc(line: string) -> []Word {
 	return words[:]
 }
 
+// The sentence of an error of a manifest.
+@(private = "file")
+manifest_fail :: proc(path: string, line, column: int, expected: string, found: string) -> string {
+	return fmt.tprintf("%s:%d:%d: expected %s; found %s", path, line, column, expected, found)
+}
+
+@(private = "file")
+manifest_quoted :: proc(text: string) -> string {
+	return len(text) == 0 ? "the end of the line" : fmt.tprintf("\"%s\"", text)
+}
+
 // manifest_parse reads a pointer manifest (docs/POINTERS.md, section 4).
 // An error is one sentence: "path:line:column: expected ...; found ...".
 manifest_parse :: proc(path: string, text: string) -> (manifest: Manifest, problem: string) {
@@ -272,12 +330,8 @@ manifest_parse :: proc(path: string, text: string) -> (manifest: Manifest, probl
 	manifest.sizes = make([dynamic]u32, context.temp_allocator)
 	manifest.shapes = make([dynamic]Manifest_Shape, context.temp_allocator)
 	attribution := strings.builder_make(context.temp_allocator)
-	fail :: proc(path: string, line, column: int, expected: string, found: string) -> string {
-		return fmt.tprintf("%s:%d:%d: expected %s; found %s", path, line, column, expected, found)
-	}
-	quoted :: proc(text: string) -> string {
-		return len(text) == 0 ? "the end of the line" : fmt.tprintf("\"%s\"", text)
-	}
+	fail :: manifest_fail
+	quoted :: manifest_quoted
 	number_of :: proc(word: Word, low, high: u64) -> (value: u32, ok: bool) {
 		parsed, parsed_ok := strconv.parse_u64_of_base(word.text, 10)
 		if !parsed_ok || parsed < low || parsed > high {
@@ -314,31 +368,6 @@ manifest_parse :: proc(path: string, text: string) -> (manifest: Manifest, probl
 			if line[index] < 32 || line[index] > 126 {
 				return {}, fail(path, line_number, index + 1, "a character of ASCII 32 to 126", fmt.tprintf("the byte %d", line[index]))
 			}
-		}
-		// A line of a grid: '|' then squares. A comment cannot follow it: '#'
-		// is not a square.
-		if len(line) > 0 && line[0] == '|' {
-			if shape == nil || len(shape.sources) > 0 {
-				return {}, fail(path, line_number, 1, "a grid only after a statement \"shape\" with no source", quoted(line))
-			}
-			squares := line[1:]
-			for index in 0 ..< len(squares) {
-				if squares[index] != 'X' && squares[index] != '.' && squares[index] != ' ' {
-					return {}, fail(path, line_number, index + 2, "a square \"X\", \".\" or \" \"", quoted(squares[index:index + 1]))
-				}
-			}
-			if len(squares) > GRID_SQUARES_LIMIT {
-				return {}, fail(path, line_number, GRID_SQUARES_LIMIT + 2, "at most 12 squares in a line", quoted(squares[GRID_SQUARES_LIMIT:]))
-			}
-			if len(shape.frames) == 0 {
-				append(&shape.frames, Grid_Frame{lines = make([dynamic]string, context.temp_allocator)})
-			}
-			frame := &shape.frames[len(shape.frames) - 1]
-			if len(frame.lines) == GRID_SQUARES_LIMIT {
-				return {}, fail(path, line_number, 1, "at most 12 lines in a grid", quoted(line))
-			}
-			append(&frame.lines, squares)
-			continue
 		}
 		statement := line
 		if comment := strings.index_byte(statement, '#'); comment >= 0 {
@@ -410,7 +439,7 @@ manifest_parse :: proc(path: string, text: string) -> (manifest: Manifest, probl
 			if shape_problem := shape_check_end(&manifest, shape); shape_problem != "" {
 				return {}, shape_problem
 			}
-			append(&manifest.shapes, Manifest_Shape{shape = found, line = line_number, sources = make([dynamic]string, context.temp_allocator), sizes = make([dynamic]u32, context.temp_allocator), frames = make([dynamic]Grid_Frame, context.temp_allocator)})
+			append(&manifest.shapes, Manifest_Shape{shape = found, line = line_number, sources = make([dynamic]string, context.temp_allocator), sizes = make([dynamic]u32, context.temp_allocator), layers = make([dynamic]Outline_Layer, context.temp_allocator), frames = make([dynamic]Outline_Frame, context.temp_allocator)})
 			shape = &manifest.shapes[len(manifest.shapes) - 1]
 			index := 2
 			for index < len(words) {
@@ -459,9 +488,6 @@ manifest_parse :: proc(path: string, text: string) -> (manifest: Manifest, probl
 			if shape == nil || len(shape.sources) > 0 {
 				return {}, fail(path, line_number, keyword.column, "a statement \"frame\" only after a statement \"shape\" with no source", quoted(keyword.text))
 			}
-			if len(shape.frames) > 0 && !shape.has_frames {
-				return {}, fail(path, line_number, keyword.column, "\"frame\" before the first line of the grid", quoted(keyword.text))
-			}
 			if len(words) != 2 {
 				return {}, fail(path, line_number, len(words) > 1 ? words[2].column : len(line) + 1, "one delay in milliseconds", quoted(len(words) > 2 ? words[2].text : ""))
 			}
@@ -472,10 +498,33 @@ manifest_parse :: proc(path: string, text: string) -> (manifest: Manifest, probl
 			if len(shape.frames) == pointer_pictures.FRAME_COUNT_LIMIT {
 				return {}, fail(path, line_number, keyword.column, "at most 256 frames", "one more")
 			}
-			shape.has_frames = true
-			append(&shape.frames, Grid_Frame{delay = delay, lines = make([dynamic]string, context.temp_allocator)})
+			append(&shape.frames, Outline_Frame{delay = delay, layers = make([dynamic]Outline_Layer, context.temp_allocator)})
+		case "layer":
+			if shape == nil || len(shape.sources) > 0 {
+				return {}, fail(path, line_number, keyword.column, "an outline only after a statement \"shape\" with no source", quoted(keyword.text))
+			}
+			if len(words) != 2 {
+				column := len(words) > 2 ? words[2].column : len(statement) + 1
+				return {}, fail(path, line_number, column, "one paint \"dark\", \"light\" or \"clear\"", quoted(len(words) > 2 ? words[2].text : ""))
+			}
+			paint: Outline_Paint
+			switch words[1].text {
+			case "dark":
+				paint = .Dark
+			case "light":
+				paint = .Light
+			case "clear":
+				paint = .Clear
+			case:
+				return {}, fail(path, line_number, words[1].column, "one paint \"dark\", \"light\" or \"clear\"", quoted(words[1].text))
+			}
+			append(outline_layers_now(shape), Outline_Layer{paint = paint, contours = make([dynamic]Outline_Contour, context.temp_allocator), line = line_number})
+		case "contour", "line", "curve", "circle":
+			if outline_problem := outline_statement_parse(path, line_number, words, len(statement) + 1, &manifest, shape); outline_problem != "" {
+				return {}, outline_problem
+			}
 		case:
-			return {}, fail(path, line_number, keyword.column, "a statement \"theme\", \"license\", \"attribution\", \"sizes\", \"shape\" or \"frame\", or a line of a grid", quoted(keyword.text))
+			return {}, fail(path, line_number, keyword.column, "a statement \"theme\", \"license\", \"attribution\", \"sizes\", \"shape\", \"frame\", \"layer\", \"contour\", \"line\", \"curve\" or \"circle\"", quoted(keyword.text))
 		}
 	}
 	if shape_problem := shape_check_end(&manifest, shape); shape_problem != "" {
@@ -502,8 +551,9 @@ manifest_parse :: proc(path: string, text: string) -> (manifest: Manifest, probl
 }
 
 // shape_check_end checks a shape when the statement after it starts: a
-// shape with no source has a grid with a hot spot, and an animation has
-// two frames at least, each with lines.
+// shape with no source has an outline with a hot spot inside its square,
+// each layer has a contour, each contour two segments at least, and an
+// animation has two frames at least, each with a layer.
 @(private = "file")
 shape_check_end :: proc(manifest: ^Manifest, shape: ^Manifest_Shape) -> string {
 	if shape == nil {
@@ -512,37 +562,331 @@ shape_check_end :: proc(manifest: ^Manifest, shape: ^Manifest_Shape) -> string {
 	at :: proc(manifest: ^Manifest, shape: ^Manifest_Shape, expected: string) -> string {
 		return fmt.tprintf("%s:%d:1: expected %s; found the shape %s with none", manifest.path, shape.line, expected, pointer_pictures.SHAPE_NAMES[shape.shape])
 	}
+	layers_check :: proc(manifest: ^Manifest, layers: []Outline_Layer) -> string {
+		for layer in layers {
+			if len(layer.contours) == 0 {
+				return fmt.tprintf("%s:%d:1: expected a contour after the statement \"layer\"; found none", manifest.path, layer.line)
+			}
+			for item in layer.contours {
+				if len(item.segments) < 2 {
+					return fmt.tprintf("%s:%d:1: expected a contour of 2 segments at least; found %d", manifest.path, item.line, len(item.segments))
+				}
+			}
+		}
+		return ""
+	}
 	if len(shape.sources) > 0 {
 		return ""
 	}
-	if len(shape.frames) == 0 {
-		return at(manifest, shape, "a source file or the lines of a grid")
+	if len(shape.layers) == 0 && len(shape.frames) == 0 {
+		return at(manifest, shape, "a source file or an outline")
 	}
 	if !shape.has_hot_spot {
-		return at(manifest, shape, "the option \"hot\" for a grid")
+		return at(manifest, shape, "the option \"hot\" for an outline")
 	}
-	if shape.has_frames && len(shape.frames) < 2 {
+	if len(shape.frames) == 1 {
 		return at(manifest, shape, "2 statements \"frame\" at least for an animation")
 	}
-	for frame in shape.frames {
-		if len(frame.lines) == 0 {
-			return at(manifest, shape, "the lines of a grid after each \"frame\"")
-		}
-		width := 0
-		for line in frame.lines {
-			width = max(width, len(line))
-		}
-		if int(shape.hot_spot.x) >= width || int(shape.hot_spot.y) >= len(frame.lines) {
-			return fmt.tprintf("%s:%d:1: expected a hot spot inside the grid of %d x %d squares; found %d,%d", manifest.path, shape.line, width, len(frame.lines), shape.hot_spot.x, shape.hot_spot.y)
-		}
+	design := outline_design_size(manifest, shape)
+	if shape.hot_spot.x >= design || shape.hot_spot.y >= design {
+		return fmt.tprintf("%s:%d:1: expected a hot spot inside the square of %d units; found %d,%d", manifest.path, shape.line, design, shape.hot_spot.x, shape.hot_spot.y)
 	}
-	sizes := len(shape.sizes) > 0 ? shape.sizes[:] : manifest.sizes[:]
-	for size in sizes {
-		if size % GRID_SQUARES_LIMIT != 0 {
-			return fmt.tprintf("%s:%d:1: expected sizes that are multiples of 12 for a grid; found %d", manifest.path, shape.line, size)
+	if layers_problem := layers_check(manifest, shape.layers[:]); layers_problem != "" {
+		return layers_problem
+	}
+	for frame in shape.frames {
+		if len(frame.layers) == 0 {
+			return at(manifest, shape, "the layers of an outline after each \"frame\"")
+		}
+		if frame_problem := layers_check(manifest, frame.layers[:]); frame_problem != "" {
+			return frame_problem
 		}
 	}
 	return ""
+}
+
+// outline_design_size gives the size whose pixels are the units of an
+// outline: the first size of the shape.
+@(private = "file")
+outline_design_size :: proc(manifest: ^Manifest, shape: ^Manifest_Shape) -> u32 {
+	return len(shape.sizes) > 0 ? shape.sizes[0] : manifest.sizes[0]
+}
+
+// outline_layers_now gives the layers that a statement "layer" adds to: the
+// layers of the last frame, or the layers of every frame before the first
+// statement "frame".
+@(private = "file")
+outline_layers_now :: proc(shape: ^Manifest_Shape) -> ^[dynamic]Outline_Layer {
+	if len(shape.frames) > 0 {
+		return &shape.frames[len(shape.frames) - 1].layers
+	}
+	return &shape.layers
+}
+
+// coordinate_of reads a coordinate of an outline: 1 to 3 digits, then
+// optionally a point and 1 to 3 decimals. It gives thousandths of a unit,
+// and false for another word or a value above the limit.
+@(private = "file")
+coordinate_of :: proc(text: string, limit: i64) -> (value: i64, ok: bool) {
+	whole, fraction := text, ""
+	if dot := strings.index_byte(text, '.'); dot >= 0 {
+		whole, fraction = text[:dot], text[dot + 1:]
+		if len(fraction) == 0 {
+			return 0, false
+		}
+	}
+	if len(whole) == 0 || len(whole) > 3 || len(fraction) > OUTLINE_COORDINATE_DECIMALS {
+		return 0, false
+	}
+	for character in whole {
+		if character < '0' || character > '9' {
+			return 0, false
+		}
+		value = value * 10 + i64(character - '0')
+	}
+	value *= OUTLINE_COORDINATE_SCALE
+	place: i64 = OUTLINE_COORDINATE_SCALE / 10
+	for character in fraction {
+		if character < '0' || character > '9' {
+			return 0, false
+		}
+		value += i64(character - '0') * place
+		place /= 10
+	}
+	return value, value <= limit
+}
+
+// outline_statement_parse reads a line of contour statements: "contour x
+// y", "line x y", "curve cx cy x y" and "circle x y radius", one after the
+// other. A contour goes in the last layer; each point is inside the square
+// of the design size, so no picture is cut.
+@(private = "file")
+outline_statement_parse :: proc(path: string, line_number: int, words: []Word, end_column: int, manifest: ^Manifest, shape: ^Manifest_Shape) -> string {
+	if shape == nil || len(shape.sources) > 0 {
+		return manifest_fail(path, line_number, words[0].column, "an outline only after a statement \"shape\" with no source", manifest_quoted(words[0].text))
+	}
+	layers := outline_layers_now(shape)
+	if len(layers) == 0 {
+		return manifest_fail(path, line_number, words[0].column, "the statement \"layer\" before a contour", manifest_quoted(words[0].text))
+	}
+	layer := &layers[len(layers) - 1]
+	design := outline_design_size(manifest, shape)
+	limit := i64(design) * OUTLINE_COORDINATE_SCALE
+	expected := fmt.tprintf("a coordinate from 0 to %d with at most 3 decimals", design)
+	index := 0
+	for index < len(words) {
+		word := words[index]
+		count := 0
+		switch word.text {
+		case "contour", "line":
+			count = 2
+		case "curve":
+			count = 4
+		case "circle":
+			count = 3
+		case:
+			return manifest_fail(path, line_number, word.column, "\"contour\", \"line\", \"curve\" or \"circle\"", manifest_quoted(word.text))
+		}
+		values: [4]i64
+		for value_index in 0 ..< count {
+			at := index + 1 + value_index
+			if at >= len(words) {
+				return manifest_fail(path, line_number, end_column, expected, "the end of the line")
+			}
+			value, ok := coordinate_of(words[at].text, limit)
+			if !ok {
+				return manifest_fail(path, line_number, words[at].column, expected, manifest_quoted(words[at].text))
+			}
+			values[value_index] = value
+		}
+		switch word.text {
+		case "contour":
+			append(&layer.contours, Outline_Contour{start = {values[0], values[1]}, segments = make([dynamic]Outline_Segment, context.temp_allocator), line = line_number})
+		case "line", "curve":
+			if len(layer.contours) == 0 || layer.contours[len(layer.contours) - 1].from_circle {
+				return manifest_fail(path, line_number, word.column, fmt.tprintf("a statement \"contour\" before \"%s\"", word.text), manifest_quoted(word.text))
+			}
+			current := &layer.contours[len(layer.contours) - 1]
+			if word.text == "line" {
+				append(&current.segments, Outline_Segment{to = {values[0], values[1]}})
+			} else {
+				append(&current.segments, Outline_Segment{control = {values[0], values[1]}, to = {values[2], values[3]}, curve = true})
+			}
+		case "circle":
+			center_x, center_y, radius := values[0], values[1], values[2]
+			if radius == 0 || radius > center_x || radius > center_y || center_x + radius > limit || center_y + radius > limit {
+				return manifest_fail(path, line_number, words[index + 3].column, fmt.tprintf("a radius above 0 that keeps the circle inside the square of %d units", design), manifest_quoted(words[index + 3].text))
+			}
+			append(&layer.contours, outline_circle(center_x, center_y, radius, line_number))
+		}
+		index += 1 + count
+	}
+	return ""
+}
+
+// outline_circle gives a circle as eight quadratic curves of 45 degrees,
+// each with its control point on the tangents at its ends: the distance of
+// the curve from the circle is at most 0.3 % of the radius, under 1/30 of a
+// pixel for the circles of a pointer. The two constants are cos 45 and
+// tan 22.5 in parts of 10 000.
+@(private = "file")
+outline_circle :: proc(center_x, center_y, radius: i64, line: int) -> Outline_Contour {
+	diagonal := vector_font.divide_rounded(radius * 7071, 10_000)
+	tangent := vector_font.divide_rounded(radius * 4142, 10_000)
+	// The control point, then the end, of each curve, around from the right.
+	offsets := [16][2]i64 {
+		{radius, tangent},
+		{diagonal, diagonal},
+		{tangent, radius},
+		{0, radius},
+		{-tangent, radius},
+		{-diagonal, diagonal},
+		{-radius, tangent},
+		{-radius, 0},
+		{-radius, -tangent},
+		{-diagonal, -diagonal},
+		{-tangent, -radius},
+		{0, -radius},
+		{tangent, -radius},
+		{diagonal, -diagonal},
+		{radius, -tangent},
+		{radius, 0},
+	}
+	center := [2]i64{center_x, center_y}
+	circle := Outline_Contour {
+		start       = center + [2]i64{radius, 0},
+		segments    = make([dynamic]Outline_Segment, context.temp_allocator),
+		line        = line,
+		from_circle = true,
+	}
+	for index := 0; index < len(offsets); index += 2 {
+		append(&circle.segments, Outline_Segment{control = center + offsets[index], to = center + offsets[index + 1], curve = true})
+	}
+	return circle
+}
+
+// outline_contour_add adds one contour to an accumulation, in pixels of the
+// size: a unit is size / design pixels.
+@(private = "file")
+outline_contour_add :: proc(target: ^vector_font.Accumulation, item: Outline_Contour, design, size: i64) {
+	// The contours of one layer are a union. The rasterizer adds signed
+	// areas, so two contours in opposite directions would cancel where they
+	// overlap: each contour is added in the direction that gives its control
+	// polygon a positive area.
+	twice_area: i64 = 0
+	from := item.start
+	for segment in item.segments {
+		if segment.curve {
+			twice_area += from.x * segment.control.y - segment.control.x * from.y
+			twice_area += segment.control.x * segment.to.y - segment.to.x * segment.control.y
+		} else {
+			twice_area += from.x * segment.to.y - segment.to.x * from.y
+		}
+		from = segment.to
+	}
+	twice_area += from.x * item.start.y - item.start.x * from.y
+	reverse := twice_area < 0
+	place :: proc(value, design, size: i64) -> i32 {
+		return i32(vector_font.divide_rounded(value * size * vector_font.SUBUNITS_PER_PIXEL, design * OUTLINE_COORDINATE_SCALE))
+	}
+	closing := Outline_Segment {
+		to = item.start,
+	}
+	from = item.start
+	for index in 0 ..= len(item.segments) {
+		segment := index < len(item.segments) ? item.segments[index] : closing
+		x0, y0 := place(from.x, design, size), place(from.y, design, size)
+		x1, y1 := place(segment.to.x, design, size), place(segment.to.y, design, size)
+		if reverse {
+			x0, y0, x1, y1 = x1, y1, x0, y0
+		}
+		if segment.curve {
+			vector_font.quadratic_add(target, x0, y0, place(segment.control.x, design, size), place(segment.control.y, design, size), x1, y1)
+		} else {
+			vector_font.line_add(target, x0, y0, x1, y1)
+		}
+		from = segment.to
+	}
+}
+
+// outline_layer_draw draws one layer over a canvas of size x size
+// premultiplied pixels: the exact coverage of each pixel by the union of
+// the contours, then the paint over the pixel with that coverage.
+@(private = "file")
+outline_layer_draw :: proc(canvas: []u32, cells: []i32, coverage: []u8, layer: Outline_Layer, design, size: u32) {
+	target, ok := vector_font.accumulation_of(cells, int(size), int(size))
+	if !ok {
+		return // The caller gives (size + 1) * size cells: this does not happen.
+	}
+	for item in layer.contours {
+		outline_contour_add(&target, item, i64(design), i64(size))
+	}
+	vector_font.coverage_finish(&target, coverage)
+	color := layer.paint == .Light ? POINTER_LIGHT_COLOR : POINTER_DARK_COLOR
+	paint := layer.paint == .Clear ? u32(0) : 0xFF000000 | color
+	for &pixel, index in canvas {
+		covered := u32(coverage[index])
+		if covered == 0 {
+			continue
+		}
+		kept := 255 - covered
+		// Each channel and the alpha: the paint with the coverage, over what
+		// the coverage leaves. A channel never passes its alpha, as a
+		// premultiplied pixel needs.
+		result: u32 = 0
+		for shift in ([?]u32{0, 8, 16, 24}) {
+			source := (paint >> shift) & 0xFF
+			before := (pixel >> shift) & 0xFF
+			result |= ((source * covered + before * kept + 127) / 255) << shift
+		}
+		pixel = result
+	}
+}
+
+// outline_pictures_add draws each frame of an outline at one size, and
+// adds its pictures. The pictures of one size have one box: the pixels
+// that a frame draws, and the hot spot.
+@(private = "file")
+outline_pictures_add :: proc(pictures: ^[dynamic]Made_Picture, item: Manifest_Shape, design, size: u32) {
+	side := int(size)
+	frame_count := max(len(item.frames), 1)
+	cells := make([]i32, (side + 1) * side, context.temp_allocator)
+	coverage := make([]u8, side * side, context.temp_allocator)
+	canvases := make([][]u32, frame_count, context.temp_allocator)
+	for &canvas, frame_index in canvases {
+		canvas = make([]u32, side * side, context.temp_allocator)
+		for layer in item.layers {
+			outline_layer_draw(canvas, cells, coverage, layer, design, size)
+		}
+		if len(item.frames) > 0 {
+			for layer in item.frames[frame_index].layers {
+				outline_layer_draw(canvas, cells, coverage, layer, design, size)
+			}
+		}
+	}
+	hot_x, hot_y := item.hot_spot.x * size / design, item.hot_spot.y * size / design
+	left, top, right, bottom := int(hot_x), int(hot_y), int(hot_x), int(hot_y)
+	for canvas in canvases {
+		for y in 0 ..< side {
+			for x in 0 ..< side {
+				if canvas[y * side + x] >> 24 != 0 {
+					left, right = min(left, x), max(right, x)
+					top, bottom = min(top, y), max(bottom, y)
+				}
+			}
+		}
+	}
+	width, height := right - left + 1, bottom - top + 1
+	for canvas, frame_index in canvases {
+		picture := Made_Picture {
+			entry = {nominal_size = size, width = u32(width), height = u32(height), hot_spot_x = hot_x - u32(left), hot_spot_y = hot_y - u32(top), delay_milliseconds = len(item.frames) > 0 ? item.frames[frame_index].delay : 0},
+		}
+		picture.pixels = make([]u32, width * height, context.temp_allocator)
+		for y in 0 ..< height {
+			copy(picture.pixels[y * width:][:width], canvas[(top + y) * side + left:][:width])
+		}
+		append(pictures, picture)
+	}
 }
 
 // ---- The conversion ----
@@ -602,7 +946,7 @@ source_resolve :: proc(folder: string, sources: []string) -> (name: string, data
 }
 
 // pointer_theme_make makes a pointer theme file from a manifest. The folder
-// is the Xcursor theme of the sources ("" for a manifest of grids). The
+// is the Xcursor theme of the sources ("" for a manifest of outlines). The
 // file passes pointer_pictures.validate before it is given.
 pointer_theme_make :: proc(manifest: Manifest, folder: string) -> (file: []u8, rows: []Pointer_Table_Row, problem: string) {
 	shapes := make([dynamic]pointer_pictures.Shape_Entry, context.temp_allocator)
@@ -630,41 +974,12 @@ pointer_theme_make :: proc(manifest: Manifest, folder: string) -> (file: []u8, r
 			bytes_before += len(picture.pixels) * 4
 		}
 		if len(item.sources) == 0 {
-			// A grid: a square is size / 12 pixels.
-			entry.frame_count = u32(len(item.frames))
+			// An outline: a unit is a pixel of the first size.
+			entry.frame_count = u32(max(len(item.frames), 1))
 			for size in sizes {
-				square := size / GRID_SQUARES_LIMIT
-				for frame in item.frames {
-					width := 0
-					for line in frame.lines {
-						width = max(width, len(line))
-					}
-					picture := Made_Picture {
-						entry = {nominal_size = size, width = u32(width) * square, height = u32(len(frame.lines)) * square, hot_spot_x = item.hot_spot.x * square + square / 2, hot_spot_y = item.hot_spot.y * square + square / 2, delay_milliseconds = item.has_frames ? frame.delay : 0},
-					}
-					picture.pixels = make([]u32, picture.entry.width * picture.entry.height, context.temp_allocator)
-					for line, row_index in frame.lines {
-						for column in 0 ..< len(line) {
-							color: u32
-							switch line[column] {
-							case 'X':
-								color = 0xFF000000
-							case '.':
-								color = 0xFFFFFFFF
-							case:
-								continue
-							}
-							for y in 0 ..< square {
-								for x in 0 ..< square {
-									picture.pixels[(u32(row_index) * square + y) * picture.entry.width + u32(column) * square + x] = color
-								}
-							}
-						}
-					}
-					append(&pictures, picture)
-				}
+				outline_pictures_add(&pictures, item, sizes[0], size)
 			}
-			row.source = item.has_frames ? "a grid, animated" : "a grid"
+			row.source = len(item.frames) > 0 ? "an outline, animated" : "an outline"
 		} else {
 			resolved, data, source_problem := source_resolve(folder, item.sources[:])
 			if source_problem != "" {

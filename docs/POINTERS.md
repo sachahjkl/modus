@@ -49,8 +49,8 @@ Read on 2026-11-11 (`hyprwm/hyprcursor`, `README.md` and `docs/MAKING_THEMES.md`
 What this system takes from it, and what not:
 
 - **Not as the format that the compositor reads.** At run time it needs a zip reader, an inflate and PNG decoder, an SVG rasterizer and a hyprlang parser in the compositor: four parsers of input that the compositor must not trust, against the rule of this format "no parse at run time" and against section 7 of `DESIGN.md`. The pointer theme file of section 3 is read in place after one validation. Its size is not a problem here: the Posy theme at 32 and 64 is 883 008 bytes, the boot image holds it once.
-- **As the model of the manifest.** The manifest of section 4 is the same idea as `meta.hl`, in one file for the theme: the sizes, the names that a shape takes from other names (the sources, in order), the frames with a delay, the hot spot. It differs in two places: the hot spot is in pixels of the smallest size (a fraction of the size gives a pixel only after a rounding), and a grid of squares is a source of its own.
-- **Not as a source of the tool.** Posy's Cursor exists as Xcursor files and as Windows files, not as hyprcursor. A reader of `.hlc` files in the tool needs zip and PNG (the Odin library has an inflate and a PNG reader, no zip reader). That reader is not built: the tool reads Xcursor files and grids of squares only.
+- **As the model of the manifest.** The manifest of section 4 is the same idea as `meta.hl`, in one file for the theme: the sizes, the names that a shape takes from other names (the sources, in order), the frames with a delay, the hot spot. It differs in two places: the hot spot is in pixels of the smallest size (a fraction of the size gives a pixel only after a rounding), and an outline in the manifest is a source of its own, in place of an SVG file.
+- **Not as a source of the tool.** Posy's Cursor exists as Xcursor files and as Windows files, not as hyprcursor. A reader of `.hlc` files in the tool needs zip and PNG (the Odin library has an inflate and a PNG reader, no zip reader). That reader is not built: the tool reads Xcursor files and outlines only.
 
 ### The Wayland cursor shape protocol (`cursor-shape-v1`, wayland-protocols 1.48)
 
@@ -164,7 +164,7 @@ A failure gives a `Problem`: its kind, the part of the file, the field, the inde
 
 ## 4. The manifest
 
-A text file in the repository (`resources/pointers/`). One grammar for the two sources of pictures: the files of an Xcursor theme, and grids of squares in the manifest itself.
+A text file in the repository (`resources/pointers/`). One grammar for the two sources of pictures: the files of an Xcursor theme, and outlines in the manifest itself.
 
 ```
 manifest  = { line }                        lines end with "\n"; ASCII 32 to 126 only
@@ -174,19 +174,33 @@ statement = "theme" text                    the name of the theme: 1 to 31 chara
           | "attribution" text              to the end of the line; more lines add to it (399 characters at most)
           | "sizes" number { number }       the nominal sizes of each shape, increasing; once, before the shapes
           | "shape" name { source } { option }    one line for each shape of the theme
-          | "frame" number                  a new frame of the shape above, with its delay in ms
-          | "|" { "X" | "." | " " }         one line of a grid of the shape above: black, white, nothing
-option    = "hot" number number             the hot spot: in pixels of the smallest size for a source, in squares for a grid
+          | "layer" paint                   a new layer of the outline of the shape above
+          | contour { contour }             contours of the last layer, one or more on a line
+          | "frame" number                  a new frame of the outline above, with its delay in ms
+option    = "hot" number number             the hot spot: in pixels of the smallest size
           | "sizes" number { number }       the sizes of this shape, in place of the default
 source    = file name                       a file of the Xcursor folder; the first one that exists is used
+paint     = "dark" | "light" | "clear"      the dark edge color, the light fill color, or transparent
+contour   = "contour" point { "line" point | "curve" point point }   a closed contour: a line or a quadratic
+                                            curve (control point, then end) to each point, then back to its start
+          | "circle" point coordinate       a circle: its centre and its radius
+point     = coordinate coordinate           x to the right, y down
+coordinate = digits [ "." digits ]          units: 1 to 3 digits, then at most 3 decimals
 ```
 
 - The words are separated by spaces. `hot` and `sizes` are reserved: they cannot be a file name.
-- A shape has sources or a grid, not both. A grid has at most 12 squares in a line and 12 lines; a square is `size / 12` pixels, so each size of a grid is a multiple of 12.
+- A shape has sources or an outline, not both.
 - A source is followed through its links (8 at most) inside the folder. The Xcursor file is hostile input: each offset and count is checked before a read.
 - For a source, a size of the list must be a nominal size of the file: the tool does not scale pixels. A `hot` adjustment is in pixels of the smallest size; the tool multiplies it for the other sizes.
-- An animation of a grid has two `frame` statements at least, each followed by the lines of its grid. A shape with a grid needs the option `hot`, inside the grid.
 - Two shapes that take the same file with the same options share their pictures in the theme file: the file holds them once.
+
+**An outline** is closed contours of lines and quadratic curves, in layers (the design: `src/md/features/vector_pointers.md`).
+
+- **The unit** is a pixel of the first size of the shape. Each point and each circle is inside the square of that size, from 0 to the size. An integer coordinate is the corner of a pixel: a level or upright edge on it is sharp at that size and at each multiple of it.
+- **A layer** paints its contours over the layers before it: `dark` (`0x000000`), `light` (`0xFFFFFF`), or `clear`, which makes them transparent. The contours of one layer are a union: the tool adds each contour in one direction, so two contours that overlap never cancel. A layer has a contour at least, and a contour two segments at least.
+- **Frames.** The layers before the first `frame` are in every frame. Each `frame` adds the layers after it, over those. An animation has two frames at least.
+- **The option `hot`** is required, and inside the square.
+- **The drawing.** At each size, the tool draws each layer with the rasterizer of the vector font (`src/library/support/vector_font`): the exact coverage of each pixel, from 0 to 255, then the paint over the pixel with that weight, in premultiplied integers. The pictures of one size have one box: the pixels that some frame draws, and the hot spot.
 - An error gives the file, the line, the column, and what was expected: `resources/pointers/posy.manifest:12:7: expected a pointer shape name such as "arrow"; found "arow"`.
 - No JSON, no TOML: the system has no general parser and needs none.
 
@@ -202,28 +216,43 @@ shape text                          text xterm
 shape wait                          wait watch sizes 32
 ```
 
-**An example with a grid**, the arrow of `resources/pointers/system.manifest`. `X` is a black square, `.` a white one, a space nothing. The hot spot is the square at the top left:
+**An example with an outline**, the arrow of `resources/pointers/system.manifest`. The dark contour is the whole arrow; the light contour is the same arrow moved in by 1 unit, so a dark edge of 1 pixel at 24 goes around the fill. The left side is on the integer 1 and the wing on the integer 13: both stay sharp. The point is the corner 1,1, and the hot spot is the pixel 1,1:
 
 ```
-shape arrow hot 0 0
-|X
-|XX
-|X.X
-|X..X
-|X...X
-|X....X
-|X.....X
-|X......X
-|X..XXXXX
-|X.X
-|XX
+shape arrow hot 1 1
+layer dark
+contour 1 1 line 1 18 line 5 14 line 8 20 line 11.6 18.2 line 9 13 line 13 13
+layer light
+contour 2 3.414 line 2 15.586 line 5.274 12.312 line 8.447 18.658 line 10.258 17.753 line 7.382 12 line 10.586 12
+```
+
+**An example with frames**, from `wait`: a ring with a hole, then a dark dot that is one eighth of a turn further in each frame.
+
+```
+shape wait hot 11 11
+layer dark
+circle 11.5 11.5 9
+layer light
+circle 11.5 11.5 8
+layer dark
+circle 11.5 11.5 4.5
+layer clear
+circle 11.5 11.5 3.5
+frame 125
+layer dark
+circle 11.5 5.25 1.25
+frame 125
+layer dark
+circle 15.919 7.081 1.25
 ```
 
 **The command.** `modustool pointers` converts each manifest of `resources/pointers` to a pointer theme file in `build/pointers`, and prints a table of each theme: the shape, its source, its sizes, its frames and its bytes. It takes the Xcursor folder from the variable `POINTER_THEME_SOURCE` or from the path after the command. `modustool build` runs the same code.
 
 ## 5. The two themes
 
-- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as grids of squares, in the style of the arrow of `DESIGN.md`, at the sizes 24 (squares of 2 pixels) and 48 (squares of 4 pixels, for a later screen with twice the pixels). `wait` and `busy_with_arrow` have 4 frames of 250 ms. Its file has 42 pictures. It is always in the boot image, as the resource `pointers_system`.
+- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as outlines (section 4), drawn for this system, at the sizes 24 and 48 (for a later screen with twice the pixels). Each shape is a light fill inside a dark edge of 1 pixel at 24. `wait` and `busy_with_arrow` have 8 frames of 125 ms: a dot turns once around a ring in one second. Its file has 58 pictures. It is always in the boot image, as the resource `pointers_system`.
+  - **Why a light fill in a dark edge.** The desktop, the cards and the windows are dark: there the light fill carries the contrast, 19 to 1 on the background of the desktop. Over a light text or picture, the dark edge carries it. On any background, black or white has at least 4.58 to 1. A dark fill in a light edge would show only a line of 1 pixel on the dark desktop.
+  - **Why 24 and 48 only.** The compositor asks for 24, and 48 is the size of a screen with twice the pixels. A size of an outline is one number of the statement `sizes`: a size for a scale of 1.25 or 1.5 is added when the system has such a scale. A multiple of 24 keeps each level and upright edge sharp.
 - **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The default development shell of the flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The checks of the flake and the shell `release` do not: they build the theme of the system only. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64). Its file has 178 pictures: `grab` and `grabbing` come from one file of the theme and share their pictures.
 - **The choice of the compositor**: the Posy theme is the default when the build has its input; the theme of the system is the fallback.
   - The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `src/programs/root/resources.odin`: the one place of this order).
@@ -248,7 +277,7 @@ What follows for this repository: property 2 of the objective of `PROPERTIES.md`
 
 1. **Posy's Cursor is a build input.** The flake fetches it, the tool converts it at build time, and no file of the theme and no file made from its pixels enters the repository.
 2. **It is the default pointer theme when the build input is there.** The theme of the system is the fallback.
-3. The pointer picture is the one picture of the desktop with smooth edges and transparency (`DESIGN.md`, section 9, "Pointer"): this follows from 1 and 2.
+3. The pointer picture is the one picture of the desktop with smooth edges and transparency (`DESIGN.md`, section 9, "Pointer"), in the Posy theme and in the theme of the system alike.
 4. **No release image holds it.** A release image is a public download, and the publisher of the system cannot keep its use non-commercial. Its pointer theme is the theme of the system, under the license of the repository. Three parts keep the Posy theme out:
    - `modustool release image` makes the theme of the system only;
    - the packaging of a release refuses a boot image with the resource `pointers_posy`, or with a pointer theme file whose header names another license than the license of `LICENSE`;
@@ -265,7 +294,6 @@ From one full check (one run, with a load of about 30 on the host; a measure is 
 | What | Time |
 |---|---|
 | `modustool pointers`: the Posy theme (122 names, 17 files read, 178 pictures, 883 008 bytes) | 34 to 87 ms |
-| the same for the theme of the system (15 grids, 42 pictures, 208 512 bytes) | 0.6 to 0.8 ms |
 | the root service: the hash of the Posy theme | 1.4 to 1.8 ms |
 | the compositor: `validate` of the Posy theme, once | 427 to 653 us |
 | the blend of the arrow of Posy, 32x32, 860 pixels transparent | 824 to 1008 ns |

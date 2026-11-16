@@ -1,286 +1,265 @@
 # The pointer theme of the system (docs/POINTERS.md, section 5), under the
-# license of the repository. Each shape is a grid of squares, in the style of
-# the arrow of docs/DESIGN.md: "X" a black square, "." a white one, " "
-# nothing. A square is size / 12 pixels: 2 at the size 24, 4 at 48. The
-# option "hot" is in squares; the hot spot is the middle of its square.
+# license of the repository. Each shape is an outline: closed contours of
+# lines and quadratic curves in layers, a dark edge around a light fill. A
+# unit is a pixel at the size 24, so an integer coordinate is a pixel corner:
+# each straight edge that is level or upright is sharp at 24 and at 48. An
+# edge of 1 unit is the light contour moved out by 1 unit; on a slanted side
+# of 45 degrees the corner moves by 1.414. The option "hot" is the pixel that
+# points, at the size 24. The centre of a symmetric shape is the pixel 11.
 theme System
 license MIT
-attribution The pointer theme of the system, drawn as grids of squares in resources/pointers/system.manifest.
+attribution The pointer theme of the system, drawn as outlines in resources/pointers/system.manifest.
 
 sizes 24 48
 
-shape arrow hot 0 0
-|X
-|XX
-|X.X
-|X..X
-|X...X
-|X....X
-|X.....X
-|X......X
-|X..XXXXX
-|X.X
-|XX
+# A slanted arrow with a tail. The point is the corner 1,1.
+shape arrow hot 1 1
+layer dark
+contour 1 1 line 1 18 line 5 14 line 8 20 line 11.6 18.2 line 9 13 line 13 13
+layer light
+contour 2 3.414 line 2 15.586 line 5.274 12.312 line 8.447 18.658 line 10.258 17.753 line 7.382 12 line 10.586 12
 
-shape text hot 3 6
-|XXX XXX
-|X..X..X
-|XXX.XXX
-|  X.X
-|  X.X
-|  X.X
-|  X.X
-|  X.X
-|  X.X
-|XXX.XXX
-|X..X..X
-|XXX XXX
+# An I-beam: a stem of 1 pixel between two bars.
+shape text hot 11 11
+layer dark
+contour 7 3 line 16 3 line 16 6 line 7 6
+contour 10 4 line 13 4 line 13 19 line 10 19
+contour 7 17 line 16 17 line 16 20 line 7 20
+layer light
+contour 8 4 line 15 4 line 15 5 line 8 5
+contour 11 5 line 12 5 line 12 18 line 11 18
+contour 8 18 line 15 18 line 15 19 line 8 19
 
-shape pointing_hand hot 3 0
-|  XXXX
-|  X..X
-|  X..X
-|  X..X
-|  X..XXXXXXX
-|XXX..X..X..X
-|X..........X
-|X..........X
-|X..........X
-|X..........X
-|XX........XX
-| XXXXXXXXXX
+# A hand: the index finger up, three fingers folded, the thumb at the left.
+# The tip of the index finger points.
+shape pointing_hand hot 7 2
+layer dark
+contour 5 14 line 5 3.5 curve 5 1 7.5 1 curve 10 1 10 3.5 line 10 14
+contour 9 14 line 9 8.5 curve 9 6 11.5 6 curve 14 6 14 8.5 line 14 14
+contour 13 14 line 13 9.5 curve 13 7 15.5 7 curve 18 7 18 9.5 line 18 14
+contour 17 14 line 17 11 curve 17 9 19 9 curve 21 9 21 11 line 21 14
+contour 5 11 line 21 11 line 21 17.414 line 18.414 20 line 7.586 20 line 5 17.414
+contour 6 12 line 4.5 12 curve 2 12 2 14.5 curve 2 17 4.5 17 line 6 17
+layer light
+contour 6 13 line 6 3.5 curve 6 2 7.5 2 curve 9 2 9 3.5 line 9 13
+contour 10 13 line 10 8.5 curve 10 7 11.5 7 curve 13 7 13 8.5 line 13 13
+contour 14 13 line 14 9.5 curve 14 8 15.5 8 curve 17 8 17 9.5 line 17 13
+contour 18 13 line 18 11 curve 18 10 19 10 curve 20 10 20 11 line 20 13
+contour 6 12 line 20 12 line 20 17 line 18 19 line 8 19 line 6 17
+contour 6 13 line 4.5 13 curve 3 13 3 14.5 curve 3 16 4.5 16 line 6 16
 
-shape move hot 5 5
-|    XXX
-|   XX.XX
-|   X...X
-| XXXX.XXXX
-|XX.XX.XX.XX
-|X.........X
-|XX.XX.XX.XX
-| XXXX.XXXX
-|   X...X
-|   XX.XX
-|    XXX
+# Four arrows from the centre.
+shape move hot 11 11
+layer dark
+contour 10 4 line 13 4 line 13 19 line 10 19
+contour 4 10 line 19 10 line 19 13 line 4 13
+contour 11.5 0.086 line 17.414 6 line 5.586 6
+contour 11.5 22.914 line 17.414 17 line 5.586 17
+contour 0.086 11.5 line 6 5.586 line 6 17.414
+contour 22.914 11.5 line 17 5.586 line 17 17.414
+layer light
+contour 11 5 line 12 5 line 12 18 line 11 18
+contour 5 11 line 18 11 line 18 12 line 5 12
+contour 11.5 1.5 line 15 5 line 8 5
+contour 11.5 21.5 line 15 18 line 8 18
+contour 1.5 11.5 line 5 8 line 5 15
+contour 21.5 11.5 line 18 8 line 18 15
 
-shape grab hot 5 6
-|   XXXX
-|XXXX..XXXX
-|X..X..X..X
-|X..X..X..X
-|X..X..X..XXX
-|X..X..X..X.X
-|X..........X
-|X..........X
-|X.........XX
-|X.........X
-|XX.......XX
-| XXXXXXXXX
+# An open hand: four fingers up, the thumb at the left.
+shape grab hot 12 13
+layer dark
+contour 5 13 line 5 5.5 curve 5 3 7.5 3 curve 10 3 10 5.5 line 10 13
+contour 9 13 line 9 4.5 curve 9 2 11.5 2 curve 14 2 14 4.5 line 14 13
+contour 13 13 line 13 5.5 curve 13 3 15.5 3 curve 18 3 18 5.5 line 18 13
+contour 17 13 line 17 8 curve 17 6 19 6 curve 21 6 21 8 line 21 13
+contour 5 10 line 21 10 line 21 17.414 line 18.414 20 line 7.586 20 line 5 17.414
+contour 6 11 line 4.5 11 curve 2 11 2 13.5 curve 2 16 4.5 16 line 6 16
+layer light
+contour 6 12 line 6 5.5 curve 6 4 7.5 4 curve 9 4 9 5.5 line 9 12
+contour 10 12 line 10 4.5 curve 10 3 11.5 3 curve 13 3 13 4.5 line 13 12
+contour 14 12 line 14 5.5 curve 14 4 15.5 4 curve 17 4 17 5.5 line 17 12
+contour 18 12 line 18 8 curve 18 7 19 7 curve 20 7 20 8 line 20 12
+contour 6 11 line 20 11 line 20 17 line 18 19 line 8 19 line 6 17
+contour 6 12 line 4.5 12 curve 3 12 3 13.5 curve 3 15 4.5 15 line 6 15
 
-shape grabbing hot 5 4
-|XXXXXXXXXX
-|X..X..X..XX
-|X.........X
-|X.........X
-|X.........X
-|X.........X
-|X.........X
-|XX.......XX
-| XXXXXXXXX
+# A closed hand: the four knuckles at the top, the thumb at the left.
+shape grabbing hot 12 13
+layer dark
+contour 5 13 line 5 9.5 curve 5 7 7.5 7 curve 10 7 10 9.5 line 10 13
+contour 9 13 line 9 9.5 curve 9 7 11.5 7 curve 14 7 14 9.5 line 14 13
+contour 13 13 line 13 9.5 curve 13 7 15.5 7 curve 18 7 18 9.5 line 18 13
+contour 17 13 line 17 10 curve 17 8 19 8 curve 21 8 21 10 line 21 13
+contour 5 10 line 21 10 line 21 17.414 line 18.414 20 line 7.586 20 line 5 17.414
+contour 6 11 line 4.5 11 curve 2 11 2 13.5 curve 2 16 4.5 16 line 6 16
+layer light
+contour 6 12 line 6 9.5 curve 6 8 7.5 8 curve 9 8 9 9.5 line 9 12
+contour 10 12 line 10 9.5 curve 10 8 11.5 8 curve 13 8 13 9.5 line 13 12
+contour 14 12 line 14 9.5 curve 14 8 15.5 8 curve 17 8 17 9.5 line 17 12
+contour 18 12 line 18 10 curve 18 9 19 9 curve 20 9 20 10 line 20 12
+contour 6 11 line 20 11 line 20 17 line 18 19 line 8 19 line 6 17
+contour 6 12 line 4.5 12 curve 3 12 3 13.5 curve 3 15 4.5 15 line 6 15
 
-shape wait hot 5 6
-frame 250
-|XXXXXXXXXXX
-|X.........X
-| X.XXXXX.X
-|  X.XXX.X
-|   X.X.X
-|    X.X
-|    X.X
-|   X...X
-|  X.....X
-| X.......X
-|X.........X
-|XXXXXXXXXXX
-frame 250
-|XXXXXXXXXXX
-|X.........X
-| X.......X
-|  X.XXX.X
-|   X.X.X
-|    XXX
-|    XXX
-|   X...X
-|  X.....X
-| X.......X
-|X..XXXXX..X
-|XXXXXXXXXXX
-frame 250
-|XXXXXXXXXXX
-|X.........X
-| X.......X
-|  X.....X
-|   X.X.X
-|    XXX
-|    XXX
-|   X...X
-|  X.....X
-| X..XXX..X
-|X.XXXXXXX.X
-|XXXXXXXXXXX
-frame 250
-|XXXXXXXXXXX
-|X.........X
-| X.......X
-|  X.....X
-|   X...X
-|    X.X
-|    X.X
-|   X...X
-|  X..X..X
-| X.XXXXX.X
-|X.XXXXXXX.X
-|XXXXXXXXXXX
+# A ring with a hole. In each frame a dark dot is one eighth of a turn
+# further, clockwise: one turn in one second.
+shape wait hot 11 11
+layer dark
+circle 11.5 11.5 9
+layer light
+circle 11.5 11.5 8
+layer dark
+circle 11.5 11.5 4.5
+layer clear
+circle 11.5 11.5 3.5
+frame 125
+layer dark
+circle 11.5 5.25 1.25
+frame 125
+layer dark
+circle 15.919 7.081 1.25
+frame 125
+layer dark
+circle 17.75 11.5 1.25
+frame 125
+layer dark
+circle 15.919 15.919 1.25
+frame 125
+layer dark
+circle 11.5 17.75 1.25
+frame 125
+layer dark
+circle 7.081 15.919 1.25
+frame 125
+layer dark
+circle 5.25 11.5 1.25
+frame 125
+layer dark
+circle 7.081 7.081 1.25
 
-shape busy_with_arrow hot 0 0
-frame 250
-|X
-|XX
-|X.X
-|X..X
-|X...X
-|X....X
-|X..XXX
-|X.X    XXXXX
-|XX     X.X.X
-|X      X.X.X
-|       X.X.X
-|       XXXXX
-frame 250
-|X
-|XX
-|X.X
-|X..X
-|X...X
-|X....X
-|X..XXX
-|X.X    XXXXX
-|XX     X..XX
-|X      X.X.X
-|       XX..X
-|       XXXXX
-frame 250
-|X
-|XX
-|X.X
-|X..X
-|X...X
-|X....X
-|X..XXX
-|X.X    XXXXX
-|XX     X...X
-|X      XXXXX
-|       X...X
-|       XXXXX
-frame 250
-|X
-|XX
-|X.X
-|X..X
-|X...X
-|X....X
-|X..XXX
-|X.X    XXXXX
-|XX     XX..X
-|X      X.X.X
-|       X..XX
-|       XXXXX
+# The arrow, and a small ring at its lower right whose dot turns as in wait.
+shape busy_with_arrow hot 1 1
+layer dark
+contour 1 1 line 1 18 line 5 14 line 8 20 line 11.6 18.2 line 9 13 line 13 13
+layer light
+contour 2 3.414 line 2 15.586 line 5.274 12.312 line 8.447 18.658 line 10.258 17.753 line 7.382 12 line 10.586 12
+layer dark
+circle 18 18 5
+layer light
+circle 18 18 4
+layer dark
+circle 18 18 1.5
+frame 125
+layer dark
+circle 18 15.25 0.85
+frame 125
+layer dark
+circle 19.945 16.055 0.85
+frame 125
+layer dark
+circle 20.75 18 0.85
+frame 125
+layer dark
+circle 19.945 19.945 0.85
+frame 125
+layer dark
+circle 18 20.75 0.85
+frame 125
+layer dark
+circle 16.055 19.945 0.85
+frame 125
+layer dark
+circle 15.25 18 0.85
+frame 125
+layer dark
+circle 16.055 16.055 0.85
 
-shape forbidden hot 5 5
-|   XXXXX
-| XX.....XX
-| XXX.....X
-|X..XX.....X
-|X...XX....X
-|X....XX...X
-|X.....XX..X
-|X......XX.X
-| X......XX
-| XX.....XX
-|   XXXXX
+# A ring with a slash from the upper left to the lower right. The ends of the
+# light slash join the light ring.
+shape forbidden hot 11 11
+layer dark
+circle 11.5 11.5 9
+layer light
+circle 11.5 11.5 8
+layer dark
+circle 11.5 11.5 5.5
+layer clear
+circle 11.5 11.5 4.5
+layer dark
+contour 16.273 13.799 line 13.799 16.273 line 6.727 9.201 line 9.201 6.727
+layer light
+contour 16.626 15.566 line 15.566 16.626 line 6.374 7.434 line 7.434 6.374
 
-shape help hot 0 0
-|X
-|XX
-|X.X
-|X..X    XXX
-|X...X  X...X
-|X....X X.X.X
-|X..XXX XXX.X
-|X.X     X.XX
-|XX      X.X
-|X       XXX
-|        X.X
-|        XXX
+# The arrow, and a question mark of strokes of 1 pixel at its right.
+shape help hot 1 1
+layer dark
+contour 1 1 line 1 18 line 5 14 line 8 20 line 11.6 18.2 line 9 13 line 13 13
+contour 16 11 line 22 11 line 22 14 line 16 14
+contour 15 12 line 18 12 line 18 16 line 15 16
+contour 20 12 line 23 12 line 23 17 line 20 17
+contour 18 15 line 22 15 line 22 18 line 18 18
+contour 18 16 line 21 16 line 21 20 line 18 20
+contour 18 20 line 21 20 line 21 23 line 18 23
+layer light
+contour 2 3.414 line 2 15.586 line 5.274 12.312 line 8.447 18.658 line 10.258 17.753 line 7.382 12 line 10.586 12
+contour 17 12 line 21 12 line 21 13 line 17 13
+contour 16 13 line 17 13 line 17 15 line 16 15
+contour 21 13 line 22 13 line 22 16 line 21 16
+contour 19 16 line 21 16 line 21 17 line 19 17
+contour 19 17 line 20 17 line 20 19 line 19 19
+contour 19 21 line 20 21 line 20 22 line 19 22
 
-shape crosshair hot 5 5
-|    XXX
-|    X.X
-|    X.X
-|    X.X
-|XXXXXXXXXXX
-|X...X.X...X
-|XXXXXXXXXXX
-|    X.X
-|    X.X
-|    X.X
-|    XXX
+# A cross of lines of 1 pixel with a gap around a centre dot.
+shape crosshair hot 11 11
+layer dark
+contour 10 1 line 13 1 line 13 10 line 10 10
+contour 10 13 line 13 13 line 13 22 line 10 22
+contour 1 10 line 10 10 line 10 13 line 1 13
+contour 13 10 line 22 10 line 22 13 line 13 13
+contour 10 10 line 13 10 line 13 13 line 10 13
+layer light
+contour 11 2 line 12 2 line 12 9 line 11 9
+contour 11 14 line 12 14 line 12 21 line 11 21
+contour 2 11 line 9 11 line 9 12 line 2 12
+contour 14 11 line 21 11 line 21 12 line 14 12
+contour 11 11 line 12 11 line 12 12 line 11 12
 
-shape resize_left_right hot 5 3
-|  XXX  XXX
-| XX.X  X.XX
-|XX..XXXX..XX
-|X..........X
-|XX..XXXX..XX
-| XX.X  X.XX
-|  XXX  XXX
+shape resize_left_right hot 11 11
+layer dark
+contour 4 10 line 19 10 line 19 13 line 4 13
+contour 0.086 11.5 line 6 5.586 line 6 17.414
+contour 22.914 11.5 line 17 5.586 line 17 17.414
+layer light
+contour 5 11 line 18 11 line 18 12 line 5 12
+contour 1.5 11.5 line 5 8 line 5 15
+contour 21.5 11.5 line 18 8 line 18 15
 
-shape resize_up_down hot 3 5
-|  XXX
-| XX.XX
-|XX...XX
-|X.....X
-|XXX.XXX
-|  X.X
-|  X.X
-|XXX.XXX
-|X.....X
-|XX...XX
-| XX.XX
-|  XXX
+shape resize_up_down hot 11 11
+layer dark
+contour 10 4 line 13 4 line 13 19 line 10 19
+contour 11.5 0.086 line 17.414 6 line 5.586 6
+contour 11.5 22.914 line 17.414 17 line 5.586 17
+layer light
+contour 11 5 line 12 5 line 12 18 line 11 18
+contour 11.5 1.5 line 15 5 line 8 5
+contour 11.5 21.5 line 15 18 line 8 18
 
-shape resize_top_left_bottom_right hot 5 5
-|XXXXX
-|X...X
-|X..XX
-|X.X.XX
-|XXXX.XX
-|   XX.XX
-|    XX.XXXX
-|     XX.X.X
-|      XX..X
-|      X...X
-|      XXXXX
+# The two diagonal arrows: heads with a level and an upright side, so that
+# these two sides stay sharp. Their centre is the corner 12,12.
+shape resize_top_left_bottom_right hot 11 11
+layer dark
+contour 2 2 line 12.414 2 line 2 12.414
+contour 22 22 line 11.586 22 line 22 11.586
+contour 7.375 5.625 line 18.375 16.625 line 16.625 18.375 line 5.625 7.375
+layer light
+contour 3 3 line 10 3 line 3 10
+contour 21 21 line 14 21 line 21 14
+contour 6.375 5.625 line 18.375 17.625 line 17.625 18.375 line 5.625 6.375
 
-shape resize_top_right_bottom_left hot 5 5
-|      XXXXX
-|      X...X
-|      XX..X
-|     XX.X.X
-|    XX.XXXX
-|   XX.XX
-|XXXX.XX
-|X.X.XX
-|X..XX
-|X...X
-|XXXXX
+shape resize_top_right_bottom_left hot 12 11
+layer dark
+contour 22 2 line 11.586 2 line 22 12.414
+contour 2 22 line 12.414 22 line 2 11.586
+contour 16.625 5.625 line 5.625 16.625 line 7.375 18.375 line 18.375 7.375
+layer light
+contour 21 3 line 14 3 line 21 10
+contour 3 21 line 10 21 line 3 14
+contour 17.625 5.625 line 5.625 17.625 line 6.375 18.375 line 18.375 6.375
