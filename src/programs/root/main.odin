@@ -49,8 +49,8 @@
 //   The kernel ends each handle that came from the grant, also in the
 //   programs that received it from that program.
 // - `Replace`: change the replacement table of the machine.
-// - `Principal_Create`, `Principal_Lock`, `Principals`: the named
-//   principals (docs/PRINCIPALS.md, "7. The commands").
+// - `Principal_Create`, `Principal_Lock`, `Principals`, `Principal_Change`:
+//   the named principals (docs/PRINCIPALS.md, "7. The commands").
 // - `Machine_Passphrase`: the machine passphrase, which guards the key of
 //   the disk grant table of principal 0 (persisted_grant_table.odin).
 // - `Machine_Seal`: a machine key that the TPM service seals to the
@@ -842,6 +842,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Stop:
 				for &item in started {
 					if item.program != 0 && item.client == system.Handle(record.values[0]) {
+						// A close of the window of unlock is a stop that
+						// this service asked: it does not count toward the
+						// bound of its restarts.
+						if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
+							unlock_stop_asked = true
+						}
 						system.call(.Program_Stop, u64(item.program), 0)
 					}
 				}
@@ -863,7 +869,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// program can send.
 				command := system.Root_Command(record.kind)
 				role := grants_of(system.name_of(item.name[:]))
-				of_principals := command == .Principal_Record || command == .Principal_Unlock || command == .Machine_Key
+				of_principals := command == .Principal_Record || command == .Principal_Unlock || command == .Machine_Key || command == .Principal_Change_End
 				// The command Debug: the debugger service only. It names
 				// one of its own callers, and this service applies the
 				// rule to that caller (debug).
@@ -889,6 +895,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					result = machine_passphrase_ask()
 				case .Machine_Seal:
 					result = machine_seal_ask()
+				case .Principal_Change:
+					// The completion comes when the change ends: the loop
+					// goes on meanwhile.
+					result, held = principal_change(&item, record.tag, record.values[4], &completion.values)
+				case .Principal_Change_End:
+					result = principal_change_end(record.values, &completion.values)
 				case .Machine_Key:
 					result = machine_key_take(record.values)
 					key_ring_erase(&item.requests.commands)
@@ -966,8 +978,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// a name, and a refused Principal_Unlock wrote its own. A
 				// refused Replace wrote its own: a refused signature is a
 				// cause that only replace knows. A refused Debug_Store wrote
-				// its own, as Debug does.
-				if result != .Ok && command != .Debug && command != .Debug_Store && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key && command != .Principal_Unlock && command != .Replace {
+				// its own, as Debug does. A refused Principal_Change wrote its
+				// own: the grant that refuses is a fact of the caller.
+				if result != .Ok && command != .Debug && command != .Debug_Store && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key && command != .Principal_Unlock && command != .Replace && command != .Principal_Change && command != .Principal_Change_End {
 					completion.values = refusal(system.Root_Command(record.kind), system.name_of(name[:]), record.values[4], result)
 				}
 				completion.kind = u32(result)
@@ -978,6 +991,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// has its answers in the ring.
 		entropy_answers(&wait)
 		reap()
+		// After reap: a principal that is locked has a window of unlock.
+		unlock_for_a_locked_principal()
 		// After reap: a storage service that stopped ended its connections.
 		disk_load_step(&wait)
 		persisted_tables_step(&wait)
@@ -2182,6 +2197,7 @@ release :: proc "contextless" (item: ^Started) {
 	entropy_service_end(item)
 	endpoint_close(item)
 	disk_load_forget(item)
+	principal_change_forget(item)
 	if palette_provider == item {
 		palette_provider_end(item, false)
 	}
@@ -2226,6 +2242,9 @@ reap :: proc "contextless" () {
 			// The kernel forgets the stop report with the last handle,
 			// which release closes: a disk program keeps it here.
 			stop_report_keep(&item)
+			if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
+				unlock_stopped()
+			}
 			release(&item)
 		}
 	}

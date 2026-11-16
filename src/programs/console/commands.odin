@@ -11,6 +11,7 @@ import "modus:contract/start_grant"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:support/disk_program"
+import "modus:support/principals"
 import "modus:support/random"
 import "modus:support/system"
 import "base:intrinsics"
@@ -572,6 +573,34 @@ commands_start :: proc "contextless" () {
 	// Errors: the machine has a record of its key already; no TPM service
 	// runs; Secure Boot did not verify the boot program; unlock runs.
 	command("machine_seal", {}, .None, "seal a machine key to the measure of the system with the TPM: the window of unlock shows its recovery key one time", machine_seal)
+	// Asks the root service to change the passphrase of the named principal
+	// of the session of this console, and gives what changed when the
+	// window of unlock ends the change.
+	//
+	// The window of unlock asks for the current passphrase, which the TPM
+	// counts when it seals the keys, then for the new one two times. The
+	// line waits for the end of the change; Escape ends the wait, and the
+	// window goes on. Only a console that the desktop starts during the
+	// session acts for the principal: the console of the machine cannot
+	// ask.
+	//
+	// Errors: this console acts for no named principal; its session is
+	// locked; unlock runs; the file cannot take the change (the cause
+	// follows); the change was cancelled, or failed, and nothing changed.
+	command("passphrase_change", {}, .Text, "change the passphrase of the principal of this session: it is typed in the window of unlock", passphrase_change)
+	// Asks the root service for a new recovery key of the named principal
+	// of the session of this console, and gives what changed when the
+	// window of unlock ends the change.
+	//
+	// The window of unlock asks for the current passphrase, then shows the
+	// new recovery key one time; the file is written after Enter. The old
+	// recovery key opens no file written after it, and still opens the
+	// version from before that the store keeps on the disk. Only the keys
+	// sealed by the TPM have a recovery key.
+	//
+	// Errors: as `passphrase_change()`; the keys under the passphrase alone
+	// have no recovery key.
+	command("recovery_key_change", {}, .Text, "make a new recovery key for the principal of this session: the window of unlock shows it one time", recovery_key_change)
 	// Asks the root service to lock the session of the named principal that
 	// is unlocked, and gives the count of the programs of the session that
 	// stopped.
@@ -2529,6 +2558,77 @@ machine_seal :: proc "contextless" (arguments: []Value) -> Value {
 		return fail_root("", completion)
 	}
 	return {}
+}
+
+// passphrase_change asks the root service to change the passphrase of the
+// principal of the session of this console. The passphrases are never a
+// text of the console: the console keeps each line in its history, so they
+// are typed in the window of unlock.
+passphrase_change :: proc "contextless" (arguments: []Value) -> Value {
+	return change_request(system.PRINCIPAL_CHANGE_PASSPHRASE)
+}
+
+// recovery_key_change asks the root service for a new recovery key of the
+// principal of the session of this console. The recovery key is never a
+// text of the console: the window of unlock shows it one time.
+recovery_key_change :: proc "contextless" (arguments: []Value) -> Value {
+	return change_request(system.PRINCIPAL_CHANGE_RECOVERY_KEY)
+}
+
+// change_request sends Principal_Change and waits for the end of the
+// change, which takes the time of the typing in the window of unlock: the
+// line gives what changed, or why nothing changed. The wait has no time
+// limit, as a principal types at its own pace; Escape ends the wait, and
+// the window of unlock goes on.
+change_request :: proc "contextless" (change: u64) -> Value {
+	if requests.head == nil {
+		return fail_no_answer()
+	}
+	intrinsics.atomic_store(&work.call_stoppable, 1)
+	defer intrinsics.atomic_store(&work.call_stoppable, 0)
+	request_count += 1
+	system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Principal_Change), tag = request_count, values = {4 = change}})
+	for {
+		// A completion with another tag answers a command that this
+		// program waits for no more.
+		for record in system.receive(&requests.completions) {
+			if record.tag != request_count {
+				continue
+			}
+			if system.Status(record.kind) != .Ok {
+				return fail_root("", record)
+			}
+			return change_result(record.values[0], record.values[1])
+		}
+		if intrinsics.atomic_load_explicit(&work.cancel, .Relaxed) != 0 {
+			return fail("Escape: the console waits no more for the end of the change; the window of unlock goes on")
+		}
+		wait: system.Wait
+		system.wait_records(&wait, &requests.completions)
+		system.wait_word(&wait, &work.cancel, 0)
+		system.wait_end(&wait)
+	}
+}
+
+// change_result gives the value of the line from the end of a change. The
+// values come from the root service, so each one is checked against its
+// enum.
+change_result :: proc "contextless" (end_value: u64, problem_value: u64) -> Value {
+	if end_value > u64(max(principals.Change_End)) {
+		return fail("the root service gave an end of the change that the console does not know")
+	}
+	end := principals.Change_End(end_value)
+	#partial switch end {
+	case .Passphrase_Changed, .Recovery_Key_Changed:
+		return {kind = .Text, text = principals.change_end_sentences[end]}
+	case .Refused:
+		problem := principals.Change_Problem.Unknown_Change
+		if problem_value <= u64(max(principals.Change_Problem)) {
+			problem = principals.Change_Problem(problem_value)
+		}
+		return fail(principals.change_end_sentences[end], ": ", principals.change_problem_sentences[problem])
+	}
+	return fail(principals.change_end_sentences[end])
 }
 
 // start_from_disk_refusal makes the line fail with the refusal of the root

@@ -23,14 +23,39 @@ import "modus:support/graphics"
 // The mark in the text of a step that the text of the last Screen_Text
 // replaces.
 SCREEN_TEXT_MARK :: "{screen text}"
+// The mark that the text of the Screen_Text before the last one replaces:
+// a recovery key that a new one replaced, which a later step types to show
+// that it opens nothing new.
+SCREEN_TEXT_BEFORE_MARK :: "{screen text before}"
 
 // The text that the last step Screen_Text read, in one test part: a later
 // machine of the part types it.
 screen_text_kept: string
+// The text that the step Screen_Text before the last one read.
+screen_text_before: string
 
-// screen_text_expand writes the kept text in place of each mark.
-screen_text_expand :: proc(text: string, kept: string) -> string {
+// screen_text_keep keeps a text that a step Screen_Text read, and the text
+// before it.
+screen_text_keep :: proc(read: string) {
+	delete(screen_text_before)
+	screen_text_before = screen_text_kept
+	screen_text_kept = strings.clone(read)
+}
+
+// screen_text_forget forgets the kept texts at the start of a test part.
+screen_text_forget :: proc() {
+	delete(screen_text_kept)
+	delete(screen_text_before)
+	screen_text_kept = ""
+	screen_text_before = ""
+}
+
+// screen_text_expand writes the kept text in place of each mark, and the
+// text before it in place of each mark of that one. The two marks do not
+// overlap: "{screen text}" ends where the other one goes on.
+screen_text_expand :: proc(text: string, kept: string, before: string) -> string {
 	result, _ := strings.replace_all(text, SCREEN_TEXT_MARK, kept, context.temp_allocator)
+	result, _ = strings.replace_all(result, SCREEN_TEXT_BEFORE_MARK, before, context.temp_allocator)
 	return result
 }
 

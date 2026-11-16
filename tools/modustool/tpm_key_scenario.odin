@@ -43,7 +43,7 @@ import "modus:support/tpm2"
 //      would trust a boot program that nothing verified. `machine_seal()`
 //      is refused for the same reason.
 //
-// Machines 7 to 10, after them, seal the keys of a named principal on a
+// Machines 7 to 12, after them, seal the keys of a named principal on a
 // disk of their own (see scenario_tpm_principal_create below).
 
 TEST_TPM_KEY_DISK :: BUILD_FOLDER + "/test_tpm_key_disk.img"
@@ -203,16 +203,26 @@ scenario_tpm_key_secure_boot_off := [?]Step {
 //   9. The other system: the TPM refuses the passphrase, as PCR 11 differs;
 //      a wrong recovery key opens nothing; the recovery key opens the keys,
 //      and a new passphrase seals them again to this system.
-//  10. The other system again: two wrong passphrases, each counted; with
-//      the one of machine 8, the TPM has counted three, the most that
-//      libtpms allows by default, and refuses the right one (TPM_RC_LOCKOUT);
-//      the recovery key opens the keys. This machine is the last one that
-//      uses the TPM: the lockout lasts 1000 seconds of the time of the TPM.
+//  10. The other system again: the passphrase opens the session; a console
+//      of the session changes the passphrase (the current one first, which
+//      the TPM checks), then makes a new recovery key, which the tool reads
+//      off the screen. After a lock the passphrase before the change is
+//      refused and counted, and the changed one opens the keys.
+//  11. The system of machines 7 and 8: the TPM refuses, as the keys are
+//      sealed to the other system; the recovery key of machine 7 opens
+//      nothing, the new one of machine 10 opens the keys, and the TPM seals
+//      them again to this system.
+//  12. The same system: one wrong passphrase, counted; with the one of
+//      machine 8 and the one of machine 10, the TPM has counted three, the
+//      most that libtpms allows by default, and refuses the right one
+//      (TPM_RC_LOCKOUT); the recovery key opens the keys. This machine is
+//      the last one that uses the TPM: the lockout lasts 1000 seconds of
+//      the time of the TPM.
 //
 // Machines 1 to 6 use no passphrase, so the TPM service leaves the lockout
 // hierarchy as it found it. Machine 7, the first seal with a passphrase,
-// sets the lockout value; machines 8 to 10 find it at their first
-// passphrase. After machine 10, the tool starts swtpm alone, as
+// sets the lockout value; machines 8 to 12 find it at their first
+// passphrase. After machine 12, the tool starts swtpm alone, as
 // another system on the machine, and sends TPM2_DictionaryAttackLockReset
 // with the empty value: a new TPM takes it, the TPM of the part refuses it
 // (tpm_lockout_reset_tests_run).
@@ -221,14 +231,17 @@ scenario_tpm_key_secure_boot_off := [?]Step {
 // is not a counted failure. After a counted failure it sends none, so a stop
 // then would count one more failure at the next start. Each machine here
 // that types a wrong passphrase ends its tries in the same run with an
-// answer that is not a counted failure: machine 8 with the right
-// passphrase, machine 10 with the lockout. So no start counts a failure of
-// its own, and the counts are those of before: one failure on machine 8,
-// two on machine 10, and the lockout at the next try.
+// answer that is not a counted failure: machines 8 and 10 with the right
+// passphrase, machine 12 with the lockout. A policy failure on another
+// system counts nothing. So no start counts a failure of its own, and the
+// counts are those of before: one failure on machine 8, one on machine 10,
+// one on machine 12, and the lockout at the next try.
 
 TEST_TPM_PRINCIPAL_DISK :: BUILD_FOLDER + "/test_tpm_principal_disk.img"
 WRONG_PRINCIPAL_PASSPHRASE :: "not the passphrase of alice"
 NEW_PRINCIPAL_PASSPHRASE :: "a new passphrase of alice"
+// The passphrase that the change of machine 10 gives.
+CHANGED_PRINCIPAL_PASSPHRASE :: "the changed passphrase of alice"
 
 // The line of the TPM service after each use of an authorization value.
 @(private = "file")
@@ -310,17 +323,103 @@ scenario_tpm_principal_other_system := [?]Step {
 	{kind = .Wait, text = "unlock: the keys of principal 1 \"alice\" wait for their recovery key: the TPM does not release them", fails_on = "unlock: the TPM releases the keys"},
 }
 
+// Machine 10: the passphrase of machine 9 opens the session; a console of
+// the session changes the passphrase, then makes a new recovery key, which
+// the tool reads off the screen. After a lock, the passphrase before the
+// change is refused and counted, and the new one opens.
+@(private = "file")
+scenario_tpm_principal_change := [?]Step {
+	{kind = .Type, text = NEW_PRINCIPAL_PASSPHRASE},
+	{kind = .Wait, text = TPM_LOCKOUT_FOUND_LINE, any_order = true, fails_on = TPM_LOCKOUT_SET_LINE},
+	{kind = .Wait, text = "unlock: the TPM releases the keys of principal 1 \"alice\" to its passphrase: the system is the system of the seal", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+	// A console of the session acts for alice: the console of the machine
+	// cannot ask for a change.
+	{kind = .Launch, text = "console"},
+	{kind = .Wait, text = "root: started console, with a terminal, in the session of principal 1 \"alice\""},
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Front, text = "console"},
+	// The change of the passphrase: the current one proves it, then the new
+	// one two times. The TPM seals the keys again.
+	{kind = .Type, text = "passphrase_change()"},
+	{kind = .Wait, text = "root: the passphrase of principal 1 \"alice\" changes in the window of unlock"},
+	{kind = .Wait, text = "unlock: principal 1 \"alice\" asks for a change: its current passphrase comes first", any_order = true},
+	{kind = .Wait, text = "compositor: surface unlock", any_order = true},
+	{kind = .Front, text = "unlock"},
+	{kind = .Type, text = NEW_PRINCIPAL_PASSPHRASE},
+	{kind = .Wait, text = "tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal, and the authorization value is right", any_order = true},
+	{kind = .Wait, text = "unlock: the current passphrase of principal 1 \"alice\" opens its keys"},
+	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
+	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
+	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
+	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" is changed: the TPM seals its keys to PCR 7 and PCR 11 and to the new passphrase", any_order = true},
+	// The end goes to the console that asked, and the window shows it
+	// until Enter.
+	{kind = .Wait, text = "root: the change in the window of unlock ends: the passphrase is changed"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	// A new recovery key: the current passphrase, then the key, shown one
+	// time. The tool keeps the key of machine 7 as the text before.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "recovery_key_change()"},
+	{kind = .Wait, text = "root: a new recovery key of principal 1 \"alice\" is made in the window of unlock"},
+	{kind = .Wait, text = "compositor: surface unlock", any_order = true},
+	{kind = .Front, text = "unlock"},
+	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
+	{kind = .Wait, text = "unlock: the current passphrase of principal 1 \"alice\" opens its keys"},
+	{kind = .Wait, text = "unlock: principal 1 \"alice\" has a new recovery key, and the window shows it one time; the file is written when it is written down", any_order = true},
+	{kind = .Screen_Text, text = "unlock", element = "recovery_key"},
+	// Enter after the key is written down: the file is written only now.
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "unlock: the new recovery key of principal 1 \"alice\" is kept: a file written from now opens with it only"},
+	{kind = .Wait, text = "root: the change in the window of unlock ends: the new recovery key is kept; the old one opens no new file", any_order = true},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "root: unlock stopped with code 0"},
+	// The lock from the console of the session, which stops with it. The
+	// passphrase before the change is wrong now: the TPM counts it.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "lock()"},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: "},
+	{kind = .Wait, text = "unlock: principal 1 \"alice\" is locked: its passphrase opens its session", any_order = true},
+	{kind = .Wait, text = "compositor: surface unlock", any_order = true},
+	{kind = .Front, text = "unlock"},
+	{kind = .Type, text = NEW_PRINCIPAL_PASSPHRASE},
+	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" is wrong: the TPM refuses it and counts it, nothing is unlocked (1 in all)", fails_on = TPM_SHUTDOWN_LINE},
+	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
+	{kind = .Wait, text = "unlock: the TPM releases the keys of principal 1 \"alice\" to its passphrase: the system is the system of the seal", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+}
+
+// Machine 11, after the other system refused the passphrase: the recovery
+// key of machine 7, which the new one of machine 10 replaced, opens
+// nothing; the new one opens the keys, and the TPM seals them again to this
+// system and to the changed passphrase.
+@(private = "file")
+scenario_tpm_principal_old_recovery_key := [?]Step {
+	{kind = .Type, text = SCREEN_TEXT_BEFORE_MARK},
+	{kind = .Wait, text = "unlock: the recovery key of principal 1 \"alice\" is wrong: the copy of its keys does not open, nothing is unlocked (1 in all)"},
+	{kind = .Type, text = SCREEN_TEXT_MARK},
+	{kind = .Wait, text = "unlock: the recovery key of principal 1 \"alice\" opens its keys"},
+	{kind = .Wait, text = "unlock: principal 1 \"alice\" types a passphrase: the TPM seals its keys again to it and to the system that runs"},
+	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
+	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
+	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
+	{kind = .Wait, text = "unlock: the keys of principal 1 \"alice\" are sealed again to PCR 7 and PCR 11 of the system that runs and to the new passphrase: its next unlock needs no recovery key", any_order = true},
+	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
+	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
+}
+
 @(private = "file")
 scenario_tpm_principal_lockout := [?]Step {
-	// The passphrase of before the recovery is wrong now: two failures,
-	// which make three with the one of machine 8.
-	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
+	// One failure of machine 8 and one of machine 10, the passphrase before
+	// the change: one more wrong passphrase makes three.
+	{kind = .Type, text = WRONG_PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = TPM_LOCKOUT_FOUND_LINE, any_order = true, fails_on = TPM_LOCKOUT_SET_LINE},
 	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" is wrong: the TPM refuses it and counts it, nothing is unlocked (1 in all)", fails_on = TPM_SHUTDOWN_LINE},
-	{kind = .Type, text = WRONG_PRINCIPAL_PASSPHRASE},
-	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" is wrong: the TPM refuses it and counts it, nothing is unlocked (2 in all)", fails_on = TPM_SHUTDOWN_LINE},
 	// The right passphrase: the TPM refuses each try now.
-	{kind = .Type, text = NEW_PRINCIPAL_PASSPHRASE},
+	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = "tpm: the TPM refuses the unseal: it counted too many wrong authorization values, and refuses each try for now (response code ", any_order = true, fails_on = "tpm: unsealed 32 bytes"},
 	// The lockout is not a counted failure: the service sends TPM2_Shutdown.
 	{kind = .Wait, text = TPM_SHUTDOWN_LINE, any_order = true},
@@ -506,12 +605,12 @@ tpm_lockout_reset_try :: proc(state_folder: string, number: int) -> (code: u32, 
 // tpm_lockout_reset_tests_run sends the reset of the count with the empty
 // lockout value, as another system on the machine can, first to a new
 // state of the TPM, which takes it, then to the TPM of the part after
-// machine 10, which refuses it: the service set a value there at machine 7.
+// machine 12, which refuses it: the service set a value there at machine 7.
 // The first one proves that the bytes of the command reset the count of a
 // TPM with an empty value, so the refusal of the second one comes from its
 // value. The TPM of the part answers TPM_RC_AUTH_FAIL: no machine of the
 // TPM runs after it, and the lockout hierarchy then waits. The answer is
-// TPM_RC_AUTH_FAIL only because machine 10 ends with TPM2_Shutdown: after a
+// TPM_RC_AUTH_FAIL only because machine 12 ends with TPM2_Shutdown: after a
 // start that is not orderly, a TPM can close the lockout hierarchy and
 // answer TPM_RC_LOCKOUT; read that cause first if the code is 0x921.
 @(private = "file")
@@ -533,13 +632,12 @@ tpm_lockout_reset_tests_run :: proc() -> bool {
 }
 
 // principals_tpm_tests_run runs the six machines of the machine key, then
-// the four of the keys of a named principal, on a new disk and a new state
+// the six of the keys of a named principal, on a new disk and a new state
 // of the software TPM.
 principals_tpm_tests_run :: proc() -> bool {
 	disk_prepare(TEST_TPM_KEY_DISK, DATA_DISK_SIZE, true) or_return
 	reset_folder(TPM_KEY_STATE_FOLDER) or_return
-	delete(screen_text_kept)
-	screen_text_kept = ""
+	screen_text_forget()
 	tpm_key_machine_run([][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_key_seal[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 1) or_return
 	test_passed_print("%s", "machine_seal() sealed the machine key by the TPM, and the window of unlock showed its recovery key")
 	tpm_key_machine_run([][]Step{scenario_tpm_key_same_system[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 2) or_return
@@ -563,23 +661,26 @@ principals_tpm_tests_run :: proc() -> bool {
 	return true
 }
 
-// principals_tpm_principal_tests_run runs the four machines of the keys of a
+// principals_tpm_principal_tests_run runs the six machines of the keys of a
 // named principal, on a new disk and the state of the software TPM that the
 // machines of the machine key left.
 @(private = "file")
 principals_tpm_principal_tests_run :: proc() -> bool {
 	disk_prepare(TEST_TPM_PRINCIPAL_DISK, DATA_DISK_SIZE, true) or_return
-	delete(screen_text_kept)
-	screen_text_kept = ""
+	screen_text_forget()
 	tpm_key_machine_run([][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_principal_create[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 7, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "principal_create() sealed the keys of alice by the TPM with her passphrase, and the window of unlock showed her recovery key")
 	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_same_system[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 8, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "the same system: the TPM counted a wrong passphrase, and released the keys to the right one")
 	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_other_system[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 9, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "another system: the TPM refused the passphrase, the recovery key opened the keys, and a new passphrase sealed them again")
-	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_lockout[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 10, TEST_TPM_PRINCIPAL_DISK) or_return
+	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_change[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 10, TEST_TPM_PRINCIPAL_DISK) or_return
+	test_passed_print("%s", "a console of the session changed the passphrase and the recovery key; the old passphrase was refused and counted, and the new one opened the keys")
+	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_other_system[:], scenario_tpm_principal_old_recovery_key[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 11, TEST_TPM_PRINCIPAL_DISK) or_return
+	test_passed_print("%s", "another system: the recovery key before the change opened nothing, and the new one opened the keys")
+	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_lockout[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 12, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "the TPM counted each wrong passphrase, refused each try after three, and the recovery key opened the keys")
-	fmt.println("modustool: the keys of a named principal sealed by the TPM: 4 machines passed")
+	fmt.println("modustool: the keys of a named principal sealed by the TPM: 6 machines passed")
 	// After the last machine of the TPM: the try of the reset closes the
 	// lockout hierarchy of that TPM for its recovery time.
 	tpm_lockout_reset_tests_run() or_return

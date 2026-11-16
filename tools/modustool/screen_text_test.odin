@@ -43,5 +43,24 @@ cells_of_spleen_are_read_back :: proc(t: ^testing.T) {
 	_, ok = cells_text(pixels, WIDTH, HEIGHT, 0, origin_y, 1)
 	testing.expect(t, !ok)
 	// The mark of a step takes the text that was read.
-	testing.expect_value(t, screen_text_expand("type {screen text} now", "ABCD"), "type ABCD now")
+	testing.expect_value(t, screen_text_expand("type {screen text} now", "ABCD", "WXYZ"), "type ABCD now")
+	// The mark of the text before takes the text of the read before.
+	testing.expect_value(t, screen_text_expand("type {screen text before} now", "ABCD", "WXYZ"), "type WXYZ now")
+	testing.expect_value(t, screen_text_expand("{screen text before} {screen text}", "ABCD", "WXYZ"), "WXYZ ABCD")
+}
+
+// A second read keeps the first text as the text before, and the start of
+// a part forgets both.
+@(test)
+the_text_before_is_the_text_of_the_read_before :: proc(t: ^testing.T) {
+	screen_text_forget()
+	screen_text_keep("FIRST")
+	testing.expect_value(t, screen_text_kept, "FIRST")
+	testing.expect_value(t, screen_text_before, "")
+	screen_text_keep("SECOND")
+	testing.expect_value(t, screen_text_kept, "SECOND")
+	testing.expect_value(t, screen_text_before, "FIRST")
+	screen_text_forget()
+	testing.expect_value(t, screen_text_kept, "")
+	testing.expect_value(t, screen_text_before, "")
 }

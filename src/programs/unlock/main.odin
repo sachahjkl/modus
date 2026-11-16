@@ -67,12 +67,16 @@
 // - At boot, and again after `lock()` in the console.
 // - With a name, after `principal_create("alice")` in the console: the
 //   window asks for the passphrase two times.
+// - During a session, after `passphrase_change()` or
+//   `recovery_key_change()` in a console of the session: the window asks
+//   for the current passphrase, then for the new one, or shows the new
+//   recovery key (docs/PRINCIPALS.md, "A change of the passphrase").
 //
 // **Grants**, as the root service gives them:
 //
 // - **Store**: its private store, which holds the file "principal".
 // - **Principals**: a ring to the root service for `Principal_Record`,
-//   `Principal_Unlock` and `Machine_Key` only. No other program can send
+//   `Principal_Unlock`, `Machine_Key` and `Principal_Change_End` only. No other program can send
 //   these commands, so no other program can start a session or give the
 //   key of a disk grant table.
 // - **Tpm**: the ring and the region of the TPM service, when the system is
@@ -153,13 +157,19 @@ Mode :: enum {
 	Machine_Recovery, // The TPM did not release the machine key: the recovery key, before the passphrase of a named principal.
 	Recovery_Shown, // The recovery key of a new machine key sealed by the TPM, shown one time.
 	Principal_Recovery, // The TPM did not release the keys of the named principal: its recovery key.
-	Principal_Recovery_Shown, // The recovery key of a new named principal sealed by the TPM, shown one time.
-	Passphrase_After_Recovery_First, // The recovery key opened the keys: a passphrase that the TPM seals them to again.
-	Passphrase_After_Recovery_Again, // The same passphrase again.
+	Principal_Recovery_Shown, // A new recovery key of a named principal sealed by the TPM, shown one time.
+	New_Passphrase_First, // The recovery key or the current passphrase opened the keys: a new passphrase that seals them again.
+	New_Passphrase_Again, // The same passphrase again.
+	Change_Current, // A change that the principal asked for: its current passphrase, which proves it.
+	Change_Result, // The end of a change, shown until Enter: what changed, or why nothing changed.
 	Done,
 }
 
 mode: Mode
+// The change that the root service started this program for:
+// principals.MODE_CHANGE_PASSPHRASE, principals.MODE_NEW_RECOVERY_KEY, or
+// 0 for none.
+change_mode: u64
 principal_found: bool // The store holds the file of a named principal: its unlock comes after the machine key.
 
 // The record of the machine key, as the store gave it, in its form.
@@ -208,9 +218,14 @@ principal_tpm_file_bytes: [principals.PRINCIPAL_TPM_FILE_SIZE]u8
 // The public keys of the named principal, from its file in either form.
 signing_public_key: [principals.PUBLIC_KEY_SIZE]u8
 unlock_public_key: [principals.PUBLIC_KEY_SIZE]u8
-// The secret keys that a recovery key opened, until a new passphrase seals
-// them again by the TPM; erased then.
-recovered_secrets: [principals.SECRET_KEYS_SIZE]u8
+// The secret keys that a recovery key, or the current passphrase of a
+// change, opened, until a new passphrase seals them again; erased then.
+opened_secrets: [principals.SECRET_KEYS_SIZE]u8
+// The file with the copy under a new recovery key, while the window shows
+// that key: it is written only after Enter, so a key that nobody saw never
+// becomes the key of the file.
+renewed_recovery_file: principals.Principal_Tpm_File
+renewed_recovery_bytes: [principals.PRINCIPAL_TPM_FILE_SIZE]u8
 
 typed: [principals.PASSPHRASE_LIMIT]u8
 typed_count: int
@@ -325,13 +340,11 @@ create :: proc "contextless" () {
 		system.log("unlock: no TPM service: the keys of the new principal are sealed under its passphrase alone, with no recovery key")
 	}
 	secrets: [principals.SECRET_KEYS_SIZE]u8
-	key: [principals.KEY_SIZE]u8
 	defer erase(secrets[:])
-	defer erase(key[:])
 	error: errors.Error_Record
 	// The keys come from the generator of this program, seeded by the root
 	// service from the sources of the processor; a weak seed is refused.
-	if !random.fill_for_a_key(&generator, secrets[:], .Processor, &error) || !random.fill_for_a_key(&generator, file.salt[:], .Processor, &error) || !random.fill_for_a_key(&generator, file.nonce[:], .Processor, &error) {
+	if !random.fill_for_a_key(&generator, secrets[:], .Processor, &error) {
 		system.log("unlock: the seed of this program is too weak for a key: no principal is created")
 		message, message_failed = "the seed of the machine is too weak for a key", true
 		return
@@ -345,23 +358,10 @@ create :: proc "contextless" () {
 	file.name, file.name_length = name, name_length
 	signing_public_key, unlock_public_key = file.signing_public_key, file.unlock_public_key
 	principal_form = .Passphrase
-	started := system.time()
-	if !derive(typed[:typed_count], file.salt[:], &key) {
-		message, message_failed = "the derivation of the key failed", true
+	derived, sealed := passphrase_file_seal(&secrets, &file, &file_bytes)
+	if !sealed {
 		return
 	}
-	derived := system.time() - started
-	principals.file_encode(&file, &file_bytes)
-	key_text := string(key[:])
-	nonce_text := string(file.nonce[:])
-	additional := string(principals.file_additional_data(&file_bytes))
-	text := string(secrets[:])
-	sealed := file.sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.SEALED_SIZE {
-		message, message_failed = "the seal of the keys failed", true
-		return
-	}
-	principals.file_encode(&file, &file_bytes)
 	if _, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, file_bytes[:]); status != .Ok {
 		system.log("unlock: the store did not keep the file of the principal: status ", u64(status))
 		message, message_failed = "the store did not keep the principal", true
@@ -375,6 +375,43 @@ create :: proc "contextless" () {
 	session_start(&secrets, system.PRINCIPAL_KEY_NEW)
 }
 
+// passphrase_file_seal seals the secret keys in a file of the form under the
+// passphrase alone: a new salt and a new nonce, the key of the passphrase
+// typed, and the seal. The name and the public keys are in the file
+// already. It gives the milliseconds of the derivation. On a failure the
+// file can be half written: the caller writes it to the store only on
+// success.
+passphrase_file_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, sealed_file: ^principals.Principal_File, sealed_bytes: ^[principals.FILE_SIZE]u8) -> (derived: u64, ok: bool) {
+	key: [principals.KEY_SIZE]u8
+	defer erase(key[:])
+	error: errors.Error_Record
+	// A new salt and a new nonce at each seal: a nonce is never used again
+	// under one key.
+	if !random.fill_for_a_key(&generator, sealed_file.salt[:], .Processor, &error) || !random.fill_for_a_key(&generator, sealed_file.nonce[:], .Processor, &error) {
+		system.log("unlock: the seed of this program is too weak for a key: the keys are not sealed")
+		message, message_failed = "the seed of the machine is too weak for a key", true
+		return 0, false
+	}
+	started := system.time()
+	if !derive(typed[:typed_count], sealed_file.salt[:], &key) {
+		message, message_failed = "the derivation of the key failed", true
+		return 0, false
+	}
+	derived = system.time() - started
+	principals.file_encode(sealed_file, sealed_bytes)
+	key_text := string(key[:])
+	nonce_text := string(sealed_file.nonce[:])
+	additional := string(principals.file_additional_data(sealed_bytes))
+	text := string(secrets^[:])
+	sealed := sealed_file.sealed[:]
+	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.SEALED_SIZE {
+		message, message_failed = "the seal of the keys failed", true
+		return 0, false
+	}
+	principals.file_encode(sealed_file, sealed_bytes)
+	return derived, true
+}
+
 // public_keys_match says if two secret keys give the public keys of the
 // file: a file whose public part does not match its seal is refused.
 public_keys_match :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8) -> bool {
@@ -382,42 +419,86 @@ public_keys_match :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]
 	return ok && signing == signing_public_key && unlocking == unlock_public_key
 }
 
-// passphrase_try opens the seal with the passphrase typed. A wrong passphrase gives
-// another key: the open fails, and nothing is unlocked.
-passphrase_try :: proc "contextless" () {
+// What the passphrase typed gave when it opened the keys of the file.
+Open_Outcome :: enum u8 {
+	Opened, // The keys opened, and they give the public keys of the file.
+	Derivation_Failed, // Argon2id gave no key.
+	Wrong, // A wrong passphrase: the seal does not open, or the TPM refused its value and counted it.
+	Locked_Out, // The TPM counted too many wrong passphrases, and refuses each try for now.
+	Tpm_Refused, // The TPM did not release the TPM secret: another system, no answer, a record that it did not make.
+	Not_Consistent, // The seal opened, and its keys are not the keys of the public part of the file.
+}
+
+// principal_keys_open opens the keys of the file of the named principal
+// with the passphrase typed, in the form of the file. A wrong passphrase
+// gives another key: the open fails. In the form sealed by the TPM, the
+// TPM counts it.
+principal_keys_open :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8) -> Open_Outcome {
 	if principal_form == .Sealed_By_The_Tpm {
-		principal_tpm_try()
-		return
+		return principal_tpm_open(secrets)
 	}
-	secrets: [principals.SECRET_KEYS_SIZE]u8
 	key: [principals.KEY_SIZE]u8
-	defer erase(secrets[:])
 	defer erase(key[:])
 	if !derive(typed[:typed_count], file.salt[:], &key) {
-		message, message_failed = "the derivation of the key failed", true
-		return
+		return .Derivation_Failed
 	}
 	error: errors.Error_Record
 	key_text := string(key[:])
 	nonce_text := string(file.nonce[:])
 	additional := string(principals.file_additional_data(&file_bytes))
 	sealed := string(file.sealed[:])
-	result := secrets[:]
+	result := secrets^[:]
 	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.SECRET_KEYS_SIZE {
-		refusals += 1
-		system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" is wrong: the seal does not open, nothing is unlocked (", refusals, " in all)")
-		message, message_failed = "the passphrase is wrong: nothing is unlocked", true
-		return
+		return .Wrong
 	}
 	// The secret keys must be the keys of the record: a file whose public
 	// part does not match its seal is refused.
-	if !public_keys_match(&secrets) {
-		system.log("unlock: the sealed keys of principal ", number, " do not match its public keys: nothing is unlocked")
-		message, message_failed = "the record is not consistent: nothing is unlocked", true
-		return
+	if !public_keys_match(secrets) {
+		return .Not_Consistent
 	}
-	system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" opens its seal; the root service receives the key of its disk grant table only, and the secret keys are erased")
-	session_start(&secrets, system.PRINCIPAL_KEY_OPENED)
+	return .Opened
+}
+
+// passphrase_try opens the keys with the passphrase typed, and starts the
+// session. A wrong passphrase opens nothing; when the TPM refuses, the
+// window asks for the recovery key.
+passphrase_try :: proc "contextless" () {
+	secrets: [principals.SECRET_KEYS_SIZE]u8
+	defer erase(secrets[:])
+	sealed_by_the_tpm := principal_form == .Sealed_By_The_Tpm
+	switch principal_keys_open(&secrets) {
+	case .Derivation_Failed:
+		message, message_failed = "the derivation of the key failed", true
+	case .Wrong:
+		refusals += 1
+		if sealed_by_the_tpm {
+			system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" is wrong: the TPM refuses it and counts it, nothing is unlocked (", refusals, " in all)")
+			message, message_failed = "the passphrase is wrong: the TPM counts each wrong try", true
+		} else {
+			system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" is wrong: the seal does not open, nothing is unlocked (", refusals, " in all)")
+			message, message_failed = "the passphrase is wrong: nothing is unlocked", true
+		}
+	case .Locked_Out:
+		system.log("unlock: the TPM refuses each try of the passphrase of principal ", number, " \"", the_name(), "\" for now: it counted too many wrong passphrases; the recovery key opens the keys")
+		principal_recovery_ask("the TPM refuses tries for now: type the recovery key")
+	case .Tpm_Refused:
+		principal_recovery_ask("the TPM refuses: type the recovery key of the principal")
+	case .Not_Consistent:
+		if sealed_by_the_tpm {
+			system.log("unlock: the keys of principal ", number, " do not open under the secret that the TPM released: the file is not consistent, and the recovery key opens them")
+			principal_recovery_ask("the file is not consistent: type the recovery key")
+		} else {
+			system.log("unlock: the sealed keys of principal ", number, " do not match its public keys: nothing is unlocked")
+			message, message_failed = "the record is not consistent: nothing is unlocked", true
+		}
+	case .Opened:
+		if sealed_by_the_tpm {
+			system.log("unlock: the TPM releases the keys of principal ", number, " \"", the_name(), "\" to its passphrase: the system is the system of the seal; the root service receives the key of its disk grant table only, and the secret keys are erased")
+		} else {
+			system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" opens its seal; the root service receives the key of its disk grant table only, and the secret keys are erased")
+		}
+		session_start(&secrets, system.PRINCIPAL_KEY_OPENED)
+	}
 }
 
 // machine_key_give gives the root service the key of the tag of the disk
@@ -582,6 +663,10 @@ tpm_open :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	tpm_region = ([^]u8)(address)[:tpm_service.REGION_SIZE]
+	// A run that stopped during a request (a lock stops a change) can have
+	// left an authorization value or a secret in the region.
+	erase(tpm_region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
+	erase(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE])
 	for {
 		_, has_record := system.receive(&tpm_requests.completions)
 		if !has_record {
@@ -1011,20 +1096,17 @@ create_sealed_by_the_tpm :: proc "contextless" () {
 	message, message_failed = "write it down: it opens the keys when the TPM refuses", false
 }
 
-// principal_tpm_try opens the keys of a principal whose file the TPM seals:
-// the key of the passphrase gives the authorization value, the TPM releases
-// the TPM secret only to it and to the system of the seal, and the two
-// together give the seal key. The TPM counts each wrong passphrase.
-principal_tpm_try :: proc "contextless" () {
+// principal_tpm_open opens the keys of a principal whose file the TPM
+// seals: the key of the passphrase gives the authorization value, the TPM
+// releases the TPM secret only to it and to the system of the seal, and the
+// two together give the seal key. The TPM counts each wrong passphrase.
+principal_tpm_open :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8) -> Open_Outcome {
 	passphrase_key: [principals.KEY_SIZE]u8
 	tpm_secret: [principals.PRINCIPAL_TPM_SECRET_SIZE]u8
-	secrets: [principals.SECRET_KEYS_SIZE]u8
 	defer erase(passphrase_key[:])
 	defer erase(tpm_secret[:])
-	defer erase(secrets[:])
 	if !derive(typed[:typed_count], principal_tpm_file.salt[:], &passphrase_key) {
-		message, message_failed = "the derivation of the key failed", true
-		return
+		return .Derivation_Failed
 	}
 	authorization := principals.principal_authorization_value(&passphrase_key)
 	defer erase(authorization[:])
@@ -1032,17 +1114,11 @@ principal_tpm_try :: proc "contextless" () {
 	switch {
 	case answered && status == .Ok:
 	case answered && status == .Authorization_Fails:
-		refusals += 1
-		system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" is wrong: the TPM refuses it and counts it, nothing is unlocked (", refusals, " in all)")
-		message, message_failed = "the passphrase is wrong: the TPM counts each wrong try", true
-		return
+		return .Wrong
 	case answered && status == .Locked_Out:
-		system.log("unlock: the TPM refuses each try of the passphrase of principal ", number, " \"", the_name(), "\" for now: it counted too many wrong passphrases; the recovery key opens the keys")
-		principal_recovery_ask("the TPM refuses tries for now: type the recovery key")
-		return
+		return .Locked_Out
 	case:
-		principal_recovery_ask("the TPM refuses: type the recovery key of the principal")
-		return
+		return .Tpm_Refused
 	}
 	seal_key := principals.principal_tpm_seal_key(&tpm_secret, &passphrase_key)
 	defer erase(seal_key[:])
@@ -1051,14 +1127,220 @@ principal_tpm_try :: proc "contextless" () {
 	nonce_text := string(principal_tpm_file.nonce[:])
 	additional := string(principals.principal_tpm_file_additional_data(&principal_tpm_file_bytes))
 	sealed := string(principal_tpm_file.sealed[:])
-	result := secrets[:]
-	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.SECRET_KEYS_SIZE || !public_keys_match(&secrets) {
-		system.log("unlock: the keys of principal ", number, " do not open under the secret that the TPM released: the file is not consistent, and the recovery key opens them")
-		principal_recovery_ask("the file is not consistent: type the recovery key")
+	result := secrets^[:]
+	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.SECRET_KEYS_SIZE || !public_keys_match(secrets) {
+		return .Not_Consistent
+	}
+	return .Opened
+}
+
+// change_proof_try opens the keys with the current passphrase typed, the
+// proof of a change. In the form sealed by the TPM, the TPM counts a wrong
+// one, as at an unlock. When the keys open, the change goes on: a new
+// passphrase, or a new recovery key. A refusal changes nothing, and the
+// window asks again.
+change_proof_try :: proc "contextless" () {
+	secrets: [principals.SECRET_KEYS_SIZE]u8
+	defer erase(secrets[:])
+	sealed_by_the_tpm := principal_form == .Sealed_By_The_Tpm
+	switch principal_keys_open(&secrets) {
+	case .Derivation_Failed:
+		message, message_failed = "the derivation of the key failed", true
+	case .Wrong:
+		refusals += 1
+		if sealed_by_the_tpm {
+			system.log("unlock: the current passphrase of principal ", number, " \"", the_name(), "\" is wrong: the TPM refuses it and counts it, nothing changes (", refusals, " in all)")
+			message, message_failed = "the passphrase is wrong: the TPM counts each wrong try", true
+		} else {
+			system.log("unlock: the current passphrase of principal ", number, " \"", the_name(), "\" is wrong: the seal does not open, nothing changes (", refusals, " in all)")
+			message, message_failed = "the passphrase is wrong: nothing changes", true
+		}
+	case .Locked_Out:
+		system.log("unlock: the TPM refuses each try of the passphrase of principal ", number, " \"", the_name(), "\" for now: it counted too many wrong passphrases; nothing changes")
+		message, message_failed = "the TPM refuses tries for now: nothing changes", true
+	case .Tpm_Refused:
+		system.log("unlock: the TPM does not release the keys of principal ", number, " \"", the_name(), "\" to its current passphrase: nothing changes")
+		message, message_failed = "the TPM refuses: nothing changes", true
+	case .Not_Consistent:
+		system.log("unlock: the keys of principal ", number, " do not open under its current passphrase: the file is not consistent, nothing changes")
+		message, message_failed = "the file is not consistent: nothing changes", true
+	case .Opened:
+		system.log("unlock: the current passphrase of principal ", number, " \"", the_name(), "\" opens its keys")
+		if change_mode == principals.MODE_NEW_RECOVERY_KEY {
+			recovery_key_prepare(&secrets)
+			return
+		}
+		opened_secrets = secrets
+		mode = .New_Passphrase_First
+		message, message_failed = "type the new passphrase", false
+	}
+}
+
+// recovery_key_prepare makes a new recovery key after the proof of a
+// change: a new key and a new nonce from the generator of this program, and
+// the copy of the keys under it, in a file that waits in memory. The
+// passphrase and the seal by the TPM stay: the additional data of the copy
+// stops before the salt, and the seal under the seal key stops before the
+// copy. The window shows the new key first; the file is written only after
+// Enter (recovery_key_commit), so a key that the principal never saw never
+// becomes the key of the file. A failure here keeps the file as it was.
+recovery_key_prepare :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8) {
+	recovery_key: [principals.RECOVERY_KEY_SIZE]u8
+	defer erase(recovery_key[:])
+	renewed_recovery_file = principal_tpm_file
+	error: errors.Error_Record
+	if !random.fill_for_a_key(&generator, recovery_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, renewed_recovery_file.recovery_nonce[:], .Processor, &error) {
+		system.log("unlock: the seed of this program is too weak for a key: principal ", number, " keeps its recovery key")
+		change_end(.Seed_Too_Weak)
 		return
 	}
-	system.log("unlock: the TPM releases the keys of principal ", number, " \"", the_name(), "\" to its passphrase: the system is the system of the seal; the root service receives the key of its disk grant table only, and the secret keys are erased")
-	session_start(&secrets, system.PRINCIPAL_KEY_OPENED)
+	recovery_seal_key := principals.principal_recovery_seal_key(&recovery_key)
+	defer erase(recovery_seal_key[:])
+	principals.principal_tpm_file_encode(&renewed_recovery_file, &renewed_recovery_bytes)
+	key_text := string(recovery_seal_key[:])
+	nonce_text := string(renewed_recovery_file.recovery_nonce[:])
+	additional := string(principals.principal_tpm_file_recovery_additional_data(&renewed_recovery_bytes))
+	text := string(secrets^[:])
+	recovery_sealed := renewed_recovery_file.recovery_sealed[:]
+	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error) != principals.SEALED_SIZE {
+		system.log("unlock: the seal of the copy under the new recovery key failed: principal ", number, " keeps its recovery key")
+		change_end(.Seal_Failed)
+		return
+	}
+	principals.principal_tpm_file_encode(&renewed_recovery_file, &renewed_recovery_bytes)
+	// The file goes to the disk only when it decodes: the next start reads
+	// it with the same checks.
+	if _, _, problem := principals.principal_tpm_file_decode(renewed_recovery_bytes[:]); problem != .None {
+		system.log("unlock: the file of the principal with a new recovery key does not decode: ", principals.principal_tpm_file_problem_sentences[problem])
+		change_end(.Seal_Failed)
+		return
+	}
+	recovery_text = principals.recovery_key_text(&recovery_key)
+	system.log("unlock: principal ", number, " \"", the_name(), "\" has a new recovery key, and the window shows it one time; the file is written when it is written down")
+	mode = .Principal_Recovery_Shown
+	message, message_failed = "write it down, then Enter: the file is written then", false
+}
+
+// recovery_key_commit writes the file with the copy under the new recovery
+// key, after Enter: its principal wrote the key down. If the store does
+// not keep the file, the recovery key before it stays the key of the file.
+recovery_key_commit :: proc "contextless" () {
+	erase(recovery_text[:])
+	switch principal_file_write(renewed_recovery_bytes[:]) {
+	case .Kept:
+		principal_tpm_file, principal_tpm_file_bytes = renewed_recovery_file, renewed_recovery_bytes
+		system.log("unlock: the new recovery key of principal ", number, " \"", the_name(), "\" is kept: a file written from now opens with it only; the store keeps the file from before as a version on this disk, and the old recovery key still opens that version")
+		change_end(.Recovery_Key_Changed)
+	case .Not_Kept:
+		system.log("unlock: the store did not keep the new recovery key of principal ", number, ": the recovery key before it stays the key of the file")
+		change_end(.Store_Failed)
+	case .Unknown:
+		system.log("unlock: the store gave no answer on the new recovery key of principal ", number, ": the old or the new recovery key opens the keys")
+		change_end(.Store_Unknown)
+	}
+}
+
+// passphrase_change_seal seals the keys that the current passphrase opened
+// under the new passphrase typed, in the form of the file, and writes the
+// file. The session goes on: the keys and the tag of the disk grant table
+// do not change. A failure keeps the file as it was. In each case the keys
+// are erased, and the window shows the end until Enter.
+passphrase_change_seal :: proc "contextless" () {
+	defer erase(opened_secrets[:])
+	switch principal_form {
+	case .Sealed_By_The_Tpm:
+		renewed := principal_tpm_file
+		renewed_bytes: [principals.PRINCIPAL_TPM_FILE_SIZE]u8
+		if !principal_tpm_seal(&opened_secrets, &renewed, &renewed_bytes) {
+			system.log("unlock: the passphrase of principal ", number, " does not change: the TPM did not seal the keys again, and the file stays as it was")
+			change_end(.Seal_Failed)
+			return
+		}
+		outcome := principal_file_write(renewed_bytes[:])
+		if outcome == .Kept {
+			principal_tpm_file, principal_tpm_file_bytes = renewed, renewed_bytes
+		}
+		passphrase_change_report(outcome, "the TPM seals its keys to PCR 7 and PCR 11 and to the new passphrase")
+	case .Passphrase:
+		renewed := file
+		renewed_bytes: [principals.FILE_SIZE]u8
+		if _, sealed := passphrase_file_seal(&opened_secrets, &renewed, &renewed_bytes); !sealed {
+			system.log("unlock: the passphrase of principal ", number, " does not change: the keys are not sealed again, and the file stays as it was")
+			change_end(.Seal_Failed)
+			return
+		}
+		// The file goes to the disk only when it decodes: the next start
+		// reads it with the same checks.
+		if _, _, problem := principals.file_decode(renewed_bytes[:]); problem != .None {
+			system.log("unlock: the file of the principal under the new passphrase does not decode: ", principals.file_problem_sentences[problem])
+			change_end(.Seal_Failed)
+			return
+		}
+		outcome := principal_file_write(renewed_bytes[:])
+		if outcome == .Kept {
+			file, file_bytes = renewed, renewed_bytes
+		}
+		passphrase_change_report(outcome, "its keys are sealed under the new passphrase alone")
+	case .Unknown:
+		change_end(.Seal_Failed)
+	}
+}
+
+// passphrase_change_report writes the end of a change of the passphrase on
+// the log, and shows it in the window. how says how the keys are sealed.
+passphrase_change_report :: proc "contextless" (outcome: Write_Outcome, how: string) {
+	switch outcome {
+	case .Kept:
+		system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" is changed: ", how, "; the store keeps the file from before as a version on this disk, and the old passphrase still opens that version")
+		change_end(.Passphrase_Changed)
+	case .Not_Kept:
+		system.log("unlock: the passphrase of principal ", number, " does not change: the store did not keep the new file")
+		change_end(.Store_Failed)
+	case .Unknown:
+		system.log("unlock: the store gave no answer on the new file of principal ", number, ": the old or the new passphrase opens the keys")
+		change_end(.Store_Unknown)
+	}
+}
+
+// change_end gives the end of a change to the root service, which gives it
+// to the console that asked, and shows it in the window until Enter: a
+// change never ends with a silent close.
+change_end :: proc "contextless" (end: principals.Change_End, problem: principals.Change_Problem = .None) {
+	completion, answered := root_command(.Principal_Change_End, {4 = u64(end), 5 = u64(problem)})
+	if !answered || system.Status(completion.kind) != .Ok {
+		system.log("unlock: the root service did not take the end of the change: status ", u64(completion.kind))
+	}
+	mode = .Change_Result
+	message = principals.change_end_sentences[end]
+	message_failed = end != .Passphrase_Changed && end != .Recovery_Key_Changed
+}
+
+// What a write of the file of the principal gave.
+Write_Outcome :: enum u8 {
+	Kept, // The store holds the new file.
+	Not_Kept, // The store holds the file from before.
+	Unknown, // The store did not answer, and the file could not be read back.
+}
+
+// principal_file_write writes a new file of the principal. A write whose
+// answer failed can still be on the disk: the file is read back and
+// compared, so the window never says that a secret is not kept when the
+// disk holds it.
+principal_file_write :: proc "contextless" (bytes: []u8) -> Write_Outcome {
+	_, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, bytes)
+	if status == .Ok {
+		return .Kept
+	}
+	system.log("unlock: the store did not answer the write of the file of principal ", number, ": status ", u64(status), "; the file is read back")
+	buffer: [principals.PRINCIPAL_FILE_LIMIT + 1]u8
+	read, found, read_status := storage.read(&client, storage.ROOT, principals.FILE_OBJECT, buffer[:])
+	if read_status != .Ok {
+		return .Unknown
+	}
+	if found && string(read) == string(bytes) {
+		return .Kept
+	}
+	return .Not_Kept
 }
 
 // principal_recovery_try opens the copy of the keys of the named principal
@@ -1095,8 +1377,8 @@ principal_recovery_try :: proc "contextless" () {
 	case !seal_allowed:
 		system.log("unlock: the firmware did not verify the boot program (Secure Boot is off): the keys of principal ", number, " are not sealed again, as their seal would trust a boot program that nothing verified; the recovery key opens them at the next start too")
 	case:
-		recovered_secrets = secrets
-		mode = .Passphrase_After_Recovery_First
+		opened_secrets = secrets
+		mode = .New_Passphrase_First
 		message, message_failed = "type a passphrase: the TPM seals the keys to it again", false
 		system.log("unlock: principal ", number, " \"", the_name(), "\" types a passphrase: the TPM seals its keys again to it and to the system that runs")
 		return
@@ -1110,12 +1392,12 @@ principal_recovery_try :: proc "contextless" () {
 // seal that fails keeps the file as it was, and the session starts anyway:
 // the recovery key opens the keys at the next start too.
 principal_reseal :: proc "contextless" () {
-	defer erase(recovered_secrets[:])
+	defer erase(opened_secrets[:])
 	renewed := principal_tpm_file
 	renewed_bytes: [principals.PRINCIPAL_TPM_FILE_SIZE]u8
 	defer erase(renewed_bytes[:])
 	switch {
-	case !principal_tpm_seal(&recovered_secrets, &renewed, &renewed_bytes):
+	case !principal_tpm_seal(&opened_secrets, &renewed, &renewed_bytes):
 		system.log("unlock: the keys of principal ", number, " are not sealed again: the recovery key opens them at the next start too")
 	case:
 		if _, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, renewed_bytes[:]); status != .Ok {
@@ -1125,7 +1407,7 @@ principal_reseal :: proc "contextless" () {
 			system.log("unlock: the keys of principal ", number, " \"", the_name(), "\" are sealed again to PCR 7 and PCR 11 of the system that runs and to the new passphrase: its next unlock needs no recovery key")
 		}
 	}
-	session_start(&recovered_secrets, system.PRINCIPAL_KEY_OPENED)
+	session_start(&opened_secrets, system.PRINCIPAL_KEY_OPENED)
 	// The keys are erased now: the window cannot ask for a passphrase to
 	// seal them again, so it ends even when the session did not start.
 	if mode != .Done {
@@ -1248,12 +1530,19 @@ draw :: proc "contextless" (window: ^display.Window) {
 		label = "keys sealed by the TPM  "
 		prompt = "recovery key  "
 		hint = "it is shown one time; enter: done"
-	case .Passphrase_After_Recovery_First:
+	case .New_Passphrase_First:
 		prompt = "new passphrase  "
-		hint = "enter: seal; escape: clear"
-	case .Passphrase_After_Recovery_Again:
+		hint = change_mode == principals.MODE_CHANGE_PASSPHRASE ? "enter: seal; enter with nothing: cancel; escape: clear" : "enter: seal; escape: clear"
+	case .New_Passphrase_Again:
 		prompt = "again  "
 		hint = "enter: seal; escape: clear"
+	case .Change_Current:
+		// 54 cells of 8 pixels after a margin of 12: it fits in 520 pixels.
+		prompt = "current passphrase  "
+		hint = "enter: check; enter with nothing: cancel; escape: clear"
+	case .Change_Result:
+		prompt = "change  "
+		hint = "enter: done"
 	}
 	x := interface.draw_text(table, 12, 12, label, graphics.COLOR_DIM)
 	interface.draw_text(table, x, 12, subject, graphics.COLOR_TEXT)
@@ -1275,6 +1564,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 		shown := string(recovery_text[:])
 		interface.draw_text(table, x, 48, shown, graphics.COLOR_TEXT)
 		interface.element_name(&frame, {x, 48, len(shown) * graphics.CELL_WIDTH, graphics.CELL_HEIGHT}, "recovery_key")
+	case .Change_Result:
+		// Nothing is typed: the sentence of the end is the message below.
 	case .Machine_Recovery, .Principal_Recovery:
 		// The recovery key typed is drawn: it is copied from paper, and its
 		// user checks it. At most RECOVERY_TYPED_LIMIT cells: it fits.
@@ -1351,10 +1642,39 @@ enter :: proc "contextless" (window: ^display.Window) {
 		principal_recovery_try()
 	case .Recovery_Shown, .Principal_Recovery_Shown:
 		// Its user wrote the recovery key down: it is erased, and never
-		// shown again.
-		erase(recovery_text[:])
+		// shown again. In a change, the file is written now.
+		if mode == .Principal_Recovery_Shown && change_mode == principals.MODE_NEW_RECOVERY_KEY {
+			message, message_failed = "writing the file", false
+			draw(window)
+			recovery_key_commit()
+		} else {
+			erase(recovery_text[:])
+			mode = .Done
+		}
+	case .Change_Result:
 		mode = .Done
-	case .Create_First, .Machine_Create_First, .Passphrase_After_Recovery_First:
+	case .Change_Current:
+		// Enter with nothing ends the change: nothing changes, and the
+		// session goes on.
+		if typed_count == 0 {
+			system.log("unlock: the current passphrase of principal ", number, " is not typed: nothing changes")
+			change_end(.Cancelled)
+			mode = .Done
+			return
+		}
+		message, message_failed = "deriving the key", false
+		draw(window)
+		change_proof_try()
+	case .Create_First, .Machine_Create_First, .New_Passphrase_First:
+		// In a change, Enter with nothing ends it: the keys that the proof
+		// opened must not wait for anyone at the keyboard.
+		if mode == .New_Passphrase_First && typed_count == 0 && change_mode == principals.MODE_CHANGE_PASSPHRASE {
+			erase(opened_secrets[:])
+			system.log("unlock: the new passphrase of principal ", number, " is not typed: nothing changes")
+			change_end(.Cancelled)
+			mode = .Done
+			return
+		}
 		if problem := principals.passphrase_problem(typed[:typed_count]); problem != .None {
 			message, message_failed = principals.passphrase_problem_sentences[problem], true
 		} else {
@@ -1365,19 +1685,19 @@ enter :: proc "contextless" (window: ^display.Window) {
 			case .Machine_Create_First:
 				mode = .Machine_Create_Again
 			case:
-				mode = .Passphrase_After_Recovery_Again
+				mode = .New_Passphrase_Again
 			}
 			message, message_failed = "type it again", false
 		}
-	case .Create_Again, .Machine_Create_Again, .Passphrase_After_Recovery_Again:
+	case .Create_Again, .Machine_Create_Again, .New_Passphrase_Again:
 		// The mode of the first passphrase, for a second one that differs
 		// and for a creation that failed before it wrote a file.
 		first_mode := Mode.Create_First
 		#partial switch mode {
 		case .Machine_Create_Again:
 			first_mode = .Machine_Create_First
-		case .Passphrase_After_Recovery_Again:
-			first_mode = .Passphrase_After_Recovery_First
+		case .New_Passphrase_Again:
+			first_mode = .New_Passphrase_First
 		}
 		if string(first[:first_count]) != string(typed[:typed_count]) {
 			message, message_failed = "the two passphrases differ: type a new one", true
@@ -1389,8 +1709,14 @@ enter :: proc "contextless" (window: ^display.Window) {
 			#partial switch again_mode {
 			case .Machine_Create_Again:
 				machine_create()
-			case .Passphrase_After_Recovery_Again:
-				principal_reseal()
+			case .New_Passphrase_Again:
+				// The same two modes after a recovery and in a change: a
+				// recovery starts the session, a change keeps it.
+				if change_mode == principals.MODE_CHANGE_PASSPHRASE {
+					passphrase_change_seal()
+				} else {
+					principal_reseal()
+				}
 			case:
 				create()
 			}
@@ -1406,6 +1732,49 @@ enter :: proc "contextless" (window: ^display.Window) {
 	}
 	erase(typed[:])
 	typed_count = 0
+}
+
+// principal_file_read reads the file of the named principal from the store,
+// in its form, and gives its public part to the root service. It gives
+// false when the store holds no file. A file that does not decode, or a
+// record that the root service refuses, stops the program with the code 1.
+principal_file_read :: proc "contextless" () -> (found: bool) {
+	buffer: [principals.PRINCIPAL_FILE_LIMIT + 1]u8
+	bytes, present, read_status := storage.read(&client, storage.ROOT, principals.FILE_OBJECT, buffer[:])
+	if read_status != .Ok {
+		system.log("unlock: the store did not give the file of the principal: status ", u64(read_status))
+		system.stop(1)
+	}
+	if !present {
+		return false
+	}
+	problem: principals.File_Problem
+	principal_form = principals.principal_record_form(bytes)
+	switch principal_form {
+	case .Passphrase:
+		file, file_bytes, problem = principals.file_decode(bytes)
+		if problem != .None {
+			system.log("unlock: the file of the principal is refused: ", principals.file_problem_sentences[problem])
+			system.stop(1)
+		}
+		name, name_length = file.name, file.name_length
+		signing_public_key, unlock_public_key = file.signing_public_key, file.unlock_public_key
+	case .Sealed_By_The_Tpm:
+		principal_tpm_file, principal_tpm_file_bytes, problem = principals.principal_tpm_file_decode(bytes)
+		if problem != .None {
+			system.log("unlock: the file of the principal sealed by the TPM is refused: ", principals.principal_tpm_file_problem_sentences[problem])
+			system.stop(1)
+		}
+		name, name_length = principal_tpm_file.name, principal_tpm_file.name_length
+		signing_public_key, unlock_public_key = principal_tpm_file.signing_public_key, principal_tpm_file.unlock_public_key
+	case .Unknown:
+		system.log("unlock: the file of the principal is refused: it starts with neither PRINCIPL nor PRINCIPT")
+		system.stop(1)
+	}
+	if !record_give() {
+		system.stop(1)
+	}
+	return true
 }
 
 // The entry of unlock: it reads or creates the record of a named principal,
@@ -1426,6 +1795,15 @@ enter :: proc "contextless" (window: ^display.Window) {
 //   recovery key, has the TPM service seal the key, writes the record, gives
 //   the root service the key of the tag, and shows the recovery key until
 //   Enter.
+// - **Change the passphrase** (`MODE_CHANGE_PASSPHRASE`) or **make a new
+//   recovery key** (`MODE_NEW_RECOVERY_KEY`) of the principal whose
+//   session runs: it reads the file, asks for the current passphrase,
+//   which opens the keys as an unlock does, then for the new passphrase two
+//   times, or shows the new recovery key until Enter. Enter with nothing
+//   ends the change. A file that cannot take the change (a new recovery key
+//   for the form under the passphrase alone, no TPM service for the form
+//   sealed by the TPM, a new seal with Secure Boot off) stops it with the
+//   code 1 before its window opens.
 // - **Unlock**: it reads the file "principal", and the record "machine"
 //   unless the mode is `MODE_UNLOCK_MACHINE_KEY_HELD`. With a record under
 //   a machine passphrase it asks for the machine passphrase first. With a
@@ -1510,42 +1888,32 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		mode = .Machine_Create_First
 		message = "type a passphrase of 8 bytes at least"
-	case:
-		buffer: [principals.PRINCIPAL_FILE_LIMIT + 1]u8
-		bytes, found, read_status := storage.read(&client, storage.ROOT, principals.FILE_OBJECT, buffer[:])
-		if read_status != .Ok {
-			system.log("unlock: the store did not give the file of the principal: status ", u64(read_status))
+	case principals.MODE_CHANGE_PASSPHRASE, principals.MODE_NEW_RECOVERY_KEY:
+		// The root service starts these modes only for a principal whose
+		// session runs; the file is read again here, as the store is the
+		// truth, and its record must be the record of that session.
+		change_mode = ctx.values[principals.VALUE_MODE]
+		if !principal_file_read() {
+			system.log("unlock: no named principal: there is no passphrase to change")
+			change_end(.Refused, .Unknown_Form)
 			system.stop(1)
 		}
-		if found {
-			problem: principals.File_Problem
-			principal_form = principals.principal_record_form(bytes)
-			switch principal_form {
-			case .Passphrase:
-				file, file_bytes, problem = principals.file_decode(bytes)
-				if problem != .None {
-					system.log("unlock: the file of the principal is refused: ", principals.file_problem_sentences[problem])
-					system.stop(1)
-				}
-				name, name_length = file.name, file.name_length
-				signing_public_key, unlock_public_key = file.signing_public_key, file.unlock_public_key
-			case .Sealed_By_The_Tpm:
-				principal_tpm_file, principal_tpm_file_bytes, problem = principals.principal_tpm_file_decode(bytes)
-				if problem != .None {
-					system.log("unlock: the file of the principal sealed by the TPM is refused: ", principals.principal_tpm_file_problem_sentences[problem])
-					system.stop(1)
-				}
-				name, name_length = principal_tpm_file.name, principal_tpm_file.name_length
-				signing_public_key, unlock_public_key = principal_tpm_file.signing_public_key, principal_tpm_file.unlock_public_key
-			case .Unknown:
-				system.log("unlock: the file of the principal is refused: it starts with neither PRINCIPL nor PRINCIPT")
-				system.stop(1)
-			}
-			if !record_give() {
-				system.stop(1)
-			}
-			principal_found = true
+		if problem := principals.change_problem(principal_form, change_mode, has_tpm, seal_allowed); problem != .None {
+			system.log("unlock: principal ", number, " \"", the_name(), "\" is not changed: ", principals.change_problem_sentences[problem])
+			// The console that asked gives the cause: the sentence does not
+			// fit on one line of the window.
+			change_end(.Refused, problem)
+			system.stop(1)
 		}
+		mode = .Change_Current
+		if principal_form == .Sealed_By_The_Tpm {
+			message = "type the current passphrase: the TPM counts each wrong try"
+		} else {
+			message = "type the current passphrase of the principal"
+		}
+		system.log("unlock: principal ", number, " \"", the_name(), "\" asks for a change: its current passphrase comes first")
+	case:
+		principal_found = principal_file_read()
 		// After a lock the root service holds the key of the table of
 		// principal 0 already: the machine passphrase is not asked again.
 		record_state := Record_State.Absent
