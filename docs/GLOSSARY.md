@@ -6042,6 +6042,68 @@ The design: `docs/TRUSTED_BOOT.md`, "7. Secure Boot".
 
 Do not use: development certificate.
 
+### Key folder
+
+The key folder is the folder outside the repository that holds the keys of the publisher of the system: the signing key, the firmware signing key and its certificate, and the release signing key.
+
+`modustool key new <folder>` makes it, each private file readable by its owner only, in a folder that only its owner can open. `modustool key write <folder>` makes the same folder from the four secrets of the workflow of a release. `SYSTEM_SIGNING_KEY` names the signing key in it, and the tool finds the other keys beside it.
+
+The design: `docs/TRUSTED_BOOT.md`, "5. The signing key".
+
+Do not use: keyring, key store, vault.
+
+### Release signing key
+
+The release signing key is the Ed25519 key pair of the publisher of the system whose private key signs the checksum list of the files of a release.
+
+It answers one question: do these downloaded files come from the publisher of the system? It signs no system: the signing key does. No machine holds it, so a new release signing key changes no machine. Its seed is `release_signing_key` in the key folder; its public key is `resources/keys/release_signing_key.public`, and the site publishes it. A key text is 32 bytes in base64url with no padding, the form of the package `signing` of gui_toolkit. `modustool release image` refuses a release signing key whose public key is not the file of the repository.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: release key, download key, GPG key.
+
+### Checksum list
+
+The checksum list is the file `SHA256SUMS.txt` of a release: one line for each published file, its SHA-256 in 64 lowercase hexadecimal digits, two spaces and its name.
+
+It has the form that `sha256sum -c` reads. Its line names the compressed image, the file that a principal downloads. The release signature covers it, so the image needs no signature of its own. Example: `3f0c...e1  modus-0.93.0-x86_64.img.zst`.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: manifest, hash file, digest list.
+
+### Release signature
+
+The release signature is the Ed25519 signature, by the release signing key, of the release signature context and the checksum list: the file `SHA256SUMS.txt.sig`, in base64url with no padding.
+
+The release signature context is the bytes `modus release checksums 1` and an end of line. It binds the signature to this one use: a signature that the key makes for another message is never a release signature, and a signature of the checksum list alone does not verify. `modustool verify` checks it before it reads a line of the list; OpenSSL 3 checks it with no tool (`docs/INSTALL.md`, "2. Verify the files").
+
+It is not a description signature: that one signs a system description, with the signing key.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: detached signature (for this), checksum signature.
+
+### Release volume
+
+The release volume is the boot volume that a release publishes: the main boot image, the kernel of the tests, and the boot program signed with the firmware signing key, signed with the keys of the publisher of the system.
+
+Only `modustool release image` builds it, as `build/boot_volume_release.img`, after a whole build: it is not in the list of the volumes of the build, and no test boots it. Its form is the form of the volume of the machine of Secure Boot of the tests, with other keys.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: production volume, installer.
+
+### Release image
+
+The release image is the disk image that a release publishes: a GPT disk whose one partition, the EFI system partition, is the release volume, compressed with zstd.
+
+A principal writes it to a USB key with `dd` (`docs/INSTALL.md`, "3. Write the USB key"). The boot volume of the tests has no partition table; the release image has one, because the firmware of a real machine reads a GPT disk. The GUIDs of the disk come from the hash of the volume, so one volume gives one disk. File: `modus-<release number>-x86_64.img.zst`.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: ISO, installer, live image.
+
 ## Project
 
 The words of this group name how the project is run and published: the documents that hold its rules and its state, the units of the work, and the site, the changelog and the news that report it.
@@ -6118,9 +6180,9 @@ Do not use: release notes (for the file), history, news.
 
 A release is one section of the changelog: a release number, a date, and the entries of its changes, in the parts Added, Changed, Deprecated, Removed, Fixed and Security.
 
-A release marks a state of `master` that passed its checks. `modustool changelog release` makes it: it moves the fragments of `changelog.d/` into a new section `## [<number>] - <date>`, deletes them, and writes the release number in `src/library/contract/release`. Example: `## [0.91.0] - 2026-11-12`. On the site each release has the anchor `release-<number>` and links to each news entry that names it.
+A release marks a state of `master` that passed its checks. `modustool changelog release` makes it: it moves the fragments of `changelog.d/` into a new section `## [<number>] - <date>`, deletes them, and writes the release number in `src/library/contract/release`. Example: `## [0.91.0] - 2026-11-12`. On the site each release has the anchor `release-<number>` and links to each news entry that names it. The tag `v<number>` of its commit starts the workflow that publishes its release image, its checksum list and its release signature.
 
-It is not a version: a stored object of the system has versions. It is not a git tag, and not a build: many builds come between two releases.
+It is not a version: a stored object of the system has versions. It is not the git tag, which only names its commit, and not a build: many builds come between two releases.
 
 The design: `docs/SITE.md`, "The pages".
 
@@ -6824,6 +6886,26 @@ It holds no logic: each step calls `modustool` or an action pinned by its versio
 The design: `docs/SITE.md`, "How the site is published".
 
 Do not use: pipeline, CI job, deploy script.
+
+### Release workflow
+
+The release workflow is the workflow of GitHub Actions `.github/workflows/release.yml`, which publishes the release image, the checksum list and the release signature of a release at each push of a tag `v<release number>`.
+
+It holds no logic: each step calls `modustool`, Nix or an action pinned by the commit of its version. A first job runs `nix flake check` of the tagged commit. A second job, the one that reads the keys, from the GitHub environment `release` that only a tag `v*` may use, checks that the tag names the release number (`modustool release tag-check`), writes the key folder (`modustool key write`) and makes the files (`modustool release image`). A third job, with no key, creates the release of the tag with the files and with the notes of the release from `CHANGELOG.md`. A failed check, a refused key or a failed build stops the run, and nothing is published.
+
+The design: `src/md/infrastructure/release_image.md`.
+
+Do not use: release pipeline, deploy script.
+
+### Check workflow
+
+The check workflow is the workflow of GitHub Actions `.github/workflows/ci.yml`, which runs `nix flake check` at each push.
+
+It holds no logic: one step calls Nix. `nix flake check` runs the hooks and `modustool check` in an empty folder, with the machine tests. A newer push of the same branch cancels an older run.
+
+The design: `docs/TOOLS.md`, "The commands of the tool".
+
+Do not use: CI pipeline, build job.
 
 ### Full check
 

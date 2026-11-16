@@ -751,6 +751,8 @@ site_releases_add :: proc(site: ^Site) {
 	site_source_line(site, &b, CHANGELOG_FILE)
 	// This page lists the work that is done; the planned work has its page.
 	site_roadmap_link_line(site, &b, path)
+	// The files of the newest release, and how to verify them.
+	site_download_write(site, &b, path)
 	for changelog_release in releases {
 		number := release_number_text(changelog_release.number)
 		fmt.sbprintf(&b, "<section class=\"release\">\n<h2 id=\"%s\">%s <span class=\"date\">%s</span></h2>\n", site_release_id(number), number, changelog_release.date)
@@ -901,6 +903,8 @@ site_home_add :: proc(site: ^Site) {
 
 	// The newest release, and the line of the roadmap.
 	site_release_band_write(site, &b, home)
+	// The files of the newest release, and how to verify them.
+	site_download_write(site, &b, home)
 	site_page_add(site, Site_Page{path = home, is_index = true, title = SITE_SYSTEM_NAME, description = site_description_cut(site.readme.lead), section = .Home, body = strings.to_string(b), sources = site_sources(SITE_README_FILE, CHANGELOG_FILE, SITE_GALLERY_SOURCE_FILE), script = SITE_CAROUSEL_SCRIPT})
 }
 

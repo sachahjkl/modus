@@ -640,7 +640,7 @@ site_declaration_link_in_code :: proc(site: ^Site, b: ^strings.Builder, from_pag
 }
 
 // The commands that start a code span of a shell: such a span is not Odin.
-SITE_COMMAND_NAMES :: [?]string{"modustool", "nix", "odin", "git", "gh", "qemu-system-x86_64", "qemu-img", "cargo", "make", "sh", "bash", "fish", "cd", "ls", "cat", "curl", "ssh", "sudo", "rm", "cp", "mv", "mkdir", "echo", "grep", "rg", "objdump", "readelf", "llvm-objdump", "swtpm", "sbsign", "openssl", "python", "node"}
+SITE_COMMAND_NAMES :: [?]string{"modustool", "nix", "odin", "git", "gh", "qemu-system-x86_64", "qemu-img", "cargo", "make", "sh", "bash", "fish", "cd", "ls", "cat", "curl", "ssh", "sudo", "rm", "cp", "mv", "mkdir", "echo", "grep", "rg", "objdump", "readelf", "llvm-objdump", "swtpm", "sbsign", "openssl", "python", "node", "zstd", "sha256sum", "dd", "printf", "basenc", "sops", "lsblk", "sync"}
 
 // site_code_span_is_odin tells whether a code span that is not a single
 // name is a fragment of Odin that the site colors. The test leaves a span

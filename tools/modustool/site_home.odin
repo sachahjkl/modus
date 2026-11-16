@@ -593,6 +593,12 @@ SITE_HOME_RULES :: `
 .release-changes a { font-weight: 700; }
 .release-change-type { display: inline-block; min-width: 9ch; color: var(--dim); font-family: var(--mono); font-size: 12px; text-transform: uppercase; }
 .release-more { color: var(--dim); }
+/* The download section: the files of the newest release, and the release
+   signing key, whose text breaks at any character rather than leave its
+   box. */
+.download-files { list-style: none; margin: 0 0 8px; padding: 0; }
+.download-files li { margin: 0; padding: 2px 0; overflow-wrap: anywhere; }
+.download-key { overflow-wrap: anywhere; font-size: 14px; }
 `
 
 // site_boot_card_rules gives the rules that show one card of a stage at a

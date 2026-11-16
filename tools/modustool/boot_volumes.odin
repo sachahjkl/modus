@@ -303,7 +303,7 @@ boot_volume_build :: proc(volume: Boot_Volume) -> bool {
 	file_write_with_a_hole_at_its_end(volume.path, volume_bytes) or_return
 	// Beside the volume: which key signed it. A volume that the test keys
 	// signed is for a test machine only.
-	signed_by := signed.signed_by_test_key ? "the TEST signing key, whose private key is published: do not install this volume on a real machine\n" : "the signing key of SYSTEM_SIGNING_KEY\n"
+	signed_by := signed.signed_by_test_key ? SIGNED_BY_TEST_KEY_TEXT : SIGNED_BY_PUBLISHER_KEY_TEXT
 	if write_err := os.write_entire_file(signed_by_file_path(volume.path), signed_by); write_err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", signed_by_file_path(volume.path), write_err)
 		return false
@@ -767,7 +767,7 @@ test_part_volumes := [?]Volumes_Of_Part {
 	// main volume and the other system.
 	{
 		part = "trusted_boot",
-		procedures = {"trusted_boot_tests_run"},
+		procedures = {"trusted_boot_tests_run", "release_image_machine_run"},
 		volumes = {BOOT_VOLUME, BOOT_VOLUME_CHANGED_MODULE, BOOT_VOLUME_WRONG_SIGNATURE, BOOT_VOLUME_OTHER_SYSTEM, BOOT_VOLUME_CHANGED_KERNEL, BOOT_VOLUME_WITHOUT_DESCRIPTION, BOOT_VOLUME_STATED_HASH, BOOT_VOLUME_SECURE_BOOT, BOOT_VOLUME_SECURE_BOOT_CHANGED},
 	},
 }

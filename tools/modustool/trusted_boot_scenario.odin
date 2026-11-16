@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "modus:contract/release"
 import "modus:contract/system_description"
 
 // The machines of the trusted boot (docs/TRUSTED_BOOT.md), `modustool test
@@ -28,6 +29,10 @@ import "modus:contract/system_description"
 //      it;
 //   9. the signed boot program with one byte changed does not start;
 //  10. the unsigned boot program does not start.
+// Then, with the usual firmware:
+//  11. the volume of machine 8, packaged as the files of a release with a
+//      release signing key of the test, verifies, decompresses, and starts
+//      from its GPT disk.
 
 // The module that the volumes of machines 1 and 5 change: the root service
 // starts it at each boot: with no check, the machine runs it.
@@ -330,6 +335,51 @@ trusted_boot_tests_run :: proc(with_tpm := false) -> bool {
 	test_passed_print("the firmware with Secure Boot started the signed boot program of %s, which says so", BOOT_VOLUME_SECURE_BOOT)
 	refused_machine_run(scenario_secure_boot_refused[:], BOOT_VOLUME_SECURE_BOOT_CHANGED, TEST_OUTPUT_SECURE_BOOT_CHANGED, .With_Secure_Boot) or_return
 	refused_machine_run(scenario_secure_boot_refused[:], BOOT_VOLUME, TEST_OUTPUT_SECURE_BOOT_UNSIGNED, .With_Secure_Boot) or_return
+	release_image_machine_run() or_return
+	return true
+}
+
+// The machine of the release image: the files of a release, made from the
+// volume of Secure Boot of the tests, verified, decompressed, and started.
+RELEASE_TEST_FOLDER :: BUILD_FOLDER + "/release_test"
+RELEASE_TEST_DISK :: RELEASE_TEST_FOLDER + "/decompressed.img"
+TEST_OUTPUT_RELEASE_IMAGE :: BUILD_FOLDER + "/test_output_release_image.txt"
+// The seed of the release signing key of this test only. It is published
+// here, so its public key is never the key of the repository, and the
+// release command refuses it.
+RELEASE_TEST_SEED_TEXT :: "modus release image test seed 01"
+
+scenario_release_image := [?]Step {
+	{kind = .Wait, text = "boot program: started"},
+	{kind = .Wait, text = "boot program: the kernel and each module and resource have the hash of the system description"},
+	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: "},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Quit},
+}
+
+// release_image_machine_run packages the volume of Secure Boot, which the
+// test keys signed, as the files of a release, with the one packaging that
+// accepts the test keys. It verifies the files, decompresses the image with
+// zstd, and starts a machine from the GPT disk with the usual firmware: the
+// machines of Secure Boot already test the signature of the boot program.
+release_image_machine_run :: proc() -> bool {
+	seed_text: string = RELEASE_TEST_SEED_TEXT
+	seed := transmute([]u8)seed_text
+	files := release_files_write(BOOT_VOLUME_SECURE_BOOT, release.RELEASE_NUMBER, RELEASE_TEST_FOLDER, RELEASE_TEST_FOLDER + "/" + RELEASE_OUTPUT_FOLDER, seed, .Test_Keys_Allowed) or_return
+	public_key := public_key_of_seed(seed) or_return
+	digits, problem := release_files_verify(files.image_path, files.checksum_path, public_key)
+	if problem != "" {
+		fmt.eprintfln("modustool: test failed: the files of the release image do not verify: %s", problem)
+		return false
+	}
+	test_passed_print("the release signature of %s verifies, and %s has its SHA-256 %s", files.checksum_path, files.image_path, digits)
+	_ = os.remove(RELEASE_TEST_DISK)
+	run([]string{"zstd", "-d", "-q", "-o", RELEASE_TEST_DISK, files.image_path}) or_return
+	// The disk is the output of this build: the machine starts from it.
+	boot_volume_ready_note(RELEASE_TEST_DISK)
+	// The tool ends QEMU: status 0.
+	machine_test(scenario_release_image[:], RELEASE_TEST_DISK, TEST_OUTPUT_RELEASE_IMAGE, 0) or_return
+	test_passed_print("the decompressed release image %s, a GPT disk, starts the system", RELEASE_TEST_DISK)
 	return true
 }
 

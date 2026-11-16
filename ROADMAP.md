@@ -6,11 +6,13 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
+- **The first signed release image.** The keys of the publisher of the system go into the secrets of the repository, and their public key and certificate into `resources/keys`. The next tag then publishes a disk image that a principal verifies and starts. [Design](src/md/infrastructure/release_image.md)
 - **The keys of a named principal sealed by the TPM, and their recovery key.** The TPM releases the keys of a named principal only to the system whose measure it holds, and counts the wrong passphrases, so a copy of the disk allows no tries without limit. A principal who loses the passphrase opens the stores again with a recovery key. [Design](src/md/features/tpm_sealed_machine_key.md)
 - **A guest on a machine with an Intel processor.** A program runs a guest on a machine with an Intel processor too, with the same operation and the same exit records as on AMD. [Design](src/md/features/guest.md)
 
 ## Later
 
+- **The release image started on a real machine.** The image starts from a USB key on the UEFI firmware of a real machine, with the certificate of the publisher enrolled and Secure Boot on, and the machine key sealed by its TPM. Today the image starts in the machine test only, on the firmware of QEMU. [Design](src/md/infrastructure/release_image.md)
 - **The screen shows each frame of the compositor whole.** The compositor puts a frame on the screen in one step, by a page flip or at the vertical blank, so a window that changes many times a second never shows a cut between two of its pictures. [Design](src/md/infrastructure/whole_frame.md)
 - **An outside module imports another outside module.** The import of a module of another project names a module of the same project, and not only a module of the system. A developer then writes a library module and the programs that import it outside the repository. [Design](src/md/infrastructure/third_party_module.md)
 - **The option for the debug information in the compiler of the Odin project.** The kind of debug information that adds no instruction is offered to the Odin project. A developer then builds the modules of the system with the compiler of that project, with no fork. [Design](src/md/infrastructure/debug_information_and_code.md)
