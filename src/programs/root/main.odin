@@ -689,7 +689,8 @@ entropy_report: random.Entropy_Report
 // 7. starts `input` with the ports and the interrupts of the PS/2
 //    controller, then the compositor with the framebuffer, then the entropy
 //    service when the machine has an entropy device, with no wait for its
-//    bytes, then the font service with the demand cache (font_service.odin);
+//    bytes, then the font service, which draws the demand cache and ends
+//    (font_service.odin);
 // 8. starts `date`, then the console, then the settings that were kept,
 //    then the TPM service when the system is measured into a TPM, then
 //    `unlock`.
@@ -823,8 +824,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The compositor is also a service (src/programs/compositor/exports.odin):
 		// a service ring and its own file, as start() gives to a service.
 		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
-		// The file, two pointer themes, the settings page, five glyph caches, the date page, the fresh bytes page.
-		mappings: [12]system.Mapping
+		// The file, two pointer themes, the settings page, five glyph caches, the font outlines, the demand cache, the date page, the fresh bytes page.
+		mappings: [14]system.Mapping
 		mapping_count := 0
 		served := &started[0]
 		served^ = {}
@@ -883,8 +884,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// first place of the table of the programs. The loop below mixes its
 	// bytes when they come (entropy.odin).
 	entropy_service_start()
-	// The font service, before the programs with a surface: each one gets a
-	// request ring to it (font_service.odin).
+	// The font service draws the fixed subsets into the demand cache, which
+	// each program with a surface maps; a program that draws before it ends
+	// draws the same glyphs itself (font_service.odin).
 	font_service_start()
 	// The date: the program `date` reads the real-time clock. The programs
 	// that start before it writes the page read no date until then.
@@ -1348,7 +1350,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	slot.principal = principal // The name of its store carries the principal.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	// The storage file, the date page, the fresh bytes page, the settings page, five glyph caches, the file of a service, the debug image, the disk program page, the demand cache and the request ring: 14 places for the union, and the largest role uses 13.
+	// The storage file, the date page, the fresh bytes page, the settings page, five glyph caches, the file of a service, the debug image, the disk program page, the font outlines and the demand cache: 14 places for the union, and the largest role uses 13.
 	mappings: [14]system.Mapping
 	mapping_count := 0
 	// A mapping that the program cannot start without did not fit: the
@@ -1359,13 +1361,6 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	defer if store_ring != 0 {
 		system.close(store_ring)
 		system.close(store_region)
-	}
-	// The request ring to the font service: the program maps it and the
-	// font service holds it, so this service keeps no handle of it after
-	// the start (font_service.odin).
-	font_ring: system.Handle
-	defer if font_ring != 0 {
-		system.close(font_ring)
 	}
 	if .Store in role && .Acts_For_Principal not_in role {
 		storage_service: ^Started
@@ -1509,11 +1504,10 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	if .Inspect in role {
 		disk_program_page_give(mappings[:], &mapping_count, &values)
 	}
-	// A program with a surface: the settings page and the glyph cache, read-only;
-	// the demand cache, read-only, and its request ring to the font service.
+	// A program with a surface: the settings page, the glyph caches, the
+	// font outlines and the demand cache, read-only.
 	if .Terminal not_in role {
 		text_settings_give(mappings[:], &mapping_count, &values)
-		font_ring = font_requests_give(slot, name, mappings[:], &mapping_count, &values)
 	}
 	// A service: the service ring, and its own file, to read the
 	// descriptions of its exports.
@@ -2122,11 +2116,11 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	measure: bool
 	values[terminal.VALUE_COLUMNS], values[terminal.VALUE_ROWS], measure = terminal_of(system.name_of(writer.name[:]))
 	values[terminal.VALUE_MEASURE] = u64(measure)
-	// The settings page, five glyph caches and the demand cache.
+	// The settings page, five glyph caches, the font outlines and the
+	// demand cache.
 	mappings: [8]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
-	demand_cache_give(mappings[:], &mapping_count, &values)
 	// The terminal imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	load_error: module.Load_Error

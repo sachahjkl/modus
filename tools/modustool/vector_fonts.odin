@@ -5,6 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "modus:contract/demand_cache"
+import "modus:contract/font_outlines"
 import "modus:contract/glyph_cache"
 import "modus:support/vector_font"
 
@@ -19,7 +20,8 @@ import "modus:support/vector_font"
 // instructions. A font that lacks one of them is refused. The subsets of
 // the regular weight of the interface font and of the two weights of the
 // font of the cells also hold the characters that the font service draws
-// on demand (demand_characters_of), after the others, so the glyphs of
+// into the demand cache, and that each program draws past its glyph cache
+// (demand_characters_of), after the others, so the glyphs of
 // their glyph caches do not change; the hash of the font file in the
 // header of each cache does. The
 // subsets are in the repository, as the output of the command "font" is:
@@ -27,8 +29,8 @@ import "modus:support/vector_font"
 // build/fonts/candidates.png, the picture of the choice, from the same
 // renderer as the system.
 //
-// The build makes the glyph caches of the default font and of the interface font (build_glyph_caches):
-// the boot image holds it as the resource "glyph_cache".
+// The build makes the glyph caches of the default font and of the interface font, and
+// the font outlines (build_glyph_caches): the boot image holds them as resources.
 
 VECTOR_FONT_SOURCES_VARIABLE :: "VECTOR_FONT_SOURCES"
 VECTOR_FONT_FOLDER :: "resources/fonts"
@@ -779,7 +781,7 @@ glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scal
 // grid fit and without it, and of its bold weight at scale 1, and gives
 // them as resources of the boot image. The setting "grid_fit" of the
 // system chooses one of the first two at run time.
-build_glyph_caches :: proc() -> (resources: [5]Resource_File, ok: bool) {
+build_glyph_caches :: proc() -> (resources: [6]Resource_File, ok: bool) {
 	make_folder(VECTOR_FONT_BUILD_FOLDER)
 	builds := [3]struct {
 		font:         string,
@@ -799,7 +801,49 @@ build_glyph_caches :: proc() -> (resources: [5]Resource_File, ok: bool) {
 	// The two caches of the interface font (docs/FONTS.md, section 12).
 	interface_resources := interface_glyph_caches_write() or_return
 	resources[3], resources[4] = interface_resources[0], interface_resources[1]
+	// The font outlines: the files of the four caches, from which each
+	// program draws the glyphs past them (docs/FONTS.md, "13. Glyphs past
+	// the glyph cache").
+	resources[5] = font_outlines_write() or_return
 	return resources, true
+}
+
+FONT_OUTLINES_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/font_outlines.bin"
+
+// The fonts of the resource of the outlines, by the names that
+// fallback_glyphs.outline_font_name gives: the files of the glyph caches.
+FONT_OUTLINES_FONTS :: [?]string{INTERFACE_VECTOR_FONT, INTERFACE_EMPHASIS_VECTOR_FONT, DEFAULT_VECTOR_FONT, EMPHASIS_VECTOR_FONT}
+
+// font_outlines_write writes the resource of the font outlines from the
+// subsets in resources/fonts, checks it with the reader of the programs,
+// and gives it as a resource of the boot image.
+font_outlines_write :: proc() -> (resource: Resource_File, ok: bool) {
+	names := FONT_OUTLINES_FONTS
+	fonts: [len(names)]font_outlines.Font_Input
+	for name, index in names {
+		if len(name) == 0 || len(name) >= font_outlines.NAME_SIZE {
+			fmt.eprintfln("modustool: the font %s has a name of %d bytes; the font outlines hold names of 1 to %d bytes", name, len(name), font_outlines.NAME_SIZE - 1)
+			return {}, false
+		}
+		bytes := read_file(join(VECTOR_FONT_FOLDER, "/", name, ".ttf")) or_return
+		fonts[index] = {name = name, bytes = bytes}
+	}
+	size := font_outlines.resource_size(fonts[:])
+	words := make([]u64, (size + 7) / 8, context.temp_allocator)
+	out := ([^]u8)(raw_data(words))[:size]
+	if _, written := font_outlines.resource_write(fonts[:], out); !written {
+		fmt.eprintln("modustool: the font outlines cannot be written: a name or a file is refused")
+		return {}, false
+	}
+	if _, problem := font_outlines.validate(out); problem.kind != .None {
+		fmt.eprintfln("modustool: the font outlines are refused: %s", font_outlines.problem_sentences[problem.kind])
+		return {}, false
+	}
+	if err := os.write_entire_file(FONT_OUTLINES_OUTPUT, out); err != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", FONT_OUTLINES_OUTPUT, err)
+		return {}, false
+	}
+	return {name = font_outlines.RESOURCE_NAME, path = FONT_OUTLINES_OUTPUT}, true
 }
 
 // The subpixel positions of the caches of the interface font, for each

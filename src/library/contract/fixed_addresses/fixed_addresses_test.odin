@@ -36,7 +36,7 @@ no_two_ranges_overlap :: proc(t: ^testing.T) {
 		.Debug_Image                  = DEBUG_IMAGE_ADDRESS,
 		.Disk_Program_Page            = DISK_PROGRAM_PAGE_ADDRESS,
 		.Demand_Cache                 = DEMAND_CACHE_ADDRESS,
-		.Glyph_Requests               = GLYPH_REQUESTS_ADDRESS,
+		.Font_Outlines                = FONT_OUTLINES_ADDRESS,
 		.Fresh_Bytes_Page             = FRESH_BYTES_PAGE_ADDRESS,
 	}
 	for address, name in named {

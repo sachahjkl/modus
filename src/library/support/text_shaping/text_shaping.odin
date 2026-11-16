@@ -8,10 +8,11 @@
 // a glyph cache that it validated (spacing_of). The module text_shaping
 // gives the same functions as exports over tables of the caller.
 //
-// A spacing with a demand cache (Spacing.demand) also places the characters
-// past the glyph cache that the font service drew
-// (src/md/features/glyphs_on_demand.md), and collects the others in the
-// wanted characters of the frame.
+// A spacing with a fallback face (Spacing.fallback) also places the
+// characters past the glyph cache that a font of its fallback chain has,
+// with the advance of that font file (src/md/features/glyphs_on_demand.md).
+// The advance never depends on a cache, so the measure and the draw of a
+// frame agree.
 //
 // The spacing can be in memory that another thread changes during a call:
 // in an isolated call the tables are in the call region. So no value is
@@ -21,9 +22,9 @@
 package text_shaping
 
 import "base:intrinsics"
-import "modus:contract/demand_cache"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
+import "modus:support/fallback_glyphs"
 
 CHARACTER_COUNT :: glyph_cache.CHARACTER_COUNT // The characters of a glyph cache: ASCII 32 to 126, the Latin-1 Supplement and the added characters.
 // The glyph of a character that the cache does not hold, and of each invalid sequence
@@ -33,11 +34,12 @@ CHARACTER_COUNT :: glyph_cache.CHARACTER_COUNT // The characters of a glyph cach
 // REPLACEMENT_ADVANCE_CHARACTER, and no pair.
 REPLACEMENT_GLYPH :: max(u32)
 REPLACEMENT_ADVANCE_CHARACTER :: '0'
-// The glyph of a character of the demand cache is DEMAND_GLYPH_FIRST plus
-// its code point (src/md/features/glyphs_on_demand.md): past each character
-// index, and below REPLACEMENT_GLYPH.
-DEMAND_GLYPH_FIRST :: u32(1) << 24
-#assert(DEMAND_GLYPH_FIRST > CHARACTER_COUNT && u64(DEMAND_GLYPH_FIRST) + text_encoding.CODE_POINT_LAST < u64(REPLACEMENT_GLYPH))
+// The glyph of a character past the glyph cache that the fallback chain
+// has is FALLBACK_GLYPH_FIRST plus its code point
+// (src/md/features/glyphs_on_demand.md): past each character index, and
+// below REPLACEMENT_GLYPH.
+FALLBACK_GLYPH_FIRST :: u32(1) << 24
+#assert(FALLBACK_GLYPH_FIRST > CHARACTER_COUNT && u64(FALLBACK_GLYPH_FIRST) + text_encoding.CODE_POINT_LAST < u64(REPLACEMENT_GLYPH))
 // The most bytes of one text. With an advance and a pair adjustment of at
 // most glyph_cache.ADVANCE_LIMIT each, the place of the last glyph stays
 // in an i32 of 1/64 of a pixel.
@@ -48,7 +50,7 @@ TEXT_LIMIT :: 1 << 16
 // the text; advance includes the pair adjustment with the next character;
 // so the x of a glyph is the sum of the advances before it.
 Placed_Glyph :: struct {
-	glyph:   u32, // The character index of the character (glyph_cache.character_index); DEMAND_GLYPH_FIRST plus the code point: a character of the demand cache; REPLACEMENT_GLYPH: a character outside both.
+	glyph:   u32, // The character index of the character (glyph_cache.character_index); FALLBACK_GLYPH_FIRST plus the code point: a character that the fallback chain has; REPLACEMENT_GLYPH: a character outside both.
 	x:       i32, // In 1/64 of a pixel.
 	advance: i32, // In 1/64 of a pixel.
 	cluster: u32, // The first byte of the character in the text.
@@ -75,16 +77,16 @@ Character_Advance :: struct {
 Spacing :: struct {
 	advances: []i32, // CHARACTER_COUNT of them.
 	pairs:    []glyph_cache.Pair_Entry, // The pair adjustments, sorted by left then right character index.
-	// The demand cache of the font, read at the generation of the frame,
-	// or nil. With it, a character past the glyph cache that the cache
-	// holds is placed with its own advance, and each other one is wanted
-	// (demand_cache.want). The module text_shaping has none.
-	demand:   ^demand_cache.Reader,
-	scale:    int, // The scale of the advances: the advance of a glyph of the demand cache is its advance at this scale.
+	// The fallback face of the glyph cache, or None. With a face, a
+	// character past the glyph cache that its chain has is placed with the
+	// advance of its font file. The module text_shaping has none.
+	fallback: fallback_glyphs.Face,
+	scale:    int, // The scale of the advances: the advance of a fallback glyph is its advance at this scale.
 }
 
-// spacing_of gives the spacing of one scale of a valid glyph cache. ok is
-// false for a scale that the cache does not have.
+// spacing_of gives the spacing of one scale of a valid glyph cache, with
+// the fallback face of the cache when the program opened the outlines. ok
+// is false for a scale that the cache does not have.
 spacing_of :: proc "contextless" (cache: ^glyph_cache.Cache, scale: int) -> (spacing: Spacing, ok: bool) {
 	if cache.header.character_count != CHARACTER_COUNT {
 		return {}, false
@@ -93,7 +95,7 @@ spacing_of :: proc "contextless" (cache: ^glyph_cache.Cache, scale: int) -> (spa
 	if len(advances) != CHARACTER_COUNT {
 		return {}, false
 	}
-	return {advances = advances, pairs = glyph_cache.pairs_of(cache, scale), scale = scale}, true
+	return {advances = advances, pairs = glyph_cache.pairs_of(cache, scale), fallback = fallback_glyphs.face_of_cache(cache), scale = scale}, true
 }
 
 // glyph_of gives the glyph of a character: its index in the cache, or
@@ -106,36 +108,29 @@ glyph_of :: #force_inline proc "contextless" (character: rune) -> u32 {
 	return u32(index)
 }
 
-// glyph_in gives the glyph of a decoded character with the demand cache of
-// the spacing: its character index, a glyph of the demand cache, or
-// REPLACEMENT_GLYPH. A character that the demand cache does not hold yet
-// is wanted; an invalid sequence is never wanted.
+// glyph_in gives the glyph of a decoded character with the fallback face
+// of the spacing: its character index, a fallback glyph, or
+// REPLACEMENT_GLYPH. An invalid sequence is the replacement glyph.
 @(private)
 glyph_in :: proc "contextless" (spacing: ^Spacing, character: rune, valid: bool) -> u32 {
 	glyph := glyph_of(character)
-	if glyph != REPLACEMENT_GLYPH || spacing.demand == nil || !valid {
+	if glyph != REPLACEMENT_GLYPH || spacing.fallback == .None || !valid {
 		return glyph
 	}
-	_, state := demand_cache.find(spacing.demand, character)
-	switch state {
-	case .Drawn:
-		return DEMAND_GLYPH_FIRST + u32(character)
-	case .Empty:
-		demand_cache.want(spacing.demand, character)
-	case .Absent:
+	if fallback_glyphs.has(spacing.fallback, character) {
+		return FALLBACK_GLYPH_FIRST + u32(character)
 	}
 	return REPLACEMENT_GLYPH
 }
 
 // advance_of gives the advance of a glyph, read once, from 0 to
-// glyph_cache.ADVANCE_LIMIT. A glyph of the demand cache has the advance of
-// its entry, which find checked.
+// glyph_cache.ADVANCE_LIMIT. A fallback glyph has the advance of its font
+// file at the scale of the spacing.
 @(private)
 advance_of :: #force_inline proc "contextless" (spacing: ^Spacing, glyph_given: u32) -> i32 {
-	if glyph_given >= DEMAND_GLYPH_FIRST && glyph_given != REPLACEMENT_GLYPH && spacing.demand != nil && spacing.scale >= 1 && spacing.scale <= demand_cache.SIZE_COUNT {
-		entry, state := demand_cache.find(spacing.demand, rune(glyph_given - DEMAND_GLYPH_FIRST))
-		if state == .Drawn {
-			return entry.advances[spacing.scale - 1]
+	if glyph_given >= FALLBACK_GLYPH_FIRST && glyph_given != REPLACEMENT_GLYPH && spacing.fallback != .None {
+		if value, found := fallback_glyphs.advance(spacing.fallback, rune(glyph_given - FALLBACK_GLYPH_FIRST), spacing.scale); found {
+			return clamp(value, 0, glyph_cache.ADVANCE_LIMIT)
 		}
 	}
 	glyph := glyph_given >= CHARACTER_COUNT ? glyph_of(REPLACEMENT_ADVANCE_CHARACTER) : glyph_given

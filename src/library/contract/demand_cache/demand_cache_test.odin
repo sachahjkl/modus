@@ -4,7 +4,6 @@ package demand_cache
 import "core:mem"
 import "core:testing"
 import "modus:contract/glyph_cache"
-import "modus:contract/ring"
 
 // A demand cache in the memory of the test, on a page, all zero.
 @(private = "file")
@@ -54,6 +53,12 @@ forms_make :: proc(forms: ^[Face]Form) {
 	form_make(&forms[.Cells_Bold], .Cells_Bold, 3)
 }
 
+// The reader of a face for the font file and the flags of a form.
+@(private = "file")
+reader_of_form :: proc(base: uintptr, face: Face, form: ^Form) -> (reader: Reader, ok: bool) {
+	return reader_of(base, face, form.header.font_hash, form.header.flags)
+}
+
 // An entry of one glyph of ink at each place of a face, inside the cache
 // and inside the cell of a cell face.
 @(private = "file")
@@ -70,41 +75,24 @@ drawn_entry :: proc(face: Face, word_offset: u32) -> (entry: Entry) {
 	return entry
 }
 
-// A request holds 14 code points, two in each value, and the reader of the
-// font service reads back each one; a value that is no character of a text
-// is left out.
+// A reader at an address that is 0 or not on a page is refused.
 @(test)
-a_request_holds_fourteen_code_points :: proc(t: ^testing.T) {
-	characters: [20]rune
-	for &character, index in characters {
-		character = rune(0x0391 + index)
-	}
-	record, count := request_pack(characters[:], 7)
-	testing.expect_value(t, count, CHARACTERS_PER_REQUEST)
-	testing.expect_value(t, record.kind, u32(Request_Kind.Glyphs))
-	testing.expect_value(t, record.tag, u32(7))
-	read: [CHARACTERS_PER_REQUEST]rune
-	testing.expect_value(t, request_unpack(record, &read), CHARACTERS_PER_REQUEST)
-	for character, index in read {
-		testing.expect_value(t, character, characters[index])
-	}
-	// Three characters: the other halves are 0, which is no character.
-	record, count = request_pack(characters[:3], 8)
-	testing.expect_value(t, count, 3)
-	testing.expect_value(t, request_unpack(record, &read), 3)
-	// A hostile record: a control character, a surrogate, a number past the
-	// last code point, then one character.
-	hostile := ring.Record {
-		kind = u32(Request_Kind.Glyphs),
-		values = {0 = 0x1B | u64(0xD800) << 32, 1 = 0x0011_0000 | u64(0x03A9) << 32},
-	}
-	testing.expect_value(t, request_unpack(hostile, &read), 1)
-	testing.expect_value(t, read[0], rune(0x03A9))
+a_reader_off_a_page_is_refused :: proc(t: ^testing.T) {
+	hash: [32]u8
+	_, ok := reader_of(0, .Interface, hash, 0)
+	testing.expect(t, !ok)
+	_, ok = reader_of(PAGE_SIZE + 8, .Interface, hash, 0)
+	testing.expect(t, !ok)
+	_, ok = reader_of(PAGE_SIZE - 1, .Cells, hash, 0)
+	testing.expect(t, !ok)
+	_, ok = reader_of(PAGE_SIZE, .Cells, hash, 0)
+	testing.expect(t, ok)
 }
 
-// A published entry is found from the next frame: the frame that started
-// before the publication does not see it, so its measure and its draw
-// agree. A cache with no magic, or of another font, finds nothing.
+// A cache with no magic, of another version, or of another font file or
+// flags gives a reader nothing; a published entry is found from the next
+// frame, as each draw of a frame takes the same entries. A code point that
+// is 0, negative or past the last code point is found Empty.
 @(test)
 a_published_entry_is_found_from_the_next_frame :: proc(t: ^testing.T) {
 	bytes := cache_memory_make()
@@ -112,10 +100,11 @@ a_published_entry_is_found_from_the_next_frame :: proc(t: ^testing.T) {
 	base := uintptr(raw_data(bytes))
 	forms: [Face]Form
 	forms_make(&forms)
-	reader, ok := reader_of(base, .Interface, &forms[.Interface].cache)
+	reader, ok := reader_of_form(base, .Interface, &forms[.Interface])
 	testing.expect(t, ok)
 	// Before the font service wrote the header: nothing.
 	reader_frame_begin(&reader)
+	testing.expect_value(t, reader.generation_limit, u64(0))
 	_, state := find(&reader, 0x03A9)
 	testing.expect_value(t, state, Entry_State.Empty)
 	writer := writer_open(base, 1, faces_of(&forms))
@@ -130,6 +119,17 @@ a_published_entry_is_found_from_the_next_frame :: proc(t: ^testing.T) {
 	testing.expect_value(t, state, Entry_State.Empty)
 	// The next frame.
 	reader_frame_begin(&reader)
+	for character in ([?]rune{0, -1, 0x0011_0000, max(rune)}) {
+		_, state = find(&reader, character)
+		testing.expectf(t, state == .Empty, "the code point %v is found Empty", character)
+	}
+	// Another version: nothing.
+	writer.header.version = VERSION + 1
+	reader_frame_begin(&reader)
+	_, state = find(&reader, 0x03A9)
+	testing.expect_value(t, state, Entry_State.Empty)
+	writer.header.version = VERSION
+	reader_frame_begin(&reader)
 	entry: Entry
 	entry, state = find(&reader, 0x03A9)
 	testing.expect_value(t, state, Entry_State.Drawn)
@@ -142,32 +142,21 @@ a_published_entry_is_found_from_the_next_frame :: proc(t: ^testing.T) {
 	// A second search finds it published.
 	_, search = place_find(&writer, .Interface, 0x03A9)
 	testing.expect_value(t, search, Place_Search.Published)
-	// An absent character.
-	place, search = place_find(&writer, .Interface, 0x0101)
-	testing.expect_value(t, search, Place_Search.Free)
-	publish(&writer, place, .Interface, 0x0101, Entry{state = .Absent})
-	reader_frame_begin(&reader)
-	_, state = find(&reader, 0x0101)
-	testing.expect_value(t, state, Entry_State.Absent)
 	// A reader of another font finds nothing.
 	other_form: Form
 	form_make(&other_form, .Interface, 9)
-	other, _ := reader_of(base, .Interface, &other_form.cache)
+	other, _ := reader_of_form(base, .Interface, &other_form)
 	reader_frame_begin(&other)
 	testing.expect_value(t, other.generation_limit, u64(0))
 	_, state = find(&other, 0x03A9)
 	testing.expect_value(t, state, Entry_State.Empty)
-	// A glyph cache of another form has no reader.
-	forms[.Interface].sizes[0].position_count = 1
-	_, ok = reader_of(base, .Interface, &forms[.Interface].cache)
-	testing.expect(t, !ok)
 }
 
 // The faces keep their glyphs apart: one code point in two faces is two
 // entries, a reader of one face does not find the entry of the other, and
 // the two faces of Paper Mono, which share one font file, are told apart by
-// their flags. A glyph cache of cells has no reader of the face Interface,
-// and a cache of the interface font none of a cell face.
+// their flags. A glyph cache of cells does not match the face Interface,
+// and a cache of the interface font matches no cell face.
 @(test)
 the_faces_keep_their_glyphs_apart :: proc(t: ^testing.T) {
 	bytes := cache_memory_make()
@@ -175,6 +164,10 @@ the_faces_keep_their_glyphs_apart :: proc(t: ^testing.T) {
 	base := uintptr(raw_data(bytes))
 	forms: [Face]Form
 	forms_make(&forms)
+	testing.expect(t, !reader_matches(.Interface, &forms[.Cells].cache))
+	testing.expect(t, !reader_matches(.Cells, &forms[.Interface].cache))
+	testing.expect(t, !reader_matches(.Cells, &forms[.Cells_Without_Grid_Fit].cache))
+	testing.expect(t, !reader_matches(.Cells_Bold, &forms[.Cells].cache))
 	writer := writer_open(base, 1, faces_of(&forms))
 	OMEGA :: rune(0x03A9)
 	BOX :: rune(0x2500)
@@ -187,42 +180,33 @@ the_faces_keep_their_glyphs_apart :: proc(t: ^testing.T) {
 	publish(&writer, place, .Cells, BOX, drawn_entry(.Cells, 0))
 	readers: [Face]Reader
 	for face in Face {
-		ok: bool
-		readers[face], ok = reader_of(base, face, &forms[face].cache)
-		testing.expectf(t, ok, "%v: the glyph cache of its form has a reader", face)
+		testing.expectf(t, reader_matches(face, &forms[face].cache), "%v: the glyph cache of its form matches", face)
+		readers[face], _ = reader_of_form(base, face, &forms[face])
 		reader_frame_begin(&readers[face])
 		testing.expectf(t, readers[face].generation_limit == writer.generation, "%v: the font file and the flags of the face are the ones of its glyph cache", face)
 	}
-	_, state := find(&readers[.Interface], OMEGA)
-	testing.expect_value(t, state, Entry_State.Drawn)
-	_, state = find(&readers[.Interface], BOX)
-	testing.expect_value(t, state, Entry_State.Empty)
-	_, state = find(&readers[.Cells], BOX)
-	testing.expect_value(t, state, Entry_State.Drawn)
-	for face in ([2]Face{.Cells_Without_Grid_Fit, .Cells_Bold}) {
-		_, state = find(&readers[face], BOX)
-		testing.expectf(t, state == .Empty, "%v: the entry of the face Cells is not its own", face)
-	}
-	// A reader of the face Cells beside the cache with no grid fit: the
-	// flags of the face differ, and it finds nothing.
+	// A reader of the face Cells with the flags of the cache with no grid
+	// fit: the flags of the face differ, and it finds nothing.
 	crossed := readers[.Cells]
 	crossed.flags = forms[.Cells_Without_Grid_Fit].header.flags
 	reader_frame_begin(&crossed)
 	testing.expect_value(t, crossed.generation_limit, u64(0))
-	_, matches := reader_of(base, .Interface, &forms[.Cells].cache)
-	testing.expect(t, !matches)
-	_, matches = reader_of(base, .Cells, &forms[.Interface].cache)
-	testing.expect(t, !matches)
-	_, matches = reader_of(base, .Cells, &forms[.Cells_Without_Grid_Fit].cache)
-	testing.expect(t, !matches)
-	_, matches = reader_of(base, .Cells_Bold, &forms[.Cells].cache)
-	testing.expect(t, !matches)
+	_, state := find(&readers[.Interface], BOX)
+	testing.expect_value(t, state, Entry_State.Empty)
+	for face in ([2]Face{.Cells_Without_Grid_Fit, .Cells_Bold}) {
+		_, state = find(&readers[face], BOX)
+		testing.expectf(t, state == .Empty, "%v: the entry of the face Cells is not its own", face)
+	}
+	_, state = find(&readers[.Interface], OMEGA)
+	testing.expect_value(t, state, Entry_State.Drawn)
+	_, state = find(&readers[.Cells], BOX)
+	testing.expect_value(t, state, Entry_State.Drawn)
 }
 
 // A wrong entry of the shared memory is never a read outside the cache:
-// each one is found Absent, and draws the replacement glyph. A cell entry
-// whose glyph leaves its cell, or whose advance is not its cell, is wrong
-// too.
+// each one is found Absent, and the program draws the glyph itself. A cell
+// entry whose glyph leaves its cell, or whose advance is not its cell, is
+// wrong too.
 @(test)
 a_wrong_entry_is_never_a_read_outside_the_cache :: proc(t: ^testing.T) {
 	bytes := cache_memory_make()
@@ -239,15 +223,17 @@ a_wrong_entry_is_never_a_read_outside_the_cache :: proc(t: ^testing.T) {
 		Negative_Advance,
 		Advance_Too_Large,
 		Unknown_State,
+		Empty_State,
 		Cell_Glyph_Left_Of_Its_Cell,
 		Cell_Glyph_Wider_Than_Its_Cell,
 		Cell_Advance_Not_Its_Cell,
 	}
 	for wrong, index in Wrong {
 		face := Face.Interface
-		#partial switch wrong {
+		switch wrong {
 		case .Cell_Glyph_Left_Of_Its_Cell, .Cell_Glyph_Wider_Than_Its_Cell, .Cell_Advance_Not_Its_Cell:
 			face = .Cells
+		case .Words_Past_The_Cache, .Too_Wide, .Rows_Past_The_Line, .Left_Too_Far, .Negative_Advance, .Advance_Too_Large, .Unknown_State, .Empty_State:
 		}
 		entry := drawn_entry(face, 0)
 		switch wrong {
@@ -265,6 +251,8 @@ a_wrong_entry_is_never_a_read_outside_the_cache :: proc(t: ^testing.T) {
 			entry.advances[1] = glyph_cache.ADVANCE_LIMIT + 1
 		case .Unknown_State:
 			entry.state = Entry_State(u32(max(Entry_State)) + 1)
+		case .Empty_State:
+			entry.state = .Empty
 		case .Cell_Glyph_Left_Of_Its_Cell:
 			entry.glyphs[0].left = 1
 		case .Cell_Glyph_Wider_Than_Its_Cell:
@@ -275,16 +263,16 @@ a_wrong_entry_is_never_a_read_outside_the_cache :: proc(t: ^testing.T) {
 		character := rune(0x0391 + index)
 		place, _ := place_find(&writer, face, character)
 		publish(&writer, place, face, character, entry)
-		reader, _ := reader_of(base, face, &forms[face].cache)
+		reader, _ := reader_of_form(base, face, &forms[face])
 		reader_frame_begin(&reader)
 		_, state := find(&reader, character)
 		testing.expectf(t, state == .Absent, "%v: the entry is refused", wrong)
 	}
-	// The same entries with each field inside its limits are drawn.
+	// The same entries with each field at its limit are drawn.
 	for face in ([2]Face{.Interface, .Cells}) {
 		place, _ := place_find(&writer, face, 0x03B1)
 		publish(&writer, place, face, 0x03B1, drawn_entry(face, WORD_CAPACITY - 20))
-		reader, _ := reader_of(base, face, &forms[face].cache)
+		reader, _ := reader_of_form(base, face, &forms[face])
 		reader_frame_begin(&reader)
 		_, state := find(&reader, 0x03B1)
 		testing.expectf(t, state == .Drawn, "%v: the entry inside its limits is drawn", face)
@@ -292,7 +280,8 @@ a_wrong_entry_is_never_a_read_outside_the_cache :: proc(t: ^testing.T) {
 }
 
 // A character whose places are all taken is refused, and its search ends
-// after PROBE_LIMIT places. The words end at their capacity.
+// after PROBE_LIMIT places. The words end at their capacity: a count past
+// them and a negative count are refused.
 @(test)
 a_full_search_and_full_words_are_refused :: proc(t: ^testing.T) {
 	bytes := cache_memory_make()
@@ -300,7 +289,7 @@ a_full_search_and_full_words_are_refused :: proc(t: ^testing.T) {
 	base := uintptr(raw_data(bytes))
 	forms: [Face]Form
 	forms_make(&forms)
-	reader, _ := reader_of(base, .Interface, &forms[.Interface].cache)
+	reader, _ := reader_of_form(base, .Interface, &forms[.Interface])
 	writer := writer_open(base, 1, faces_of(&forms))
 	character := rune(0x03A9)
 	home := home_place_of(key_of(.Interface, character))
@@ -313,47 +302,17 @@ a_full_search_and_full_words_are_refused :: proc(t: ^testing.T) {
 	reader_frame_begin(&reader)
 	_, state := find(&reader, character)
 	testing.expect_value(t, state, Entry_State.Empty)
-	_, taken := words_take(&writer, WORD_CAPACITY)
+	_, taken := words_take(&writer, -1)
+	testing.expect(t, !taken)
+	_, taken = words_take(&writer, WORD_CAPACITY + 1)
+	testing.expect(t, !taken)
+	testing.expect_value(t, writer.words_used, 0)
+	_, taken = words_take(&writer, WORD_CAPACITY)
 	testing.expect(t, taken)
 	_, taken = words_take(&writer, 1)
 	testing.expect(t, !taken)
 	refusal_count(&writer)
 	testing.expect_value(t, writer.header.refused, u64(1))
-}
-
-// The word subset_drawn: 0 for a cache with no magic and for a cache whose
-// font service still draws its subsets, 1 after subset_drawn_set.
-@(test)
-the_word_of_the_drawn_subsets :: proc(t: ^testing.T) {
-	bytes := cache_memory_make()
-	defer mem.free_bytes(bytes)
-	base := uintptr(raw_data(bytes))
-	forms: [Face]Form
-	forms_make(&forms)
-	reader, _ := reader_of(base, .Cells, &forms[.Cells].cache)
-	testing.expect(t, !subset_drawn(&reader))
-	writer := writer_open(base, 1, faces_of(&forms))
-	testing.expect(t, !subset_drawn(&reader))
-	subset_drawn_set(&writer)
-	testing.expect(t, subset_drawn(&reader))
-	testing.expect_value(t, writer.header.subset_drawn, u32(1))
-}
-
-// A frame wants each character once, and at most WANTED_LIMIT of them.
-@(test)
-a_frame_wants_each_character_once :: proc(t: ^testing.T) {
-	reader: Reader
-	for _ in 0 ..< 3 {
-		want(&reader, 0x03A9)
-	}
-	testing.expect_value(t, reader.wanted_count, 1)
-	for index in 0 ..< 2 * WANTED_LIMIT {
-		want(&reader, rune(0x0391 + index))
-	}
-	testing.expect_value(t, reader.wanted_count, WANTED_LIMIT)
-	// The start of a frame empties the list.
-	reader_frame_begin(&reader)
-	testing.expect_value(t, reader.wanted_count, 0)
 }
 
 // The subset of each face: runs in the order of the code points, with a
@@ -367,6 +326,14 @@ a_frame_wants_each_character_once :: proc(t: ^testing.T) {
 // tool, each_source_font_has_the_characters_of_a_cache.
 @(test)
 the_subsets_of_the_faces :: proc(t: ^testing.T) {
+	outside := [?]rune{-1, 0, 'W', 0xE9, 0x20AC, 0x0390, 0x03A0, 0x03A2, 0x03C1, 0x03CA, 0x4E00, 0x0011_0000}
+	for character in outside {
+		testing.expectf(t, !in_subset(.Interface, character), "U+%04X is not in the subset of the interface font", int(character))
+	}
+	cell_outside := [?]rune{-1, 0, 'W', 0x03B1, 0x0391, 0x24FF, 0x25A0, 0x0011_0000}
+	for character in cell_outside {
+		testing.expectf(t, !in_subset(.Cells, character), "U+%04X is not in the cell subset", int(character))
+	}
 	for face in Face {
 		counted := 0
 		previous_last := rune(-1)
@@ -404,46 +371,44 @@ the_subsets_of_the_faces :: proc(t: ^testing.T) {
 	for face in ([3]Face{.Cells, .Cells_Without_Grid_Fit, .Cells_Bold}) {
 		testing.expectf(t, subset_count(face) == CELL_SUBSET_COUNT, "%v: the count of CELL_SUBSET_COUNT", face)
 	}
-	outside := [?]rune{'W', 0xE9, 0x20AC, 0x0390, 0x03A0, 0x03A2, 0x03C1, 0x03CA, 0x4E00}
-	for character in outside {
-		testing.expectf(t, !in_subset(.Interface, character), "U+%04X is not in the subset of the interface font", int(character))
-	}
-	cell_outside := [?]rune{'W', 0x03B1, 0x0391, 0x24FF, 0x25A0}
-	for character in cell_outside {
-		testing.expectf(t, !in_subset(.Cells, character), "U+%04X is not in the cell subset", int(character))
-	}
 }
 
 // The places of the glyphs: three positions at scale 1, one at the scales
 // 2 and 3, each glyph its own place. A cell face has one position at each
-// of its scales; the bold face has scale 1 only.
+// of its scales; the bold face has scale 1 only. A scale or a position
+// that a face does not have has no place.
 @(test)
 the_places_of_the_glyphs :: proc(t: ^testing.T) {
+	refused := [?][2]int{{0, 0}, {-1, 0}, {SIZE_COUNT + 1, 0}, {1, -1}, {1, POSITIONS_AT_SCALE_ONE}, {2, 1}, {max(int), 0}}
+	for pair in refused {
+		_, ok := glyph_place_of(pair[0], pair[1])
+		testing.expectf(t, !ok, "scale %v, position %v has no place", pair[0], pair[1])
+	}
+	testing.expect_value(t, position_count_of(.Cells_Bold, 2), 0)
+	testing.expect_value(t, position_count_of(.Interface, 0), 0)
+	testing.expect_value(t, position_count_of(.Interface, SIZE_COUNT + 1), 0)
+	entry: Entry
+	_, ok := glyph_of_entry(.Cells_Bold, &entry, 2, 0)
+	testing.expect(t, !ok)
+	_, ok = glyph_of_entry(.Cells, &entry, 1, 1)
+	testing.expect(t, !ok)
+	_, ok = glyph_of_entry(.Interface, &entry, 1, -1)
+	testing.expect(t, !ok)
 	seen: [GLYPH_COUNT]bool
 	for scale in 1 ..= SIZE_COUNT {
 		for position in 0 ..< position_count_of(.Interface, scale) {
-			place, ok := glyph_place_of(scale, position)
-			testing.expect(t, ok && !seen[place])
+			place, place_ok := glyph_place_of(scale, position)
+			testing.expect(t, place_ok && !seen[place])
 			seen[place] = true
 		}
 	}
 	for each in seen {
 		testing.expect(t, each)
 	}
-	_, ok := glyph_place_of(0, 0)
-	testing.expect(t, !ok)
-	_, ok = glyph_place_of(SIZE_COUNT + 1, 0)
-	testing.expect(t, !ok)
 	for scale in 1 ..= SIZE_COUNT {
 		testing.expect_value(t, position_count_of(.Cells, scale), 1)
 	}
 	testing.expect_value(t, position_count_of(.Cells_Bold, 1), 1)
-	testing.expect_value(t, position_count_of(.Cells_Bold, 2), 0)
-	entry: Entry
-	_, ok = glyph_of_entry(.Cells_Bold, &entry, 2, 0)
-	testing.expect(t, !ok)
-	_, ok = glyph_of_entry(.Cells, &entry, 1, 1)
-	testing.expect(t, !ok)
 }
 
 // The keys of the faces: never 0, and one code point of two faces gives two
@@ -455,69 +420,5 @@ the_keys_of_the_faces :: proc(t: ^testing.T) {
 		for other in Face {
 			testing.expect(t, face == other || key_of(face, 0x03A9) != key_of(other, 0x03A9))
 		}
-	}
-}
-
-// The budget of a program: REQUEST_BUDGET requests in one window, the last
-// one says so, the next one waits until the end of the window, and a new
-// window starts at the first request after it.
-@(test)
-a_program_past_its_budget_waits_for_the_next_window :: proc(t: ^testing.T) {
-	budget: Request_Budget
-	start := u64(5000)
-	for index in 0 ..< REQUEST_BUDGET {
-		taken, last := request_budget_take(&budget, start + u64(index))
-		testing.expect(t, taken)
-		testing.expect_value(t, last, index == REQUEST_BUDGET - 1)
-	}
-	window_end := start + REQUEST_BUDGET_WINDOW_MILLISECONDS
-	testing.expect_value(t, budget.window_end, window_end)
-	testing.expect(t, request_budget_held(&budget, window_end - 1))
-	taken, last := request_budget_take(&budget, window_end - 1)
-	testing.expect(t, !taken && !last)
-	// A pass is counted once in a window, whatever the requests that wait.
-	testing.expect(t, request_budget_pass(&budget))
-	testing.expect(t, !request_budget_pass(&budget))
-	// The window ends: the budget is whole again, and a new pass counts.
-	testing.expect(t, !request_budget_held(&budget, window_end))
-	taken, last = request_budget_take(&budget, window_end)
-	testing.expect(t, taken && !last)
-	testing.expect_value(t, budget.spent, u32(1))
-	testing.expect_value(t, budget.window_end, window_end + REQUEST_BUDGET_WINDOW_MILLISECONDS)
-	testing.expect(t, request_budget_pass(&budget))
-}
-
-// The budget counts the requests of one program alone: a program that
-// spends its budget changes nothing in the budget of another, so a refusal
-// says nothing of the others.
-@(test)
-the_budget_of_a_program_is_its_own :: proc(t: ^testing.T) {
-	flooding, quiet: Request_Budget
-	now := u64(1)
-	for _ in 0 ..< 10 * REQUEST_BUDGET {
-		_, _ = request_budget_take(&flooding, now)
-	}
-	testing.expect(t, request_budget_held(&flooding, now))
-	testing.expect(t, !request_budget_held(&quiet, now))
-	for index in 0 ..< REQUEST_BUDGET {
-		taken, last := request_budget_take(&quiet, now)
-		testing.expect(t, taken)
-		testing.expect_value(t, last, index == REQUEST_BUDGET - 1)
-	}
-}
-
-// A window starts at the first request after the end of the one before: a
-// program that asks less than its budget in each window is never held.
-@(test)
-a_program_under_its_budget_is_never_held :: proc(t: ^testing.T) {
-	budget: Request_Budget
-	now := u64(0)
-	for _ in 0 ..< 4 {
-		for _ in 0 ..< REQUEST_BUDGET - 1 {
-			taken, last := request_budget_take(&budget, now)
-			testing.expect(t, taken && !last)
-			testing.expect(t, !request_budget_held(&budget, now))
-		}
-		now += REQUEST_BUDGET_WINDOW_MILLISECONDS
 	}
 }

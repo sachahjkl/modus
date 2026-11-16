@@ -135,7 +135,7 @@ The design is in `src/md/features/fresh_bytes.md`.
 
 ## 5. What is not built
 
-- **Fresh bytes for every program.** The device services, the TPM service, the font service, `input`, a terminal and each program that another program starts get no fresh bytes page.
+- **Fresh bytes for every program.** The device services, the TPM service, `input`, a terminal and each program that another program starts get no fresh bytes page.
 - **A strength of the entropy device.** The device adds bytes and no claim.
 - **The TPM** (property 17) as a source.
 - **A measure of the jitter of the cycle counter** (as `jitterentropy` does). Without it, the claim stays 0 bits.

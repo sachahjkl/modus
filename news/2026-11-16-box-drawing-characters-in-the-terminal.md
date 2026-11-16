@@ -9,4 +9,4 @@ The terminal draws the box-drawing characters, the block elements and the five G
 
 The glyph caches of the boot image hold 192 characters for each font, and these 165 are past them. The font service draws them at its start, beside each glyph cache of the cells: Paper Mono with the grid fit, Paper Mono with no grid fit, and Paper Mono SemiBold. Each glyph stays in its cell, as each glyph of a glyph cache of cells does.
 
-Paper Mono has no other Greek letter: a cell of α still draws the replacement glyph, a box.
+Paper Mono has no other Greek letter.

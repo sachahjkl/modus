@@ -2,8 +2,9 @@
 // placed by src/library/support/text_shaping and drawn by graphics.text_proportional.
 // It shows a paragraph, three pairs with and without their adjustment, one
 // word at the three positions of a pixel, enlarged, the digits in columns,
-// two lines of Greek letters that the font service draws on demand
-// (src/md/features/glyphs_on_demand.md), and the time of one line.
+// three lines of characters past the glyph cache (Greek letters of B612,
+// box-drawing characters of Paper Mono, the second font of the fallback
+// chain: src/md/features/glyphs_on_demand.md), and the time of one line.
 //
 // The two glyph caches are resources of the boot image that the root
 // service maps read-only at their fixed ranges (display.interface_font_open
@@ -12,41 +13,36 @@
 // **What it is for.** It shows the [interface font](term:interface-font)
 // as the system draws it: [text shaping](term:text-shaping) with the
 // [pair adjustments](term:pair-adjustment) of the font, glyphs at a
-// [subpixel position](term:subpixel-position), and the
-// [glyph caches](term:glyph-cache) that the build computes once. A reader
-// compares a pair with and without its adjustment, and one word at three
-// positions of a pixel.
+// [subpixel position](term:subpixel-position), the
+// [glyph caches](term:glyph-cache) that the build computes once, and the
+// [fallback chain](term:fallback-chain) past them. A reader compares a pair
+// with and without its adjustment, and one word at three positions of a
+// pixel.
 //
 // **What a reader sees.** Start it from the menu of the programs, or with
 // `start("interface_font")` in the console. The log gets the time of
 // shaping and of drawing one line, then `interface_font: ok, B612 Regular
-// and Bold, <count> and <count> pairs, ...`. The font service drew its
-// whole subset at its start, so the first frame draws the Greek letters
-// from the demand cache. A letter that the cache does not hold yet (the
-// service did not end its start) draws the replacement glyph and is asked
-// for; the answer gives a new frame. The window shows each letter of the
-// subset (demand_cache.interface_subset_ranges). The first frame where no letter
-// waits writes `interface_font: each Greek letter of the subset is drawn
-// from the demand cache: <n> letters`, n the count of the subset, or `not
-// each Greek letter ...` with the counts of that frame. After that line,
-// it asks the font service for letters of the subset with no end, past
-// its budget of requests, and writes `interface_font: the requests past
-// the budget of this program wait until the end of its window, and each
-// one is answered: as it must`, or `interface_font: the requests past the
-// budget of this program are not held as they must be: ...`. With no valid
-// glyph cache in the boot image, it writes
-// `interface_font: the boot image gives no valid cache of the interface
-// font`.
+// and Bold, <count> and <count> pairs, ...`. After its first frame it
+// writes `interface_font: each Greek letter of B612 is drawn: <n> letters,
+// <d> from the demand cache`, n the count of the subset of B612, or `not
+// each Greek letter of B612 is drawn: ...`; then `interface_font: the
+// box-drawing characters come from paper_mono, the second font of the
+// chain of the interface: <n> characters: as it must`; then
+// `interface_font: <n> characters that no font of the chain has draw the
+// replacement glyph: as it must`. A line that names a fault starts with
+// `interface_font: the fallback chain of the interface is wrong: `. With
+// no valid glyph cache in the boot image, it writes `interface_font: the
+// boot image gives no valid cache of the interface font`.
 //
-// **Its grants**: none. The root service maps the glyph caches, the demand
-// cache and the request ring into each program that it starts.
+// **Its grants**: none. The root service maps the glyph caches, the font
+// outlines and the demand cache into each program that it starts.
 package interface_font
 
 import "modus:contract/demand_cache"
 import "modus:contract/glyph_cache"
-import "modus:contract/ring"
 import "modus:contract/text_encoding"
 import "modus:support/display"
+import "modus:support/fallback_glyphs"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
@@ -76,22 +72,23 @@ ENLARGED_COLUMNS :: 48 // The columns of the small canvas that are enlarged: the
 // The places of the enlarged word in a pixel, in 1/64: 0, a third, two thirds.
 ENLARGED_FRACTIONS := [3]i64{0, 21, 43}
 NUMBERS := [?]string{"7", "42", "1 024", "65 536", "4 294 967 296", "100 000"}
-// Characters past the glyph cache, which the font service draws: the
-// capitals and the small letters of its subset, each one, made from
-// demand_cache.interface_subset_ranges at the start, then a line with some of them.
-// A letter that B612 lacks is in no line: the subset does not have it.
+// Characters past the glyph cache: the capitals and the small letters of
+// the subset of B612, each one, made from
+// demand_cache.interface_subset_ranges at the start, then a line with some
+// of them and box-drawing characters, which B612 lacks and Paper Mono, the
+// second font of the chain of the interface, has. A letter that B612 lacks
+// is in no line of letters.
 GREEK_SMALL_FIRST :: 0x03B1 // The first small letter of the Greek alphabet.
-GREEK_SENTENCE :: "Δt = 16 ms   λ = 532 nm   θ = 45°   σ, μ, π = 3.14159"
+GREEK_SENTENCE :: "Δt = 16 ms   λ = 532 nm   θ = 45°   σ, μ, π = 3.14159   ┌─┬─┐ ▒▓█"
 greek_capitals, greek_small: [LINE_LIMIT]u8
 GREEK: [3]string
+// The box-drawing characters of GREEK_SENTENCE: each one from Paper Mono.
+BOX_CHARACTERS := [?]rune{0x250C, 0x2500, 0x252C, 0x2510, 0x2592, 0x2593, 0x2588}
+// Characters that no font of the chain of the interface has: the capital
+// pi and the small rho that B612 lacks, and a Cyrillic letter.
+MISSING_CHARACTERS := [?]rune{0x03A0, 0x03C1, 0x0416}
 
-// The demand cache of the interface font, when the root service gave it.
-demand: display.Demand
-demand_given: bool
-greek_spacing: text_shaping.Spacing // The regular weight at scale 1, with the demand cache.
-greek_character_count: u64 // The characters of GREEK past the glyph cache, each once.
-greek_drawn_told: bool // The line of the Greek letters drawn is on the log.
-budget_case_due: bool // Each Greek letter is drawn: the case of the budget of requests runs once, after this frame.
+fallback_told: bool // The lines of the characters past the glyph cache are on the log.
 
 // One line of B612 drawn into a canvas of its own: the enlarged word, and
 // the measure of the time of one line.
@@ -111,7 +108,7 @@ line_draw :: proc "contextless" (canvas: graphics.Canvas, place: i64, y: int, te
 	placed: [LINE_LIMIT]text_shaping.Placed_Glyph
 	count := min(len(text), LINE_LIMIT)
 	_, width, _ = text_shaping.shape(spacing, transmute([]u8)(text[:count]), placed[:count])
-	graphics.text_proportional(canvas, place, y, placed[:count], cache, scale, color, spacing.demand)
+	graphics.text_proportional(canvas, place, y, placed[:count], cache, scale, color)
 	return width
 }
 
@@ -131,35 +128,67 @@ greek_lines_make :: proc "contextless" () {
 	GREEK = {string(greek_capitals[:capitals]), string(greek_small[:small]), GREEK_SENTENCE}
 }
 
-// The characters of GREEK that no glyph cache holds, each once: the
-// characters that the window finds in the demand cache, or asks for.
-greek_characters: [demand_cache.WANTED_LIMIT]rune
-
-// greek_characters_count fills greek_characters and gives their count.
-greek_characters_count :: proc "contextless" () -> u64 {
-	count := 0
-	for line in GREEK {
-		bytes := transmute([]u8)line
-		place := 0
-		for place < len(bytes) {
-			character, length, _ := text_encoding.character_decode(bytes, place)
-			place += length
-			if _, in_cache := glyph_cache.character_index(character); in_cache {
-				continue
-			}
-			known := false
-			for each in greek_characters[:count] {
-				if each == character {
-					known = true
-				}
-			}
-			if !known && count < len(greek_characters) {
-				greek_characters[count] = character
-				count += 1
+// fallback_lines_tell writes, once, what the frame drew past the glyph
+// cache, from the fallback chain of the interface: each Greek letter of the
+// subset of B612, each box-drawing character from Paper Mono, and the
+// replacement glyph for the characters that no font of the chain has. The
+// program draws each glyph as its frame drew it, from its own private
+// glyph cache or from the demand cache.
+fallback_lines_tell :: proc "contextless" () {
+	FAULT :: "interface_font: the fallback chain of the interface is wrong: "
+	if fallback_told {
+		return
+	}
+	fallback_told = true
+	face := fallback_glyphs.face_of_cache(&regular_cache)
+	if face != .Interface {
+		system.log_in("programs", .Warning, FAULT, "the glyph cache of B612 Regular has no fallback face; the font outlines are not given")
+		return
+	}
+	drawn, from_demand, missing: u64
+	for range in demand_cache.interface_subset_ranges {
+		for character in range.first ..= range.last {
+			entry, _, source := fallback_glyphs.glyph(face, character, 1, 0)
+			switch source {
+			case .Demand_Cache:
+				from_demand += 1
+				drawn += entry.row_count > 0 ? 1 : 0
+			case .Private_Cache:
+				drawn += entry.row_count > 0 ? 1 : 0
+			case .Missing:
+				missing += 1
 			}
 		}
 	}
-	return u64(count)
+	subset := u64(demand_cache.subset_count(.Interface))
+	if drawn == subset && missing == 0 {
+		system.log("interface_font: each Greek letter of B612 is drawn: ", drawn, " letters, ", from_demand, " from the demand cache")
+	} else {
+		system.log_in("programs", .Warning, "interface_font: not each Greek letter of B612 is drawn: ", drawn, " of ", subset, ", ", missing, " with no glyph")
+	}
+	for character in BOX_CHARACTERS {
+		entry, _, source := fallback_glyphs.glyph(face, character, 1, 0)
+		font := fallback_glyphs.font_of(face, character)
+		if font != .Paper_Mono || source != .Private_Cache || entry.row_count == 0 {
+			system.log_in("programs", .Warning, FAULT, "the character ", u64(character), " comes from the font ", fallback_glyphs.outline_font_name(font), ", with ", u64(entry.row_count), " rows of ink")
+			return
+		}
+	}
+	system.log("interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: ", u64(len(BOX_CHARACTERS)), " characters: as it must")
+	for character in MISSING_CHARACTERS {
+		_, _, source := fallback_glyphs.glyph(face, character, 1, 0)
+		if fallback_glyphs.has(face, character) || source != .Missing {
+			system.log_in("programs", .Warning, FAULT, "the character ", u64(character), " has a glyph, and no font of the chain has it")
+			return
+		}
+		// Its advance is the advance of the replacement glyph: the shaper
+		// gives it no fallback glyph.
+		if _, found := fallback_glyphs.advance(face, character, 1); found {
+			system.log_in("programs", .Warning, FAULT, "the character ", u64(character), " has an advance of a font")
+			return
+		}
+	}
+	system.log("interface_font: ", u64(len(MISSING_CHARACTERS)), " characters that no font of the chain has draw the replacement glyph: as it must")
 }
 
 // line_width gives the width of a text in 1/64 of a pixel.
@@ -177,11 +206,6 @@ GREEK_TOP :: 552
 TIME_TOP :: 616
 
 draw :: proc "contextless" (window: ^display.Window) {
-	// One generation of the demand cache for the whole frame: the measure
-	// and the draw of a Greek letter agree.
-	if demand_given {
-		display.demand_frame_begin(&demand)
-	}
 	interface.draw_whole_window_next(&drawing)
 	frame := interface.window_frame_begin(&drawing)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
@@ -194,7 +218,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		{PAIRS_TOP - 24, "three pairs at scale 3: with the adjustment of the font, then without"},
 		{ENLARGED_TOP - 24, "one word at 0, 1/3 and 2/3 of a pixel, enlarged 4 times"},
 		{DIGITS_TOP - 24, "digits in columns: each digit has the same advance, so a column aligns"},
-		{GREEK_TOP - 24, "letters past the glyph cache, drawn on demand by the font service"},
+		{GREEK_TOP - 24, "past the glyph cache: Greek of B612, box drawing of Paper Mono, the next font of its chain"},
 	}
 	for label in labels {
 		interface.draw_text(frame.table, content.x, content.y + label.top, label.text, graphics.colors.dim)
@@ -240,145 +264,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 		line_draw(canvas, column_right - line_width(number, &regular_spacing), y, number, &regular_spacing, &regular_cache, 1, graphics.colors.text)
 		line_draw(canvas, bold_right - line_width(number, &bold_spacing), y, number, &bold_spacing, &bold_cache, 1, graphics.colors.program)
 	}
-	// The Greek letters: the replacement glyph until the demand cache holds
-	// a letter at the generation of this frame.
+	// The characters past the glyph cache: each one from its font of the
+	// fallback chain, or the replacement glyph; the frame never waits.
 	for line, index in GREEK {
-		line_draw(canvas, x, content.y + GREEK_TOP + index * 20, line, &greek_spacing, &regular_cache, 1, graphics.colors.text)
+		line_draw(canvas, x, content.y + GREEK_TOP + index * 20, line, &regular_spacing, &regular_cache, 1, graphics.colors.text)
 	}
 	display.present(window)
-	if !demand_given {
-		return
-	}
-	// The letters that this frame did not find: the font service draws
-	// them, and its answers wake this program for the next frame.
-	display.demand_requests_send(&demand)
-	// The line of the test says what this frame drew: the letters found in
-	// the demand cache at its generation, and the others. It is written
-	// once, when no letter waits for an answer.
-	if greek_drawn_told || demand.reader.generation_limit == 0 {
-		return
-	}
-	drawn, absent, waiting: u64
-	for character in greek_characters[:int(greek_character_count)] {
-		_, state := demand_cache.find(&demand.reader, character)
-		switch state {
-		case .Drawn:
-			drawn += 1
-		case .Absent:
-			absent += 1
-		case .Empty:
-			waiting += 1
-		}
-	}
-	// A letter that the cache refused stays Empty: the counts of the
-	// answers end the wait for it.
-	if waiting > demand.refused {
-		return
-	}
-	greek_drawn_told = true
-	// The window shows each letter of the subset: the line of the test
-	// holds when each one is drawn, and names no count of its own.
-	if drawn == u64(demand_cache.subset_count(.Interface)) && drawn == greek_character_count && absent == 0 && waiting == 0 {
-		system.log("interface_font: each Greek letter of the subset is drawn from the demand cache: ", drawn, " letters")
-		budget_case_due = true
-	} else {
-		system.log_in("programs", .Warning, "interface_font: not each Greek letter of the subset is drawn from the demand cache: ", drawn, " drawn of ", u64(demand_cache.subset_count(.Interface)), ", ", absent, " absent, ", waiting, " refused")
-	}
-}
-
-// budget_case asks the font service for letters of the subset with no
-// end (docs/FONTS.md, "13.2.4 The budget of requests of a program"). The
-// service must hold the requests past the budget until the end of the
-// window that it named, then answer each request: none is dropped. A
-// window must hold no more than its budget: the answer of the first
-// request after a hold is the first of a new window, and the answer that
-// names the end of that window must be the answer number REQUEST_BUDGET
-// from it. The letters are in the cache, so the case adds no entry and no
-// other line of the service. At most a ring of requests waits for its
-// answer, so each answer fits the ring. The case keeps the loop of the
-// window from its events for at least one window: it runs after the frame
-// that the picture of the test shows.
-budget_case :: proc "contextless" (demand: ^display.Demand) {
-	FAULT :: "interface_font: the requests past the budget of this program are not held as they must be: "
-	letters: [demand_cache.CHARACTERS_PER_REQUEST]rune
-	for &letter, index in letters {
-		letter = demand_cache.interface_subset_ranges[0].first + rune(index)
-	}
-	sent, answered: u64
-	window_end: u64 // The end of the window that the last answer named.
-	passes: u64 // The count of the passes of the last answer.
-	// The answers of the window that started after a hold, from its first;
-	// counting is false outside such a window.
-	counting := false
-	window_answers: u64
-	window_first_answer_time: u64 // The time at which the first answer of that window came.
-	verified := false // One whole window after a hold had its budget of answers.
-	hang_end := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
-	for {
-		wait := system.wait_begin()
-		if !verified {
-			pushed := false
-			for sent - answered < ring.CAPACITY {
-				record, _ := demand_cache.request_pack(letters[:], u32(sent + 1))
-				if !ring.push(&demand.requests.commands, record) {
-					break
-				}
-				sent += 1
-				pushed = true
-			}
-			if pushed {
-				system.wake_reader(&demand.requests.commands)
-			}
-		}
-		for _ in 0 ..< system.records_of_turn(&demand.requests.completions) {
-			answer := system.receive(&demand.requests.completions) or_break
-			answered += 1
-			// The same counter of milliseconds as the time of the service.
-			now := system.time()
-			if count := answer.values[demand_cache.ANSWER_BUDGET_PASSED]; count > passes {
-				// The service read this request after a hold: at or after
-				// the end of the window before, and as the first of a new
-				// window.
-				passes = count
-				if window_end == 0 || now < window_end {
-					system.log_in("programs", .Warning, FAULT, "an answer past the budget came at ", now, " ms, before the end of its window at ", window_end, " ms")
-					return
-				}
-				if !verified {
-					counting = true
-					window_answers = 0
-					window_first_answer_time = now
-				}
-			}
-			if counting {
-				window_answers += 1
-			}
-			if end := answer.values[demand_cache.ANSWER_BUDGET_WINDOW_END]; end != 0 {
-				window_end = end
-				// The window that this answer ends started with the first
-				// answer that the case counts, only if it started before
-				// that answer came. Else that window did not spend its
-				// budget, and a later hold starts the count again.
-				if counting && end - demand_cache.REQUEST_BUDGET_WINDOW_MILLISECONDS <= window_first_answer_time {
-					if window_answers != demand_cache.REQUEST_BUDGET {
-						system.log_in("programs", .Warning, FAULT, "a window had ", window_answers, " answers; its budget is ", u64(demand_cache.REQUEST_BUDGET))
-						return
-					}
-					verified = true
-				}
-				counting = false
-			}
-		}
-		if verified && answered >= sent {
-			break
-		}
-		system.wait_records(&wait, &demand.requests.completions)
-		if system.wait_end(&wait, hang_end) >= hang_end {
-			system.log_in("programs", .Warning, FAULT, "no answer before the hang bound: ", sent, " requests sent, ", answered, " answered, ", passes, " passes, a whole window counted: ", verified ? "yes" : "no")
-			return
-		}
-	}
-	system.log("interface_font: the requests past the budget of this program wait until the end of its window, and each one is answered: as it must")
+	fallback_lines_tell()
 }
 
 // measure gives the least time of one line in batches, so that a batch
@@ -426,37 +318,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	no_pair_spacing_large = {advances = regular_spacing_large.advances}
-	greek_spacing = regular_spacing
 	greek_lines_make()
-	greek_character_count = greek_characters_count()
-	demand, demand_given = display.demand_open(ctx, &regular_cache)
-	if demand_given {
-		greek_spacing.demand = &demand.reader
-	} else {
-		system.log("interface_font: no demand cache: the Greek letters draw the replacement glyph")
-	}
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	measure()
 	system.log("interface_font: one line of ", u64(len(PARAGRAPH[1])), " characters in B612 at scale 1 (the least of 50 batches): shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; the caches of ", regular_cache.header.file_size, " and ", bold_cache.header.file_size, " bytes, from the boot image")
 	draw(&window)
 	system.log("interface_font: ok, B612 Regular and Bold, ", u64(regular_cache.header.pair_count), " and ", u64(bold_cache.header.pair_count), " pairs")
 	for {
-		if budget_case_due {
-			budget_case_due = false
-			budget_case(&demand)
-		}
-		// The input of the window, and the answers of the font service:
-		// each one gives a frame, which never waits for the service.
+		// The input of the window: each event gives a frame.
 		list: system.Wait
 		display.wait_events(&list, &window)
-		if demand_given {
-			display.demand_wait(&list, &demand)
-		}
 		system.wait_end(&list)
 		changed := interface.window_events(&drawing, &window)
-		if demand_given && display.demand_answers_take(&demand) {
-			changed = true
-		}
 		if changed {
 			draw(&window)
 		}

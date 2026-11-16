@@ -486,7 +486,7 @@ Most programs now draw their window with the package. This section lists the inv
 | A table that does not cover its surface leaves no stale pixel | Each damage rectangle of a surface is painted with the background first (`draw_damage_on_surface`), a whole frame starts from the background, with no rule for the caller | Host test `a_gone_record_leaves_no_pixel` |
 | Names are complete words | `raster.odin`: `start_x`, `signed_height`, `width_inverse`, `first_x`, ...; `parse.odin`: `start_read`, `end_read`, `glyph_bytes`; `vector_glyphs`: `pixel_x`, `pixel_y`; `bar`: `full_width`; the palette: `first_row`, `matched_count`. The TrueType tags stay | Read |
 
-The package has 49 host tests (45 in `src/library/support/interface/interface_test.odin`, 4 in `interface_font_test.odin`), and `src/library/support/vector_font` has 22.
+The package has 49 host tests (45 in `src/library/support/interface/interface_test.odin`, 4 in `interface_font_test.odin`), and `src/library/support/vector_font` has 27.
 
 ### The converted windows
 
