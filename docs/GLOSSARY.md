@@ -5437,9 +5437,9 @@ Do not use: run (alone), token, inline.
 
 ### Link page
 
-A link page is a page of the program `manual` for the target of a link that is no module: a term of the glossary, or a heading of a guide.
+A link page is a page of the program `manual` for the target of a link that no module describes: a term of the glossary, a heading of a guide, or a declaration of the sources.
 
-The documentation of a module links terms and headings of the guides, and the manual reads only the boot image. So the build writes the page of each such target that the modules of the image link, with the headings under each heading, in the resource `manual_pages` (`src/library/contract/manual_pages`). The page of a term is its name, its short definition and its explanation. The page of a heading is its text up to the next heading, then a link to each heading under it. Example: on the page of the module `manual`, the link "the description tables" opens the link page `docs/MODULE_CONTRACT.md#description-tables`. A link page is not a copy of the site: it holds no picture, and a table is a list.
+The documentation of a module links terms, headings of the guides and declarations of the support packages, and the manual reads only the boot image. So the build writes the page of each such target that the modules of the image link, with the headings under each heading, in the resource `manual_pages` (`src/library/contract/manual_pages`). The page of a term is its name, its short definition and its explanation. The page of a heading is its text up to the next heading, then a link to each heading under it. The page of a declaration is its package and its name, its kind, its file and its line, its one line of Odin and its comment, from the declaration index; the link `system.word_wait` opens one. Example: on the page of the module `manual`, the link "the description tables" opens the link page `docs/MODULE_CONTRACT.md#description-tables`. A link page is not a copy of the site: it holds no picture, and a table is a list.
 
 The design: `src/md/features/manual_links.md`.
 
@@ -7108,7 +7108,7 @@ Do not use: value type, badge, chip, tag (for this).
 
 The declaration index is the list of every top-level declaration of the sources of the system, which `modustool site` reads with the parser of Odin so that a code span can link to what it names.
 
-It reads each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/modules` and `src/programs` (not the tests and not the tool). For each procedure, type, constant and global variable it keeps its package, its file and line, its kind, its one line of Odin and the first sentence of its comment. A code span of a guide, a news entry, the glossary or a source comment whose whole text is a name (`blend_coverage_row`, `graphics.text_proportional`) then becomes a link with a declaration card. When several declarations share the name, the folder that the text around the span names chooses one.
+It reads each source file of `src/kernel`, `src/boot`, `src/library/contract`, `src/library/support`, `src/modules` and `src/programs` (not the tests and not the tool). For each procedure, type, constant and global variable it keeps its package, its file and line, its kind, its one line of Odin, the first sentence of its comment and its whole comment. The build reads the part of the index that holds the names that the modules of the boot image link: a declaration that no module describes gets its link page from it. A code span of a guide, a news entry, the glossary or a source comment whose whole text is a name (`blend_coverage_row`, `graphics.text_proportional`) then becomes a link with a declaration card. When several declarations share the name, the folder that the text around the span names chooses one.
 
 It is not a symbol table of an object file, and its entries are not symbols: a symbol is a documented thing of a reference page.
 

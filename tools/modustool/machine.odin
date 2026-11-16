@@ -2122,6 +2122,22 @@ scenario := [?]Step {
 	{kind = .Key, text = "backspace"},
 	{kind = .Wait, text = "manual: back to the page before"},
 	{kind = .Wait, text = "manual: manual: a program, 17 exports, "},
+	// The third link names a procedure of a support package that no
+	// module describes: it opens the page of its declaration, which the
+	// build took from the source.
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "manual: the focus is on the link the description tables to docs/MODULE_CONTRACT.md#description-tables"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "manual: the focus is on the link link page to term:link-page"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "manual: the focus is on the link system.word_wait to system.word_wait"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "manual: the link system.word_wait opens system.word_wait"},
+	{kind = .Wait, text = "manual: the page system.word_wait: system.word_wait, "},
+	{kind = .Shot, text = "manual_declaration"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Wait, text = "manual: back to the page before"},
+	{kind = .Wait, text = "manual: manual: a program, 17 exports, "},
 	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 
