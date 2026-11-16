@@ -213,17 +213,20 @@ Measure_State :: enum u64 {
 // write it (docs/TRUSTED_BOOT.md, "The measure").
 MEASURE_REGISTER :: 11
 
-// A test of the kernel on itself. The kernel does one thing that its page
-// tables must refuse, and the machine stops with the report of the fault.
-// The modus tool builds one boot program for each test.
+// A test of the kernel on itself. The kernel does one thing that the
+// processor must refuse. For a test of the page tables, the machine stops
+// with the report of the fault. For the register trial, the kernel goes on
+// after the refusal, says so and stops the machine with the code 0. The
+// modus tool builds one boot program for each test.
 Self_Test :: enum u64 {
-	None            = 0, // No test: a normal boot.
-	Stack_Overflow  = 1, // Use more than the kernel stack.
-	Write_Code      = 2, // Write to the code of the kernel.
-	Write_Code_View = 3, // Write to the code of the kernel through the direct map.
-	Execute_Data    = 4, // Execute the data of the kernel.
-	Read_Program    = 5, // Read the memory of a program, outside a copy.
-	Execute_Program = 6, // Execute the code of a program.
+	None             = 0, // No test: a normal boot.
+	Stack_Overflow   = 1, // Use more than the kernel stack.
+	Write_Code       = 2, // Write to the code of the kernel.
+	Write_Code_View  = 3, // Write to the code of the kernel through the direct map.
+	Execute_Data     = 4, // Execute the data of the kernel.
+	Read_Program     = 5, // Read the memory of a program, outside a copy.
+	Execute_Program  = 6, // Execute the code of a program.
+	Register_Refused = 7, // Write an address that is not canonical to a register in a register trial.
 }
 
 // physical gives a pointer to physical memory, through the direct map. Only

@@ -352,6 +352,41 @@ global resume_return
 resume_return:
 	iretq
 
+; The register trials (src/kernel/register_trial.odin): one rdmsr or wrmsr
+; that the processor can refuse with a protection fault, as a hypervisor
+; does with a register that it lists in CPUID and does not give. Each one
+; gives 1 when the processor took the access. kernel_interrupt knows the
+; one instruction of each by its label: a protection fault there goes on at
+; model_specific_register_trial_refused, which gives 0, on the stack and
+; with the registers of the fault. No other instruction here can fault: the
+; caller gives the address of a local of its own stack.
+global model_specific_register_trial_read
+global model_specific_register_trial_read_instruction
+global model_specific_register_trial_write
+global model_specific_register_trial_write_instruction
+global model_specific_register_trial_refused
+model_specific_register_trial_read:   ; (index: u32, value: ^u64) -> bool
+	mov ecx, edi
+model_specific_register_trial_read_instruction:
+	rdmsr                        ; It clears the high halves of rax and rdx.
+	shl rdx, 32
+	or rax, rdx
+	mov [rsi], rax
+	mov eax, 1
+	ret
+model_specific_register_trial_write:  ; (index: u32, value: u64) -> bool
+	mov ecx, edi
+	mov eax, esi                 ; The low 32 bits of the value.
+	mov rdx, rsi
+	shr rdx, 32                  ; The high 32 bits.
+model_specific_register_trial_write_instruction:
+	wrmsr
+	mov eax, 1
+	ret
+model_specific_register_trial_refused:
+	xor eax, eax
+	ret
+
 global stack_switch
 stack_switch:                    ; (top: u64, entry: rawptr) -> !: continue on another stack
 	mov rsp, rdi
