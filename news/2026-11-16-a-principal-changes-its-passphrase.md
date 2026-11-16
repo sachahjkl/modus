@@ -7,7 +7,7 @@ guide: docs/PRINCIPALS.md
 
 Before, a named principal got a new passphrase only after a recovery, when the TPM refused its keys. Its recovery key never changed.
 
-Now a console of the session of the principal asks for a change. `passphrase_change()` opens the window of `unlock`, which asks for the current passphrase first. The TPM checks it and counts a wrong one, as at an unlock. The window then asks for the new passphrase two times, and the TPM seals the keys again. `recovery_key_change()` asks for the current passphrase too, then shows a new recovery key one time; the file is written after Enter, when the key is written down. The window ends on the result, and the line of the console gives the same result. The console of the machine cannot ask: a change needs the session of the principal.
+Now a console of the session asks for a change. `passphrase_change()` opens the window of `unlock`, which asks for the current passphrase first; the TPM counts a wrong one. The TPM then seals the keys to the new passphrase. `recovery_key_change()` shows a new recovery key one time, and writes the file after Enter.
 
 The keys themselves do not change: they are the principal. The store keeps the file from before the change as a version on the same disk, and that version still opens with the old passphrase and the old recovery key. So today a change protects the keys only against a party who knows the old secret and never gets this disk. The erase of the old versions is planned.
 
