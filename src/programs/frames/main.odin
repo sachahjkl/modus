@@ -65,7 +65,6 @@ SMALL_BUDGET :: 100 // The pages of a budget that this program makes for one cas
 TWIN_COUNT :: 4
 TWIN_AMOUNTS :: system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 10}
 
-COLOR_WRONG :: 0xE0B040
 
 // One case: what the program did, and what the kernel answered.
 Case :: struct {
@@ -348,7 +347,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.colors.card_top)
 			}
 			interface.draw_text(table, 12, y, item.text, graphics.colors.text)
-			interface.draw_text(table, ANSWER_X, y, item.right ? item.answer : "another answer", item.right ? graphics.colors.program : COLOR_WRONG)
+			interface.draw_text(table, ANSWER_X, y, item.right ? item.answer : "another answer", item.right ? graphics.colors.program : graphics.colors.failed)
 			y += LINE
 		}
 		y += LINE / 2

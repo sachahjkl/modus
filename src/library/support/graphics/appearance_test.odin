@@ -36,11 +36,24 @@ the_rules_keep_their_contrast_in_each_appearance :: proc(t: ^testing.T) {
 			{"a module with no entry", tokens.no_entry},
 			{"a resource", tokens.resource},
 			{"a failure", tokens.failed},
+			{"a warning", tokens.warning},
+			{"a link", tokens.link},
 		}
 		for concept in concepts {
 			for surface in surfaces {
 				expect_contrast(t, of, concept.name, concept.color, surface, TEXT_CONTRAST_LEAST)
 			}
+		}
+		// The link with the focus is on a band of the track.
+		expect_contrast(t, of, "a link on the track", tokens.link, tokens.track, TEXT_CONTRAST_LEAST)
+		// A member of a series is a text (a name in the log, "thread 1")
+		// on each surface, and a graphic on the track (the part of the work
+		// of a node of `rings` that is done).
+		for color in tokens.series {
+			for surface in surfaces {
+				expect_contrast(t, of, "a series color", color, surface, TEXT_CONTRAST_LEAST)
+			}
+			expect_contrast(t, of, "a series color on the track", color, tokens.track, GRAPHIC_CONTRAST_LEAST)
 		}
 		// White on the fills of the blue and of the red.
 		expect_contrast(t, of, "white on the chosen row", COLOR_WHITE, tokens.chosen, TEXT_CONTRAST_LEAST)
@@ -108,6 +121,16 @@ the_two_appearances_differ_where_they_must :: proc(t: ^testing.T) {
 	testing.expect_value(t, light.no_entry, shade(DARK_NO_ENTRY, 55))
 	testing.expect_value(t, light.resource, shade(DARK_RESOURCE, 60))
 	testing.expect_value(t, light.failed, shade(DARK_FAILED, 78))
+	// The tokens that the programs share: the same rule, the shade that
+	// keeps 4.5 to 1 on the light surfaces.
+	testing.expect_value(t, light.warning, shade(DARK_WARNING, 57))
+	testing.expect_value(t, light.link, shade(DARK_LINK, 55))
+	dark_series := DARK_SERIES
+	series_light_percents := [SERIES_COLOR_COUNT]u32{76, 64, 56, 75, 79, 57, 54, 63}
+	for number in 0 ..< SERIES_COLOR_COUNT {
+		testing.expect_value(t, dark.series[number], dark_series[number])
+		testing.expect_value(t, light.series[number], shade(dark_series[number], series_light_percents[number]))
+	}
 	// The surfaces of the light form of the site, from their rule.
 	testing.expect_value(t, light.card_bottom, mix(COLOR_WHITE, light.background, 50 * 255 / 100))
 	testing.expect_value(t, light.track, mix(light.background, DARK_DIM, 25 * 255 / 100))

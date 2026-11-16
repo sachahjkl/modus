@@ -21,7 +21,6 @@ import "modus:support/system"
 TEXT_WIDTH :: COLUMNS * CELL_WIDTH // The width of the text, in pixels.
 LIST_INDENT :: 2 * CELL_WIDTH // The indentation of an item inside an item.
 ROW_PART_CAPACITY :: 4096
-COLOR_LINK :: 0x6CB4F0
 
 Row_Part_Flag :: enum u8 {
 	Row_Start, // The part starts a row. Without it, the part is on the row of the part before.
@@ -266,7 +265,7 @@ markdown_span :: proc "contextless" (data: rawptr, text: string, span: markdown.
 	case .Code in span.styles:
 		// Code is a text that a reader copies: the font of the cells.
 		style.font = bold ? interface.FONT_BOLD : interface.Font{}
-		style.color = COLOR_CODE
+		style.color = graphics.colors.text
 		page_marks.code += 1
 	case bold:
 		style.font = interface.FONT_INTERFACE_BOLD
@@ -277,7 +276,7 @@ markdown_span :: proc "contextless" (data: rawptr, text: string, span: markdown.
 		page_marks.italic += 1
 	}
 	if .Link in span.styles {
-		style.color = COLOR_LINK
+		style.color = graphics.colors.link
 		if span.target_start != flow.link_target_start {
 			link_begin(text, span)
 		}
@@ -326,7 +325,7 @@ code_line :: proc "contextless" (line: string) {
 				cut = columns // A word longer than the row.
 			}
 		}
-		row_part_add({text = rest[:cut], x = i32(flow.left), width = i32(cut * CELL_WIDTH), color = COLOR_CODE, flags = {.Row_Start, .Code_Block, .From_Markdown}})
+		row_part_add({text = rest[:cut], x = i32(flow.left), width = i32(cut * CELL_WIDTH), color = graphics.colors.text, flags = {.Row_Start, .Code_Block, .From_Markdown}})
 		rest = rest[cut:]
 		for len(rest) > 0 && len(rest) < len(line) && rest[0] == ' ' {
 			rest = rest[1:]
@@ -740,7 +739,7 @@ link_page_build :: proc "contextless" (index: int) {
 	wanted_row = -1
 	page_kind, link_page_index = .Link_Page, index
 	target := manual_pages.target_of(link_pages, index)
-	put(manual_pages.title_of(link_pages, index), 0, COLOR_TITLE)
+	put(manual_pages.title_of(link_pages, index), 0, graphics.colors.text)
 	source := ""
 	switch manual_pages.link_target_kind(target) {
 	case .Term:

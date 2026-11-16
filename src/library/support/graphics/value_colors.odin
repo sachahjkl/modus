@@ -33,7 +33,7 @@ value_kind_colors := [value_kinds.Value_Kind]Value_Kind_Color {
 	.Value     = {accent = DARK_MEMORY, dark_percent = 100, light_percent = 65},
 	.Grant     = {accent = DARK_MACHINE, dark_percent = 100, light_percent = 78},
 	.Status    = {accent = DARK_FAILED, dark_percent = 100, light_percent = 78},
-	// The firmware violet at 100 % is at the bound on the band of a row.
+	// The firmware violet at 100 % is at the bound on the top of a card.
 	.Type      = {accent = DARK_FIRMWARE, dark_percent = 115, light_percent = 83},
 	.Operation = {accent = DARK_KERNEL, dark_percent = 100, light_percent = 73},
 	.Command   = {accent = DARK_PROGRAM, dark_percent = 100, light_percent = 58},
