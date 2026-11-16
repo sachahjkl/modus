@@ -43,6 +43,7 @@
 // the processor (docs/RANDOMNESS.md, section 3).
 package randomness
 
+import op "modus:contract/operation"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
@@ -82,11 +83,13 @@ hex_text :: proc "contextless" (builder: ^interface.Text_Builder, bytes: []u8) -
 }
 
 strength_color :: proc "contextless" (strength: random.Seed_Strength) -> graphics.Color {
-	#partial switch strength {
+	switch strength {
 	case .Entropy:
 		return graphics.colors.program
 	case .Processor:
 		return graphics.colors.text
+	case .None, .Weak:
+		return graphics.colors.failed
 	}
 	return graphics.colors.failed
 }
@@ -154,7 +157,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// The seed of the system: the facts of the root service.
 	content := interface.card(&frame, {8, 8, WIDTH - 16, 196}, "THE SEED OF THE SYSTEM", "Entropy_Report of the root service, at its start", graphics.colors.kernel)
 	column := interface.column_of(content)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "strength", random.seed_strength_names[report.strength], strength_color(report.strength), 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "strength", op.seed_strength_names[report.strength], strength_color(report.strength), 168)
 	source_line(&frame, &column, "rdseed", report.rdseed_present, report.rdseed_good, report.rdseed_refused, random.PROCESSOR_VALUES)
 	source_line(&frame, &column, "rdrand", report.rdrand_present, report.rdrand_good, report.rdrand_refused, random.PROCESSOR_VALUES)
 	builder.count = 0
@@ -221,7 +224,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("randomness: no random seed in the context")
 		system.stop(1)
 	}
-	report = random.report_values_read(&ctx.values)
+	report_ok: bool
+	if report, report_ok = random.report_values_read(&ctx.values); !report_ok {
+		system.log("randomness: the root service gave the seed strength ", ctx.values[0] & 0xFF, ", which names no strength: nothing is shown")
+		system.stop(1)
+	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "randomness")
 	if !ok {
 		system.stop(1)
@@ -229,7 +236,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	random.fill(&program_generator, first_bytes[:])
 	hex: interface.Text_Builder
-	system.log("randomness: the seed of the system: strength ", random.seed_strength_names[report.strength], "; the first bytes of the stream of this program: ", hex_text(&hex, first_bytes[:]))
+	system.log("randomness: the seed of the system: strength ", op.seed_strength_names[report.strength], "; the first bytes of the stream of this program: ", hex_text(&hex, first_bytes[:]))
 	if report.device_present {
 		system.log("randomness: the entropy device: ", u64(report.device_bytes), " bytes mixed after the gathering; refused reads: ", u64(report.device_reads_refused))
 	} else {

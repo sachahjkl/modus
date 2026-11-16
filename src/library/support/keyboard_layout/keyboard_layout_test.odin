@@ -101,15 +101,15 @@ the_third_level_of_the_layout_of_france :: proc(t: ^testing.T) {
 		testing.expectf(t, key_character(.French, {.Alt_Graph}, key.code) == key.character, "AltGr %x: %v, expected %v", key.code, key_character(.French, {.Alt_Graph}, key.code), key.character)
 		// The third level ignores Shift.
 		testing.expectf(t, key_character(.French, {.Shift, .Alt_Graph}, key.code) == key.character, "Shift AltGr %x: %v", key.code, key_character(.French, {.Shift, .Alt_Graph}, key.code))
-		testing.expectf(t, dead_accent_of(.French, {.Alt_Graph}, key.code) == 0, "AltGr %x is not a dead key", key.code)
+		testing.expectf(t, dead_accent_of(.French, {.Alt_Graph}, key.code) == .None, "AltGr %x is not a dead key", key.code)
 	}
 	// The keys of 2 and 7 are dead keys with AltGr: no character.
 	testing.expect_value(t, key_character(.French, {.Alt_Graph}, KEY_DEAD_TILDE), 0)
 	testing.expect_value(t, key_character(.French, {.Alt_Graph}, KEY_DEAD_GRAVE), 0)
-	testing.expect_value(t, dead_accent_of(.French, {.Alt_Graph}, KEY_DEAD_TILDE), ACCENT_TILDE)
-	testing.expect_value(t, dead_accent_of(.French, {.Alt_Graph}, KEY_DEAD_GRAVE), ACCENT_GRAVE)
+	testing.expect_value(t, dead_accent_of(.French, {.Alt_Graph}, KEY_DEAD_TILDE), Accent.Tilde)
+	testing.expect_value(t, dead_accent_of(.French, {.Alt_Graph}, KEY_DEAD_GRAVE), Accent.Grave)
 	// The key right of P is no dead key with AltGr.
-	testing.expect_value(t, dead_accent_of(.French, {.Alt_Graph}, KEY_DEAD_ACCENTS), 0)
+	testing.expect_value(t, dead_accent_of(.French, {.Alt_Graph}, KEY_DEAD_ACCENTS), Accent.None)
 	// A letter other than e has no third level: no character.
 	testing.expect_value(t, key_character(.French, {.Alt_Graph}, SCAN_SEMICOLON), 0)
 	testing.expect_value(t, key_character(.French, {.Alt_Graph}, KEY_LESS_GREATER), 0)
@@ -118,7 +118,7 @@ the_third_level_of_the_layout_of_france :: proc(t: ^testing.T) {
 	state: Dead_Key_State
 	_, _ = key_press(&state, .French, {}, KEY_DEAD_ACCENTS, false)
 	accent_alone, euro := key_press(&state, .French, {.Alt_Graph}, SCAN_E, false)
-	testing.expect_value(t, accent_alone, ACCENT_CIRCUMFLEX)
+	testing.expect_value(t, accent_alone, accent_characters[.Circumflex])
 	testing.expect_value(t, euro, glyph_cache.EURO_SIGN)
 	// Space, Enter and Backspace act as themselves.
 	testing.expect_value(t, key_character(.French, {.Alt_Graph}, SCAN_SPACE), ' ')
@@ -127,7 +127,7 @@ the_third_level_of_the_layout_of_france :: proc(t: ^testing.T) {
 	// The layout of the United States has no third level.
 	testing.expect_value(t, key_character(.United_States, {.Alt_Graph}, SCAN_2), '2')
 	testing.expect_value(t, key_character(.United_States, {.Shift, .Alt_Graph}, SCAN_2), '@')
-	testing.expect_value(t, dead_accent_of(.United_States, {.Alt_Graph}, KEY_DEAD_TILDE), 0)
+	testing.expect_value(t, dead_accent_of(.United_States, {.Alt_Graph}, KEY_DEAD_TILDE), Accent.None)
 }
 
 // One key that a case presses.
@@ -143,7 +143,7 @@ Pressed_Key :: struct {
 Dead_Key_Case :: struct {
 	keys:     []Pressed_Key,
 	expected: string,
-	waiting:  rune,
+	waiting:  Accent,
 }
 
 // The rules of a dead key, each with its case
@@ -151,42 +151,42 @@ Dead_Key_Case :: struct {
 @(test)
 the_dead_keys_of_the_layout_of_france :: proc(t: ^testing.T) {
 	cases := [?]Dead_Key_Case {
-		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_E, {}}}, "ê", 0},
-		{{{KEY_DEAD_ACCENTS, {.Shift}}, {SCAN_I, {}}}, "ï", 0},
+		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_E, {}}}, "ê", .None},
+		{{{KEY_DEAD_ACCENTS, {.Shift}}, {SCAN_I, {}}}, "ï", .None},
 		// Shift keeps the accent: a capital with its accent.
-		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_LEFT_SHIFT, {.Shift}}, {SCAN_E, {.Shift}}}, "Ê", 0},
+		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_LEFT_SHIFT, {.Shift}}, {SCAN_E, {.Shift}}}, "Ê", .None},
 		// Rule 1: a dead key while an accent waits.
-		{{{KEY_DEAD_ACCENTS, {}}, {KEY_DEAD_ACCENTS, {}}}, "^", 0},
-		{{{KEY_DEAD_ACCENTS, {}}, {KEY_DEAD_ACCENTS, {.Shift}}}, "^", 0},
-		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {KEY_DEAD_GRAVE, {.Alt_Graph}}}, "~", 0},
+		{{{KEY_DEAD_ACCENTS, {}}, {KEY_DEAD_ACCENTS, {}}}, "^", .None},
+		{{{KEY_DEAD_ACCENTS, {}}, {KEY_DEAD_ACCENTS, {.Shift}}}, "^", .None},
+		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {KEY_DEAD_GRAVE, {.Alt_Graph}}}, "~", .None},
 		// Rule 2: a space gives the accent alone.
-		{{{KEY_DEAD_ACCENTS, {.Shift}}, {SCAN_SPACE, {}}}, "¨", 0},
-		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_SPACE, {}}}, "~", 0},
-		{{{KEY_DEAD_GRAVE, {.Alt_Graph}}, {SCAN_SPACE, {}}}, "`", 0},
+		{{{KEY_DEAD_ACCENTS, {.Shift}}, {SCAN_SPACE, {}}}, "¨", .None},
+		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_SPACE, {}}}, "~", .None},
+		{{{KEY_DEAD_GRAVE, {.Alt_Graph}}, {SCAN_SPACE, {}}}, "`", .None},
 		// Rule 3 and rule 4: a letter with no accented form gives both.
-		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_Z, {}}}, "^z", 0},
-		{{{KEY_DEAD_ACCENTS, {.Shift}}, {SCAN_Y, {.Shift}}}, "¨Y", 0},
-		{{{KEY_DEAD_ACCENTS, {.Shift}}, {SCAN_Y, {}}}, "ÿ", 0},
-		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_2, {}}}, "^é", 0},
+		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_Z, {}}}, "^z", .None},
+		{{{KEY_DEAD_ACCENTS, {.Shift}}, {SCAN_Y, {.Shift}}}, "¨Y", .None},
+		{{{KEY_DEAD_ACCENTS, {.Shift}}, {SCAN_Y, {}}}, "ÿ", .None},
+		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_2, {}}}, "^é", .None},
 		// The dead keys of the third level: the tilde and the grave accent.
-		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_N, {}}}, "ñ", 0},
-		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_Q, {.Shift}}}, "Ã", 0},
-		{{{KEY_DEAD_GRAVE, {.Alt_Graph}}, {SCAN_LEFT_SHIFT, {.Shift}}, {SCAN_Q, {.Shift}}}, "À", 0},
-		{{{KEY_DEAD_GRAVE, {.Alt_Graph}}, {SCAN_E, {}}}, "è", 0},
-		{{{KEY_DEAD_GRAVE, {.Alt_Graph}}, {SCAN_Z, {}}}, "`z", 0},
-		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_3, {}}}, "~\"", 0},
+		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_N, {}}}, "ñ", .None},
+		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_Q, {.Shift}}}, "Ã", .None},
+		{{{KEY_DEAD_GRAVE, {.Alt_Graph}}, {SCAN_LEFT_SHIFT, {.Shift}}, {SCAN_Q, {.Shift}}}, "À", .None},
+		{{{KEY_DEAD_GRAVE, {.Alt_Graph}}, {SCAN_E, {}}}, "è", .None},
+		{{{KEY_DEAD_GRAVE, {.Alt_Graph}}, {SCAN_Z, {}}}, "`z", .None},
+		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_3, {}}}, "~\"", .None},
 		// Rule 6: AltGr keeps the accent, and a character of the third
 		// level after a dead key gives both.
-		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_RIGHT_ALT, {.Alt_Graph}}, {0x05, {.Alt_Graph}}}, "^{", 0},
+		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_RIGHT_ALT, {.Alt_Graph}}, {0x05, {.Alt_Graph}}}, "^{", .None},
 		// Rule 5: a control character drops the accent.
-		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_ENTER, {}}}, "\n", 0},
+		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_ENTER, {}}}, "\n", .None},
 		// A key with no character on the third level drops the accent.
-		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_Q, {.Alt_Graph}}}, "", 0},
+		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_Q, {.Alt_Graph}}}, "", .None},
 		// The euro sign takes no accent: the accent, then the sign.
-		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_E, {.Alt_Graph}}}, "~€", 0},
+		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_E, {.Alt_Graph}}}, "~€", .None},
 		// A dead key alone: nothing yet, the accent waits.
-		{{{KEY_DEAD_ACCENTS, {}}}, "", ACCENT_CIRCUMFLEX},
-		{{{KEY_DEAD_TILDE, {.Alt_Graph}}}, "", ACCENT_TILDE},
+		{{{KEY_DEAD_ACCENTS, {}}}, "", .Circumflex},
+		{{{KEY_DEAD_TILDE, {.Alt_Graph}}}, "", .Tilde},
 	}
 	for item, number in cases {
 		state: Dead_Key_State
@@ -204,14 +204,14 @@ the_dead_keys_of_the_layout_of_france :: proc(t: ^testing.T) {
 		text := strings.to_string(builder)
 		testing.expectf(t, text == item.expected, "case %v: %q, expected %q", number, text, item.expected)
 		testing.expectf(t, state.accent == item.waiting, "case %v: the accent that waits is %v", number, state.accent)
-		testing.expect_value(t, key_records_needed(&state), item.waiting != 0 ? 2 : 1)
+		testing.expect_value(t, key_records_needed(&state), item.waiting != .None ? 2 : 1)
 	}
 	// The layout of the United States has no dead key.
 	state: Dead_Key_State
 	_, character := key_press(&state, .United_States, {}, KEY_DEAD_ACCENTS, false)
 	testing.expect_value(t, character, '[')
-	testing.expect_value(t, state.accent, 0)
+	testing.expect_value(t, state.accent, Accent.None)
 	_, character = key_press(&state, .United_States, {.Alt_Graph}, KEY_DEAD_TILDE, false)
 	testing.expect_value(t, character, '2')
-	testing.expect_value(t, state.accent, 0)
+	testing.expect_value(t, state.accent, Accent.None)
 }

@@ -63,6 +63,7 @@ import op "modus:contract/operation"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
+import rounds "modus:support/kernel_events_rounds"
 import "modus:support/random"
 import "modus:support/system"
 
@@ -135,27 +136,8 @@ STOP_BY_PARENT :: 9
 LOAD_AMOUNTS :: system.Budget_Amounts{pages = 256 + LOADERS_MOST * (16 + 3), programs = 1, threads = 1 + LOADERS_MOST, processor = (1 + LOADERS_MOST) * 1_000_000, log_records = 0}
 WAITER_AMOUNTS :: system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 0}
 
-// The rounds of the load child.
-ROUND_EXACT :: 1
-ROUND_ONE_IN :: 2
-ROUND_FULL :: 3
-ROUND_TAKEN_AWAY :: 4
-// One first use of a new page: the child writes its address in the page
-// that it shares.
-ROUND_FIRST_USE_ALL :: 5
-ROUND_FIRST_USE_NAMED :: 6
-// The loaders start, then stop.
-ROUND_LOADERS_START :: 7
-ROUND_LOADERS_STOP :: 8
-// The rounds of the measure: the load child runs its loop of Memory_Size
-// for MEASURE_TIME, and writes its own count and its own time.
-ROUND_MEASURE_NO_RULE :: 9
-ROUND_MEASURE_OTHER :: 10
-ROUND_MEASURE_NOTHING :: 11
-ROUND_MEASURE_EACH :: 12
-// The right revoked: CALLS operations before the revocation, CALLS after.
-ROUND_BEFORE_REVOCATION :: 13
-ROUND_AFTER_REVOCATION :: 14
+// The rounds of the load child: modus:support/kernel_events_rounds.
+Round :: rounds.Round
 
 // The page that the parent shares with each child, at SHARED_ADDRESS in the
 // child.
@@ -330,18 +312,28 @@ child_end :: proc "contextless" (child: ^Child, name: string) -> (back: bool) {
 
 // round_run asks the load child to run one round and waits for its end. The
 // bound only ends a hang.
-round_run :: proc "contextless" (load: ^Child, round: u32) -> bool {
-	intrinsics.atomic_store(&load.shared.go, round)
+round_run :: proc "contextless" (load: ^Child, round: Round) -> bool {
+	intrinsics.atomic_store(&load.shared.go, u32(round))
 	system.word_wake(&load.shared.go)
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for system.time() < deadline {
 		done := intrinsics.atomic_load(&load.shared.done)
-		if done == round {
+		if done == u32(round) {
 			return true
+		}
+		// A child that refused the round stopped: its stop code says so at
+		// once, and the wait for a round that never runs ends now.
+		if results, status := system.call(.Program_State, u64(load.program)); status == .Ok && op.Program_State(results[0]) == .Stopped {
+			if results[1] == rounds.REFUSED_ROUND_STOP_CODE {
+				system.log("kernel_events: the load child refused the round ", u64(round), ": its word names no round to run")
+			} else {
+				system.log("kernel_events: the load child stopped with the code ", results[1], " before the end of the round ", u64(round))
+			}
+			return false
 		}
 		system.word_wait(&load.shared.done, done, system.time() + 100)
 	}
-	if intrinsics.atomic_load(&load.shared.done) == round {
+	if intrinsics.atomic_load(&load.shared.done) == u32(round) {
 		return true
 	}
 	system.log("kernel_events: the load child did not end the round ", u64(round), " in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
@@ -492,7 +484,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	given := table_give(exact[:], RING_RECORDS)
 	intrinsics.atomic_store(&faulter.shared.go, 1)
 	system.word_wake(&faulter.shared.go)
-	ran := given == .Ok && round_run(load, ROUND_EXACT)
+	ran := given == .Ok && round_run(load, .Exact)
 	faulted := child_stopped(&faulter)
 	_, lost, _ := heads()
 	rings_read(&tally)
@@ -516,7 +508,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	// 6. One in 10.
 	one_in := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, program = u64(load.program), detail = memory_size, one_in = ONE_IN}}
 	tally = {}
-	ran = table_give(one_in[:], RING_RECORDS) == .Ok && round_run(load, ROUND_ONE_IN)
+	ran = table_give(one_in[:], RING_RECORDS) == .Ok && round_run(load, .One_In)
 	rings_read(&tally)
 	right = ran && tally.kinds[.Operation] == CALLS / ONE_IN
 	system.log("kernel_events: one in 10: ", tally.kinds[.Operation], " records of 1000 operations", right ? string(": as it must") : string(": WRONG"))
@@ -525,7 +517,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 
 	// 7. A full ring: this program reads nothing until the end of the round.
 	tally = {}
-	ran = table_give(exact[:1], FULL_RING_RECORDS) == .Ok && round_run(load, ROUND_FULL)
+	ran = table_give(exact[:1], FULL_RING_RECORDS) == .Ok && round_run(load, .Full)
 	written, full_lost, most := heads()
 	rings_read(&tally)
 	right = ran && written + full_lost == CALLS && full_lost > 0 && most <= FULL_RING_RECORDS && tally.kinds[.Operation] == written
@@ -537,7 +529,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	// and a second take is refused.
 	ended := system.events_end(machine)
 	written_before, lost_before, _ := heads()
-	ran = ended == .Ok && round_run(load, ROUND_TAKEN_AWAY)
+	ran = ended == .Ok && round_run(load, .Taken_Away)
 	written_after, lost_after, _ := heads()
 	second := system.events_end(machine)
 	right = ran && written_after == written_before && lost_after == lost_before && second == .Bad_State
@@ -555,10 +547,10 @@ case_of_the_fault_address :: proc "contextless" (load: ^Child) {
 	every := [1]op.Event_Rule{{kind = .Fault, flags = {.Match_Detail}, detail = 14}}
 	named := [1]op.Event_Rule{{kind = .Fault, flags = {.Match_Detail}, program = u64(load.program), detail = 14}}
 	all_tally, named_tally: Tally
-	ran := table_give(every[:], RING_RECORDS) == .Ok && round_run(load, ROUND_FIRST_USE_ALL)
+	ran := table_give(every[:], RING_RECORDS) == .Ok && round_run(load, .First_Use_All)
 	ran = ran && system.events_end(machine) == .Ok
 	rings_read(&all_tally)
-	ran = ran && table_give(named[:], RING_RECORDS) == .Ok && round_run(load, ROUND_FIRST_USE_NAMED)
+	ran = ran && table_give(named[:], RING_RECORDS) == .Ok && round_run(load, .First_Use_Named)
 	ran = ran && system.events_end(machine) == .Ok
 	// The address of the second round: the child wrote it in its round.
 	named_tally.fault_address_wanted = intrinsics.atomic_load(&load.shared.first_use_address)
@@ -578,7 +570,7 @@ case_of_the_ends_under_load :: proc "contextless" (load: ^Child, window: ^displa
 	rules := [1]op.Event_Rule{{kind = .Operation, program = u64(load.program)}}
 	words := rings_pages * PAGE / size_of(u64)
 	base := ([^]u64)(rings_base)
-	ran := round_run(load, ROUND_LOADERS_START)
+	ran := round_run(load, .Loaders_Start)
 	loaders := intrinsics.atomic_load(&load.shared.loaders)
 	rounds := 0
 	broken_round := -1
@@ -611,7 +603,7 @@ case_of_the_ends_under_load :: proc "contextless" (load: ^Child, window: ^displa
 		}
 		rounds += 1
 	}
-	stopped := round_run(load, ROUND_LOADERS_STOP)
+	stopped := round_run(load, .Loaders_Stop)
 	right := ran && stopped && loaders >= 1 && rounds == STRESS_ROUNDS && broken_round < 0 && written_sum != 0
 	if broken_round >= 0 {
 		system.log("kernel_events: 1000 gives and ends under load: WRONG: after the end ", u64(broken_round), ", the word at the offset ", system.Hex(broken_offset), " of the memory object of the rings changed: a record written after the end")
@@ -629,7 +621,7 @@ case_of_the_ends_under_load :: proc "contextless" (load: ^Child, window: ^displa
 // Events_Set with the handle is refused.
 case_of_the_revoked_right :: proc "contextless" (load: ^Child) {
 	rules := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, program = u64(load.program), detail = u64(op.Operation.Memory_Size)}}
-	ran := table_give(rules[:], RING_RECORDS) == .Ok && round_run(load, ROUND_BEFORE_REVOCATION)
+	ran := table_give(rules[:], RING_RECORDS) == .Ok && round_run(load, .Before_Revocation)
 	written_before, lost_before, _ := heads()
 	system.log("kernel_events: the table is given; waiting for the revocation of the grant machine")
 	// The wait for the principal has no bound: the principal takes the time that
@@ -642,7 +634,7 @@ case_of_the_revoked_right :: proc "contextless" (load: ^Child) {
 		}
 		system.sleep(system.time() + 10)
 	}
-	ran = ran && round_run(load, ROUND_AFTER_REVOCATION)
+	ran = ran && round_run(load, .After_Revocation)
 	written_after, lost_after, _ := heads()
 	_, _, refused := system.events_set(machine, rings_memory, rules[:], RING_RECORDS)
 	right := ran && revoked && written_before + lost_before == CALLS && written_after == written_before && lost_after == lost_before && refused == .Bad_Handle
@@ -674,7 +666,7 @@ drain_thread :: proc "c" (_: rawptr) -> ! {
 // the ones of its loop: so the events that a rule for its Memory_Size
 // accepts are exactly the count of its loop. The heads are read after the
 // table ended: the kernel writes no more there.
-measure_round :: proc "contextless" (load: ^Child, round: u32, rules: []op.Event_Rule, measure: ^Measure) -> bool {
+measure_round :: proc "contextless" (load: ^Child, round: Round, rules: []op.Event_Rule, measure: ^Measure) -> bool {
 	if len(rules) != 0 && table_give(rules, RING_RECORDS) != .Ok {
 		return false
 	}
@@ -723,12 +715,12 @@ case_of_the_cost :: proc "contextless" (load: ^Child, other: ^Child) {
 	named_other := [1]op.Event_Rule{{kind = .Operation, program = other_program}}
 	nothing := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, detail = u64(op.Operation.Machine_Stop)}}
 	each := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, program = u64(load.program), detail = u64(op.Operation.Memory_Size)}}
-	ran := measure_round(load, ROUND_MEASURE_NO_RULE, nil, &measures[0])
+	ran := measure_round(load, .Measure_No_Rule, nil, &measures[0])
 	// With no other program, the round does not run: a rule for every
 	// program would not measure the same path.
-	ran = other != nil && measure_round(load, ROUND_MEASURE_OTHER, named_other[:], &measures[1]) && ran
-	ran = measure_round(load, ROUND_MEASURE_NOTHING, nothing[:], &measures[2]) && ran
-	ran = measure_round(load, ROUND_MEASURE_EACH, each[:], &measures[3]) && ran
+	ran = other != nil && measure_round(load, .Measure_Other, named_other[:], &measures[1]) && ran
+	ran = measure_round(load, .Measure_Nothing, nothing[:], &measures[2]) && ran
+	ran = measure_round(load, .Measure_Each, each[:], &measures[3]) && ran
 	other_agrees := measures[1].written + measures[1].lost == 0
 	nothing_agrees := measures[2].written + measures[2].lost == 0
 	each_agrees := measures[3].written + measures[3].lost == measures[3].count
@@ -800,16 +792,25 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 		if status != .Ok {
 			system.stop(20)
 		}
-		round: u32
+		round_word: u32
 		loaders: [LOADERS_MOST]system.Thread
 		loader_count: u32
 		for {
-			for intrinsics.atomic_load(&shared.go) == round {
-				system.word_wait(&shared.go, round, system.time() + 100)
+			for intrinsics.atomic_load(&shared.go) == round_word {
+				system.word_wait(&shared.go, round_word, system.time() + 100)
 			}
-			round = intrinsics.atomic_load(&shared.go)
+			round_word = intrinsics.atomic_load(&shared.go)
+			// The border of the shared page: a word that names no round, or
+			// the word of no round, runs nothing, and the child stops.
+			round, round_ok := rounds.round_of_word(round_word)
+			if !round_ok {
+				system.log("kernel_events: the load child got the round ", u64(round_word), ", which names no round: it stops")
+				system.stop(rounds.REFUSED_ROUND_STOP_CODE)
+			}
 			switch round {
-			case ROUND_MEASURE_NO_RULE, ROUND_MEASURE_OTHER, ROUND_MEASURE_NOTHING, ROUND_MEASURE_EACH:
+			case .None:
+				// Refused above.
+			case .Measure_No_Rule, .Measure_Other, .Measure_Nothing, .Measure_Each:
 				// The measure: its own count and its own time. The loop
 				// makes one kernel entry with one operation Memory_Size for
 				// each count, and no other operation Memory_Size; the
@@ -824,19 +825,19 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 				}
 				intrinsics.atomic_store(&shared.measure_nanoseconds, system.nanoseconds() - start)
 				intrinsics.atomic_store(&shared.measure_count, count)
-			case ROUND_FIRST_USE_ALL, ROUND_FIRST_USE_NAMED:
+			case .First_Use_All, .First_Use_Named:
 				// One first use of a new page: a page fault that the kernel
 				// serves, at the address that the child writes.
 				page, created := system.memory_create(1)
 				if created == .Ok {
 					if address, mapped := system.memory_map(page); mapped == .Ok {
-						intrinsics.volatile_store((^u64)(address), u64(round))
+						intrinsics.volatile_store((^u64)(address), u64(round_word))
 						intrinsics.atomic_store(&shared.first_use_address, u64(uintptr(address)))
 						system.memory_unmap(address)
 					}
 					system.close(page)
 				}
-			case ROUND_LOADERS_START:
+			case .Loaders_Start:
 				// One loader for each processor, at most LOADERS_MOST.
 				intrinsics.atomic_store(&loaders_running, 1)
 				wanted := min(max(u32(system.thread_record().processors), 1), LOADERS_MOST)
@@ -847,17 +848,17 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 					}
 				}
 				intrinsics.atomic_store(&shared.loaders, loader_count)
-			case ROUND_LOADERS_STOP:
+			case .Loaders_Stop:
 				intrinsics.atomic_store(&loaders_running, 0)
 				for thread in loaders[:loader_count] {
 					system.thread_wait(thread)
 				}
 				loader_count = 0
-			case:
+			case .Exact, .One_In, .Full, .Taken_Away, .Before_Revocation, .After_Revocation:
 				for _ in 0 ..< CALLS {
 					system.call(.Memory_Size, u64(load_memory))
 				}
-				if round == ROUND_EXACT {
+				if round == .Exact {
 					// Each sleep leaves the processor; each wake is a
 					// switch to this thread.
 					for _ in 0 ..< SLEEPS {
@@ -865,7 +866,7 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 					}
 				}
 			}
-			intrinsics.atomic_store(&shared.done, round)
+			intrinsics.atomic_store(&shared.done, round_word)
 			system.word_wake(&shared.done)
 		}
 	case .Faulter:

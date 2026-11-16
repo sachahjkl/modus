@@ -588,7 +588,7 @@ modustool: src/kernel/serial.odin:12: the import "modus:support/sentence" is ref
 
 ## The rules that a check holds
 
-Three rules of the system are checked when the tool builds, not only read.
+Four rules of the system are checked when the tool builds, not only read.
 
 **The count of the kernel operations.** `PROPERTIES.md` states how many operations the kernel has, in the sentence "The kernel has <number> operations". The enumeration `Operation` of `src/library/contract/operation/operation.odin` declares them. The tool counts the members of the enumeration, without `None`, and compares the two numbers. A new operation is then refused until the property states the new count, with its reason.
 
@@ -609,7 +609,21 @@ modustool: src/programs/manual/main.odin:618: the export show gives a negative n
 
 What it does not see: a `return` of a variable that holds a negative number, a helper of another package, and a failure that gives 0 or an empty text. A 0 and an empty text are also answers (`tally.last()` before the first add, `roman(0)`), and the source does not tell the two apart. Review holds them. The design: `src/md/api/export_error_records.md`.
 
-**When they run.** `modustool check` runs the three after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same three conditions on the sources of the repository.
+**A closed set of choices is an enum.** A set of choices is an `enum`, never a family of integer constants passed as an integer. A word that carries a choice across a border (a value of the context, a field of a record, a word of a ring) becomes its member at one place, which refuses a word that names no member, and each `switch` on the member names each member. `choice_constant_check` (`tools/modustool/choice_constant_check.odin`) parses each source of the kernel, of the boot program, of the programs, of the modules, of the source library and of the tool that is not a test. It keeps the constants of each package whose value is at most 255: an integer or a character literal, or a value computed from them and from other constants of the package (`B :: A + 1`, `KEY_EXTENDED | 0x53`), in a declaration of one name or of several. It refuses two constants or more of one package, with the same first word, or with the same last word when their first word gives no family (`READ_REQUEST`, `WRITE_REQUEST`), that the code uses as choices:
+
+- a value of a `case`, except in a `switch` on `len(...)`, whose cases are quantities;
+- an operand of `==` or `!=` whose other operand is a variable, not a constant, with a word of a choice in its name (`mode`, `kind`, `state`, `form`, `level`, `stage`, `strength`, `role`, `phase`, `action`, `origin`, `change`, `step`, `round`, `variety`, `reason`, `request`, `choice`, `strategy`, `answer`);
+- a value given to such a name: an assignment, a declaration, a field of a literal, an index (`values[VALUE_MODE]`), or an argument of such a parameter.
+
+A refused family stops the check with its place:
+
+```
+modustool: src/library/support/principals/principals.odin:93: the constants MODE_ of src/library/support/principals are a closed set of choices (MODE_CHANGE_PASSPHRASE, MODE_CREATE_PRINCIPAL, MODE_NEW_RECOVERY_KEY, MODE_SEAL_MACHINE_KEY, MODE_SET_MACHINE_PASSPHRASE, here a case of a switch): make them an enum, with the values of the contract when the value crosses a border, and one conversion at the border that refuses a value that names no member (src/md/infrastructure/choice_constants.md)
+```
+
+A short list of exceptions in the source names the open sets of outside standards (the frame types of QUIC, the protocol numbers of IPv4, the scan codes of the keyboard, the codes of DWARF and of ELF that the tool reads), and the places of the fields of a remote request, each with its reason. An exception that names no family stops the check too. What it does not see: a cast of a word to an enum (`Mode(word)`), which accepts each word, a `#partial switch`, a constant declared inside a procedure or a `when` block, a value past 255 (the stop codes of a program, an open set), a value computed from a constant of another package, and a family whose members share neither their first nor their last word. Review holds them. The design: `src/md/infrastructure/choice_constants.md`.
+
+**When they run.** `modustool check` runs the four after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same four conditions on the sources of the repository.
 
 ## The reuse list
 
@@ -869,7 +883,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `similarity`, `similarity near <file>:<line>`, `similarity pair <file>:<line> <file>:<line>` | Measures how similar the code pieces of `src/` and `tools/` are: families with their factoring template, ranked by the nodes that a factoring saves, in `build/similarity/`; or the procedures most similar to one; or the score of two procedures ("The similarity finder") |
 | `library-imports` | Checks that each import of each source file of the kernel and of the contract packages names a package of the compiler or a contract package ("The imports of the kernel and of the contract packages") |
-| `rule-checks` | Checks the count of the kernel operations against the properties, and that no source of the system calls an allocator ("The rules that a check holds") |
+| `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, and that no family of integer constants is a closed set of choices ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron \| boot]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
 

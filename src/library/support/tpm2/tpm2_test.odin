@@ -34,7 +34,7 @@ the_storage_key_command_has_its_bytes :: proc(t: ^testing.T) {
 @(test)
 the_session_commands_have_their_bytes :: proc(t: ^testing.T) {
 	buffer: [256]u8
-	count := start_session_command(buffer[:], SESSION_TRIAL)
+	count := start_session_command(buffer[:], .Trial)
 	expected_start := [?]u8 {
 		0x80, 0x01, 0x00, 0x00, 0x00, 0x2B, 0x00, 0x00, 0x01, 0x76,
 		0x40, 0x00, 0x00, 0x07, 0x40, 0x00, 0x00, 0x07, // No key, no bind.
@@ -46,9 +46,9 @@ the_session_commands_have_their_bytes :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, count, len(expected_start))
 	testing.expect(t, string(buffer[:count]) == string(expected_start[:]))
-	count = start_session_command(buffer[:], SESSION_POLICY)
+	count = start_session_command(buffer[:], .Policy)
 	testing.expect_value(t, count, len(expected_start))
-	testing.expect_value(t, buffer[38], SESSION_POLICY) // After the header, the two handles, the nonce and the salt.
+	testing.expect_value(t, buffer[38], u8(Session_Kind.Policy)) // After the header, the two handles, the nonce and the salt.
 
 	count = policy_pcr_command(buffer[:], 0x0300_0000)
 	expected_pcr := [?]u8 {

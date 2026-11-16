@@ -639,29 +639,31 @@ the_keys_of_a_principal_sealed_by_the_tpm_differ :: proc(t: ^testing.T) {
 the_changes_that_a_file_takes :: proc(t: ^testing.T) {
 	cases := [?]struct {
 		form:         Principal_Record_Form,
-		mode:         u64,
+		mode:         Unlock_Mode,
 		has_tpm:      bool,
 		seal_allowed: bool,
 		problem:      Change_Problem,
 	} {
-		{.Sealed_By_The_Tpm, MODE_CHANGE_PASSPHRASE, true, true, .None},
-		{.Sealed_By_The_Tpm, MODE_NEW_RECOVERY_KEY, true, true, .None},
+		// The modes of unlock that are no change come first: each is refused.
+		{.Sealed_By_The_Tpm, .Unlock, true, true, .Unknown_Change},
+		{.Sealed_By_The_Tpm, .Unlock_Machine_Key_Held, true, true, .Unknown_Change},
+		{.Sealed_By_The_Tpm, .Create_Principal, true, true, .Unknown_Change},
+		{.Passphrase, .Set_Machine_Passphrase, true, true, .Unknown_Change},
+		{.Passphrase, .Seal_Machine_Key, true, true, .Unknown_Change},
+		{.Unknown, .Change_Passphrase, true, true, .Unknown_Form},
+		{.Unknown, .New_Recovery_Key, false, false, .Unknown_Form},
+		{.Sealed_By_The_Tpm, .Change_Passphrase, true, false, .Seal_Not_Allowed},
+		{.Sealed_By_The_Tpm, .Change_Passphrase, false, true, .No_Tpm_Service},
+		{.Sealed_By_The_Tpm, .New_Recovery_Key, false, true, .No_Tpm_Service},
+		{.Passphrase, .New_Recovery_Key, true, true, .No_Recovery_Copy},
+		{.Passphrase, .New_Recovery_Key, false, false, .No_Recovery_Copy},
+		{.Sealed_By_The_Tpm, .Change_Passphrase, true, true, .None},
+		{.Sealed_By_The_Tpm, .New_Recovery_Key, true, true, .None},
 		// A new recovery key seals nothing by the TPM.
-		{.Sealed_By_The_Tpm, MODE_NEW_RECOVERY_KEY, true, false, .None},
-		{.Sealed_By_The_Tpm, MODE_CHANGE_PASSPHRASE, true, false, .Seal_Not_Allowed},
-		{.Sealed_By_The_Tpm, MODE_CHANGE_PASSPHRASE, false, true, .No_Tpm_Service},
-		{.Sealed_By_The_Tpm, MODE_NEW_RECOVERY_KEY, false, true, .No_Tpm_Service},
+		{.Sealed_By_The_Tpm, .New_Recovery_Key, true, false, .None},
 		// The form under the passphrase alone needs no TPM.
-		{.Passphrase, MODE_CHANGE_PASSPHRASE, false, false, .None},
-		{.Passphrase, MODE_CHANGE_PASSPHRASE, true, true, .None},
-		{.Passphrase, MODE_NEW_RECOVERY_KEY, true, true, .No_Recovery_Copy},
-		{.Passphrase, MODE_NEW_RECOVERY_KEY, false, false, .No_Recovery_Copy},
-		{.Unknown, MODE_CHANGE_PASSPHRASE, true, true, .Unknown_Form},
-		// The other modes of unlock are no change.
-		{.Sealed_By_The_Tpm, MODE_UNLOCK, true, true, .Unknown_Change},
-		{.Sealed_By_The_Tpm, MODE_CREATE_PRINCIPAL, true, true, .Unknown_Change},
-		{.Passphrase, MODE_SEAL_MACHINE_KEY, true, true, .Unknown_Change},
-		{.Passphrase, MODE_NEW_RECOVERY_KEY + 1, true, true, .Unknown_Change},
+		{.Passphrase, .Change_Passphrase, false, false, .None},
+		{.Passphrase, .Change_Passphrase, true, true, .None},
 	}
 	for item in cases {
 		testing.expect_value(t, change_problem(item.form, item.mode, item.has_tpm, item.seal_allowed), item.problem)
@@ -676,10 +678,21 @@ the_changes_that_a_file_takes :: proc(t: ^testing.T) {
 		testing.expect(t, len(change_end_sentences[end]) > 0)
 		testing.expect(t, len(change_end_sentences[end]) <= WINDOW_LINE_CELLS)
 	}
-	// The modes of a change are not modes of a start that unlocks.
-	modes := [?]u64{MODE_UNLOCK, MODE_CREATE_PRINCIPAL, MODE_SET_MACHINE_PASSPHRASE, MODE_UNLOCK_MACHINE_KEY_HELD, MODE_SEAL_MACHINE_KEY}
-	for mode in modes {
-		testing.expect(t, mode != MODE_CHANGE_PASSPHRASE && mode != MODE_NEW_RECOVERY_KEY)
+}
+
+// The word of VALUE_MODE crosses the border of the context: each word that
+// names no mode is refused, then each mode comes back from its own word.
+@(test)
+the_word_of_the_mode_of_unlock :: proc(t: ^testing.T) {
+	refused := [?]u64{u64(max(Unlock_Mode)) + 1, u64(max(Unlock_Mode)) + 2, 1 << 32, max(u64)}
+	for word in refused {
+		_, ok := unlock_mode_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no mode, and it is taken", word)
+	}
+	for mode in Unlock_Mode {
+		read, ok := unlock_mode_of_word(u64(mode))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, mode)
 	}
 }
 
@@ -707,18 +720,18 @@ the_prompts_that_offer_the_recovery_key :: proc(t: ^testing.T) {
 
 // The line of a lock names what the `unlock` that it stops ran for: each
 // mode that a session can ask for has words of its own, and a mode that
-// only unlocks says so.
+// only unlocks says so. A word that names no mode never reaches the words:
+// the border refuses it (the_word_of_the_mode_of_unlock).
 @(test)
 the_words_of_each_mode_of_unlock :: proc(t: ^testing.T) {
-	asked := [?]u64{MODE_CREATE_PRINCIPAL, MODE_SET_MACHINE_PASSPHRASE, MODE_SEAL_MACHINE_KEY, MODE_CHANGE_PASSPHRASE, MODE_NEW_RECOVERY_KEY}
+	asked := [?]Unlock_Mode{.Create_Principal, .Set_Machine_Passphrase, .Seal_Machine_Key, .Change_Passphrase, .New_Recovery_Key}
 	for mode, index in asked {
-		testing.expect(t, mode_words(mode) != mode_words(MODE_UNLOCK))
+		testing.expect(t, mode_words(mode) != mode_words(.Unlock))
 		for other in asked[index + 1:] {
 			testing.expect(t, mode_words(mode) != mode_words(other))
 		}
 	}
-	testing.expect_value(t, mode_words(MODE_UNLOCK_MACHINE_KEY_HELD), mode_words(MODE_UNLOCK))
-	testing.expect_value(t, mode_words(MODE_NEW_RECOVERY_KEY + 1), mode_words(MODE_UNLOCK))
+	testing.expect_value(t, mode_words(.Unlock_Machine_Key_Held), mode_words(.Unlock))
 }
 
 // A new recovery key changes only the copy under the recovery key: the two

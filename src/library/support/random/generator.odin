@@ -245,7 +245,8 @@ reseed :: proc "contextless" (generator: ^Generator, fresh: []u8) {
 // its context (the values 9 to 12) and its strength (the value 16), and
 // erases the seed there. It attaches the fresh bytes page of the context,
 // when the starter mapped one. false: the context has no seed (the root
-// service).
+// service), or its strength names no member of Seed_Strength; the caller
+// then has no generator, and each key that it asks for is refused.
 generator_from_context :: proc "contextless" (generator: ^Generator, ctx: ^system.Context) -> bool {
 	seed: [SEED_SIZE]u8
 	for index in 0 ..< op.CONTEXT_VALUE_SEED_COUNT {
@@ -255,7 +256,13 @@ generator_from_context :: proc "contextless" (generator: ^Generator, ctx: ^syste
 		}
 	}
 	crypto.zero_explicit(&ctx.values[op.CONTEXT_VALUE_SEED], op.CONTEXT_VALUE_SEED_COUNT * 8)
-	strength := Seed_Strength(min(ctx.values[op.CONTEXT_VALUE_SEED_STRENGTH], u64(max(Seed_Strength))))
+	// A strength that names no member refuses the seed: taken for the
+	// strongest, it would let a key come from a seed that nothing measured.
+	strength, strength_ok := op.seed_strength_of_word(ctx.values[op.CONTEXT_VALUE_SEED_STRENGTH])
+	if !strength_ok {
+		crypto.zero_explicit(&seed, SEED_SIZE)
+		return false
+	}
 	if !generator_seed(generator, &seed, strength) {
 		return false
 	}

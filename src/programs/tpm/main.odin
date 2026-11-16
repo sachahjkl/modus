@@ -156,20 +156,20 @@ wait_for :: proc "contextless" (offset: uintptr, mask: u32, value: u32) -> bool 
 	return true
 }
 
-// transact sends one command to the TPM and gives its answer. step is 0, or
-// the step at which the interface failed (tpm_service.DEVICE_STEP_).
-transact :: proc "contextless" (count: int) -> (answer: []u8, step: u64) {
+// transact sends one command to the TPM and gives its answer. step is
+// .None, or the step at which the interface failed.
+transact :: proc "contextless" (count: int) -> (answer: []u8, step: tpm_service.Device_Step) {
 	if count <= 0 || count > MESSAGE_LIMIT {
-		return nil, tpm_service.DEVICE_STEP_ANSWER // A command that did not fit its buffer.
+		return nil, .Answer // A command that did not fit its buffer.
 	}
 	register_write(REGISTER_LOCALITY_CONTROL, 1)
 	if !wait_for(REGISTER_LOCALITY_STATUS, 1, 1) {
-		return nil, tpm_service.DEVICE_STEP_LOCALITY
+		return nil, .Locality
 	}
 	defer register_write(REGISTER_LOCALITY_CONTROL, 2)
 	register_write(REGISTER_CONTROL_REQUEST, 1)
 	if !wait_for(REGISTER_CONTROL_REQUEST, 1, 0) || !wait_for(REGISTER_CONTROL_STATUS, 2, 0) {
-		return nil, tpm_service.DEVICE_STEP_READY
+		return nil, .Ready
 	}
 	defer register_write(REGISTER_CONTROL_REQUEST, 2)
 	// The defers run in the reverse order: the buffer is erased while this
@@ -180,10 +180,10 @@ transact :: proc "contextless" (count: int) -> (answer: []u8, step: u64) {
 	}
 	register_write(REGISTER_CONTROL_START, 1)
 	if !wait_for(REGISTER_CONTROL_START, 1, 0) {
-		return nil, tpm_service.DEVICE_STEP_START
+		return nil, .Start
 	}
 	if register_read(REGISTER_CONTROL_STATUS) & 1 != 0 {
-		return nil, tpm_service.DEVICE_STEP_ANSWER
+		return nil, .Answer
 	}
 	// The size of the answer is in its header: bytes 2 to 5, big-endian.
 	header: [6]u8
@@ -192,12 +192,12 @@ transact :: proc "contextless" (count: int) -> (answer: []u8, step: u64) {
 	}
 	size := int(u32(header[2]) << 24 | u32(header[3]) << 16 | u32(header[4]) << 8 | u32(header[5]))
 	if size < 10 || size > min(buffer_size, MESSAGE_LIMIT) {
-		return nil, tpm_service.DEVICE_STEP_ANSWER
+		return nil, .Answer
 	}
 	for index in 0 ..< size {
 		answer_bytes[index] = intrinsics.volatile_load((^u8)(registers + DATA_BUFFER + uintptr(index)))
 	}
-	return answer_bytes[:size], 0
+	return answer_bytes[:size], .None
 }
 
 // The outcome of one request, for its completion record.
@@ -220,7 +220,7 @@ outcome_of_problem :: proc "contextless" (problem: tpm2.Answer_Problem, code: u3
 		}
 		return {status = .Refused, values = {0 = u64(code), 1 = u64(command)}}
 	}
-	return {status = .Device_Error, values = {0 = tpm_service.DEVICE_STEP_ANSWER}}
+	return {status = .Device_Error, values = {0 = u64(tpm_service.Device_Step.Answer)}}
 }
 
 // flush ends a session or a loaded object. Its answer is not read: a
@@ -245,8 +245,8 @@ flush :: proc "contextless" (handle: u32) {
 storage_key :: proc "contextless" () -> (handle: u32, failed: Outcome, ok: bool) {
 	count := tpm2.create_primary_command(command_bytes[:])
 	answer, step := transact(count)
-	if step != 0 {
-		return 0, {status = .Device_Error, values = {0 = step}}, false
+	if step != .None {
+		return 0, {status = .Device_Error, values = {0 = u64(step)}}, false
 	}
 	code: u32
 	problem: tpm2.Answer_Problem
@@ -259,11 +259,11 @@ storage_key :: proc "contextless" () -> (handle: u32, failed: Outcome, ok: bool)
 
 // policy_session starts a session of the kind given and runs TPM2_PolicyPCR
 // in it, then TPM2_PolicyPassword for an object with an authorization value.
-policy_session :: proc "contextless" (kind: u8, authorized: bool) -> (session: u32, failed: Outcome, ok: bool) {
+policy_session :: proc "contextless" (kind: tpm2.Session_Kind, authorized: bool) -> (session: u32, failed: Outcome, ok: bool) {
 	count := tpm2.start_session_command(command_bytes[:], kind)
 	answer, step := transact(count)
-	if step != 0 {
-		return 0, {status = .Device_Error, values = {0 = step}}, false
+	if step != .None {
+		return 0, {status = .Device_Error, values = {0 = u64(step)}}, false
 	}
 	code: u32
 	problem: tpm2.Answer_Problem
@@ -273,8 +273,8 @@ policy_session :: proc "contextless" (kind: u8, authorized: bool) -> (session: u
 	}
 	count = tpm2.policy_pcr_command(command_bytes[:], session)
 	answer, step = transact(count)
-	if step != 0 {
-		return session, {status = .Device_Error, values = {0 = step}}, false
+	if step != .None {
+		return session, {status = .Device_Error, values = {0 = u64(step)}}, false
 	}
 	code, problem = tpm2.status_answer(answer)
 	if problem != .None {
@@ -283,8 +283,8 @@ policy_session :: proc "contextless" (kind: u8, authorized: bool) -> (session: u
 	if authorized {
 		count = tpm2.policy_password_command(command_bytes[:], session)
 		answer, step = transact(count)
-		if step != 0 {
-			return session, {status = .Device_Error, values = {0 = step}}, false
+		if step != .None {
+			return session, {status = .Device_Error, values = {0 = u64(step)}}, false
 		}
 		code, problem = tpm2.status_answer(answer)
 		if problem != .None {
@@ -294,19 +294,19 @@ policy_session :: proc "contextless" (kind: u8, authorized: bool) -> (session: u
 	return session, {}, true
 }
 
-// authorization_take reads the authorization of a request: with
-// AUTHORIZATION_VALUE, it copies the value of the region and erases it
-// there. ok is false for another value of the client.
-authorization_take :: proc "contextless" (kind: u64, value: ^[tpm2.AUTHORIZATION_VALUE_SIZE]u8) -> (authorized: bool, ok: bool) {
-	switch kind {
-	case tpm_service.AUTHORIZATION_NONE:
-		return false, true
-	case tpm_service.AUTHORIZATION_VALUE:
+// authorization_take reads the authorization of a request: with .Value,
+// it copies the value of the region and erases it there. The main loop
+// refused a word that names no authorization before the request.
+authorization_take :: proc "contextless" (authorization: tpm_service.Authorization, value: ^[tpm2.AUTHORIZATION_VALUE_SIZE]u8) -> (authorized: bool) {
+	switch authorization {
+	case .None:
+		return false
+	case .Value:
 		copy(value^[:], region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
 		erase(region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
-		return true, true
+		return true
 	}
-	return false, false
+	return false
 }
 
 // The TPM was asked to check an authorization value in the request that
@@ -327,8 +327,8 @@ orderly_state_restore :: proc "contextless" () {
 	request_deadline = system.time() + FLUSH_BOUND_MILLISECONDS
 	count := tpm2.shutdown_command(command_bytes[:])
 	answer, step := transact(count)
-	if step != 0 {
-		system.log("tpm: the interface failed at TPM2_Shutdown after a use of an authorization value: step ", step, "; the next start of the TPM can count one failure")
+	if step != .None {
+		system.log("tpm: the interface failed at TPM2_Shutdown after a use of an authorization value: ", tpm_service.device_step_words[step], "; the next start of the TPM can count one failure")
 		return
 	}
 	code, problem := tpm2.status_answer(answer)
@@ -341,17 +341,14 @@ orderly_state_restore :: proc "contextless" () {
 
 // seal seals the secret of the region to the values of PCR 7 and PCR 11 now,
 // with the authorization value of the region when the request has one.
-seal :: proc "contextless" (authorization_kind: u64) -> Outcome {
+seal :: proc "contextless" (authorization_kind: tpm_service.Authorization) -> Outcome {
 	secret: [tpm2.SECRET_SIZE]u8
 	authorization: [tpm2.AUTHORIZATION_VALUE_SIZE]u8
 	defer erase(secret[:])
 	defer erase(authorization[:])
 	copy(secret[:], region[tpm_service.REGION_SECRET:][:tpm2.SECRET_SIZE])
 	erase(region[tpm_service.REGION_SECRET:][:tpm2.SECRET_SIZE])
-	authorized, known := authorization_take(authorization_kind, &authorization)
-	if !known {
-		return {status = .Bad_Command}
-	}
+	authorized := authorization_take(authorization_kind, &authorization)
 	authorization_bytes: []u8
 	if authorized {
 		authorization_bytes = authorization[:]
@@ -363,15 +360,15 @@ seal :: proc "contextless" (authorization_kind: u64) -> Outcome {
 	}
 	defer flush(primary)
 	// A trial session: the TPM computes the policy from the PCRs now.
-	session, session_failed, session_ok := policy_session(tpm2.SESSION_TRIAL, authorized)
+	session, session_failed, session_ok := policy_session(.Trial, authorized)
 	defer flush(session)
 	if !session_ok {
 		return session_failed
 	}
 	count := tpm2.policy_get_digest_command(command_bytes[:], session)
 	answer, step := transact(count)
-	if step != 0 {
-		return {status = .Device_Error, values = {0 = step}}
+	if step != .None {
+		return {status = .Device_Error, values = {0 = u64(step)}}
 	}
 	policy, code, problem := tpm2.digest_answer(answer)
 	if problem != .None {
@@ -379,8 +376,8 @@ seal :: proc "contextless" (authorization_kind: u64) -> Outcome {
 	}
 	count = tpm2.create_sealed_command(command_bytes[:], primary, &secret, &policy, authorization_bytes)
 	answer, step = transact(count)
-	if step != 0 {
-		return {status = .Device_Error, values = {0 = step}}
+	if step != .None {
+		return {status = .Device_Error, values = {0 = u64(step)}}
 	}
 	created: tpm2.Created_Object
 	created, code, problem = tpm2.create_answer(answer)
@@ -402,15 +399,15 @@ seal :: proc "contextless" (authorization_kind: u64) -> Outcome {
 // unseal gives the secret of a sealed object in the region, when this TPM
 // made the object under the PCR values of its policy, and when PCR 7 and
 // PCR 11 hold those values now.
-unseal :: proc "contextless" (public_count, private_count, creation_count, ticket_count: u64, authorization_kind: u64) -> Outcome {
+unseal :: proc "contextless" (public_count, private_count, creation_count, ticket_count: u64, authorization_kind: tpm_service.Authorization) -> Outcome {
 	authorization: [tpm2.AUTHORIZATION_VALUE_SIZE]u8
 	defer erase(authorization[:])
 	// The command of the unseal holds the authorization value: the buffer is
 	// erased after the last command of the request, on each path.
 	defer erase(command_bytes[:])
-	authorized, known := authorization_take(authorization_kind, &authorization)
+	authorized := authorization_take(authorization_kind, &authorization)
 	// The counts come from the client: they are checked before any copy.
-	if !known || public_count > tpm2.PUBLIC_AREA_LIMIT || private_count > tpm2.PRIVATE_AREA_LIMIT || creation_count > tpm2.CREATION_DATA_LIMIT || ticket_count > tpm2.CREATION_TICKET_LIMIT {
+	if public_count > tpm2.PUBLIC_AREA_LIMIT || private_count > tpm2.PRIVATE_AREA_LIMIT || creation_count > tpm2.CREATION_DATA_LIMIT || ticket_count > tpm2.CREATION_TICKET_LIMIT {
 		return {status = .Bad_Command}
 	}
 	authorization_bytes: []u8
@@ -458,8 +455,8 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	defer flush(primary)
 	count := tpm2.load_command(command_bytes[:], primary, public_area[:public_bytes], private_area[:private_bytes])
 	answer, step := transact(count)
-	if step != 0 {
-		return {status = .Device_Error, values = {0 = step}}
+	if step != .None {
+		return {status = .Device_Error, values = {0 = u64(step)}}
 	}
 	item, code, problem := tpm2.handle_answer(answer)
 	if problem != .None {
@@ -471,8 +468,8 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	hash := tpm2.creation_hash(creation_data[:creation_bytes])
 	count = tpm2.certify_creation_command(command_bytes[:], item, &hash, creation_ticket[:ticket_bytes])
 	answer, step = transact(count)
-	if step != 0 {
-		return {status = .Device_Error, values = {0 = step}}
+	if step != .None {
+		return {status = .Device_Error, values = {0 = u64(step)}}
 	}
 	code, problem = tpm2.status_answer(answer)
 	if problem == .Refused && tpm2.ticket_fails(code) {
@@ -482,7 +479,7 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	if problem != .None {
 		return outcome_of_problem(problem, code, tpm2.COMMAND_CERTIFY_CREATION)
 	}
-	session, session_failed, session_ok := policy_session(tpm2.SESSION_POLICY, authorized)
+	session, session_failed, session_ok := policy_session(.Policy, authorized)
 	defer flush(session)
 	if !session_ok {
 		return session_failed
@@ -492,8 +489,8 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 		count = tpm2.unseal_command(command_bytes[:], item, session, authorization_bytes)
 		authorization_used = authorization_used || authorized
 		answer, step = transact(count)
-		if step != 0 {
-			return {status = .Device_Error, values = {0 = step}}
+		if step != .None {
+			return {status = .Device_Error, values = {0 = u64(step)}}
 		}
 		secret, code, problem = tpm2.unseal_answer(answer)
 		// A TPM can ask for the command again at the first use of an object
@@ -539,8 +536,8 @@ generator: random.Generator
 properties_read :: proc "contextless" (first: u32, values: []u32, what: string) -> bool {
 	count := tpm2.properties_command(command_bytes[:], first, u32(len(values)))
 	answer, step := transact(count)
-	if step != 0 {
-		system.log_in("devices", .Warning, "tpm: the interface failed at TPM2_GetCapability of ", what, ": step ", step)
+	if step != .None {
+		system.log_in("devices", .Warning, "tpm: the interface failed at TPM2_GetCapability of ", what, ": ", tpm_service.device_step_words[step])
 		return false
 	}
 	code, problem := tpm2.properties_answer(answer, first, values)
@@ -614,8 +611,8 @@ lockout_authorization_check :: proc "contextless" (seeded: bool) {
 	}
 	count := tpm2.lockout_authorization_change_command(command_bytes[:], value[:])
 	answer, step := transact(count)
-	if step != 0 {
-		system.log_in("devices", .Warning, "tpm: the interface failed at TPM2_HierarchyChangeAuth of the lockout hierarchy: step ", step, "; it can keep its empty authorization value until the next start")
+	if step != .None {
+		system.log_in("devices", .Warning, "tpm: the interface failed at TPM2_HierarchyChangeAuth of the lockout hierarchy: ", tpm_service.device_step_words[step], "; it can keep its empty authorization value until the next start")
 		return
 	}
 	code, problem := tpm2.status_answer(answer)
@@ -678,26 +675,33 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// leaves the lockout hierarchy as it found it. The check has its
 			// own bound, before the bound of the request, so both stay below
 			// the bound of the client.
-			authorization_kind: u64
-			#partial switch tpm_service.Command(command.kind) {
-			case .Seal:
-				authorization_kind = command.values[0]
-			case .Unseal:
-				authorization_kind = command.values[4]
+			// The border of the ring: the kind and the authorization become
+			// their members here, and a word that names no member is answered
+			// with Bad_Command before any work. The secret and the value of
+			// such a request are erased from the region all the same.
+			request, request_status := tpm_service.request_of_record(command.kind, command.values)
+			if request_status != .Ok {
+				erase(region[tpm_service.REGION_SECRET:][:tpm2.SECRET_SIZE])
+				erase(region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
+				if !system.send(&clients.completions, ring.Record{kind = u32(request_status), tag = command.tag}) {
+					system.log_in("devices", .Warning, "tpm: the completion queue of the TPM ring is full: a completion is lost")
+				}
+				continue
 			}
-			if !lockout_checked && authorization_kind == tpm_service.AUTHORIZATION_VALUE {
+			if !lockout_checked && request.authorization == .Value {
 				lockout_checked = true
 				lockout_authorization_check(seeded)
 			}
 			request_deadline = system.time() + REQUEST_BOUND_MILLISECONDS
 			authorization_used = false
-			#partial switch tpm_service.Command(command.kind) {
-			case .Seal:
-				outcome = seal(command.values[0])
-			case .Unseal:
-				outcome = unseal(command.values[0], command.values[1], command.values[2], command.values[3], command.values[4])
-			case:
+			switch request.command {
+			case .None:
+				// Refused at the border above.
 				outcome = {status = .Bad_Command}
+			case .Seal:
+				outcome = seal(request.authorization)
+			case .Unseal:
+				outcome = unseal(command.values[0], command.values[1], command.values[2], command.values[3], request.authorization)
 			}
 			// After the flushes of the request, before its completion: the
 			// client learns the outcome only once the TPM is orderly again.

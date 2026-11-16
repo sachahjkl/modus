@@ -48,6 +48,7 @@ import "modus:contract/fixed_addresses"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import "modus:contract/ring"
+import store_contract "modus:contract/store"
 import "modus:support/system"
 
 GRANT_RING :: 7 // Memory: the call ring.
@@ -408,12 +409,27 @@ close_tree :: proc "contextless" (client: ^Client, place: Place, error: ^errors.
 	return status
 }
 
-ENTRY_OBJECT :: 1 // The kind of an entry that is an object: `store.Entry_Kind.Object`.
-ENTRY_TREE :: 2 // The kind of an entry that is a tree: `store.Entry_Kind.Tree`.
+// The kind of an entry, in the field `kind` of Add_Row and of Listed: the
+// word of a store_contract.Entry_Kind. The field stays a word of 64 bits, as the
+// records are the layout of the export.
+Entry_Kind :: store_contract.Entry_Kind
+
+// entry_kind_of_word reads the kind of a Listed row from the storage
+// service. A word that names no entry, None included, is refused: a reader
+// never counts it as an object or as a tree.
+entry_kind_of_word :: proc "contextless" (word: i64) -> (kind: Entry_Kind, ok: bool) {
+	for member in Entry_Kind {
+		if member != .None && i64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
 
 // One entry that add makes: its name, at an offset of the bytes of the
-// names, and its kind (ENTRY_OBJECT: an empty object; ENTRY_TREE: an empty
-// tree). The layout of the record of the export add.
+// names, and its kind (i64(Entry_Kind.Object): an empty object;
+// i64(Entry_Kind.Tree): an empty tree). The layout of the record of the
+// export add.
 Add_Row :: struct {
 	name_offset: i64,
 	name_count:  i64,
@@ -424,7 +440,7 @@ Add_Row :: struct {
 //
 // ```odin
 // names := "draftsnotes"
-// rows := [2]storage.Add_Row{{0, 6, storage.ENTRY_TREE}, {6, 5, storage.ENTRY_OBJECT}}
+// rows := [2]storage.Add_Row{{0, 6, i64(storage.Entry_Kind.Tree)}, {6, 5, i64(storage.Entry_Kind.Object)}}
 // generation, status := storage.add(&client, storage.ROOT, rows[:], transmute([]u8)names)
 // ```
 add :: proc "contextless" (client: ^Client, place: Place, rows: []Add_Row, names: []u8, error: ^errors.Error_Record = nil) -> (generation: i64, status: Status) {
@@ -440,7 +456,7 @@ add :: proc "contextless" (client: ^Client, place: Place, rows: []Add_Row, names
 Listed :: struct {
 	name_offset: i64,
 	name_count:  i64,
-	kind:        i64, // ENTRY_OBJECT or ENTRY_TREE.
+	kind:        i64, // The word of an Entry_Kind: read it with entry_kind_of_word.
 	size:        i64, // The bytes of an object, the entries of a tree.
 	generation:  i64, // The commit of the last change of the entry.
 }

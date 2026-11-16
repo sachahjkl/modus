@@ -116,9 +116,12 @@ ALGORITHM_ECC :: u16(0x0023)
 ALGORITHM_CFB :: u16(0x0043)
 CURVE_NIST_P256 :: u16(0x0003)
 
-// The kinds of a session.
-SESSION_POLICY :: u8(0x01)
-SESSION_TRIAL :: u8(0x03)
+// The kinds of a session that this system starts (part 2, TPM_SE): the
+// values of the TPM, written in a command and never read back.
+Session_Kind :: enum u8 {
+	Policy = 0x01,
+	Trial  = 0x03,
+}
 
 // The attributes of an object (part 2, TPMA_OBJECT).
 ATTRIBUTE_FIXED_TPM :: u32(1 << 1)
@@ -382,17 +385,17 @@ create_primary_command :: proc "contextless" (buffer: []u8) -> int {
 
 // start_session_command builds TPM2_StartAuthSession of a session with no
 // key, no bind, no salt and no symmetric algorithm: its session key is
-// empty, so the TPM takes an empty HMAC. kind is SESSION_TRIAL, to compute
-// a policy, or SESSION_POLICY, to satisfy one. The nonce of the caller is
-// 16 zero bytes: a session with an empty key computes no HMAC from it.
-start_session_command :: proc "contextless" (buffer: []u8, kind: u8) -> int {
+// empty, so the TPM takes an empty HMAC. kind is .Trial, to compute a
+// policy, or .Policy, to satisfy one. The nonce of the caller is 16 zero
+// bytes: a session with an empty key computes no HMAC from it.
+start_session_command :: proc "contextless" (buffer: []u8, kind: Session_Kind) -> int {
 	command_writer := begin(buffer, TAG_NO_SESSIONS, COMMAND_START_AUTH_SESSION)
 	put_u32(&command_writer, HANDLE_NULL)
 	put_u32(&command_writer, HANDLE_NULL)
 	nonce: [NONCE_SIZE]u8
 	put_sized(&command_writer, nonce[:])
 	put_u16(&command_writer, 0) // No salt.
-	put_u8(&command_writer, kind)
+	put_u8(&command_writer, u8(kind))
 	put_u16(&command_writer, ALGORITHM_NULL)
 	put_u16(&command_writer, ALGORITHM_SHA256)
 	return end(&command_writer)

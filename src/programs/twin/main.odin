@@ -19,18 +19,25 @@ import "modus:support/twins"
 // The entry of twin: it does what its mode says, then sleeps until
 // `frames` stops it.
 //
-// - `MODE_WRITE_PAGE`: it maps the shared page, writes the agreed word in
-//   it, and wakes `frames`, which waits on that word. A page that does not
-//   map stops it with the code 1.
-// - `MODE_WRITE_CODE`: it writes one byte in its own code. The page has no
-//   right Write, so the kernel stops the program as its own fault: the
-//   expected result.
-// - any other mode: it only sleeps, as one more program that shares the
+// - `Twin_Mode.Write_Page`: it maps the shared page, writes the agreed
+//   word in it, and wakes `frames`, which waits on that word. A page that
+//   does not map stops it with the code 1.
+// - `Twin_Mode.Write_Code`: it writes one byte in its own code. The page
+//   has no right Write, so the kernel stops the program as its own fault:
+//   the expected result.
+// - `Twin_Mode.Wait`: it only sleeps, as one more program that shares the
 //   code of the module.
+// - a word that names no mode: it writes a line and stops with the code 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	switch ctx.values[twins.VALUE_MODE] {
-	case twins.MODE_WRITE_PAGE:
+	mode, mode_ok := twins.twin_mode_of_word(ctx.values[twins.VALUE_MODE])
+	if !mode_ok {
+		system.log("twin: the mode ", ctx.values[twins.VALUE_MODE], " names no mode of a twin: nothing is done")
+		system.stop(1)
+	}
+	switch mode {
+	case .Wait:
+	case .Write_Page:
 		// The first use of the page in this program: the page has the frame
 		// that the program `frames` took, or it takes it now.
 		address, status := system.memory_map(ctx.handles[twins.GRANT_PAGE])
@@ -40,7 +47,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		word := (^u32)(address)
 		intrinsics.volatile_store(word, twins.WORD)
 		system.word_wake(word)
-	case twins.MODE_WRITE_CODE:
+	case .Write_Code:
 		// The code of this program is the shared code of the module: the
 		// page has no Write, and the kernel stops this program.
 		intrinsics.volatile_store((^u8)(rawptr(entry)), 0xC3)

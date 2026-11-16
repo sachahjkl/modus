@@ -885,14 +885,14 @@ expire :: proc "contextless" (now: u64) -> (deadline: u64) {
 		case .None:
 		case .Send:
 			send_place_free(item.place)
-			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(datagram.Command.Send), .No_Answer, .Milliseconds, 0, i64(item.address), i64(now - item.start), 1))
+			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(datagram.Command.Send), .No_Answer, .Milliseconds, 0, i64(item.address), i64(now - item.start), i64(errors.Unanswered.Hardware_Address)))
 		case .Resolve, .Echo:
 			command := item.kind == .Resolve ? datagram.Command.Resolve : datagram.Command.Echo
-			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(command), .No_Answer, .Milliseconds, 0, i64(item.address), i64(now - item.start), 1))
+			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(command), .No_Answer, .Milliseconds, 0, i64(item.address), i64(now - item.start), i64(errors.Unanswered.Hardware_Address)))
 		case .Echo_Sent:
-			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(datagram.Command.Echo), .No_Answer, .Milliseconds, 0, i64(item.target), i64(now - item.start), 2))
+			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(datagram.Command.Echo), .No_Answer, .Milliseconds, 0, i64(item.target), i64(now - item.start), i64(errors.Unanswered.Echo)))
 		case .Statistics:
-			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(datagram.Command.Statistics), .No_Answer, .Milliseconds, 0, 0, i64(now - item.start), 3))
+			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(datagram.Command.Statistics), .No_Answer, .Milliseconds, 0, 0, i64(now - item.start), i64(errors.Unanswered.Device)))
 		}
 		item = {}
 	}

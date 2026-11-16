@@ -47,14 +47,14 @@
 //   and a recovery key, shown one time, opens a copy. Else the passphrase
 //   alone seals it. With either record, and when the root service does not
 //   hold the key yet, it asks for the machine passphrase first. The root
-//   service starts it with the mode MODE_SET_MACHINE_PASSPHRASE after
+//   service starts it with the mode Unlock_Mode.Set_Machine_Passphrase after
 //   `machine_passphrase()`;
 // - the machine key sealed by the TPM service to PCR 7 and PCR 11, with a
 //   copy under a recovery key. At each start the TPM releases the key with
 //   no typing; when it refuses (another system, another machine, no TPM),
 //   the window asks for the recovery key, and the key is sealed again to
 //   the system that runs. The root service starts it with the mode
-//   MODE_SEAL_MACHINE_KEY after `machine_seal()`: the window shows the
+//   Unlock_Mode.Seal_Machine_Key after `machine_seal()`: the window shows the
 //   recovery key one time.
 //
 // When a record gives the machine key, it gives the root service the key of
@@ -195,9 +195,9 @@ pending_write: Pending_Write
 
 mode: Mode
 // The change that the root service started this program for:
-// principals.MODE_CHANGE_PASSPHRASE, principals.MODE_NEW_RECOVERY_KEY, or
-// 0 for none.
-change_mode: u64
+// .Change_Passphrase or .New_Recovery_Key. Any other mode, as the zero
+// value .Unlock, is no change.
+change_mode: principals.Unlock_Mode
 principal_found: bool // The store holds the file of a named principal: its unlock comes after the machine key.
 
 // The record of the machine key, as the store gave it, in its form.
@@ -434,7 +434,7 @@ create :: proc "contextless" () {
 		return
 	}
 	system.log("unlock: principal ", number, " \"", the_name(), "\" is created: its keys are sealed in the store of unlock under a key of Argon2id, 19456 KiB and 2 passes, derived in ", derived, " ms")
-	session_start(&secrets, system.PRINCIPAL_KEY_NEW)
+	session_start(&secrets, system.Principal_Key_Origin.New)
 }
 
 // passphrase_file_seal seals the secret keys in a file of the form under the
@@ -559,27 +559,27 @@ passphrase_try :: proc "contextless" () {
 		} else {
 			system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" opens its seal; the root service receives the key of its disk grant table only, and the secret keys are erased")
 		}
-		session_start(&secrets, system.PRINCIPAL_KEY_OPENED)
+		session_start(&secrets, system.Principal_Key_Origin.Opened)
 	}
 }
 
 // machine_key_give gives the root service the key of the tag of the disk
 // grant table of principal 0, which the machine key gives, and nothing
 // else: the root service needs no key that opens the record. origin is
-// MACHINE_KEY_OPENED or MACHINE_KEY_NEW: the root service writes over a
-// table that does not verify only under a key of a new passphrase.
-machine_key_give :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8, origin: u64) -> bool {
+// .Opened or .New: the root service writes over a table that does not
+// verify only under a key of a new passphrase.
+machine_key_give :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8, origin: system.Machine_Key_State) -> bool {
 	// The current record gave the machine key: an erase that a stop missed
 	// is done now, as for the file of a principal. A new key opened no
 	// record.
-	if origin == system.MACHINE_KEY_OPENED {
+	if origin == .Opened {
 		object_versions_erase(principals.MACHINE_OBJECT)
 	}
 	table_key := disk_program.table_key_of_machine_key(machine_key)
 	values := transmute([4]u64)table_key
 	defer erase(table_key[:])
 	defer erase(([^]u8)(rawptr(&values))[:size_of(values)])
-	completion, answered := root_command(.Machine_Key, {values[0], values[1], values[2], values[3], origin, 0, 0})
+	completion, answered := root_command(.Machine_Key, {values[0], values[1], values[2], values[3], u64(origin), 0, 0})
 	if !answered || system.Status(completion.kind) != .Ok {
 		system.log("unlock: the root service did not take the key of the disk grant table of principal 0: status ", u64(completion.kind))
 		return false
@@ -654,7 +654,7 @@ machine_passphrase_alone_try :: proc "contextless" () {
 		message, message_failed = "the passphrase is wrong: nothing is opened", true
 		return
 	}
-	if !machine_key_give(&machine_key, system.MACHINE_KEY_OPENED) {
+	if !machine_key_give(&machine_key, system.Machine_Key_State.Opened) {
 		message, message_failed = "the root service did not take the key", true
 		return
 	}
@@ -722,7 +722,7 @@ machine_passphrase_alone_create :: proc "contextless" () {
 	// The record is on the disk now: this run never writes a second one.
 	// A root service that answers late can still take this key, and a new
 	// record would then hold another key than the root service.
-	if !machine_key_give(&machine_key, system.MACHINE_KEY_NEW) {
+	if !machine_key_give(&machine_key, system.Machine_Key_State.New) {
 		system.log("unlock: the root service did not take the key of the new machine passphrase; the record stays, and its passphrase opens it at the next start")
 		erase(machine_key[:])
 		erase(key[:])
@@ -783,63 +783,81 @@ tpm_service_runs :: proc "contextless" () -> bool {
 // tpm_request sends one command to the TPM service and waits for its
 // completion. The stop of the service is an event of this thread, as it
 // holds the handle of the service: the wait ends at once, and no TPM is
-// asked again in this run.
-tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64) -> (completion: ring.Record, answered: bool) {
+// asked again in this run. status is the member of the status of the
+// completion, read only when answered.
+tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64) -> (completion: ring.Record, status: tpm_service.Status, answered: bool) {
 	tpm_tag += 1
 	if !system.send(&tpm_requests.commands, ring.Record{kind = u32(command), tag = tpm_tag, values = values}) {
-		return {}, false
+		return {}, {}, false
 	}
 	limit := system.time() + TPM_ANSWER_LIMIT
 	for {
 		wait := system.wait_begin()
 		for record in system.receive(&tpm_requests.completions) {
-			if record.tag == tpm_tag {
-				return record, true
+			if record.tag != tpm_tag {
+				continue
 			}
+			// The one border of the status: a word that names no status is
+			// no answer that this program can read. It is said here, and the
+			// caller takes it as no answer.
+			read, read_ok := tpm_service.status_of_word(record.kind)
+			if !read_ok {
+				system.log("unlock: the TPM service gave the status ", u64(record.kind), " to the command ", u64(command), ", which names no status")
+				return record, {}, false
+			}
+			return record, read, true
 		}
 		if !tpm_service_runs() {
 			system.log("unlock: the TPM service stopped during a request")
 			has_tpm = false
-			return {}, false
+			return {}, {}, false
 		}
 		system.wait_records(&wait, &tpm_requests.completions)
 		if system.wait_end(&wait, limit) >= limit {
-			return {}, false
+			return {}, {}, false
 		}
 	}
 }
 
-// tpm_refusal_log writes why the TPM service did not do a request.
-tpm_refusal_log :: proc "contextless" (what: string, completion: ring.Record, answered: bool) {
+// tpm_refusal_log writes why the TPM service did not do a request. status
+// is read only when answered.
+tpm_refusal_log :: proc "contextless" (what: string, completion: ring.Record, status: tpm_service.Status, answered: bool) {
 	if !answered {
 		system.log("unlock: the TPM service gave no answer to the ", what)
 		return
 	}
-	#partial switch tpm_service.Status(completion.kind) {
+	switch status {
+	case .Ok:
+		// No refusal: nothing to write.
 	case .Policy_Fails:
 		system.log("unlock: the TPM refuses the ", what, ": PCR 7 and PCR 11 do not hold the values of the seal: another system, another state of Secure Boot, or another machine")
 	case .Refused:
 		system.log("unlock: the TPM refuses the ", what, ": response code ", system.Hex(completion.values[0]), " to the command ", system.Hex(completion.values[1]))
 	case .Device_Error:
-		system.log("unlock: the interface of the TPM failed at the ", what, ": step ", completion.values[0])
+		// .None is no failed step: a Device_Error with it names no step.
+		if step, step_ok := tpm_service.device_step_of_word(completion.values[0]); step_ok && step != .None {
+			system.log("unlock: the interface of the TPM failed at the ", what, ": ", tpm_service.device_step_words[step])
+		} else {
+			system.log("unlock: the interface of the TPM failed at the ", what, ": the step ", completion.values[0], " names no step")
+		}
 	case .Not_Authentic:
 		system.log("unlock: the TPM service refuses the ", what, ": this TPM did not make the sealed object of the record under the PCR values of its policy; the record was written by another system, and only its recovery key opens it")
 	case .Authorization_Fails, .Locked_Out:
 		// The caller says it, with the name of the principal.
-	case:
-		system.log("unlock: the TPM service refuses the ", what, ": status ", u64(completion.kind))
+	case .Bad_Command:
+		system.log("unlock: the TPM service refuses the ", what, ": the command or a value is out of its range")
 	}
 }
 
 // authorization_put puts an authorization value in the region of the TPM
-// service, and gives the authorization of the request: AUTHORIZATION_NONE
-// with no value.
-authorization_put :: proc "contextless" (authorization: []u8) -> u64 {
+// service, and gives the authorization of the request: .None with no
+// value.
+authorization_put :: proc "contextless" (authorization: []u8) -> tpm_service.Authorization {
 	if len(authorization) != tpm_service.AUTHORIZATION_SIZE {
-		return tpm_service.AUTHORIZATION_NONE
+		return .None
 	}
 	copy(tpm_region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE], authorization)
-	return tpm_service.AUTHORIZATION_VALUE
+	return .Value
 }
 
 // tpm_seal asks the TPM service to seal a secret to PCR 7 and PCR 11, with
@@ -848,13 +866,13 @@ authorization_put :: proc "contextless" (authorization: []u8) -> u64 {
 // keeps its parts.
 tpm_seal :: proc "contextless" (secret: ^[tpm_service.SECRET_SIZE]u8, authorization: []u8, object: ^principals.Sealed_Object) -> bool {
 	copy(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE], secret^[:])
-	completion, answered := tpm_request(.Seal, {0 = authorization_put(authorization)})
+	completion, status, answered := tpm_request(.Seal, {0 = u64(authorization_put(authorization))})
 	// The service erases the secret and the value when it takes the
 	// request; a service that did not answer can leave them in the region.
 	erase(tpm_region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
-	if !answered || tpm_service.Status(completion.kind) != .Ok {
+	if !answered || status != .Ok {
 		erase(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE])
-		tpm_refusal_log("seal", completion, answered)
+		tpm_refusal_log("seal", completion, status, answered)
 		return false
 	}
 	// The counts come from the service: they are checked before a copy.
@@ -887,16 +905,15 @@ tpm_unseal :: proc "contextless" (object: ^principals.Sealed_Object, authorizati
 	copy(tpm_region[tpm_service.REGION_CREATION_TICKET:][:ticket_bytes], object.creation_ticket[:ticket_bytes])
 	kind := authorization_put(authorization)
 	completion: ring.Record
-	completion, answered = tpm_request(.Unseal, {0 = u64(public_bytes), 1 = u64(private_bytes), 2 = u64(creation_bytes), 3 = u64(ticket_bytes), 4 = kind})
+	completion, status, answered = tpm_request(.Unseal, {0 = u64(public_bytes), 1 = u64(private_bytes), 2 = u64(creation_bytes), 3 = u64(ticket_bytes), 4 = u64(kind)})
 	defer erase(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE])
 	erase(tpm_region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
 	if !answered {
-		tpm_refusal_log("unseal", completion, answered)
+		tpm_refusal_log("unseal", completion, status, answered)
 		return .Device_Error, false
 	}
-	status = tpm_service.Status(completion.kind)
 	if status != .Ok {
-		tpm_refusal_log("unseal", completion, answered)
+		tpm_refusal_log("unseal", completion, status, answered)
 		return status, true
 	}
 	if completion.values[0] != tpm_service.SECRET_SIZE {
@@ -987,7 +1004,7 @@ machine_key_sealed_commit :: proc "contextless" () {
 	system.log("unlock: the record of the machine key sealed by the TPM is in the store of unlock: its recovery key is written down")
 	// The record holds the copy under the recovery key: a root service that
 	// does not take the key changes nothing of it.
-	if !machine_key_give(&opened_machine_key, system.MACHINE_KEY_NEW) {
+	if !machine_key_give(&opened_machine_key, system.Machine_Key_State.New) {
 		system.log("unlock: the root service did not take the key of the new machine key; the record stays, and the TPM opens it at the next start")
 	}
 	mode = .Done
@@ -1041,7 +1058,7 @@ machine_tpm_unseal :: proc "contextless" () -> Unseal_Outcome {
 		system.log("unlock: the key that the TPM released does not have the key check of the record: it is erased, and the recovery key opens the record")
 		return .Refused
 	}
-	if !machine_key_give(&machine_key, system.MACHINE_KEY_OPENED) {
+	if !machine_key_give(&machine_key, system.Machine_Key_State.Opened) {
 		system.log("unlock: the TPM released the machine key, and the root service did not take the key of its table: the disk grants of principal 0 stay absent until the next start")
 		return .Not_Taken
 	}
@@ -1122,7 +1139,7 @@ recovery_try :: proc "contextless" () {
 		message, message_failed = "the recovery key is wrong: nothing is opened", true
 		return
 	}
-	if !machine_key_give(&machine_key, system.MACHINE_KEY_OPENED) {
+	if !machine_key_give(&machine_key, system.Machine_Key_State.Opened) {
 		message, message_failed = "the root service did not take the key", true
 		return
 	}
@@ -1267,7 +1284,7 @@ machine_passphrase_commit :: proc "contextless" () {
 	system.log("unlock: the machine passphrase is set: the TPM seals the machine key with it, with a copy under a recovery key, in the store of unlock")
 	// The record holds the copy under the recovery key: a root service that
 	// does not take the key changes nothing of it.
-	if !machine_key_give(&opened_machine_key, system.MACHINE_KEY_NEW) {
+	if !machine_key_give(&opened_machine_key, system.Machine_Key_State.New) {
 		system.log("unlock: the root service did not take the key of the new machine passphrase; the record stays, and its passphrase opens it at the next start")
 	}
 	mode = .Done
@@ -1321,7 +1338,7 @@ machine_tpm_passphrase_try :: proc "contextless" () {
 		machine_recovery_ask("the record is not consistent: type the recovery key")
 		return
 	}
-	if !machine_key_give(&machine_key, system.MACHINE_KEY_OPENED) {
+	if !machine_key_give(&machine_key, system.Machine_Key_State.Opened) {
 		message, message_failed = "the root service did not take the key", true
 		return
 	}
@@ -1524,7 +1541,7 @@ principal_created_commit :: proc "contextless" () {
 		return
 	}
 	system.log("unlock: principal ", number, " \"", the_name(), "\" is created: its keys are sealed by the TPM with its passphrase, with a copy under a recovery key")
-	session_start(&opened_secrets, system.PRINCIPAL_KEY_NEW)
+	session_start(&opened_secrets, system.Principal_Key_Origin.New)
 	// The keys are erased now: a session that did not start starts at the
 	// next start of unlock, which reads the file.
 	if mode != .Done {
@@ -1603,7 +1620,7 @@ change_proof_try :: proc "contextless" () {
 		message, message_failed = "the file is not consistent: nothing changes", true
 	case .Opened:
 		system.log("unlock: the current passphrase of principal ", number, " \"", the_name(), "\" opens its keys")
-		if change_mode == principals.MODE_NEW_RECOVERY_KEY {
+		if change_mode == .New_Recovery_Key {
 			recovery_key_prepare(&secrets)
 			return
 		}
@@ -1846,7 +1863,7 @@ principal_recovery_try :: proc "contextless" () {
 		system.log("unlock: principal ", number, " \"", the_name(), "\" types a passphrase: the TPM seals its keys again to it and to the system that runs")
 		return
 	}
-	session_start(&secrets, system.PRINCIPAL_KEY_OPENED)
+	session_start(&secrets, system.Principal_Key_Origin.Opened)
 }
 
 // principal_reseal seals the keys that the recovery key opened again by the
@@ -1871,7 +1888,7 @@ principal_reseal :: proc "contextless" () {
 			object_versions_erase(principals.FILE_OBJECT)
 		}
 	}
-	session_start(&opened_secrets, system.PRINCIPAL_KEY_OPENED)
+	session_start(&opened_secrets, system.Principal_Key_Origin.Opened)
 	// The keys are erased now: the window cannot ask for a passphrase to
 	// seal them again, so it ends even when the session did not start.
 	if mode != .Done {
@@ -1933,16 +1950,16 @@ machine_record_read :: proc "contextless" () -> Record_State {
 // session_start asks the root service to start the session of the
 // principal, and gives it the key of the tag of the disk grant table of the
 // principal, which the secret unlock key gives, and nothing else: the root
-// service needs no key that opens the file or signs a grant. origin is
-// PRINCIPAL_KEY_OPENED or PRINCIPAL_KEY_NEW: the root service writes over a
-// table that does not verify only under the key of a new principal.
-session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, origin: u64) {
+// service needs no key that opens the file or signs a grant. origin
+// .New lets the root service write over a table that does not verify:
+// only the key of a new principal does.
+session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, origin: system.Principal_Key_Origin) {
 	// The current file opened the keys: a version of it is no longer the
 	// only way back to keys that open, so an erase that a stop missed is
 	// done now (src/md/features/version_erase.md). A new principal opened
 	// nothing: its write can replace a file that never decoded, whose
 	// version is then the one way back to its keys.
-	if origin == system.PRINCIPAL_KEY_OPENED {
+	if origin == .Opened {
 		object_versions_erase(principals.FILE_OBJECT)
 	}
 	unlock_key: [disk_program.KEY_SIZE]u8
@@ -1952,7 +1969,7 @@ session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, 
 	defer erase(unlock_key[:])
 	defer erase(table_key[:])
 	defer erase(([^]u8)(rawptr(&values))[:size_of(values)])
-	completion, answered := root_command(.Principal_Unlock, {values[0], values[1], values[2], values[3], number, origin, 0})
+	completion, answered := root_command(.Principal_Unlock, {values[0], values[1], values[2], values[3], number, u64(origin), 0})
 	if !answered || system.Status(completion.kind) != .Ok {
 		system.log("unlock: the root service did not start the session of principal ", number, ": status ", u64(completion.kind))
 		message, message_failed = "the root service did not start the session", true
@@ -2088,7 +2105,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		enter_name, clears, note = "done", false, "it is shown one time"
 	case .New_Passphrase_First:
 		prompt = "new passphrase  "
-		enter_name = change_mode == principals.MODE_CHANGE_PASSPHRASE ? "seal; empty: cancel" : "seal"
+		enter_name = change_mode == .Change_Passphrase ? "seal; empty: cancel" : "seal"
 	case .New_Passphrase_Again:
 		prompt = "again  "
 		enter_name = "seal"
@@ -2252,7 +2269,7 @@ enter :: proc "contextless" (window: ^display.Window) {
 		// unless the write is not known: then it stays on the screen.
 		message, message_failed = "writing", false
 		draw(window)
-		if mode == .Principal_Recovery_Shown && change_mode == principals.MODE_NEW_RECOVERY_KEY {
+		if mode == .Principal_Recovery_Shown && change_mode == .New_Recovery_Key {
 			erase(recovery_text[:])
 			recovery_key_commit()
 		} else {
@@ -2302,7 +2319,7 @@ enter :: proc "contextless" (window: ^display.Window) {
 	case .Create_First, .Machine_Create_First, .New_Passphrase_First, .Machine_Reseal_First:
 		// In a change, Enter with nothing ends it: the keys that the proof
 		// opened must not wait for anyone at the keyboard.
-		if mode == .New_Passphrase_First && typed_count == 0 && change_mode == principals.MODE_CHANGE_PASSPHRASE {
+		if mode == .New_Passphrase_First && typed_count == 0 && change_mode == .Change_Passphrase {
 			erase(opened_secrets[:])
 			system.log("unlock: the new passphrase of principal ", number, " is not typed: nothing changes")
 			change_end(.Cancelled)
@@ -2362,7 +2379,7 @@ enter :: proc "contextless" (window: ^display.Window) {
 			case .New_Passphrase_Again:
 				// The same two modes after a recovery and in a change: a
 				// recovery starts the session, a change keeps it.
-				if change_mode == principals.MODE_CHANGE_PASSPHRASE {
+				if change_mode == .Change_Passphrase {
 					passphrase_change_seal()
 				} else {
 					principal_reseal()
@@ -2434,24 +2451,24 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 // and its private store; with no ring or no store it stops with the code 1.
 // Then:
 //
-// - **Create** (the context value `VALUE_MODE` is `MODE_CREATE_PRINCIPAL`):
+// - **Create** (the context value `VALUE_MODE` is `Unlock_Mode.Create_Principal`):
 //   it checks the name of the new principal and asks for a passphrase of 8
 //   bytes at least.
-// - **Set the machine passphrase** (`MODE_SET_MACHINE_PASSPHRASE`): with
+// - **Set the machine passphrase** (`Unlock_Mode.Set_Machine_Passphrase`): with
 //   no record "machine", it asks for a passphrase two times, makes the
 //   machine key, seals it, and gives the root service the key of the tag.
 //   With the TPM service and Secure Boot on, the TPM seals the key with the
 //   passphrase, and the window shows a recovery key until Enter, before the
 //   record is written.
-// - **Seal the machine key** (`MODE_SEAL_MACHINE_KEY`): with the TPM
+// - **Seal the machine key** (`Unlock_Mode.Seal_Machine_Key`): with the TPM
 //   service and no record "machine", it makes the machine key and a
 //   recovery key, has the TPM service seal the key, and shows the recovery
 //   key until Enter; then it writes the record and gives the root service
 //   the key of the tag. Each window that shows a new recovery key writes
 //   its record or its file only after Enter: a stop before it (a lock, a
 //   close) leaves the disk as it was.
-// - **Change the passphrase** (`MODE_CHANGE_PASSPHRASE`) or **make a new
-//   recovery key** (`MODE_NEW_RECOVERY_KEY`) of the principal whose
+// - **Change the passphrase** (`Unlock_Mode.Change_Passphrase`) or **make a new
+//   recovery key** (`Unlock_Mode.New_Recovery_Key`) of the principal whose
 //   session runs: it reads the file, asks for the current passphrase,
 //   which opens the keys as an unlock does, then for the new passphrase two
 //   times, or shows the new recovery key until Enter. Enter with nothing
@@ -2460,7 +2477,7 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 //   sealed by the TPM, a new seal with Secure Boot off) stops it with the
 //   code 1 before its window opens.
 // - **Unlock**: it reads the file "principal", and the record "machine"
-//   unless the mode is `MODE_UNLOCK_MACHINE_KEY_HELD`. With a record under
+//   unless the mode is `Unlock_Mode.Unlock_Machine_Key_Held`. With a record under
 //   a machine passphrase it asks for the machine passphrase first; when
 //   the TPM seals the key with it and refuses for another cause than a
 //   wrong passphrase, it asks for the recovery key, then for a new machine
@@ -2499,8 +2516,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// The TPM service, when the system is measured into a TPM.
 	tpm_open(ctx)
-	switch ctx.values[principals.VALUE_MODE] {
-	case principals.MODE_SEAL_MACHINE_KEY:
+	// A word that names no mode is refused: an unlock in its place would do
+	// what the starter did not ask for.
+	start_mode, start_mode_ok := principals.unlock_mode_of_word(ctx.values[principals.VALUE_MODE])
+	if !start_mode_ok {
+		system.log("unlock: the root service gave the mode ", ctx.values[principals.VALUE_MODE], ", which names no mode of unlock: nothing is done")
+		system.stop(1)
+	}
+	switch start_mode {
+	case .Seal_Machine_Key:
 		// The root service refuses this mode with no TPM service, or with a
 		// record of the machine key; the store is read again here, as the
 		// store is the truth.
@@ -2526,7 +2550,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		mode = .Recovery_Shown
 		message = "write it down, then Enter: the record is written then"
-	case principals.MODE_CREATE_PRINCIPAL:
+	case .Create_Principal:
 		name, name_length = principals.name_unpack({ctx.values[principals.VALUE_NAME], ctx.values[principals.VALUE_NAME + 1], ctx.values[principals.VALUE_NAME + 2]})
 		if principals.name_problem(the_name()) != .None {
 			system.log("unlock: the name of the new principal is refused")
@@ -2534,7 +2558,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		mode = .Create_First
 		message = "type a passphrase of 8 bytes at least"
-	case principals.MODE_SET_MACHINE_PASSPHRASE:
+	case .Set_Machine_Passphrase:
 		// The root service refuses a second machine passphrase; the record
 		// is read again here, as the store is the truth. Only a store that
 		// holds no record lets a new one be written.
@@ -2549,11 +2573,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		mode = .Machine_Create_First
 		message = "type a passphrase of 8 bytes at least"
-	case principals.MODE_CHANGE_PASSPHRASE, principals.MODE_NEW_RECOVERY_KEY:
+	case .Change_Passphrase, .New_Recovery_Key:
 		// The root service starts these modes only for a principal whose
 		// session runs; the file is read again here, as the store is the
 		// truth, and its record must be the record of that session.
-		change_mode = ctx.values[principals.VALUE_MODE]
+		change_mode = start_mode
 		if !principal_file_read() {
 			system.log("unlock: no named principal: there is no passphrase to change")
 			change_end(.Refused, .Unknown_Form)
@@ -2573,12 +2597,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			message = "type the current passphrase of the principal"
 		}
 		system.log("unlock: principal ", number, " \"", the_name(), "\" asks for a change: its current passphrase comes first")
-	case:
+	case .Unlock, .Unlock_Machine_Key_Held:
 		principal_found = principal_file_read()
 		// After a lock the root service holds the key of the table of
 		// principal 0 already: the machine passphrase is not asked again.
 		record_state := Record_State.Absent
-		if ctx.values[principals.VALUE_MODE] != principals.MODE_UNLOCK_MACHINE_KEY_HELD {
+		if start_mode != .Unlock_Machine_Key_Held {
 			record_state = machine_record_read()
 		}
 		machine_asked := false
@@ -2587,8 +2611,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		case .Absent:
 		case .Present:
 			sealed_by_the_tpm := machine_form == .Sealed_By_The_Tpm
-			form_value := sealed_by_the_tpm ? u64(system.MACHINE_KEY_SEALED_BY_THE_TPM) : u64(0)
-			completion, answered := root_command(.Machine_Key, {4 = system.MACHINE_KEY_AWAITED, 5 = form_value})
+			key_form := sealed_by_the_tpm ? system.Machine_Key_Form.Sealed_By_The_Tpm : system.Machine_Key_Form.Passphrase
+			completion, answered := root_command(.Machine_Key, {4 = u64(system.Machine_Key_State.Awaited), 5 = u64(key_form)})
 			switch {
 			case !answered || system.Status(completion.kind) != .Ok:
 				system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
@@ -2608,7 +2632,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// service refuses each change of the table of principal 0, and
 			// a new machine passphrase, so nothing is written over a table
 			// or a record that can be good.
-			completion, answered := root_command(.Machine_Key, {4 = system.MACHINE_KEY_UNREADABLE})
+			completion, answered := root_command(.Machine_Key, {4 = u64(system.Machine_Key_State.Unreadable)})
 			if !answered || system.Status(completion.kind) != .Ok {
 				system.log("unlock: the root service did not take the state of the machine passphrase: status ", u64(completion.kind))
 			}

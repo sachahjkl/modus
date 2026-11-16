@@ -56,8 +56,13 @@ import "modus:support/virtio"
 // The budget of a block service: it drives one disk through one ring.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, programs = 1, threads = 1}
 
-REQUEST_READ :: 0
-REQUEST_WRITE :: 1
+// The kind of a request of this test to its disk: the request types of a
+// virtio block device (virtio 1.2, section 5.2.6), written in the header
+// and never read back.
+Request_Kind :: enum u32 {
+	Read  = 0,
+	Write = 1,
+}
 SECTOR_SIZE :: 512
 // The block of the disk that the test writes and reads.
 TEST_BLOCK :: 0
@@ -100,12 +105,12 @@ fail :: proc "contextless" (text: string) -> ! {
 
 // request gives the device one request for the test block: the header, a
 // buffer of one block at a physical address, and the status byte.
-request :: proc "contextless" (kind: u32, buffer: u64) {
-	header^ = {kind = kind, sector = TEST_BLOCK * (block.BLOCK_SIZE / SECTOR_SIZE)}
+request :: proc "contextless" (kind: Request_Kind, buffer: u64) {
+	header^ = {kind = u32(kind), sector = TEST_BLOCK * (block.BLOCK_SIZE / SECTOR_SIZE)}
 	status^ = 0xFF
 	descriptors := queue.descriptors
 	descriptors[0] = {address = requests, length = size_of(Header), flags = virtio.DESCRIPTOR_NEXT, next = 1}
-	descriptors[1] = {address = buffer, length = block.BLOCK_SIZE, flags = virtio.DESCRIPTOR_NEXT | (kind == REQUEST_READ ? virtio.DESCRIPTOR_DEVICE_WRITES : 0), next = 2}
+	descriptors[1] = {address = buffer, length = block.BLOCK_SIZE, flags = virtio.DESCRIPTOR_NEXT | (kind == .Read ? virtio.DESCRIPTOR_DEVICE_WRITES : 0), next = 2}
 	descriptors[2] = {address = requests + STATUS_PLACE, length = 1, flags = virtio.DESCRIPTOR_DEVICE_WRITES}
 	virtio.give(&queue, 0)
 	virtio.notify(&queue)
@@ -220,9 +225,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		bytes[index] = PATTERN_WRITTEN
 		bytes[block.BLOCK_SIZE + index] = 0
 	}
-	request(REQUEST_WRITE, data_physical)
+	request(.Write, data_physical)
 	written := request_end()
-	request(REQUEST_READ, data_physical + block.BLOCK_SIZE)
+	request(.Read, data_physical + block.BLOCK_SIZE)
 	read := request_end()
 	if written != .Used || read != .Used || status^ != 0 || !page_holds(([^]u8)(uintptr(data_address) + block.BLOCK_SIZE), PATTERN_WRITTEN) {
 		fail("a block written from a declared page and read into another declared page did not arrive")
@@ -253,9 +258,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for index in 0 ..< block.BLOCK_SIZE {
 		bytes[index] = 0
 	}
-	request(REQUEST_WRITE, data_physical)
+	request(.Write, data_physical)
 	zeroed := request_end()
-	request(REQUEST_READ, FORGED_MESSAGE_ADDRESS)
+	request(.Read, FORGED_MESSAGE_ADDRESS)
 	forged := request_end()
 	if zeroed != .Used || forged != .Used {
 		fail("a read into the interrupt addresses: the device did not give the request back")
@@ -281,7 +286,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.close(page)
 
 	// 4. The address of that page in a descriptor of a read.
-	request(REQUEST_READ, page_physical)
+	request(.Read, page_physical)
 	outcome := request_end()
 
 	// 5. The page keeps its bytes when the device did not reach it.
@@ -335,7 +340,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// through them. The count before is read and dropped.
 		_, _ = system.call(.Interrupt_Read, u64(interrupt))
 		capacity_before := virtio.load_32(device.device_config + CONFIG_CAPACITY_LOW)
-		request(REQUEST_READ, data_physical + block.BLOCK_SIZE)
+		request(.Read, data_physical + block.BLOCK_SIZE)
 		// The device of QEMU 10 neither ends the request nor says that it
 		// needs a reset: it keeps the request. Its state is no bound of the
 		// wait. The tool bounds it: it stops the machine, which ends each
