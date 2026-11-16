@@ -515,25 +515,49 @@ tpm_key_changed_ticket_disk_write :: proc() -> bool {
 // tool could not ask, or the answer is not an answer of a TPM.
 @(private = "file")
 tpm_lockout_reset_try :: proc(state_folder: string, number: int) -> (code: u32, ok: bool) {
+	alone := tpm_alone_start(state_folder, self_test_file(TEST_OUTPUT_TPM_LOCKOUT, number)) or_return
+	defer tpm_alone_stop(&alone)
+	command: [64]u8
+	count := tpm2.dictionary_attack_lock_reset_command(command[:])
+	answer: [TPM_TOOL_ANSWER_LIMIT]u8
+	bytes := tpm_alone_transact(&alone, command[:count], answer[:], "TPM2_DictionaryAttackLockReset") or_return
+	status_code, problem := tpm2.status_answer(bytes)
+	if problem == .Malformed {
+		fmt.eprintfln("modustool: test failed: the answer of swtpm to TPM2_DictionaryAttackLockReset does not have the form of an answer (%s)", alone.tpm.folder)
+		return 0, false
+	}
+	return status_code, true
+}
+
+// A software TPM that runs alone, with no QEMU, on a state of the software
+// TPM of a part: the tool sends it the commands that another system on the
+// machine can send.
+Tpm_Alone :: struct {
+	tpm:    Tpm_Process,
+	socket: net.TCP_Socket,
+}
+
+// tpm_alone_start starts swtpm alone on a state of the software TPM, in the
+// folder of the output given, and connects to its port of the commands.
+tpm_alone_start :: proc(state_folder: string, output: string) -> (alone: Tpm_Alone, ok: bool) {
 	// Two ports of the loopback at once, so they differ: the commands and
 	// the control channel of swtpm.
 	server_socket, server_error := net.listen_tcp({net.IP4_Loopback, 0})
 	if server_error != nil {
 		fmt.eprintfln("modustool: test failed: no port of the loopback for swtpm: %v", server_error)
-		return 0, false
+		return {}, false
 	}
 	control_socket, control_error := net.listen_tcp({net.IP4_Loopback, 0})
 	if control_error != nil {
 		net.close(server_socket)
 		fmt.eprintfln("modustool: test failed: no port of the loopback for swtpm: %v", control_error)
-		return 0, false
+		return {}, false
 	}
 	server_endpoint, _ := net.bound_endpoint(server_socket)
 	control_endpoint, _ := net.bound_endpoint(control_socket)
 	net.close(server_socket)
 	net.close(control_socket)
 
-	output := self_test_file(TEST_OUTPUT_TPM_LOCKOUT, number)
 	folder := tpm_folder_of(output)
 	reset_folder(folder) or_return
 	log := strings.concatenate({"file=", folder, "/swtpm.log,level=20"}, context.temp_allocator)
@@ -544,62 +568,65 @@ tpm_lockout_reset_try :: proc(state_folder: string, number: int) -> (code: u32, 
 	process, start_error := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", state_folder}, context.temp_allocator), "--server", server, "--ctrl", control, "--flags", "not-need-init,startup-clear", "--log", log}, stdout = os.stderr, stderr = os.stderr})
 	if start_error != nil {
 		fmt.eprintfln("modustool: cannot start swtpm: %v. Use the development shell: nix develop", start_error)
-		return 0, false
+		return {}, false
 	}
-	tpm := Tpm_Process{process = process, started = true, folder = strings.clone(folder)}
-	defer tpm_stop(&tpm)
+	alone.tpm = Tpm_Process{process = process, started = true, folder = strings.clone(folder)}
 
 	// Wait until swtpm takes a connection.
-	socket: net.TCP_Socket
 	start := time.tick_now()
 	for {
 		dialed, dial_error := net.dial_tcp(net.Endpoint{net.IP4_Loopback, server_endpoint.port})
 		if dial_error == nil {
-			socket = dialed
+			alone.socket = dialed
 			break
 		}
 		if time.tick_since(start) > TPM_START_TIMEOUT {
 			fmt.eprintfln("modustool: test failed: swtpm took no connection on the port %d in %v (%s)", server_endpoint.port, TPM_START_TIMEOUT, folder)
-			return 0, false
+			tpm_stop(&alone.tpm)
+			return {}, false
 		}
 		time.sleep(10 * time.Millisecond)
 	}
-	defer net.close(socket)
 	// The bound only ends a wait for a TPM that does not answer.
-	_ = net.set_option(socket, .Receive_Timeout, HANG_BOUND)
+	_ = net.set_option(alone.socket, .Receive_Timeout, HANG_BOUND)
+	return alone, true
+}
 
-	command: [64]u8
-	count := tpm2.dictionary_attack_lock_reset_command(command[:])
-	if count == 0 || !send_all(socket, command[:count]) {
-		fmt.eprintfln("modustool: test failed: the command TPM2_DictionaryAttackLockReset did not go to swtpm (%s)", folder)
-		return 0, false
+// tpm_alone_stop closes the connection and ends swtpm, which writes its
+// state.
+tpm_alone_stop :: proc(alone: ^Tpm_Alone) {
+	net.close(alone.socket)
+	tpm_stop(&alone.tpm)
+}
+
+// tpm_alone_transact sends one command and gives its whole answer, in the
+// buffer given: the size of its header bounds it. what names the command in
+// a line of a failure.
+tpm_alone_transact :: proc(alone: ^Tpm_Alone, command: []u8, answer: []u8, what: string) -> (bytes: []u8, ok: bool) {
+	if len(command) == 0 || !send_all(alone.socket, command) {
+		fmt.eprintfln("modustool: test failed: the command %s did not go to swtpm (%s)", what, alone.tpm.folder)
+		return nil, false
 	}
 	// The header of an answer has its size in bytes 2 to 5, big-endian.
 	HEADER_SIZE :: 10
-	answer: [TPM_TOOL_ANSWER_LIMIT]u8
 	received := 0
 	size := HEADER_SIZE
 	for received < size {
-		got, receive_error := net.recv_tcp(socket, answer[received:size])
+		got, receive_error := net.recv_tcp(alone.socket, answer[received:size])
 		if receive_error != nil || got == 0 {
-			fmt.eprintfln("modustool: test failed: swtpm gave %d bytes of an answer of %d to TPM2_DictionaryAttackLockReset: %v (%s)", received, size, receive_error, folder)
-			return 0, false
+			fmt.eprintfln("modustool: test failed: swtpm gave %d bytes of an answer of %d to %s: %v (%s)", received, size, what, receive_error, alone.tpm.folder)
+			return nil, false
 		}
 		received += got
 		if received >= HEADER_SIZE && size == HEADER_SIZE {
 			size = int(u32(answer[2]) << 24 | u32(answer[3]) << 16 | u32(answer[4]) << 8 | u32(answer[5]))
 			if size < HEADER_SIZE || size > len(answer) {
-				fmt.eprintfln("modustool: test failed: swtpm gave an answer of %d bytes to TPM2_DictionaryAttackLockReset (%s)", size, folder)
-				return 0, false
+				fmt.eprintfln("modustool: test failed: swtpm gave an answer of %d bytes to %s (%s)", size, what, alone.tpm.folder)
+				return nil, false
 			}
 		}
 	}
-	status_code, problem := tpm2.status_answer(answer[:size])
-	if problem == .Malformed {
-		fmt.eprintfln("modustool: test failed: the answer of swtpm to TPM2_DictionaryAttackLockReset does not have the form of an answer (%s)", folder)
-		return 0, false
-	}
-	return status_code, true
+	return answer[:size], true
 }
 
 // tpm_lockout_reset_tests_run sends the reset of the count with the empty

@@ -157,6 +157,11 @@ BOOT_VOLUME_STATED_HASH :: BUILD_FOLDER + "/boot_volume_stated_hash.img"
 // changed after the signature (secure_boot.odin).
 BOOT_VOLUME_SECURE_BOOT :: BUILD_FOLDER + "/boot_volume_secure_boot.img"
 BOOT_VOLUME_SECURE_BOOT_CHANGED :: BUILD_FOLDER + "/boot_volume_secure_boot_changed.img"
+// The volumes of the TPM floors, signed for Secure Boot: a newer system (a
+// security version one above the repository), and a newer system whose
+// boot program has a newer key (a key number one above too).
+BOOT_VOLUME_NEWER_SYSTEM :: BUILD_FOLDER + "/boot_volume_newer_system.img"
+BOOT_VOLUME_NEWER_KEY :: BUILD_FOLDER + "/boot_volume_newer_key.img"
 // The path where the firmware looks for the boot program of a disk.
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
 FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"

@@ -76,7 +76,7 @@ Before any build:
 - a release signing key whose public key is not `resources/keys/release_signing_key.public`, or no such file;
 - a certificate of the firmware signing key that is not `resources/keys/firmware_signing_key.crt`, or no such file. A principal enrols that certificate in the firmware; the site publishes it in PEM and in DER, because the setup of a firmware reads one or the other. A release whose boot program another certificate signed would start with Secure Boot on at no machine.
 
-In the build, `sbverify` checks the signed boot program with the certificate: a private key that does not belong to its certificate would give a boot program that the enrolled certificate refuses on every machine.
+In the build, the key of the system stops the build when `resources/keys/key_numbers` has no line for the signing key: its boot program would have no key number for the key floor of the TPM ([rollback_floors.md](../features/rollback_floors.md)). In the build, `sbverify` checks the signed boot program with the certificate: a private key that does not belong to its certificate would give a boot program that the enrolled certificate refuses on every machine.
 
 After the build, the packaging checks the files that the build of the volume wrote beside it:
 
