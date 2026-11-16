@@ -108,7 +108,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "palette_result.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "A command chosen in the palette runs as a line of the console: memory() is in the console behind the panel."},
 	{file = "palette_empty.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The palette with letters that nothing matches: it says that nothing has them in its name."},
 	{file = "palette_no_provider.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The palette after the console lost its grant palette: the count says that it has no commands, and shutdown is not found."},
-	{file = "pointers_system.png", group = .Desktop, guide = "docs/POINTERS.md", caption = "The pointer pictures: each shape of the pointer theme of the system, at 24 and 48 pixels, with the lines of its hot spot."},
+	{file = "pointers_system.png", group = .Desktop, guide = "docs/POINTERS.md", caption = "The pointer pictures: each shape of the pointer theme of the system, in the dark form and in the light form at 24 and 48 pixels, with the lines of its hot spot."},
 	{file = "pointer_text.png", group = .Desktop, guide = "docs/POINTERS.md", caption = "The pointer over the text of the console takes the shape of a text cursor."},
 
 	// The console and the terminal.

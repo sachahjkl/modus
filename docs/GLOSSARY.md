@@ -4961,9 +4961,9 @@ Do not use: cursor type, cursor name, cursor kind.
 
 A pointer picture is one image of one pointer shape at one nominal size, for one frame of an animation: its width, height, hot spot, delay and pixels with premultiplied alpha.
 
-A pointer theme file holds the pictures of each shape: the frames of the smallest size, then of the next. A picture is 1 to 256 pixels wide and high, and its hot spot is inside it. An animated shape has 1 to 256 frames with a delay of 1 to 60000 ms each; `wait` in the theme of the system has 4 frames of 250 ms. The compositor blends the picture over the screen with premultiplied alpha.
+A pointer theme file holds the pictures of each shape: the frames of the smallest size, then of the next. A picture is 1 to 256 pixels wide and high, and its hot spot is inside it. An animated shape has 1 to 256 frames with a delay of 1 to 60000 ms each; `wait` in the theme of the system has 16 frames of 60 ms. The compositor blends the picture over the screen with premultiplied alpha.
 
-A pointer picture is the one picture of the desktop that is not made of rectangles: the pictures of the Posy theme have smooth edges and transparency.
+A pointer picture is the one picture of the desktop that is not made of rectangles: the pictures of both themes have smooth edges and transparency.
 
 The design: `docs/POINTERS.md`, "3. The format of the system: one pointer theme file".
 
@@ -4973,7 +4973,7 @@ Do not use: cursor image, sprite, icon.
 
 The hot spot is the pixel of a pointer picture that the compositor puts at the place of the pointer.
 
-A press acts at the place of the pointer, so the hot spot is the pixel that "points": the top left square of the arrow, the centre of a crosshair. Each pointer picture has its own hot spot, inside its width and its height. A manifest gives it with `hot` in pixels of the smallest size, or in squares for a grid; the tool multiplies it for the other sizes.
+A press acts at the place of the pointer, so the hot spot is the pixel that "points": the point of the arrow, the centre of a crosshair. Each pointer picture has its own hot spot, inside its width and its height. A manifest gives it with `hot` in pixels of the smallest size; the tool multiplies it for the other sizes.
 
 The hot spot is not the top left corner of the picture, except for the arrow.
 
@@ -4999,7 +4999,7 @@ A pointer theme is the pointer pictures of each pointer shape, with a name, a li
 
 The system has two themes:
 
-- the theme of the system (`resources/pointers/system.manifest`): the 15 shapes as grids of squares of 2 pixels, in the style of the arrow of the design rules. It is always in the boot image, as the resource `pointers_system`.
+- the theme of the system (`resources/pointers/system.manifest`): the 15 shapes as outlines that the tool draws at the build, in two pointer forms, a fill inside an edge of 1 pixel, with an accent color on a few parts. It is always in the boot image, as the resource `pointers_system`.
 - the Posy theme, "Posy's Cursor", from the build input `posy-cursors` of the default development shell: the tool converts it at each build into the resource `pointers_posy`. No file of it is in the repository, and no release image holds it: its license allows no public download.
 
 The Posy theme is the default when the build has its input; the theme of the system is the fallback, and the one theme of a release image. The setting `pointer_theme` chooses one of them.
@@ -5022,11 +5022,23 @@ The design: `docs/POINTERS.md`, "3. The format of the system: one pointer theme 
 
 Do not use: cursor file, .cur, Xcursor file (for this).
 
+### Pointer form
+
+A pointer form is one set of the pictures of a pointer theme for one appearance of the desktop: the dark form for a dark desktop, the light form for a light one.
+
+A pointer theme file holds one or two forms (`Pointer_Form` of `src/library/contract/pointer_pictures`): a shape entry for each shape in each form, the dark form first. The dark form of the theme of the system is a white fill in a dark edge, the light form a dark fill in a white edge, so the fill, the large part, has a strong contrast on the surfaces of its appearance. The compositor draws the form of the appearance in force. A theme with one form, such as the Posy theme, gives it for both.
+
+A pointer form is not a pointer theme: the setting `pointer_theme` chooses the theme, the appearance chooses the form.
+
+The design: `docs/POINTERS.md`, "3. The format of the system: one pointer theme file".
+
+Do not use: cursor variant, dark cursor, mode (for this).
+
 ### Pointer manifest
 
-A pointer manifest is a text file of the repository that says how the tool makes a pointer theme file: for each pointer shape, the files of an Xcursor theme or grids of squares, and the adjustments.
+A pointer manifest is a text file of the repository that says how the tool makes a pointer theme file: for each pointer shape, the files of an Xcursor theme or an outline, and the adjustments.
 
-The manifest keeps the choices about a theme in text that a reader can review, with no JSON and no general parser. It has the statements `theme`, `license`, `attribution`, `sizes`, `shape`, `frame`, and lines of a grid that start with `|`. A shape has sources or a grid, not both. `modustool pointers` reads it and writes the pointer theme file. An error gives the file, the line, the column and what was expected: `resources/pointers/posy.manifest:12:7: expected a pointer shape name such as "arrow"; found "arow"`.
+The manifest keeps the choices about a theme in text that a reader can review, with no JSON and no general parser. It has the statements `theme`, `license`, `attribution`, `sizes`, `shape`, `frame`, and the statements of an outline: `layer`, `contour`, `line`, `curve` and `circle`. A shape has sources or an outline, not both. The tool draws an outline at each size and in each pointer form with the rasterizer of the vector font: the contours of each layer, in its paint (`fill`, `accent` with the name of a color token, `edge` or `clear`), over the layers before it, with an edge of 1 pixel that it makes inside the contours of a fill or an accent. A manifest names a color by its token, never by a value. `modustool pointers` reads it and writes the pointer theme file. An error gives the file, the line, the column and what was expected: `resources/pointers/posy.manifest:12:7: expected a pointer shape name such as "arrow"; found "arow"`.
 
 A pointer manifest is not the `index.theme` of an icon theme: the system reads no file of a theme at run time.
 
@@ -5156,13 +5168,15 @@ Do not use: character (for the form), symbol.
 
 ### Outline
 
-An outline is the set of closed contours of line segments and quadratic curves that bound a glyph, in units of its font.
+An outline is the set of closed contours of line segments and quadratic curves that bound a glyph or a pointer shape, in units of its font or of its design size.
 
 The outline is what a TrueType font stores in its table `glyf`: points in units of the font (1000 to one em for Paper Mono, 2000 for B612), each on or off the curve. The renderer of `src/library/support/vector_font` cuts each quadratic curve into 1 to 16 segments, each at most 1/8 of a pixel from the curve, scales the points to the grid, applies the grid fit, and accumulates the coverage of each pixel in fixed point, with no floating point. The sum of the coverage of a closed outline is exactly the area of the polygon of its cut points.
 
-Only the modus tool reads outlines: it draws them once into a glyph cache at the build. A glyph made of glyphs (`i` and `j` in Paper Mono) is made a simple outline in the subset. Outlines of CFF (cubic curves) are not read.
+A pointer shape of the theme of the system is also an outline, written in its pointer manifest: contours in layers of a paint, in units of a pixel at its first size, with up to three decimals. The same renderer draws it, with no grid fit: its level and upright edges are on whole units by design. The tool moves each contour in by 1 pixel to draw its edge.
 
-The design: `docs/FONTS.md`, "4. Fixed point".
+Only the modus tool reads outlines: it draws them once into a glyph cache or a pointer theme file at the build. A glyph made of glyphs (`i` and `j` in Paper Mono) is made a simple outline in the subset. Outlines of CFF (cubic curves) are not read, and the tool reads no SVG file.
+
+The design: `docs/FONTS.md`, "4. Fixed point"; for a pointer, `docs/POINTERS.md`, "4. The manifest".
 
 Do not use: path, vector shape, Bézier.
 

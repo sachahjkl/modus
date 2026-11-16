@@ -1,7 +1,7 @@
 // The pointer themes of the boot image (docs/POINTERS.md), as a table that
-// a reader reads: each pointer shape of a theme at each of its sizes, its
-// hot spot marked, its frames, and the theme with its license and its
-// attribution.
+// a reader reads: each pointer shape of a theme at each of its sizes, in
+// each of its forms (the light form on a light track), its hot spot marked,
+// its frames, and the theme with its license and its attribution.
 //
 // The program has the boot image, read-only. It finds the pointer theme
 // files in the resource table, checks the hash of each one against its
@@ -169,7 +169,7 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 	// The tiles: one for each shape of the theme.
 	under := -1
 	pictures := pointer_pictures.picture_entries(theme.file)
-	for entry, index in pointer_pictures.shape_entries(theme.file) {
+	for entry, index in pointer_pictures.shape_entries(theme.file, .Dark) {
 		area := tile_area(index)
 		if input.pointer_known && interface.area_contains(area, input.pointer_x, input.pointer_y) {
 			under = index
@@ -207,21 +207,28 @@ build :: proc "contextless" (frame: ^interface.Frame) -> int {
 			interface.text_put(&builder, " ms")
 			interface.draw_text_right(frame.table, area.x + area.width - 8, area.y + 36, interface.text_of(&builder), graphics.colors.dim)
 		}
-		// A track behind each size, with the lines of the hot spot.
+		// A track behind each size of each form, with the lines of the hot
+		// spot: the dark form on a dark track, the light form on a light one.
 		x := area.x + 8
-		for size in 0 ..< entry.size_count {
-			picture := pictures[entry.first_picture + size * entry.frame_count]
-			side := int(picture.nominal_size)
-			if x + side > area.x + area.width - 8 {
-				break
+		for form in forms_of(theme.file) {
+			form_entry, found := pointer_pictures.shape_entry_of(theme.file, form, pointer_pictures.Pointer_Shape(entry.shape))
+			if !found {
+				continue
 			}
-			interface.draw_rectangle(frame.table, x, area.y + PICTURE_TOP, side, side, graphics.colors.track)
-			interface.draw_rectangle(frame.table, x + int(picture.hot_spot_x), area.y + PICTURE_TOP, 1, side, graphics.colors.boot_program)
-			interface.draw_rectangle(frame.table, x, area.y + PICTURE_TOP + int(picture.hot_spot_y), side, 1, graphics.colors.boot_program)
-			builder = {}
-			interface.text_put_number(&builder, u64(picture.nominal_size))
-			interface.draw_text(frame.table, x, area.y + PICTURE_TOP + side + 4, interface.text_of(&builder), graphics.colors.dim)
-			x += side + 8
+			for size in 0 ..< form_entry.size_count {
+				picture := pictures[form_entry.first_picture + size * form_entry.frame_count]
+				side := int(picture.nominal_size)
+				if x + side > area.x + area.width - 8 {
+					break
+				}
+				interface.draw_rectangle(frame.table, x, area.y + PICTURE_TOP, side, side, TRACK_OF_FORM[form])
+				interface.draw_rectangle(frame.table, x + int(picture.hot_spot_x), area.y + PICTURE_TOP, 1, side, graphics.colors.boot_program)
+				interface.draw_rectangle(frame.table, x, area.y + PICTURE_TOP + int(picture.hot_spot_y), side, 1, graphics.colors.boot_program)
+				builder = {}
+				interface.text_put_number(&builder, u64(picture.nominal_size))
+				interface.draw_text(frame.table, x, area.y + PICTURE_TOP + side + 4, interface.text_of(&builder), graphics.colors.dim)
+				x += side + 8
+			}
 		}
 	}
 	builder = {}
@@ -238,23 +245,46 @@ pictures_draw :: proc "contextless" (canvas: graphics.Canvas) {
 		return
 	}
 	pictures := pointer_pictures.picture_entries(theme.file)
-	for entry, index in pointer_pictures.shape_entries(theme.file) {
+	for entry, index in pointer_pictures.shape_entries(theme.file, .Dark) {
 		area := tile_area(index)
 		x := area.x + 8
-		for size in 0 ..< entry.size_count {
-			picture := pictures[entry.first_picture + size * entry.frame_count]
-			side := int(picture.nominal_size)
-			if x + side > area.x + area.width - 8 {
-				break
+		for form in forms_of(theme.file) {
+			form_entry, found := pointer_pictures.shape_entry_of(theme.file, form, pointer_pictures.Pointer_Shape(entry.shape))
+			if !found {
+				continue
 			}
-			pixels := pointer_pictures.pixels_of(theme.file, picture)
-			// The picture in the square of its nominal size: a picture larger
-			// than its size is cut to the square.
-			square := graphics.view(canvas, x, area.y + PICTURE_TOP, side, side)
-			graphics.blend_premultiplied_alpha(square, 0, 0, {pixels = raw_data(pixels), width = int(picture.width), height = int(picture.height), stride = int(picture.width)})
-			x += side + 8
+			for size in 0 ..< form_entry.size_count {
+				picture := pictures[form_entry.first_picture + size * form_entry.frame_count]
+				side := int(picture.nominal_size)
+				if x + side > area.x + area.width - 8 {
+					break
+				}
+				pixels := pointer_pictures.pixels_of(theme.file, picture)
+				// The picture in the square of its nominal size: a picture larger
+				// than its size is cut to the square.
+				square := graphics.view(canvas, x, area.y + PICTURE_TOP, side, side)
+				graphics.blend_premultiplied_alpha(square, 0, 0, {pixels = raw_data(pixels), width = int(picture.width), height = int(picture.height), stride = int(picture.width)})
+				x += side + 8
+			}
 		}
 	}
+}
+
+// The track behind the pictures of each form: the track of the appearance
+// of that form, whatever the appearance in force: each form is seen on the
+// surfaces it is drawn for.
+TRACK_OF_FORM := [pointer_pictures.Pointer_Form]graphics.Color {
+	.Dark  = graphics.DARK_COLOR_TOKENS.track,
+	.Light = graphics.LIGHT_COLOR_TOKENS.track,
+}
+
+// The forms in their order, for forms_of.
+@(rodata)
+ALL_FORMS := [?]pointer_pictures.Pointer_Form{.Dark, .Light}
+
+// forms_of gives the forms that a theme holds, the dark form first.
+forms_of :: proc "contextless" (file: []u8) -> []pointer_pictures.Pointer_Form {
+	return ALL_FORMS[:min(int(pointer_pictures.header(file).form_count), len(ALL_FORMS))]
 }
 
 // frame_draw builds the window, draws it whole, then the pictures, and
@@ -284,7 +314,7 @@ frame_draw :: proc "contextless" (window: ^display.Window) -> u64 {
 	// Over a tile, the pointer takes the shape of the tile.
 	shape := pointer_pictures.Pointer_Shape.Arrow
 	if under >= 0 && themes[shown].valid {
-		shape = pointer_pictures.Pointer_Shape(pointer_pictures.shape_entries(themes[shown].file)[under].shape)
+		shape = pointer_pictures.Pointer_Shape(pointer_pictures.shape_entries(themes[shown].file, .Dark)[under].shape)
 	}
 	if shape != asked_shape {
 		asked_shape = shape

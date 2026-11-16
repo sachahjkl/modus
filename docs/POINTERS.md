@@ -19,7 +19,7 @@ The terms are in `GLOSSARY.md`: pointer, pointer shape, pointer picture, hot spo
 
 **An example.** The compositor chooses the shape `move` while the pointer drags a window by its title bar, and blends its picture at its hot spot. The program `pointers` shows each shape of each theme.
 
-![The pointer pictures: each shape of the pointer theme of the system, at 24 and 48 pixels, with the lines of its hot spot](screenshots/pointers_system.png)
+![The pointer pictures: each shape of the pointer theme of the system, in the dark form and in the light form at 24 and 48 pixels, with the lines of its hot spot](screenshots/pointers_system.png)
 
 ## 1. What exists
 
@@ -49,8 +49,8 @@ Read on 2026-11-11 (`hyprwm/hyprcursor`, `README.md` and `docs/MAKING_THEMES.md`
 What this system takes from it, and what not:
 
 - **Not as the format that the compositor reads.** At run time it needs a zip reader, an inflate and PNG decoder, an SVG rasterizer and a hyprlang parser in the compositor: four parsers of input that the compositor must not trust, against the rule of this format "no parse at run time" and against section 7 of `DESIGN.md`. The pointer theme file of section 3 is read in place after one validation. Its size is not a problem here: the Posy theme at 32 and 64 is 883 008 bytes, the boot image holds it once.
-- **As the model of the manifest.** The manifest of section 4 is the same idea as `meta.hl`, in one file for the theme: the sizes, the names that a shape takes from other names (the sources, in order), the frames with a delay, the hot spot. It differs in two places: the hot spot is in pixels of the smallest size (a fraction of the size gives a pixel only after a rounding), and a grid of squares is a source of its own.
-- **Not as a source of the tool.** Posy's Cursor exists as Xcursor files and as Windows files, not as hyprcursor. A reader of `.hlc` files in the tool needs zip and PNG (the Odin library has an inflate and a PNG reader, no zip reader). That reader is not built: the tool reads Xcursor files and grids of squares only.
+- **As the model of the manifest.** The manifest of section 4 is the same idea as `meta.hl`, in one file for the theme: the sizes, the names that a shape takes from other names (the sources, in order), the frames with a delay, the hot spot. It differs in two places: the hot spot is in pixels of the smallest size (a fraction of the size gives a pixel only after a rounding), and an outline in the manifest is a source of its own, in place of an SVG file.
+- **Not as a source of the tool.** Posy's Cursor exists as Xcursor files and as Windows files, not as hyprcursor. A reader of `.hlc` files in the tool needs zip and PNG (the Odin library has an inflate and a PNG reader, no zip reader). That reader is not built: the tool reads Xcursor files and outlines only.
 
 ### The Wayland cursor shape protocol (`cursor-shape-v1`, wayland-protocols 1.48)
 
@@ -114,6 +114,7 @@ Two programs ask today: `terminal` and `pointers` (the shape of the tile under t
 ### How the compositor draws the pointer
 
 - **The size.** The compositor asks for the nominal size 24 (`POINTER_NOMINAL_SIZE`). `pointer_pictures.choose` gives the smallest size of the shape that is at least the size asked, else its largest size: 24 for the theme of the system, 32 for the Posy theme.
+- **The form.** A theme can hold a dark form, for a dark desktop, and a light form, for a light desktop (section 3). The compositor takes the form of the appearance in force (`pointer_form_in_force` in `src/programs/compositor/pointer_picture.odin`), and writes `compositor: the pointer form in use: light` on the log at each change. It reads the appearance in force from the settings page (`appearance_in_force`), so the pointer changes its form at the next frame, also when the rule of the day changes the appearance with no new setting. `compositor.pointer()` gives the form on the screen in its field `form`. A theme with one form gives it for both.
 - **A shape that the theme does not have** is drawn as the arrow. Every valid theme has the arrow.
 - **The place.** The picture is drawn with its hot spot at the place of the pointer: its top left corner is the place less the hot spot. A press acts at the place of the pointer.
 - **The blend.** `graphics.blend_premultiplied_alpha` blends the picture over the frame (`docs/SIMD.md`, "4. The compositor").
@@ -127,14 +128,15 @@ Two programs ask today: `terminal` and `pointers` (the shape of the tile under t
 
 ```
 Header           512 bytes  at 0
-Shape_Entry      16 bytes   x shape_count, at 512
+Shape_Entry      16 bytes   x shape_count x form_count, at 512
 Picture_Entry    32 bytes   x picture_count, after the shapes
 (zero bytes to a multiple of 64)
 pixels           u32 each   at pixel_offset, pixel_size bytes
 ```
 
-- **Header**: `magic` (the bytes "POINTERS"), `version` (1), `shape_count`, `picture_count`, a reserved word of 0, `pixel_offset`, `pixel_size`, `file_size`, `theme_name` (32 bytes), `license` (32 bytes, an SPDX identifier), `attribution` (400 bytes). The texts are ASCII 32 to 126 followed by zero bytes, so that the font of the system shows them. The name and the license are not empty; the attribution can be.
+- **Header**: `magic` (the bytes "POINTERS"), `version` (2), `shape_count` (the shapes of one form), `picture_count`, `form_count` (1 or 2), `pixel_offset`, `pixel_size`, `file_size`, `theme_name` (32 bytes), `license` (32 bytes, an SPDX identifier), `attribution` (400 bytes). The texts are ASCII 32 to 126 followed by zero bytes, so that the font of the system shows them. The name and the license are not empty; the attribution can be.
 - **Shape_Entry**: `shape` (the number of the enum), `first_picture`, `size_count`, `frame_count`. The pictures of a shape are `size_count * frame_count` entries from `first_picture`: the frames of the smallest size, then of the next. Two shapes can name the same pictures (two names, one file, as the links of an Xcursor theme).
+- **Forms**: the shape table holds `shape_count` entries for each form, the dark form first (`Pointer_Form`: `Dark` 0, `Light` 1). Each form has its own entries and can name its own pictures; two forms can also name the same pictures. `choose`, `shape_entries` and `shape_entry_of` take the form; a theme with one form gives that form for both.
 - **Picture_Entry**: `nominal_size`, `width`, `height`, `hot_spot_x`, `hot_spot_y`, `delay_milliseconds` (0 for a shape with one frame), `pixel_offset` (from the start of the pixels).
 - **Pixels**: 0xAARRGGBB with premultiplied alpha, the form of an Xcursor file and the form of a canvas of `src/library/support/graphics` (0x00RRGGBB) plus alpha in the high byte. The blend reads the alpha from the same word and adds the source to the destination with no conversion. Straight alpha needs three more multiplications for each pixel.
 
@@ -142,7 +144,8 @@ pixels           u32 each   at pixel_offset, pixel_size bytes
 
 | Limit | Value |
 |---|---|
-| Shapes of one file | 1 to 256 (`SHAPE_COUNT_LIMIT`); the enum has 15 today |
+| Shapes of one form | 1 to 256 (`SHAPE_COUNT_LIMIT`); the enum has 15 today |
+| Forms of one file | 1 to 2 (`FORM_COUNT_LIMIT`) |
 | Pictures of one file | 1 to 65 536 (`PICTURE_COUNT_LIMIT`) |
 | Nominal sizes of one shape | 1 to 8 (`SIZE_COUNT_LIMIT`) |
 | Frames of one shape | 1 to 256 (`FRAME_COUNT_LIMIT`) |
@@ -152,8 +155,8 @@ pixels           u32 each   at pixel_offset, pixel_size bytes
 **The validation** (`pointer_pictures.validate`) is one function that the tool and the compositor run. The tool runs it on each file that it makes, before it writes it. The compositor does not trust the file, also from the root service: it runs the validation once at its start, and it uses a file only after that. The validation checks:
 
 - **The file**: at least the size of the header, and its address on a multiple of 8 bytes.
-- **The header**: the magic, the version, `file_size` equal to the size of the file, the two counts in their limits, `pixel_offset` exactly at the first multiple of 64 after the tables, `pixel_size` to the end of the file and a multiple of 4, and the three texts.
-- **The shapes**: each number in the enum, the numbers in increasing order with no repeat, the arrow present, 1 to 8 sizes and 1 to 256 frames, and the range of the pictures inside the picture table.
+- **The header**: the magic, the version, `file_size` equal to the size of the file, the three counts in their limits, `pixel_offset` exactly at the first multiple of 64 after the tables, `pixel_size` to the end of the file and a multiple of 4, and the three texts.
+- **The shapes**: in each form, each number in the enum, the numbers in increasing order with no repeat, the arrow present; 1 to 8 sizes and 1 to 256 frames, and the range of the pictures inside the picture table.
 - **The sizes and the frames of a shape**: the same nominal size for the frames of one size, an increasing nominal size from one size to the next, a delay of 1 to 60 000 ms for each frame of an animation and 0 for a shape with one frame.
 - **Each picture**: its nominal size, its width and its height from 1 to 256, its hot spot inside it, its pixels inside the pixel area and at an offset that is a multiple of 4.
 - **The pixels**: each pixel premultiplied (no channel above its alpha).
@@ -164,7 +167,7 @@ A failure gives a `Problem`: its kind, the part of the file, the field, the inde
 
 ## 4. The manifest
 
-A text file in the repository (`resources/pointers/`). One grammar for the two sources of pictures: the files of an Xcursor theme, and grids of squares in the manifest itself.
+A text file in the repository (`resources/pointers/`). One grammar for the two sources of pictures: the files of an Xcursor theme, and outlines in the manifest itself.
 
 ```
 manifest  = { line }                        lines end with "\n"; ASCII 32 to 126 only
@@ -174,19 +177,42 @@ statement = "theme" text                    the name of the theme: 1 to 31 chara
           | "attribution" text              to the end of the line; more lines add to it (399 characters at most)
           | "sizes" number { number }       the nominal sizes of each shape, increasing; once, before the shapes
           | "shape" name { source } { option }    one line for each shape of the theme
-          | "frame" number                  a new frame of the shape above, with its delay in ms
-          | "|" { "X" | "." | " " }         one line of a grid of the shape above: black, white, nothing
-option    = "hot" number number             the hot spot: in pixels of the smallest size for a source, in squares for a grid
+          | "layer" paint                   a new layer of the outline of the shape above
+          | contour { contour }             contours of the last layer, one or more on a line
+          | "frame" number                  a new frame of the outline above, with its delay in ms
+option    = "hot" number number             the hot spot: in pixels of the smallest size
           | "sizes" number { number }       the sizes of this shape, in place of the default
 source    = file name                       a file of the Xcursor folder; the first one that exists is used
+paint     = "fill" [ "inside" ]             the fill color of each form; "inside": no edge
+          | "accent" token [ "inside" ] [ "fade" percent ]   an accent: "title", "stop_program" or "boot_program";
+                                            "fade": that percent of the token over the color around it (1 to 100)
+          | "edge"                          the edge color of each form, with no edge of its own
+          | "clear"                         transparent, with an edge around the hole
+contour   = "contour" point { "line" point | "curve" point point }   a closed contour: a line or a quadratic
+                                            curve (control point, then end) to each point, then back to its start
+          | "circle" point coordinate       a circle: its centre and its radius
+point     = coordinate coordinate           x to the right, y down
+coordinate = digits [ "." digits ]          units: 1 to 3 digits, then at most 3 decimals
 ```
 
 - The words are separated by spaces. `hot` and `sizes` are reserved: they cannot be a file name.
-- A shape has sources or a grid, not both. A grid has at most 12 squares in a line and 12 lines; a square is `size / 12` pixels, so each size of a grid is a multiple of 12.
+- A shape has sources or an outline, not both.
 - A source is followed through its links (8 at most) inside the folder. The Xcursor file is hostile input: each offset and count is checked before a read.
 - For a source, a size of the list must be a nominal size of the file: the tool does not scale pixels. A `hot` adjustment is in pixels of the smallest size; the tool multiplies it for the other sizes.
-- An animation of a grid has two `frame` statements at least, each followed by the lines of its grid. A shape with a grid needs the option `hot`, inside the grid.
 - Two shapes that take the same file with the same options share their pictures in the theme file: the file holds them once.
+
+**An outline** is closed contours of lines and quadratic curves, in layers (the design: `src/md/features/vector_pointers.md`).
+
+- **The unit** is a pixel of the first size of the shape. Each point and each circle is inside the square of that size, from 0 to the size. An integer coordinate is the corner of a pixel: a level or upright edge on it is sharp at that size and at each multiple of it.
+- **A layer** paints its contours over the layers before it, by role: a paint names a role, and each form gives the role its color. The contours of one layer are a union: the tool adds each contour in one direction, so two contours that overlap never cancel. A layer has a contour at least, and a contour two segments at least.
+- **The edge is 1 pixel at every size, inside the contours.** For `fill` and `accent`, the tool paints the contours in the edge color, then the contours moved in by 1 pixel in the color of the layer: the contours are the whole shape, and a larger size has a finer edge, not a thicker one. `inside` paints the contours with no edge, for a part on the fill. `edge` paints the edge color as drawn: the line between two parts. `clear` paints the edge color on its contours moved out by 1 pixel, then makes its contours transparent: a hole has an edge too.
+- **Joins.** Two contours of one layer that must join overlap by 2 units: their moved contours meet. A part thinner than 2 units has no fill: its moved contour is inside out, and the tool drops it.
+- **The forms.** A manifest with an outline makes two forms: the dark form (fill white, edge `COLOR_INK`, the darkest color of the rules) and the light form (fill `COLOR_INK`, edge white). A shape from a source keeps its pictures in both forms.
+- **The accents** are color tokens of the design rules, by the name of their field in `graphics.Color_Tokens` (`src/library/support/graphics`). An accent takes the value of its token for the color around it: the fill for `inside`, else the edge. Around the dark, it takes the value of the token in the dark appearance (`DARK_COLOR_TOKENS`); around white, its value in the light appearance (`LIGHT_COLOR_TOKENS`), whose surfaces are light. No manifest holds a color value. The tokens that a manifest can name: `title` (the blue of the focus), `stop_program` (the red of "stop a program") and `boot_program` (the amber of "starts" and of a match).
+
+- **Frames.** The layers before the first `frame` are in every frame. Each `frame` adds the layers after it, over those. An animation has two frames at least.
+- **The option `hot`** is required, and inside the square.
+- **The drawing.** At each size and in each form, the tool draws each layer with the rasterizer of the vector font (`src/library/support/vector_font`): the exact coverage of each pixel, from 0 to 255, then the paint over the pixel with that weight, in premultiplied integers. The pictures of one size have one box: the pixels that some frame draws, and the hot spot.
 - An error gives the file, the line, the column, and what was expected: `resources/pointers/posy.manifest:12:7: expected a pointer shape name such as "arrow"; found "arow"`.
 - No JSON, no TOML: the system has no general parser and needs none.
 
@@ -202,28 +228,43 @@ shape text                          text xterm
 shape wait                          wait watch sizes 32
 ```
 
-**An example with a grid**, the arrow of `resources/pointers/system.manifest`. `X` is a black square, `.` a white one, a space nothing. The hot spot is the square at the top left:
+**An example with an outline**, the arrow of `resources/pointers/system.manifest`. The contour is the whole arrow; the tool draws the edge of 1 pixel inside it. The head is large: the left side is upright on the integer 1 for 18 pixels, the right side goes at 45 degrees to the wing at 14,14, and the bottom of the wing is level on the integer 14; the notch is level with the wing, so the head reads as one triangle. The tail is short and slim: a parallelogram along the axis of the arrow, 2 down for 1 across, so that its sides step regularly, with 1.6 pixels of fill and 4.5 pixels long; its end is square to the axis. The point is the corner 1,1, and the hot spot is the pixel 1,1:
 
 ```
-shape arrow hot 0 0
-|X
-|XX
-|X.X
-|X..X
-|X...X
-|X....X
-|X.....X
-|X......X
-|X..XXXXX
-|X.X
-|XX
+shape arrow hot 1 1
+layer fill
+contour 1 1 line 1 19 line 6 14 line 8 18 line 11.2 16.4 line 10 14 line 14 14
+```
+
+**An example with frames and a faded accent**, the first frame of `wait`: a thin ring with a hole; on its fill, three arcs of an eighth of a turn at 20, 45 and 70 percent of the blue of the focus, then a bright arc of a quarter turn with a round head. Each of the 16 frames turns the sweep by a sixteenth of a turn. The arcs are the result of a computation of the arcs, written in the manifest.
+
+```
+shape wait hot 11 11
+layer fill
+circle 11.5 11.5 8.5
+layer clear
+circle 11.5 11.5 4.5
+frame 60
+layer accent title inside fade 20
+contour 16.803 16.803 curve 14.607 19 11.5 19 line 11.5 17 curve 13.778 17 15.389 15.389
+layer accent title inside fade 45
+contour 11.5 19 curve 8.393 19 6.197 16.803 line 7.611 15.389 curve 9.222 17 11.5 17
+layer accent title inside fade 70
+contour 6.197 16.803 curve 4 14.607 4 11.5 line 6 11.5 curve 6 13.778 7.611 15.389
+layer accent title inside
+contour 4 11.5 curve 4 8.393 6.197 6.197 curve 8.393 4 11.5 4 line 11.5 6 curve 9.222 6 7.611 7.611 curve 6 9.222 6 11.5
+circle 11.5 5 1
 ```
 
 **The command.** `modustool pointers` converts each manifest of `resources/pointers` to a pointer theme file in `build/pointers`, and prints a table of each theme: the shape, its source, its sizes, its frames and its bytes. It takes the Xcursor folder from the variable `POINTER_THEME_SOURCE` or from the path after the command. `modustool build` runs the same code.
 
+**The preview.** `modustool pointers preview <file.png>` draws the theme of the system on the host, with no machine, into one PNG file: a row for each shape with its name and its hot spot, then for each form two blocks: on the surface of its appearance (the background of the desktop, the light background of the site), and on a mid grey, where the edge shows as well as the fill. In each block each size is at 1:1 and magnified (24 at 8 times, 48 at 4 times) with a grid of its pixels and a frame of amber on the hot spot; a magnified square on the grey is a checkerboard of two greys. An animated shape has a second row for its second frame. It is the way to see a drawing while it changes.
+
 ## 5. The two themes
 
-- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as grids of squares, in the style of the arrow of `DESIGN.md`, at the sizes 24 (squares of 2 pixels) and 48 (squares of 4 pixels, for a later screen with twice the pixels). `wait` and `busy_with_arrow` have 4 frames of 250 ms. Its file has 42 pictures. It is always in the boot image, as the resource `pointers_system`.
+- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as outlines (section 4), drawn for this system, at the sizes 24 and 48 (for a later screen with twice the pixels), in two forms. Each shape has an edge of 1 pixel at both sizes. `wait` and `busy_with_arrow` have 16 frames of 60 ms: a sweep of the blue of the focus, a bright arc with a round head and a tail that fades into the ring, goes once around a thin ring in 960 ms. 16 steps of a sixteenth of a turn move the head by 2.6 pixels at 24; 12 steps of 80 ms move it by 3.4 pixels and look less smooth. The accents: the blue of the focus on the sweep of `wait` and `busy_with_arrow` and on the question mark of `help`, the red of "stop a program" on the slash of `forbidden`, the amber of a match on the dot at the hot spot of `crosshair`; the other shapes are neutral. Its file has 180 pictures. It is always in the boot image, as the resource `pointers_system`.
+  - **Why the fill carries the contrast.** The fill is the large part of a pointer. In the dark form it is white on the dark desktop, cards and windows: 19 to 1 on the background of the desktop. In the light form it is the dark of the desktop on the light surfaces: 17 to 1 on the light background of the site. The edge carries the contrast over a surface of the other kind: a light picture under the dark form, a dark picture under the light form.
+  - **Why 24 and 48 only.** The compositor asks for 24, and 48 is the size of a screen with twice the pixels. A size of 32 helps only a compositor that asks for it; the details are drawn for 24. A size of an outline is one number of the statement `sizes`: a size for a scale of 1.25 or 1.5 is added when the system has such a scale. A multiple of 24 keeps each level and upright edge sharp.
 - **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The default development shell of the flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The checks of the flake and the shell `release` do not: they build the theme of the system only. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64). Its file has 178 pictures: `grab` and `grabbing` come from one file of the theme and share their pictures.
 - **The choice of the compositor**: the Posy theme is the default when the build has its input; the theme of the system is the fallback.
   - The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `src/programs/root/resources.odin`: the one place of this order).
@@ -248,7 +289,7 @@ What follows for this repository: property 2 of the objective of `PROPERTIES.md`
 
 1. **Posy's Cursor is a build input.** The flake fetches it, the tool converts it at build time, and no file of the theme and no file made from its pixels enters the repository.
 2. **It is the default pointer theme when the build input is there.** The theme of the system is the fallback.
-3. The pointer picture is the one picture of the desktop with smooth edges and transparency (`DESIGN.md`, section 9, "Pointer"): this follows from 1 and 2.
+3. The pointer picture is the one picture of the desktop with smooth edges and transparency (`DESIGN.md`, section 9, "Pointer"), in the Posy theme and in the theme of the system alike.
 4. **No release image holds it.** A release image is a public download, and the publisher of the system cannot keep its use non-commercial. Its pointer theme is the theme of the system, under the license of the repository. Three parts keep the Posy theme out:
    - `modustool release image` makes the theme of the system only;
    - the packaging of a release refuses a boot image with the resource `pointers_posy`, or with a pointer theme file whose header names another license than the license of `LICENSE`;
@@ -265,7 +306,6 @@ From one full check (one run, with a load of about 30 on the host; a measure is 
 | What | Time |
 |---|---|
 | `modustool pointers`: the Posy theme (122 names, 17 files read, 178 pictures, 883 008 bytes) | 34 to 87 ms |
-| the same for the theme of the system (15 grids, 42 pictures, 208 512 bytes) | 0.6 to 0.8 ms |
 | the root service: the hash of the Posy theme | 1.4 to 1.8 ms |
 | the compositor: `validate` of the Posy theme, once | 427 to 653 us |
 | the blend of the arrow of Posy, 32x32, 860 pixels transparent | 824 to 1008 ns |
