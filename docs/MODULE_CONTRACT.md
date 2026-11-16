@@ -525,8 +525,8 @@ An empty hash starts the file of the row: `start_from_disk("visitor", "")`. The 
 
 | Console | Root ring | What it does |
 |---|---|---|
-| `allow(nickname, grant)` | `Disk_Grant`, values[4] = 1 | Gives a grant to the file that the nickname names: the hash of its row, or with no row the hash of the disk program of that nickname that runs |
-| `disallow(nickname, grant)` | `Disk_Grant`, values[4] = 2 | Takes the grant. The row stays, and the store stays on the disk |
+| `allow(nickname, grant)` | `Disk_Grant`, values[4] `Disk_Grant_Action.Allow` | Gives a grant to the file that the nickname names: the hash of its row, or with no row the hash of the disk program of that nickname that runs |
+| `disallow(nickname, grant)` | `Disk_Grant`, values[4] `Disk_Grant_Action.Disallow` | Takes the grant. The row stays, and the store stays on the disk |
 | `nickname_move(nickname, hash)` | `Nickname_Move` | Points the nickname to another file. Its grants and its store follow |
 | `disk_persistence(nickname, setting)` | `Disk_Grant_Persistence` | Sets how long a row lasts across a restart: `persist`, `forget`, or `global` (the global setting). An empty nickname sets the global setting: `persist` or `forget` |
 
@@ -1130,7 +1130,7 @@ The values that the system names:
 |---|---|---|
 | 9 to 12 | The random seed of the program, 32 bytes. The generator of the program reads it, then writes zeros over the four values | `CONTEXT_VALUE_SEED` |
 | 13, 14, 15 | No role. A new role of the system never takes these numbers | |
-| 16 | The strength of the seed: 1 weak, 2 processor, 3 entropy | `CONTEXT_VALUE_SEED_STRENGTH` |
+| 16 | The strength of the seed: a member of `Seed_Strength` | `CONTEXT_VALUE_SEED_STRENGTH` |
 | 17 | The program `settings` runs its boot pass (1) | `CONTEXT_VALUE_SETTINGS_BOOT_PASS` |
 | 18, 19 | The address and the size of the second pointer theme file of the compositor | `CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS`, `CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE` |
 | 20 | A set of bits: the fixed ranges that the starter mapped for this program | `CONTEXT_VALUE_FIXED_RANGES_MAPPED` |

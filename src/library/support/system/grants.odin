@@ -143,12 +143,12 @@ Root_Command :: enum u32 {
 	// values[4]: `unlock` opened its sealed keys with the passphrase.
 	// values[0..3] is the key of the tag of the disk grant table of that
 	// principal (modus:support/disk_program, table_key_of_principal_key),
-	// and values[5] its origin: PRINCIPAL_KEY_OPENED from the open of an
-	// existing file, PRINCIPAL_KEY_NEW from the creation of the principal.
+	// and values[5] its origin: Principal_Key_Origin.Opened from the open of an
+	// existing file, Principal_Key_Origin.New from the creation of the principal.
 	// At the first unlock of a run the root service takes the key and reads
 	// the table; a later unlock must give the same key, else it is refused
 	// with Bad_State, and starts the read again when the first one failed.
-	// PRINCIPAL_KEY_NEW for a principal whose record no creation made since
+	// Principal_Key_Origin.New for a principal whose record no creation made since
 	// the machine started is refused with Bad_State. A key of 32 zero bytes,
 	// or another origin, is refused with Bad_Operation.
 	Principal_Unlock = 13,
@@ -225,8 +225,8 @@ Root_Command :: enum u32 {
 	// Disk_Grant changes the disk grant table of the principal of the
 	// caller (docs/MODULE_CONTRACT.md, "The grants of a disk program"):
 	// values[0..2] the nickname, 1 to 23 bytes with zero bytes after it
-	// (modus:support/disk_program, name_pack); values[4] 1 to allow, 2 to
-	// disallow; values[5] the start grant (modus:contract/start_grant). The
+	// (modus:support/disk_program, name_pack); values[4] a
+	// Disk_Grant_Action, another word refused with `Bad_Value`; values[5] the start grant (modus:contract/start_grant). The
 	// row names the hash that the nickname names now: its row, or the disk
 	// program of the nickname that runs. The grant takes effect at the next
 	// start. The caller must act for its principal (`No_Grant`, unit
@@ -248,13 +248,13 @@ Root_Command :: enum u32 {
 	// (unit `Principals`); while `unlock` runs, `Busy`.
 	Machine_Passphrase = 19,
 	// Machine_Key comes from `unlock` only; values[4] says what it reports.
-	// MACHINE_KEY_AWAITED: the machine has a machine passphrase that is not
+	// Machine_Key_State.Awaited: the machine has a machine passphrase that is not
 	// typed yet, or a machine key sealed by the TPM that is not unsealed yet
-	// (values[5] MACHINE_KEY_SEALED_BY_THE_TPM), so a change of the disk
-	// grant table of principal 0 is refused until the key comes. MACHINE_KEY_UNREADABLE: the store holds a
+	// (values[5] Machine_Key_Form.Sealed_By_The_Tpm), so a change of the disk
+	// grant table of principal 0 is refused until the key comes. Machine_Key_State.Unreadable: the store holds a
 	// record of the machine passphrase that `unlock` cannot read; a change
-	// and a new machine passphrase are refused. MACHINE_KEY_OPENED and
-	// MACHINE_KEY_NEW: values[0..3] is the key of the tag of that table
+	// and a new machine passphrase are refused. Machine_Key_State.Opened and
+	// Machine_Key_State.New: values[0..3] is the key of the tag of that table
 	// (modus:support/disk_program, table_key_of_machine_key), from the open
 	// of the record or from a new machine passphrase. The root service
 	// reads the table, then writes it after each change. A table that does
@@ -306,8 +306,8 @@ Root_Command :: enum u32 {
 	Machine_Seal = 23,
 	// Principal_Change starts `unlock` to change the passphrase of the
 	// named principal of the session of the caller (values[4]
-	// PRINCIPAL_CHANGE_PASSPHRASE), or to make it a new recovery key
-	// (PRINCIPAL_CHANGE_RECOVERY_KEY): the window asks for the current
+	// Principal_Change.Passphrase), or to make it a new recovery key
+	// (Principal_Change.Recovery_Key): the window asks for the current
 	// passphrase first (docs/PRINCIPALS.md, "A change of the passphrase").
 	// The completion comes when the change ends, which takes the time of
 	// the typing: values[0] the end (principals.Change_End), values[1] for
@@ -328,22 +328,22 @@ Root_Command :: enum u32 {
 	// Remote_Client changes the client table of the remote service
 	// (modus:contract/remote, Client_Table; docs/PRINCIPALS.md, "The client
 	// keys of remote"): values[0..3] is the Ed25519 public key of a client,
-	// values[4] the action. REMOTE_CLIENT_ALLOW gives the key a row for the
+	// values[4] the action. Remote_Client_Action.Allow gives the key a row for the
 	// principal of the caller: each call of that client then acts for it.
-	// REMOTE_CLIENT_REVOKE frees the row of the key: the root service ends
+	// Remote_Client_Action.Revoke frees the row of the key: the root service ends
 	// each connection to a service that was made for the row, and the remote
 	// service ends the open connection of the client. The allow and the
 	// revocation also change the disk grant table of the principal, which
 	// keeps the key across a restart. The completion of a revocation has
 	// the count of the connections that ended in values[0], and
 	// REMOTE_CLIENT_KEY_CAN_COME_BACK in values[1] when the disk grant table
-	// did not take the revocation. REMOTE_CLIENT_READ reads the place
+	// did not take the revocation. Remote_Client_Action.Read reads the place
 	// values[5], below remote.CLIENT_READ_PLACES: a row of the client table,
 	// then a contested key of the disk grant table of the caller, whose row
 	// is a row of another principal. The completion has the key in
 	// values[0..3], the principal in values[4], 1 in values[5] for a key of
 	// the principal of the caller, and its state in values[6]
-	// (REMOTE_CLIENT_HOLDS, REMOTE_CLIENT_LOCKED, REMOTE_CLIENT_CONTESTED).
+	// (Remote_Client_State.Holds, Remote_Client_State.Locked, Remote_Client_State.Contested).
 	// The caller must act for its principal (`No_Grant`, unit
 	// `Acts_For_Principal`). A key of zeros is refused with `Bad_Value`; a
 	// key that another principal allowed with `Exists` (unit `Grants`); a
@@ -357,43 +357,76 @@ Root_Command :: enum u32 {
 	Remote_Client = 26,
 }
 
+// The enumerations below are words of the root ring: each value is the
+// word of the record, so it is explicit and does not move. A word becomes
+// its member at one place, member_of_word, which refuses a word that names
+// no member.
+
 // The action of a Remote_Client command, in values[4].
-REMOTE_CLIENT_ALLOW :: 1
-REMOTE_CLIENT_REVOKE :: 2
-REMOTE_CLIENT_READ :: 3
+Remote_Client_Action :: enum u64 {
+	Allow  = 1,
+	Revoke = 2,
+	Read   = 3,
+}
 
 // The state of a client key in values[6] of the completion of a
-// REMOTE_CLIENT_READ.
-REMOTE_CLIENT_HOLDS :: 0 // Each call of its client acts for the principal.
-REMOTE_CLIENT_LOCKED :: 1 // The session of the principal is locked: the key opens no connection until the unlock.
-REMOTE_CLIENT_CONTESTED :: 2 // Two principals allowed the key, one in this run and one in its disk grant table: it acts for neither until one of them revokes it.
+// Remote_Client_Action.Read.
+Remote_Client_State :: enum u64 {
+	Holds     = 0, // Each call of its client acts for the principal.
+	Locked    = 1, // The session of the principal is locked: the key opens no connection until the unlock.
+	Contested = 2, // Two principals allowed the key, one in this run and one in its disk grant table: it acts for neither until one of them revokes it.
+}
 
-// The flag of values[1] of the completion of a REMOTE_CLIENT_REVOKE: the
-// disk grant table of the principal did not take the revocation, so the
-// key can come back at the next start of the machine.
+// The flag of values[1] of the completion of a Remote_Client_Action.Revoke:
+// the disk grant table of the principal did not take the revocation, so
+// the key can come back at the next start of the machine. A flag, not a
+// choice: 0 says the opposite.
 REMOTE_CLIENT_KEY_CAN_COME_BACK :: 1
 
 // The change of a Principal_Change command, in values[4].
-PRINCIPAL_CHANGE_PASSPHRASE :: 1
-PRINCIPAL_CHANGE_RECOVERY_KEY :: 2
+Principal_Change :: enum u64 {
+	Passphrase   = 1,
+	Recovery_Key = 2,
+}
 
 // The action of a Disk_Grant command, in values[4].
-DISK_GRANT_ALLOW :: 1
-DISK_GRANT_DISALLOW :: 2
+Disk_Grant_Action :: enum u64 {
+	Allow    = 1,
+	Disallow = 2,
+}
 
 // The state that a Machine_Key command gives, in values[4].
-MACHINE_KEY_AWAITED :: 1
-MACHINE_KEY_OPENED :: 2
-MACHINE_KEY_NEW :: 3
-MACHINE_KEY_UNREADABLE :: 4
-// values[5] of a Machine_Key command MACHINE_KEY_AWAITED: the record of the
-// machine key is sealed by the TPM, and not by a machine passphrase. Only
-// the line of the log differs.
-MACHINE_KEY_SEALED_BY_THE_TPM :: 1
+Machine_Key_State :: enum u64 {
+	Awaited    = 1,
+	Opened     = 2,
+	New        = 3,
+	Unreadable = 4,
+}
+
+// values[5] of a Machine_Key command Machine_Key_State.Awaited: how the
+// record of the machine key is sealed. Only the line of the log differs.
+Machine_Key_Form :: enum u64 {
+	Passphrase        = 0, // By a machine passphrase.
+	Sealed_By_The_Tpm = 1, // By the TPM, and not by a machine passphrase.
+}
 
 // The origin of the key of a Principal_Unlock command, in values[5].
-PRINCIPAL_KEY_OPENED :: 1
-PRINCIPAL_KEY_NEW :: 2
+Principal_Key_Origin :: enum u64 {
+	Opened = 1,
+	New    = 2,
+}
+
+// member_of_word reads a word of a record as a member of the enumeration
+// `Enum`. A word that names no member is refused: the caller answers it
+// with an error record, and never takes it for a member.
+member_of_word :: proc "contextless" ($Enum: typeid, word: u64) -> (member: Enum, ok: bool) where intrinsics.type_is_enum(Enum) {
+	for candidate in Enum {
+		if u64(candidate) == word {
+			return candidate, true
+		}
+	}
+	return {}, false
+}
 
 // The state of a principal in the root service.
 Principal_State :: enum u64 {

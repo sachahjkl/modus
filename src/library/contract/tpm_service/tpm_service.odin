@@ -59,28 +59,33 @@ REGION_PRIVATE_AREA :: 512 // The private area, with its size field.
 REGION_CREATION_DATA :: 1024 // The creation data, with its size field.
 REGION_CREATION_TICKET :: 1536 // The creation ticket, whole.
 AREA_LIMIT :: 512 // The bytes of the place of each part.
-// The authorization value of a request with AUTHORIZATION_VALUE:
+// The authorization value of a request with Authorization.Value:
 // AUTHORIZATION_SIZE bytes. The service erases it from the region when it
 // takes the request.
 REGION_AUTHORIZATION :: 2048
 AUTHORIZATION_SIZE :: 32
 
 // The authorization of a sealed object, in values[0] of Seal and values[4]
-// of Unseal.
-AUTHORIZATION_NONE :: 0 // The object opens to the policy of PCR 7 and PCR 11 alone: the machine key with no machine passphrase.
-// The object also needs the authorization value at REGION_AUTHORIZATION:
-// the keys of a named principal, whose value comes from its passphrase, and
-// the machine key under a machine passphrase, whose value comes from it.
-// The TPM counts each wrong value, and refuses each try for a time after
-// too many.
-AUTHORIZATION_VALUE :: 1
+// of Unseal. Its word crosses the ring, so each value is explicit.
+Authorization :: enum u64 {
+	// The object opens to the policy of PCR 7 and PCR 11 alone: the machine
+	// key with no machine passphrase.
+	None  = 0,
+	// The object also needs the authorization value at
+	// REGION_AUTHORIZATION: the keys of a named principal, whose value comes
+	// from its passphrase, and the machine key under a machine passphrase,
+	// whose value comes from it. The TPM counts each wrong value, and
+	// refuses each try for a time after too many.
+	Value = 1,
+}
 
 // A command of the client, as the kind of a command record of the ring.
 Command :: enum u32 {
 	None   = 0, // Not a command: Bad_Command.
 	// The region holds the secret at REGION_SECRET; values[0] is the
-	// authorization (AUTHORIZATION_NONE or AUTHORIZATION_VALUE, with the
-	// value at REGION_AUTHORIZATION). The completion:
+	// word of an Authorization (with Authorization.Value, the value is at
+	// REGION_AUTHORIZATION); another word is refused with Bad_Command. The
+	// completion:
 	// values[0] the bytes of the public area at REGION_PUBLIC_AREA,
 	// values[1] the bytes of the private area at REGION_PRIVATE_AREA,
 	// values[2] the PCRs of the policy (bit n: PCR n), values[3] the bytes
@@ -95,7 +100,7 @@ Command :: enum u32 {
 	// checks that the policy of the object is the policy of the PCR values
 	// of its creation data, with the attributes of its authorization; then
 	// it unseals. The completion: the secret at REGION_SECRET, and
-	// values[0] its bytes. After an unseal with AUTHORIZATION_VALUE that the
+	// values[0] its bytes. After an unseal with Authorization.Value that the
 	// TPM answered with another answer than a counted failure
 	// (Authorization_Fails), the service sends TPM2_Shutdown(CLEAR): the system has
 	// no orderly stop, and a TPM counts a failure at a start that follows a
@@ -118,18 +123,73 @@ Status :: enum u32 {
 	// or its attributes are not the attributes of a sealed object (values[0]
 	// 0). Nothing is unsealed: a record that another system wrote.
 	Not_Authentic = 5,
-	// Unseal with AUTHORIZATION_VALUE: the value is wrong, and the TPM
+	// Unseal with Authorization.Value: the value is wrong, and the TPM
 	// counted the failure (TPM_RC_AUTH_FAIL). values[0] is the response code.
 	Authorization_Fails = 6,
-	// Unseal with AUTHORIZATION_VALUE: the TPM refuses each try for now, as
+	// Unseal with Authorization.Value: the TPM refuses each try for now, as
 	// it counted too many failures (TPM_RC_LOCKOUT). The PCRs and the value
 	// were not checked. values[0] is the response code.
 	Locked_Out = 7,
 }
 
-// The steps of a request at which the interface failed, in values[0] of a
-// completion Device_Error.
-DEVICE_STEP_LOCALITY :: 1 // The TPM did not give locality 0.
-DEVICE_STEP_READY :: 2 // The TPM did not become ready for a command.
-DEVICE_STEP_START :: 3 // The TPM did not end the command.
-DEVICE_STEP_ANSWER :: 4 // The answer does not fit its buffer, or the TPM reported a fatal error.
+// The step of a request at which the interface failed, in values[0] of a
+// completion Device_Error. Its word crosses the ring, so each value is
+// explicit.
+Device_Step :: enum u64 {
+	None     = 0, // The interface did not fail: no completion Device_Error has it.
+	Locality = 1, // The TPM did not give locality 0.
+	Ready    = 2, // The TPM did not become ready for a command.
+	Start    = 3, // The TPM did not end the command.
+	Answer   = 4, // The answer does not fit its buffer, or the TPM reported a fatal error.
+}
+
+// The words of each step, for the log of a client.
+@(rodata)
+device_step_words := [Device_Step]string {
+	.None     = "no step",
+	.Locality = "the request of locality 0",
+	.Ready    = "the wait until the TPM is ready",
+	.Start    = "the end of the command",
+	.Answer   = "the read of the answer",
+}
+
+// The border of the ring: a word becomes its member here only, and a word
+// that names no member is refused. The service answers a refused command
+// or authorization with Bad_Command; a client logs a refused status or
+// step with its number.
+
+command_of_word :: proc "contextless" (word: u32) -> (command: Command, ok: bool) {
+	for member in Command {
+		if u32(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
+authorization_of_word :: proc "contextless" (word: u64) -> (authorization: Authorization, ok: bool) {
+	for member in Authorization {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
+status_of_word :: proc "contextless" (word: u32) -> (status: Status, ok: bool) {
+	for member in Status {
+		if u32(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
+device_step_of_word :: proc "contextless" (word: u64) -> (step: Device_Step, ok: bool) {
+	for member in Device_Step {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}

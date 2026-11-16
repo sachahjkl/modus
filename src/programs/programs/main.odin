@@ -529,11 +529,15 @@ list :: proc "c" (result: ^[]Program_File_Row, error: ^errors.Error_Record) -> i
 			if item.name_offset < 0 || item.name_count <= 0 || item.name_count > i64(len(after)) || item.name_offset > i64(len(names)) - item.name_count {
 				return store_failure(error, &store_error, .Refused, "the listing of its root tree: an entry has a name out of its page")
 			}
+			entry_kind, entry_kind_ok := storage.entry_kind_of_word(item.kind)
+			if !entry_kind_ok {
+				return store_failure(error, &store_error, .Refused, "the listing of its root tree: an entry has a kind that names no kind")
+			}
 			entry_name := string(names[item.name_offset:][:item.name_count])
 			after_length = copy(after[:], entry_name)
 			// The disk grant table and the debug object of a module file
 			// are objects of the store, and no module file.
-			if item.kind != storage.ENTRY_OBJECT || entry_name == disk_program.TABLE_OBJECT_NAME || disk_program.debug_object_name_is(entry_name) {
+			if entry_kind != .Object || entry_name == disk_program.TABLE_OBJECT_NAME || disk_program.debug_object_name_is(entry_name) {
 				continue
 			}
 			digits: [disk_program.HASH_DIGITS]u8

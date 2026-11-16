@@ -138,7 +138,7 @@ Kind :: enum i64 {
 	// last operation.
 	Refused           = 25, // The call refused, and gives no more detail. found: the status (op.Status for the kernel).
 	// The last resort of a callee that has no better kind: a reader shows the status.
-	No_Answer         = 26, // No answer before the time limit. value: the IPv4 address that did not answer, or 0; limit: the milliseconds waited; found: what did not answer: 1 its hardware address (ARP), 2 the echo, 3 the device.
+	No_Answer         = 26, // No answer before the time limit. value: the IPv4 address that did not answer, or 0; limit: the milliseconds waited; found: the word of an Unanswered, what did not answer.
 	// The network service gives it, with the unit `Milliseconds`.
 	Unsupported       = 27, // The receiver does not do this command. value: the command, or the field that it does not do.
 	// Given by the block and frame services for a command that the device does not have, by the network
@@ -168,7 +168,7 @@ Kind :: enum i64 {
 	Not_Authentic     = 37, // The bytes of the argument do not prove what they must: the tag of a sealed text, or a signature, does not verify. No byte of the result is given.
 	// The cryptography module gives it for an open of a sealed text, and QUIC for a packet or a handshake that
 	// does not verify. See [not authentic](term:not-authentic).
-	Seed_Too_Weak     = 38, // The random seed of the program is weaker than the least strength that the caller accepts. value: the strength of the seed; limit: the least strength asked (1 weak, 2 processor, 3 entropy). Nothing is made.
+	Seed_Too_Weak     = 38, // The random seed of the program is weaker than the least strength that the caller accepts. value: the word of the op.Seed_Strength of the seed; limit: the word of the least strength asked. Nothing is made.
 	// `random.fill_for_a_key` gives it when the seed of the generator has a lower `Seed_Strength` than the call
 	// asks. A plain draw (`random.fill`) never gives it.
 	Exists            = 39, // The name of the argument names something that exists already, and the call makes a new one. found: 0, or the number from 1 of the row of a table argument that names it.
@@ -176,6 +176,26 @@ Kind :: enum i64 {
 	Starter_Module    = 40, // value: the address that the call names; limit: the base of a module record that the starter of the program wrote (op.Module_Writer.Starter); found: its size in bytes.
 	// The kernel gives it with `No_Right` for `Program_Module`, `Memory_Map` and `Memory_Unmap` of a program in
 	// itself over that record: only a holder of its program handle changes it.
+}
+
+// What did not answer, in `found` of a record No_Answer. The record
+// crosses each border of the system, so each value is explicit; a reader
+// takes the word with unanswered_of_word, which refuses a word that names
+// no member.
+Unanswered :: enum i64 {
+	Not_Said         = 0, // The record does not say what did not answer: the time limit alone passed.
+	Hardware_Address = 1, // The hardware address of the IPv4 address (ARP).
+	Echo             = 2, // The echo of an ICMP echo request.
+	Device           = 3, // The device of the service.
+}
+
+unanswered_of_word :: proc "contextless" (word: i64) -> (unanswered: Unanswered, ok: bool) {
+	for member in Unanswered {
+		if i64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
 }
 
 // What value, limit and found count.

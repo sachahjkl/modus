@@ -105,8 +105,12 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		values^ = errors.ring_fail(kind, .Absent, .Principals, 0)
 		return .Bad_State
 	}
-	action := record.values[4]
-	if action == system.REMOTE_CLIENT_READ {
+	action, action_ok := system.member_of_word(system.Remote_Client_Action, record.values[4])
+	if !action_ok {
+		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(record.values[4], 1 << 62)), i64(max(system.Remote_Client_Action)))
+		return .Bad_Operation
+	}
+	if action == .Read {
 		place := record.values[5]
 		if place >= remote.CLIENT_READ_PLACES {
 			values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(place, 1 << 62)), remote.CLIENT_READ_PLACES - 1)
@@ -119,13 +123,13 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			row := client_table.clients[place]
 			if row.serial != 0 && row.principal == principal {
 				key := transmute([4]u64)row.key
-				state: u64 = system.REMOTE_CLIENT_HOLDS
+				state := system.Remote_Client_State.Holds
 				if row.contested != 0 {
-					state = system.REMOTE_CLIENT_CONTESTED
+					state = .Contested
 				} else if row.session_locked != 0 {
-					state = system.REMOTE_CLIENT_LOCKED
+					state = .Locked
 				}
-				values^ = {key[0], key[1], key[2], key[3], row.principal, 1, state}
+				values^ = {key[0], key[1], key[2], key[3], row.principal, 1, u64(state)}
 			}
 			return .Ok
 		}
@@ -137,7 +141,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			holder := remote.client_find(&client_table.clients, contested)
 			if holder >= 0 && client_table.clients[holder].principal != principal {
 				key := transmute([4]u64)contested
-				values^ = {key[0], key[1], key[2], key[3], principal, 1, system.REMOTE_CLIENT_CONTESTED}
+				values^ = {key[0], key[1], key[2], key[3], principal, 1, u64(system.Remote_Client_State.Contested)}
 			}
 		}
 		return .Ok
@@ -150,7 +154,9 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 	place := remote.client_find(&client_table.clients, key)
 	head: [16]u8
 	switch action {
-	case system.REMOTE_CLIENT_ALLOW:
+	case .Read:
+		// Served above, before the check of the key.
+	case .Allow:
 		if place >= 0 {
 			if client_table.clients[place].principal != principal {
 				// One key acts for one principal: else a call of the client
@@ -201,7 +207,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		}
 		values^ = errors.ring_fail(kind, .Full, .Grants, 0, 0, remote.CLIENT_CAPACITY)
 		return .No_Slot
-	case system.REMOTE_CLIENT_REVOKE:
+	case .Revoke:
 		if place < 0 || client_table.clients[place].principal != principal {
 			// A contested key of the disk grant table of the caller, whose
 			// row is a row of another principal: the revocation takes it
@@ -227,8 +233,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		client_keys_restore()
 		return .Ok
 	}
-	values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(action, 1 << 62)), system.REMOTE_CLIENT_READ)
-	return .Bad_Operation
+	return .Ok
 }
 
 // client_connections_end ends each connection to a service that this

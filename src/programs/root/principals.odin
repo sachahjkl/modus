@@ -46,7 +46,7 @@ principal_records: [principals.PRINCIPAL_CAPACITY]Principal_Record
 // What start() gives to the next start of `unlock` (principals.VALUE_MODE):
 // to unlock, to create the principal with this name, or to set the machine
 // passphrase.
-unlock_mode: u64
+unlock_mode: principals.Unlock_Mode
 unlock_name: [principals.NAME_LIMIT]u8
 unlock_name_length: int
 // True only while unlock_start starts `unlock`: a start by name from a
@@ -54,7 +54,7 @@ unlock_name_length: int
 unlock_start_asked: bool
 // The mode of the last `unlock` that started: the line of a lock that
 // stops it names what it ran for (principal_lock).
-unlock_running_mode: u64
+unlock_running_mode: principals.Unlock_Mode
 // The stops of `unlock` that the root service did not ask, while a
 // principal is locked, whatever their code, and its starts that failed for
 // another cause than a full table, since the last lock or the last start
@@ -116,9 +116,8 @@ principals_start :: proc "contextless" () {
 
 // unlock_start starts `unlock`: at boot to read its files (with none it
 // stops at once, and the machine runs as principal 0 only), after a lock,
-// to create a principal, or to set the machine passphrase. mode is a
-// principals.MODE_ value.
-unlock_start :: proc "contextless" (mode: u64, name: string) -> system.Status {
+// to create a principal, or to set the machine passphrase.
+unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string) -> system.Status {
 	unlock_mode = mode
 	unlock_name_length = copy(unlock_name[:], name)
 	unlock_start_asked = true
@@ -127,7 +126,7 @@ unlock_start :: proc "contextless" (mode: u64, name: string) -> system.Status {
 	if status == .Ok {
 		unlock_running_mode = mode
 	}
-	unlock_mode = principals.MODE_UNLOCK
+	unlock_mode = .Unlock
 	unlock_name_length = 0
 	unlock_name = {}
 	if status != .Ok {
@@ -153,7 +152,7 @@ principal_create :: proc "contextless" (name: string) -> system.Status {
 		return .Bad_State
 	}
 	system.log_in("programs", .Info, "root: the principal \"", name, "\" is created in the window of unlock")
-	status := unlock_start(principals.MODE_CREATE_PRINCIPAL, name)
+	status := unlock_start(.Create_Principal, name)
 	unlock_creating = status == .Ok
 	return status
 }
@@ -258,7 +257,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 		system.log_in("programs", .Info, "root: the lock stops the window of unlock, which ran for ", principals.mode_words(unlock_running_mode), "; unlock asks for the passphrase when it stopped")
 		return .Ok
 	}
-	unlock_start(principals.MODE_UNLOCK, "")
+	unlock_start(.Unlock, "")
 	return .Ok
 }
 
@@ -303,7 +302,7 @@ unlock_for_a_locked_principal :: proc "contextless" () {
 	}
 	// A full table is not counted: a slot comes free only with a stop, and
 	// a stop is an event, so the next pass tries again with no hot loop.
-	if status := unlock_start(principals.MODE_UNLOCK, ""); status != .Ok && status != .No_Slot {
+	if status := unlock_start(.Unlock, ""); status != .Ok && status != .No_Slot {
 		unlock_failed_stops += 1
 	}
 }
@@ -313,16 +312,21 @@ unlock_for_a_locked_principal :: proc "contextless" () {
 // Principal_Change.
 principal_change_end :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> system.Status {
 	kind := u32(system.Root_Command.Principal_Change_End)
-	end, problem := values[4], values[5]
 	if !principal_change_waiting {
 		completion^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	if end > u64(max(principals.Change_End)) || problem > u64(max(principals.Change_Problem)) {
-		completion^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(end, 1 << 62)), i64(max(principals.Change_End)))
+	end, end_ok := system.member_of_word(principals.Change_End, values[4])
+	if !end_ok {
+		completion^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(values[4], 1 << 62)), i64(max(principals.Change_End)))
 		return .Bad_Operation
 	}
-	principal_change_finish(principals.Change_End(end), principals.Change_Problem(problem))
+	problem, problem_ok := system.member_of_word(principals.Change_Problem, values[5])
+	if !problem_ok {
+		completion^ = errors.ring_fail(kind, .Bad_Value, .None, 3, i64(min(values[5], 1 << 62)), i64(max(principals.Change_Problem)))
+		return .Bad_Operation
+	}
+	principal_change_finish(end, problem)
 	return .Ok
 }
 
@@ -379,15 +383,17 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		return .No_Right, false
 	}
-	mode: u64
-	switch change {
-	case system.PRINCIPAL_CHANGE_PASSPHRASE:
-		mode = principals.MODE_CHANGE_PASSPHRASE
-	case system.PRINCIPAL_CHANGE_RECOVERY_KEY:
-		mode = principals.MODE_NEW_RECOVERY_KEY
-	case:
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(change, 1 << 62)), system.PRINCIPAL_CHANGE_RECOVERY_KEY)
+	asked, asked_ok := system.member_of_word(system.Principal_Change, change)
+	if !asked_ok {
+		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(change, 1 << 62)), i64(max(system.Principal_Change)))
 		return .Bad_Operation, false
+	}
+	mode: principals.Unlock_Mode
+	switch asked {
+	case .Passphrase:
+		mode = .Change_Passphrase
+	case .Recovery_Key:
+		mode = .New_Recovery_Key
 	}
 	number := caller.principal
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state != .Unlocked {
@@ -402,7 +408,7 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
 		return .No_Slot, false
 	}
-	if mode == principals.MODE_CHANGE_PASSPHRASE {
+	if mode == .Change_Passphrase {
 		system.log_in("programs", .Info, "root: the passphrase of principal ", number, " \"", principal_name(number), "\" changes in the window of unlock")
 	} else {
 		system.log_in("programs", .Info, "root: a new recovery key of principal ", number, " \"", principal_name(number), "\" is made in the window of unlock")
@@ -444,5 +450,5 @@ unlock_creating: bool
 
 // For each principal: its record was made by a creation in this run of the
 // machine, not read from a file that existed. Only such a principal can
-// give a key of the origin PRINCIPAL_KEY_NEW.
+// give a key of the origin Principal_Key_Origin.New.
 principal_created_in_this_run: [principals.PRINCIPAL_CAPACITY]bool

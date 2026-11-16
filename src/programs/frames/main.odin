@@ -127,10 +127,10 @@ report_of :: proc "contextless" (name: string) -> (report: op.Program_Report, fo
 	return {}, false
 }
 
-twin_start :: proc "contextless" (name: string, mode: u64, table: ^system.Prepared_Modules, page: system.Handle = 0) -> (system.Handle, system.Status) {
+twin_start :: proc "contextless" (name: string, mode: twins.Twin_Mode, table: ^system.Prepared_Modules, page: system.Handle = 0) -> (system.Handle, system.Status) {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
-	values[twins.VALUE_MODE] = mode
+	values[twins.VALUE_MODE] = u64(mode)
 	if page != 0 {
 		grants[twins.GRANT_PAGE] = {page, {.Read, .Write}}
 	}
@@ -160,7 +160,7 @@ twins_start :: proc "contextless" (programs: ^[TWIN_COUNT]system.Handle, table: 
 	start := intrinsics.read_cycle_counter()
 	for &program, index in programs {
 		status: system.Status
-		if program, status = twin_start(TWIN_NAMES[index], twins.MODE_WAIT, table); status != .Ok {
+		if program, status = twin_start(TWIN_NAMES[index], .Wait, table); status != .Ok {
 			system.log("frames: cannot start a twin: status ", u64(status))
 			return 0, 0, false
 		}
@@ -234,7 +234,7 @@ first_use_cases :: proc "contextless" () {
 	page, _ := system.memory_create(1)
 	address, _ = system.memory_map(page)
 	word := (^u32)(address)
-	twin, status := twin_start("twin", twins.MODE_WRITE_PAGE, &prepared, page)
+	twin, status := twin_start("twin", .Write_Page, &prepared, page)
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for status == .Ok && intrinsics.volatile_load(word) == 0 && system.time() < deadline {
 		system.word_wait(word, 0, deadline)
@@ -269,7 +269,7 @@ shared_code_cases :: proc "contextless" () {
 	start_own, start_shared = nanoseconds(own_cycles) / 1000, nanoseconds(shared_cycles) / 1000
 
 	// A write to the shared code: the kernel stops the twin that writes.
-	writer, _ := twin_start("twin 5", twins.MODE_WRITE_CODE, &prepared)
+	writer, _ := twin_start("twin 5", .Write_Code, &prepared)
 	stop, stopped := stop_code(writer)
 	system.close(writer)
 	note("a twin writes to its shared code", stopped && stop == op.STOP_CODE_FAULT + 14, "stopped: page fault")

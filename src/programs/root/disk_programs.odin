@@ -658,9 +658,9 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		return .No_Right
 	}
-	action := record.values[4]
-	if action != system.DISK_GRANT_ALLOW && action != system.DISK_GRANT_DISALLOW {
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, 0, i64(min(action, 1 << 62)), system.DISK_GRANT_DISALLOW)
+	action, action_ok := system.member_of_word(system.Disk_Grant_Action, record.values[4])
+	if !action_ok {
+		values^ = errors.ring_fail(kind, .Bad_Value, .None, 0, i64(min(record.values[4], 1 << 62)), i64(max(system.Disk_Grant_Action)))
 		return .Bad_Operation
 	}
 	number := record.values[5]
@@ -710,7 +710,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		return .Bad_State
 	}
 	grant_name := disk_program.disk_grant_names[grant]
-	if action == system.DISK_GRANT_DISALLOW {
+	if action == .Disallow {
 		row := disk_program.table_find(table, nickname)
 		problem := disk_program.table_disallow(table, nickname, grant)
 		if problem != .None {

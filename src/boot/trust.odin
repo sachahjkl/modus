@@ -547,7 +547,7 @@ floor_raise :: proc "contextless" (tpm: ^Efi_Tcg2_Protocol, index: u32, name: st
 	}
 	// A policy session: TPM2_PolicyPCR of PCR 7 and PCR 11 now, which the
 	// policy of the index names.
-	count := tpm2.start_session_command(command[:], tpm2.SESSION_POLICY)
+	count := tpm2.start_session_command(command[:], .Policy)
 	answer, firmware_status, answered := firmware_submit(tpm, command[:count], response[:])
 	if !answered {
 		floor_step_failed(name, "TPM2_StartAuthSession", firmware_status)

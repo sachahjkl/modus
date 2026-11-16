@@ -6,6 +6,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
+- **Each enum read from a word at its border.** Each word of a context, a record or a ring that a program reads as an enum goes through one conversion that refuses a word that names no member, in place of a cast, and each `switch` on a closed set names each member, with no `#partial`. A starter or a service that writes a wrong word then gets a refusal, and never a member that it did not name. [Design](src/md/infrastructure/choice_constants.md)
 - **The first signed release image.** The keys of the publisher of the system go into the secrets of the repository, and their public key and certificate into `resources/keys`. The next tag then publishes a disk image that a principal verifies and starts. [Design](src/md/infrastructure/release_image.md)
 
 ## Later

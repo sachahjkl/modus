@@ -3496,14 +3496,46 @@ CONTEXT_LOG :: 14 // The log of the kernel.
 CONTEXT_VALUE_SEED :: 9
 CONTEXT_VALUE_SEED_COUNT :: 4 // The values of the seed: 4 values of 8 bytes.
 // The value 16: the strength of the seed of the system, from which the seed
-// of the program comes (src/library/support/random, Seed_Strength): 1 weak (the cycle
-// counter only), 2 processor (rdrand), 3 entropy (rdseed). The starter
-// writes it with the seed.
+// of the program comes: the word of a Seed_Strength. The starter writes it
+// with the seed.
 //
 // The seed itself cannot say how it was made: the generator of the program
 // keeps this value. The handshake of `src/library/support/quic` refuses a seed weaker
 // than its least strength, and the program `randomness` shows it.
 CONTEXT_VALUE_SEED_STRENGTH :: 16
+
+// How strong the source of a seed is: the strongest source that gave all
+// its values at the gathering of the root service. Its word crosses the
+// context (CONTEXT_VALUE_SEED_STRENGTH), so each value is explicit, and the
+// order is the order of the strength: `random.fill_for_a_key` refuses a
+// seed below the strength that the caller asks.
+Seed_Strength :: enum u8 {
+	None      = 0, // No gathering yet.
+	Weak      = 1, // The cycle counter only: no claim of entropy.
+	Processor = 2, // rdrand: the generator of the processor.
+	Entropy   = 3, // rdseed: the entropy source of the processor.
+}
+
+// The words of each strength, for a window, the log and a sentence.
+@(rodata)
+seed_strength_names := [Seed_Strength]string {
+	.None      = "none",
+	.Weak      = "weak (the cycle counter only)",
+	.Processor = "processor (rdrand)",
+	.Entropy   = "entropy (rdseed)",
+}
+
+// seed_strength_of_word reads the word of a strength. A word that names no
+// strength is refused: a reader that took it for the strongest would make
+// keys from a seed that nothing measured.
+seed_strength_of_word :: proc "contextless" (word: u64) -> (strength: Seed_Strength, ok: bool) {
+	for member in Seed_Strength {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
 // The value 17: the program `settings` runs its boot pass (1): it reads the
 // settings kept in its store, writes the settings page, and stops, with no
 // window (modus:contract/settings).

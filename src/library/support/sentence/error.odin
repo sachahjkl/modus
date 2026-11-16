@@ -332,13 +332,23 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, " in ")
 		write_part(writer, record.limit)
 		write_part(writer, " ms")
-		switch record.found {
-		case 1:
-			write_part(writer, ": its hardware address is not known (ARP)")
-		case 2:
-			write_part(writer, ": no echo came back")
-		case 3:
-			write_part(writer, ": the device did not answer")
+		// A word that names no member is said as such: the sentence states
+		// no fact that the record does not hold.
+		unanswered, unanswered_ok := errors.unanswered_of_word(record.found)
+		if !unanswered_ok {
+			write_part(writer, ": what did not answer is ")
+			write_part(writer, record.found)
+			write_part(writer, ", which names nothing")
+		} else {
+			switch unanswered {
+			case .Not_Said:
+			case .Hardware_Address:
+				write_part(writer, ": its hardware address is not known (ARP)")
+			case .Echo:
+				write_part(writer, ": no echo came back")
+			case .Device:
+				write_part(writer, ": the device did not answer")
+			}
 		}
 	case .Unsupported:
 		write_part(writer, "the receiver does not do the command ")
@@ -558,16 +568,15 @@ export_error_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u3
 }
 
 // seed_strength_name gives the name of a strength of a random seed
-// (src/library/support/random, Seed_Strength), for a sentence.
+// (modus:contract/operation, Seed_Strength), for a sentence. A value of
+// the record that names no strength is said as such: a sentence that said
+// "none" would state a fact that the record does not hold.
 @(private)
 seed_strength_name :: proc "contextless" (strength: i64) -> string {
-	switch strength {
-	case 1:
-		return "weak (the cycle counter only)"
-	case 2:
-		return "processor (rdrand)"
-	case 3:
-		return "entropy (rdseed)"
+	if strength >= 0 {
+		if member, ok := op.seed_strength_of_word(u64(strength)); ok {
+			return op.seed_strength_names[member]
+		}
 	}
-	return "none"
+	return "a strength that names no member"
 }

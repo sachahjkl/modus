@@ -752,7 +752,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			fail("the random seed of the system is 32 zero bytes: no program can get a seed", .Bad_Operation)
 		}
 		report := &entropy_report
-		system.log("root: the random seed of the system, strength ", random.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
+		system.log("root: the random seed of the system, strength ", op.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
 	}
 	// The machine of the test of the shortage of frames: its boot image has
 	// the program shortage and no input service, so no desktop.
@@ -928,7 +928,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	tpm_service_start()
 	// The named principal, if one was created: `unlock` reads its file and
 	// asks for the passphrase; with no file it stops (principals.odin).
-	unlock_start(principals.MODE_UNLOCK, "")
+	unlock_start(.Unlock, "")
 	// A measure, not a check: the pages that this service can still give,
 	// now and at the lowest count that it read since its start. This
 	// service holds the budget of the free memory of the machine, and each
@@ -1348,10 +1348,11 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	if name == "unlock" {
 		// After a lock this service holds the key of the table of principal
 		// 0: unlock does not ask for the machine passphrase again.
-		values[principals.VALUE_MODE] = unlock_mode
-		if unlock_mode == principals.MODE_UNLOCK && machine_key_held() {
-			values[principals.VALUE_MODE] = principals.MODE_UNLOCK_MACHINE_KEY_HELD
+		start_mode := unlock_mode
+		if start_mode == .Unlock && machine_key_held() {
+			start_mode = .Unlock_Machine_Key_Held
 		}
+		values[principals.VALUE_MODE] = u64(start_mode)
 		packed := principals.name_pack(string(unlock_name[:unlock_name_length]))
 		copy(values[principals.VALUE_NAME:][:3], packed[:])
 	}
