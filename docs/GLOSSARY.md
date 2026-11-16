@@ -7223,6 +7223,16 @@ The design: `docs/SITE.md`, "The measure record".
 
 Do not use: benchmark results, metrics file, numbers cache.
 
+### Measure history
+
+The measure history is the folder `docs/measures/releases/`: one copy of the measure record for each release that a full check measured, named by its release number.
+
+It lets a reader see whether a change made the system faster or slower. `modustool changelog release` writes the copy of each new release, and `modustool measure-history` gave the old release tags their copies. A release whose record holds the same run as the release before gets no copy. The page of the measured numbers draws, from the copies, one chart for each measure over the releases: one number of its line, at equal steps, from zero. It is not a record of each full check: a full check between two releases replaces the measure record only.
+
+The design: `src/md/features/measure_history.md`; `docs/SITE.md`, "The measure history".
+
+Do not use: benchmark history, performance log, trend file.
+
 ### Measure run
 
 A measure run is a machine whose boot image holds the resource `measure_run`, in which each program measures its rates over a duration.
