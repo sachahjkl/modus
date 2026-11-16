@@ -20,6 +20,17 @@ package vector_font
 KERN_HEADER_SIZE :: 4 // version, count of subtables.
 KERN_SUBTABLE_HEADER_SIZE :: 14 // version, length, coverage, count of pairs, and three numbers of the search.
 KERN_PAIR_SIZE :: 6 // left glyph, right glyph, adjustment.
+// The places of the fields, in bytes: of the table from its start, of a
+// subtable from its start, and of a pair from its start. Each field is
+// 16 bits, big-endian.
+KERN_VERSION_PLACE :: 0
+KERN_SUBTABLE_COUNT_PLACE :: 2
+KERN_SUBTABLE_VERSION_PLACE :: 0
+KERN_SUBTABLE_COVERAGE_PLACE :: 4
+KERN_SUBTABLE_PAIR_COUNT_PLACE :: 6
+KERN_PAIR_LEFT_PLACE :: 0
+KERN_PAIR_RIGHT_PLACE :: 2
+KERN_PAIR_ADJUSTMENT_PLACE :: 4
 
 // Pair_Table: the pairs of the first subtable of a kern table that
 // pair_table_open accepted.
@@ -38,8 +49,8 @@ pair_table_open :: proc "contextless" (font: ^Font_File) -> (table: Pair_Table, 
 		return {}, .Too_Short
 	}
 	kern := font.bytes[font.kern.offset:][:font.kern.length]
-	version, version_read := read_u16(kern, 0)
-	subtables, subtables_read := read_u16(kern, 2)
+	version, version_read := read_u16(kern, KERN_VERSION_PLACE)
+	subtables, subtables_read := read_u16(kern, KERN_SUBTABLE_COUNT_PLACE)
 	if !version_read || !subtables_read {
 		return {}, .Too_Short
 	}
@@ -49,9 +60,9 @@ pair_table_open :: proc "contextless" (font: ^Font_File) -> (table: Pair_Table, 
 		return {}, .Unknown_Format
 	}
 	at := KERN_HEADER_SIZE
-	subtable_version, subtable_version_read := read_u16(kern, at)
-	coverage, coverage_read := read_u16(kern, at + 4)
-	count, count_read := read_u16(kern, at + 6)
+	subtable_version, subtable_version_read := read_u16(kern, at + KERN_SUBTABLE_VERSION_PLACE)
+	coverage, coverage_read := read_u16(kern, at + KERN_SUBTABLE_COVERAGE_PLACE)
+	count, count_read := read_u16(kern, at + KERN_SUBTABLE_PAIR_COUNT_PLACE)
 	if !subtable_version_read || !coverage_read || !count_read {
 		return {}, .Too_Short
 	}
@@ -71,8 +82,8 @@ pair_table_open :: proc "contextless" (font: ^Font_File) -> (table: Pair_Table, 
 	pairs := kern[first_pair:pairs_end]
 	previous := -1
 	for index in 0 ..< count {
-		left := read_u16(pairs, index * KERN_PAIR_SIZE) or_else 0
-		right := read_u16(pairs, index * KERN_PAIR_SIZE + 2) or_else 0
+		left := read_u16(pairs, index * KERN_PAIR_SIZE + KERN_PAIR_LEFT_PLACE) or_else 0
+		right := read_u16(pairs, index * KERN_PAIR_SIZE + KERN_PAIR_RIGHT_PLACE) or_else 0
 		if left >= font.glyph_count || right >= font.glyph_count {
 			return {}, .Unknown_Format
 		}
@@ -95,12 +106,12 @@ pair_adjustment :: proc "contextless" (table: ^Pair_Table, left, right: int) -> 
 	for low < high {
 		middle := low + (high - low) / 2
 		at := middle * KERN_PAIR_SIZE
-		pair_left := read_u16(table.pairs, at) or_else 0
-		pair_right := read_u16(table.pairs, at + 2) or_else 0
+		pair_left := read_u16(table.pairs, at + KERN_PAIR_LEFT_PLACE) or_else 0
+		pair_right := read_u16(table.pairs, at + KERN_PAIR_RIGHT_PLACE) or_else 0
 		pair_key := pair_left << 16 | pair_right
 		switch {
 		case pair_key == key:
-			return read_i16(table.pairs, at + 4) or_else 0
+			return read_i16(table.pairs, at + KERN_PAIR_ADJUSTMENT_PLACE) or_else 0
 		case pair_key < key:
 			low = middle + 1
 		case:
