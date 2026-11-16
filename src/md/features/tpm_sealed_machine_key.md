@@ -32,6 +32,8 @@ Each command can also carry an authorization value, for the keys of a named prin
 
 The service builds each TPM command itself. No client sends a raw command: a client that sends `TPM2_PCR_Extend` changes the measure, and one that sends `TPM2_Clear` destroys every key of the TPM.
 
+At its start, before it serves the ring, the service reads the count limits of the TPM and writes them on the log. Before the first request with an authorization value, it sets a random lockout authorization value, which nobody keeps, when the TPM has an empty one. No client asks for it, and a boot that seals only the machine key leaves the lockout hierarchy as it found it. The design is in [tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md), "The lockout authorization value": the count of the wrong passphrases of a named principal needs it.
+
 ### The seal
 
 `Seal` runs these commands of TPM 2.0:

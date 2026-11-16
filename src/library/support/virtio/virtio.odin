@@ -11,7 +11,12 @@
 //
 // A queue takes three pages of the memory of the queues: the descriptors,
 // what the driver gives (avail), what the device used. A queue has at most
-// QUEUE_SIZE_LIMIT descriptors: its descriptors fill one page.
+// QUEUE_SIZE_LIMIT descriptors: its descriptors fill one page. Its size is a
+// power of two (queue_size_choose).
+//
+// The device gives the places of its registers. This package takes a place
+// only inside the memory of its BAR (region_fits): the place and the length
+// of each capability, and the notify register of each queue.
 //
 // The order of a start: `find` finds the registers in the copy of the
 // configuration; `start` resets the device and agrees on the features;
@@ -87,12 +92,41 @@ Used :: struct {
 	length: u32, // The bytes that the device wrote in its buffers.
 }
 
+// The bytes of the common configuration that this package reads: up to the
+// end of COMMON_QUEUE_DEVICE.
+COMMON_CONFIG_SIZE :: COMMON_QUEUE_DEVICE + 8
+
 // The registers of one device, found in its capabilities.
 Device :: struct {
 	common:        uintptr, // The common configuration, mapped.
 	device_config: uintptr, // The configuration of the device class.
 	notify_base:   uintptr, // The first notify register.
+	notify_length: u64, // The bytes of the notify registers, from notify_base, that the capability gives and the memory of the BAR holds.
 	multiplier:    u32, // The bytes between the notify registers of two queues, per unit of COMMON_QUEUE_NOTIFY_OFF.
+}
+
+// region_fits says if a region of `length` bytes at `place` lies inside
+// memory of `size` bytes. The device gives the place and the length, so
+// a sum that passes the largest value is no fit.
+region_fits :: proc "contextless" (place, length, size: u64) -> bool {
+	return place <= size && length <= size - place
+}
+
+// queue_size_choose gives the size of a queue from the size that the
+// device offers: the largest power of two that is not above it or above
+// QUEUE_SIZE_LIMIT, 0 for 0. The counters of a split queue are 16 bits and
+// wrap; the place of a chain is a counter modulo the size, which stays in
+// order across the wrap only for a power of two.
+queue_size_choose :: proc "contextless" (offered: u32) -> u32 {
+	limit := min(offered, QUEUE_SIZE_LIMIT)
+	if limit == 0 {
+		return 0
+	}
+	size: u32 = 1
+	for size * 2 <= limit {
+		size *= 2
+	}
+	return size
 }
 
 // One split virtqueue, as the driver sees it.
@@ -141,28 +175,34 @@ store_64 :: #force_inline proc "contextless" (address: uintptr, value: u64) {
 
 // find reads the virtio capabilities in the copy of the configuration, and
 // maps the BARs that they name (the roles pci.GRANT_BAR + n of the context).
+// The device writes the place and the length of each capability: one whose
+// registers are not inside the memory of its BAR is not taken, and a
+// common configuration shorter than COMMON_CONFIG_SIZE neither, so that no
+// read of a register falls outside the mapping.
 // false: the device has no virtio registers in the memory that it received.
 find :: proc "contextless" (ctx: ^system.Context, configuration: []u8) -> (device: Device, ok: bool) {
 	if len(configuration) < pci.CONFIGURATION_SIZE {
 		return {}, false
 	}
 	mapped: [pci.BAR_COUNT]uintptr
-	bar_address :: proc "contextless" (ctx: ^system.Context, mapped: ^[pci.BAR_COUNT]uintptr, bar: u8) -> uintptr {
+	sizes: [pci.BAR_COUNT]u64
+	bar_address :: proc "contextless" (ctx: ^system.Context, mapped: ^[pci.BAR_COUNT]uintptr, sizes: ^[pci.BAR_COUNT]u64, bar: u8) -> (base: uintptr, size: u64) {
 		if bar >= pci.BAR_COUNT {
-			return 0
+			return 0, 0
 		}
 		if mapped[bar] == 0 {
 			memory := ctx.handles[pci.GRANT_BAR + int(bar)]
 			if memory == 0 {
-				return 0
+				return 0, 0
 			}
 			address, status := system.memory_map(memory, {.Write})
 			if status != .Ok {
-				return 0
+				return 0, 0
 			}
 			mapped[bar] = uintptr(address)
+			sizes[bar] = system.memory_size(memory) * system.PAGE_SIZE
 		}
-		return mapped[bar]
+		return mapped[bar], sizes[bar]
 	}
 	offset := u32(configuration[pci.OFFSET_CAPABILITIES]) &~ 3
 	for _ in 0 ..< 48 {
@@ -173,13 +213,17 @@ find :: proc "contextless" (ctx: ^system.Context, configuration: []u8) -> (devic
 			kind := configuration[offset + 3]
 			bar := configuration[offset + 4]
 			place := intrinsics.unaligned_load((^u32)(&configuration[offset + 8]))
-			base := bar_address(ctx, &mapped, bar)
-			if base != 0 {
+			length := intrinsics.unaligned_load((^u32)(&configuration[offset + 12]))
+			base, size := bar_address(ctx, &mapped, &sizes, bar)
+			if base != 0 && region_fits(u64(place), u64(length), size) {
 				switch kind {
 				case CAPABILITY_COMMON:
-					device.common = base + uintptr(place)
+					if length >= COMMON_CONFIG_SIZE {
+						device.common = base + uintptr(place)
+					}
 				case CAPABILITY_NOTIFY:
 					device.notify_base = base + uintptr(place)
+					device.notify_length = u64(length)
 					device.multiplier = intrinsics.unaligned_load((^u32)(&configuration[offset + 16]))
 				case CAPABILITY_DEVICE:
 					device.device_config = base + uintptr(place)
@@ -268,6 +312,7 @@ Queue_Error :: enum {
 	None, // The queue runs.
 	Too_Small, // The queue of the device has fewer than `least` descriptors.
 	No_Vector, // The device has no message interrupt for the queue.
+	Bad_Notify, // The notify register of the queue is not inside the notify registers that the capability gives.
 }
 
 // queue_start gives the device the queue `index`, in three pages of the
@@ -275,16 +320,22 @@ Queue_Error :: enum {
 // their physical address. The queue sends the message interrupt `vector`.
 queue_start :: proc "contextless" (device: ^Device, index: u16, base: uintptr, physical: u64, least: u32, vector: u16) -> (queue: Queue, error: Queue_Error) {
 	store_16(device.common + COMMON_QUEUE_SELECT, index)
-	queue.size = min(u32(load_16(device.common + COMMON_QUEUE_SIZE)), QUEUE_SIZE_LIMIT)
-	if queue.size < least {
+	queue.size = queue_size_choose(u32(load_16(device.common + COMMON_QUEUE_SIZE)))
+	if queue.size < least || queue.size == 0 {
 		return {}, .Too_Small
+	}
+	// The device gives the place of the notify register of the queue: a
+	// store there must stay inside the notify registers of the BAR.
+	notify_place := u64(load_16(device.common + COMMON_QUEUE_NOTIFY_OFF)) * u64(device.multiplier)
+	if !region_fits(notify_place, size_of(u16), device.notify_length) {
+		return {}, .Bad_Notify
 	}
 	store_16(device.common + COMMON_QUEUE_SIZE, u16(queue.size))
 	store_16(device.common + COMMON_QUEUE_VECTOR, vector)
 	if load_16(device.common + COMMON_QUEUE_VECTOR) != vector {
 		return {}, .No_Vector
 	}
-	queue.notify = device.notify_base + uintptr(u32(load_16(device.common + COMMON_QUEUE_NOTIFY_OFF)) * device.multiplier)
+	queue.notify = device.notify_base + uintptr(notify_place)
 	queue.descriptors = ([^]Descriptor)(base)
 	queue.driver_index = (^u16)(base + system.PAGE_SIZE + 2)
 	queue.driver_ring = ([^]u16)(base + system.PAGE_SIZE + 4)

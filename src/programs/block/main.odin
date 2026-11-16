@@ -169,6 +169,8 @@ start :: proc "contextless" (queues: system.Handle) {
 		fail("the queue of the device is too small")
 	case .No_Vector:
 		fail("the device has no message interrupt for its queue")
+	case .Bad_Notify:
+		fail("the notify register of the queue is outside the registers of the device")
 	}
 	headers = ([^]Header)(base + PAGE_REQUESTS * system.PAGE_SIZE)
 	statuses = ([^]u8)(base + PAGE_REQUESTS * system.PAGE_SIZE + STATUS_PLACE)

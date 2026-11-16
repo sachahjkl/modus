@@ -1,10 +1,14 @@
 package modustool
 
 import "core:fmt"
+import "core:net"
 import "core:os"
+import "core:strings"
+import "core:time"
 import format "modus:contract/store"
 import "modus:support/principals"
 import "modus:support/storage_mount"
+import "modus:support/tpm2"
 
 // The machines of the machine key sealed by the TPM
 // (docs/PRINCIPALS.md, "The machine key sealed by the TPM"),
@@ -54,6 +58,21 @@ UNLOCK_STORE :: "unlock"
 TEST_OUTPUT_TPM_KEY :: BUILD_FOLDER + "/test_output_tpm_key_%d.txt"
 // The state of the software TPM that the six machines share.
 TPM_KEY_STATE_FOLDER :: BUILD_FOLDER + "/test_tpm_key_state"
+
+// The lines of the TPM service on its lockout hierarchy
+// (src/md/features/tpm_sealed_principal_keys.md, "The lockout authorization
+// value"): the first use of a passphrase on a new state of the TPM sets a
+// value, and the first use in each later run finds it. The count limits of libtpms with no setup: three
+// failures, then one forgiven each 1000 seconds.
+TPM_LOCKOUT_SET_LINE :: "tpm: the lockout hierarchy had an empty authorization value: this service set a random one and kept no copy, so no system resets the count of the TPM or changes its limits"
+TPM_LOCKOUT_FOUND_LINE :: "tpm: the lockout hierarchy has an authorization value: an earlier start of this system set it, or another system did; this service keeps no copy of it and leaves it"
+TPM_COUNT_LIMITS_LINE :: "tpm: the count limits of the TPM: a lockout after 3 wrong authorization values, one forgiven each 1000 seconds; "
+// A new state of the software TPM, whose lockout hierarchy has the empty
+// value: the reset that the TPM of the part refuses is taken there.
+TPM_LOCKOUT_EMPTY_STATE_FOLDER :: BUILD_FOLDER + "/test_tpm_lockout_empty_state"
+TEST_OUTPUT_TPM_LOCKOUT :: BUILD_FOLDER + "/test_output_tpm_lockout_%d.txt"
+// The largest answer to a command that the tool sends to the TPM.
+TPM_TOOL_ANSWER_LIMIT :: 256
 
 // A recovery key that is not the recovery key of the machine: 32 symbols of
 // base32, each one A.
@@ -192,6 +211,14 @@ scenario_tpm_key_secure_boot_off := [?]Step {
 //      the recovery key opens the keys. This machine is the last one that
 //      uses the TPM: the lockout lasts 1000 seconds of the time of the TPM.
 //
+// Machines 1 to 6 use no passphrase, so the TPM service leaves the lockout
+// hierarchy as it found it. Machine 7, the first seal with a passphrase,
+// sets the lockout value; machines 8 to 10 find it at their first
+// passphrase. After machine 10, the tool starts swtpm alone, as
+// another system on the machine, and sends TPM2_DictionaryAttackLockReset
+// with the empty value: a new TPM takes it, the TPM of the part refuses it
+// (tpm_lockout_reset_tests_run).
+//
 // The TPM service sends TPM2_Shutdown after each use of the passphrase that
 // is not a counted failure. After a counted failure it sends none, so a stop
 // then would count one more failure at the next start. Each machine here
@@ -218,6 +245,9 @@ scenario_tpm_principal_create := [?]Step {
 	{kind = .Front, text = "unlock"},
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
+	// The first seal with a passphrase on this TPM: machines 1 to 6 used no
+	// passphrase, so they left the lockout value empty.
+	{kind = .Wait, text = TPM_LOCKOUT_SET_LINE, any_order = true, fails_on = TPM_LOCKOUT_FOUND_LINE},
 	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
 	{kind = .Wait, text = "unlock: the keys of principal \"alice\" are sealed by the TPM to PCR 7 and PCR 11 and to its passphrase, under a key of Argon2id", any_order = true},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is created: its keys are sealed by the TPM with its passphrase, with a copy under a recovery key; the window shows the recovery key one time", any_order = true},
@@ -242,6 +272,7 @@ tpm_principal_locked := [?]Step {
 @(private = "file")
 scenario_tpm_principal_same_system := [?]Step {
 	{kind = .Type, text = WRONG_PRINCIPAL_PASSPHRASE},
+	{kind = .Wait, text = TPM_LOCKOUT_FOUND_LINE, any_order = true, fails_on = TPM_LOCKOUT_SET_LINE},
 	{kind = .Wait, text = "tpm: the TPM refuses the unseal: the authorization value is wrong, and the TPM counted the failure (response code ", any_order = true},
 	// No TPM2_Shutdown after a counted failure: its line would come before
 	// the line of unlock.
@@ -276,6 +307,7 @@ tpm_principal_recovery_and_new_passphrase := [?]Step {
 @(private = "file")
 scenario_tpm_principal_other_system := [?]Step {
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
+	{kind = .Wait, text = TPM_LOCKOUT_FOUND_LINE, any_order = true, fails_on = TPM_LOCKOUT_SET_LINE},
 	{kind = .Wait, text = "tpm: the TPM refuses the unseal: PCR 7 and PCR 11 do not hold the values of the seal", any_order = true},
 	{kind = .Wait, text = "unlock: the keys of principal 1 \"alice\" wait for their recovery key: the TPM does not release them", fails_on = "unlock: the TPM releases the keys"},
 }
@@ -285,6 +317,7 @@ scenario_tpm_principal_lockout := [?]Step {
 	// The passphrase of before the recovery is wrong now: two failures,
 	// which make three with the one of machine 8.
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
+	{kind = .Wait, text = TPM_LOCKOUT_FOUND_LINE, any_order = true, fails_on = TPM_LOCKOUT_SET_LINE},
 	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" is wrong: the TPM refuses it and counts it, nothing is unlocked (1 in all)", fails_on = TPM_SHUTDOWN_LINE},
 	{kind = .Type, text = WRONG_PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" is wrong: the TPM refuses it and counts it, nothing is unlocked (2 in all)", fails_on = TPM_SHUTDOWN_LINE},
@@ -313,6 +346,10 @@ tpm_key_machine_run :: proc(parts: [][]Step, volume: string, firmware: Machine_F
 		append(&all, Step{kind = .Wait, text = TEST_ROOT_SEAL_WITHOUT_SECURE_BOOT_LINE, any_order = true, seconds = TPM_MACHINE_STEP_SECONDS})
 	}
 	append(&all, ..tpm_key_start[1:])
+	// The TPM service writes this line after its line "ok", before it serves
+	// its ring. The lines of the lockout value come at the first use of a
+	// passphrase, in the steps of machines 7 to 10.
+	append(&all, Step{kind = .Wait, text = TPM_COUNT_LIMITS_LINE, any_order = true})
 	for part in parts {
 		append(&all, ..part)
 	}
@@ -375,6 +412,129 @@ tpm_key_changed_ticket_disk_write :: proc() -> bool {
 	return true
 }
 
+// tpm_lockout_reset_try starts swtpm alone on a state of the software TPM,
+// as another system on the machine finds the TPM, and sends it
+// TPM2_DictionaryAttackLockReset with the empty value of the lockout
+// hierarchy. It gives the response code of the TPM; ok is false when the
+// tool could not ask, or the answer is not an answer of a TPM.
+@(private = "file")
+tpm_lockout_reset_try :: proc(state_folder: string, number: int) -> (code: u32, ok: bool) {
+	// Two ports of the loopback at once, so they differ: the commands and
+	// the control channel of swtpm.
+	server_socket, server_error := net.listen_tcp({net.IP4_Loopback, 0})
+	if server_error != nil {
+		fmt.eprintfln("modustool: test failed: no port of the loopback for swtpm: %v", server_error)
+		return 0, false
+	}
+	control_socket, control_error := net.listen_tcp({net.IP4_Loopback, 0})
+	if control_error != nil {
+		net.close(server_socket)
+		fmt.eprintfln("modustool: test failed: no port of the loopback for swtpm: %v", control_error)
+		return 0, false
+	}
+	server_endpoint, _ := net.bound_endpoint(server_socket)
+	control_endpoint, _ := net.bound_endpoint(control_socket)
+	net.close(server_socket)
+	net.close(control_socket)
+
+	output := self_test_file(TEST_OUTPUT_TPM_LOCKOUT, number)
+	folder := tpm_folder_of(output)
+	reset_folder(folder) or_return
+	log := strings.concatenate({"file=", folder, "/swtpm.log,level=20"}, context.temp_allocator)
+	server := fmt.tprintf("type=tcp,port=%d,bindaddr=127.0.0.1", server_endpoint.port)
+	control := fmt.tprintf("type=tcp,port=%d,bindaddr=127.0.0.1", control_endpoint.port)
+	// not-need-init and startup-clear: swtpm starts the TPM itself, as the
+	// firmware of a machine does, with no QEMU.
+	process, start_error := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", state_folder}, context.temp_allocator), "--server", server, "--ctrl", control, "--flags", "not-need-init,startup-clear", "--log", log}, stdout = os.stderr, stderr = os.stderr})
+	if start_error != nil {
+		fmt.eprintfln("modustool: cannot start swtpm: %v. Use the development shell: nix develop", start_error)
+		return 0, false
+	}
+	tpm := Tpm_Process{process = process, started = true, folder = strings.clone(folder)}
+	defer tpm_stop(&tpm)
+
+	// Wait until swtpm takes a connection.
+	socket: net.TCP_Socket
+	start := time.tick_now()
+	for {
+		dialed, dial_error := net.dial_tcp(net.Endpoint{net.IP4_Loopback, server_endpoint.port})
+		if dial_error == nil {
+			socket = dialed
+			break
+		}
+		if time.tick_since(start) > TPM_START_TIMEOUT {
+			fmt.eprintfln("modustool: test failed: swtpm took no connection on the port %d in %v (%s)", server_endpoint.port, TPM_START_TIMEOUT, folder)
+			return 0, false
+		}
+		time.sleep(10 * time.Millisecond)
+	}
+	defer net.close(socket)
+	// The bound only ends a wait for a TPM that does not answer.
+	_ = net.set_option(socket, .Receive_Timeout, HANG_BOUND)
+
+	command: [64]u8
+	count := tpm2.dictionary_attack_lock_reset_command(command[:])
+	if count == 0 || !send_all(socket, command[:count]) {
+		fmt.eprintfln("modustool: test failed: the command TPM2_DictionaryAttackLockReset did not go to swtpm (%s)", folder)
+		return 0, false
+	}
+	// The header of an answer has its size in bytes 2 to 5, big-endian.
+	HEADER_SIZE :: 10
+	answer: [TPM_TOOL_ANSWER_LIMIT]u8
+	received := 0
+	size := HEADER_SIZE
+	for received < size {
+		got, receive_error := net.recv_tcp(socket, answer[received:size])
+		if receive_error != nil || got == 0 {
+			fmt.eprintfln("modustool: test failed: swtpm gave %d bytes of an answer of %d to TPM2_DictionaryAttackLockReset: %v (%s)", received, size, receive_error, folder)
+			return 0, false
+		}
+		received += got
+		if received >= HEADER_SIZE && size == HEADER_SIZE {
+			size = int(u32(answer[2]) << 24 | u32(answer[3]) << 16 | u32(answer[4]) << 8 | u32(answer[5]))
+			if size < HEADER_SIZE || size > len(answer) {
+				fmt.eprintfln("modustool: test failed: swtpm gave an answer of %d bytes to TPM2_DictionaryAttackLockReset (%s)", size, folder)
+				return 0, false
+			}
+		}
+	}
+	status_code, problem := tpm2.status_answer(answer[:size])
+	if problem == .Malformed {
+		fmt.eprintfln("modustool: test failed: the answer of swtpm to TPM2_DictionaryAttackLockReset does not have the form of an answer (%s)", folder)
+		return 0, false
+	}
+	return status_code, true
+}
+
+// tpm_lockout_reset_tests_run sends the reset of the count with the empty
+// lockout value, as another system on the machine can, first to a new
+// state of the TPM, which takes it, then to the TPM of the part after
+// machine 10, which refuses it: the service set a value there at machine 7.
+// The first one proves that the bytes of the command reset the count of a
+// TPM with an empty value, so the refusal of the second one comes from its
+// value. The TPM of the part answers TPM_RC_AUTH_FAIL: no machine of the
+// TPM runs after it, and the lockout hierarchy then waits. The answer is
+// TPM_RC_AUTH_FAIL only because machine 10 ends with TPM2_Shutdown: after a
+// start that is not orderly, a TPM can close the lockout hierarchy and
+// answer TPM_RC_LOCKOUT; read that cause first if the code is 0x921.
+@(private = "file")
+tpm_lockout_reset_tests_run :: proc() -> bool {
+	reset_folder(TPM_LOCKOUT_EMPTY_STATE_FOLDER) or_return
+	code := tpm_lockout_reset_try(TPM_LOCKOUT_EMPTY_STATE_FOLDER, 1) or_return
+	if code != tpm2.RESPONSE_SUCCESS {
+		fmt.eprintfln("modustool: test failed: a new TPM, whose lockout value is empty, refused TPM2_DictionaryAttackLockReset with the empty value (response code 0x%X)", code)
+		return false
+	}
+	test_passed_print("%s", "a new TPM, whose lockout value is empty, took TPM2_DictionaryAttackLockReset from another system")
+	code = tpm_lockout_reset_try(TPM_KEY_STATE_FOLDER, 2) or_return
+	if !tpm2.authorization_fails(code) {
+		fmt.eprintfln("modustool: test failed: the TPM whose lockout value the TPM service set answered 0x%X to TPM2_DictionaryAttackLockReset with the empty value, not TPM_RC_AUTH_FAIL", code)
+		return false
+	}
+	test_passed_print("the TPM whose lockout value the TPM service set refused TPM2_DictionaryAttackLockReset from another system (response code 0x%X): the count of the wrong passphrases holds", code)
+	return true
+}
+
 // principals_tpm_tests_run runs the six machines, on a new disk and a new
 // state of the software TPM.
 principals_tpm_tests_run :: proc() -> bool {
@@ -419,5 +579,8 @@ principals_tpm_principal_tests_run :: proc() -> bool {
 	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_lockout[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM, .With_Tpm, 10, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "the TPM counted each wrong passphrase, refused each try after three, and the recovery key opened the keys")
 	fmt.println("modustool: the keys of a named principal sealed by the TPM: 4 machines passed")
+	// After the last machine of the TPM: the try of the reset closes the
+	// lockout hierarchy of that TPM for its recovery time.
+	tpm_lockout_reset_tests_run() or_return
 	return true
 }

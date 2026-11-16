@@ -4,7 +4,7 @@ This guide says where a program gets random bytes, how the generator works, wher
 
 The terms are in `GLOSSARY.md`, section "Randomness": random seed, random generator, entropy report, seed strength.
 
-**The idea in plain words.** A program asks no service and no kernel for random bytes: its starter gives it a seed of 32 bytes in its context, and it draws from its own generator in its own memory. The root service gathers the seed of the system from the processor at boot, and the system says how strong that seed is, so a program that makes a key can refuse a weak one.
+**The idea in plain words.** A program asks no service and no kernel for random bytes: its starter gives it a seed of 32 bytes in its context, and it draws from its own generator in its own memory. The root service gathers the seed of the system from the processor at boot, mixes in the bytes of the entropy device when the machine has one, and the system says how strong that seed is, so a program that makes a key can refuse a weak one.
 
 **For whom.** A reader who needs random bytes in a program, and a reader who must know how far to trust them.
 
@@ -57,6 +57,7 @@ The root service hashes, with BLAKE3, each value of each source, each with its l
 | `rdseed` | 8 values of 64 bits, when CPUID 7 says the processor has it | A value with the carry clear (empty), all ones (a known fault of some processors of AMD), or equal to a value before it, is refused and read again, 32 times for each value at most | The entropy source of the processor, by its specification: strength `entropy` |
 | `rdrand` | 8 values, when CPUID 1 says the processor has it | The same | The generator of the processor, which the processor reseeds: strength `processor` |
 | The cycle counter | 2048 deltas of `rdtsc` around a short loop | None: its count of distinct low bytes is shown, as a sign of life only | 0 bits: this system does not measure its entropy. A seed from it alone has strength `weak` |
+| The entropy device | 2 reads of 32 bytes through the entropy service, after the gathering, when the machine has the device; mixed with `reseed` | A read with no byte, with one value only, or equal to the read before is refused, and the key stays as it was | No change of the strength: the bytes add to the key, below |
 
 The strength of the seed is the strongest source that gave all its values. The root service writes it on the log: "root: the random seed of the system, strength ...". It gives the facts of the gathering, never the seed, to the program `randomness` (its context values 0 to 7).
 
@@ -75,7 +76,21 @@ The strength of the seed is the strongest source that gave all its values. The r
 - QUIC and TLS ask for `processor` at least (`Tls_Configuration.least_seed_strength`): on a machine with no `rdrand` and no `rdseed`, a handshake does not start, and the caller gets the error.
 - The exports of the module `cryptography` take each key as an argument and draw no random byte, so they have no such parameter.
 
-**The boot-time problem: who seeds root.** No program runs before the root service, so it cannot get a seed from a device program. It takes one from the processor at its start; a device program can add bytes later with `reseed` (section 5).
+**The boot-time problem: who seeds root.** No program runs before the root service, so it cannot get a seed from a device program. It takes one from the processor at its start; the entropy service adds bytes later, below.
+
+**The entropy device.** When the machine has the entropy device of virtio (`virtio-rng-pci` in QEMU) at the place 19 of bus 0, the root service starts the entropy service, the program `entropy`, after the compositor. It asks for two reads of 32 bytes and does not wait for them. Its loop mixes each read into its generator with `random.device_bytes_mix`, which calls `reseed`: the next key is BLAKE3 of a domain text, the old key and the bytes. When both reads are in, the log has:
+
+```
+root: the entropy device gave 64 bytes in 2 reads: 64 bytes mixed into the random generator of the system; refused reads: 0
+```
+
+- **One more source, never the only one.** The bytes add to the key and do not replace it. A device that lies cannot remove what the processor gave.
+- **A read that adds nothing is refused.** A read with no byte, a read whose bytes all have one value (zeros, all ones), and a read equal to the read before it leave the key as it was. Each one counts in "refused reads", as does a read that the entropy service answered with an error. These checks find a broken device. They are not a protection against a hostile one, which passes them with ease: the protection is the mix, whose key always has the bytes of the processor in it.
+- **The strength does not change.** The seed strength stays the claim of the processor: the system cannot check the bytes of the device, and the programs that start before the reads have no bytes of the device.
+- **Which seeds have the bytes.** Each program that the root service starts after the line. `input`, the compositor and the programs that start while the device answers have the seed of the processor only.
+- **A machine with no device** starts as before, with one line: `root: no entropy device at the place 19 of the bus: the random seed of the system has the sources of the processor only`.
+
+The entropy report carries the facts of the device to the program `randomness`: present or absent, the bytes mixed, the refused reads. The design is in `src/md/features/entropy_device.md`.
 
 ## 4. The tests
 
@@ -84,16 +99,21 @@ The strength of the seed is the strongest source that gave all its values. The r
   - each served byte is erased;
   - two seeds give two streams, a zero seed is refused, and a child seed is not part of the later stream of its starter;
   - a statistical smoke test on 1 MiB: the count of one bits within 6 standard deviations, and a chi-square of the 256 byte values between 150 and 400. **It finds a gross fault, and proves nothing about the quality**;
-  - each fallback with sources of the test: none, `rdrand` of all ones, `rdrand` that repeats one value, `rdrand` alone, and `rdseed`.
+  - each fallback with sources of the test: none, `rdrand` of all ones, `rdrand` that repeats one value, `rdrand` alone, and `rdseed`;
+  - a read of the entropy device of zeros, of all ones, of one byte, with no byte, or equal to the read before leaves the key as it was and counts as refused; a good read changes the key and counts its bytes; the strength does not change;
+  - the report goes through the context values and back, with the facts of the device.
+- `odin test src/library/contract/entropy_service`: the bytes of a read go through the values of a completion and back, and a count above the limit gives the limit.
 - `modustool test random`, three machines:
   - two with the processor of the host (strength `entropy`), with two programs `randomness` in the first;
+  - the first with the entropy device: the root service writes the line of the two reads, and `randomness` logs "randomness: the entropy device: 64 bytes mixed after the gathering; refused reads: 0";
+  - the second with no entropy device: it starts with the sources of the processor, and `randomness` logs "randomness: the entropy device: absent";
   - one with no `rdrand` and no `rdseed` (strength `weak`).
   - The first 16 bytes of the stream of the 4 programs all differ: two programs give different streams, and a restart gives different streams.
 - `server` and `fetch` take the secret of the initial sequence numbers of TCP from their generator (`modustool test tcp`).
 
 ## 5. What is not built
 
-- **An entropy device.** QEMU has `virtio-rng-pci`. A device program of property 7 that reads it and gives its bytes to the root service (`reseed`) is not built. The window says "none yet".
-- **A reseed of a running program.** A program reseeds its own generator only from bytes that it has (`random.reseed`). No service gives fresh bytes to a running program.
+- **A reseed of a running program.** A program reseeds its own generator only from bytes that it has (`random.reseed`). No service gives fresh bytes to a running program; the entropy service answers the root service only.
+- **A strength of the entropy device.** The device adds bytes and no claim.
 - **The TPM** (property 17) as a source.
 - **A measure of the jitter of the cycle counter** (as `jitterentropy` does). Without it, the claim stays 0 bits.

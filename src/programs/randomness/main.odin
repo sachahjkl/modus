@@ -1,8 +1,9 @@
 // The randomness of the system, shown (docs/RANDOMNESS.md).
 //
 // The root service gathers the seed of the system at its start, from the
-// sources of the processor, and gives this program the facts of that
-// gathering (the values 0 to 7 of its context): which sources were there,
+// sources of the processor, mixes in the bytes of the entropy device when
+// the machine has one, and gives this program the facts of that gathering
+// (the values 0 to 7 of its context): which sources were there,
 // how many values each one gave, how many it refused, and the strength
 // that the seed can claim. Like each program, this one has its own
 // generator, seeded by its starter (the values 9 to 12). The window shows
@@ -21,12 +22,14 @@
 // facts, not the seed.
 //
 // **What a reader sees**: the sources of the seed (rdseed, rdrand, the
-// jitter of the cycle counter) with their counts, the strength, a live draw
-// of the stream every 500 ms, the 16 bars of 1 MiB counted by the high 4
-// bits of each byte, and the speed. The log has:
+// jitter of the cycle counter, the entropy device) with their counts, the
+// strength, a live draw of the stream every 500 ms, the 16 bars of 1 MiB
+// counted by the high 4 bits of each byte, and the speed. The log has:
 //
 // - "randomness: the seed of the system: strength ...; the first bytes of
 //   the stream of this program: ...";
+// - "randomness: the entropy device: N bytes mixed after the gathering;
+//   refused reads: N", or "randomness: the entropy device: absent";
 // - "randomness: 1 MiB by the high 4 bits of each byte: from A to B in each
 //   of 16 (the mean is 65536)";
 // - "randomness: the generator: 4 MiB in T us, R MB/s".
@@ -100,6 +103,22 @@ source_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.C
 	interface.label_value_line(frame, interface.column_take(column, LINE), name, interface.text_of(&builder), good == wanted ? graphics.COLOR_TEXT : graphics.COLOR_FAILED, 168)
 }
 
+// device_line shows the entropy device: absent, or the bytes that the root
+// service mixed in before this program started, and the reads that added
+// nothing.
+device_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.Column) {
+	if !report.device_present {
+		interface.label_value_line(frame, interface.column_take(column, LINE), "entropy device", "absent: the machine does not have one", graphics.COLOR_DIM, 168)
+		return
+	}
+	builder: interface.Text_Builder
+	interface.text_put(&builder, "present, ")
+	interface.text_put_number(&builder, u64(report.device_bytes))
+	interface.text_put(&builder, " bytes mixed after the gathering; refused reads: ")
+	interface.text_put_number(&builder, u64(report.device_reads_refused))
+	interface.label_value_line(frame, interface.column_take(column, LINE), "entropy device", interface.text_of(&builder), report.device_reads_refused == 0 ? graphics.COLOR_TEXT : graphics.COLOR_FAILED, 168)
+}
+
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
@@ -117,7 +136,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.text_put_number(&builder, u64(report.jitter_distinct))
 	interface.text_put(&builder, " distinct low bytes; counted as 0 bits")
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "cycle counter", interface.text_of(&builder), graphics.COLOR_TEXT, 168)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "entropy device", "none yet: virtio-rng is not driven", graphics.COLOR_DIM, 168)
+	device_line(&frame, &column)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "mixed by", "BLAKE3 of each value, with its length", graphics.COLOR_TEXT, 168)
 
 	// The generator of this program.
@@ -183,6 +202,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	random.fill(&program_generator, first_bytes[:])
 	hex: interface.Text_Builder
 	system.log("randomness: the seed of the system: strength ", random.seed_strength_names[report.strength], "; the first bytes of the stream of this program: ", hex_text(&hex, first_bytes[:]))
+	if report.device_present {
+		system.log("randomness: the entropy device: ", u64(report.device_bytes), " bytes mixed after the gathering; refused reads: ", u64(report.device_reads_refused))
+	} else {
+		system.log("randomness: the entropy device: absent")
+	}
 	draw(&window)
 
 	// The counts of the byte values of 1 MiB, then the speed on 4 MiB.

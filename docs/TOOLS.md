@@ -700,7 +700,9 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
 | `ship step`, `ship correction`, `ship <release number>` | The release in one command: the changelog, a commit, a signed release tag, one atomic push to `master` ("The release") |
 | `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
-| `key new <folder>`, `key show` | The key that signs the system description |
+| `key new <folder>`, `key write <folder>`, `key show` | The keys of the publisher of the system: the signing key, the firmware signing key, the release signing key; `key write` makes the folder from the secrets of a workflow (`secrets/README.md`) |
+| `release image`, `release tag-check <tag>` | The files of a release in `dist/`: the GPT disk image of the release volume compressed with zstd, `SHA256SUMS.txt` and its release signature, with the keys of the publisher only; the check that a tag names the release number (`INSTALL.md`, `src/md/infrastructure/release_image.md`) |
+| `verify <image> <checksum list>` | Verifies the release signature of the checksum list with `resources/keys/release_signing_key.public`, then the SHA-256 of the image (`INSTALL.md`, "2. Verify the files") |
 | `font`, `vector_fonts`, `pointers`, `logo`, `portraits` | Convert a source (a font, a pointer theme, the mark, the pictures of the hall of fame) into the files of the repository. A build reads the result, never the source |
 | `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `library-imports` | Checks that each import of each source file of the kernel and of the contract packages names a package of the compiler or a contract package ("The imports of the kernel and of the contract packages") |
@@ -721,7 +723,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `tcp` | The two machines of TCP |
 | `quic` | The machine of QUIC through the network service |
 | `quic-real` | The QUIC client of OpenSSL against `quic_echo`, through the UDP relay of the peer |
-| `random` | The three machines of the randomness |
+| `random` | The three machines of the randomness: the first has the entropy device (`virtio-rng-pci`), the other two have none |
 | `crypto` | The machine of the module `cryptography` |
 | `extended_state` | The three machines of the extended state |
 | `return_fault` | The machine of the return to a program |
@@ -729,7 +731,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `debugger` | The two machines of the debugger: the contract of the kernel, then the commands of the service `debugger` |
 | `kernel_events` | The machine of the kernel events |
 | `guest` | The machine of a guest: `guest_demo` runs seven bytes of 16-bit code in a guest, receives its port write of 42 to the port 0x80 as an exit record, sees its `hlt`, and gets its `int1` as an exit `Other` with the exit code 0x88 (icebp). The tool reads the host first: on a host that gives the test machine no SVM, the machine checks only that `Guest_Run` gives `Unsupported`, and the tool writes that no guest ran, and why (`ARCHITECTURE.md`, "A guest") |
-| `iommu` | The machine with the IOMMU of Intel with interrupt remapping (`intel-iommu,intremap=on`, `kernel-irqchip=split`), with the disk of the measures behind a root port of PCI Express: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, whose message interrupt arrives through its entry, whose messages to entries that it was not given are refused with a line, and whose device does not reach a page that it did not declare, then `net`, whose datagram region the network device reads through a device window (`ARCHITECTURE.md`, "K5. Device grant and interrupts") |
+| `iommu` | The machine with the IOMMU of Intel with interrupt remapping (`intel-iommu,intremap=on`, `kernel-irqchip=split`), with the disk of the measures behind a root port of PCI Express and the entropy device: the system with translation and interrupt remapping on, the two reads of the entropy device through the unit, then the test device service `iommu_device` on that disk, whose message interrupt arrives through its entry, whose messages to entries that it was not given are refused with a line, and whose device does not reach a page that it did not declare, then `net`, whose datagram region the network device reads through a device window (`ARCHITECTURE.md`, "K5. Device grant and interrupts") |
 | `iommu_amd` | The machine with the IOMMU of AMD with interrupt remapping (`amd-iommu,dma-remap=on,intremap=on`, `kernel-irqchip=split`), with the disk of the measures on bus 0 at the place 17: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, whose message interrupt arrives through the interrupt table of its device, and whose device does not reach a page that it did not declare, with the line of the DMA fault from the event log; QEMU records no event for a refused message, so no line of a refused interrupt is waited for; then `net` through a device window |
 | `shortage` | The machine of the shortage of frames |
 | `principals` | The two machines of the principals, then the six machines of the machine key sealed by the TPM, with a software TPM whose state they share and the firmware with no Secure Boot: five on the volumes of the test of the seal, one on the main volume, where the seal is refused (`PRINCIPALS.md`, "8. The tests") |
@@ -737,7 +739,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `ranges` | The machines of the ranges of storage |
 | `disk_programs` | The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant that a console of the session of the named principal alice gives survives the restart and her unlock ("The disk of the disk programs") |
 | `power` | The loss of power: of the storage, of the settings, of the ranges |
-| `trusted_boot` | The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot |
+| `trusted_boot` | The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot; then the release image: the volume of Secure Boot packaged as the files of a release, verified, decompressed and started from its GPT disk |
 
 A part builds only the boot volumes that its machines boot ("The incremental build", "The volumes of a command"). Each part boots the main boot volume, `build/boot_volume.img`, with these differences:
 
@@ -1230,7 +1232,7 @@ The host tests of the generator are in `mark_pictures_test.odin` and `mark_forma
 
 ### The release
 
-A release (`GLOSSARY.md`, "Release") is one section of `CHANGELOG.md`, one commit on `master`, and its release tag `v<release number>` on that commit. `modustool ship` makes the three and pushes them at once. The intent is `src/md/infrastructure/releases.md`.
+A release (`GLOSSARY.md`, "Release") is one section of `CHANGELOG.md`, one commit on `master`, and its release tag `v<release number>` on that commit. `modustool ship` makes the three and pushes them at once. The intent is `src/md/infrastructure/releases.md`. The push of the release tag starts the release workflow, which publishes the release image of the release with `modustool release image` (`INSTALL.md`, `src/md/infrastructure/release_image.md`).
 
 ```
 ## [0.93.0] - 2026-11-15 18:48
