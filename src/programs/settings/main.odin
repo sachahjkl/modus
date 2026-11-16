@@ -200,19 +200,22 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 //
 // - **name**: the name of a setting, 32 bytes at most.
 //
-// The result is the length of the value name, and the text holds the value name. The text is empty, with the
-// result 0, for a name that no setting has or a name of more than 32 bytes. A text shorter than the value gets its
-// first bytes; the result still counts them all.
+// The result is the length of the value name, and the text holds the value name. A text shorter than the value
+// gets its first bytes; the result still counts them all. The result is a negative number with an error record
+// when the call fails:
+//
+// - `Absent` (-2): no setting has this name.
+// - `Too_Long` (-3): the name has more than 32 bytes.
 @(export, link_name = "get")
-get :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
+get :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	name_buffer: [32]u8
 	wanted, ok := copied(name^, name_buffer[:])
 	if !ok {
-		return 0
+		return errors.fail(error, ERROR_VALUE, .Too_Long, .Bytes, 1, i64(len(name^)), len(name_buffer))
 	}
 	setting, found := setting_of(wanted)
 	if !found {
-		return 0
+		return errors.fail(error, ERROR_NAME, .Absent, .None, 1)
 	}
 	values := settings.read(page).values
 	// The count of the whole text: a caller with a smaller buffer sees that

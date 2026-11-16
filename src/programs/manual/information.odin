@@ -228,9 +228,17 @@ replacements :: proc "c" (result: ^[]information.Replacement) -> i64 {
 }
 
 // problem gives the first rule of the format that a module breaks, by name or by hash, as a sentence: the table, the record and the byte of the file. The text is empty when the module keeps each rule.
+//
+// **Result**: the count of bytes of the sentence, 0 for a module that keeps each rule, or a negative number with an
+// error record:
+//
+// - `Absent` (-1): no module of the boot image has this name or this hash.
 @(export, link_name = "problem")
-problem :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
+problem :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	found, problem := information.find(catalog(), name^)
+	if problem.kind == .No_Module {
+		return errors.fail(error, -1, .Absent, .Modules, 1)
+	}
 	if problem.kind == .None {
 		return 0
 	}

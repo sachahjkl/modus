@@ -760,15 +760,18 @@ usage :: proc "c" (result: ^[]Usage) -> i64 {
 	return 1
 }
 
-// stores gives the stores that the caller may name, one line for each, with its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for a principal sees them: the stores of that principal.
+// stores gives the stores that the caller may name, one line for each, with its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for a principal sees them: the stores of that principal. The result is the count of bytes of the text, or a negative number with an error record.
+//
+// **Error kinds**
+//
+// - `No_Grant` (-10, unit Acts_For_Principal: the caller does not act for a principal).
 @(export, link_name = "stores")
-stores :: proc "c" (result: ^[]u8) -> i64 {
+stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
-	writer := system.Writer{buffer = result^}
 	if !caller.acts_for_principal {
-		system.write_part(&writer, "no grant to see the stores")
-		return i64(writer.count + writer.dropped)
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
+	writer := system.Writer{buffer = result^}
 	parts := [?]system.Part{"generation ", root.generation, ", ", opened.in_use_count, " of ", root.disk_blocks, " blocks in use, ", commits, " commits and ", blocks_written, " blocks written since the start"}
 	for part in parts {
 		system.write_part(&writer, part)
