@@ -683,6 +683,28 @@ the_changes_that_a_file_takes :: proc(t: ^testing.T) {
 	}
 }
 
+// The prompt of an unlock offers the recovery key at once only for a file
+// that has a copy under one, and only when it asks for the passphrase.
+@(test)
+the_prompts_that_offer_the_recovery_key :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		form:    Principal_Record_Form,
+		has_tpm: bool,
+		offered: bool,
+	} {
+		{.Sealed_By_The_Tpm, true, true},
+		// With no TPM service the prompt asks for the recovery key already.
+		{.Sealed_By_The_Tpm, false, false},
+		// The form under the passphrase alone has no recovery key.
+		{.Passphrase, true, false},
+		{.Passphrase, false, false},
+		{.Unknown, true, false},
+	}
+	for item in cases {
+		testing.expect_value(t, recovery_key_offered_at_unlock(item.form, item.has_tpm), item.offered)
+	}
+}
+
 // A new recovery key changes only the copy under the recovery key: the two
 // additional data stay, so the seal under the seal key still opens, and a
 // new passphrase keeps the copy under the recovery key.
