@@ -312,6 +312,8 @@ An error record replaces `errno`, exceptions and error texts. A status or a nega
 
 The record has three places. A kernel operation gives it in the values of its completion record. A ring of a service gives it in the values of a completion whose status is not 0. An export writes it at an address that the caller gives, as its last parameter. A record names only what the caller gave and what the caller can see: no fact of another program.
 
+Each export that fails gives one, in every service and every module: a bare negative number with no record is not an answer of a failure, and `modustool check` refuses it (`src/md/api/export_error_records.md`).
+
 `system.error_text` writes one sentence from the record, for example "Memory_Map: the argument memory, handle 0x30004, has the rights Give Read; the operation needs Read Write".
 
 The design: `docs/MODULE_CONTRACT.md`, "The error record".

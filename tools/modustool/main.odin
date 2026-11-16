@@ -498,10 +498,11 @@ COMMANDS :: [?]Command {
 	// contract packages names a package of the base library or of the core
 	// library of the compiler, or a contract package. Each build runs it
 	// before its first compiler starts, and `modustool check` runs it.
-	// Checks two rules of the system that a reader had to trust: the count
-	// of the kernel operations against the properties, and no call of an
-	// allocator in a source of the system.
-	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, and that no source file of the system that is not a test calls or names an allocator", run = run_rule_checks},
+	// Checks three rules of the system that a reader had to trust: the count
+	// of the kernel operations against the properties, no call of an
+	// allocator in a source of the system, and an error record from each
+	// export that fails.
+	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, and that no export of a program or a module gives a negative number with no error record", run = run_rule_checks},
 	{name = "library-imports", about = "check that each import of each source file of " + SOURCE_FOLDER_KERNEL + " and of " + SOURCE_FOLDER_CONTRACT + " names a package of base:, of core: or under " + CONTRACT_IMPORT_START, run = run_library_imports},
 	// Works on the changelog: the fragments of `changelog.d/`, and the releases
 	// of `CHANGELOG.md`.
@@ -1057,8 +1058,9 @@ run_check :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	// The count of the kernel operations is the count that the properties
-	// state, and no source of the system calls an allocator.
-	if !operation_count_check() || !allocator_check() {
+	// state, no source of the system calls an allocator, and each export
+	// that fails gives an error record.
+	if !operation_count_check() || !allocator_check() || !export_error_record_check() {
 		return EXIT_FAILURE
 	}
 	// The tests of the memory procedures in assembly link the form of the

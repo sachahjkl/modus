@@ -557,13 +557,28 @@ modustool: src/kernel/serial.odin:12: the import "modus:support/sentence" is ref
 
 ## The rules that a check holds
 
-Two rules of the system are checked when the tool builds, not only read.
+Three rules of the system are checked when the tool builds, not only read.
 
 **The count of the kernel operations.** `PROPERTIES.md` states how many operations the kernel has, in the sentence "The kernel has <number> operations". The enumeration `Operation` of `src/library/contract/operation/operation.odin` declares them. The tool counts the members of the enumeration, without `None`, and compares the two numbers. A new operation is then refused until the property states the new count, with its reason.
 
 **No source of the system calls an allocator.** A program has no heap: its memory is a mapping that it asks the kernel for, or a variable of its module. The tool reads each source file of the kernel, of the boot program, of the programs, of the modules and of the source library that is not a test, and refuses a line that calls `make`, `new`, `new_clone`, `delete`, `free` or `free_all`, or that names `context.allocator`, `context.temp_allocator` or `[dynamic]`. A comment and the text of a string are not read. A procedure of the system whose name ends with one of these words, as `caller_grant_make`, is not a call of the built-in procedure. The compiler also gets `-default-to-nil-allocator`: with it a call of an allocator fails when the program runs; the check refuses the call before the program exists.
 
-**When they run.** `modustool check` runs both after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same two conditions on the sources of the repository.
+**Each export that fails gives an error record.** A caller reads why a call failed from the error record of the export (`MODULE_CONTRACT.md`, "8. Errors that diagnose"), never from a bare negative number. A negative result can be an answer (`number("-5")` is -5), so the check reads the forms of a failure, not the values. `export_error_record_check` (`tools/modustool/export_error_record_check.odin`) parses each source file of `src/programs` and of `src/modules` that is not a test, one folder as one package. For each export with an `i64` result, no parameter `error`, and a name other than `entry`, it refuses a `return` whose value is:
+
+- a minus before a literal, a call or a conversion, or before a constant of the package: `-1`, `-i64(status)`;
+- a constant of the package whose value is a minus before a literal: `ERROR :: -1`;
+- a `?:` or `if else` expression with such a value on one side, such a value in parentheses, or in a conversion to an integer type;
+- a call of a procedure of the same package, in any of its files, with such a `return`, at any depth.
+
+A minus before a variable is an answer, and a procedure literal inside the body is another procedure: the check reads neither. A refused `return` stops the check with its place:
+
+```
+modustool: src/programs/manual/main.odin:618: the export show gives a negative number with no error record: give it the last parameter error: ^errors.Error_Record, and write the record on this path with errors.fail (docs/MODULE_CONTRACT.md, "8. Errors that diagnose")
+```
+
+What it does not see: a `return` of a variable that holds a negative number, a helper of another package, and a failure that gives 0 or an empty text. Review holds them. The design: `src/md/api/export_error_records.md`.
+
+**When they run.** `modustool check` runs the three after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same three conditions on the sources of the repository.
 
 ## The reuse list
 
