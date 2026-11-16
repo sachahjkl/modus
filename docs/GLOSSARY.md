@@ -6370,7 +6370,7 @@ The TPM service seals with `TPM2_Create` under the storage key and a policy of `
 
 For the machine key of `machine_seal()` it is not an encryption under a passphrase: no passphrase is typed, and the strength is the TPM, not a derivation. For a named principal and for the machine passphrase, the TPM and the passphrase are needed together.
 
-The design: `src/md/features/tpm_sealed_machine_key.md`, `src/md/features/tpm_sealed_principal_keys.md`, `src/md/features/tpm_sealed_machine_passphrase.md`; `docs/PRINCIPALS.md`, "The machine key sealed by the TPM", "The keys sealed by the TPM" and "The machine passphrase with the TPM".
+The design: `src/md/features/tpm_sealed_machine_key.md`, `src/md/features/tpm_sealed_principal_keys.md`, `src/md/features/tpm_sealed_machine_passphrase.md`; `docs/PRINCIPALS.md`, "The machine key sealed by the TPM"; `docs/PRINCIPALS.md`, "The keys sealed by the TPM"; `docs/PRINCIPALS.md`, "The machine passphrase with the TPM".
 
 Do not use: bound to the TPM, TPM-encrypted, locked (for this).
 
