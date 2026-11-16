@@ -662,6 +662,7 @@ site_numbers_body :: proc(site: ^Site) -> string {
 		strings.write_string(&b, "</td></tr>\n")
 	}
 	site_table_end(&b, numbers_table)
+	site_measure_history_write(site, &b)
 	// How to read each number: the table quotes the line, this section
 	// says what the line measures and what it does not say.
 	strings.write_string(&b, "<h2 id=\"how-to-read\">How to read each number</h2>\n<p>A number is <strong>one run</strong> on the host of the record, under QEMU: it says what the system did there, not what it does on another machine. No test asserts a number: a test checks that a thing happens, and the number is printed for a reader. Compare two numbers only when the same host and the same build gave them.</p>\n")

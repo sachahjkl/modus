@@ -128,6 +128,13 @@ call_with_error :: proc "contextless" (error: ^errors.Error_Record, operation: o
 	for value, index in values {
 		command.values[index] = value
 	}
+	return command_call(error, command)
+}
+
+// command_call executes one command record of the kernel ring, as
+// call_with_error.
+@(private = "package")
+command_call :: proc "contextless" (error: ^errors.Error_Record, command: ring.Record) -> (results: [7]u64, status: Status) {
 	kernel := kernel_ring()
 	ring.push(&kernel.commands, command)
 	enter(0)

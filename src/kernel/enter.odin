@@ -35,7 +35,7 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			// The operation can have stopped this thread or its program: its
 			// slot keeps its program and its number until its processor
 			// leaves it (schedule), so the record names it.
-			event_record(cpu, .Operation, thread.program, thread.number, u64(command.kind), cycles_now() - started, u64(status))
+			event_record(cpu, .Operation, thread.program, thread.number, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), cycles_now() - started, u64(status))
 		}
 		// The operation can end the thread: then it does nothing more.
 		if intrinsics.atomic_load(&thread.stop_requested) {
@@ -43,8 +43,9 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		}
 		completion.kind = u32(status)
 		if status != .Ok {
-			// The error record: the values of a failed operation (diagnose.odin).
-			completion.values = transmute([7]u64)diagnose(thread.program, command, status)
+			// The error record: the values of a failed operation, and the
+			// table of error details that the command names (diagnose.odin).
+			completion.values = transmute([7]u64)diagnose_command(thread.program, command, status)
 		}
 		ring.push(&thread.ring.completions, completion)
 	}
@@ -1081,6 +1082,18 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		machine_stop(u8(v[1]))
 
 	case:
+		// A command that names a table of error details has a kind that no
+		// operation has, so only this branch reads the bit: the dispatch of
+		// a command with no table runs no added instruction. The command
+		// with the bit removed runs once, under the same locks
+		// (src/md/features/kernel_error_details.md).
+		if command.kind & op.COMMAND_NAMES_ERROR_DETAILS != 0 {
+			named := command
+			named.kind &~= op.COMMAND_NAMES_ERROR_DETAILS
+			if named.kind != 0 && named.kind <= u32(max(op.Operation)) && op.command_takes_error_details(op.Operation(named.kind)) {
+				return execute(index, named, results)
+			}
+		}
 	}
 	return .Bad_Operation
 }

@@ -143,6 +143,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Form", type_info_of(op.Form)},
 		{"operation", "Parameter_Form", type_info_of(op.Parameter_Form)},
 		{"operation", "Operation_Form", type_info_of(op.Operation_Form)},
+		{"operation", "Error_Details_Place", type_info_of(op.Error_Details_Place)},
 		{"operation", "Time_Record", type_info_of(op.Time_Record)},
 		{"operation", "Handle", type_info_of(op.Handle)},
 		{"operation", "Right", type_info_of(op.Right)},

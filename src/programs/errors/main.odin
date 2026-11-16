@@ -47,12 +47,19 @@
 // must explain its status; a record of the kind `Refused` (its cause was
 // gone when the kernel read the state again) must stay rare.
 //
+// **The table of error details of a kernel command.** `Memory_Create` with
+// two wrong arguments, a budget that names nothing and an unknown flag,
+// gives the two in its [table of error details](term:table-of-error-details),
+// one log line for each; a command with a table that succeeds leaves the
+// table empty; `Log`, whose last value is an argument, refuses a table.
+//
 // **The measures**, printed and never compared to a bound: a kernel
 // operation that succeeds and one that fails with its record; a direct
 // call that succeeds and one that fails; a refused `Log` over the limit of
 // a budget, measured by a child (a copy of this program with no log
 // records in its budget); a refused `Memory_Create`, with the takes of the
-// locks of the kernel.
+// locks of the kernel; a kernel command that succeeds and one that is
+// refused, each with no table of error details and with one.
 //
 // **Its grants**, one for each family: **Store** (the cases of the storage
 // service), **Image** (load modules, and start its child and the program
@@ -277,6 +284,102 @@ log_filter_check :: proc "contextless" () {
 	} else {
 		system.log("errors: WRONG: a name of a program with an escape byte gave ", status)
 	}
+}
+
+// The table of error details of a kernel command
+// (src/md/features/kernel_error_details.md): Memory_Create with two wrong
+// arguments, a budget handle of the index 0, which names nothing, and a flag
+// that the kernel does not know. The kernel refuses it for the budget, the
+// first argument that the operation reads, and the table holds the two
+// arguments in their order, each as one line of the log.
+DETAILS_NO_HANDLE :: u64(0)
+DETAILS_UNKNOWN_FLAG :: u64(0x100) // A bit that no flag of Memory_Create has.
+
+kernel_details_check :: proc "contextless" () {
+	records: [4]errors.Error_Record
+	details := system.Error_Details{records = &records[0], capacity = len(records)}
+	error: errors.Error_Record
+	_, status := system.call_with_error_details(&error, &details, .Memory_Create, DETAILS_NO_HANDLE, 1, DETAILS_UNKNOWN_FLAG)
+	written := system.error_details_written(&details)
+	for &detail, number in written {
+		buffer: [SENTENCE_CAPACITY]u8
+		writer := system.Writer{buffer = buffer[:]}
+		system.error_detail_number_text(&writer, u64(number + 1), details.count)
+		system.kernel_error_text(&writer, &detail)
+		system.log("errors: ", system.written(&writer))
+	}
+	two := status == .Bad_Handle && details.count == 2 && len(written) == 2 && written[0] == error
+	two &&= errors.Kind(written[0].kind) == .Handle_Absent && written[0].argument == 1
+	two &&= errors.Kind(written[1].kind) == .Bad_Flags && written[1].argument == 3 && u64(written[1].value) == DETAILS_UNKNOWN_FLAG
+	if two {
+		system.log("errors: a kernel command with two wrong arguments gives the two in its table of error details: as it must")
+	} else {
+		system.log("errors: WRONG: a kernel command with two wrong arguments gave the status ", status, " and ", details.count, " error details")
+	}
+	// A table of one place for two details: the Append rule. The kernel
+	// writes the first detail, the error record, and counts the two.
+	small := system.Error_Details{records = &records[0], capacity = 1}
+	records[1] = {}
+	_, status = system.call_with_error_details(&error, &small, .Memory_Create, DETAILS_NO_HANDLE, 1, DETAILS_UNKNOWN_FLAG)
+	shown := system.error_details_written(&small)
+	rest_buffer: [SENTENCE_CAPACITY]u8
+	rest := system.Writer{buffer = rest_buffer[:]}
+	system.error_details_rest_text(&rest, u64(len(shown)), small.count)
+	system.log("errors: a table of 1 place: ", system.written(&rest))
+	if status == .Bad_Handle && small.count == 2 && len(shown) == 1 && shown[0] == error && records[1] == (errors.Error_Record{}) {
+		system.log("errors: a table smaller than its error details holds the first and counts each one: as it must")
+	} else {
+		system.log("errors: WRONG: a table of 1 place gave the status ", status, " and the count ", small.count)
+	}
+	// A command with a table that succeeds leaves the table as it was.
+	details.count = 0
+	_, status = system.call_with_error_details(&error, &details, .Handle_State, u64(system.own_budget()))
+	if status == .Ok && details.count == 0 {
+		system.log("errors: an accepted kernel command leaves its table of error details empty: as it must")
+	} else {
+		system.log("errors: WRONG: an accepted kernel command with a table gave the status ", status, " and ", details.count, " error details")
+	}
+	// Log uses its last value: with the bit, the kernel refuses the command
+	// and writes no detail.
+	text := "x"
+	_, status = system.call_with_error_details(&error, &details, .Log, u64(ctx_log), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0, 0)
+	if status == .Bad_Operation && errors.Kind(error.kind) == .Unsupported && details.count == 0 {
+		system.log("errors: Log refuses a table of error details: as it must")
+	} else {
+		system.log("errors: WRONG: Log with a table of error details gave the status ", status, " and ", details.count, " error details")
+	}
+}
+
+// kernel_details_measure measures a command that succeeds and one that the
+// kernel refuses, each with no table and with a table of error details: the
+// least of 3 runs, in nanoseconds for one command. Printed, never compared.
+kernel_details_measure :: proc "contextless" () {
+	DETAILS_CALLS :: 100_000
+	budget := u64(system.own_budget())
+	records: [4]errors.Error_Record
+	error: errors.Error_Record
+	// 0 and 1: accepted, with no table and with one; 2 and 3: refused.
+	best := [4]u64{max(u64), max(u64), max(u64), max(u64)}
+	for _ in 0 ..< 3 {
+		for variant in 0 ..< len(best) {
+			details := system.Error_Details{records = &records[0], capacity = len(records)}
+			table: ^system.Error_Details
+			if variant % 2 == 1 {
+				table = &details
+			}
+			start := system.nanoseconds()
+			for _ in 0 ..< DETAILS_CALLS {
+				details.count = 0
+				if variant < 2 {
+					system.call_with_error_details(&error, table, .Handle_State, budget)
+				} else {
+					system.call_with_error_details(&error, table, .Memory_Create, DETAILS_NO_HANDLE, 1, DETAILS_UNKNOWN_FLAG)
+				}
+			}
+			best[variant] = min(best[variant], (system.nanoseconds() - start) / DETAILS_CALLS)
+		}
+	}
+	system.log("errors: a kernel command and its table of error details: accepted with no table ", best[0], " ns, with a table ", best[1], " ns; refused with its error record ", best[2], " ns, with its 2 error details ", best[3], " ns")
 }
 
 case_name :: proc "contextless" (writer: ^system.Writer) -> bool {
@@ -1019,12 +1122,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("errors: ", u64(wrong), " cases of ", u64(len(cases)), " gave another answer")
 	}
 	log_filter_check()
+	kernel_details_check()
 	if !contend() {
 		system.log("errors: WRONG: the case under contention failed")
 	}
 	measure()
 	families_measure(ctx)
 	refusals(ctx)
+	kernel_details_measure()
 	system.log("errors: a kernel operation that succeeds: ", kernel_good, " ns; one that fails, with its error record: ", kernel_failed, " ns; a direct call that succeeds: ", direct_good, " ns; one that fails: ", direct_failed, " ns")
 
 	pressed := false

@@ -245,7 +245,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 ### Pointer
 
 - The pointer is an arrow of squares of 2 pixels, 8 squares wide and 11 high: black at the edge, white inside. Its point is the top left square. This arrow is the shape `arrow` of the pointer theme of the system (`resources/pointers/system.manifest`). Each other pointer shape of that theme has the same style: squares of 2 pixels, black and white.
-- **Not a rectangle.** The theme "Posy's Cursor" (`docs/POINTERS.md`) is a build input. When the build has it, it is the default pointer theme. Its pointer pictures have smooth edges, curves and transparency: they are not rectangles. The pointer picture is the one picture resource of the desktop that does not follow sections 2 and 7. It is drawn with a blend of premultiplied alpha. The windows, the bar, the menus, the palette and each program keep rectangular forms and no transparency.
+- **Not a rectangle.** The theme "Posy's Cursor" (`docs/POINTERS.md`) is a build input of the development shell. When the build has it, it is the default pointer theme. A release image holds the theme of the system only. Its pointer pictures have smooth edges, curves and transparency: they are not rectangles. The pointer picture is the one picture resource of the desktop that does not follow sections 2 and 7. It is drawn with a blend of premultiplied alpha. The windows, the bar, the menus, the palette and each program keep rectangular forms and no transparency.
 
 ### Palette
 

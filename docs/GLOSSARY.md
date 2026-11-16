@@ -320,7 +320,7 @@ Do not use: errno, exception, error code, detail record, error message.
 
 ### Error detail
 
-An error detail is one thing that a call that failed has to say, as one record of the error form of the call: an error record for an export, a load error for the loader.
+An error detail is one thing that a call that failed has to say, as one record of the error form of the call: an error record for an export and a kernel command, a load error for the loader.
 
 An error record holds one failure: the first argument that is wrong. A caller that wants each failure gives a table of error details, and the callee appends one detail for each thing that it finds, in order. The error record of the call is the first detail, so a caller with no table receives the same first answer.
 
@@ -332,13 +332,15 @@ Do not use: sub-error, cause, inner error, error list, diagnostic.
 
 ### Table of error details
 
-A table of error details is an optional Append table parameter of error details, in memory of the caller: the last parameter of an export that has an error record.
+A table of error details is an optional Append table of error details, in memory of the caller: the last parameter of an export that has an error record, or the table that a kernel command names in its last value.
 
 The table follows the rules of each Append table: the callee writes the details that fit, and the count is the count of all the details, also those that did not fit. With no table (`nil` in a direct call, the capacity 0 in an isolated call) the call gives its error record only. On success the callee does not touch the table, so the path of success costs nothing.
 
 In Odin the parameter is `details: ^system.Table_To_Append(errors.Error_Record)`. A reader finds it with `module.error_details_parameter`.
 
-The design: `docs/MODULE_CONTRACT.md`, "The table of error details".
+A kernel command names its table with bit 31 of its kind (`op.COMMAND_NAMES_ERROR_DETAILS`) and the address of the table in its last value: `system.call_with_error_details`. When the kernel refuses the command, it writes the error record, then one detail for each other argument that it finds wrong: a handle, a count, a set of flags or a choice. In the source of the kernel, a command with no table runs no added line.
+
+The design: `docs/MODULE_CONTRACT.md`, "The table of error details"; for a kernel command, "Kernel operations".
 
 Do not use: error list, error buffer, error stack, error chain.
 
@@ -4842,9 +4844,9 @@ A pointer theme is the pointer pictures of each pointer shape, with a name, a li
 The system has two themes:
 
 - the theme of the system (`resources/pointers/system.manifest`): the 15 shapes as grids of squares of 2 pixels, in the style of the arrow of the design rules. It is always in the boot image, as the resource `pointers_system`.
-- the Posy theme, "Posy's Cursor", from the build input `posy-cursors`: the tool converts it at each build into the resource `pointers_posy`. No file of it is in the repository.
+- the Posy theme, "Posy's Cursor", from the build input `posy-cursors` of the default development shell: the tool converts it at each build into the resource `pointers_posy`. No file of it is in the repository, and no release image holds it: its license allows no public download.
 
-The Posy theme is the default when the build has its input; the theme of the system is the fallback. The setting `pointer_theme` chooses one of them.
+The Posy theme is the default when the build has its input; the theme of the system is the fallback, and the one theme of a release image. The setting `pointer_theme` chooses one of them.
 
 A pointer theme is not an icon theme: it holds the pictures of the pointer only.
 
@@ -6277,7 +6279,7 @@ Do not use: production volume, installer.
 
 The release image is the disk image that a release publishes: a GPT disk whose one partition, the EFI system partition, is the release volume, compressed with zstd.
 
-A principal writes it to a USB key with `dd` (`docs/INSTALL.md`, "3. Write the USB key"). The boot volume of the tests has no partition table; the release image has one, because the firmware of a real machine reads a GPT disk. The GUIDs of the disk come from the hash of the volume, so one volume gives one disk. File: `modus-<release number>-x86_64.img.zst`.
+A principal writes it to a USB key with `dd` (`docs/INSTALL.md`, "3. Write the USB key"). The boot volume of the tests has no partition table; the release image has one, because the firmware of a real machine reads a GPT disk. The GUIDs of the disk come from the hash of the volume, so one volume gives one disk. Its only pointer theme is the theme of the system: a release image never holds the Posy theme. File: `modus-<release number>-x86_64.img.zst`.
 
 The design: `src/md/infrastructure/release_image.md`.
 
@@ -7257,6 +7259,16 @@ The site workflow runs no machine test, so the pass that commits the pictures al
 The design: `docs/SITE.md`, "The measure record".
 
 Do not use: benchmark results, metrics file, numbers cache.
+
+### Measure history
+
+The measure history is the folder `docs/measures/releases/`: one copy of the measure record for each release that a full check measured, named by its release number.
+
+It lets a reader see whether a change made the system faster or slower. `modustool changelog release` writes the copy of each new release, and `modustool measure-history` gave the old release tags their copies. A release whose record holds the same run as the release before gets no copy. The page of the measured numbers draws, from the copies, one chart for each measure over the releases: one number of its line, at equal steps, from zero. It is not a record of each full check: a full check between two releases replaces the measure record only.
+
+The design: `src/md/features/measure_history.md`; `docs/SITE.md`, "The measure history".
+
+Do not use: benchmark history, performance log, trend file.
 
 ### Measure run
 

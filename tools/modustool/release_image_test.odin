@@ -1,11 +1,13 @@
 package modustool
 
 import "core:encoding/base64"
+import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
 import "modus:contract/blake3"
+import "modus:contract/pointer_pictures"
 import "modus:contract/replacement_list"
 import "modus:contract/system_description"
 import "modus:support/cryptography/ed25519"
@@ -194,6 +196,59 @@ a_volume_of_a_test_is_never_packaged :: proc(t: ^testing.T) {
 
 	_ = os.remove(signed_by_file_path(volume))
 	testing.expect(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_hash) != "", "a volume that does not say who signed it is refused")
+}
+
+// release_test_pointer_theme makes a pointer theme file of one shape under
+// a license, as the build makes one from a manifest.
+@(private = "file")
+release_test_pointer_theme :: proc(t: ^testing.T, license: string) -> []u8 {
+	text := fmt.tprintf("theme Small\nlicense %s\nattribution a theme of a test\nsizes 12\nshape arrow hot 0 0\n|X\n", license)
+	manifest, problem := manifest_parse("release_test.manifest", text)
+	testing.expect_value(t, problem, "")
+	file, _, made_problem := pointer_theme_make(manifest, "")
+	testing.expect_value(t, made_problem, "")
+	return file
+}
+
+// A published volume holds the pointer theme of the system only: the
+// resource of the theme of the owner is refused by its name, and a pointer
+// theme file under another license by its header, whatever its name. A
+// volume of the machine test, a development build, may hold them.
+@(test)
+a_release_holds_the_pointer_theme_of_the_system_only :: proc(t: ^testing.T) {
+	folder, error := os.make_directory_temp("", "release_image_test_*", context.temp_allocator)
+	testing.expect_value(t, error, nil)
+	defer os.remove_all(folder)
+	volume := join(folder, "/boot_volume_test.img")
+	root_text, console_text, kernel_text: string = "the module root of the build", "the module console of the build", "the kernel of the build"
+	kernel_hash := blake3.hash(transmute([]u8)kernel_text)
+	repository_license, license_found := repository_license_read()
+	testing.expect(t, license_found, "LICENSE names an SPDX identifier")
+	owner_text: string = "any bytes under the name of the theme of the owner"
+
+	cases := []struct {
+		resource_name: string,
+		file:          []u8,
+		accepted:      bool,
+		about:         string,
+	} {
+		{pointer_pictures.RESOURCE_OF_THE_SYSTEM, release_test_pointer_theme(t, repository_license), true, "a theme under the license of the repository"},
+		{pointer_pictures.RESOURCE_OF_THE_OWNER, transmute([]u8)owner_text, false, "the name of the theme of the owner"},
+		{pointer_pictures.RESOURCE_OF_THE_SYSTEM, release_test_pointer_theme(t, "CC-BY-NC-4.0"), false, "a theme of others under the name of the theme of the system"},
+		{"pointers_renamed", release_test_pointer_theme(t, "CC-BY-NC-4.0"), false, "a theme of others under a new name"},
+	}
+	for item in cases {
+		files := make([]Image_File, RELEASE_TEST_MODULE_COUNT + 1, context.temp_allocator)
+		files[0] = Image_File{name = ROOT_SERVICE_MODULE, file = transmute([]u8)root_text}
+		files[1] = Image_File{name = "console", file = transmute([]u8)console_text}
+		files[2] = Image_File{name = item.resource_name, file = item.file}
+		build_image := boot_image_encode(files, RELEASE_TEST_MODULE_COUNT)
+		release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, files, kernel_text)
+		problem := release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_hash)
+		testing.expectf(t, (problem == "") == item.accepted, "%s: accepted is %v, the problem is \"%s\"", item.about, item.accepted, problem)
+		release_test_volume_write(volume, SIGNED_BY_TEST_KEY_TEXT, files, kernel_text)
+		testing.expect_value(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_hash), "")
+	}
 }
 
 @(test)

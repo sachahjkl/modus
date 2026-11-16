@@ -2651,6 +2651,15 @@ scenario := [?]Step {
 	// continuation. The line holds no byte that a terminal acts on.
 	{kind = .Wait, text = "[errors] errors: a log line with control bytes: ?[2J????( as it must"},
 	{kind = .Wait, text = "errors: a name of a program with an escape byte is refused: as it must"},
+	// The table of error details of a kernel command: each wrong argument,
+	// not only the first (src/md/features/kernel_error_details.md).
+	{kind = .Wait, text = "errors: detail 1 of 2: Memory_Create: the argument budget, 0x0, names no handle of this program"},
+	{kind = .Wait, text = "errors: detail 2 of 2: Memory_Create: the argument flags has the flags 0x100; the call knows the flags 0xf"},
+	{kind = .Wait, text = "errors: a kernel command with two wrong arguments gives the two in its table of error details: as it must"},
+	{kind = .Wait, text = "errors: a table of 1 place: 1 more error detail did not fit in the table of error details"},
+	{kind = .Wait, text = "errors: a table smaller than its error details holds the first and counts each one: as it must"},
+	{kind = .Wait, text = "errors: an accepted kernel command leaves its table of error details empty: as it must"},
+	{kind = .Wait, text = "errors: Log refuses a table of error details: as it must"},
 	{kind = .Wait, text = "errors: under contention: "},
 	// A text longer than one row of log.records (one log record, 152
 	// bytes): its end is in the next row, and the tool joins the rows.
@@ -2658,6 +2667,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " handles; 0 records contradict their status, "},
 	{kind = .Wait, text = "errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", any_order = true},
 	{kind = .Wait, text = " refused Memory_Create: "},
+	{kind = .Wait, text = "errors: a kernel command and its table of error details: accepted with no table "},
 	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},
 	{kind = .Front, text = "errors"},
 	{kind = .Key, text = "b"},
@@ -2787,7 +2797,10 @@ scenario := [?]Step {
 	// The pointer pictures (docs/POINTERS.md): the shape that the compositor
 	// chooses for what is under the pointer, and the shape that a program
 	// asks for over its own surface. The window of pointers shows each
-	// shape of the theme of the owner, then of the theme of the system.
+	// shape of the theme of the owner when the build has it (the default
+	// development shell), then of the theme of the system, which the checks
+	// of the flake and a release image hold alone. Its first button is the
+	// theme of the system in both cases.
 	{kind = .Launch, text = "pointers"},
 	{kind = .Wait, text = "pointers: ok, ", any_order = true},
 	{kind = .Wait, text = "compositor: surface pointers"},
@@ -2799,7 +2812,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "pointers"},
 	{kind = .Point, inside_window = "pointers", x = 2 + 16 + 60, y = 24 + 216 + 60, text = "arrow"}, // The tile of arrow.
 	{kind = .Point, inside_window = "pointers", x = 2 + 592 + 60, y = 24 + 216 + 60, text = "move"}, // The tile of move.
-	{kind = .Click, inside_window = "pointers", x = 300, y = 60}, // The second button: the theme of the system.
+	{kind = .Click, inside_window = "pointers", x = 100, y = 60}, // The first button: the theme of the system.
 	{kind = .Wait, text = "pointers: the theme pointers_system is shown"},
 	{kind = .Point, inside_window = "pointers", x = 2 + 784 + 60, y = 24 + 368 + 60, text = "help"}, // The tile of help, in the theme of the system.
 	{kind = .Shot, text = "pointers_system"},
@@ -2847,7 +2860,6 @@ scenario := [?]Step {
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off, keyboard layout us"},
 	{kind = .Shot, text = "font_without_grid_fit"},
 	{kind = .Call, text = "settings.set(\"pointer_theme\", \"system\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the pointer theme in use: System", any_order = true}, // Written before the line of the change.
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme system, grid fit off, keyboard layout us; "},
 	{kind = .Point, inside_window = "settings", x = 100, y = 12, text = "move"}, // The title bar, in the theme of the system.
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"bgr\")", expected = "1"},
