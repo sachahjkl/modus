@@ -1,17 +1,21 @@
 package kernel
 
 import "base:intrinsics"
+import op "modus:contract/operation"
 
 // The limits of a budget: processor time and log records. A program cannot
 // take all the processor time or fill the log: each resource has a limit.
 //
 // Pages, programs and threads are things that a budget holds: they move
-// from a budget to a new budget, and they return. Time does not return, so
-// processor time and log records are limits for each second:
+// from a budget to a new budget, and they return. The log records of each
+// second move in the same way: a new budget takes its records of each
+// second from the budget that it came from, and gives them back at its end,
+// so no budget learns from a refusal what another one wrote (budget_log).
+//   log_records: records that the budget can write on the log in each second.
+// Processor time is a limit for each second:
 //   processor:   microseconds of processor time in each second, on all the
 //                processors together. 1 000 000 is one full processor.
-//   log_records: records that the budget can write on the log in each second.
-// A limit is for a budget and for each budget that came from it: the kernel
+// It is for a budget and for each budget that came from it: the kernel
 // counts what a thread uses in the budget of the thread and in each budget
 // above it. A new budget cannot have a limit above the limit of the budget
 // that it came from. A budget with the limit 0 has no time: its threads do
@@ -37,6 +41,9 @@ import "base:intrinsics"
 // processor_sync to all processors (budget_create).
 LIMIT_PERIOD :: 100 // Milliseconds.
 LOG_PERIOD :: 1000 // Milliseconds.
+// The root budget holds the log records of a program of normal use for
+// each program slot: the contract counts the slots of the kernel.
+#assert(PROGRAM_CAPACITY == op.PROGRAM_SLOTS_OF_THE_MACHINE)
 
 // budget_charge counts the time of the thread of a processor, up to now,
 // and gives it: the strategy charges the same time (strategy.odin).
@@ -102,52 +109,86 @@ budget_period :: proc "contextless" (now: u64) {
 	}
 }
 
-// budget_log counts one log record of a program. false: a budget has no
-// record left in this second. The word `logged` holds the second in its
-// high 32 bits and the count of that second in its low 32 bits: a new
-// second starts at 0 with no reset by another processor. A record is
-// accepted only if each budget of the chain counted it under its limit; a
-// refusal takes back the counts that this record added, in the same second
-// only. So no budget accepts more records than its limit in one second.
-budget_log :: proc "contextless" (index: u32) -> bool {
+// budget_log_count_to_child moves into a new budget the part of the count
+// of this second of its parent that the parent's new amount no longer
+// holds, at most the amount of the child. Without it, a child would start
+// at 0, and a loop of starts and stops of a child would write past the
+// amount of its starter in one second. The caller holds the frame lock and
+// subtracted the amount of the child from the parent before.
+budget_log_count_to_child :: proc "contextless" (parent: u32, child: u32) {
 	second := intrinsics.atomic_load(&time_milliseconds) / LOG_PERIOD
-	counted: [BUDGET_CAPACITY]u32
-	depth := 0
-	accepted := true
-	for at := index; at != 0 && depth < BUDGET_CAPACITY; at = intrinsics.atomic_load(&budgets[at].parent) {
-		budget := &budgets[at]
-		for {
-			word := intrinsics.atomic_load(&budget.logged)
-			count := word >> 32 == second ? word & 0xFFFF_FFFF : 0
-			if count >= budget.amounts.log_records {
-				accepted = false
-				break
-			}
-			if _, swapped := intrinsics.atomic_compare_exchange_strong(&budget.logged, word, second << 32 | (count + 1)); swapped {
-				counted[depth] = at
-				depth += 1
-				break
-			}
+	from := &budgets[parent]
+	left := intrinsics.atomic_load(&from.amounts.log_records)
+	child_amount := budgets[child].amounts.log_records
+	for {
+		word := intrinsics.atomic_load(&from.logged)
+		count := word >> 32 == second ? word & 0xFFFF_FFFF : 0
+		part := min(child_amount, count > left ? count - left : 0)
+		if part == 0 {
+			return
 		}
-		if !accepted {
-			break
+		if _, swapped := intrinsics.atomic_compare_exchange_strong(&from.logged, word, second << 32 | (count - part)); swapped {
+			intrinsics.atomic_store(&budgets[child].logged, second << 32 | part)
+			return
 		}
 	}
-	if accepted {
+}
+
+// budget_log_count_to_parent adds the count of this second of a budget that
+// ends to its parent, as its amount returns: the records that it wrote in
+// this second stay spent. The caller holds the frame lock.
+budget_log_count_to_parent :: proc "contextless" (index: u32, parent: u32) {
+	second := intrinsics.atomic_load(&time_milliseconds) / LOG_PERIOD
+	word := intrinsics.atomic_load(&budgets[index].logged)
+	if word >> 32 != second || word & 0xFFFF_FFFF == 0 {
+		return
+	}
+	part := word & 0xFFFF_FFFF
+	to := &budgets[parent]
+	for {
+		parent_word := intrinsics.atomic_load(&to.logged)
+		count := parent_word >> 32 == second ? parent_word & 0xFFFF_FFFF : 0
+		if _, swapped := intrinsics.atomic_compare_exchange_strong(&to.logged, parent_word, second << 32 | (count + part)); swapped {
+			return
+		}
+	}
+}
+
+// budget_log counts the log records of one Log of a program in the budget
+// that pays for it: all of them, or none. false: the budget has not that
+// many records left in this second. The word
+// `logged` holds the second in its high 32 bits and the count of that
+// second in its low 32 bits: a new second starts at 0 with no reset by
+// another processor.
+//
+// The log records of each second are an amount that a budget holds, as its
+// pages: Budget_Create moves them to the new budget, and the end of the
+// budget gives them back. So a budget counts only its own records, and the
+// records of a tree of budgets are still at most the amount of its top. A
+// count in each budget above would tell a program, by a refusal, that the
+// others wrote much (src/md/features/log_side_channels.md).
+budget_log :: proc "contextless" (index: u32, records: u64) -> bool {
+	// Budget 0 is no budget: it holds what returned to no budget, and a
+	// program whose budgets all ended counts nowhere, as a processor time
+	// that no budget charges.
+	if index == 0 {
 		return true
 	}
-	for at in counted[:depth] {
-		budget := &budgets[at]
-		for {
-			word := intrinsics.atomic_load(&budget.logged)
-			if word >> 32 != second || word & 0xFFFF_FFFF == 0 {
-				break
-			}
-			if _, swapped := intrinsics.atomic_compare_exchange_strong(&budget.logged, word, word - 1); swapped {
-				break
-			}
+	second := intrinsics.atomic_load(&time_milliseconds) / LOG_PERIOD
+	budget := &budgets[index]
+	// One read: Budget_Create and the end of a child change the amount
+	// under the frame lock, and a record checked against a value that held
+	// is right.
+	limit := intrinsics.atomic_load(&budget.amounts.log_records)
+	for {
+		word := intrinsics.atomic_load(&budget.logged)
+		count := word >> 32 == second ? word & 0xFFFF_FFFF : 0
+		if count + records > limit {
+			intrinsics.atomic_add(&budget.refused, records)
+			return false
+		}
+		if _, swapped := intrinsics.atomic_compare_exchange_strong(&budget.logged, word, second << 32 | (count + records)); swapped {
+			return true
 		}
 	}
-	intrinsics.atomic_add(&budgets[index].refused, 1)
-	return false
 }

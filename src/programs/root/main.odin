@@ -631,7 +631,7 @@ shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
 		programs    = 1,
 		threads     = 8,
 		processor   = own.processor,
-		log_records = 1000,
+		log_records = LOG_RECORDS_OF_A_PROGRAM,
 	}
 	if _, status := system.program_start(system.image_find(image, "shortage"), "shortage", grants, random.values_with_seed(&program_generator, {}), amounts, nil, &prepared); status != .Ok {
 		system.log("root: cannot start shortage: status ", status)

@@ -29,6 +29,7 @@ Each kind of content has one place. The intent of a design is in `src/md`. A gui
 - `ROADMAP.md`, at the root of the repository, next to `CHANGELOG.md`, holds the planned work of this project. It is the one place of the plans: do not keep a plan in a guide or in a to-do file outside the repository.
 - The file is plain Markdown that a reader understands without a tool: no YAML, no front matter, no metadata field, no HTML.
 - Its shape: the title `# Roadmap`, then the sections `## Now`, `## Next` and `## Later`, in this order. Each section is a list. `Now` is the work in progress, `Next` the work that is decided and comes after, `Later` the work that is wanted and has no order. Give no dates.
+- An optional last section `## Maybe`, after `## Later`, holds what may be done one day and is not decided: each entry says the ways open and what each waits for.
 - A roadmap entry (`docs/GLOSSARY.md`) is `- **<summary>.** <one or two sentences>`: a short bold summary, then what the work gives the user of the system, or the developer who builds on it. Do not say how the code changes. Name no person.
 - If an intent file holds the design of the work, end the entry with its design link: `[Design](src/md/<file>.md)`.
 - When you plan a work, add its entry. When a work starts or is decided, move its entry to its section.

@@ -150,7 +150,7 @@ The table `Budget` holds one record at index 1, `module.Budget_Request` (24 byte
 
 - **No table.** A module with no table `Budget` asks for the least budget of its starter.
 - **A part that is 0** asks for the least budget of that part. So a record of an older, shorter size reads its missing parts as the least, by the rule of the table directory.
-- **Processor time and log records are not in the request.** They are limits that protect the other programs: the starter sets them.
+- **Processor time and log records are not in the request.** They protect the other programs: the starter sets them.
 
 **The source states only what the tool cannot count**: its stated budget, one constant of the type `system.Stated_Budget`, with a comment that gives the reasons of the amounts:
 
@@ -185,13 +185,13 @@ The step that describes the exports reads the constant from the tree of the pars
 | The least budget | 2048 | 1 | 1 |
 | The largest budget of a program | 16384 | 8 | 32 |
 
-Each program gets one processor of time for each of its threads, and 1000 log records in each second. The root service keeps a table of budget exceptions (`budget_exceptions` in `src/programs/root/budgets.odin`): a row names one program of the boot image, gives it another largest budget or other limits in time, and holds its reason. A disk program and a module of another project have no row.
+Each program gets one processor of time for each of its threads, and 1000 log records in each second (`op.LOG_RECORDS_OF_A_PROGRAM`), which leave the budget of the root service while it runs: the machine has 64 000 (`op.LOG_RECORDS_OF_THE_MACHINE`), 1000 for each program slot (`src/md/features/log_side_channels.md`). The root service keeps a table of budget exceptions (`budget_exceptions` in `src/programs/root/budgets.odin`): a row names one program of the boot image, gives it another largest budget or other limits in time, and holds its reason. A disk program and a module of another project have no row.
 
 **A disk program** is paid by one budget that the root service makes from its own at the first disk program, and keeps (`src/library/support/disk_program/budget.odin`):
 
 | Amount | Pages | Programs | Threads | Processor | Log records |
 |---|---|---|---|---|---|
-| The budget of all disk programs | 16384 | 4 | 16 | two processors | 1000 in each second |
+| The budget of all disk programs | 16384 | 4 | 16 | two processors | 4000 in each second |
 | The largest budget of one disk program | 8192 | 1 | 4 | one processor for each thread | 1000 in each second |
 
 A file chooses its own request, so the sum of all disk programs has one bound: the programs of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk program holds no grant that starts a program, so one program slot loses nothing. The log has one line when the budget of the disk programs is made:
@@ -1173,7 +1173,7 @@ The kinds, the meaning of `limit` and `found` for each kind, and the units are i
 - **P20**: the record gives the amounts of a budget only when the handle of the caller has the right Read, and the state of a program only when the handle has Read: the operations that read them need this right. The rule for each record: it gives no fact of another program, or of the machine, that the status and the facts of the caller do not already give. Each case, in `src/kernel/diagnose.odin`:
   - `Handle_Give` with `No_Slot`: the table of the target is full. It is the one cause of this status; the record adds the handle of the caller and a constant capacity.
   - A full table of the machine (memory objects, programs, budgets, message interrupts): the kernel names it only when the handle table of the caller has a free place, which the caller can count, and only for an operation where that table is the one cause that the status leaves. `Thread_Create` and `Program_Start` can fail on two tables of the machine (memory objects, threads): which one is full is a fact of the machine that the status does not give, so the record is `Refused`. The control lock is taken only for `Program_Create`, `Budget_Create` and `Device_Create`. The record adds a constant capacity, never a count of what other programs hold.
-  - The log limit: the counts of the budget that paid for the program, only when the program holds that budget with Read (else `Budget_Hidden`). A budget above it is never described.
+  - The log limit: the counts of the budget that paid for the program, only when the program holds that budget with Read (else `Budget_Hidden`). No other budget counts a log record.
   - `No_Target`: one sentence for "no other program" and "two other programs": the record does not say which.
   - A program state (`State`) and a budget (`Budget`): only with Read.
   The storage service: a full disk (no place for one more store, no free block) is one record with no number; a full store (48 objects) is a fact of the store of the caller. The stack trace of a call host: the reader holds the program handle with Read, the right of `Program_State`, and the trace holds addresses and modules of that program only.

@@ -216,9 +216,9 @@ own_budget :: proc "contextless" () -> Handle {
 // budget_create moves amounts from a budget (0: the budget of this program)
 // to a new budget.
 //
-// The pages, the programs and the threads leave the budget `from`; the
-// processor and the log limits of the new budget are at most those of
-// `from`. The handle of `from` needs **Spend**. The new handle has each
+// The pages, the programs, the threads and the log records of each second
+// leave the budget `from`; the processor limit of the new budget is at most
+// that of `from`. The handle of `from` needs **Spend**. The new handle has each
 // right of a budget. The statuses: `No_Budget` when `from` does not hold an
 // amount; `Bad_Handle`, `No_Right`, `No_Slot`.
 //
@@ -233,8 +233,9 @@ budget_create :: proc "contextless" (amounts: Budget_Amounts, from: Handle = 0, 
 
 // budget_read gives what a budget (0: the budget of this program) can still pay.
 //
-// The handle needs **Read**. `processor` and `log_records` are the limits of
-// the budget, not what is left in this period.
+// The handle needs **Read**. `processor` is the limit of the budget, and
+// `log_records` the records of each second that it holds after the budgets
+// that came from it; neither is what is left in this period.
 budget_read :: proc "contextless" (budget: Handle = 0, error: ^errors.Error_Record = nil) -> (amounts: Budget_Amounts, status: Status) {
 	results: [7]u64
 	results, status = call_with_error(error, .Budget_Read, u64(budget == 0 ? own_budget() : budget))
