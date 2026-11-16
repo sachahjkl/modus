@@ -305,8 +305,8 @@ record_of :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> (num
 	return struct_record(state, pointer.elem, result)
 }
 
-// integer_unit_of_parameter reads a type of an Integer parameter with a
-// unit: `value_kinds.Size_In_Pages` and the other names of
+// integer_unit_of_parameter reads a type of an Integer parameter, or of an
+// Integer field of a record, with a unit: `value_kinds.Size_In_Pages` and the other names of
 // value_kinds.INTEGER_UNIT_TYPES, through an import of the contract package
 // value_kinds under any name. is_unit is false for another type: a type of
 // the same name in another package is not a unit of the contract.
@@ -464,6 +464,11 @@ struct_record :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> 
 				return 0, true, describe_fail(found.path, field, "the record %s: write the rights of a handle as Lent({{.Read, .Write}})", record_name)
 			}
 			item, field_size, field_alignment, has_handle = {type = .Handle, detail = transmute(u32)rights}, 4, 4, true
+		} else if integer_unit, is_unit := integer_unit_of_parameter(state, field.type); is_unit {
+			// A type of the contract such as value_kinds.Size_In_Pages is a
+			// distinct i64: an Integer of 8 bytes with a sign that states
+			// what it counts.
+			item, field_size, field_alignment = {type = .Integer, detail = 0, integer_unit = integer_unit}, 8, 8
 		} else if integer, unsigned := integer_size(state, found.prefix, type_text(found.source, field.type)); integer != 0 {
 			// 8 bytes keep the detail 0 of the fields before the sizes.
 			item, field_size, field_alignment = {type = .Integer, detail = integer == 8 ? 0 : integer, unsigned = unsigned}, integer, integer
@@ -473,7 +478,7 @@ struct_record :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> 
 			}
 			item, field_size, field_alignment = {type = .Text, detail = count}, count, 1
 		} else {
-			return 0, true, describe_fail(found.path, field, "the record %s: the type %s has no description. A field is an integer (i64, u64, i32, u32, i16, u16, i8, u8, or an enum of one of them), a Lent({{...}}) (Handle) or a [N]u8 (Text)", record_name, type_text(found.source, field.type))
+			return 0, true, describe_fail(found.path, field, "the record %s: the type %s has no description. A field is an integer (i64, u64, i32, u32, i16, u16, i8, u8, or an enum of one of them), an integer with a unit (value_kinds.Size_In_Pages and the other types of value_kinds), a Lent({{...}}) (Handle) or a [N]u8 (Text)", record_name, type_text(found.source, field.type))
 		}
 		alignment = max(alignment, field_alignment)
 		for expression in field.names {

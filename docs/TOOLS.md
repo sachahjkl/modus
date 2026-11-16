@@ -734,7 +734,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `iommu` | The machine with the IOMMU of Intel with interrupt remapping (`intel-iommu,intremap=on`, `kernel-irqchip=split`), with the disk of the measures behind a root port of PCI Express and the entropy device: the system with translation and interrupt remapping on, the two reads of the entropy device through the unit, then the test device service `iommu_device` on that disk, whose message interrupt arrives through its entry, whose messages to entries that it was not given are refused with a line, and whose device does not reach a page that it did not declare, then `net`, whose datagram region the network device reads through a device window (`ARCHITECTURE.md`, "K5. Device grant and interrupts") |
 | `iommu_amd` | The machine with the IOMMU of AMD with interrupt remapping (`amd-iommu,dma-remap=on,intremap=on`, `kernel-irqchip=split`), with the disk of the measures on bus 0 at the place 17: the system with translation and interrupt remapping on, then the test device service `iommu_device` on that disk, whose message interrupt arrives through the interrupt table of its device, and whose device does not reach a page that it did not declare, with the line of the DMA fault from the event log; QEMU records no event for a refused message, so no line of a refused interrupt is waited for; then `net` through a device window |
 | `shortage` | The machine of the shortage of frames |
-| `principals` | The two machines of the principals, then the six machines of the machine key sealed by the TPM, with a software TPM whose state they share and the firmware with no Secure Boot: five on the volumes of the test of the seal, one on the main volume, where the seal is refused (`PRINCIPALS.md`, "8. The tests") |
+| `principals` | The two machines of the principals, then the ten machines of the keys sealed by the TPM, with a software TPM whose state they share: nine with Secure Boot on, on the volumes `secure_boot` and `other_system`, and one with Secure Boot off, where the seal is refused (`PRINCIPALS.md`, "8. The tests") |
 | `hierarchy` | The machines of the hierarchy of storage |
 | `ranges` | The machines of the ranges of storage |
 | `disk_programs` | The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant that a console of the session of the named principal alice gives survives the restart and her unlock ("The disk of the disk programs") |
@@ -913,7 +913,7 @@ A damaged record is never an error. The tool decides for a module after its impo
 
 **When no record is written.** The tool writes no record for a module when the compiler gave no list, or when it cannot prove that the hash and the build read the same bytes: an input file must be older than the start of the build by one second, and its size and its time must be the same after the build. The conversion reads the sources too, so the rule holds for a module that was only converted: its record of the conversion is removed. A file that was saved during the build, or in the last second before it, costs one more build of its modules.
 
-**The boot volumes.** The build has 21 boot volumes. Each one has its own boot program, because the boot program holds its boot image and its kernel (`#load`).
+**The boot volumes.** The build has 19 boot volumes. Each one has its own boot program, because the boot program holds its boot image and its kernel (`#load`).
 
 | Volume | Its boot image | What differs from the main volume |
 |---|---|---|
@@ -925,9 +925,8 @@ A damaged record is never an error. The tool decides for a module after its impo
 | `changed_module`, `stated_hash` | `boot.image` | One byte of a module, or its stated hash, changed after the system description was made |
 | `wrong_signature`, `without_description` | `boot.image` | One bit of the description signature changed; no description |
 | `changed_kernel` | `boot.image` | One byte of the kernel changed after the description was made |
-| `other_system` | `boot.image` | One byte of a module changed before the description was made |
+| `other_system` | `boot.image` | One byte of a module changed before the description was made; the boot program signed with the firmware signing key, for the machines of the TPM of `test principals` |
 | `secure_boot`, `secure_boot_changed` | `boot.image` | The boot program signed with the firmware signing key; the same with one byte changed |
-| `seal_test`, `seal_test_other_system` | `boot_seal_test.image`: the module `root_seal_test` under the name `root` | The root service seals the machine key by the TPM with no Secure Boot (`SEAL_WITHOUT_SECURE_BOOT_FOR_A_TEST`); the second one has one byte of a module changed before the description was made. Only the machines of the TPM of `test principals` boot them |
 | `self_test_1` to `self_test_6` | `boot.image` | The flag `SELF_TEST` of the compiler of the boot program |
 
 Each volume has its own object folder, `build/boot/<name>/`, and its own build record, `build/boot/<name>.build_record`. The build key of a volume covers:
@@ -1057,11 +1056,13 @@ A picture that is taken too early is wrong, and no test fails. So the tool reads
 **The condition by calls.** When the tool can call the compositor through `remote`, it makes three reads in this order: `monitor.programs()`, then `compositor.windows()` and `compositor.screen()`, then `monitor.programs()` again. The screen is settled when, for each window:
 
 - its program is in the state `waiting` in the two reads of the programs, with the same count of kernel entries;
-- the window has at least one picture of its program (`presents`), and no picture that waits for a frame (`waits`);
+- the window has at least one picture of its program (`presents`), no picture that waits for a frame (`waits`), and no change that waits for its next picture (`due`);
 
 and when no change of the desktop itself waits for a frame (`desktop` of `compositor.screen()`: the pointer, the bar, a menu, the palette, a window that appeared, moved or closed).
 
 Why this is the two facts. A program that waits, then runs, then waits again enters the kernel to wait. So a program that waits in the two reads with the same count of kernel entries did not run between them: each picture that it sent, it sent before the first read. The compositor reads the ring of each window before it answers a call, so it counted each of these pictures. With no picture and no change of the desktop that waits for a frame, the screen shows them. The window of a program that writes in a terminal has the title of that program, and the terminal draws it: so the condition holds for each program `terminal` too, which is in a wait in the two reads with the same count of kernel entries.
+
+**A picture that is due.** A program that paces its pictures, such as a terminal (at most one picture in each `FRAME_TIME`), can wait on its clock with a change that it did not draw. That wait looks the same as a wait with nothing to draw: the same state and the same count of kernel entries. So the program says it. Before it waits with such a change, it sends `Picture_Due` with 1 on the ring of its window (`display.picture_due_set`). Its next `Present` ends it, and a frame that changed nothing sends `Picture_Due` with 0. `compositor.windows()` gives it in the field `due`, and the condition does not hold while a window has `due` 1. The program states the fact itself, so the condition needs no time and no copy of the pace of a program. A picture of the console that the condition took before this fact existed showed the head of a table and not its row.
 
 **What the condition by calls leaves out.**
 

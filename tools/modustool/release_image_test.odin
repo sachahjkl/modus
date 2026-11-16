@@ -152,8 +152,8 @@ release_test_volume_write :: proc(volume, signed_by: string, files: []Image_File
 }
 
 // A volume that the test signing key signed, a boot image with another
-// root service (the test of the seal), a boot image of a measure run, a
-// changed module and a changed kernel are never packaged for a release.
+// build of the root service, a boot image of a measure run, a changed
+// module and a changed kernel are never packaged for a release.
 @(test)
 a_volume_of_a_test_is_never_packaged :: proc(t: ^testing.T) {
 	folder, error := os.make_directory_temp("", "release_image_test_*", context.temp_allocator)
@@ -172,7 +172,7 @@ a_volume_of_a_test_is_never_packaged :: proc(t: ^testing.T) {
 	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_hash) != "", "the test signing key is refused")
 	testing.expect_value(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_hash), "")
 
-	release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, release_test_files("the root service of the test of the seal", console_text, "fonts"), kernel_text)
+	release_test_volume_write(volume, SIGNED_BY_PUBLISHER_KEY_TEXT, release_test_files("a root service of another build", console_text, "fonts"), kernel_text)
 	testing.expect(t, release_volume_problem(volume, .Publisher_Keys_Only, build_image, kernel_hash) != "", "another root service is refused")
 	testing.expect(t, release_volume_problem(volume, .Test_Keys_Allowed, build_image, kernel_hash) != "", "another root service is refused in a test too")
 

@@ -111,10 +111,10 @@
         config.allowUnfreePredicate = package: inputs.nixpkgs.lib.getName package == "posy-cursors";
       }).posy-cursors;
 
-    # The firmware of the machines of the measure and of the machine key
-    # sealed by the TPM: the TPM driver without Secure Boot, so without
-    # system management mode. The machines of Secure Boot have no TPM device
-    # (docs/TRUSTED_BOOT.md, "The machines of the TPM").
+    # The firmware of the machines of the measure and of the machine of the
+    # TPM with Secure Boot off: the TPM driver without Secure Boot, so
+    # without system management mode (docs/TRUSTED_BOOT.md, "The machines of
+    # the TPM").
     ovmfWithTpm = pkgs.OVMF.override {tpmSupport = true;};
 
     # The UEFI firmware of the first machine. modustool reads these names.
@@ -127,7 +127,8 @@
       OVMF_TPM_CODE = "${ovmfWithTpm.fd}/FV/OVMF_CODE.fd";
       OVMF_TPM_VARS = "${ovmfWithTpm.fd}/FV/OVMF_VARS.fd";
       # The firmware with a TPM driver and Secure Boot (it needs the system
-      # management mode of QEMU), for the machines of Secure Boot. Its
+      # management mode of QEMU), for the machines of Secure Boot and of the
+      # keys sealed by the TPM. Its
       # variable store has no key; the build writes a copy with the
       # certificate of the firmware signing key enrolled and Secure Boot on.
       OVMF_FULL_CODE = "${pkgs.OVMFFull.fd}/FV/OVMF_CODE.fd";

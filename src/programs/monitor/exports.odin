@@ -3,6 +3,7 @@ package monitor
 import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/value_kinds"
 import program_page "modus:contract/disk_program_page"
 import op "modus:contract/operation"
 import "modus:support/disk_program"
@@ -18,17 +19,20 @@ import "modus:support/system"
 // (a program sees no other program).
 
 // One row for each program that runs: programs().
+//
+// A field that counts a size or a time has a type of the contract: the
+// console shows it in the color of its kind, with its unit.
 Program :: struct {
-	slot:    i64, // The place of the program in the kernel.
-	name:    [32]u8,
-	state:   [8]u8, // created, ready, waiting or stopped.
-	pages:   i64, // The mapped pages that have a page frame.
-	mapped:  i64, // The mapped pages.
-	handles: i64,
-	threads: i64,
-	time:    i64, // Milliseconds of processor time.
-	entries: i64, // Kernel entries.
-	started: i64, // Microseconds after the start of the machine.
+	slot:     i64, // The place of the program in the kernel.
+	name:     [32]u8,
+	state:    [8]u8, // created, ready, waiting or stopped.
+	resident: value_kinds.Size_In_Pages, // The mapped pages that have a page frame.
+	mapped:   value_kinds.Size_In_Pages, // The mapped pages.
+	handles:  i64,
+	threads:  i64,
+	time:     value_kinds.Time_In_Milliseconds, // Processor time.
+	entries:  i64, // Kernel entries.
+	started:  value_kinds.Time_In_Microseconds, // The time of the start, after the start of the machine.
 	// A disk program: the BLAKE3 hash of its module file, in hexadecimal,
 	// as the root service checked it. Empty: the root service did not start
 	// this program from a disk.
@@ -82,7 +86,7 @@ acts_for_principal :: proc "contextless" () -> bool {
 	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
-// programs gives one row for each program that runs, from the reports of the kernel: its slot, its name, its state, its pages with a frame and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, the time of its start in microseconds, and the hash of the file of a disk program.
+// programs gives one row for each program that runs, from the reports of the kernel: its slot, its name, its state, its resident pages (the mapped pages with a page frame) and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, the time of its start in microseconds, and the hash of the file of a disk program.
 //
 // The monitor asks the kernel for the report of each program slot, and skips a slot with no program. A stopped
 // program that its parent has not closed yet has a row, with the state `stopped`.
@@ -123,14 +127,14 @@ programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
 		if total < len(result^) {
 			row := &result[total]
 			row^ = {
-				slot    = i64(slot),
-				pages   = i64(program.present_pages),
-				mapped  = i64(program.mapped_pages),
-				handles = i64(program.handle_count),
-				threads = i64(program.thread_count),
-				time    = i64(program.run_time),
-				entries = i64(program.entries),
-				started = i64(program.start_time),
+				slot     = i64(slot),
+				resident = value_kinds.Size_In_Pages(program.present_pages),
+				mapped   = value_kinds.Size_In_Pages(program.mapped_pages),
+				handles  = i64(program.handle_count),
+				threads  = i64(program.thread_count),
+				time     = value_kinds.Time_In_Milliseconds(program.run_time),
+				entries  = i64(program.entries),
+				started  = value_kinds.Time_In_Microseconds(program.start_time),
 			}
 			// A disk program: the nickname and the hash that the root
 			// service checked, matched as the window matches them, by the

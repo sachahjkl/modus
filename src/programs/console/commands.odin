@@ -894,14 +894,14 @@ show_memory :: proc "contextless" (arguments: []Value) -> Value {
 		return {}
 	}
 	columns := [10]Column {
-		integer_column("memory_mebibytes"),
-		integer_column("free_mebibytes"),
-		integer_column("used_pages"),
-		integer_column("reserved_pages"),
-		integer_column("budget_pages"),
+		size_column("memory", .Mebibytes),
+		size_column("free", .Mebibytes),
+		size_column("used", .Pages),
+		size_column("reserved", .Pages),
+		size_column("budgets", .Pages),
 		// Each page is free or paid: the budgets and the reserved pages
 		// hold all the free pages, and this count is 0.
-		integer_column("free_pages_no_budget_holds"),
+		size_column("free_no_budget_holds", .Pages),
 		integer_column("memory_objects"),
 		integer_column("kernel_entries"),
 		integer_column("interrupts"),
@@ -972,7 +972,7 @@ module_text :: proc "contextless" (value: [32]u8) -> string {
 }
 
 list_modules :: proc "contextless" (arguments: []Value) -> Value {
-	columns := [3]Column{text_column("name", 32), integer_column("bytes"), text_column("hash_head", 16)}
+	columns := [3]Column{text_column("name", 32), size_column("size", .Bytes), text_column("hash_head", 16)}
 	table, made := made_table("Module", columns[:])
 	if !made {
 		return fail("modules: the line has no room for the description")

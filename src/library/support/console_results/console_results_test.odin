@@ -3,6 +3,8 @@ package console_results
 
 import "modus:contract/errors"
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
+import "modus:support/graphics"
 import "core:strings"
 import "core:testing"
 
@@ -14,12 +16,42 @@ Drawn :: struct {
 	parts:        [Part]int, // The bytes of each kind of part.
 	continuation: [64]int, // The continuation of each line, when it ended.
 	lines:        int,
+	runs:         [256]Drawn_Run, // Each part that is not spaces, in order.
+	run_count:    int,
+}
+
+// One part that a drawer wrote, with what it is.
+Drawn_Run :: struct {
+	start:  int, // In Drawn.text.
+	length: int,
+	part:   Part,
 }
 
 drawn_write :: proc "contextless" (sink: ^Sink, text: string, part: Part) {
 	drawn := (^Drawn)(sink.data)
+	start := drawn.count
 	drawn.count += copy(drawn.text[drawn.count:], text)
 	drawn.parts[part] += len(text)
+	blank := true
+	for character in transmute([]u8)text {
+		blank = blank && character == ' '
+	}
+	if !blank && drawn.run_count < len(drawn.runs) {
+		drawn.runs[drawn.run_count] = {start = start, length = drawn.count - start, part = part}
+		drawn.run_count += 1
+	}
+}
+
+// drawn_part_of gives the part of the first run whose text is exactly
+// text, after the run number `after`, and the number of that run. found is
+// false when no run has the text.
+drawn_part_of :: proc(drawn: ^Drawn, text: string, after: int = -1) -> (part: Part, number: int, found: bool) {
+	for run, index in drawn.runs[:drawn.run_count] {
+		if index > after && string(drawn.text[run.start:][:run.length]) == text {
+			return run.part, index, true
+		}
+	}
+	return .Plain, -1, false
 }
 
 drawn_end_line :: proc "contextless" (sink: ^Sink) {
@@ -190,6 +222,144 @@ record_fields :: proc(t: ^testing.T) {
 	drawn^ = {}
 	draw_record(&sink, table.file, 1, test_table_bytes(table)[:8])
 	testing.expect_value(t, drawn_text(drawn), "a record with no valid description\n")
+}
+
+// The record of the tests of the value kinds: a text, a plain number, a
+// size in pages and a time in milliseconds.
+Usage_Table :: struct {
+	description: [1024]u8,
+	file:        []u8,
+	columns:     [4]Column,
+	size:        int,
+	rows:        [4 * 40]u8,
+	row_count:   int,
+}
+
+usage_table_make :: proc(t: ^testing.T, table: ^Usage_Table) {
+	table.columns = {text_column("name", 12), integer_column("count"), size_column("used", .Pages), time_column("wait", .Milliseconds)}
+	size: u32
+	ok: bool
+	table.file, size, ok = description_write(table.description[:], "Usage", table.columns[:])
+	testing.expect(t, ok, "the description is written")
+	testing.expect_value(t, size, 40)
+	table.size = int(size)
+}
+
+usage_table_add :: proc(table: ^Usage_Table, name: string, count, used, wait: i64) {
+	row := table.rows[table.row_count * table.size:][:table.size]
+	row_text_set(row, table.columns[0], name)
+	row_integer_set(row, table.columns[1], count)
+	row_integer_set(row, table.columns[2], used)
+	row_integer_set(row, table.columns[3], wait)
+	table.row_count += 1
+}
+
+// The integer unit of a column is in the description that the console
+// writes, and the reader of the contract gives it back. A unit out of the
+// contract, and a unit on a Text, make a description that the contract
+// refuses, and the drawer then draws no field of it.
+@(test)
+a_field_states_its_integer_unit :: proc(t: ^testing.T) {
+	table := new(Usage_Table, context.temp_allocator)
+	usage_table_make(t, table)
+	described, ok := module.record_type(table.file, 1)
+	testing.expect(t, ok, "the record is found")
+	expected := [4]value_kinds.Integer_Unit{{}, {}, value_kinds.size_in(.Pages), value_kinds.time_in(.Milliseconds)}
+	for unit, number in expected {
+		item, found := module.field(table.file, described, u32(number))
+		testing.expect(t, found)
+		testing.expect_value(t, item.integer_unit, unit)
+		testing.expect(t, module.field_integer_unit_valid(item))
+	}
+	refused := [?]Column {
+		{name = "used", type = .Integer, detail = 8, integer_unit = {kind = .Size, unit = u8(max(value_kinds.Size_Unit)) + 1}},
+		{name = "used", type = .Integer, detail = 8, integer_unit = {kind = .Module, unit = 0}},
+		{name = "name", type = .Text, detail = 8, integer_unit = value_kinds.size_in(.Bytes)},
+	}
+	for column in refused {
+		one := [1]Column{column}
+		buffer: [1024]u8
+		file, _, written := description_write(buffer[:], "Refused", one[:])
+		testing.expect(t, written)
+		_, valid := module.record_type(file, 1)
+		testing.expectf(t, !valid, "the unit %v on a field %v is refused", column.integer_unit, column.type)
+		drawn := new(Drawn, context.temp_allocator)
+		sink := drawn_sink(drawn)
+		draw_table(&sink, file, 1, nil, 20)
+		testing.expect_value(t, drawn_text(drawn), "a table with no valid description\n")
+	}
+}
+
+// Each cell of a table has the part of the value kind of its field, so the
+// console gives it the color of that kind from the one table of colors: a
+// text is plain, a number and a size have the color of memory, a time the
+// color of the boot program. The unit of a size or a time is in the head
+// of its column, one time: the cells hold the number only.
+@(test)
+table_cells_have_the_color_of_their_value_kind :: proc(t: ^testing.T) {
+	table := new(Usage_Table, context.temp_allocator)
+	usage_table_make(t, table)
+	usage_table_add(table, "console", 3, 120, 45)
+	usage_table_add(table, "log", 12, 7, 1500)
+	drawn := new(Drawn, context.temp_allocator)
+	sink := drawn_sink(drawn)
+	draw_table(&sink, table.file, 1, table.rows[:table.row_count * table.size], 20)
+	expected := "name     count  used (pages)  wait (ms)\n" + "console      3           120         45\n" + "log         12             7       1500\n" + "2 rows of Usage\n"
+	testing.expect_value(t, drawn_text(drawn), expected)
+	Cell_Kind :: struct {
+		text: string,
+		kind: value_kinds.Value_Kind,
+	}
+	// In the order of the rows; each text is found after the one before it.
+	cells := [?]Cell_Kind {
+		{"console", .None},
+		{"3", .Number},
+		{"120", .Size},
+		{"45", .Time},
+		{"log", .None},
+		{"12", .Number},
+		{"7", .Size},
+		{"1500", .Time},
+	}
+	after := -1
+	for cell in cells {
+		part, number, found := drawn_part_of(drawn, cell.text, after)
+		if !testing.expectf(t, found, "the cell %s is drawn", cell.text) {
+			continue
+		}
+		after = number
+		kind := part_value_kind(part)
+		testing.expectf(t, kind == cell.kind, "the cell %s has the kind %v, not %v", cell.text, kind, cell.kind)
+		testing.expectf(t, graphics.value_kind_color(kind, false) == graphics.value_kind_color(cell.kind, false), "the cell %s has the color of %v", cell.text, cell.kind)
+	}
+	// A time is not in the color of a number: a reader tells them apart by
+	// the color and by the unit of the head.
+	testing.expect(t, graphics.value_kind_color(.Time, false) != graphics.value_kind_color(.Number, false))
+	// The heads and their units are dim labels, and the unit is never in a
+	// cell.
+	testing.expect_value(t, drawn.parts[Part.Label], len("name") + len("count") + len("used (pages)") + len("wait (ms)"))
+	testing.expect_value(t, drawn.parts[Part.Size], len("120") + len("7"))
+	testing.expect_value(t, drawn.parts[Part.Time], len("45") + len("1500"))
+}
+
+// A record writes the unit after the value of a size or a time, in the
+// part of the value, as a value run of the log covers the number and its
+// unit.
+@(test)
+record_fields_have_their_unit_after_the_value :: proc(t: ^testing.T) {
+	table := new(Usage_Table, context.temp_allocator)
+	usage_table_make(t, table)
+	usage_table_add(table, "console", 3, 120, 45)
+	drawn := new(Drawn, context.temp_allocator)
+	sink := drawn_sink(drawn)
+	draw_record(&sink, table.file, 1, table.rows[:table.size])
+	expected := "Usage\n" + "  name   console\n" + "  count  3\n" + "  used   120 pages\n" + "  wait   45 ms\n"
+	testing.expect_value(t, drawn_text(drawn), expected)
+	unit, _, found := drawn_part_of(drawn, " pages")
+	testing.expect(t, found && unit == .Size, "the unit of a size has the part of a size")
+	unit, _, found = drawn_part_of(drawn, " ms")
+	testing.expect(t, found && unit == .Time, "the unit of a time has the part of a time")
+	testing.expect_value(t, drawn.parts[Part.Number], len("3"))
 }
 
 @(test)

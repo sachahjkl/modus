@@ -375,7 +375,9 @@ scenario_debugger_commands := [?]Step {
 	// From the host, through the service remote: the same exports.
 	// debug_target has no grant; notes has a private store.
 	{kind = .Launch, text = "remote"},
-	{kind = .Wait, text = "root: started remote"},
+	// The service prints its key while the root service starts it: the key
+	// can come before the line of the start.
+	{kind = .Wait, text = "root: started remote", any_order = true},
 	{kind = .Remote_Key, text = "remote: the public key of this service: "},
 	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
 	{kind = .Call, text = "debugger.attach(\"debug_target\")", expected = "1 rows of Attached"},
