@@ -2651,6 +2651,15 @@ scenario := [?]Step {
 	// continuation. The line holds no byte that a terminal acts on.
 	{kind = .Wait, text = "[errors] errors: a log line with control bytes: ?[2J????( as it must"},
 	{kind = .Wait, text = "errors: a name of a program with an escape byte is refused: as it must"},
+	// The table of error details of a kernel command: each wrong argument,
+	// not only the first (src/md/features/kernel_error_details.md).
+	{kind = .Wait, text = "errors: detail 1 of 2: Memory_Create: the argument budget, 0x0, names no handle of this program"},
+	{kind = .Wait, text = "errors: detail 2 of 2: Memory_Create: the argument flags has the flags 0x100; the call knows the flags 0xf"},
+	{kind = .Wait, text = "errors: a kernel command with two wrong arguments gives the two in its table of error details: as it must"},
+	{kind = .Wait, text = "errors: a table of 1 place: 1 more error detail did not fit in the table of error details"},
+	{kind = .Wait, text = "errors: a table smaller than its error details holds the first and counts each one: as it must"},
+	{kind = .Wait, text = "errors: an accepted kernel command leaves its table of error details empty: as it must"},
+	{kind = .Wait, text = "errors: Log refuses a table of error details: as it must"},
 	{kind = .Wait, text = "errors: under contention: "},
 	// A text longer than one row of log.records (one log record, 152
 	// bytes): its end is in the next row, and the tool joins the rows.
@@ -2658,6 +2667,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " handles; 0 records contradict their status, "},
 	{kind = .Wait, text = "errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", any_order = true},
 	{kind = .Wait, text = " refused Memory_Create: "},
+	{kind = .Wait, text = "errors: a kernel command and its table of error details: accepted with no table "},
 	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},
 	{kind = .Front, text = "errors"},
 	{kind = .Key, text = "b"},
