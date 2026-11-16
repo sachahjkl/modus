@@ -31,7 +31,20 @@ KERNEL_STACK_BYTES :: op.KERNEL_STACK_PAGES * info.PAGE_SIZE
 // The build fails when less stays free. The listing does not show a push
 // of an argument outside the frame, nor an indirect jump that is a tail
 // call: the margin is the room for them.
-KERNEL_STACK_LEAST_FREE_PAGES :: 4
+// One rule for each stack: a quarter of it stays free.
+STACK_LEAST_FREE_PART :: 4
+
+// An interrupt stack and what kernel_interrupt runs on it. The gate of each
+// of its vectors names it in the task state (src/kernel/processor.odin).
+Kernel_Stack_Interrupt_Stack :: struct {
+	label:            string,
+	bytes:            int,
+	least_free_bytes: int,
+	// kernel_interrupt runs the report of a stop on it (the callees of
+	// report_callees). false: no compiled code runs on the stack, only the
+	// stub.
+	runs_the_report:  bool,
+}
 
 // A place where the kernel starts on the kernel stack.
 Kernel_Stack_Entry :: struct {
@@ -94,8 +107,15 @@ Kernel_Stack_Rules :: struct {
 	idle_wait:                string, // The one place where the kernel takes an interrupt.
 	stack_bytes:              int,
 	least_free_bytes:         int,
-	interrupt_stack_bytes:    int,
-	double_fault_stack_bytes: int,
+	interrupt_stacks:         []Kernel_Stack_Interrupt_Stack,
+	// What interrupt_entry calls in the report of a stop on an interrupt
+	// stack, and for a fault inside that report, which the processor pushes
+	// on the same stack.
+	report_callees:           []string,
+	nested_report_callees:    []string,
+	// Procedures that no chain runs under the report of a fault: from
+	// fault_report_begin the log takes no lock and wakes no reader.
+	report_never_reaches:     []string,
 }
 
 kernel_stack_rules := Kernel_Stack_Rules {
@@ -182,9 +202,38 @@ kernel_stack_rules := Kernel_Stack_Rules {
 	interrupt_entry = "kernel_interrupt",
 	idle_wait = "idle_wait",
 	stack_bytes = KERNEL_STACK_BYTES,
-	least_free_bytes = KERNEL_STACK_LEAST_FREE_PAGES * info.PAGE_SIZE,
-	interrupt_stack_bytes = op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE,
-	double_fault_stack_bytes = op.KERNEL_FAULT_STACK_PAGES * info.PAGE_SIZE,
+	least_free_bytes = KERNEL_STACK_BYTES / STACK_LEAST_FREE_PART,
+	// The gates of these four vectors name an interrupt stack. Each other
+	// vector, the timer and the devices too, runs on the kernel stack.
+	interrupt_stacks = {
+		// A double fault, a non-maskable interrupt and a machine check stop
+		// the machine, from a program or from the kernel.
+		{"the double fault", op.KERNEL_FAULT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_FAULT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, true},
+		{"the non-maskable interrupt", op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, true},
+		{"the machine check", op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, true},
+		// The stub returns from a debug trap of the kernel with no compiled
+		// code, and moves the frame of a trap of a program to the kernel
+		// stack before kernel_interrupt (src/kernel/processor.asm).
+		{"the debug exception", op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, false},
+	},
+	// The report: kernel_interrupt starts the report of a fault, writes its
+	// line (with the reason of a fault of the kernel, and the name of the
+	// vector at a checked index) and stops the machine.
+	report_callees = {
+		"kernel::fault_report_begin",
+		"kernel::log",
+		"kernel::log_in",
+		"kernel::fault_reason",
+		"kernel::machine_stop",
+		"runtime::bounds_check_error_contextless",
+		"runtime::bounds_check_error_contextless.handle_error",
+		"runtime::slice_handle_error_contextless",
+	},
+	// A fault inside that report: kernel_interrupt starts a second report,
+	// which fault_report_begin ends with one line and the stop of the
+	// machine.
+	nested_report_callees = {"kernel::fault_report_begin"},
+	report_never_reaches = {"kernel::lock_take", "kernel::word_wake"},
 }
 
 // One procedure of the listing. names[0] is the first name at its address.
@@ -905,8 +954,71 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 		append(&measure.problems, fmt.tprintf("the deepest chain leaves %d of the %d bytes of the kernel stack free, under the margin of %d bytes: %s", free_bytes, rules.stack_bytes, rules.least_free_bytes, deepest_text))
 	}
 	fault := measure.deepest + INTERRUPT_ALIGNMENT_BYTES + KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES + handler
-	on_interrupt_stack := KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES + handler
 	append(&measure.lines, fmt.tprintf("the kernel stack of %s: the deepest chain uses %d of %d bytes, %d bytes free, and the build fails under %d bytes free: %s", module_name, measure.deepest, rules.stack_bytes, free_bytes, rules.least_free_bytes, deepest_text))
-	append(&measure.lines, fmt.tprintf("the kernel stack of %s: each entry: %s; %s; a fault of the kernel over the deepest chain %d bytes (not checked); %s with its frame %d bytes, on an interrupt stack of %d bytes and on the stack of the double fault of %d bytes (not checked)", module_name, strings.to_string(entries_text), idle_line, fault, rules.interrupt_entry, on_interrupt_stack, rules.interrupt_stack_bytes, rules.double_fault_stack_bytes))
+	append(&measure.lines, fmt.tprintf("the kernel stack of %s: each entry: %s; %s; a fault of the kernel over the deepest chain %d bytes (not checked)", module_name, strings.to_string(entries_text), idle_line, fault))
+
+	// The interrupt stacks: only the report of a stop runs there, and under
+	// that report the log takes no lock and wakes no reader.
+	if len(rules.interrupt_stacks) == 0 {
+		return
+	}
+	report_levels := make([]int, count, context.temp_allocator)
+	copy(report_levels, levels)
+	for name in rules.report_never_reaches {
+		at := stack_procedure_named(procedures, name)
+		if at < 0 {
+			append(&measure.problems, fmt.tprintf("the listing has no procedure %s, which the report of a stop never runs", name))
+			continue
+		}
+		report_levels[at] = 0
+	}
+	report := depth_search_make(procedures, frame_of, report_levels, -1, cut, -1)
+	report_bytes, report_chain := callees_depth(&report, interrupt_entry, rules.report_callees, &measure.problems)
+	nested_bytes, nested_chain := callees_depth(&report, interrupt_entry, rules.nested_report_callees, &measure.problems)
+	handler_frame := max(frame_of[interrupt_entry], 0)
+	on_report := KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES + handler_frame + report_bytes
+	on_report += INTERRUPT_ALIGNMENT_BYTES + KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES + handler_frame + nested_bytes
+	stacks_text := strings.builder_make(context.temp_allocator)
+	for stack, position in rules.interrupt_stacks {
+		used := stack.runs_the_report ? on_report : KERNEL_ENTRY_FRAME_BYTES
+		stack_free := stack.bytes - used
+		fmt.sbprintf(&stacks_text, "%s%s %d of %d bytes, %d free, the build fails under %d", position > 0 ? "; " : "", stack.label, used, stack.bytes, stack_free, stack.least_free_bytes)
+		if !stack.runs_the_report {
+			strings.write_string(&stacks_text, " (the stub only)")
+		}
+		if stack_free < stack.least_free_bytes {
+			append(&measure.problems, fmt.tprintf("the interrupt stack of %s keeps %d of its %d bytes free, under the margin of %d bytes: %s, then a fault inside the report: %s", stack.label, stack_free, stack.bytes, stack.least_free_bytes, report_chain, nested_chain))
+		}
+	}
+	append(&measure.lines, fmt.tprintf("the interrupt stacks of %s: %s; the report: %s, then a fault inside it: %s", module_name, strings.to_string(stacks_text), report_chain, nested_chain))
+	return
+}
+
+// callees_depth gives the deepest chain under a caller through the callees
+// that a row names, with the return address of the call. A name that the
+// caller does not call is a problem: the row would hold nothing.
+@(private = "file")
+callees_depth :: proc(search: ^Depth_Search, caller: int, names: []string, problems: ^[dynamic]string) -> (bytes: int, chain: string) {
+	chain = search.procedures[caller].names[0]
+	for name in names {
+		target := -1
+		for edge in search.procedures[caller].edges {
+			if stack_procedure_matches(search.procedures[edge.target], name) {
+				target = edge.target
+			}
+		}
+		if target < 0 {
+			append(problems, fmt.tprintf("%s calls no procedure %s, which a row of the report names", search.procedures[caller].names[0], name))
+			continue
+		}
+		below := depth_of(search, target)
+		if below == DEPTH_NO_CHAIN {
+			continue
+		}
+		if RETURN_ADDRESS_BYTES + below > bytes {
+			bytes = RETURN_ADDRESS_BYTES + below
+			chain = fmt.tprintf("%s -> %s", search.procedures[caller].names[0], chain_text(search, target))
+		}
+	}
 	return
 }

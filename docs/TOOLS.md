@@ -1055,16 +1055,19 @@ The measure stops the build with a line that names the procedure when a chain re
 
 **One interrupt over the kernel.** The kernel takes an interrupt of the machine only in `idle_wait`. The measure adds, to the deepest chain to `idle_wait`, 8 bytes of alignment, the frame of the interrupt, a return address and the deepest chain of `kernel_interrupt`.
 
-**The check.** The build fails when less than 4 pages (16 384 bytes, `KERNEL_STACK_LEAST_FREE_PAGES`) of the kernel stack stay free after the deepest chain, the entries and the interrupt at the idle wait together. The margin is for what the listing does not show: a push of an argument outside a frame, and an indirect jump that is a tail call.
+**The check.** Each stack keeps a quarter of its bytes free (`STACK_LEAST_FREE_PART`). The build fails when less than 4 pages (16 384 bytes) of the kernel stack stay free after the deepest chain, the entries and the interrupt at the idle wait together. The margin is for what the listing does not show: a push of an argument outside a frame, and an indirect jump that is a tail call.
+
+**The interrupt stacks.** The gates of four vectors name an interrupt stack: the double fault (4 pages), the debug exception, the non-maskable interrupt and the machine check (2 pages each). Each other vector, the timer and the devices too, runs on the kernel stack. On the stacks of the double fault, of the non-maskable interrupt and of the machine check, `kernel_interrupt` runs the report of a stop only: the start of the report, its line, the reason of a fault of the kernel, the stop. The table `report_callees` names these callees. A name that `kernel_interrupt` does not call stops the build. Under the report the log takes no lock and wakes no reader, so the measure leaves out `lock_take` and `word_wake` there. The measure adds one fault inside the report, which the processor pushes on the same stack, and which `fault_report_begin` ends with one line. On the stack of the debug exception only the stub runs: its frame. Each interrupt stack keeps a quarter of its bytes free too, or the build fails with the chain.
 
 **The measure lines.** The step writes two lines in `build/modules/<name>/kernel_stack.measure`, and each build prints them, a kept kernel too, for `kernel` and for `kernel_without_return_check`:
 
 ```
 modustool: measure: the kernel stack of kernel: the deepest chain uses ... of 65536 bytes, ... bytes free, and the build fails under 16384 bytes free: an interrupt at the idle wait over kernel_interrupt -> ... -> idle_wait (... bytes), then kernel_interrupt -> ... -> kernel::execute (2 levels) -> ...
-modustool: measure: the kernel stack of kernel: each entry: an entry from a program ... bytes, ...; an interrupt at the idle wait ... bytes; a fault of the kernel over the deepest chain ... bytes (not checked); kernel_interrupt with its frame ... bytes, on an interrupt stack of 8192 bytes and on the stack of the double fault of 16384 bytes (not checked)
+modustool: measure: the kernel stack of kernel: each entry: an entry from a program ... bytes, ...; an interrupt at the idle wait ... bytes; a fault of the kernel over the deepest chain ... bytes (not checked)
+modustool: measure: the interrupt stacks of kernel: the double fault ... of 16384 bytes, ... free, the build fails under 4096; the non-maskable interrupt ... of 8192 bytes, ...; the debug exception 176 of 8192 bytes, ... (the stub only); the report: kernel_interrupt -> kernel::log -> ..., then a fault inside it: kernel_interrupt -> kernel::fault_report_begin -> ...
 ```
 
-The first line names the deepest chain, procedure by procedure. A fault of the kernel stops the machine, so its bound is printed and not checked: if its report passes the guard page, the processor reports a double fault on its own stack. The bound of `kernel_interrupt` on an interrupt stack is printed and not checked too: only the report of a stop runs there, and the bound holds each path of `kernel_interrupt`.
+The first line names the deepest chain, procedure by procedure. A fault of the kernel stops the machine, so its bound on the kernel stack is printed and not checked: if its report passes the guard page, the processor reports a double fault on its own stack, and the third line checks that stack.
 
 ### The hashes of the modules of two builds
 

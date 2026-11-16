@@ -156,8 +156,6 @@ kernel_stack_test_rules :: proc(stack_bytes, least_free_bytes: int) -> Kernel_St
 		idle_wait = "idle_wait",
 		stack_bytes = stack_bytes,
 		least_free_bytes = least_free_bytes,
-		interrupt_stack_bytes = 2048,
-		double_fault_stack_bytes = 4096,
 	}
 }
 
@@ -196,8 +194,7 @@ kernel_stack_frames_need_the_section :: proc(t: ^testing.T) {
 //   first_run 16 + 8 + log 72 = 96, and 8 above it: 104;
 //   the interrupt at the idle wait: 184 + 40 + 8 + 0 = 232, then
 //   8 + 176 + 8 + 568: 992, the deepest;
-//   a fault over it: 992 + 8 + 176 + 8 + 568 = 1752;
-//   kernel_interrupt on an interrupt stack: 176 + 8 + 568 = 752.
+//   a fault over it: 992 + 8 + 176 + 8 + 568 = 1752.
 @(test)
 kernel_stack_measure_golden :: proc(t: ^testing.T) {
 	elf := kernel_stack_test_elf(kernel_stack_test_frames[:])
@@ -213,7 +210,7 @@ kernel_stack_measure_golden :: proc(t: ^testing.T) {
 		return
 	}
 	testing.expect_value(t, measure.lines[0], "the kernel stack of kernel: the deepest chain uses 992 of 4096 bytes, 3104 bytes free, and the build fails under 1024 bytes free: an interrupt at the idle wait over kernel_interrupt -> idle_wait (232 bytes), then kernel_interrupt -> kernel::command_run -> kernel::execute (2 levels) -> kernel::log -> memcpy")
-	testing.expect_value(t, measure.lines[1], "the kernel stack of kernel: each entry: an entry from a program 752 bytes, the first run 104 bytes; an interrupt at the idle wait 992 bytes; a fault of the kernel over the deepest chain 1752 bytes (not checked); kernel_interrupt with its frame 752 bytes, on an interrupt stack of 2048 bytes and on the stack of the double fault of 4096 bytes (not checked)")
+	testing.expect_value(t, measure.lines[1], "the kernel stack of kernel: each entry: an entry from a program 752 bytes, the first run 104 bytes; an interrupt at the idle wait 992 bytes; a fault of the kernel over the deepest chain 1752 bytes (not checked)")
 }
 
 // A stack with less room than the margin after the deepest chain fails
@@ -276,6 +273,55 @@ kernel_stack_measure_refuses_what_no_row_states :: proc(t: ^testing.T) {
 		}
 		testing.expectf(t, found, "%s: %v", item.about, measure.problems[:])
 	}
+}
+
+// kernel_stack_test_interrupt_rules gives the rules of the test listing
+// with a stack that runs the report, of report_stack_bytes, and a stack of
+// the stub only. The report runs command_run, with execute never run under
+// it, and a fault inside the report runs idle_wait.
+kernel_stack_test_interrupt_rules :: proc(report_stack_bytes: int) -> Kernel_Stack_Rules {
+	rules := kernel_stack_test_rules(4096, 1024)
+	stacks := make([]Kernel_Stack_Interrupt_Stack, 2, context.temp_allocator)
+	stacks[0] = {"the test stack", report_stack_bytes, 256, true}
+	stacks[1] = {"the stub stack", 512, 128, false}
+	rules.interrupt_stacks = stacks
+	report_callees := make([]string, 1, context.temp_allocator)
+	report_callees[0] = "kernel::command_run"
+	rules.report_callees = report_callees
+	nested_report_callees := make([]string, 1, context.temp_allocator)
+	nested_report_callees[0] = "idle_wait"
+	rules.nested_report_callees = nested_report_callees
+	report_never_reaches := make([]string, 1, context.temp_allocator)
+	report_never_reaches[0] = "kernel::execute"
+	rules.report_never_reaches = report_never_reaches
+	return rules
+}
+
+// The interrupt stacks of the test listing:
+//   the report: command_run with execute left out, 24, or its tail call to
+//   log 72: 72; 8 + 72 = 80;
+//   the stack that runs the report: 176 + 8 + 40 + 80 = 304, then a fault
+//   inside it: 8 + 176 + 8 + 40 + 8 + idle_wait 0 = 240: 544;
+//   the stack of the stub: 176.
+@(test)
+kernel_stack_interrupt_stacks_are_checked :: proc(t: ^testing.T) {
+	frames, _ := kernel_stack_frames_read(kernel_stack_test_elf(kernel_stack_test_frames[:]))
+	measure := kernel_stack_measure("kernel", KERNEL_STACK_TEST_LISTING, frames, kernel_stack_test_interrupt_rules(1024))
+	testing.expectf(t, len(measure.problems) == 0, "%v", measure.problems[:])
+	if !testing.expect_value(t, len(measure.lines), 3) {
+		return
+	}
+	testing.expect_value(t, measure.lines[2], "the interrupt stacks of kernel: the test stack 544 of 1024 bytes, 480 free, the build fails under 256; the stub stack 176 of 512 bytes, 336 free, the build fails under 128 (the stub only); the report: kernel_interrupt -> kernel::command_run -> kernel::log (a tail call) -> memcpy, then a fault inside it: kernel_interrupt -> idle_wait")
+
+	small := kernel_stack_measure("kernel", KERNEL_STACK_TEST_LISTING, frames, kernel_stack_test_interrupt_rules(700))
+	testing.expectf(t, len(small.problems) == 1 && strings.has_prefix(small.problems[0], "the interrupt stack of the test stack keeps 156 of its 700 bytes free, under the margin of 256 bytes: kernel_interrupt -> kernel::command_run"), "%v", small.problems[:])
+
+	// A row of the report that names a procedure that kernel_interrupt does
+	// not call holds nothing.
+	rules := kernel_stack_test_interrupt_rules(1024)
+	rules.report_callees[0] = "kernel::execute"
+	wrong := kernel_stack_measure("kernel", KERNEL_STACK_TEST_LISTING, frames, rules)
+	testing.expectf(t, len(wrong.problems) == 1 && wrong.problems[0] == "kernel_interrupt calls no procedure kernel::execute, which a row of the report names", "%v", wrong.problems[:])
 }
 
 // A row names a nested procedure of Odin without the number that the
@@ -341,8 +387,6 @@ kernel_stack_test_break_rules :: proc(with_data_call, with_cycle_break: bool) ->
 		idle_wait = "idle_wait",
 		stack_bytes = 4096,
 		least_free_bytes = 1024,
-		interrupt_stack_bytes = 2048,
-		double_fault_stack_bytes = 4096,
 	}
 	if with_data_call {
 		data_calls := make([]Kernel_Stack_Data_Call, 1, context.temp_allocator)
