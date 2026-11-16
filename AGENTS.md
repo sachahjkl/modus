@@ -36,6 +36,14 @@ Each kind of content has one place. The intent of a design is in `src/md`. A gui
 - `modustool roadmap check` checks the format of the file, as `modustool changelog check` checks the changelog. `modustool check` runs it. The rules are in `docs/TOOLS.md`, "The roadmap".
 - The site shows the file on the page Roadmap, beside the page Releases (`docs/SITE.md`, "The roadmap"). `modustool site` stops on a fault of the form of the file.
 
+## Changelog
+
+- `CHANGELOG.md`, at the root of the repository, records each release in the Keep a Changelog format. Its version numbers are in `src/library/contract/release/release.odin`.
+- A branch adds one fragment in `changelog.d/` for each change that a reader notices (`modustool changelog new`; read `changelog.d/README.md`). A change that a reader sees always gets its fragment.
+- Never edit `CHANGELOG.md` or `src/library/contract/release/release.odin`: `modustool changelog release` writes them.
+- `modustool ship` makes a release: it assembles the fragments, commits, makes the signed tag `v<number>` and pushes both. The tag starts the release workflow, which publishes the signed release image (`src/md/infrastructure/releases.md`, `src/md/infrastructure/release_image.md`).
+- `modustool changelog check` checks the fragments and the file; `modustool check` runs it.
+
 ## Work
 
 - Documents, code and comments are in English, so that one term keeps one concept. The conversation is in the language of the owner.
@@ -63,5 +71,4 @@ Each kind of content has one place. The intent of a design is in `src/md`. A gui
 - Never commit under an AI identity.
 - No pull request and nothing opened upstream unless the owner asks.
 - Do not start the ARM64 port unless the owner asks.
-- Changelog: a branch adds one fragment in `changelog.d/` for each change that a reader notices (`modustool changelog new`; read `changelog.d/README.md`). Never edit `CHANGELOG.md` or `src/library/contract/release/release.odin`: `modustool changelog release` writes them.
 - Posts on X about the project: short, simple, technical, in lower case. A post says what modus is; it does not assume that the reader knows it. It shows the thing with a picture, and tags no person.
