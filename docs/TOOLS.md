@@ -740,6 +740,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `site` | Writes the site in `build/site/` |
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
 | `ship step`, `ship correction`, `ship <release number>` | The release in one command: the changelog, a commit, a signed release tag, one atomic push to `master` ("The release") |
+| `measure-history` | The copy of the measure record of each release tag that holds one, in `docs/measures/releases/` ("The release") |
 | `roadmap check` | Checks the form of `ROADMAP.md`, the planned work, and refuses an entry whose work has an entry of the changelog ("The roadmap") |
 | `key new <folder>`, `key write <folder>`, `key show` | The keys of the publisher of the system: the signing key, the firmware signing key, the release signing key; `key write` makes the folder from the secrets of a workflow (`secrets/README.md`) |
 | `release image`, `release tag-check <tag>` | The files of a release in `dist/`: the GPT disk image of the release volume compressed with zstd, `SHA256SUMS.txt` and its release signature, with the keys of the publisher only and the pointer theme of the system only; the check that a tag names the release number (`INSTALL.md`, `src/md/infrastructure/release_image.md`) |
@@ -1296,20 +1297,23 @@ A release (`GLOSSARY.md`, "Release") is one section of `CHANGELOG.md`, one commi
 | `modustool ship correction` | The release `0.N.(x+1)`: a correction after the newest release |
 | `modustool ship <release number>` | That release; it must come after the newest release |
 | `modustool ship ... --dry-run` | Checks the branch, the tree and `origin/master`, then prints the number, the release tag, the commands and the changes of the release. It writes nothing; the fetch updates the remote-tracking branches only |
-| `modustool changelog release <release number>` | Writes the section with the time of the host in UTC and its release link, sets `RELEASE_NUMBER`, and deletes the fragments. `ship` runs it |
+| `modustool changelog release <release number>` | Writes the section with the time of the host in UTC and its release link, sets `RELEASE_NUMBER`, deletes the fragments, and copies the measure record to `docs/measures/releases/<release number>.txt` (below). `ship` runs it |
+| `modustool measure-history` | Gives each release tag `v*` whose tree holds `docs/measures/measures.txt` its copy in `docs/measures/releases/`, with the rule of the copy below. It changes no file that exists, and prints the count of the tags, of the tags with a record, and of the copies written |
 | `modustool changelog times` | Gives each old heading with its day alone the time of the commit of its release, and adds each missing release link |
 
 **What `ship` does, in order.**
 
 1. It refuses a branch other than `master`, a tree with changes that are not committed, and a `master` that does not hold `origin/master` after a fetch.
 2. It takes the newest release: the higher of `RELEASE_NUMBER` in `src/library/contract/release/release.odin`, read from the file, and of the highest tag `v*`. It takes the next number from it.
-3. It runs `changelog release`. If that fails, it puts the tree back to the last commit.
-4. It commits `CHANGELOG.md`, the source of the release number and the deleted fragments, with the message `Release <number>`.
+3. It runs `changelog release`. If that fails, it puts the tree back to the last commit, and removes the copy of the measure record that git does not track yet.
+4. It commits `CHANGELOG.md`, the source of the release number, the deleted fragments and the copy of the measure record, with the message `Release <number>`.
 5. It makes the release tag with `git tag -s -a`: annotated, and signed by the git configuration of the publisher of the system. If git cannot sign, `ship` undoes the commit and stops.
 6. It pushes with `git push --atomic origin HEAD:refs/heads/master refs/tags/v<number>`: `origin` gets the commit and the tag, or neither.
 7. If `origin` refuses the push because `origin/master` moved, `ship` deletes the tag, undoes the commit, fetches, merges `origin/master`, and goes back to step 2 with the next number. It tries three times at most (`SHIP_ATTEMPT_COUNT`). A merge with a conflict is aborted, and `ship` stops.
 
 `ship` does not run the full check: run it on the commit before `ship`. The release workflow starts from the tag.
+
+**The copy of the measure record.** The measure history (`GLOSSARY.md`) keeps the measure record of each release, for the chart of each measure over the releases (`SITE.md`, "The measure history"; `src/md/features/measure_history.md`). `changelog release` reads `docs/measures/measures.txt` and the history before it writes a file, and refuses a record that does not read. It writes no copy when the copy of the release before holds the same run, the same `time` and `commit`: no full check ran between the two releases. With no record, it writes no copy and says so. The folder `docs/measures/releases/` must exist for the add of `ship`: it holds the copies of the old releases, from `modustool measure-history`.
 
 **The old headings.** `changelog times` reads three records of git for each heading with its day alone, in this order, and takes the first whose commit was made on the day of the heading, in the zone of the committer: the release tag; the oldest commit that wrote `RELEASE_NUMBER :: "<number>"` in a file `*release/release.odin`; the oldest commit that added the heading to `CHANGELOG.md`. It writes that time in UTC. A heading with no record on its day keeps its day alone, and the command names it. The command writes nothing when the result does not have the form that `changelog check` asks for.
 

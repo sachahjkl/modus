@@ -45,7 +45,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/reference/glossary/` | The index of `docs/GLOSSARY.md`: every term from A to Z, each row with the anchor `term-<name>` (see "The glossary") |
 | `docs/reference/glossary/<group>/` | One group of `docs/GLOSSARY.md`, by the slug of its heading: each term of the group is an entry with the anchor `term-<name>` |
 | `docs/reference/commands/` | `COMMANDS` in `tools/modustool/main.odin`: the comment above `COMMANDS ::` (what the tool is and how to run a command) at the top; for each command its name, the comment lines just above its entry as its documentation (the first sentence is the cell "What it does"), and its help, the line that `modustool help` prints |
-| `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it |
+| `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it, and the measure history `docs/measures/releases/` (see "The measure history") |
 | `docs/reference/licenses/` | See "The licenses" |
 | `releases/` | All of `CHANGELOG.md`, newest first; each release shows its release time, `2026-11-15 18:48 UTC`, or its day alone for an old release whose time no record holds; each release has the anchor `release-<number>`, each of its changes the anchor `release-<number>-change-<its place in the release, from 1>`, and a line with a link to each news entry that names it; the subscribe menu under the heading (see "The subscribe menu") |
 | `roadmap/` | All of `ROADMAP.md`: the planned work, in the sections Now, Next and Later; see "The roadmap" |
@@ -436,7 +436,7 @@ A measure chart (`GLOSSARY.md`) is an entry of `site_measure_charts`: the patter
 
 What left the home: the three cards that each quoted one whole line of a log. What is not a chart today: a number alone (a full frame, 1000 commits, the reads of the time page), a line whose numbers have several units (the scheduler), and two numbers of two measures (the two directions of TCP).
 
-No history: the measure record holds the numbers of one run, the last full check, and each run replaces it. A chart of a measure over the releases needs a record that keeps the numbers of each release. It is an entry of the roadmap, and the home draws no history until the record has one.
+No history on the home: its bars are the numbers of one run. The chart of each measure over the releases is on the page of the measured numbers (see "The measure history").
 
 ### The band of the newest release
 
@@ -742,6 +742,29 @@ How the site chooses, for each number and for the stages of the start:
 - Else the record, when it holds the line. The row says "Measured in the full check of <date>, on the tree of <commit>".
 - Else "Not measured.", with the reasons: no log, a log older than the record, no record, or the reason of the run.
 - A checkout writes the record at the time of the checkout: the logs of an older run lose.
+
+## The measure history
+
+The measure history (`GLOSSARY.md`) is the folder `docs/measures/releases/`: one copy of the measure record for each release that a full check measured, named `<release number>.txt`, in the form of the measure record. The intent is `src/md/features/measure_history.md`.
+
+- `modustool changelog release <number>` copies `docs/measures/measures.txt` to `docs/measures/releases/<number>.txt`, and `ship` commits it with the release. When the record holds the run of the copy of the release before (the same `time` and the same `commit`), no full check ran between the two releases: the release gets no copy, and the command says so.
+- `modustool measure-history` gives a copy to each release tag whose tree holds a measure record, with the same rule, and changes no file that exists (`TOOLS.md`, "The release").
+- The file name gives the release. The line `release` of a copy names the newest release in the tree of its run, which is the release before.
+- The site reads each copy. A file with another name, or that does not read as a measure record, stops the command.
+
+The page of the measured numbers has a section "Each measure over the releases", after the table. It says how many releases the history holds, and the noise: each point is one run of the full check on a host that runs other work, two runs of one build differ, and a step that is not larger than that spread says nothing. When the copies name more than one host, a paragraph says that a change of the host is not a change of the system, and each list names the host of each release.
+
+**The number that a chart follows.** A measure is the same across releases when its sentence of `site_measures` is the same; a measure that changes its meaning gets a new sentence. The table `measure_history_series` (`tools/modustool/measure_history.odin`) gives, for each sentence, the one number that its chart follows: the words of the line just before it and just after it, the unit in words, and whether a higher or a lower number is faster. A line whose words changed gives no number for its release. The second build gives a fact, not a number: it has no chart. A host test checks that each sentence of the table is a sentence of `site_measures`, and that each series reads its number from the line of today.
+
+**A chart** is drawn for each measure with a number in two releases or more, in the card and the grid of the charts of the home, in the accent of the measure:
+
+- The text over it: "From 0 to" the largest number, its unit, and which way is faster.
+- An SVG of 600 by 120 units that scales with its card. The releases of the history at equal steps on the horizontal axis, the same places in each chart; the vertical axis from zero to the largest number, with a line at each. A line joins the points of consecutive releases; a release with no number breaks it. A point is a square of 6 units with a title: its release and its number as the log writes it. The SVG holds no other text.
+- Under it, the first and the last release, in a row that wraps.
+- A `details` element that lists each release: its number, the commit and the time of its run, or why it has no number.
+- A link to the reading of the measure.
+
+With no copy, the section says that the folder holds none. With no measure that has two numbers, it says that a chart needs two.
 
 ## The licenses
 
