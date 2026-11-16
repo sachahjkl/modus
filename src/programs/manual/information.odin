@@ -18,11 +18,9 @@ import "modus:support/system"
 // its grant, the machine with the right Inspect, and gives them only to a
 // caller that acts for the principal: a program sees no other program.
 //
-// The window shows the same facts: the key Tab, or overview(), shows the
+// The window shows the same facts: the key o, or overview(), shows the
 // table of all the modules; the page of a module has its sizes, the modules
 // that import it, and the programs that run it.
-
-KEY_TAB :: 0x0F
 
 machine: system.Handle
 
@@ -247,6 +245,7 @@ problem :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
 // overview shows in the window the table of all the modules of the boot image: their sizes, their counts of exports and imports, who imports each one, and the programs that run it. The result is the count of modules.
 @(export, link_name = "overview")
 overview :: proc "c" () -> i64 {
+	navigation_leave()
 	return i64(overview_build())
 }
 
@@ -271,12 +270,12 @@ running_count :: proc "contextless" (hash: string, count: int) -> (programs: int
 // writes on the log what it shows.
 overview_build :: proc "contextless" () -> int {
 	page_clear()
-	showing_overview = true
+	page_kind = .Overview
 	count := min(information.modules(catalog(), module_rows[:]), len(module_rows))
 	run_count, _ := information.running(machine, catalog(), running_rows[:])
 	put_built(0, COLOR_TITLE, "ALL MODULES (", u64(count), ")")
 	put("The flat tables of each module of the boot image, read by modus:support/information.", 0, graphics.COLOR_DIM)
-	put("Sizes in bytes of memory. Tab: this table; up, down: the page of a module.", 0, graphics.COLOR_DIM)
+	put("Sizes in bytes of memory. o: this table; up, down: the page of a module.", 0, graphics.COLOR_DIM)
 	put("", 0, 0)
 	// The column of the names has the width of the longest name of the
 	// table: no name is cut, and no name meets the number after it.
@@ -315,8 +314,6 @@ overview_build :: proc "contextless" () -> int {
 	return count
 }
 
-showing_overview: bool
-
 // padded gives a text, whole, and the spaces after it that make it one
 // character wider than `width`, in the built lines.
 @(private = "file")
@@ -352,7 +349,6 @@ right :: proc "contextless" (value: i64, width: int) -> string {
 // information_page writes the facts of one module that the information
 // functions give: its sizes, who imports it, and the programs that run it.
 information_page :: proc "contextless" (hash: [32]u8) {
-	showing_overview = false
 	found, problem := information.find(catalog(), hex_of(hash))
 	if problem.kind != .None {
 		writer := system.Writer {

@@ -2076,6 +2076,36 @@ scenario := [?]Step {
 	{kind = .Key, text = "pgdn"},
 	{kind = .Key, text = "up"},
 	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
+	// The links of a page (src/md/features/manual_links.md). Tab puts the
+	// focus on the first link of the page of the manual, a heading of a
+	// guide, and scrolls the page to it.
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "manual: manual: a program, 17 exports, "},
+	// The element line of the link comes after the line of the page: before
+	// the focus when the view showed the link, after it when Tab scrolled.
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "manual: the focus is on the link the description tables to docs/MODULE_CONTRACT.md#description-tables", any_order = true},
+	{kind = .Wait, text = "interface: manual: the element the description tables at "},
+	{kind = .Shot, text = "manual_link"},
+	// A press on the link opens its link page, from the resource of the
+	// boot image; Backspace goes back to the page of the module.
+	{kind = .Click_Element, text = "manual", element = "the description tables"},
+	{kind = .Wait, text = "manual: the link the description tables opens docs/MODULE_CONTRACT.md#description-tables"},
+	{kind = .Wait, text = "manual: the page docs/MODULE_CONTRACT.md#description-tables: Description tables, "},
+	{kind = .Key, text = "backspace"},
+	{kind = .Wait, text = "manual: back to the page before"},
+	{kind = .Wait, text = "manual: manual: a program, 17 exports, "},
+	// Tab twice and Enter: the second link, a term of the glossary.
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "manual: the focus is on the link the description tables to docs/MODULE_CONTRACT.md#description-tables"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "manual: the focus is on the link link page to term:link-page"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "manual: the link link page opens term:link-page"},
+	{kind = .Wait, text = "manual: the page term:link-page: Link page, "},
+	{kind = .Key, text = "backspace"},
+	{kind = .Wait, text = "manual: back to the page before"},
+	{kind = .Wait, text = "manual: manual: a program, 17 exports, "},
 	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 
