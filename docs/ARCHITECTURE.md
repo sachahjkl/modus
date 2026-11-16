@@ -507,7 +507,7 @@ A processor takes locks only in this order. It takes a lock of a kind only if it
 8. **Wait lock** (one for each bucket of the wait table). One at a time.
 9. **Run lock** (one for each processor). Two at a time only to move a thread from a queue to another, in the order of the processor index: the balance, and a move for the placement of a thread.
 
-Interrupts are off in the kernel, so a processor never takes a lock again in an interrupt. A processor that waits for a lock answers `processor_sync` while it waits.
+Interrupts are off in the kernel, so a processor never takes a lock again in an interrupt. Two places take an interrupt, and each holds no lock and no serial writer: `idle_wait`, and `interrupt_window`, after each byte of the drain of the serial port in the idle loop, which frees the serial writer before the window and takes it again after. A processor that waits for a lock answers `processor_sync` while it waits.
 
 ### Rules that keep each path correct
 
@@ -1247,6 +1247,7 @@ A template is an expression: it takes values and gives values, and the compiler 
 - `extended_state_save`, `extended_state_restore`, `extended_state_restore_and_read`: the only code of the kernel that names a vector register. The check of the build allows vector instructions only between the start of each and its end label (`<name>_end`); a template inlined into compiled code has no such label.
 - `guest_enter`: it owns every general register. Before `vmrun` they hold the registers of the guest, and after the exit too ("A guest").
 - `model_specific_register_trial_read` and `model_specific_register_trial_write`, the register trials: their one `rdmsr` or `wrmsr` is at a label that `kernel_interrupt` knows, and a protection fault there goes on at the label `model_specific_register_trial_refused`, which gives false. A template inlined into compiled code has no such label ("The counters of a thread").
+- `interrupt_window` (`sti`, `nop`, `cli`): it takes the interrupts that wait, with no wait, for the drain of the serial port in the idle loop. It is a procedure of assembly so that an interrupt comes only at one named place, which the measure of the kernel stack knows.
 - `idle_wait` (`sti`, `hlt`, `cli`) and `processor_stop` (`cli`, then `hlt` in a loop): the checker of the compiler takes `hlt` as an instruction after which the flow ends, so it refuses a template that continues after `hlt`. A template marked as one that never returns (`-> !`) is accepted, but a `hlt` continues after an interrupt or an NMI, and the compiled code after such a template is code that the compiler took as unreachable. Both procedures wait: the cost of a call does not matter there.
 - The start code of the other processors (`ap_start_begin` to `ap_start_end`): 16-bit and 32-bit code that the kernel copies to a fixed page.
 

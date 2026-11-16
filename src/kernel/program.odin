@@ -2051,6 +2051,12 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	}
 	cpu := processor_self()
 	sync_acknowledge(cpu)
+	if !from_program {
+		// An interrupt in the idle loop: the drain of the serial port there
+		// leaves after it, as idle_wait returns after one interrupt, so the
+		// processor looks at the queues again (serial_drain_while_idle).
+		intrinsics.atomic_add(&cpu.idle_interrupts, 1)
+	}
 	// The thread of a program entry is the current thread of this
 	// processor: no other processor takes it away.
 	thread: ^Thread
