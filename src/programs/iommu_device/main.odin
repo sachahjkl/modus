@@ -34,7 +34,9 @@
 //    registers of the other device there too, it starts its device again,
 //    then closes those registers: its domain ends, its next declaration is
 //    refused, with a line of the kernel, and a read of the device into a
-//    page that it declared before does not arrive.
+//    page that it declared before does not end and does not reach the page.
+//    The tool gives the disk a new size after the line of that read: the
+//    service waits for it, and no interrupt of the device arrives.
 //
 // Then it answers the commands of the block ring, so that its client
 // sees that the machine goes on.
@@ -120,9 +122,7 @@ Outcome :: enum {
 // used it, or it needs a reset. The configuration interrupt of a device
 // that needs a reset and the interrupt of the queue are one message
 // interrupt, so each wakes this thread. The hang bound only ends a hang.
-// With no interrupt (the end of the domain clears the interrupt entries of
-// its group), it reads the two conditions again with no wait.
-request_end :: proc "contextless" (interrupt_arrives := true) -> Outcome {
+request_end :: proc "contextless" () -> Outcome {
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		wait := system.wait_begin()
@@ -135,10 +135,27 @@ request_end :: proc "contextless" (interrupt_arrives := true) -> Outcome {
 		if system.time() >= deadline {
 			return .Hang
 		}
-		if interrupt_arrives {
-			system.wait_end(&wait, deadline)
+		system.wait_end(&wait, deadline)
+	}
+}
+
+// The low word of the capacity of the disk, in sectors: the first field of
+// the configuration of a virtio block device.
+CONFIG_CAPACITY_LOW :: 0
+
+// capacity_changed waits until the capacity of the disk differs from
+// before: the tool makes the disk larger. Its configuration interrupt does
+// not arrive after the end of the domain, so this reads the register again
+// with no wait; each read is an exit to QEMU, which then runs the monitor
+// of the tool. The hang bound only ends a hang.
+capacity_changed :: proc "contextless" (before: u32) -> bool {
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for system.time() < deadline {
+		if virtio.load_32(device.device_config + CONFIG_CAPACITY_LOW) != before {
+			return true
 		}
 	}
+	return false
 }
 
 // page_holds says if each byte of one page is value.
@@ -317,21 +334,31 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// and waited for each unit: no interrupt counted from now on came
 		// through them. The count before is read and dropped.
 		_, _ = system.call(.Interrupt_Read, u64(interrupt))
+		capacity_before := virtio.load_32(device.device_config + CONFIG_CAPACITY_LOW)
 		request(REQUEST_READ, data_physical + block.BLOCK_SIZE)
-		// A device of QEMU that cannot read its queue needs a reset, and
-		// sends its configuration interrupt, which the unit refuses.
-		ended_outcome := request_end(interrupt_arrives = false)
-		if !page_holds(second_page, PATTERN_KEPT) || (ended_outcome == .Used && status^ == 0) {
+		// The device of QEMU 10 neither ends the request nor says that it
+		// needs a reset: it keeps the request. Its state is no bound of the
+		// wait. The tool bounds it: it stops the machine, which ends each
+		// read that QEMU took, makes the disk larger and starts the machine
+		// again (src/md/infrastructure/iommu.md, "The proof"). The disk
+		// has no ioevent file here, so QEMU took or refused the request
+		// before the notify returned, and before this line.
+		system.log("iommu_device: a read given to the device after the end of its domain: the service waits for the new size of the disk")
+		if !capacity_changed(capacity_before) {
+			fail("after the end of its domain, the device did not get a new size before the hang bound")
+		}
+		_, used := virtio.used(&queue)
+		if !page_holds(second_page, PATTERN_KEPT) || (used && status^ == 0) {
 			fail("after the end of its domain, the device read a block into a page that this service declared before")
 		}
-		if ended_outcome != .Needs_Reset {
-			fail("after the end of its domain, the device did not stop on its queue before the hang bound")
-		}
+		// The new size sends the configuration interrupt of the device, and
+		// an ended read would send the interrupt of the queue: the unit
+		// refuses both.
 		after_end, _ := system.call(.Interrupt_Read, u64(interrupt))
 		if after_end[0] != 0 {
 			fail("after the end of its domain, the device sent an interrupt that arrived")
 		}
-		system.log("iommu_device: after the end of its domain, a read of the device into a page that this service declared before does not arrive, the device needs a reset, no interrupt of it arrives, and the page keeps its 4096 bytes: as it must")
+		system.log("iommu_device: after the end of its domain, a read of the device into a page that this service declared before does not end, the page keeps its 4096 bytes, and no interrupt of the device arrives, also for its new size: as it must")
 	}
 
 	// Then it answers its client: the machine goes on.

@@ -1196,7 +1196,10 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		fmt.eprintfln("modustool: the boot volume %s, or the variable store of Secure Boot, was not built or kept by the build of this command: add it to the volumes of the command (boot_volumes.odin)", volume)
 		return nil, false
 	}
-	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, false) {
+	// The machine of AMD gives the disk of the measures a new size during
+	// its test (iommu_scenario.odin): it starts from a new disk of the
+	// first size.
+	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, iommu == .Amd) {
 		return nil, false
 	}
 	code_variable, variables_variable, variables_copy := "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES
@@ -1340,13 +1343,16 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// by its device and its function only, with no bus, so the line of
 		// a DMA fault names the device only on bus 0: the requester of the
 		// bridge is there (src/md/infrastructure/iommu.md, "Two vendors
-		// behind one kernel side").
+		// behind one kernel side"). With no ioevent file, QEMU takes or
+		// refuses a request of the disk before the notify of its service
+		// returns: the stop of the machine in the test then ends each read
+		// that it took.
 		append(
 			&list,
 			"-device",
 			fmt.tprintf("i82801b11-bridge,id=conventional_bridge,bus=pcie.0,addr=0x%x", pci.SCRATCH_BRIDGE_DEVICE),
 			"-device",
-			fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,bus=conventional_bridge,addr=0x0%s", virtio_iommu),
+			fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,ioeventfd=off,bus=conventional_bridge,addr=0x0%s", virtio_iommu),
 			"-device",
 			fmt.tprintf("virtio-rng-pci,disable-legacy=on,bus=conventional_bridge,addr=0x1%s", virtio_iommu),
 		)
