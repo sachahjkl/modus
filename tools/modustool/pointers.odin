@@ -93,7 +93,10 @@ pointer_layer_color :: proc(layer: Outline_Layer, form: pointer_pictures.Pointer
 		around := layer.inside ? colors.fill : colors.edge
 		accents := pointer_accents()
 		accent := accents[layer.accent]
-		return around == POINTER_DARK_COLOR ? accent.on_dark : accent.on_light
+		value := around == POINTER_DARK_COLOR ? accent.on_dark : accent.on_light
+		// A faded accent: the token mixed into the color around it, so a
+		// sweep of one token needs no color of its own.
+		return graphics.mix(around, value, layer.strength * 255 / 100)
 	case .Clear:
 	}
 	return 0
@@ -136,6 +139,13 @@ Resource_File :: struct {
 }
 
 run_pointers :: proc(args: []string) -> int {
+	if len(args) > 0 && args[0] == "preview" {
+		if len(args) != 2 {
+			fmt.eprintln("modustool: pointers preview <file.png>: draws each shape of the theme of the system in one picture")
+			return EXIT_FAILURE
+		}
+		return run_pointers_preview(args[1]) // pointers_preview.odin
+	}
 	source := len(args) > 0 ? args[0] : os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator)
 	_, ok := build_pointer_themes(source, true)
 	return ok ? 0 : EXIT_FAILURE
@@ -319,10 +329,13 @@ Outline_Contour :: struct {
 // The contours of one paint. The contours of one layer are a union.
 //   accent: the place of its token in pointer_accents, for an accent.
 //   inside: a fill or an accent with no edge of its own, inside the fill.
+//   strength: for an accent, the percent of its token over the color around
+//   it: 100 is the token, less fades it into that color.
 Outline_Layer :: struct {
 	paint:    Outline_Paint,
 	accent:   int,
 	inside:   bool,
+	strength: u32,
 	contours: [dynamic]Outline_Contour,
 	line:     int,
 }
@@ -573,6 +586,7 @@ manifest_parse :: proc(path: string, text: string) -> (manifest: Manifest, probl
 			layer := Outline_Layer {
 				contours = make([dynamic]Outline_Contour, context.temp_allocator),
 				line     = line_number,
+				strength = 100,
 			}
 			// The words after the paint: the token of an accent, then
 			// "inside" for a fill or an accent.
@@ -606,6 +620,19 @@ manifest_parse :: proc(path: string, text: string) -> (manifest: Manifest, probl
 			if next < len(words) && words[next].text == "inside" && (layer.paint == .Fill || layer.paint == .Accent) {
 				layer.inside = true
 				next += 1
+			}
+			if next < len(words) && words[next].text == "fade" && layer.paint == .Accent {
+				strength: u32
+				strength_ok := false
+				if next + 1 < len(words) {
+					strength, strength_ok = number_of(words[next + 1], 1, 100)
+				}
+				if !strength_ok {
+					column := next + 1 < len(words) ? words[next + 1].column : len(statement) + 1
+					return {}, fail(path, line_number, column, "a strength of 1 to 100 percent after \"fade\"", quoted(next + 1 < len(words) ? words[next + 1].text : ""))
+				}
+				layer.strength = strength
+				next += 2
 			}
 			if next < len(words) {
 				return {}, fail(path, line_number, words[next].column, "the end of the line", quoted(words[next].text))

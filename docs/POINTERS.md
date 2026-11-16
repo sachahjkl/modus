@@ -114,7 +114,7 @@ Two programs ask today: `terminal` and `pointers` (the shape of the tile under t
 ### How the compositor draws the pointer
 
 - **The size.** The compositor asks for the nominal size 24 (`POINTER_NOMINAL_SIZE`). `pointer_pictures.choose` gives the smallest size of the shape that is at least the size asked, else its largest size: 24 for the theme of the system, 32 for the Posy theme.
-- **The form.** A theme can hold a dark form, for a dark desktop, and a light form, for a light desktop (section 3). The compositor takes the form of the appearance in force (`pointer_form_in_force` in `src/programs/compositor/pointer_picture.odin`), and writes `compositor: the pointer form in use: light` on the log at each change. Until the settings page holds the appearance in force, it takes the dark form. A theme with one form gives it for both.
+- **The form.** A theme can hold a dark form, for a dark desktop, and a light form, for a light desktop (section 3). The compositor takes the form of the appearance in force (`pointer_form_in_force` in `src/programs/compositor/pointer_picture.odin`), and writes `compositor: the pointer form in use: light` on the log at each change. It reads the appearance in force from the settings page (`appearance_in_force`), so the pointer changes its form at the next frame, also when the rule of the day changes the appearance with no new setting. `compositor.pointer()` gives the form on the screen in its field `form`. A theme with one form gives it for both.
 - **A shape that the theme does not have** is drawn as the arrow. Every valid theme has the arrow.
 - **The place.** The picture is drawn with its hot spot at the place of the pointer: its top left corner is the place less the hot spot. A press acts at the place of the pointer.
 - **The blend.** `graphics.blend_premultiplied_alpha` blends the picture over the frame (`docs/SIMD.md`, "4. The compositor").
@@ -184,7 +184,8 @@ option    = "hot" number number             the hot spot: in pixels of the small
           | "sizes" number { number }       the sizes of this shape, in place of the default
 source    = file name                       a file of the Xcursor folder; the first one that exists is used
 paint     = "fill" [ "inside" ]             the fill color of each form; "inside": no edge
-          | "accent" token [ "inside" ]     an accent: "title", "stop_program" or "boot_program"
+          | "accent" token [ "inside" ] [ "fade" percent ]   an accent: "title", "stop_program" or "boot_program";
+                                            "fade": that percent of the token over the color around it (1 to 100)
           | "edge"                          the edge color of each form, with no edge of its own
           | "clear"                         transparent, with an edge around the hole
 contour   = "contour" point { "line" point | "curve" point point }   a closed contour: a line or a quadratic
@@ -233,35 +234,41 @@ shape text                          text xterm
 shape wait                          wait watch sizes 32
 ```
 
-**An example with an outline**, the arrow of `resources/pointers/system.manifest`. The contour is the whole arrow; the tool draws the edge of 1 pixel inside it. The left side is on the integer 1 and the wing on the integer 13: both stay sharp. The point is the corner 1,1, and the hot spot is the pixel 1,1:
+**An example with an outline**, the arrow of `resources/pointers/system.manifest`. The contour is the whole arrow; the tool draws the edge of 1 pixel inside it. The head is large: the left side is upright on the integer 1 for 18 pixels, the right side goes at 45 degrees to the wing at 14,14, and the bottom of the wing is level on the integer 14; the notch is level with the wing, so the head reads as one triangle. The tail is short and slim: a parallelogram along the axis of the arrow, 2 down for 1 across, so that its sides step regularly, with 1.6 pixels of fill and 4.5 pixels long; its end is square to the axis. The point is the corner 1,1, and the hot spot is the pixel 1,1:
 
 ```
 shape arrow hot 1 1
 layer fill
-contour 1 1 line 1 17 line 5 13 line 7.89 19.5 line 10.63 18.28 line 8.28 13 line 11 13
+contour 1 1 line 1 19 line 6 14 line 8 18 line 11.2 16.4 line 10 14 line 14 14
 ```
 
-**An example with frames and an accent**, from `wait`: a thin ring with a hole, then a dot in the blue of the focus that is one eighth of a turn further in each frame.
+**An example with frames and a faded accent**, the first frame of `wait`: a thin ring with a hole; on its fill, three arcs of an eighth of a turn at 20, 45 and 70 percent of the blue of the focus, then a bright arc of a quarter turn with a round head. Each of the 16 frames turns the sweep by a sixteenth of a turn. The arcs are the result of a computation of the arcs, written in the manifest.
 
 ```
 shape wait hot 11 11
 layer fill
 circle 11.5 11.5 8.5
 layer clear
-circle 11.5 11.5 5
-frame 125
+circle 11.5 11.5 4.5
+frame 60
+layer accent title inside fade 20
+contour 16.803 16.803 curve 14.607 19 11.5 19 line 11.5 17 curve 13.778 17 15.389 15.389
+layer accent title inside fade 45
+contour 11.5 19 curve 8.393 19 6.197 16.803 line 7.611 15.389 curve 9.222 17 11.5 17
+layer accent title inside fade 70
+contour 6.197 16.803 curve 4 14.607 4 11.5 line 6 11.5 curve 6 13.778 7.611 15.389
 layer accent title inside
-circle 11.5 4.75 1.5
-frame 125
-layer accent title inside
-circle 16.273 6.727 1.5
+contour 4 11.5 curve 4 8.393 6.197 6.197 curve 8.393 4 11.5 4 line 11.5 6 curve 9.222 6 7.611 7.611 curve 6 9.222 6 11.5
+circle 11.5 5 1
 ```
 
 **The command.** `modustool pointers` converts each manifest of `resources/pointers` to a pointer theme file in `build/pointers`, and prints a table of each theme: the shape, its source, its sizes, its frames and its bytes. It takes the Xcursor folder from the variable `POINTER_THEME_SOURCE` or from the path after the command. `modustool build` runs the same code.
 
+**The preview.** `modustool pointers preview <file.png>` draws the theme of the system on the host, with no machine, into one PNG file: a row for each shape with its name and its hot spot, then for each form two blocks: on the surface of its appearance (the background of the desktop, the light background of the site), and on a mid grey, where the edge shows as well as the fill. In each block each size is at 1:1 and magnified (24 at 8 times, 48 at 4 times) with a grid of its pixels and a frame of amber on the hot spot; a magnified square on the grey is a checkerboard of two greys. An animated shape has a second row for its second frame. It is the way to see a drawing while it changes.
+
 ## 5. The two themes
 
-- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as outlines (section 4), drawn for this system, at the sizes 24 and 48 (for a later screen with twice the pixels), in two forms. Each shape has an edge of 1 pixel at both sizes. `wait` and `busy_with_arrow` have 8 frames of 125 ms: a dot turns once around a ring in one second. The accents: the blue of the focus on the dot of `wait` and `busy_with_arrow` and on the question mark of `help`, the red of "stop a program" on the slash of `forbidden`, the amber of a match on the dot at the hot spot of `crosshair`; the other shapes are neutral. Its file has 116 pictures. It is always in the boot image, as the resource `pointers_system`.
+- **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository, MIT): the 15 shapes as outlines (section 4), drawn for this system, at the sizes 24 and 48 (for a later screen with twice the pixels), in two forms. Each shape has an edge of 1 pixel at both sizes. `wait` and `busy_with_arrow` have 16 frames of 60 ms: a sweep of the blue of the focus, a bright arc with a round head and a tail that fades into the ring, goes once around a thin ring in 960 ms. 16 steps of a sixteenth of a turn move the head by 2.6 pixels at 24; 12 steps of 80 ms move it by 3.4 pixels and look less smooth. The accents: the blue of the focus on the sweep of `wait` and `busy_with_arrow` and on the question mark of `help`, the red of "stop a program" on the slash of `forbidden`, the amber of a match on the dot at the hot spot of `crosshair`; the other shapes are neutral. Its file has 180 pictures. It is always in the boot image, as the resource `pointers_system`.
   - **Why the fill carries the contrast.** The fill is the large part of a pointer. In the dark form it is white on the dark desktop, cards and windows: 19 to 1 on the background of the desktop. In the light form it is the dark of the desktop on the light surfaces: 17 to 1 on the light background of the site. The edge carries the contrast over a surface of the other kind: a light picture under the dark form, a dark picture under the light form.
   - **Why 24 and 48 only.** The compositor asks for 24, and 48 is the size of a screen with twice the pixels. A size of 32 helps only a compositor that asks for it; the details are drawn for 24. A size of an outline is one number of the statement `sizes`: a size for a scale of 1.25 or 1.5 is added when the system has such a scale. A multiple of 24 keeps each level and upright edge sharp.
 - **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The default development shell of the flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The checks of the flake and the shell `release` do not: they build the theme of the system only. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64). Its file has 178 pictures: `grab` and `grabbing` come from one file of the theme and share their pictures.

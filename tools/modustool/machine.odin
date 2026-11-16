@@ -161,6 +161,7 @@ Step :: struct {
 	milliseconds: int, // For Film_Hold: how long the state stays on the screen.
 	element:    string, // For Click_Element and Wheel: the element name ("watch", "frame 0", "round_robin").
 	notches:    int, // For Wheel: the notches of the wheel, in NOTCH_TOWARD_THE_END.
+	form:       string, // For Point: the pointer form that compositor.pointer() must also report, "dark" or "light" (docs/POINTERS.md).
 }
 
 // The two clocks agree to whole seconds: the machine reads its real-time
@@ -3928,7 +3929,28 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: the pointer at %d,%d has the shape \"%s\", not \"%s\"", index + 1, x, y, shape, step.text)
 				return false
 			}
-			test_passed_print("the pointer at %d,%d has the shape %s", x, y, step.text)
+			if step.form == "" {
+				test_passed_print("the pointer at %d,%d has the shape %s", x, y, step.text)
+			} else {
+				// The form follows the appearance in force at the next frame
+				// of the compositor: read it until it is the expected one.
+				form: string
+				for start := time.now(); time.since(start) < HANG_BOUND; {
+					read, ok := record_text_field(&machine.client, "compositor.pointer()", "form")
+					if ok {
+						form = read
+					}
+					if form == step.form {
+						break
+					}
+					time.sleep(CONDITION_POLL_PERIOD)
+				}
+				if form != step.form {
+					fmt.eprintfln("modustool: test failed: step %d: the pointer at %d,%d has the pointer form \"%s\", not \"%s\"", index + 1, x, y, form, step.form)
+					return false
+				}
+				test_passed_print("the pointer at %d,%d has the shape %s in the pointer form %s", x, y, step.text, step.form)
+			}
 		case .Front:
 			window_front_bring(machine, step.text, index) or_return
 		case .Click_Element:

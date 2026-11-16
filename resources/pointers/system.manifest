@@ -6,164 +6,462 @@
 # a dark edge for a dark desktop, a dark fill in a white edge for a light one.
 #
 # A unit is a pixel at the size 24: an integer coordinate is a pixel corner,
-# so each level and upright edge is sharp at 24 and at 48. A stroke is 3
-# units wide: 1 pixel of fill between two pixels of edge at 24. Two contours
-# of one layer that must join overlap by 2 units; two fingers overlap by 1,
-# so that 1 pixel of edge parts them at 24, and a line of edge of half a
-# unit parts them at 48. The option "hot" is the pixel that points, at 24.
-# The centre of a symmetric shape is the pixel 11.
+# so each level and upright edge is sharp at 24 and at 48. A contour is 2
+# units wider than its fill: a stroke of 1 pixel of fill is 3 units wide.
+# Two contours of one layer that must join overlap by 2 units; two fingers
+# overlap by 1, which parts their fills by 1 pixel at 24 only where both
+# stand free above the palm. A line of edge of half a unit parts them at 48.
+# The option "hot" is the pixel that points, at 24. The centre of a
+# symmetric shape is the pixel 11.
+#
+# The loaders of wait and busy_with_arrow are made by a computation of the
+# arcs, written here as its result: 16 frames of 60 ms, one turn in 960 ms;
+# in each frame a bright arc of a quarter turn with a round head, then three
+# arcs of an eighth of a turn behind it at 70, 45 and 20 percent of the
+# blue of the focus, the rest of the ring the fill.
+#
+# See the sheet of every shape with: modustool pointers preview <file.png>
 theme System
 license MIT
 attribution The pointer theme of the system, drawn as outlines in resources/pointers/system.manifest.
 
 sizes 24 48
 
-# A slanted arrow with a narrow tail; the side from the point to the wing is
-# steeper than 45 degrees.
+# The arrow: a large head and a short tail. The point on the corner 1,1;
+# the left side upright, 18 pixels; the right side at 45 degrees to the
+# wing at 14,14, so the head is 13 wide. The notch 6,14 is deep, level with
+# the wing, so the head reads as one triangle. The tail is a parallelogram
+# along the axis of the arrow, 2 down for 1 across: it leaves the head
+# between the notch and the point 10,14, is 4 across (1.6 pixels of fill),
+# 4.5 long, and its end 8,18 to 11.2,16.4 is square to the axis.
 shape arrow hot 1 1
 layer fill
-contour 1 1 line 1 17 line 5 13 line 7.89 19.5 line 10.63 18.28 line 8.28 13 line 11 13
+contour 1 1 line 1 19 line 6 14 line 8 18 line 11.2 16.4 line 10 14 line 14 14
 
-# An I-beam: a stem of 1 pixel, two small bars.
+# An I-beam: a stem of 1 pixel, bars that pass it by 2 pixels on each side.
 shape text hot 11 11
 layer fill
 contour 8 3 line 15 3 line 15 6 line 8 6
 contour 8 17 line 15 17 line 15 20 line 8 20
 contour 10 4 line 13 4 line 13 19 line 10 19
 
-# A hand: the index finger up, three fingers folded, the thumb at the left.
-shape pointing_hand hot 7 1
+# A slender hand: the index finger of 3 pixels of fill, 9 pixels above the
+# knuckles; three folded fingers as distinct rounded bumps, each lower by
+# 1.5 or 2 pixels. The palm starts at 11, so two bumps are parted by a dip
+# of 1 or 2 pixels at their tops, not by a line down the hand; only the
+# index finger is parted from them further. The palm has rounded lower
+# corners and narrows to a wrist of 7; the thumb is a rounded bump at the
+# left, at the height of the folded fingers. At 48 one line of edge parts
+# the index finger from the folded fingers, as at 24.
+shape pointing_hand hot 8 1
 layer fill
-contour 6 14 line 6 3 curve 6 1 8 1 curve 10 1 10 3 line 10 14
-contour 9 14 line 9 9 curve 9 7 11 7 curve 13 7 13 9 line 13 14
-contour 12 14 line 12 10 curve 12 8 14 8 curve 16 8 16 10 line 16 14
-contour 15 15 line 15 11.5 curve 15 10 16.5 10 curve 18 10 18 11.5 line 18 15
-contour 6 12 line 18 12 line 18 17 curve 18 20 15 20 line 9 20 curve 6 20 6 17
-contour 8 12 line 5 12 curve 3 12 3 14 curve 3 16 5 16 line 8 16
+contour 6 15 line 6 3.5 curve 6 1 8.5 1 curve 11 1 11 3.5 line 11 15
+contour 10 15 line 10 9 curve 10 7 12 7 curve 14 7 14 9 line 14 15
+contour 13 15 line 13 10.5 curve 13 8.5 15 8.5 curve 17 8.5 17 10.5 line 17 15
+contour 16 15 line 16 11.5 curve 16 10 17.5 10 curve 19 10 19 11.5 line 19 15
+contour 6 11 line 19 11 line 19 15 curve 19 17 17.5 18 line 16 21 line 9 21 line 7.5 18 curve 6 17 6 15
+contour 8 9 line 6 9 curve 4 9 4 11 curve 4 13 6 13 line 8 13
 layer edge
-contour 9.5 8 line 10 8 line 10 13 line 9.5 13
-contour 12.5 9 line 13 9 line 13 13 line 12.5 13
-contour 15.5 11 line 16 11 line 16 13 line 15.5 13
+contour 10.5 8 line 11 8 line 11 11.5 line 10.5 11.5
 
-# Four arrows from the centre, with shafts of 1 pixel.
-shape move hot 11 11
-layer fill
-contour 10 4 line 13 4 line 13 19 line 10 19
-contour 4 10 line 19 10 line 19 13 line 4 13
-contour 11.5 1.5 line 16 6 line 7 6
-contour 11.5 21.5 line 7 17 line 16 17
-contour 1.5 11.5 line 6 7 line 6 16
-contour 21.5 11.5 line 17 16 line 17 7
-
-# An open hand: four fingers up, the thumb at the left.
-shape grab hot 11 13
+# An open hand: four fingers of 2 pixels of fill, 1 pixel apart above the
+# palm only: the palm starts at 8, so each gap is as long as the free part
+# of its fingers, not the whole hand. The palm has rounded lower corners
+# and narrows to a wrist of 7; the thumb is a bump at the left.
+shape grab hot 11 12
 layer fill
 contour 5 13 line 5 7 curve 5 5 7 5 curve 9 5 9 7 line 9 13
 contour 8 13 line 8 5 curve 8 3 10 3 curve 12 3 12 5 line 12 13
 contour 11 13 line 11 6 curve 11 4 13 4 curve 15 4 15 6 line 15 13
 contour 14 13 line 14 8 curve 14 6 16 6 curve 18 6 18 8 line 18 13
-contour 5 11 line 18 11 line 18 17 curve 18 20 15 20 line 8 20 curve 5 20 5 17
-contour 7 12 line 4 12 curve 2 12 2 14 curve 2 16 4 16 line 7 16
+contour 5 8 line 18 8 line 18 14 curve 18 17 16 18 line 15 20 line 8 20 line 7 18 curve 5 17 5 14
+contour 7 11 line 5 11 curve 3 11 3 13 curve 3 15 5 15 line 7 15
 layer edge
-contour 8.5 6 line 9 6 line 9 12 line 8.5 12
-contour 11.5 5 line 12 5 line 12 12 line 11.5 12
-contour 14.5 7 line 15 7 line 15 12 line 14.5 12
+contour 8.5 6 line 9 6 line 9 8.5 line 8.5 8.5
+contour 11.5 5 line 12 5 line 12 8.5 line 11.5 8.5
+contour 14.5 7 line 15 7 line 15 8.5 line 14.5 8.5
 
-# A closed hand: four knuckles on the palm, the thumb at the left.
+# The same hand closed: the fingers curled to four distinct rounded
+# knuckles. The palm starts at 10, so two knuckles are parted by a dip of 2
+# or 3 pixels at 24, not by a line down the hand; at 48 a short line of
+# edge marks each dip.
 shape grabbing hot 11 13
 layer fill
-contour 5 13 line 5 10 curve 5 8 7 8 curve 9 8 9 10 line 9 13
-contour 8 13 line 8 9 curve 8 7 10 7 curve 12 7 12 9 line 12 13
-contour 11 13 line 11 9 curve 11 7 13 7 curve 15 7 15 9 line 15 13
-contour 14 13 line 14 10 curve 14 8 16 8 curve 18 8 18 10 line 18 13
-contour 5 10 line 18 10 line 18 17 curve 18 20 15 20 line 8 20 curve 5 20 5 17
-contour 7 12 line 4 12 curve 2 12 2 14 curve 2 16 4 16 line 7 16
+contour 5 14 line 5 10 curve 5 8 7 8 curve 9 8 9 10 line 9 14
+contour 8 14 line 8 9 curve 8 7 10 7 curve 12 7 12 9 line 12 14
+contour 11 14 line 11 9 curve 11 7 13 7 curve 15 7 15 9 line 15 14
+contour 14 14 line 14 10 curve 14 8 16 8 curve 18 8 18 10 line 18 14
+contour 5 10 line 18 10 line 18 14 curve 18 17 16 18 line 15 20 line 8 20 line 7 18 curve 5 17 5 14
+contour 7 12 line 5 12 curve 3 12 3 14 curve 3 16 5 16 line 7 16
 layer edge
-contour 8.5 9 line 9 9 line 9 11 line 8.5 11
-contour 11.5 8 line 12 8 line 12 11 line 11.5 11
-contour 14.5 9 line 15 9 line 15 11 line 14.5 11
+contour 8.5 9 line 9 9 line 9 10.5 line 8.5 10.5
+contour 11.5 8 line 12 8 line 12 10.5 line 11.5 10.5
+contour 14.5 9 line 15 9 line 15 10.5 line 14.5 10.5
 
-# A thin ring. In each frame a dot in the blue of the focus is one eighth of
-# a turn further, clockwise: one turn in one second.
+# Four compact heads, near equilateral, on shafts of 1 pixel.
+shape move hot 11 11
+layer fill
+contour 10 5 line 13 5 line 13 18 line 10 18
+contour 5 10 line 18 10 line 18 13 line 5 13
+contour 11.5 1.5 line 14.675 7 line 8.325 7
+contour 11.5 21.5 line 8.325 16 line 14.675 16
+contour 1.5 11.5 line 7 8.325 line 7 14.675
+contour 21.5 11.5 line 16 14.675 line 16 8.325
+
+# A thin ring of 2 pixels of fill, and the loader on it.
 shape wait hot 11 11
 layer fill
 circle 11.5 11.5 8.5
 layer clear
-circle 11.5 11.5 5
-frame 125
+circle 11.5 11.5 4.5
+frame 60
+layer accent title inside fade 20
+contour 16.803 16.803 curve 14.607 19 11.5 19 line 11.5 17 curve 13.778 17 15.389 15.389
+layer accent title inside fade 45
+contour 11.5 19 curve 8.393 19 6.197 16.803 line 7.611 15.389 curve 9.222 17 11.5 17
+layer accent title inside fade 70
+contour 6.197 16.803 curve 4 14.607 4 11.5 line 6 11.5 curve 6 13.778 7.611 15.389
 layer accent title inside
-circle 11.5 4.75 1.5
-frame 125
+contour 4 11.5 curve 4 8.393 6.197 6.197 curve 8.393 4 11.5 4 line 11.5 6 curve 9.222 6 7.611 7.611 curve 6 9.222 6 11.5
+circle 11.5 5 1
+frame 60
+layer accent title inside fade 20
+contour 14.37 18.429 curve 11.5 19.618 8.63 18.429 line 9.395 16.581 curve 11.5 17.453 13.605 16.581
+layer accent title inside fade 45
+contour 8.63 18.429 curve 5.76 17.24 4.571 14.37 line 6.419 13.605 curve 7.29 15.71 9.395 16.581
+layer accent title inside fade 70
+contour 4.571 14.37 curve 3.382 11.5 4.571 8.63 line 6.419 9.395 curve 5.547 11.5 6.419 13.605
 layer accent title inside
-circle 16.273 6.727 1.5
-frame 125
+contour 4.571 8.63 curve 5.76 5.76 8.63 4.571 curve 11.5 3.382 14.37 4.571 line 13.605 6.419 curve 11.5 5.547 9.395 6.419 curve 7.29 7.29 6.419 9.395
+circle 13.987 5.495 1
+frame 60
+layer accent title inside fade 20
+contour 11.5 19 curve 8.393 19 6.197 16.803 line 7.611 15.389 curve 9.222 17 11.5 17
+layer accent title inside fade 45
+contour 6.197 16.803 curve 4 14.607 4 11.5 line 6 11.5 curve 6 13.778 7.611 15.389
+layer accent title inside fade 70
+contour 4 11.5 curve 4 8.393 6.197 6.197 line 7.611 7.611 curve 6 9.222 6 11.5
 layer accent title inside
-circle 18.25 11.5 1.5
-frame 125
+contour 6.197 6.197 curve 8.393 4 11.5 4 curve 14.607 4 16.803 6.197 line 15.389 7.611 curve 13.778 6 11.5 6 curve 9.222 6 7.611 7.611
+circle 16.096 6.904 1
+frame 60
+layer accent title inside fade 20
+contour 8.63 18.429 curve 5.76 17.24 4.571 14.37 line 6.419 13.605 curve 7.29 15.71 9.395 16.581
+layer accent title inside fade 45
+contour 4.571 14.37 curve 3.382 11.5 4.571 8.63 line 6.419 9.395 curve 5.547 11.5 6.419 13.605
+layer accent title inside fade 70
+contour 4.571 8.63 curve 5.76 5.76 8.63 4.571 line 9.395 6.419 curve 7.29 7.29 6.419 9.395
 layer accent title inside
-circle 16.273 16.273 1.5
-frame 125
+contour 8.63 4.571 curve 11.5 3.382 14.37 4.571 curve 17.24 5.76 18.429 8.63 line 16.581 9.395 curve 15.71 7.29 13.605 6.419 curve 11.5 5.547 9.395 6.419
+circle 17.505 9.013 1
+frame 60
+layer accent title inside fade 20
+contour 6.197 16.803 curve 4 14.607 4 11.5 line 6 11.5 curve 6 13.778 7.611 15.389
+layer accent title inside fade 45
+contour 4 11.5 curve 4 8.393 6.197 6.197 line 7.611 7.611 curve 6 9.222 6 11.5
+layer accent title inside fade 70
+contour 6.197 6.197 curve 8.393 4 11.5 4 line 11.5 6 curve 9.222 6 7.611 7.611
 layer accent title inside
-circle 11.5 18.25 1.5
-frame 125
+contour 11.5 4 curve 14.607 4 16.803 6.197 curve 19 8.393 19 11.5 line 17 11.5 curve 17 9.222 15.389 7.611 curve 13.778 6 11.5 6
+circle 18 11.5 1
+frame 60
+layer accent title inside fade 20
+contour 4.571 14.37 curve 3.382 11.5 4.571 8.63 line 6.419 9.395 curve 5.547 11.5 6.419 13.605
+layer accent title inside fade 45
+contour 4.571 8.63 curve 5.76 5.76 8.63 4.571 line 9.395 6.419 curve 7.29 7.29 6.419 9.395
+layer accent title inside fade 70
+contour 8.63 4.571 curve 11.5 3.382 14.37 4.571 line 13.605 6.419 curve 11.5 5.547 9.395 6.419
 layer accent title inside
-circle 6.727 16.273 1.5
-frame 125
+contour 14.37 4.571 curve 17.24 5.76 18.429 8.63 curve 19.618 11.5 18.429 14.37 line 16.581 13.605 curve 17.453 11.5 16.581 9.395 curve 15.71 7.29 13.605 6.419
+circle 17.505 13.987 1
+frame 60
+layer accent title inside fade 20
+contour 4 11.5 curve 4 8.393 6.197 6.197 line 7.611 7.611 curve 6 9.222 6 11.5
+layer accent title inside fade 45
+contour 6.197 6.197 curve 8.393 4 11.5 4 line 11.5 6 curve 9.222 6 7.611 7.611
+layer accent title inside fade 70
+contour 11.5 4 curve 14.607 4 16.803 6.197 line 15.389 7.611 curve 13.778 6 11.5 6
 layer accent title inside
-circle 4.75 11.5 1.5
-frame 125
+contour 16.803 6.197 curve 19 8.393 19 11.5 curve 19 14.607 16.803 16.803 line 15.389 15.389 curve 17 13.778 17 11.5 curve 17 9.222 15.389 7.611
+circle 16.096 16.096 1
+frame 60
+layer accent title inside fade 20
+contour 4.571 8.63 curve 5.76 5.76 8.63 4.571 line 9.395 6.419 curve 7.29 7.29 6.419 9.395
+layer accent title inside fade 45
+contour 8.63 4.571 curve 11.5 3.382 14.37 4.571 line 13.605 6.419 curve 11.5 5.547 9.395 6.419
+layer accent title inside fade 70
+contour 14.37 4.571 curve 17.24 5.76 18.429 8.63 line 16.581 9.395 curve 15.71 7.29 13.605 6.419
 layer accent title inside
-circle 6.727 6.727 1.5
+contour 18.429 8.63 curve 19.618 11.5 18.429 14.37 curve 17.24 17.24 14.37 18.429 line 13.605 16.581 curve 15.71 15.71 16.581 13.605 curve 17.453 11.5 16.581 9.395
+circle 13.987 17.505 1
+frame 60
+layer accent title inside fade 20
+contour 6.197 6.197 curve 8.393 4 11.5 4 line 11.5 6 curve 9.222 6 7.611 7.611
+layer accent title inside fade 45
+contour 11.5 4 curve 14.607 4 16.803 6.197 line 15.389 7.611 curve 13.778 6 11.5 6
+layer accent title inside fade 70
+contour 16.803 6.197 curve 19 8.393 19 11.5 line 17 11.5 curve 17 9.222 15.389 7.611
+layer accent title inside
+contour 19 11.5 curve 19 14.607 16.803 16.803 curve 14.607 19 11.5 19 line 11.5 17 curve 13.778 17 15.389 15.389 curve 17 13.778 17 11.5
+circle 11.5 18 1
+frame 60
+layer accent title inside fade 20
+contour 8.63 4.571 curve 11.5 3.382 14.37 4.571 line 13.605 6.419 curve 11.5 5.547 9.395 6.419
+layer accent title inside fade 45
+contour 14.37 4.571 curve 17.24 5.76 18.429 8.63 line 16.581 9.395 curve 15.71 7.29 13.605 6.419
+layer accent title inside fade 70
+contour 18.429 8.63 curve 19.618 11.5 18.429 14.37 line 16.581 13.605 curve 17.453 11.5 16.581 9.395
+layer accent title inside
+contour 18.429 14.37 curve 17.24 17.24 14.37 18.429 curve 11.5 19.618 8.63 18.429 line 9.395 16.581 curve 11.5 17.453 13.605 16.581 curve 15.71 15.71 16.581 13.605
+circle 9.013 17.505 1
+frame 60
+layer accent title inside fade 20
+contour 11.5 4 curve 14.607 4 16.803 6.197 line 15.389 7.611 curve 13.778 6 11.5 6
+layer accent title inside fade 45
+contour 16.803 6.197 curve 19 8.393 19 11.5 line 17 11.5 curve 17 9.222 15.389 7.611
+layer accent title inside fade 70
+contour 19 11.5 curve 19 14.607 16.803 16.803 line 15.389 15.389 curve 17 13.778 17 11.5
+layer accent title inside
+contour 16.803 16.803 curve 14.607 19 11.5 19 curve 8.393 19 6.197 16.803 line 7.611 15.389 curve 9.222 17 11.5 17 curve 13.778 17 15.389 15.389
+circle 6.904 16.096 1
+frame 60
+layer accent title inside fade 20
+contour 14.37 4.571 curve 17.24 5.76 18.429 8.63 line 16.581 9.395 curve 15.71 7.29 13.605 6.419
+layer accent title inside fade 45
+contour 18.429 8.63 curve 19.618 11.5 18.429 14.37 line 16.581 13.605 curve 17.453 11.5 16.581 9.395
+layer accent title inside fade 70
+contour 18.429 14.37 curve 17.24 17.24 14.37 18.429 line 13.605 16.581 curve 15.71 15.71 16.581 13.605
+layer accent title inside
+contour 14.37 18.429 curve 11.5 19.618 8.63 18.429 curve 5.76 17.24 4.571 14.37 line 6.419 13.605 curve 7.29 15.71 9.395 16.581 curve 11.5 17.453 13.605 16.581
+circle 5.495 13.987 1
+frame 60
+layer accent title inside fade 20
+contour 16.803 6.197 curve 19 8.393 19 11.5 line 17 11.5 curve 17 9.222 15.389 7.611
+layer accent title inside fade 45
+contour 19 11.5 curve 19 14.607 16.803 16.803 line 15.389 15.389 curve 17 13.778 17 11.5
+layer accent title inside fade 70
+contour 16.803 16.803 curve 14.607 19 11.5 19 line 11.5 17 curve 13.778 17 15.389 15.389
+layer accent title inside
+contour 11.5 19 curve 8.393 19 6.197 16.803 curve 4 14.607 4 11.5 line 6 11.5 curve 6 13.778 7.611 15.389 curve 9.222 17 11.5 17
+circle 5 11.5 1
+frame 60
+layer accent title inside fade 20
+contour 18.429 8.63 curve 19.618 11.5 18.429 14.37 line 16.581 13.605 curve 17.453 11.5 16.581 9.395
+layer accent title inside fade 45
+contour 18.429 14.37 curve 17.24 17.24 14.37 18.429 line 13.605 16.581 curve 15.71 15.71 16.581 13.605
+layer accent title inside fade 70
+contour 14.37 18.429 curve 11.5 19.618 8.63 18.429 line 9.395 16.581 curve 11.5 17.453 13.605 16.581
+layer accent title inside
+contour 8.63 18.429 curve 5.76 17.24 4.571 14.37 curve 3.382 11.5 4.571 8.63 line 6.419 9.395 curve 5.547 11.5 6.419 13.605 curve 7.29 15.71 9.395 16.581
+circle 5.495 9.013 1
+frame 60
+layer accent title inside fade 20
+contour 19 11.5 curve 19 14.607 16.803 16.803 line 15.389 15.389 curve 17 13.778 17 11.5
+layer accent title inside fade 45
+contour 16.803 16.803 curve 14.607 19 11.5 19 line 11.5 17 curve 13.778 17 15.389 15.389
+layer accent title inside fade 70
+contour 11.5 19 curve 8.393 19 6.197 16.803 line 7.611 15.389 curve 9.222 17 11.5 17
+layer accent title inside
+contour 6.197 16.803 curve 4 14.607 4 11.5 curve 4 8.393 6.197 6.197 line 7.611 7.611 curve 6 9.222 6 11.5 curve 6 13.778 7.611 15.389
+circle 6.904 6.904 1
+frame 60
+layer accent title inside fade 20
+contour 18.429 14.37 curve 17.24 17.24 14.37 18.429 line 13.605 16.581 curve 15.71 15.71 16.581 13.605
+layer accent title inside fade 45
+contour 14.37 18.429 curve 11.5 19.618 8.63 18.429 line 9.395 16.581 curve 11.5 17.453 13.605 16.581
+layer accent title inside fade 70
+contour 8.63 18.429 curve 5.76 17.24 4.571 14.37 line 6.419 13.605 curve 7.29 15.71 9.395 16.581
+layer accent title inside
+contour 4.571 14.37 curve 3.382 11.5 4.571 8.63 curve 5.76 5.76 8.63 4.571 line 9.395 6.419 curve 7.29 7.29 6.419 9.395 curve 5.547 11.5 6.419 13.605
+circle 9.013 5.495 1
 
-# The arrow, and a small ring at its lower right whose dot turns as in wait.
+# The arrow, and a small ring at its lower right, apart from it, with the
+# same loader.
 shape busy_with_arrow hot 1 1
 layer fill
-contour 1 1 line 1 17 line 5 13 line 7.89 19.5 line 10.63 18.28 line 8.28 13 line 11 13
-circle 18 18 5.5
+contour 1 1 line 1 19 line 6 14 line 8 18 line 11.2 16.4 line 10 14 line 14 14
+circle 18.5 18.5 4.5
 layer clear
-circle 18 18 2
-frame 125
+circle 18.5 18.5 1
+frame 60
+layer accent title inside fade 20
+contour 20.975 20.975 curve 19.95 22 18.5 22 line 18.5 20.5 curve 19.328 20.5 19.914 19.914
+layer accent title inside fade 45
+contour 18.5 22 curve 17.05 22 16.025 20.975 line 17.086 19.914 curve 17.672 20.5 18.5 20.5
+layer accent title inside fade 70
+contour 16.025 20.975 curve 15 19.95 15 18.5 line 16.5 18.5 curve 16.5 19.328 17.086 19.914
 layer accent title inside
-circle 18 14.25 1
-frame 125
+contour 15 18.5 curve 15 17.05 16.025 16.025 curve 17.05 15 18.5 15 line 18.5 16.5 curve 17.672 16.5 17.086 17.086 curve 16.5 17.672 16.5 18.5
+circle 18.5 15.75 0.75
+frame 60
+layer accent title inside fade 20
+contour 19.839 21.734 curve 18.5 22.288 17.161 21.734 line 17.735 20.348 curve 18.5 20.665 19.265 20.348
+layer accent title inside fade 45
+contour 17.161 21.734 curve 15.821 21.179 15.266 19.839 line 16.652 19.265 curve 16.969 20.031 17.735 20.348
+layer accent title inside fade 70
+contour 15.266 19.839 curve 14.712 18.5 15.266 17.161 line 16.652 17.735 curve 16.335 18.5 16.652 19.265
 layer accent title inside
-circle 20.652 15.348 1
-frame 125
+contour 15.266 17.161 curve 15.821 15.821 17.161 15.266 curve 18.5 14.712 19.839 15.266 line 19.265 16.652 curve 18.5 16.335 17.735 16.652 curve 16.969 16.969 16.652 17.735
+circle 19.552 15.959 0.75
+frame 60
+layer accent title inside fade 20
+contour 18.5 22 curve 17.05 22 16.025 20.975 line 17.086 19.914 curve 17.672 20.5 18.5 20.5
+layer accent title inside fade 45
+contour 16.025 20.975 curve 15 19.95 15 18.5 line 16.5 18.5 curve 16.5 19.328 17.086 19.914
+layer accent title inside fade 70
+contour 15 18.5 curve 15 17.05 16.025 16.025 line 17.086 17.086 curve 16.5 17.672 16.5 18.5
 layer accent title inside
-circle 21.75 18 1
-frame 125
+contour 16.025 16.025 curve 17.05 15 18.5 15 curve 19.95 15 20.975 16.025 line 19.914 17.086 curve 19.328 16.5 18.5 16.5 curve 17.672 16.5 17.086 17.086
+circle 20.445 16.555 0.75
+frame 60
+layer accent title inside fade 20
+contour 17.161 21.734 curve 15.821 21.179 15.266 19.839 line 16.652 19.265 curve 16.969 20.031 17.735 20.348
+layer accent title inside fade 45
+contour 15.266 19.839 curve 14.712 18.5 15.266 17.161 line 16.652 17.735 curve 16.335 18.5 16.652 19.265
+layer accent title inside fade 70
+contour 15.266 17.161 curve 15.821 15.821 17.161 15.266 line 17.735 16.652 curve 16.969 16.969 16.652 17.735
 layer accent title inside
-circle 20.652 20.652 1
-frame 125
+contour 17.161 15.266 curve 18.5 14.712 19.839 15.266 curve 21.179 15.821 21.734 17.161 line 20.348 17.735 curve 20.031 16.969 19.265 16.652 curve 18.5 16.335 17.735 16.652
+circle 21.041 17.448 0.75
+frame 60
+layer accent title inside fade 20
+contour 16.025 20.975 curve 15 19.95 15 18.5 line 16.5 18.5 curve 16.5 19.328 17.086 19.914
+layer accent title inside fade 45
+contour 15 18.5 curve 15 17.05 16.025 16.025 line 17.086 17.086 curve 16.5 17.672 16.5 18.5
+layer accent title inside fade 70
+contour 16.025 16.025 curve 17.05 15 18.5 15 line 18.5 16.5 curve 17.672 16.5 17.086 17.086
 layer accent title inside
-circle 18 21.75 1
-frame 125
+contour 18.5 15 curve 19.95 15 20.975 16.025 curve 22 17.05 22 18.5 line 20.5 18.5 curve 20.5 17.672 19.914 17.086 curve 19.328 16.5 18.5 16.5
+circle 21.25 18.5 0.75
+frame 60
+layer accent title inside fade 20
+contour 15.266 19.839 curve 14.712 18.5 15.266 17.161 line 16.652 17.735 curve 16.335 18.5 16.652 19.265
+layer accent title inside fade 45
+contour 15.266 17.161 curve 15.821 15.821 17.161 15.266 line 17.735 16.652 curve 16.969 16.969 16.652 17.735
+layer accent title inside fade 70
+contour 17.161 15.266 curve 18.5 14.712 19.839 15.266 line 19.265 16.652 curve 18.5 16.335 17.735 16.652
 layer accent title inside
-circle 15.348 20.652 1
-frame 125
+contour 19.839 15.266 curve 21.179 15.821 21.734 17.161 curve 22.288 18.5 21.734 19.839 line 20.348 19.265 curve 20.665 18.5 20.348 17.735 curve 20.031 16.969 19.265 16.652
+circle 21.041 19.552 0.75
+frame 60
+layer accent title inside fade 20
+contour 15 18.5 curve 15 17.05 16.025 16.025 line 17.086 17.086 curve 16.5 17.672 16.5 18.5
+layer accent title inside fade 45
+contour 16.025 16.025 curve 17.05 15 18.5 15 line 18.5 16.5 curve 17.672 16.5 17.086 17.086
+layer accent title inside fade 70
+contour 18.5 15 curve 19.95 15 20.975 16.025 line 19.914 17.086 curve 19.328 16.5 18.5 16.5
 layer accent title inside
-circle 14.25 18 1
-frame 125
+contour 20.975 16.025 curve 22 17.05 22 18.5 curve 22 19.95 20.975 20.975 line 19.914 19.914 curve 20.5 19.328 20.5 18.5 curve 20.5 17.672 19.914 17.086
+circle 20.445 20.445 0.75
+frame 60
+layer accent title inside fade 20
+contour 15.266 17.161 curve 15.821 15.821 17.161 15.266 line 17.735 16.652 curve 16.969 16.969 16.652 17.735
+layer accent title inside fade 45
+contour 17.161 15.266 curve 18.5 14.712 19.839 15.266 line 19.265 16.652 curve 18.5 16.335 17.735 16.652
+layer accent title inside fade 70
+contour 19.839 15.266 curve 21.179 15.821 21.734 17.161 line 20.348 17.735 curve 20.031 16.969 19.265 16.652
 layer accent title inside
-circle 15.348 15.348 1
+contour 21.734 17.161 curve 22.288 18.5 21.734 19.839 curve 21.179 21.179 19.839 21.734 line 19.265 20.348 curve 20.031 20.031 20.348 19.265 curve 20.665 18.5 20.348 17.735
+circle 19.552 21.041 0.75
+frame 60
+layer accent title inside fade 20
+contour 16.025 16.025 curve 17.05 15 18.5 15 line 18.5 16.5 curve 17.672 16.5 17.086 17.086
+layer accent title inside fade 45
+contour 18.5 15 curve 19.95 15 20.975 16.025 line 19.914 17.086 curve 19.328 16.5 18.5 16.5
+layer accent title inside fade 70
+contour 20.975 16.025 curve 22 17.05 22 18.5 line 20.5 18.5 curve 20.5 17.672 19.914 17.086
+layer accent title inside
+contour 22 18.5 curve 22 19.95 20.975 20.975 curve 19.95 22 18.5 22 line 18.5 20.5 curve 19.328 20.5 19.914 19.914 curve 20.5 19.328 20.5 18.5
+circle 18.5 21.25 0.75
+frame 60
+layer accent title inside fade 20
+contour 17.161 15.266 curve 18.5 14.712 19.839 15.266 line 19.265 16.652 curve 18.5 16.335 17.735 16.652
+layer accent title inside fade 45
+contour 19.839 15.266 curve 21.179 15.821 21.734 17.161 line 20.348 17.735 curve 20.031 16.969 19.265 16.652
+layer accent title inside fade 70
+contour 21.734 17.161 curve 22.288 18.5 21.734 19.839 line 20.348 19.265 curve 20.665 18.5 20.348 17.735
+layer accent title inside
+contour 21.734 19.839 curve 21.179 21.179 19.839 21.734 curve 18.5 22.288 17.161 21.734 line 17.735 20.348 curve 18.5 20.665 19.265 20.348 curve 20.031 20.031 20.348 19.265
+circle 17.448 21.041 0.75
+frame 60
+layer accent title inside fade 20
+contour 18.5 15 curve 19.95 15 20.975 16.025 line 19.914 17.086 curve 19.328 16.5 18.5 16.5
+layer accent title inside fade 45
+contour 20.975 16.025 curve 22 17.05 22 18.5 line 20.5 18.5 curve 20.5 17.672 19.914 17.086
+layer accent title inside fade 70
+contour 22 18.5 curve 22 19.95 20.975 20.975 line 19.914 19.914 curve 20.5 19.328 20.5 18.5
+layer accent title inside
+contour 20.975 20.975 curve 19.95 22 18.5 22 curve 17.05 22 16.025 20.975 line 17.086 19.914 curve 17.672 20.5 18.5 20.5 curve 19.328 20.5 19.914 19.914
+circle 16.555 20.445 0.75
+frame 60
+layer accent title inside fade 20
+contour 19.839 15.266 curve 21.179 15.821 21.734 17.161 line 20.348 17.735 curve 20.031 16.969 19.265 16.652
+layer accent title inside fade 45
+contour 21.734 17.161 curve 22.288 18.5 21.734 19.839 line 20.348 19.265 curve 20.665 18.5 20.348 17.735
+layer accent title inside fade 70
+contour 21.734 19.839 curve 21.179 21.179 19.839 21.734 line 19.265 20.348 curve 20.031 20.031 20.348 19.265
+layer accent title inside
+contour 19.839 21.734 curve 18.5 22.288 17.161 21.734 curve 15.821 21.179 15.266 19.839 line 16.652 19.265 curve 16.969 20.031 17.735 20.348 curve 18.5 20.665 19.265 20.348
+circle 15.959 19.552 0.75
+frame 60
+layer accent title inside fade 20
+contour 20.975 16.025 curve 22 17.05 22 18.5 line 20.5 18.5 curve 20.5 17.672 19.914 17.086
+layer accent title inside fade 45
+contour 22 18.5 curve 22 19.95 20.975 20.975 line 19.914 19.914 curve 20.5 19.328 20.5 18.5
+layer accent title inside fade 70
+contour 20.975 20.975 curve 19.95 22 18.5 22 line 18.5 20.5 curve 19.328 20.5 19.914 19.914
+layer accent title inside
+contour 18.5 22 curve 17.05 22 16.025 20.975 curve 15 19.95 15 18.5 line 16.5 18.5 curve 16.5 19.328 17.086 19.914 curve 17.672 20.5 18.5 20.5
+circle 15.75 18.5 0.75
+frame 60
+layer accent title inside fade 20
+contour 21.734 17.161 curve 22.288 18.5 21.734 19.839 line 20.348 19.265 curve 20.665 18.5 20.348 17.735
+layer accent title inside fade 45
+contour 21.734 19.839 curve 21.179 21.179 19.839 21.734 line 19.265 20.348 curve 20.031 20.031 20.348 19.265
+layer accent title inside fade 70
+contour 19.839 21.734 curve 18.5 22.288 17.161 21.734 line 17.735 20.348 curve 18.5 20.665 19.265 20.348
+layer accent title inside
+contour 17.161 21.734 curve 15.821 21.179 15.266 19.839 curve 14.712 18.5 15.266 17.161 line 16.652 17.735 curve 16.335 18.5 16.652 19.265 curve 16.969 20.031 17.735 20.348
+circle 15.959 17.448 0.75
+frame 60
+layer accent title inside fade 20
+contour 22 18.5 curve 22 19.95 20.975 20.975 line 19.914 19.914 curve 20.5 19.328 20.5 18.5
+layer accent title inside fade 45
+contour 20.975 20.975 curve 19.95 22 18.5 22 line 18.5 20.5 curve 19.328 20.5 19.914 19.914
+layer accent title inside fade 70
+contour 18.5 22 curve 17.05 22 16.025 20.975 line 17.086 19.914 curve 17.672 20.5 18.5 20.5
+layer accent title inside
+contour 16.025 20.975 curve 15 19.95 15 18.5 curve 15 17.05 16.025 16.025 line 17.086 17.086 curve 16.5 17.672 16.5 18.5 curve 16.5 19.328 17.086 19.914
+circle 16.555 16.555 0.75
+frame 60
+layer accent title inside fade 20
+contour 21.734 19.839 curve 21.179 21.179 19.839 21.734 line 19.265 20.348 curve 20.031 20.031 20.348 19.265
+layer accent title inside fade 45
+contour 19.839 21.734 curve 18.5 22.288 17.161 21.734 line 17.735 20.348 curve 18.5 20.665 19.265 20.348
+layer accent title inside fade 70
+contour 17.161 21.734 curve 15.821 21.179 15.266 19.839 line 16.652 19.265 curve 16.969 20.031 17.735 20.348
+layer accent title inside
+contour 15.266 19.839 curve 14.712 18.5 15.266 17.161 curve 15.821 15.821 17.161 15.266 line 17.735 16.652 curve 16.969 16.969 16.652 17.735 curve 16.335 18.5 16.652 19.265
+circle 17.448 15.959 0.75
 
-# A thin ring, and a slash in the red of "stop a program" from the upper
-# left to the lower right; the ends of the slash reach the edge of the ring.
+# A thin ring of 2 pixels of fill, and a thin slash in the red of "stop a
+# program" across the hole, from the upper left to the lower right.
 shape forbidden hot 11 11
 layer fill
 circle 11.5 11.5 8.5
 layer clear
-circle 11.5 11.5 5.5
+circle 11.5 11.5 4.5
 layer accent stop_program
-contour 16.804 14.682 line 14.682 16.804 line 6.196 8.318 line 8.318 6.196
+contour 16.097 13.975 line 13.975 16.097 line 6.903 9.025 line 9.025 6.903
 
-# The arrow, and a question mark in the blue of the focus at its right.
+# The arrow, and a question mark in the blue of the focus at its lower
+# right, apart from it.
 shape help hot 1 1
 layer fill
-contour 1 1 line 1 17 line 5 13 line 7.89 19.5 line 10.63 18.28 line 8.28 13 line 11 13
+contour 1 1 line 1 19 line 6 14 line 8 18 line 11.2 16.4 line 10 14 line 14 14
 layer accent title
-contour 14.5 14 curve 14.5 10 18.5 10 curve 22.5 10 22.5 14 curve 22.5 16.5 20 17 line 20 20 line 17 20 line 17 16 curve 19.5 15.5 19.5 14 curve 19.5 13 18.5 13 curve 17.5 13 17.5 14
-contour 17 21 line 20 21 line 20 24 line 17 24
+contour 15.5 14 curve 15.5 10 19.5 10 curve 23.5 10 23.5 14 curve 23.5 16.5 21 17 line 21 20 line 18 20 line 18 16 curve 20.5 15.5 20.5 14 curve 20.5 13 19.5 13 curve 18.5 13 18.5 14
+contour 18 21 line 21 21 line 21 24 line 18 24
 
 # Four arms of 1 pixel, and a dot in the amber of a match at the hot spot.
 shape crosshair hot 11 11
@@ -177,27 +475,27 @@ circle 11.5 11.5 2
 
 shape resize_left_right hot 11 11
 layer fill
-contour 4 10 line 19 10 line 19 13 line 4 13
-contour 1.5 11.5 line 6 7 line 6 16
-contour 21.5 11.5 line 17 16 line 17 7
+contour 5 10 line 18 10 line 18 13 line 5 13
+contour 1.5 11.5 line 7 8.325 line 7 14.675
+contour 21.5 11.5 line 16 14.675 line 16 8.325
 
 shape resize_up_down hot 11 11
 layer fill
-contour 10 4 line 13 4 line 13 19 line 10 19
-contour 11.5 1.5 line 16 6 line 7 6
-contour 11.5 21.5 line 7 17 line 16 17
+contour 10 5 line 13 5 line 13 18 line 10 18
+contour 11.5 1.5 line 14.675 7 line 8.325 7
+contour 11.5 21.5 line 8.325 16 line 14.675 16
 
-# The two diagonal arrows: heads with a level and an upright side, so that
-# these two sides stay sharp, and a shaft of 3 units across. Their centre is
-# the corner 12,12.
+# The two diagonal arrows: compact heads with a level and an upright side,
+# so that these two sides stay sharp, and a shaft of 1 pixel of fill. Their
+# centre is the corner 12,12.
 shape resize_top_left_bottom_right hot 11 11
 layer fill
-contour 3 3 line 10 3 line 3 10
-contour 21 21 line 14 21 line 21 14
-contour 5.25 3.75 line 20.25 18.75 line 18.75 20.25 line 3.75 5.25
+contour 3 3 line 9 3 line 3 9
+contour 21 21 line 15 21 line 21 15
+contour 4.75 3.25 line 20.75 19.25 line 19.25 20.75 line 3.25 4.75
 
 shape resize_top_right_bottom_left hot 12 11
 layer fill
-contour 21 3 line 21 10 line 14 3
-contour 3 21 line 3 14 line 10 21
-contour 18.75 3.75 line 20.25 5.25 line 5.25 20.25 line 3.75 18.75
+contour 21 3 line 21 9 line 15 3
+contour 3 21 line 3 15 line 9 21
+contour 19.25 3.25 line 20.75 4.75 line 4.75 20.75 line 3.25 19.25

@@ -140,6 +140,21 @@ shape_at :: proc(file: []u8, index: int) -> ^Shape_Entry {
 	return &([^]Shape_Entry)(raw_data(file[HEADER_SIZE:]))[index]
 }
 
+// count_that_moves_the_pixels gives the smallest shape count above the
+// count of the file whose tables end past the multiple of 64 where the
+// pixels start. A count that keeps the same multiple of 64 moves no offset:
+// the validation then finds the fault in the tables that it reads, not in
+// the header.
+@(private = "file")
+count_that_moves_the_pixels :: proc(file: []u8) -> u32 {
+	head := head_of(file)
+	count := head.shape_count + 1
+	for count < SHAPE_COUNT_LIMIT && pixel_offset_for(u64(count * head.form_count), u64(head.picture_count)) == head.pixel_offset {
+		count += 1
+	}
+	return count
+}
+
 @(private = "file")
 picture_at :: proc(file: []u8, index: int) -> ^Picture_Entry {
 	return &([^]Picture_Entry)(raw_data(file[HEADER_SIZE + 2 * SHAPE_ENTRY_SIZE:]))[index]
@@ -157,7 +172,7 @@ each_damaged_field_is_found :: proc(t: ^testing.T) {
 		{"file_size", proc(file: []u8) {head_of(file).file_size -= 4}, .Wrong_Size, .File_Size},
 		{"shape_count 0", proc(file: []u8) {head_of(file).shape_count = 0}, .Zero, .Shape_Count},
 		{"shape_count too many", proc(file: []u8) {head_of(file).shape_count = 1000}, .Too_Many, .Shape_Count},
-		{"shape_count changes the offset", proc(file: []u8) {head_of(file).shape_count = 3}, .Wrong_Offset, .Pixel_Offset},
+		{"shape_count changes the offset", proc(file: []u8) {head_of(file).shape_count = count_that_moves_the_pixels(file)}, .Wrong_Offset, .Pixel_Offset},
 		{"picture_count 0", proc(file: []u8) {head_of(file).picture_count = 0}, .Zero, .Picture_Count},
 		{"picture_count too many", proc(file: []u8) {head_of(file).picture_count = 1 << 20}, .Too_Many, .Picture_Count},
 		{"pixel_offset", proc(file: []u8) {head_of(file).pixel_offset += 64}, .Wrong_Offset, .Pixel_Offset},

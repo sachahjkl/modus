@@ -4917,7 +4917,7 @@ Do not use: cursor type, cursor name, cursor kind.
 
 A pointer picture is one image of one pointer shape at one nominal size, for one frame of an animation: its width, height, hot spot, delay and pixels with premultiplied alpha.
 
-A pointer theme file holds the pictures of each shape: the frames of the smallest size, then of the next. A picture is 1 to 256 pixels wide and high, and its hot spot is inside it. An animated shape has 1 to 256 frames with a delay of 1 to 60000 ms each; `wait` in the theme of the system has 8 frames of 125 ms. The compositor blends the picture over the screen with premultiplied alpha.
+A pointer theme file holds the pictures of each shape: the frames of the smallest size, then of the next. A picture is 1 to 256 pixels wide and high, and its hot spot is inside it. An animated shape has 1 to 256 frames with a delay of 1 to 60000 ms each; `wait` in the theme of the system has 16 frames of 60 ms. The compositor blends the picture over the screen with premultiplied alpha.
 
 A pointer picture is the one picture of the desktop that is not made of rectangles: the pictures of both themes have smooth edges and transparency.
 

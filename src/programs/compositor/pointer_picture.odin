@@ -103,12 +103,17 @@ pointer_theme_open :: proc "contextless" (ctx: ^system.Context) {
 
 // pointer_form_in_force gives the form of the pointer for the appearance in
 // force: the dark form on a dark desktop, the light form on a light one
-// (docs/POINTERS.md, "5. The two themes"). The settings page does not hold
-// the appearance in force yet, so this is the dark form; the read of that
-// field of the page goes here, and nowhere else.
+// (docs/POINTERS.md, "5. The two themes"). The settings page holds the
+// appearance in force, which the rule of the day can change with no new
+// setting; the compositor reads the page again at that change, so the
+// pointer changes its form at the next frame.
 pointer_form_in_force :: proc "contextless" (choice: settings.Choice) -> pointer_pictures.Pointer_Form {
-	_ = choice
-	return .Dark
+	return choice.appearance_in_force == .Light ? .Light : .Dark
+}
+
+// pointer_form_name gives the name of a form, as the log and pointer() write it.
+pointer_form_name :: proc "contextless" (form: pointer_pictures.Pointer_Form) -> string {
+	return form == .Light ? "light" : "dark"
 }
 
 // pointer_form_choose takes a form and draws the pointer again with it.
@@ -119,7 +124,7 @@ pointer_form_choose :: proc "contextless" (form: pointer_pictures.Pointer_Form) 
 	pointer_form = form
 	pointer_drawn_valid = false // The next update chooses its picture in the new form.
 	pointer_update(0)
-	system.log_in("surfaces", .Info, "compositor: the pointer form in use: ", form == .Light ? "light" : "dark")
+	system.log_in("surfaces", .Info, "compositor: the pointer form in use: ", pointer_form_name(form))
 }
 
 // pointer_theme_choose takes the theme of the setting: the first theme of
