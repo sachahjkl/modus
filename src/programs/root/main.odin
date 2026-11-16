@@ -227,8 +227,11 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// The records of the named principals in its private store, the
 		// passphrase in its window, the commands of the principals, and the
 		// ring of the TPM service, which seals the machine key to the
-		// measure of the system (docs/PRINCIPALS.md).
-		return {.Store, .Principals, .Tpm}
+		// measure of the system (docs/PRINCIPALS.md). It erases the
+		// versions of the file of a principal after a change of a secret,
+		// so an old secret opens no version (docs/STORAGE.md, "4.8 The
+		// erase of versions").
+		return {.Store, .Principals, .Tpm, .Versions_Erase}
 	case "hierarchy":
 		return {.Store} // The test of the trees of a store.
 	case "ranges":
@@ -402,7 +405,13 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 		amount = store_limit_of(name)
 	}
 	acts := .Acts_For_Principal in role && .Acts_For_Principal not_in caller.revoked
-	return isolated.caller_grant_make(amount, caller.principal, acts)
+	grant := isolated.caller_grant_make(amount, caller.principal, acts)
+	// The grant to erase versions is a right over the private store: it goes
+	// with the store, to the storage service only.
+	if amount != 0 && .Versions_Erase in role {
+		grant |= isolated.CALLER_ERASES_VERSIONS
+	}
+	return grant
 }
 
 // log_grant gives the grant of the log: each program that this service
@@ -1573,12 +1582,13 @@ debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) 
 // - Tpm: the ring and the region of the TPM service, which hold the
 //   machine key during a request;
 // - Debugger: a ring of its own, and the debuggings of its callers;
-// - System_Part: handles that no other grant names.
+// - System_Part: handles that no other grant names;
+// - Versions_Erase: the versions of the objects of its own store.
 // Each other grant reaches one thing that each of its holders reaches: the
 // machine by its rights, the boot image, the debug image, the replacement
 // table, the settings page, the date page, the records of the log, the
 // commands of the root ring.
-GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part}
+GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part, .Versions_Erase}
 
 // debug gives the debugger service the handle of the program with a name,
 // with the right Debug and no other, on behalf of one of its callers:
@@ -1762,8 +1772,10 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 			if connection.caller != item || connection.history || system.name_of(connection.service.name[:]) != "storage" {
 				continue
 			}
-			// The amount ends; the principal and the flag stay.
-			kept := grant_for(item, connection.service) &~ isolated.CALLER_AMOUNT_MASK
+			// The amount ends, and the grant to erase versions with it, as it
+			// is a right over the store; the principal and the flag to act for
+			// it stay.
+			kept := grant_for(item, connection.service) &~ (isolated.CALLER_AMOUNT_MASK | isolated.CALLER_ERASES_VERSIONS)
 			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = kept}}) {
 				return .No_Slot
 			}

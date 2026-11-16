@@ -514,7 +514,8 @@ COMMANDS :: [?]Command {
 	//   change.
 	// - `release <release number>`: moves the fragments into a new release of
 	//   the changelog, with its release time in UTC and its release link, and
-	//   deletes them.
+	//   deletes them. It copies the measure record to the measure history,
+	//   unless the release before holds the same run.
 	// - `notes <release number>`: prints the changes of one release.
 	// - `times`: gives each old heading with its day alone the time of the
 	//   commit of its release, and adds each missing release link.
@@ -527,6 +528,11 @@ COMMANDS :: [?]Command {
 	// origin/master; when origin moved, it undoes, merges and tries again with
 	// the next number (docs/TOOLS.md, "The release").
 	{name = "ship", about = "step | correction | <release number> [--dry-run]: the release in one command: the changelog, a commit, a signed release tag v<number>, one atomic push to master", run = run_ship},
+	// Gives each release tag whose tree holds a measure record its copy in
+	// the measure history, for the releases from before the release command
+	// copied the record. It changes no file that exists
+	// (docs/TOOLS.md, "The release").
+	{name = "measure-history", about = "the copy of the measure record of each release tag that holds one, in `" + MEASURE_HISTORY_FOLDER + "`, for the charts of each measure over the releases", run = run_measure_history},
 	// Works on the news entries of `news/`, the dated reports of what a
 	// reader can now see or use.
 	//
@@ -623,7 +629,7 @@ COMMANDS :: [?]Command {
 	// - `write <folder>`: writes the same key folder from the variables
 	//   `SYSTEM_SIGNING_KEY_TEXT`, `FIRMWARE_SIGNING_KEY_TEXT`,
 	//   `FIRMWARE_CERTIFICATE_TEXT` and `RELEASE_SIGNING_KEY_TEXT`: the
-	//   secrets of the workflow of a release (secrets/README.md).
+	//   secrets of the workflow of a release (`secrets/README.md`).
 	// - `show`: prints the public key that the build uses: the key of
 	//   `SYSTEM_SIGNING_KEY`, or the test signing key of the repository.
 	//

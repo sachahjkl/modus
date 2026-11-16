@@ -72,7 +72,7 @@ ship_plan_is_one_atomic_push_of_a_signed_tag :: proc(t: ^testing.T) {
 	number := Release_Number{0, 93, 0}
 	publish := ship_publish_commands(number)
 	testing.expect_value(t, len(publish), 4)
-	testing.expect_value(t, command_text(publish[0]), "git add -A -- " + CHANGELOG_FILE + " " + RELEASE_NUMBER_SOURCE + " " + FRAGMENT_FOLDER)
+	testing.expect_value(t, command_text(publish[0]), "git add -A -- " + CHANGELOG_FILE + " " + RELEASE_NUMBER_SOURCE + " " + FRAGMENT_FOLDER + " " + MEASURE_HISTORY_FOLDER)
 	testing.expect_value(t, command_text(publish[1]), "git commit -q -m Release 0.93.0")
 	testing.expect_value(t, len(publish[1]), 5)
 	testing.expect_value(t, publish[1][4], "Release 0.93.0")
@@ -89,6 +89,7 @@ ship_plan_is_one_atomic_push_of_a_signed_tag :: proc(t: ^testing.T) {
 	testing.expect_value(t, command_text(ship_merge_command()), "git merge -q --no-edit origin/master")
 	testing.expect_value(t, command_text(ship_merge_abort_command()), "git merge --abort")
 	testing.expect_value(t, command_text(ship_restore_command()), "git reset -q --hard HEAD")
+	testing.expect_value(t, command_text(ship_measure_history_clean_command()), "git clean -q -f -- " + MEASURE_HISTORY_FOLDER)
 	testing.expect_value(t, command_text(ship_tag_list_command()), "git tag --list v*")
 	testing.expect_value(t, command_text(ship_status_command()), "git status --porcelain")
 	testing.expect_value(t, command_text(ship_branch_command()), "git branch --show-current")

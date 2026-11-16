@@ -453,4 +453,10 @@ the_grant_of_a_connection_names_the_principal :: proc(t: ^testing.T) {
 	testing.expect_value(t, caller_principal(reading), 2)
 	testing.expect(t, reading & CALLER_ACTS_FOR_PRINCIPAL == 0)
 	testing.expect_value(t, caller_principal(caller_grant_make(0, CALLER_PRINCIPAL_LIMIT - 1, true)), CALLER_PRINCIPAL_LIMIT - 1)
+	// The same for the flag of the erase of versions: an amount cannot set
+	// it, and it keeps the amount.
+	testing.expect(t, caller_grant_make(CALLER_ERASES_VERSIONS, 0, false) & CALLER_ERASES_VERSIONS == 0)
+	erasing := caller_grant_make(64, 0, false) | CALLER_ERASES_VERSIONS
+	testing.expect_value(t, erasing & CALLER_AMOUNT_MASK, 64)
+	testing.expect(t, erasing & CALLER_READS_ONLY == 0)
 }

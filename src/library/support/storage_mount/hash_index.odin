@@ -208,7 +208,10 @@ hash_index_release :: proc "contextless" (state: ^State, root: format.Pointer) {
 // commit, so a root that the index does not hold yet is never a candidate.
 // The storage service calls it after the root of the commit is on the disk.
 hash_index_entry_change :: proc "contextless" (state: ^State, before: format.Entry, after: format.Entry, gone: bool, hidden: bool) {
-	if !gone && after == before {
+	// The index keys a root by its hash and its size. A change that keeps
+	// all three (an erase of the versions, which changes only the version
+	// index) leaves the record as it is: a hidden root stays hidden.
+	if !gone && after.kind == before.kind && after.pointer == before.pointer && after.hash == before.hash && after.size == before.size {
 		return
 	}
 	if before.kind == .Object {

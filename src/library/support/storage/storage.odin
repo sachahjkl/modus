@@ -32,7 +32,8 @@
 //   `set_size`, `commit`): the objects.
 // - `open_tree`, `close_tree`, `add`, `list`, `rename`: the trees and the
 //   places.
-// - `versions`, `version`, `compare`, `restore`: the versions.
+// - `versions`, `version`, `compare`, `restore`, `erase_versions`: the
+//   versions.
 // - `share`, `unshare`, `open_handles`, `open_store`: the shares and the
 //   other stores.
 // - `usage`, `error_text`: the counts of the store and the sentence of an
@@ -631,6 +632,31 @@ compare :: proc "contextless" (client: ^Client, place: Place, name: string, firs
 		into[index] = (^Byte_Range)(raw_data(bytes[index * size_of(Byte_Range):]))^
 	}
 	return into[:count], .Ok
+}
+
+// What one erase of versions did: the row of the export erase_versions.
+Erase_Measure :: struct {
+	generation: i64, // The generation of the root that the erase wrote last; 0 when the object had no version.
+	versions:   i64, // The versions that the erase ended.
+	zeroed:     i64, // The blocks written with zero bytes.
+	kept:       i64, // The blocks of the versions that another state still names: they keep their bytes.
+	damaged:    i64, // The damaged version indexes, leaves and states that were ended with no zeros over them.
+}
+
+// erase_versions ends each version of an object of the store of this
+// program, and writes zero bytes over each block that no other state names
+// after that (src/md/features/version_erase.md). The current version stays.
+// Only a program with the grant Versions_Erase may call it, on its own
+// store: another program, and a share, get Failed with No_Grant. An object
+// with no version gives a row of zeros, and the disk does not change.
+erase_versions :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (measure: Erase_Measure, status: Status) {
+	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
+	bytes: []u8
+	_, bytes, status = call(client, "erase_versions", arguments[:], error)
+	if status == .Ok && len(bytes) >= size_of(Erase_Measure) {
+		measure = (^Erase_Measure)(raw_data(bytes))^
+	}
+	return measure, status
 }
 
 // restore makes a version of an object its current version again, in one

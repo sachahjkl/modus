@@ -271,6 +271,16 @@ cache_put :: proc "contextless" (pointer: Pointer, bytes: ^Block) {
 	block_cache[oldest].bytes = bytes^
 }
 
+// cache_forget drops a block from the cache: the erase of versions writes
+// zeros over it, and the memory of the service keeps no copy of it.
+cache_forget :: proc "contextless" (number: u64) {
+	for &entry in block_cache {
+		if entry.number == number {
+			entry = {}
+		}
+	}
+}
+
 // read_single reads one block, checked, through the cache.
 read_single :: proc "contextless" (pointer: Pointer, into: ^Block) -> Read {
 	cache_reads += 1
@@ -494,6 +504,7 @@ Plan :: struct {
 	count_fault:      bool, // A count would go below 0: a fault of the engine.
 	count_overflow:   bool, // A count would pass REFERENCE_LIMIT.
 	dropped_versions: u64, // Version indexes and leaves with a wrong check that the plan drops.
+	release_damaged:  u64, // States of versions that the plan releases with a wrong block under their root, one count for each state: the blocks under it stay in use until the next start.
 	tree_damaged:     bool, // A node of a tree has a wrong check or breaks a rule: the store is damaged.
 	// The trees that the commit opened, and the entries whose versions it
 	// changes (trees.odin).
@@ -534,6 +545,7 @@ plan_reset :: proc "contextless" (store_index: int) {
 	plan.capacity_reached, plan.capacity_limit = false, 0
 	plan.count_fault, plan.count_overflow = false, false
 	plan.dropped_versions = 0
+	plan.release_damaged = 0
 	plan.tree_damaged = false
 	plan.leaf_count = 0
 	plan.versions_change = 0
@@ -709,9 +721,11 @@ child_release :: proc "contextless" (child: Object_Child, level: int) {
 		plan.device = true
 	case .Wrong:
 		storage_mount.wrong_block_set(&opened, child.block)
+		plan.release_damaged += 1
 	case .Good:
 		if node.header.magic != format.OBJECT_NODE_MAGIC || int(node.header.level) != level {
 			storage_mount.wrong_block_set(&opened, child.block)
+			plan.release_damaged += 1
 			return
 		}
 		for item in node.children {
@@ -929,7 +943,13 @@ versions_release :: proc "contextless" (entry_index: int) {
 			return
 		}
 		for entry in leaf.leaf.entries[:leaf.leaf.count] {
+			// A state with a wrong block, known before or found by its
+			// release, keeps the blocks under it in use until the next start:
+			// the erase of versions reports it, one count for each state.
+			counted := plan.release_damaged
+			known := state_damaged(entry.root) || entry.size > format.OBJECT_SIZE_LIMIT
 			state_release(entry.root, entry.size)
+			plan.release_damaged = counted + ((known || plan.release_damaged != counted) ? u64(1) : u64(0))
 		}
 		plan.versions_change -= i64(leaf.leaf.count)
 		leaf.leaf.count = 0
@@ -1222,5 +1242,120 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	later_count = 0
 	plan.taken_count = 0
 	return i64(root.generation)
+}
+
+// root_again writes the root of the last commit again, with the next
+// generation, in the other place of the root, then a Flush. Until then the
+// root before the last commit is on the disk, whole, and names each block
+// that the last commit freed; after it, neither root names one, so the
+// erase of versions can write zeros over them
+// (src/md/features/version_erase.md).
+root_again :: proc "contextless" () -> bool {
+	if broken {
+		return false
+	}
+	next := root
+	next.generation = root.generation + 1
+	next.time = time_now()
+	next.date = date_now()
+	next.check = root_check(&next)
+	intrinsics.mem_copy_non_overlapping(raw_data(slot(0)), &next, BLOCK_SIZE)
+	place := 1 - root_place
+	if !transfer(.Write, {{number = place, slot = 0}}) || !flush() {
+		// As for a commit: the service cannot know which root the disk has,
+		// and stops serving changes.
+		broken = true
+		return false
+	}
+	root = next
+	root_place = place
+	commits += 1
+	blocks_written += 1
+	return true
+}
+
+// freed_blocks_zero writes zero bytes over each block that the last commit
+// freed: each block of the change of the reference counts of the plan
+// whose count is 0 now. Nothing names them, and no commit took one since:
+// the service runs one call at a time. It gives the count of the blocks
+// written, and false when a write or the Flush failed.
+freed_blocks_zero :: proc "contextless" () -> (zeroed: u64, ok: bool) {
+	intrinsics.mem_zero(region, REGION_BLOCKS * BLOCK_SIZE)
+	requests: [REGION_BLOCKS]Request
+	count := 0
+	for place in plan.delta_places[:plan.delta_count] {
+		number := plan.delta_blocks[place]
+		if number < 2 || number >= disk_size || opened.references[number] != 0 {
+			continue
+		}
+		cache_forget(number)
+		requests[count] = {number = number, slot = u64(count)}
+		count += 1
+		if count < REGION_BLOCKS {
+			continue
+		}
+		if !transfer(.Write, requests[:count]) {
+			return zeroed, false
+		}
+		zeroed += u64(count)
+		count = 0
+	}
+	if count > 0 {
+		if !transfer(.Write, requests[:count]) {
+			return zeroed, false
+		}
+		zeroed += u64(count)
+	}
+	return zeroed, flush()
+}
+
+// released_blocks_kept counts the blocks that the last commit took a name
+// from and that another state still names: the erase of versions leaves
+// their bytes, as a state that stays holds them. A node whose children are
+// shared too counts one: the release stops at it.
+released_blocks_kept :: proc "contextless" () -> (kept: u64) {
+	for place in plan.delta_places[:plan.delta_count] {
+		number := plan.delta_blocks[place]
+		if plan.delta_values[place] < 0 && number < DISK_BLOCKS_LIMIT && opened.references[number] != 0 {
+			kept += 1
+		}
+	}
+	return kept
+}
+
+// commit_read_back reads each block that the last commit wrote from the
+// device, and its root, past the cache of the service, and compares them
+// with the bytes that the commit wrote. The erase of versions needs it before its second
+// root: that root replaces the root before the commit, the one root that
+// the open can fall back to when the disk did not keep a write of the
+// commit (src/md/features/dropped_write.md). A disk that answers a read
+// from the same cache that lost the write still passes: the read back
+// proves only what the device gives.
+commit_read_back :: proc "contextless" () -> (differ: u64, state: Read) {
+	for first := 0; first < plan.write_count; first += REGION_BLOCKS {
+		part := plan.writes[first:min(first + REGION_BLOCKS, plan.write_count)]
+		requests: [REGION_BLOCKS]Request
+		for write, index in part {
+			requests[index] = {number = write.number, slot = u64(index)}
+		}
+		if !transfer(.Read, requests[:len(part)]) {
+			return differ, .Device
+		}
+		for write, index in part {
+			if string(slot(u64(index))) != string(write.bytes^[:]) {
+				differ += 1
+			}
+		}
+	}
+	// The root of the commit too: if the disk did not keep it, the root
+	// before it is the newest on the disk, and it names the blocks that the
+	// zeros would write over.
+	if !transfer(.Read, {{number = root_place, slot = 0}}) {
+		return differ, .Device
+	}
+	if string(slot(0)) != string(([^]u8)(&root)[:BLOCK_SIZE]) {
+		differ += 1
+	}
+	return differ, differ == 0 ? .Good : .Wrong
 }
 
