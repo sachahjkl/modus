@@ -623,7 +623,7 @@ COMMANDS :: [?]Command {
 	// - `write <folder>`: writes the same key folder from the variables
 	//   `SYSTEM_SIGNING_KEY_TEXT`, `FIRMWARE_SIGNING_KEY_TEXT`,
 	//   `FIRMWARE_CERTIFICATE_TEXT` and `RELEASE_SIGNING_KEY_TEXT`: the
-	//   secrets of the workflow of a release (secrets/README.md).
+	//   secrets of the workflow of a release (`secrets/README.md`).
 	// - `show`: prints the public key that the build uses: the key of
 	//   `SYSTEM_SIGNING_KEY`, or the test signing key of the repository.
 	//
