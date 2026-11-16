@@ -4858,7 +4858,7 @@ Do not use: straight alpha (for this).
 
 A resource is a file of the boot image that is not a module: data that a program reads in place, named by the hash of its bytes.
 
-The resources are the pointer theme files, the glyph caches of the vector font and of the interface font, and the system description with its signature. Each one has a name of 31 bytes at most and the BLAKE3 hash of its bytes in the resource table of the boot image, after the table of the modules, so a reader of modules never takes a resource for a module. No program reads the resource table by itself: the root service finds a resource by its name, checks its hash, and gives one program a read-only mapping of it. Example of the log: "root: the resource pointers_posy (883008 bytes, its hash checked in 1395 us) is given to compositor, read-only". A program with the grant `Image` finds resources with `system.image_resource_find`.
+The resources are the pointer theme files, the glyph caches of the vector font and of the interface font, the link pages of the manual, and the system description with its signature. Each one has a name of 31 bytes at most and the BLAKE3 hash of its bytes in the resource table of the boot image, after the table of the modules, so a reader of modules never takes a resource for a module. No program reads the resource table by itself: the root service finds a resource by its name, checks its hash, and gives one program a read-only mapping of it. Example of the log: "root: the resource pointers_posy (883008 bytes, its hash checked in 1395 us) is given to compositor, read-only". A program with the grant `Image` finds resources with `system.image_resource_find`.
 
 A resource is not an asset that a program loads by a path: it has no path, and the program validates its bytes with the reader of its format.
 
@@ -5322,6 +5322,16 @@ A span has no mark: the stars, the backticks and the brackets are outside its ra
 The design: `docs/SITE.md`, "The reader of the system".
 
 Do not use: run (alone), token, inline.
+
+### Link page
+
+A link page is a page of the program `manual` for the target of a link that is no module: a term of the glossary, or a heading of a guide.
+
+The documentation of a module links terms and headings of the guides, and the manual reads only the boot image. So the build writes the page of each such target that the modules of the image link, with the headings under each heading, in the resource `manual_pages` (`src/library/contract/manual_pages`). The page of a term is its name, its short definition and its explanation. The page of a heading is its text up to the next heading, then a link to each heading under it. Example: on the page of the module `manual`, the link "the description tables" opens the link page `docs/MODULE_CONTRACT.md#description-tables`. A link page is not a copy of the site: it holds no picture, and a table is a list.
+
+The design: `src/md/features/manual_links.md`.
+
+Do not use: document page.
 
 ### Text box
 

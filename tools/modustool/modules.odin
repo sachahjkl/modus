@@ -273,9 +273,15 @@ build_modules :: proc() -> bool {
 	glyph_caches := build_glyph_caches() or_return
 	build_measure_step("the glyph caches", step_started)
 	step_started = time.tick_now()
+	// The pages of the links of the documentation of the modules: one more
+	// resource, for the program manual (manual_link_pages.odin).
+	link_pages := build_manual_pages() or_return
+	build_measure_step("the link pages of the manual", step_started)
+	step_started = time.tick_now()
 	all_resources := make([dynamic]Resource_File, context.temp_allocator)
 	append(&all_resources, ..resources)
 	append(&all_resources, ..glyph_caches[:])
+	append(&all_resources, link_pages)
 	// The second boot image has no compositor: with it, the start fails.
 	// The third has no input service: the root service starts only the
 	// program shortage (the test of the shortage of frames).
