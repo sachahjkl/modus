@@ -916,7 +916,7 @@ Do not use: thread stack (for this), system stack.
 
 The deepest chain is the chain of calls of the kernel that uses the most bytes of a kernel stack, from a place where the kernel starts on it.
 
-The tool computes it at each build from the frame of each procedure that `llc` writes and from the calls of the listing of the linked kernel, with stated rules for what the listing cannot show: the indirect calls, the bounded recursions such as the two frames of `execute`, and one interrupt over the idle wait. Each build prints it, procedure by procedure, in a measure line. It is a bound: a chain of the graph can be a chain that no input runs.
+The tool computes it at each build from the frame of each procedure that `llc` writes, from the calls of the listing of the linked kernel, and from the scan of the stack pointer, which adds the arguments that a caller pushed outside its frame. Stated rules cover what the listing cannot show: the targets of the indirect calls and of the indirect tail calls, the bounded recursions such as the two frames of `execute`, and one interrupt over the idle wait. Each build prints it, procedure by procedure, in a measure line. It is a bound: a chain of the graph can be a chain that no input runs.
 
 The design: `src/md/infrastructure/kernel_stack_depth.md`.
 
@@ -931,6 +931,16 @@ The listing of the kernel shows a cycle when a procedure can reach itself throug
 The design: `src/md/infrastructure/kernel_stack_depth.md`.
 
 Do not use: cycle exception, recursion bound (for this).
+
+### Scan of the stack pointer
+
+The scan of the stack pointer is the part of the measure of the kernel stack that follows the bytes on the stack through each compiled procedure of the listing, path by path.
+
+A `push` adds 8 bytes, a `pop` removes 8, and a `sub` or an `add` of a constant to `%rsp` adds or removes the constant. In the body of a procedure the count is its frame from `llc`. At a call the count can be larger: the arguments that `llc` pushed just before the call are outside the frame, and the measure adds them under the callee. A jump through a register where the count is 0 is an indirect tail call: no frame stays, so it leaves the procedure, and it needs a row that names its targets. Above 0 it is a branch of a table of a `switch`. Each `ret` and each tail call must find 0; a count that does not stops the build. The scan does not replace the frame from `llc`: it only adds what the frame does not hold.
+
+The design: `src/md/infrastructure/kernel_stack_depth.md`.
+
+Do not use: stack tracking, stack pointer analysis, push depth.
 
 ### Direct map
 
