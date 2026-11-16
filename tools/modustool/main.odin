@@ -511,6 +511,24 @@ COMMANDS :: [?]Command {
 	// export that fails.
 	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, and that no export of a program or a module gives a negative number with no error record", run = run_rule_checks},
 	{name = "library-imports", about = "check that each import of each source file of " + SOURCE_FOLDER_KERNEL + " and of " + SOURCE_FOLDER_CONTRACT + " names a package of base:, of core: or under " + CONTRACT_IMPORT_START, run = run_library_imports},
+	// Measures how similar the code pieces of the Odin sources are, and
+	// proposes where to factor them. It reads `src/` and `tools/`, gives a
+	// similarity score from 0 to 1 to each pair that it compares, groups
+	// the similar pieces in families with their factoring template, and
+	// ranks the families by the nodes that a factoring saves
+	// (docs/TOOLS.md, "The similarity finder").
+	//
+	// - no argument: the report on the terminal, and the whole report with
+	//   two tables in `build/similarity/`.
+	// - `near <file>:<line>`: the procedures most similar to the one that
+	//   holds the line.
+	// - `pair <file>:<line> <file>:<line>`: the score of two procedures and
+	//   their template.
+	//
+	// It never edits a source and never fails on a similarity: a human or
+	// an agent decides what to factor. A family that is kept on purpose is
+	// a line of `tools/modustool/similarity_kept.txt`.
+	{name = "similarity", about = "the similarity of the code pieces of src/ and tools/: families with their factoring template, ranked by the nodes that a factoring saves, in " + SIMILARITY_OUTPUT_FOLDER + "; `similarity near <file>:<line>`: the procedures most similar to one; `similarity pair <file>:<line> <file>:<line>`: the score of two procedures", run = run_similarity},
 	// Works on the changelog: the fragments of `changelog.d/`, and the releases
 	// of `CHANGELOG.md`.
 	//
