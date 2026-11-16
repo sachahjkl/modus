@@ -902,6 +902,36 @@ The design: `docs/ARCHITECTURE.md`, "The return to a program".
 
 Do not use: IST, exception stack, NMI stack.
 
+### Kernel stack
+
+A kernel stack is the stack of 16 pages of one processor where the kernel runs each entry from a program, each interrupt that it takes and each operation.
+
+Each entry from a program starts at its top, and no entry continues an earlier one. A guard page is before it and after it. The build measures the deepest chain of calls on it and fails when less than 4 pages stay free. It is not an interrupt stack: those hold the frames of the exceptions that can come when no stack is safe.
+
+The design: `src/md/infrastructure/kernel_stack_depth.md`; `docs/TOOLS.md`, "The deepest stack of the kernel".
+
+Do not use: thread stack (for this), system stack.
+
+### Deepest chain
+
+The deepest chain is the chain of calls of the kernel that uses the most bytes of a kernel stack, from a place where the kernel starts on it.
+
+The tool computes it at each build from the frame of each procedure that `llc` writes and from the calls of the listing of the linked kernel, with stated rules for what the listing cannot show: the indirect calls, the bounded recursions such as the two frames of `execute`, and one interrupt over the idle wait. Each build prints it, procedure by procedure, in a measure line. It is a bound: a chain of the graph can be a chain that no input runs.
+
+The design: `src/md/infrastructure/kernel_stack_depth.md`.
+
+Do not use: stack depth (for the chain), call stack (for this), worst-case stack.
+
+### Cycle break
+
+A cycle break is a stated rule of the measure of the kernel stack: below one procedure, no chain runs a named other procedure again, so a cycle of calls through them has a depth.
+
+The listing of the kernel shows a cycle when a procedure can reach itself through others, and a cycle has no depth. A state of the kernel can cut it: `lock_order_broken` logs, and the log takes a lock, but it starts the report of a fault first, and from then the log takes no lock. The row names the two procedures and its reason in the source of the tool; the measure takes the depth of the first with the second left out, and a cycle with no row stops the build.
+
+The design: `src/md/infrastructure/kernel_stack_depth.md`.
+
+Do not use: cycle exception, recursion bound (for this).
+
 ### Direct map
 
 The direct map is the part of the kernel half of the addresses that shows all physical memory.
@@ -928,11 +958,11 @@ Do not use: negative test, lkdtm.
 
 ### Log record
 
-A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a program, a thread, a level, a channel, a text and the value runs of the text.
+A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes): a number, a time, a program (its name, its program slot and its program serial), the own number of the record among the records of its program, a thread, a level, a channel, a text and the value runs of the text.
 
 A program writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the program and the thread, so a program cannot write a record in the name of another one. The text has 152 bytes at most per record; a longer text continues in the next record. The serial port prints the text only. The budget of the program limits its log records in each second.
 
-A program with the grant to read the log serves the records as a table: `log.records(after)`, and their value runs: `log.value_runs(after)`.
+A program with the grant to read the log serves the records as a table: `log.records(after)`, and their value runs: `log.value_runs(after)`. Each caller receives the records of its log scope: the whole log, or its own records.
 
 The design: `docs/TOOLS.md`, "The log".
 
@@ -983,6 +1013,36 @@ A level says how much a log record matters: Info, Debug, Warning or Error.
 Info is 0, the default. Debug is for the reader who looks for a fault.
 
 Do not use: severity, priority.
+
+### Own records
+
+The own records of a program are the log records that the kernel wrote for the `Log` operations of that program: the records with its program slot and its program serial.
+
+The kernel sets the slot and the serial of each record (`op.Log_Record.program`, `op.Log_Record.program_serial`), so a program cannot write a record in the name of another one. The two numbers together name one program: a new program in the same slot has another serial, and does not read the records of the program before it. A record that another program wrote about this program, such as the line "root: started log_reader" of the root service, is not one of its own records. A caller of the log service that does not act for the principal receives its own records only.
+
+The design: `src/md/features/log_reader_scope.md`.
+
+Do not use: my log, private log, log of a program (for this).
+
+### Own number
+
+The own number of a log record is its place among the records of its program: 0 for the first record that the program wrote, 1 for the next one (`op.Log_Record.own_number`).
+
+The kernel counts the records of each program and writes the count in each record. A reader of its own records receives the own number as the number of each row, gives `after` in own numbers, and its count `lost` is a gap in its own numbers: it receives no number or count of the records of other programs. The one ring still lets their records push its own records out. A reader of the whole log receives the number of the record in the whole log. The own number has 32 bits and starts again from 0 after 2^32 records; two own numbers are compared by their distance.
+
+The design: `src/md/features/log_reader_scope.md`.
+
+Do not use: local sequence, private number, cursor (for this).
+
+### Log scope
+
+The log scope of a connection to the log service is the set of log records that its caller receives from `log.records(after)` and `log.value_runs(after)`: the whole log, or its own records.
+
+The root service writes it in the grant of the connection, and the log service, which holds the memory of the log, chooses the records; the reader never maps that memory. A caller that acts for the principal, such as the console or `remote`, receives the whole log. Each other caller receives its own records: the amount of its grant names its program slot and its program serial (`modus:contract/log_scope`). A program with no connection to the log service reads no record through it. A log scope never names a channel: a channel is a name that the writer chooses, not a fact that the kernel sets.
+
+The design: `src/md/features/log_reader_scope.md`.
+
+Do not use: log permission, log view, log access level.
 
 ### Lock of the kernel
 

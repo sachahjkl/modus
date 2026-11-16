@@ -2327,6 +2327,31 @@ scenario := [?]Step {
 	// the first records have a run of the kind size.
 	{kind = .Call, text = "log.value_runs(0)", expected = "  size"},
 	{kind = .Front, text = "console"},
+	// The log scope: log_reader has a connection to the log service that
+	// does not act for the principal. It reads the log from the own number
+	// 0 and receives its own records only: the records of its program slot
+	// with its program serial, numbered among its own records. The second
+	// run reads none of the records of the first one, which the ring still
+	// keeps: same name, same texts, often the same slot, another serial.
+	// The remote service acts for the principal and still reads the whole
+	// log: the record of the root service about log_reader, and the record
+	// of log_reader.
+	{kind = .Type, text = "start(\"log_reader\")"},
+	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
+	{kind = .Wait, text = "[log_reader] log_reader: its own records: 1 rows from the own number 0, its first record, in the slot "},
+	{kind = .Wait, text = ", lost 0: no row of another program or of an earlier run: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the value runs: 1 rows, each of a record of this program, with the run of its value 42: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: ok"},
+	{kind = .Wait, text = "root: log_reader stopped with code 0"},
+	{kind = .Type, text = "start(\"log_reader\")"},
+	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
+	{kind = .Wait, text = "[log_reader] log_reader: its own records: 1 rows from the own number 0, its first record, in the slot "},
+	{kind = .Wait, text = ", lost 0: no row of another program or of an earlier run: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the value runs: 1 rows, each of a record of this program, with the run of its value 42: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: ok"},
+	{kind = .Wait, text = "root: log_reader stopped with code 0"},
+	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: started log_reader", any_order = true},
+	{kind = .Record, program = "log_reader", level = "info", text = "log_reader: the record that this program reads back, with the value 42"},
 	// The refusals of the console come after the check of the log, which
 	// needs each record since the boot (" 0 lost"): the lines before it stay
 	// few.
