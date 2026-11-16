@@ -31,6 +31,13 @@ idle_wait:                       ; (): wait for one interrupt
 	cli
 	ret
 
+global interrupt_window
+interrupt_window:                ; (): take the interrupts that wait, and no wait
+	sti                          ; Interrupts come after the next instruction.
+	nop
+	cli
+	ret
+
 global gdt_load
 gdt_load:                        ; (descriptor: rawptr): load the table and all segment registers
 	lgdt [rdi]

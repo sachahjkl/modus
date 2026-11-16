@@ -114,7 +114,8 @@ Kernel_Stack_Rules :: struct {
 	// Compiled procedures that no code calls.
 	not_run:                  []string,
 	interrupt_entry:          string, // The procedure that each interrupt runs.
-	idle_wait:                string, // The one place where the kernel takes an interrupt.
+	idle_wait:                string, // A place where the kernel takes an interrupt: it waits for one.
+	interrupt_windows:        []string, // The other places where the kernel takes an interrupt, with no wait.
 	stack_bytes:              int,
 	least_free_bytes:         int,
 	interrupt_stacks:         []Kernel_Stack_Interrupt_Stack,
@@ -148,6 +149,7 @@ kernel_stack_rules := Kernel_Stack_Rules {
 	assembly_frames = {
 		{"processor_stop", 0},
 		{"idle_wait", 0},
+		{"interrupt_window", 0},
 		// It takes the return address off and pushes the code selector and
 		// the return address: 8 bytes under its entry.
 		{"gdt_load", 8},
@@ -222,6 +224,9 @@ kernel_stack_rules := Kernel_Stack_Rules {
 	not_run = {"__truncsfhf2", "__gnu_f2h_ieee", "__truncdfhf2", "__gnu_h2f_ieee", "__extendhfsf2"},
 	interrupt_entry = "kernel_interrupt",
 	idle_wait = "idle_wait",
+	// The drain of the serial port in the idle loop opens it after each
+	// byte (src/md/features/log_side_channels.md).
+	interrupt_windows = {"interrupt_window"},
 	stack_bytes = KERNEL_STACK_BYTES,
 	least_free_bytes = KERNEL_STACK_BYTES / STACK_LEAST_FREE_PART,
 	// The gates of these four vectors name an interrupt stack. Each other
@@ -1189,6 +1194,18 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 	if idle_wait < 0 {
 		append(&measure.problems, fmt.tprintf("the listing has no procedure %s: the measure cannot place an interrupt over the kernel", rules.idle_wait))
 	}
+	// Each place where an interrupt comes over the kernel: the idle wait,
+	// then each window.
+	interrupt_places := make([dynamic]int, 0, 1 + len(rules.interrupt_windows), context.temp_allocator)
+	append(&interrupt_places, idle_wait)
+	for name in rules.interrupt_windows {
+		place := stack_procedure_named(procedures, name)
+		if place < 0 {
+			append(&measure.problems, fmt.tprintf("the listing has no procedure %s: the measure cannot place an interrupt over the kernel", name))
+			continue
+		}
+		append(&interrupt_places, place)
+	}
 	for len(pending) > 0 {
 		index := pop(&pending)
 		if reached[index] {
@@ -1285,7 +1302,6 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 
 	// The depths.
 	deepest := depth_search_make(procedures, frame_of, levels, -1, cut, -1)
-	to_idle := depth_search_make(procedures, frame_of, levels, idle_wait, cut, -1)
 	handler := depth_of(&deepest, interrupt_entry)
 	measure.deepest = -1
 	deepest_text := ""
@@ -1299,17 +1315,21 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 			deepest_text = fmt.tprintf("%s, %d bytes above it: %s", entry.label, entry.bytes_above, chain_text(&deepest, index))
 		}
 	}
-	// One interrupt over the deepest chain to the idle wait.
+	// One interrupt over the deepest chain to a place where an interrupt
+	// comes: the idle wait or a window.
 	idle_bytes := -1
 	idle_text := ""
-	for entry, position in rules.entries {
-		index := entry_indexes[position]
-		below := depth_of(&to_idle, index)
-		if below == DEPTH_NO_CHAIN || entry.bytes_above + below <= idle_bytes {
-			continue
+	for place in interrupt_places {
+		to_idle := depth_search_make(procedures, frame_of, levels, place, cut, -1)
+		for entry, position in rules.entries {
+			index := entry_indexes[position]
+			below := depth_of(&to_idle, index)
+			if below == DEPTH_NO_CHAIN || entry.bytes_above + below <= idle_bytes {
+				continue
+			}
+			idle_bytes = entry.bytes_above + below
+			idle_text = chain_text(&to_idle, index)
 		}
-		idle_bytes = entry.bytes_above + below
-		idle_text = chain_text(&to_idle, index)
 	}
 	idle_line := "no chain reaches the idle wait"
 	if idle_bytes >= 0 {
