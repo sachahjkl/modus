@@ -233,9 +233,9 @@ Memory
   memory                256 MiB
   free                  201 MiB
   ...
-> columns(where(programs(), "name", "console"), "name slot resident time started")
-name     slot  resident (pages)  time (ms)  started (us)
-console     4               412         38       1830211
+> columns(where(programs(), "name", "console"), "name slot threads resident time started")
+name     slot  threads  resident (pages)  time (ms)  started (us)
+console     4        3               412         38       1830211
 1 row of Program
 ```
 

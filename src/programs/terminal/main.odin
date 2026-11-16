@@ -1150,7 +1150,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	picture_waits := false // A picture waits until the compositor took the picture before it.
 	for {
 		if !measure && !dirty && intrinsics.atomic_load(&activity) == drawn {
-			// Nothing to draw: wait for a record, a key, or the next look at the program.
+			// Nothing to draw: wait for a record, a key, or the next look at
+			// the program. A due picture that a full command ring kept from
+			// the compositor ends here.
+			display.picture_due_set(&window, false)
 			wait: system.Wait
 			display.wait_events(&wait, &window)
 			system.wait_word(&wait, &activity, drawn, &drawer_idle)
@@ -1241,6 +1244,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					system.log("terminal: the view stays at line ", request.top + 1, ", ", program_name, " continues")
 				}
 			}
+		}
+		// A change that this loop did not draw waits for the next picture:
+		// on the clock of the frames, or for the compositor. The compositor
+		// says so in windows(), so that a reader of the screen does not take
+		// this wait for a window with nothing to draw.
+		if dirty || intrinsics.atomic_load(&activity) != drawn {
+			display.picture_due_set(&window, true)
 		}
 		if now < next_frame {
 			continue

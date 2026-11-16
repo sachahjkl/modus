@@ -1377,13 +1377,6 @@ scenario := [?]Step {
 	{kind = .Wait, text = "paint  "},
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = "[console]   interrupts"},
-	// Each field in the color of its value kind: a number, a size in pages
-	// and two times, each unit once in the head of its column.
-	{kind = .Type, text = "clear()"},
-	{kind = .Type, text = "columns(where(programs(), \"name\", \"console\"), \"name slot resident time started\")"},
-	{kind = .Wait, text = "[console] name     slot  resident (pages)  time (ms)  started (us)"},
-	{kind = .Wait, text = "[console] 1 row of Program"},
-	{kind = .Shot, text = "console_value_kinds"},
 	{kind = .Type, text = "stop(\"paint\")"},
 	{kind = .Wait, text = "root: paint stopped"},
 	// A command is an export of a module: the console loads the module and
@@ -1525,6 +1518,19 @@ scenario := [?]Step {
 	{kind = .Type, text = "b"},
 	{kind = .Wait, text = ": Memory (Give, Read, Write, Execute)"},
 	{kind = .Shot, text = "records"},
+
+	// Each field in the color of its value kind: a handle in a record, then
+	// a table with a text, two numbers, a size in pages and two times, each
+	// unit once in the head of its column. The row of the table is the last
+	// line but one: the picture waits for it, then for the count of rows.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "Span(b, 96, 10)"},
+	{kind = .Wait, text = "[console]   count   10"},
+	{kind = .Type, text = "columns(where(programs(), \"name\", \"console\"), \"name slot threads resident time started\")"},
+	{kind = .Wait, text = "[console] name     slot  threads  resident (pages)  time (ms)  started (us)"},
+	{kind = .Wait, text = "[console] console  "},
+	{kind = .Wait, text = "[console] 1 row of Program"},
+	{kind = .Shot, text = "console_value_kinds"},
 
 	// Revocation. The console revokes what it lent at the end of each
 	// call: the mapping that the module kept is gone, and the next read
