@@ -80,6 +80,8 @@ A share names no store with `open_store`, not even the store of its maker: a pla
 - **The count of the current objects counts a shared block two times** (`Store_Block.current_blocks`), as for a clone, so a change at the limit of a store can be refused early. The blocks in use of the store (`usage().blocks`) count it one time.
 - **A found root can be the root of the state before of the same entry.** The entry names it again, and its version keeps its own name: two names, as for a restore.
 - **The measure of a commit of ranges** gives 0 blocks of the block tree written when the root was found.
+- **A change that keeps the root, the hash and the size leaves the record as it is.** An erase of the versions ([../features/version_erase.md](../features/version_erase.md)) changes only the version index of the entry. A release and a new name of the same root would take a hidden root out of its record and give it a slot again.
+- **The erase keeps a block that the index shares.** The old state of an entry can name the root of another entry with the same bytes. The erase of its versions then ends one name of that root, and the bytes stay: the other entry holds them.
 
 ## State
 

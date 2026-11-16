@@ -9,7 +9,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A terminal that always draws the end of an output.** On two runs of the main test, the terminal stayed on the state of a running call after the console had written the whole result: the row, the count of rows and the next line were in the log, not on the screen, with every program in a wait. The terminal now logs a lost wake of its reader or of its drawer, so the next run that shows it names the side that lost it, and a principal never sees a stale screen until the next key.
 - **The first signed release image.** The keys of the publisher of the system go into the secrets of the repository, and their public key and certificate into `resources/keys`. The next tag then publishes a disk image that a principal verifies and starts. [Design](src/md/infrastructure/release_image.md)
 - **A guest on a machine with an Intel processor.** A program runs a guest on a machine with an Intel processor too, with the same operation and the same exit records as on AMD. [Design](src/md/features/guest.md)
-- **The old versions of the file of a principal are erased.** After a change of the passphrase or of the recovery key, the store erases the versions of the file from before and writes zeros over their blocks. A thief of the machine who knows the old passphrase or the old recovery key then opens nothing on its disk. [Design](src/md/features/tpm_sealed_principal_keys.md)
 
 ## Later
 

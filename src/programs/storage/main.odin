@@ -2,7 +2,7 @@
 //
 // The root service decides who has a store: it names the store of each connection, and its limit of blocks. A connection reaches the tree of its store and what is under it: each export takes a place (0 is the root of the connection) and a name of one step under it, never a path, and never the name of a store. A connection that [share](storage.share) makes reaches a tree of the store of its maker only, and **can read only**; [unshare](storage.unshare) revokes it.
 //
-// **A change is one commit**, on the disk when the call returns: the system has no save action. The state of an object before a change is a version: a program reads, compares, restores and clones versions with no code of its own. The disk always has the state of the last commit, or of the one before: a stop of the machine during a commit never shows a part of it. The checks of the blocks show each change that the service did not make.
+// **A change is one commit**, on the disk when the call returns: the system has no save action. The state of an object before a change is a version: a program reads, compares, restores and clones versions with no code of its own, and [erase_versions](storage.erase_versions) ends them and writes zeros over their blocks. The disk always has the state of the last commit, or of the one before: a stop of the machine during a commit never shows a part of it. The checks of the blocks show each change that the service did not make.
 //
 // A program that acts for a principal (the console, remote for the host) sees the stores of that principal with [stores](storage.stores), and opens a place on one of them with [open_store](storage.open_store).
 //
@@ -88,6 +88,7 @@ Caller :: struct {
 	acts_for_principal: bool, // The root service granted it to act for its principal.
 	principal:  u64, // The principal of the session of the caller (isolated.caller_principal).
 	read_only:  bool,
+	erases_versions: bool, // The root service gave it the grant Versions_Erase (isolated.CALLER_ERASES_VERSIONS).
 	depth:      int,
 	path:       [NESTING_LIMIT]Entry_Name, // The root of the connection.
 }
@@ -139,6 +140,8 @@ caller_of :: proc "contextless" () -> (caller: Caller) {
 		// debug object of a disk program: each change is refused on it, as
 		// on a share that reads only.
 		caller.read_only = connection.grant & isolated.CALLER_READS_ONLY != 0
+		// A share never has it: the field stays false below.
+		caller.erases_versions = connection.grant & isolated.CALLER_ERASES_VERSIONS != 0
 		return caller
 	}
 	store, _, found := connection_store(item.maker, 0)
@@ -1071,6 +1074,52 @@ compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result:
 }
 
 compare_blocks: [2]Block // The two blocks of data that compare reads.
+
+// One row of erase_versions: what the erase did.
+Erase_Measure :: struct {
+	generation: i64, // The generation of the root that the erase wrote last; 0 when the object had no version.
+	versions:   i64, // The versions that the erase ended.
+	zeroed:     i64, // The blocks written with zero bytes: each block that the end of the versions freed.
+	kept:       i64, // The blocks of the versions that another state still names: they keep their bytes.
+	damaged:    i64, // The version indexes, leaves and states with a wrong block that the erase ended without zeros over their bytes.
+}
+
+// erase_versions ends each version of the object `name` under a place, in one commit, and then writes zero bytes over each block that no other state, version or entry names after that commit: the data and the object nodes of the versions, their index and their leaves, and the tree nodes that the commit replaced. The current version stays, with its generation. A block that another state still names keeps its bytes, and the row counts it. Before the zeros, the service reads back the blocks of the commit, past its cache, then writes the root of the commit again with the next generation, so that no root on the disk names a block of zeros. A loss of power leaves the versions or none of them. The disk device can keep old copies of a block that the service does not see (src/md/features/version_erase.md). Only a program with the grant Versions_Erase may call it, on its own store: a program without it, a share, a place of another store and a connection that reads only are refused. An object with no version makes no commit. The result is one row: the generation of the last root, the versions ended, the blocks written with zeros, the blocks kept because another state names them, and the damaged parts of the versions that were ended without zeros; or a negative number with an error record.
+//
+// **Error kinds**
+//
+// - `No_Grant` (-1, the caller has no store, or the place is of another store; -12, unit Changes: a share, or a connection that reads only; -12, unit Versions_Erase: the caller has no grant Versions_Erase);
+// - `Absent` (-12, unit Places: the place is not a place of this connection; -7, unit Places: its tree was removed or renamed; -7, unit Objects: no such object, or the name is a tree);
+// - `Empty`, `Too_Long` or `Bad_Byte` (-3, the name);
+// - `Full` (-5, unit Commit_Blocks: the versions free more blocks than one commit can);
+// - `Device` (-6: a write failed, or a block of the commit of the end read back with other bytes; after that commit the versions are gone, and some blocks can hold their old bytes);
+// - `Damaged` (-8, unit Stores or Counts, as for write).
+@(export, link_name = "erase_versions")
+erase_versions :: proc "c" (place: i64, name: ^string, result: ^[]Erase_Measure, error: ^errors.Error_Record) -> i64 {
+	named, refused := named_of(place, name^, error, 1, true)
+	if refused < 0 {
+		return refused
+	}
+	// A share is lent for the bytes of one tree, and ends no history.
+	if share_of(named.caller.connection) != nil {
+		return errors.fail(error, ERROR_PLACE, .No_Grant, .Changes)
+	}
+	// The versions protect the principal against a fault of the program of
+	// the store: only a program that the root service allows ends them, for
+	// a secret that an earlier version must not keep (docs/PROPERTIES.md,
+	// "Persistence: no save action, and versions for all programs").
+	if !named.caller.erases_versions {
+		return errors.fail(error, ERROR_PLACE, .No_Grant, .Versions_Erase)
+	}
+	measure, erased := versions_erase(named.caller.store, path_names(&named.path), named.name, error)
+	if erased < 0 {
+		return erased
+	}
+	if len(result) > 0 {
+		result[0] = measure
+	}
+	return 1
+}
 
 // compare_close ends the range that differs, at `end`.
 compare_close :: proc "contextless" (result: []Byte_Range, ranges: ^i64, open_first: ^i64, end: i64) {
