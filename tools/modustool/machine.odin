@@ -514,7 +514,9 @@ scenario_network := [?]Step {
 	{kind = .Launch, text = "manual"},
 	{kind = .Wait, text = "compositor: surface manual"},
 	{kind = .Launch, text = "remote"},
-	{kind = .Wait, text = "root: started remote"},
+	// The service prints its key while the root service starts it: the key
+	// can come before the line of the start.
+	{kind = .Wait, text = "root: started remote", any_order = true},
 	{kind = .Remote_Key, text = "remote: the public key of this service: "},
 	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
 	// Six malformed call requests, each on its own stream: each one has its
@@ -1682,7 +1684,9 @@ scenario := [?]Step {
 	// press on, the tool reads the place of the pointer from the compositor
 	// and corrects it before each press.
 	{kind = .Launch, text = "remote"},
-	{kind = .Wait, text = "root: started remote"},
+	// The service prints its key while the root service starts it: the key
+	// can come before the line of the start.
+	{kind = .Wait, text = "root: started remote", any_order = true},
 	{kind = .Remote_Key, text = "remote: the public key of this service: "},
 	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
 	{kind = .Call, text = "compositor.pointer()", expected = "1 rows of Pointer", pointer = true},
