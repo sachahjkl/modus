@@ -3,6 +3,7 @@ package keyboard_layout
 
 import "core:strings"
 import "core:testing"
+import "modus:contract/glyph_cache"
 import "modus:contract/settings"
 
 // The scan codes that the tests press.
@@ -58,14 +59,15 @@ the_letters_of_the_layout_of_france :: proc(t: ^testing.T) {
 	testing.expect_value(t, key_character(.French, {}, KEY_DEAD_ACCENTS), 0)
 	testing.expect_value(t, key_character(.French, {}, TABLE_KEY_COUNT), 0)
 	testing.expect_value(t, key_character(.French, {}, KEY_EXTENDED_PREFIX | SCAN_ENTER), 0)
-	// Each character of each layout, on each level, is ASCII or a
-	// character of the Latin-1 Supplement past its control characters:
-	// the fonts draw each of them.
+	// Each character of each layout, on each level, is a control character
+	// that a key acts with (Enter, Tab, Backspace) or a character that the
+	// fonts draw: it has a character index.
 	for layout in settings.Keyboard_Layout {
 		for held in ([4]Level_Keys{{}, {.Shift}, {.Alt_Graph}, {.Shift, .Alt_Graph}}) {
 			for code in u32(0) ..< TABLE_KEY_COUNT {
 				character := key_character(layout, held, code)
-				testing.expectf(t, character < 0x80 || character >= 0xA0 && character <= 0xFF, "%v %v %x: %x", layout, held, code, character)
+				_, drawn := glyph_cache.character_index(character)
+				testing.expectf(t, character < ' ' || drawn, "%v %v %x: %x", layout, held, code, character)
 			}
 		}
 	}
@@ -93,6 +95,7 @@ the_third_level_of_the_layout_of_france :: proc(t: ^testing.T) {
 		{0x0C, ']'},
 		{0x0D, '}'},
 		{SCAN_DOLLAR, '¤'},
+		{SCAN_E, glyph_cache.EURO_SIGN},
 	}
 	for key in keys {
 		testing.expectf(t, key_character(.French, {.Alt_Graph}, key.code) == key.character, "AltGr %x: %v, expected %v", key.code, key_character(.French, {.Alt_Graph}, key.code), key.character)
@@ -107,11 +110,16 @@ the_third_level_of_the_layout_of_france :: proc(t: ^testing.T) {
 	testing.expect_value(t, dead_accent_of(.French, {.Alt_Graph}, KEY_DEAD_GRAVE), ACCENT_GRAVE)
 	// The key right of P is no dead key with AltGr.
 	testing.expect_value(t, dead_accent_of(.French, {.Alt_Graph}, KEY_DEAD_ACCENTS), 0)
-	// A letter has no third level: the euro sign of e is outside the
-	// fonts, and gives no character.
-	testing.expect_value(t, key_character(.French, {.Alt_Graph}, SCAN_E), 0)
+	// A letter other than e has no third level: no character.
 	testing.expect_value(t, key_character(.French, {.Alt_Graph}, SCAN_SEMICOLON), 0)
 	testing.expect_value(t, key_character(.French, {.Alt_Graph}, KEY_LESS_GREATER), 0)
+	// The euro sign is a key with a character, so it does not combine with
+	// a waiting accent: ^ then AltGr e gives ^ and €.
+	state: Dead_Key_State
+	_, _ = key_press(&state, .French, {}, KEY_DEAD_ACCENTS, false)
+	accent_alone, euro := key_press(&state, .French, {.Alt_Graph}, SCAN_E, false)
+	testing.expect_value(t, accent_alone, ACCENT_CIRCUMFLEX)
+	testing.expect_value(t, euro, glyph_cache.EURO_SIGN)
 	// Space, Enter and Backspace act as themselves.
 	testing.expect_value(t, key_character(.French, {.Alt_Graph}, SCAN_SPACE), ' ')
 	testing.expect_value(t, key_character(.French, {.Alt_Graph}, SCAN_ENTER), '\n')

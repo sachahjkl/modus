@@ -168,7 +168,8 @@ text :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color
 
 // cell_font_draws says if the fonts of the cells have a glyph for a
 // character: Spleen and each glyph cache hold the same characters, ASCII
-// 32 to 126 and the Latin-1 Supplement (glyph_cache.character_index).
+// 32 to 126, the Latin-1 Supplement and the added characters
+// (glyph_cache.character_index).
 cell_font_draws :: #force_inline proc "contextless" (character: rune) -> bool {
 	_, found := glyph_cache.character_index(character)
 	return found

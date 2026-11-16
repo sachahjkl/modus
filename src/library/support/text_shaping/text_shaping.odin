@@ -19,7 +19,7 @@ import "base:intrinsics"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 
-CHARACTER_COUNT :: glyph_cache.CHARACTER_COUNT // The characters of a glyph cache: ASCII 32 to 126 and the Latin-1 Supplement.
+CHARACTER_COUNT :: glyph_cache.CHARACTER_COUNT // The characters of a glyph cache: ASCII 32 to 126, the Latin-1 Supplement and the added characters.
 // The glyph of a character that the cache does not hold, and of each invalid sequence
 // of the text: the reader draws the replacement glyph in its place
 // (graphics.character_replacement), so that a reader sees that a character
