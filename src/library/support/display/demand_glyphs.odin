@@ -26,6 +26,9 @@ import "modus:support/system"
 // It asks for each one once: an answer, a refusal or an absent glyph never
 // makes it ask again, so a full cache costs no loop of requests.
 DEMAND_ASKED_LIMIT :: 256
+// The requests of a whole life fit the budget of one window of the font
+// service: a program that asks only for what it draws is never held.
+#assert((DEMAND_ASKED_LIMIT + demand_cache.CHARACTERS_PER_REQUEST - 1) / demand_cache.CHARACTERS_PER_REQUEST <= demand_cache.REQUEST_BUDGET)
 
 // Demand: the demand cache of a program and its request ring.
 Demand :: struct {

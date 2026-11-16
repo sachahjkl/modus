@@ -488,8 +488,22 @@ Each program reads the whole demand cache. A cache that filled at the requests o
 
 ### 13.2.3 The log and the work of one program
 
-- The service writes one line for each program at its first request with a character that is absent or refused, and one line at its first answer that does not fit its ring. It counts the next ones and writes the totals at the stop of the program.
-- In one turn of its loop, the service reads at most `REQUESTS_OF_A_PROGRAM_IN_ONE_TURN` records of one ring: the capacity of the ring. Each ring gets its turn. The time that one program costs the service has no other bound.
+- The service writes one line for each program at its first request with a character that is absent or refused, one line at its first answer that does not fit its ring, and one line at its first request past its budget of requests. It counts the next ones and writes the totals at the stop of the program: `glyphs: <program> stopped: it asked for <a> characters outside the subset, <r> refused; <l> answers did not fit its ring; it passed its budget in <w> windows`.
+- In one turn of its loop, the service reads at most `REQUESTS_OF_A_PROGRAM_IN_ONE_TURN` records of one ring: the capacity of the ring. Each ring gets its turn. The budget of requests bounds the time that one program costs the service over a second.
+
+### 13.2.4 The budget of requests of a program
+
+The font service reads at most 32 requests of one program in each window of 1000 ms (`demand_cache.REQUEST_BUDGET`, `demand_cache.REQUEST_BUDGET_WINDOW_MILLISECONDS`). A window starts at the first request that the service reads after the end of the window before.
+
+- A window starts at the time at which the service reads the request, not at the time at which another program woke the service, so the end of a window names no event of another program.
+- A request past the budget waits in the ring of the program until the window ends. The service reads it then: it drops no request. The ring fills, and the program keeps the characters that it could not send, as for each full ring.
+- The service does not wait on a ring whose budget is spent: the end of the window ends its wait. So a program that writes its ring with no end costs the service at most its budget in each window, and no turn of its loop.
+- The answer of the request that spends the last request of a window names the end of the window, in milliseconds since boot (`ANSWER_BUDGET_WINDOW_END`). Each answer gives the count of the windows in which the program passed its budget (`ANSWER_BUDGET_PASSED`).
+- The log has one line for each program, at its first pass: `glyphs: <program> passed its budget of 32 requests in 1000 ms: its next requests wait in its ring until the end of the window; the next times of this program are counted, not told`.
+- A program that asks only for what it draws never meets the budget: it asks for each character once, at most `display.DEMAND_ASKED_LIMIT` characters in its life, which fit 19 requests. An `#assert` of `display` checks that they fit one budget.
+- The budget is the same for each program and counts the requests of that program alone. A program learns from its window, its count and its line nothing of the requests of another (`docs/PROPERTIES.md`, "20. No ambient access: the other holes to close", row 17). The time at which the service answers still depends on the work of the others in its turn, as it did before the budget: the budget neither opens nor closes that channel.
+
+After the line of its Greek letters, the program `interface_font` asks for letters of the subset with no end. The main machine test waits for the line of its pass, then for `interface_font: the requests past the budget of this program wait until the end of its window, and each one is answered: as it must`: each answer after a pass came at or after the end of the window that the service named, the window that started after a hold had exactly its budget of answers, and each request was answered.
 
 ### 13.3 What stays built at build time
 
@@ -525,4 +539,4 @@ A glyph drawn on demand has the bytes that the build gives to the same character
 
 ### 13.8 What is left
 
-The elements of the interface package, the drawing module with the face `Interface`, the compositor, the programs started from a disk, every Greek letter in the cells, the eviction of an entry, more scripts, and a budget of requests for each program: `ROADMAP.md`. The font service is not started again after a stop, until the next boot.
+The elements of the interface package, the drawing module with the face `Interface`, the compositor, the programs started from a disk, every Greek letter in the cells, the eviction of an entry and more scripts: `ROADMAP.md`. The font service is not started again after a stop, until the next boot.

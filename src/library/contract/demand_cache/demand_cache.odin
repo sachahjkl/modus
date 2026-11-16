@@ -13,7 +13,9 @@
 // through its request ring at REQUESTS_ADDRESS: records of
 // CHARACTERS_PER_REQUEST code points (request_pack). The font service
 // answers each record with one completion: the generation after the glyphs
-// of the record, and the counts of drawn, absent and refused characters. A
+// of the record, and the counts of drawn, absent and refused characters.
+// It reads at most REQUEST_BUDGET requests of one program in each window
+// of REQUEST_BUDGET_WINDOW_MILLISECONDS (Request_Budget). A
 // terminal asks for nothing: it waits on the word subset_drawn of the
 // header.
 //
@@ -550,6 +552,66 @@ ANSWER_DRAWN :: 1 // The characters that the request added, drawn.
 ANSWER_ABSENT :: 2 // The characters that the font does not have.
 ANSWER_REFUSED :: 3 // The characters that did not fit the cache.
 ANSWER_PUBLISHED_BEFORE :: 4 // The characters that were in the cache already.
+// The time of the system, in milliseconds since boot, at which the window
+// of the budget of this program ends: written in the answer of the request
+// that spends the last request of its budget, else 0. The service reads no
+// other request of this program before that time.
+ANSWER_BUDGET_WINDOW_END :: 5
+ANSWER_BUDGET_PASSED :: 6 // The windows in which this program passed its budget, since its start: its own count only.
+
+// The budget of requests of one program: the font service reads at most
+// REQUEST_BUDGET requests of one program in each window of
+// REQUEST_BUDGET_WINDOW_MILLISECONDS. A request past it waits in the ring
+// of that program until the window ends: it is read then, not dropped. A
+// program asks for each character once, at most display.DEMAND_ASKED_LIMIT
+// characters in its life, so a program that asks only for what it draws
+// never meets the budget. The budget is the same for each program and is
+// counted for each program alone: a program learns from it nothing about
+// the requests of another.
+REQUEST_BUDGET :: ring.CAPACITY
+REQUEST_BUDGET_WINDOW_MILLISECONDS :: 1000
+
+// Request_Budget: the budget of requests of one program, kept by the font
+// service. A window starts at the first request that the service reads
+// after the end of the window before.
+Request_Budget :: struct {
+	window_end: u64, // The end of the current window, in milliseconds since boot; 0 before the first request.
+	spent:      u32, // The requests read in the current window.
+	passed:     bool, // A request waited past the budget in the current window: it is counted once.
+}
+
+// request_budget_take says if the service reads one more request of a
+// program at the time now, and counts it. last is true when this request
+// spends the last request of the window: its answer then carries the end
+// of the window (ANSWER_BUDGET_WINDOW_END).
+request_budget_take :: proc "contextless" (budget: ^Request_Budget, now: u64) -> (taken: bool, last: bool) {
+	if now >= budget.window_end {
+		budget^ = {window_end = now + REQUEST_BUDGET_WINDOW_MILLISECONDS}
+	}
+	if budget.spent >= REQUEST_BUDGET {
+		return false, false
+	}
+	budget.spent += 1
+	return true, budget.spent == REQUEST_BUDGET
+}
+
+// request_budget_held says if the budget of a program is spent at the
+// time now: the service then reads none of its requests, and does not wait
+// on its ring, until the window ends.
+request_budget_held :: proc "contextless" (budget: ^Request_Budget, now: u64) -> bool {
+	return budget.spent >= REQUEST_BUDGET && now < budget.window_end
+}
+
+// request_budget_pass notes that a request of a program waits while its
+// budget is held. first is true once in each window: the service counts
+// the windows in which a program passed its budget, not its requests.
+request_budget_pass :: proc "contextless" (budget: ^Request_Budget) -> (first: bool) {
+	if budget.passed {
+		return false
+	}
+	budget.passed = true
+	return true
+}
 
 // Two code points in each of the seven values of a record.
 CHARACTERS_PER_REQUEST :: 14

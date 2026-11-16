@@ -602,7 +602,9 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 	counts.keys_refused += 1
 	if log_allowed() {
 		text: [64]u8
-		if row >= 0 {
+		if row >= 0 && rows[row].contested != 0 {
+			system.log("remote: refused the client key ", hex_text(text[:], proven[:]), ": it is contested: principal ", rows[row].principal, " and principal ", rows[row].contested - 1, " both allowed it, and it acts for neither until one of them revokes it; the handshake ends before any call")
+		} else if row >= 0 {
 			system.log("remote: refused the client key ", hex_text(text[:], proven[:]), ": the session of its principal ", rows[row].principal, " is locked; the handshake ends before any call")
 		} else {
 			system.log("remote: refused the client key ", hex_text(text[:], proven[:]), ": no principal allowed it; the handshake ends before any call")
@@ -648,7 +650,12 @@ client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: 
 	text: [40]u8
 	head: [16]u8
 	if log_allowed() {
-		system.log("remote: the grant of the client key ", hex_text(head[:], client.key[:8]), " of principal ", client.principal, " ended (a revocation, or a lock of its session): the connection from ", address_text(text[:], peer), " ends with the code Revoked")
+		place := client.row
+		if place >= 0 && place < remote.CLIENT_CAPACITY && client_rows[place].key == client.key && client_rows[place].contested != 0 {
+			system.log("remote: the client key ", hex_text(head[:], client.key[:8]), " of principal ", client.principal, " is contested: principal ", client_rows[place].contested - 1, " allowed it too, and it acts for neither; the connection from ", address_text(text[:], peer), " ends with the code Revoked")
+		} else {
+			system.log("remote: the grant of the client key ", hex_text(head[:], client.key[:8]), " of principal ", client.principal, " ended (a revocation, or a lock of its session): the connection from ", address_text(text[:], peer), " ends with the code Revoked")
+		}
 	}
 }
 

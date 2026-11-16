@@ -680,11 +680,14 @@ disk_programs_tests_run :: proc() -> bool {
 // of this machine is written over it. A console that the desktop starts
 // during the session acts for alice: it starts visitor from the store of
 // alice, gives it the grant store, and visitor counts its first visit in
-// the store of its nickname for alice.
+// the store of its nickname for alice. The console also allows the client
+// key of the peer, which goes into her table.
 //
 // The sixth machine: the passphrase of alice gives the key again, the
-// table is read with its row, and visitor starts by its nickname with the
-// grant store and finds its first visit.
+// table is read with its row and her client key, which holds again, and
+// visitor starts by its nickname with the grant store and finds its first
+// visit. A call of the peer acts for alice with no new allow; her
+// revocation writes the table with no key.
 disk_programs_named_principal_tests_run :: proc(hash: string) -> bool {
 	fifth := make([dynamic]Step)
 	defer delete(fifth)
@@ -721,7 +724,13 @@ disk_programs_named_principal_tests_run :: proc(hash: string) -> bool {
 	append(&fifth, Step{kind = .Front, text = "console"})
 	append(&fifth, Step{kind = .Type, text = fmt.aprintf("allow(\"%s\", \"store\")", DISK_PROGRAM_MODULE)})
 	append(&fifth, Step{kind = .Wait, text = fmt.aprintf("root: the nickname %s, the file %s, has the grant store for principal 1, from its next start; the passphrase of the principal keeps its disk grant table on the disk", DISK_PROGRAM_MODULE, hash)})
-	append(&fifth, Step{kind = .Wait, text = "root: the disk grant table of principal 1 is written in the store programs: 1 rows, with the tag of the key of the principal"})
+	append(&fifth, Step{kind = .Wait, text = "root: the disk grant table of principal 1 is written in the store programs: 1 rows, with the tag of the key of the principal; 0 client keys of remote"})
+	// The client key of the peer, allowed by alice, is a key of her disk
+	// grant table too: the allow writes the table again.
+	append(&fifth, Step{kind = .Type, text = "remote_allow(\"{client key}\")"})
+	append(&fifth, Step{kind = .Wait, text = "root: principal 1 allowed the client key ", any_order = true})
+	append(&fifth, Step{kind = .Wait, text = " of remote: each call of that client acts for it; the disk grant table of the principal keeps the key across a restart"})
+	append(&fifth, Step{kind = .Wait, text = "root: the disk grant table of principal 1 is written in the store programs: 1 rows, with the tag of the key of the principal; 1 client keys of remote"})
 	append(&fifth, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", DISK_PROGRAM_MODULE)})
 	append(&fifth, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped with code ", DISK_PROGRAM_MODULE)})
 	disk_programs_principal_store_steps(&fifth, hash, 1)
@@ -743,9 +752,13 @@ disk_programs_named_principal_tests_run :: proc(hash: string) -> bool {
 	append(&sixth, Step{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" opens its seal; the root service receives the key of its disk grant table only, and the secret keys are erased", any_order = true})
 	append(&sixth, Step{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it"})
 	append(&sixth, Step{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true})
-	append(&sixth, Step{kind = .Wait, text = "root: read the disk grant table of principal 1 from the store programs: 1 rows, with the tag of the key of the principal", fails_on = "root: the disk grant table of principal 1 is written in the store programs"})
+	append(&sixth, Step{kind = .Wait, text = "root: read the disk grant table of principal 1 from the store programs: 1 rows, with the tag of the key of the principal; 1 client keys of remote", fails_on = "root: the disk grant table of principal 1 is written in the store programs"})
+	// The client key of alice holds again from her table, with no new
+	// allow.
+	append(&sixth, Step{kind = .Wait, text = " of remote holds again for principal 1, from its disk grant table: each call of that client acts for it"})
 	disk_programs_session_console_steps(&sixth)
 	disk_programs_principal_store_steps(&sixth, hash, 2)
+	disk_programs_client_key_steps(&sixth)
 	append(&sixth, Step{kind = .Type, text = "shutdown()"})
 	append(&sixth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
 	return machine_test(sixth[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_DISK_PROGRAMS, 6), MACHINE_STOP_OK, TEST_DISK_PROGRAMS_DISK)
@@ -760,6 +773,33 @@ disk_programs_session_console_steps :: proc(steps: ^[dynamic]Step) {
 	append(steps, Step{kind = .Wait, text = "root: started console, with a terminal, in the session of principal 1 \"alice\""})
 	append(steps, Step{kind = .Wait, text = "compositor: surface console"})
 	append(steps, Step{kind = .Front, text = "console"})
+}
+
+// disk_programs_client_key_steps adds the steps of the client key of the
+// peer that alice allowed on the machine before, and that her disk grant
+// table kept: `remote` starts, and a call of the peer acts for alice with
+// no new allow. Then the console of her session revokes the key: the table
+// is written with no key, `remote` ends the open connection with the code
+// Revoked, and refuses the key in the next handshake.
+disk_programs_client_key_steps :: proc(steps: ^[dynamic]Step) {
+	append(steps, Step{kind = .Launch, text = "monitor"})
+	append(steps, Step{kind = .Wait, text = "compositor: surface monitor"})
+	append(steps, Step{kind = .Launch, text = "remote"})
+	// The service prints its key while the root service starts it: the key
+	// can come before the line of the start.
+	append(steps, Step{kind = .Wait, text = "root: started remote", any_order = true})
+	append(steps, Step{kind = .Remote_Key, text = "remote: the public key of this service: "})
+	append(steps, Step{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only, and for the client keys that a principal allowed", any_order = true})
+	append(steps, Step{kind = .Call, text = "monitor.served()", expected = "Served{calls = "})
+	append(steps, Step{kind = .Wait, text = ": its calls act for principal 1", any_order = true})
+	append(steps, Step{kind = .Wait, text = "root: connected remote to the service monitor, acting for principal 1, for the client key ", any_order = true})
+	append(steps, Step{kind = .Front, text = "console"})
+	append(steps, Step{kind = .Type, text = "remote_disallow(\"{client key}\")"})
+	append(steps, Step{kind = .Wait, text = "root: principal 1 revoked the client key ", any_order = true})
+	append(steps, Step{kind = .Wait, text = "root: the disk grant table of principal 1 is written in the store programs: 1 rows, with the tag of the key of the principal; 0 client keys of remote", any_order = true})
+	append(steps, Step{kind = .Wait, text = " of principal 1 ended (a revocation, or a lock of its session): the connection from 10.0.2.2 port "})
+	append(steps, Step{kind = .Remote_Case, text = "revoked"})
+	append(steps, Step{kind = .Wait, text = ": no principal allowed it; the handshake ends before any call"})
 }
 
 // disk_programs_principal_store_steps adds the steps of one start of the

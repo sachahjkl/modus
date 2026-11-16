@@ -2181,7 +2181,7 @@ Do not use: program table, origin page.
 
 A disk grant table is the table of the root service that binds each nickname of one principal to the hash of one module file, with the grants of that file.
 
-The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The persisted form is the object `grant_table` of the store `programs` of the principal, with a tag of keyed BLAKE2b under a key that a passphrase gives. For principal 0 that passphrase is optional (see "Machine passphrase", below): with none, the table lasts until the machine stops; with one, the root service reads the table after it is typed and writes it after each change. For a named principal the key comes from its unlock key at its unlock: the root service reads the table at the first unlock of the run, and a console of its session changes it. A table whose tag fails is refused, and gives no grant.
+The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. It also keeps the client keys of `remote` that its principal allowed, 4 at most (see "Client key", below). The persisted form is the object `grant_table` of the store `programs` of the principal, with a tag of keyed BLAKE2b under a key that a passphrase gives. For principal 0 that passphrase is optional (see "Machine passphrase", below): with none, the table lasts until the machine stops; with one, the root service reads the table after it is typed and writes it after each change. For a named principal the key comes from its unlock key at its unlock: the root service reads the table at the first unlock of the run, and a console of its session changes it. A table whose tag fails is refused, and gives no grant.
 
 A disk grant table is not the grant table of the root service (`grants_of`), which gives the programs of the boot image their grants by their names, and which a disk program never reaches.
 
@@ -2403,7 +2403,7 @@ Do not use: superuser, privileged, person.
 
 A client key is the Ed25519 public key that a client of the remote service proves in the QUIC handshake, and that a principal allows so that each call of that client acts for it.
 
-The client sends it as a raw public key, with a CertificateVerify signed by its private key (mutual TLS 1.3). A principal allows it from a console that acts for it, with `remote_allow(key)`, and ends the grant with `remote_disallow(key)`. One key belongs to one principal. A key that no principal allowed is refused in the handshake with the alert access_denied, before any call. The key of the server of `remote` is another key: the pinned key of the client.
+The client sends it as a raw public key, with a CertificateVerify signed by its private key (mutual TLS 1.3). A principal allows it from a console that acts for it, with `remote_allow(key)`, and ends the grant with `remote_disallow(key)`. One key belongs to one principal. The disk grant table of the principal keeps the key, so it lasts across a restart as the other grants of the principal do. A key that no principal allowed is refused in the handshake with the alert access_denied, before any call. The key of the server of `remote` is another key: the pinned key of the client.
 
 The design: `docs/PRINCIPALS.md`, "The client keys of remote".
 
@@ -2413,7 +2413,7 @@ Do not use: client certificate, API key.
 
 The client table is the page in which the root service keeps each client key that a principal allowed, with that principal and a serial; the remote service reads it and never writes it.
 
-Each row is one grant (`remote.Client`). Its serial names that grant: a new row, a lock and an unlock of the session of its principal each give a new one, and a connection to a service that the root service made for a row ends when the serial of the row changes. The remote service maps the table with the right Read only, by its start grant `Remote_Clients`, and waits on its version, which the root service wakes at each change. It holds 8 rows, 4 of them for one principal at most, and lasts until the machine stops.
+Each row is one grant (`remote.Client`). Its serial names that grant: a new row, a lock and an unlock of the session of its principal each give a new one, and a connection to a service that the root service made for a row ends when the serial of the row changes. The remote service maps the table with the right Read only, by its start grant `Remote_Clients`, and waits on its version, which the root service wakes at each change. It holds 8 rows, 4 of them for one principal at most. The table itself lasts until the machine stops: the disk grant table of each principal keeps its keys, and after the read of that table the root service gives each key a row again, with a new serial. A row whose key another principal allowed too, one in this run and one in its disk grant table, is contested: it holds no grant for either principal until one of them revokes the key.
 
 The design: `src/library/contract/remote/client_table.odin`; `docs/PRINCIPALS.md`, "The client keys of remote".
 
@@ -5339,7 +5339,7 @@ Do not use: proportional font cache.
 
 The font service is the program `glyphs`: it draws the glyphs of the characters past the glyph cache into the demand cache.
 
-It is the only program that reads outlines at run time: the subsets of the interface font and of the two weights of the font of the cells that its module holds. At its start, before it reads a request, it draws each character of the subset of each demand face, so the demand cache holds the same entries whatever the programs draw; a character outside the subset is absent. Then it sets the word `subset_drawn` of the demand cache and wakes the programs that wait on it. It draws a glyph with the renderer of the build, at each scale and each position of the glyph cache of the same font file, so a glyph on demand has the pixels that the build would give it. The root service starts it after the compositor as a part of the system, and gives it the demand cache with Write and a control ring that names the request ring of each program. It answers each request with the generation of the demand cache and the counts of drawn, absent and refused characters. It is not a font file and not a renderer in each program, and a program never waits for it: a character that is not ready draws the replacement glyph.
+It is the only program that reads outlines at run time: the subsets of the interface font and of the two weights of the font of the cells that its module holds. At its start, before it reads a request, it draws each character of the subset of each demand face, so the demand cache holds the same entries whatever the programs draw; a character outside the subset is absent. Then it sets the word `subset_drawn` of the demand cache and wakes the programs that wait on it. It draws a glyph with the renderer of the build, at each scale and each position of the glyph cache of the same font file, so a glyph on demand has the pixels that the build would give it. The root service starts it after the compositor as a part of the system, and gives it the demand cache with Write and a control ring that names the request ring of each program. It answers each request with the generation of the demand cache and the counts of drawn, absent and refused characters, and reads the requests of each program within its budget of requests. It is not a font file and not a renderer in each program, and a program never waits for it: a character that is not ready draws the replacement glyph.
 
 The design: `src/md/features/glyphs_on_demand.md`.
 
@@ -5364,6 +5364,16 @@ The demand cache keeps the glyphs of each face apart, because a glyph on demand 
 The design: `src/md/features/glyphs_on_demand.md`.
 
 Do not use: font slot, font index.
+
+### Budget of requests
+
+A budget of requests is the most requests of one program that the font service reads in one window of time: 32 in each window of 1000 ms.
+
+It bounds the time that one program costs the font service, which the bound of a turn does not: a program that writes its request ring with no end gets its budget, then its requests wait in its ring until the window ends. They are read then, not dropped. The answer of the request that spends the last of a window names the end of the window, each answer gives the count of the windows in which the program passed, and the log has one line for each program at its first pass. Each program has its own budget and its own count, so a hold tells it nothing of the requests of another. A program that asks only for what it draws never meets it. It is not a budget of the kernel, which pays for kernel objects, and not a budget of work of QUIC, which is a token bucket.
+
+The design: `src/md/features/glyphs_on_demand.md`; the guide: `docs/FONTS.md`, "13.2.4 The budget of requests of a program".
+
+Do not use: request quota, rate limit (for this), request budget.
 
 ### Setting
 

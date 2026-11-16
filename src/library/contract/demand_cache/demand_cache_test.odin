@@ -457,3 +457,67 @@ the_keys_of_the_faces :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+// The budget of a program: REQUEST_BUDGET requests in one window, the last
+// one says so, the next one waits until the end of the window, and a new
+// window starts at the first request after it.
+@(test)
+a_program_past_its_budget_waits_for_the_next_window :: proc(t: ^testing.T) {
+	budget: Request_Budget
+	start := u64(5000)
+	for index in 0 ..< REQUEST_BUDGET {
+		taken, last := request_budget_take(&budget, start + u64(index))
+		testing.expect(t, taken)
+		testing.expect_value(t, last, index == REQUEST_BUDGET - 1)
+	}
+	window_end := start + REQUEST_BUDGET_WINDOW_MILLISECONDS
+	testing.expect_value(t, budget.window_end, window_end)
+	testing.expect(t, request_budget_held(&budget, window_end - 1))
+	taken, last := request_budget_take(&budget, window_end - 1)
+	testing.expect(t, !taken && !last)
+	// A pass is counted once in a window, whatever the requests that wait.
+	testing.expect(t, request_budget_pass(&budget))
+	testing.expect(t, !request_budget_pass(&budget))
+	// The window ends: the budget is whole again, and a new pass counts.
+	testing.expect(t, !request_budget_held(&budget, window_end))
+	taken, last = request_budget_take(&budget, window_end)
+	testing.expect(t, taken && !last)
+	testing.expect_value(t, budget.spent, u32(1))
+	testing.expect_value(t, budget.window_end, window_end + REQUEST_BUDGET_WINDOW_MILLISECONDS)
+	testing.expect(t, request_budget_pass(&budget))
+}
+
+// The budget counts the requests of one program alone: a program that
+// spends its budget changes nothing in the budget of another, so a refusal
+// says nothing of the others.
+@(test)
+the_budget_of_a_program_is_its_own :: proc(t: ^testing.T) {
+	flooding, quiet: Request_Budget
+	now := u64(1)
+	for _ in 0 ..< 10 * REQUEST_BUDGET {
+		_, _ = request_budget_take(&flooding, now)
+	}
+	testing.expect(t, request_budget_held(&flooding, now))
+	testing.expect(t, !request_budget_held(&quiet, now))
+	for index in 0 ..< REQUEST_BUDGET {
+		taken, last := request_budget_take(&quiet, now)
+		testing.expect(t, taken)
+		testing.expect_value(t, last, index == REQUEST_BUDGET - 1)
+	}
+}
+
+// A window starts at the first request after the end of the one before: a
+// program that asks less than its budget in each window is never held.
+@(test)
+a_program_under_its_budget_is_never_held :: proc(t: ^testing.T) {
+	budget: Request_Budget
+	now := u64(0)
+	for _ in 0 ..< 4 {
+		for _ in 0 ..< REQUEST_BUDGET - 1 {
+			taken, last := request_budget_take(&budget, now)
+			testing.expect(t, taken && !last)
+			testing.expect(t, !request_budget_held(&budget, now))
+		}
+		now += REQUEST_BUDGET_WINDOW_MILLISECONDS
+	}
+}

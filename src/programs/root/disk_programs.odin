@@ -746,7 +746,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 	case .Full:
 		values^ = errors.ring_fail(kind, .Full, .Grants, 0, 0, disk_program.ROW_CAPACITY)
 		return .No_Slot
-	case .No_File, .Other_File, .Absent, .Not_Held, .Same_File, .Zero_Hash:
+	case .No_File, .Other_File, .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key:
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}

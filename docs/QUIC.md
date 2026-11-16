@@ -631,6 +631,7 @@ A host that vanishes while `remote` holds a stream of it (an answer whose end it
 **Who may call.** A client whose key a principal allowed, from the address of the host. The design is `src/md/features/remote_client_keys.md`.
 - The key of the client: the handshake of `remote` asks each client for its Ed25519 key, as a raw public key with its signature (section 4, "The key of the client"). `remote` takes the key only when the client table has a row for it: a principal allowed it with `remote_allow(key)` in a console that acts for it (`docs/PRINCIPALS.md`, "The client keys of remote"). Any other key ends the handshake with access_denied, before any stream, and `remote` writes one line: "remote: refused the client key ...: no principal allowed it; the handshake ends before any call".
 - The principal of a call: `remote` binds each connection to the row of its key, and makes each connection to a service for that row. The root service gives that connection the principal of the row: a call acts for the principal that allowed the client, and for no other. Two clients of two principals have two sets of connections to the services.
+- A grant across a restart: the disk grant table of the principal keeps each key that it allowed, and the root service gives each such key a row again after the read of that table (`docs/PRINCIPALS.md`, "The client keys of remote"). `remote` reads the client table only.
 - The end of a grant: `remote_disallow(key)`, and a lock of the session of the principal, end the grant of the row. The root service ends each connection to a service that it made for the row, and wakes `remote`, which ends the open QUIC connection of the client with the application code Revoked (4) and the line "remote: the grant of the client key ... of principal N ended ...". The next handshake of that key is refused.
 - The listen grant still admits the address 10.0.2.2 only: a second fence, so no other machine of the network starts a handshake. The network service drops a datagram of another address.
 - What QUIC adds: the host knows that it speaks to the machine whose key it pinned, the machine knows the key of the client, and no one on the path reads a call or an answer, changes one, or plays one again. A Retry validates the address.
@@ -659,7 +660,6 @@ A host that vanishes while `remote` holds a stream of it (an answer whose end it
 1. **The transport, second part**:
    - NewReno congestion control, from the ideas and the tests of the Reno of `src/library/support/tcp`;
    - connection identifiers, the validation of a new path (NAT rebinding), the stateless reset, DATA_BLOCKED and STREAM_DATA_BLOCKED.
-2. **The client keys of `remote` across a restart**: today a row of the client table lasts until the machine stops (`docs/PRINCIPALS.md`, "The client keys of remote").
 
 ## 9. What is not built, and will not be in version 1 of this library
 

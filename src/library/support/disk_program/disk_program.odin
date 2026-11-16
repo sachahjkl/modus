@@ -28,7 +28,10 @@
 //   disk grant table of a principal, its nickname rule, and its persisted
 //   form (grant_table.odin). `table_persistence_set`: its setting of
 //   persistence. `table_key_of_machine_key`: the key of the tag of the
-//   table of principal 0.
+//   table of principal 0. `table_client_key_add`,
+//   `table_client_key_remove`, `table_client_key_find`: the client keys of
+//   `remote` that the principal allowed, which the table keeps across a
+//   restart.
 // - `PROGRAMS_BUDGET`, `LARGEST_BUDGET` (budget.odin): the one budget that
 //   pays all disk programs, and the most that one of them gets.
 // - `Import_Scan`, `scan_want`, `scan_entry_add`, `scan_next`,

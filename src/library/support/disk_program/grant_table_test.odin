@@ -278,6 +278,11 @@ hostile_tables :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, Table_File_Problem.Not_Authentic)
 	_, problem = table_decode(good[:TABLE_SIZE - 1], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Wrong_Size)
+	// A table of the format 1 is named so, and a restore cannot help it.
+	_, problem = table_decode(good[:OLDER_FORMAT_TABLE_SIZE], &key)
+	testing.expect_value(t, problem, Table_File_Problem.Older_Format)
+	testing.expect(t, table_problem_is_format(.Older_Format) && table_problem_is_format(.Wrong_Format))
+	testing.expect(t, !table_problem_is_format(.Not_Authentic) && !table_problem_is_format(.Wrong_Size))
 	// Fields that the key signed and that break a rule: the tag is made
 	// again after the change, as a holder of the key would make it.
 	Change :: struct {
@@ -287,9 +292,13 @@ hostile_tables :: proc(t: ^testing.T) {
 	}
 	changes := [?]Change {
 		{TABLE_OFFSET_MAGIC, 'X', .Wrong_Magic},
-		{TABLE_OFFSET_FORMAT, 2, .Wrong_Format},
+		{TABLE_OFFSET_FORMAT, u8(TABLE_FORMAT + 1), .Wrong_Format},
 		{TABLE_OFFSET_COUNT, ROW_CAPACITY + 1, .Too_Many_Rows},
 		{TABLE_OFFSET_SETTING, 2, .Bad_Setting},
+		{TABLE_OFFSET_CLIENT_KEY_COUNT + 1, 1, .Bad_Setting},
+		{TABLE_OFFSET_CLIENT_KEY_COUNT, CLIENT_KEY_CAPACITY + 1, .Bad_Client_Keys},
+		{TABLE_OFFSET_CLIENT_KEYS, 1, .Bad_Client_Keys},
+		{TABLE_OFFSET_TAG - 1, 1, .Bad_Client_Keys},
 		{TABLE_HEADER_SIZE + ROW_OFFSET_LENGTH, NAME_LIMIT + 1, .Bad_Row},
 		{TABLE_HEADER_SIZE + ROW_OFFSET_NICKNAME, '.', .Bad_Row},
 		{TABLE_HEADER_SIZE + ROW_OFFSET_NICKNAME + 20, 'x', .Bad_Row},
@@ -322,4 +331,79 @@ hostile_tables :: proc(t: ^testing.T) {
 	copy(twice[TABLE_OFFSET_TAG:], tag[:])
 	_, problem = table_decode(twice[:], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Two_Rows)
+}
+
+// The client keys of remote: a key of zero bytes is refused, a key that
+// the table holds is no change, the table holds CLIENT_KEY_CAPACITY keys,
+// and a removal keeps the order of the others.
+@(test)
+the_client_keys_of_a_table :: proc(t: ^testing.T) {
+	table: Grant_Table
+	testing.expect_value(t, table_client_key_add(&table, {}), Table_Problem.Zero_Key)
+	for index in 0 ..< CLIENT_KEY_CAPACITY {
+		testing.expect_value(t, table_client_key_add(&table, hash_of(u8(10 * index + 1))), Table_Problem.None)
+	}
+	testing.expect_value(t, table_client_key_add(&table, hash_of(1)), Table_Problem.None)
+	testing.expect_value(t, table.client_key_count, CLIENT_KEY_CAPACITY)
+	testing.expect_value(t, table_client_key_add(&table, hash_of(200)), Table_Problem.Full)
+	testing.expect_value(t, table_client_key_remove(&table, hash_of(200)), Table_Problem.Absent)
+	testing.expect_value(t, table_client_key_remove(&table, hash_of(11)), Table_Problem.None)
+	testing.expect_value(t, table.client_key_count, CLIENT_KEY_CAPACITY - 1)
+	testing.expect_value(t, table_client_key_find(&table, hash_of(11)), -1)
+	testing.expect_value(t, table_client_key_find(&table, hash_of(1)), 0)
+	testing.expect_value(t, table_client_key_find(&table, hash_of(21)), 1)
+	testing.expect(t, table.client_keys[CLIENT_KEY_CAPACITY - 1] == ([CLIENT_KEY_SIZE]u8{}))
+	// The place that the removal freed takes a key again.
+	testing.expect_value(t, table_client_key_add(&table, hash_of(200)), Table_Problem.None)
+	testing.expect_value(t, table_client_key_find(&table, hash_of(200)), CLIENT_KEY_CAPACITY - 1)
+}
+
+// The client keys go through the persisted form with the rows, under the
+// same tag, and come back in their order. The global setting to forget
+// writes none, as it writes no row that has no exception.
+@(test)
+client_keys_through_the_persisted_form :: proc(t: ^testing.T) {
+	table: Grant_Table
+	key := key_of(7)
+	testing.expect_value(t, table_allow(&table, "visitor", hash_of(1), .Store), Table_Problem.None)
+	testing.expect_value(t, table_client_key_add(&table, hash_of(40)), Table_Problem.None)
+	testing.expect_value(t, table_client_key_add(&table, hash_of(80)), Table_Problem.None)
+	bytes: [TABLE_SIZE]u8
+	table_encode(&table, &key, &bytes)
+	testing.expect_value(t, int(bytes[TABLE_OFFSET_CLIENT_KEY_COUNT]), 2)
+	read, problem := table_decode(bytes[:], &key)
+	testing.expect_value(t, problem, Table_File_Problem.None)
+	testing.expect_value(t, read.count, 1)
+	testing.expect_value(t, read.client_key_count, 2)
+	testing.expect(t, read.client_keys[0] == hash_of(40) && read.client_keys[1] == hash_of(80))
+	// A key of the table is under the tag: one bit of it changed is
+	// refused.
+	changed := bytes
+	changed[TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_SIZE] ~= 1
+	_, problem = table_decode(changed[:], &key)
+	testing.expect_value(t, problem, Table_File_Problem.Not_Authentic)
+	// A key of zero bytes, and one key two times, that the key of the tag
+	// signed: refused.
+	zero := bytes
+	for &byte in zero[TABLE_OFFSET_CLIENT_KEYS:][:CLIENT_KEY_SIZE] {
+		byte = 0
+	}
+	tag := table_tag(&key, &zero)
+	copy(zero[TABLE_OFFSET_TAG:], tag[:])
+	_, problem = table_decode(zero[:], &key)
+	testing.expect_value(t, problem, Table_File_Problem.Bad_Client_Keys)
+	twice := bytes
+	copy(twice[TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_SIZE:][:CLIENT_KEY_SIZE], bytes[TABLE_OFFSET_CLIENT_KEYS:][:CLIENT_KEY_SIZE])
+	tag = table_tag(&key, &twice)
+	copy(twice[TABLE_OFFSET_TAG:], tag[:])
+	_, problem = table_decode(twice[:], &key)
+	testing.expect_value(t, problem, Table_File_Problem.Bad_Client_Keys)
+	// The global setting to forget: no key on the disk, and the table in
+	// memory keeps its keys.
+	table.forget_by_default = true
+	testing.expect_value(t, table_persisted_client_keys(&table), 0)
+	table_encode(&table, &key, &bytes)
+	read, problem = table_decode(bytes[:], &key)
+	testing.expect(t, problem == .None && read.client_key_count == 0)
+	testing.expect_value(t, table.client_key_count, 2)
 }
