@@ -962,7 +962,7 @@ A log record is one entry of the log of the kernel (`op.Log_Record`, 256 bytes):
 
 A program writes a record with the kernel operation `Log` and a log handle with Write. The kernel sets the number, the time, the program and the thread, so a program cannot write a record in the name of another one. The text has 152 bytes at most per record; a longer text continues in the next record. The serial port prints the text only. The budget of the program limits its log records in each second.
 
-A program with the grant to read the log serves the records as a table: `log.records(after)`, and their value runs: `log.value_runs(after)`. Each caller receives the records of its log scope: the whole log, or its own records.
+A program with the grant to read the log serves the records as a table: `log.records(after)`, and their value runs: `log.value_runs(after)`. Each caller receives the records of its log scope: the whole log, or its own records. A starter reads the records of a child with `log.program_records(program, after)` and `log.program_value_runs(program, after)`, where it lends the program handle of the child.
 
 The design: `docs/TOOLS.md`, "The log".
 
@@ -1039,6 +1039,8 @@ Do not use: local sequence, private number, cursor (for this).
 The log scope of a connection to the log service is the set of log records that its caller receives from `log.records(after)` and `log.value_runs(after)`: the whole log, or its own records.
 
 The root service writes it in the grant of the connection, and the log service, which holds the memory of the log, chooses the records; the reader never maps that memory. A caller that acts for the principal, such as the console or `remote`, receives the whole log. Each other caller receives its own records: the amount of its grant names its program slot and its program serial (`modus:contract/log_scope`). A program with no connection to the log service reads no record through it. A log scope never names a channel: a channel is a name that the writer chooses, not a fact that the kernel sets.
+
+A call of `log.program_records(program, after)` or `log.program_value_runs(program, after)` has a scope of its own: the records of the program whose program handle the caller lends for the call, with the right Read. A starter holds the handle of each child, so it reads the records of its children, and of no other program. A grandchild needs the handle that only the child holds and can give.
 
 The design: `src/md/features/log_reader_scope.md`.
 
