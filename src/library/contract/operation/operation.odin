@@ -575,7 +575,9 @@ Operation :: enum u32 {
 	//   - `Message`: `a` the physical address where a memory base address register of the device starts:
 	//     a message interrupt (MSI-X) of the first processor, for that device: an interrupt handle with
 	//     **Give** and **Read**. With interrupt remapping in use, the entry of the message names that device,
-	//     and the unit refuses the message to every other device; with none, `a` is not read.
+	//     and the unit refuses the message to every other device; with none, `a` is not read. Behind a
+	//     conventional bridge, the entry names the requester that the devices there share, and it is present
+	//     only while their one domain lives (`Memory_Physical`).
 	//
 	// **Results**
 	//
@@ -864,7 +866,8 @@ Operation :: enum u32 {
 	// (`Device_Create` says whether the unit of a device gives windows: `Device_Memory_Facts`). The pages leave the
 	// device when the program closes or loses its last handle to the object, when it holds neither a handle
 	// nor a mapping of the registers of the device, when the object ends, or when the program stops
-	// (docs/ARCHITECTURE.md, "K5. Device grant and interrupts").
+	// (docs/ARCHITECTURE.md, "K5. Device grant and interrupts"). The devices behind a conventional bridge
+	// share one domain: it lives while the caller holds the registers of each of them.
 	//
 	// **Arguments**
 	//
@@ -882,7 +885,9 @@ Operation :: enum u32 {
 	//   address width of the unit of a device; or an object that is not contiguous is `Uncommitted`, larger
 	//   than 128 MiB (`iommu.WINDOW_SIZE`), or declared to a device whose unit gives no windows.
 	// - `Bad_State`: another program declared memory to the same device, and it still holds or maps its
-	//   registers.
+	//   registers; or the device is behind a conventional bridge, and the caller does not hold the registers
+	//   of each device behind that bridge, which all share its requester and its domain (the log names the
+	//   device that it misses).
 	// - `No_Slot`: the caller holds the registers of more than 4 devices, or the 32 slots of the devices of
 	//   the kernel are in use.
 	// - `No_Budget`: the budget of the caller cannot pay for a page of the tables of the device.
@@ -2910,7 +2915,7 @@ Device_Kind :: enum u64 {
 // "Device addresses"). An empty set: no IOMMU in use, or a device that gets
 // no domain.
 Device_Memory_Fact :: enum u64 {
-	Domain  = 0, // The IOMMU gives the device a device domain: it reaches only the memory that its service declares.
+	Domain  = 0, // The IOMMU gives the device a device domain: it reaches only the memory that its service declares. Behind a conventional bridge, the one domain of each device there.
 	Windows = 1, // The remapping unit of the device gives device windows: `Memory_Physical` accepts an object that is not contiguous.
 }
 Device_Memory_Facts :: bit_set[Device_Memory_Fact; u64]

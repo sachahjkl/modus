@@ -30,6 +30,14 @@
 // The forged messages come before the DMA fault: a virtio device of QEMU
 // that needs a reset does no more requests.
 //
+// 6. Behind a conventional bridge, where the root service gives it the
+//    registers of the other device there too, it starts its device again,
+//    then closes those registers: its domain ends, its next declaration is
+//    refused, with a line of the kernel, and a read of the device into a
+//    page that it declared before does not end and does not reach the page.
+//    The tool gives the disk a new size after the line of that read: the
+//    service waits for it, and no interrupt of the device arrives.
+//
 // Then it answers the commands of the block ring, so that its client
 // sees that the machine goes on.
 //
@@ -129,6 +137,25 @@ request_end :: proc "contextless" () -> Outcome {
 		}
 		system.wait_end(&wait, deadline)
 	}
+}
+
+// The low word of the capacity of the disk, in sectors: the first field of
+// the configuration of a virtio block device.
+CONFIG_CAPACITY_LOW :: 0
+
+// capacity_changed waits until the capacity of the disk differs from
+// before: the tool makes the disk larger. Its configuration interrupt does
+// not arrive after the end of the domain, so this reads the register again
+// with no wait; each read is an exit to QEMU, which then runs the monitor
+// of the tool. The hang bound only ends a hang.
+capacity_changed :: proc "contextless" (before: u32) -> bool {
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for system.time() < deadline {
+		if virtio.load_32(device.device_config + CONFIG_CAPACITY_LOW) != before {
+			return true
+		}
+	}
+	return false
 }
 
 // page_holds says if each byte of one page is value.
@@ -268,6 +295,70 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("iommu_device: a read into a page that was not declared: the device gave the request back with the status ", u64(status^), ", and the page keeps its 4096 bytes: as it must")
 	case:
 		system.log("iommu_device: a read into a page that was not declared: the device did not end the request before the hang bound")
+	}
+
+	// 6. Behind a conventional bridge only: the devices there share one
+	// requester, and this service holds the registers of the other device
+	// too. Without them, its domain ends, and a new declaration is refused:
+	// the other device would reach what it declares.
+	if other_device := ctx.handles[pci.GRANT_BRIDGE_DEVICE]; other_device != 0 {
+		// The device needs a reset after the refused read of step 4: it
+		// starts again while its domain lives, so that its next request
+		// shows the end of the domain and not that state.
+		if _, restart_error := virtio.start(&device, 0); restart_error != .None {
+			fail("the device did not start again")
+		}
+		virtio.store_16(device.common + virtio.COMMON_CONFIG_VECTOR, 0)
+		if queue, queue_error = virtio.queue_start(&device, 0, uintptr(queue_address), queue_physical, 3, 0); queue_error != .None {
+			fail("the queue of the device did not start again")
+		}
+		virtio.ready(&device)
+		system.close(other_device)
+		refused, refused_status := system.memory_create(1, 0, {.Contiguous})
+		if refused_status != .Ok {
+			fail("no memory for the page of the refused declaration")
+		}
+		_, declare_status := system.memory_physical(machine, refused)
+		if declare_status != .Bad_State {
+			fail("without the registers of the other device behind the conventional bridge, a declaration was not refused")
+		}
+		system.close(refused)
+		system.log("iommu_device: without the registers of the other device behind the conventional bridge, a declaration is refused: as it must")
+		// The domain ended: a read into the second page of the data, which
+		// this service declared in step 1 and still holds, does not arrive.
+		second_page := ([^]u8)(uintptr(data_address) + block.BLOCK_SIZE)
+		for index in 0 ..< block.BLOCK_SIZE {
+			second_page[index] = PATTERN_KEPT
+		}
+		// The end of the domain cleared the interrupt entries of the group
+		// and waited for each unit: no interrupt counted from now on came
+		// through them. The count before is read and dropped.
+		_, _ = system.call(.Interrupt_Read, u64(interrupt))
+		capacity_before := virtio.load_32(device.device_config + CONFIG_CAPACITY_LOW)
+		request(REQUEST_READ, data_physical + block.BLOCK_SIZE)
+		// The device of QEMU 10 neither ends the request nor says that it
+		// needs a reset: it keeps the request. Its state is no bound of the
+		// wait. The tool bounds it: it stops the machine, which ends each
+		// read that QEMU took, makes the disk larger and starts the machine
+		// again (src/md/infrastructure/iommu.md, "The proof"). The disk
+		// has no ioevent file here, so QEMU took or refused the request
+		// before the notify returned, and before this line.
+		system.log("iommu_device: a read given to the device after the end of its domain: the service waits for the new size of the disk")
+		if !capacity_changed(capacity_before) {
+			fail("after the end of its domain, the device did not get a new size before the hang bound")
+		}
+		_, used := virtio.used(&queue)
+		if !page_holds(second_page, PATTERN_KEPT) || (used && status^ == 0) {
+			fail("after the end of its domain, the device read a block into a page that this service declared before")
+		}
+		// The new size sends the configuration interrupt of the device, and
+		// an ended read would send the interrupt of the queue: the unit
+		// refuses both.
+		after_end, _ := system.call(.Interrupt_Read, u64(interrupt))
+		if after_end[0] != 0 {
+			fail("after the end of its domain, the device sent an interrupt that arrived")
+		}
+		system.log("iommu_device: after the end of its domain, a read of the device into a page that this service declared before does not end, the page keeps its 4096 bytes, and no interrupt of the device arrives, also for its new size: as it must")
 	}
 
 	// Then it answers its client: the machine goes on.

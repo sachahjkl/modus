@@ -51,7 +51,8 @@ Region :: struct {
 	committed:  u64, // Uncommitted: the committed pages. Region lock and frame lock to change it.
 	marked_pages: u64, // The pages whose slot has a mark of protection (Memory_Protect of a part). Region lock; read atomically.
 	serial:     u64, // A number that no other memory object has had: a slot of the table serves many objects in time.
-	requester:  u32, // Device memory over the registers of a function of the bus: 1 + its requester identifier, when the IOMMU is in use and a unit gives it a domain (iommu.odin). 0: none.
+	requester:  u32, // Device memory over the registers of a function of the bus: 1 + the requester identifier that the unit sees for its accesses, when the IOMMU is in use and a unit gives it a domain (iommu.odin). 0: none.
+	bridge_function: u32, // A function behind a conventional bridge: 1 + its own requester identifier, while `requester` names the one that it shares with the devices behind the bridge. 0: a function with its own requester.
 	declared:          u32, // A bit for each device slot of the IOMMU whose domain maps the pages (iommu.odin). Frame lock.
 	declared_writable: u32, // The slots of `declared` whose device can also write the pages. Frame lock.
 }
@@ -877,6 +878,9 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 		case .Interrupt:
 			intrinsics.atomic_store(&interrupt_owner[slot.object], index_of_program(program))
 			interrupt_references[slot.object] += 1
+			// The entry of a message interrupt behind a conventional bridge
+			// follows the program that holds it.
+			iommu_interrupt_owner_changed(slot.object)
 		}
 		return op.Handle(u32(index + 1) | u32(generation) << 16)
 	}
@@ -907,6 +911,7 @@ handle_insert_undo :: proc "contextless" (program: ^Program, handle: op.Handle) 
 		if interrupt_references[slot.object] == 0 && slot.object >= INTERRUPT_LINES {
 			iommu_message_end(slot.object - INTERRUPT_LINES)
 		}
+		iommu_interrupt_owner_changed(slot.object)
 	}
 	slot^ = {generation = slot.generation}
 }
@@ -990,6 +995,9 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 		if interrupt_references[slot.object] == 0 && slot.object >= INTERRUPT_LINES {
 			iommu_message_end(slot.object - INTERRUPT_LINES)
 		}
+		// The entry of a message interrupt behind a conventional bridge
+		// follows the program that holds it.
+		iommu_interrupt_owner_changed(slot.object)
 	case .Ports:
 		slot.kind = .None
 		ports_changed(program)

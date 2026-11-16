@@ -181,6 +181,83 @@ two_units_and_an_alias :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect_value(t, target_settings, u8(0xD7))
+	// Each alias names its target: the source of the range and its target
+	// agree with the target only.
+	testing.expect(t, amd_alias_agrees(&ivrs, requester(0x42, 4, 0), requester(0x40, 8, 0)))
+	testing.expect(t, amd_alias_agrees(&ivrs, requester(0x40, 8, 0), requester(0x40, 8, 0)))
+	testing.expect(t, !amd_alias_agrees(&ivrs, requester(0x42, 4, 0), requester(0x42, 0, 0)))
+	testing.expect(t, amd_alias_agrees(&ivrs, requester(0x43, 0, 1), requester(0x43, 0, 0)))
+	testing.expect(t, !amd_alias_agrees(&ivrs, requester(0x43, 0, 1), requester(0x40, 8, 0)))
+	// A requester that no alias names agrees with any shared requester.
+	testing.expect(t, amd_alias_agrees(&ivrs, requester(0x41, 2, 1), requester(0x40, 8, 0)))
+}
+
+// The table of QEMU 10 for the machine of the part iommu_amd: a bridge
+// with no capability of PCI Express at 0:1C.0 (i82801b11-bridge), with bus
+// 1 behind it. QEMU gives a select entry for the bridge, then an alias
+// range from 1:0.0 to the last function of its subordinate bus, whose
+// target is the bridge: what the walk of the bus finds as the shared
+// requester of the devices behind it.
+@(test)
+the_alias_of_a_conventional_bridge_of_qemu :: proc(t: ^testing.T) {
+	builder: Ivrs_Builder
+	ivrs_builder_start(&builder)
+	block := ivrs_unit_add(&builder, AMD_BLOCK_UNIT_SECOND_FORM, requester(0, 2, 0), 0xFED8_0000)
+	ivrs_entry_add(&builder, block, AMD_ENTRY_SELECT, requester(0, 0x10, 0))
+	ivrs_entry_add(&builder, block, AMD_ENTRY_SELECT, requester(0, 0x1C, 0))
+	ivrs_entry_add(&builder, block, AMD_ENTRY_ALIAS_RANGE_START, requester(1, 0, 0), requester(0, 0x1C, 0))
+	ivrs_entry_add(&builder, block, AMD_ENTRY_RANGE_END, requester(1, 31, 7))
+	ivrs, problem := ivrs_read(ivrs_table(&builder))
+	testing.expect_value(t, problem, Ivrs_Problem.None)
+	bridge := requester(0, 0x1C, 0)
+	members := [?]u16{requester(1, 0, 0), requester(1, 1, 0)}
+	for member in members {
+		_, covered, aliased := amd_unit_of(&ivrs, member)
+		testing.expect(t, covered && aliased)
+		testing.expect(t, amd_alias_agrees(&ivrs, member, bridge))
+		testing.expect(t, !amd_alias_agrees(&ivrs, member, requester(1, 0, 0)))
+	}
+	// The bridge is the target of the alias and names itself.
+	_, covered, aliased := amd_unit_of(&ivrs, bridge)
+	testing.expect(t, covered && aliased)
+	testing.expect(t, amd_alias_agrees(&ivrs, bridge, bridge))
+	// A device of bus 0 is not aliased.
+	_, covered, aliased = amd_unit_of(&ivrs, requester(0, 0x10, 0))
+	testing.expect(t, covered && !aliased)
+	// The walk of the bus found bus 1 behind the bridge: each source of the
+	// alias is there.
+	shared_of_bus: [256]u32
+	shared_of_bus[1] = 1 + u32(bridge)
+	testing.expect(t, amd_alias_sources_behind(&ivrs, bridge, &shared_of_bus))
+	// With no bus behind the bridge, the source range is outside it.
+	no_bus: [256]u32
+	testing.expect(t, !amd_alias_sources_behind(&ivrs, bridge, &no_bus))
+}
+
+// The table of QEMU 10 behind a conventional bridge, and an alias from the
+// device 0:10.0, which is not behind the bridge, to the requester of the
+// bridge: the unit would translate the accesses of 0:10.0 with the domain
+// of the group, so the group gets no domain.
+@(test)
+an_alias_from_outside_the_bridge_is_refused :: proc(t: ^testing.T) {
+	builder: Ivrs_Builder
+	ivrs_builder_start(&builder)
+	block := ivrs_unit_add(&builder, AMD_BLOCK_UNIT_SECOND_FORM, requester(0, 2, 0), 0xFED8_0000)
+	ivrs_entry_add(&builder, block, AMD_ENTRY_SELECT, requester(0, 0x10, 0))
+	ivrs_entry_add(&builder, block, AMD_ENTRY_SELECT, requester(0, 0x1C, 0))
+	ivrs_entry_add(&builder, block, AMD_ENTRY_ALIAS_RANGE_START, requester(1, 0, 0), requester(0, 0x1C, 0))
+	ivrs_entry_add(&builder, block, AMD_ENTRY_RANGE_END, requester(1, 31, 7))
+	ivrs_entry_add(&builder, block, AMD_ENTRY_ALIAS_SELECT, requester(0, 0x10, 0), requester(0, 0x1C, 0))
+	ivrs, problem := ivrs_read(ivrs_table(&builder))
+	testing.expect_value(t, problem, Ivrs_Problem.None)
+	bridge := requester(0, 0x1C, 0)
+	shared_of_bus: [256]u32
+	shared_of_bus[1] = 1 + u32(bridge)
+	// The member and the target still agree on the target of their own
+	// alias: only the check of the sources refuses.
+	testing.expect(t, amd_alias_agrees(&ivrs, requester(1, 0, 0), bridge))
+	testing.expect(t, amd_alias_agrees(&ivrs, bridge, bridge))
+	testing.expect(t, !amd_alias_sources_behind(&ivrs, bridge, &shared_of_bus))
 }
 
 // Two units that name one requester leave the IOMMU off, whatever the

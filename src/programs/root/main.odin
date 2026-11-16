@@ -500,6 +500,7 @@ Started :: struct {
 	driver:          ^Started, // The block service that serves this program. nil: none, or it stopped.
 	is_driver:       bool, // A block service: it has the device at `device`.
 	device:          pci.Place,
+	bridge_group:    Bridge_Group, // A device behind a conventional bridge: the buses behind it, whose devices this service holds too (devices.odin). Zero: none.
 	queues:          system.Handle, // A block service: the memory of the queue of its device.
 	network:         ring.Ring, // The network service: the control ring from this service.
 	network_memory:  system.Handle,

@@ -371,10 +371,37 @@ the_kinds_of_a_bridge :: proc(t: ^testing.T) {
 	testing.expect(t, bridge_passes_requesters(&configuration))
 	configuration[0x60 / 4] = u32(PORT_SWITCH_DOWNSTREAM) << 20 | 0x10
 	testing.expect(t, bridge_passes_requesters(&configuration))
-	configuration[0x60 / 4] = u32(7) << 20 | 0x10 // A bridge from PCI Express to PCI.
+	configuration[0x60 / 4] = u32(PORT_PCI_EXPRESS_TO_PCI) << 20 | 0x10 // A bridge from PCI Express to PCI.
 	testing.expect(t, !bridge_passes_requesters(&configuration))
 	configuration[0x60 / 4] = 0x0000_4005 // A list that comes back to 0x40.
 	testing.expect(t, !bridge_passes_requesters(&configuration))
+	_, found := express_port_type(&configuration)
+	testing.expect(t, !found)
+}
+
+// The shared requester of a conventional bridge, as QEMU 10 gives it to the
+// unit: a bridge from PCI Express to PCI (pcie-pci-bridge) makes each
+// request with its secondary bus, the device 0 and the function 0; a bridge
+// with no capability of PCI Express (pci-bridge, i82801b11-bridge) makes it
+// with its own requester.
+@(test)
+the_shared_requester_of_a_conventional_bridge :: proc(t: ^testing.T) {
+	configuration: [CONFIGURATION_WORDS]u32
+	// No list of capabilities: the bridge itself, at 0:1C.0, before bus 1.
+	testing.expect_value(t, bridge_shared_requester(&configuration, 0, 0x1C, 0, 1), requester(0, 0x1C, 0))
+	configuration[1] = STATUS_CAPABILITIES
+	configuration[0x34 / 4] = 0x40
+	configuration[0x40 / 4] = u32(PORT_PCI_EXPRESS_TO_PCI) << 20 | 0x10
+	port, found := express_port_type(&configuration)
+	testing.expect(t, found)
+	testing.expect_value(t, port, u32(PORT_PCI_EXPRESS_TO_PCI))
+	// A bridge from PCI Express to PCI at 1:0.0, before bus 2.
+	testing.expect_value(t, bridge_shared_requester(&configuration, 1, 0, 0, 2), requester(2, 0, 0))
+	// A bridge from PCI to PCI Express (the port type 8) is conventional
+	// too, and names itself.
+	configuration[0x40 / 4] = u32(PORT_PCI_EXPRESS_TO_PCI + 1) << 20 | 0x10
+	testing.expect(t, !bridge_passes_requesters(&configuration))
+	testing.expect_value(t, bridge_shared_requester(&configuration, 3, 4, 1, 5), requester(3, 4, 1))
 }
 
 // The descriptors of the queue of invalidations, bit by bit from the
