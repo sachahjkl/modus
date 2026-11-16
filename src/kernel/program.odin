@@ -426,8 +426,11 @@ program_leave :: proc "contextless" (index: u32) -> bool {
 
 // program_module records a module that a loader put in a program, replaces
 // the record with the same base, or removes it (size 0). Two records do not
-// share an address.
-program_module :: proc "contextless" (program: ^Program, record: op.Module_Record) -> op.Status {
+// share an address. by_the_program: the program writes in itself. The kernel
+// writes the writer of the record, and the program cannot change a record of
+// its starter: else a program could name its code by the module of another
+// (src/md/features/module_record_writer.md).
+program_module :: proc "contextless" (program: ^Program, record: op.Module_Record, by_the_program: bool) -> op.Status {
 	if record.size != 0 && (record.base >= op.USER_END || record.size > op.USER_END - record.base) {
 		return .Bad_Address
 	}
@@ -447,8 +450,33 @@ program_module :: proc "contextless" (program: ^Program, record: op.Module_Recor
 	if record.size == 0 && (place.size == 0 || place.base != record.base) {
 		return .Bad_Address
 	}
-	place^ = record.size == 0 ? {} : record
+	if by_the_program && place.size != 0 && place.writer == .Starter {
+		return .No_Right
+	}
+	written := record
+	written.writer = by_the_program ? .Program : .Starter
+	place^ = record.size == 0 ? {} : written
 	return .Ok
+}
+
+// starter_module_meeting gives the module record of the writer Starter that
+// meets a range of addresses of a program, or nil. The caller holds the
+// program lock. The test compares offsets from the lower start, so no sum
+// of an address and a size from the program wraps.
+starter_module_meeting :: proc "contextless" (program: ^Program, address: u64, size: u64) -> ^op.Module_Record {
+	if size == 0 {
+		return nil
+	}
+	for &item in program.modules {
+		if item.size == 0 || item.writer != .Starter {
+			continue
+		}
+		meets := address >= item.base ? address - item.base < item.size : item.base - address < size
+		if meets {
+			return &item
+		}
+	}
+	return nil
 }
 
 // module_of gives the module record of a program that holds an address, or nil.
@@ -977,7 +1005,9 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 
 // map puts pages of a region in the address space of a program. origin is
 // the memory handle that a program mapped (origin.odin), or 0.
-map_region :: proc "contextless" (program: ^Program, region_index: u32, address: u64, flags: op.Map_Flags, first: u64, count: u64, origin: Holding = 0) -> (result: u64, status: op.Status) {
+// by_the_program: the program maps in itself, and not over a module of its
+// starter.
+map_region :: proc "contextless" (program: ^Program, region_index: u32, address: u64, flags: op.Map_Flags, first: u64, count: u64, origin: Holding = 0, by_the_program := false) -> (result: u64, status: op.Status) {
 	region := &regions[region_index]
 	// An object with marks of protection is mapped once: the marks are of
 	// the object, and would reach a second mapping.
@@ -1008,6 +1038,12 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	size := count * PAGE_SIZE
 	if address % PAGE_SIZE != 0 || address < PAGE_SIZE || address >= USER_END || size > USER_END - address {
 		return 0, .Bad_Address
+	}
+	// Memory of the program where its starter recorded a module would run
+	// under the name of that module. Before the check of the mappings, so
+	// that a map over that module always gives the same status.
+	if by_the_program && starter_module_meeting(program, address, size) != nil {
+		return 0, .No_Right
 	}
 	// A page on first use has no page table entry yet: the mappings say
 	// which addresses are taken.
@@ -1147,15 +1183,19 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 // gap between the mappings of the program. The range of a mapping that
 // ended serves again: a program that maps and unmaps at each call uses the
 // same few addresses, and its tables are those of one mapping at a time.
-// At most MAPPING_CAPACITY passes over the 128 mappings. The caller holds
-// the program lock.
+// A module record of the writer Starter is a range that the gap avoids too:
+// the program cannot map there, and an address that the kernel chooses must
+// not give a refusal that the program cannot avoid. Each pass moves the
+// candidate past at least one mapping or record, which it never meets
+// again: at most MAPPING_CAPACITY + PROGRAM_MODULE_CAPACITY passes. The
+// caller holds the program lock.
 chosen_address :: proc "contextless" (program: ^Program, count: u64, alignment: u64 = PAGE_SIZE) -> u64 {
 	align_up :: #force_inline proc "contextless" (value, alignment: u64) -> u64 {
 		return (value + alignment - 1) / alignment * alignment
 	}
 	candidate := align_up(u64(op.CHOSEN_BASE), alignment)
 	size := count * PAGE_SIZE
-	for _ in 0 ..= MAPPING_CAPACITY {
+	for _ in 0 ..= MAPPING_CAPACITY + op.PROGRAM_MODULE_CAPACITY {
 		moved := false
 		for mapping in program.mappings {
 			if mapping.page_count == 0 {
@@ -1163,6 +1203,16 @@ chosen_address :: proc "contextless" (program: ^Program, count: u64, alignment: 
 			}
 			end := mapping.address + mapping.page_count * PAGE_SIZE
 			if candidate < end + PAGE_SIZE && mapping.address < candidate + size + PAGE_SIZE {
+				candidate = align_up(end + PAGE_SIZE, alignment)
+				moved = true
+			}
+		}
+		for item in program.modules {
+			if item.size == 0 || item.writer != .Starter {
+				continue
+			}
+			end := item.base + item.size
+			if candidate < end + PAGE_SIZE && item.base < candidate + size + PAGE_SIZE {
 				candidate = align_up(end + PAGE_SIZE, alignment)
 				moved = true
 			}

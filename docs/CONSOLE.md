@@ -298,7 +298,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `debug_memory(place, count)` | Table of `Memory_Row` | `address`, `bytes`, `text` |
 | `events()`, `wait_stop(milliseconds)` | Table of `Event_Row` | `thread`, `kind`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
 | `stop_report(program)` | Table of `Stop_Frame_Row` | The frames of a disk program that stopped on a fault, with no attach: `frame`, `module`, `procedure`, `offset`, `file`, `line`, `stop` |
-| `program_modules()` | Table of `Program_Module` | One row for each module of each program: `slot`, `program`, `module`, `replaces`, `hash_head` |
+| `program_modules()` | Table of `Program_Module` | One row for each module of each program: `slot`, `program`, `module`, `replaces`, `hash_head`, `writer` (`starter` or `program`: the module writer of the record) |
 | `memory()` | Record `Memory` | The memory of the machine and the counters of the kernel: `memory` and `free` in MiB, `used`, `reserved`, `budgets` and `free_no_budget_holds` in pages, then counts. `free_no_budget_holds` is 0 pages when each page is free or paid |
 | `locks()` | Table of `Lock` | One row for each kind of kernel lock: `lock`, `waits`, `takes` |
 | `modules()` | Table of `Module` | One row for each module of the boot image: `name`, `size` in bytes, `hash_head` |

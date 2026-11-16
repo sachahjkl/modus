@@ -80,6 +80,7 @@ Running :: struct {
 	replaces: [64]u8, // The hash that an import names and that a replacement changed to `hash`. Empty: no replacement.
 	base:     i64, // The address of the module in the program.
 	size:     i64, // The bytes of addresses of the module.
+	writer:   [8]u8, // starter: the starter wrote the record, and the program cannot change it; program: the program wrote it for itself.
 }
 
 // One row for each import edge of each program that runs: edges(). An
