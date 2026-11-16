@@ -255,7 +255,9 @@ Operation :: enum u32 {
 	Log            = 1, // (log, address, length, level: Log_Level, channel, channel, runs).
 	// Writes one text on the log of the kernel: records of the log, which a reader with the memory of the log
 	// reads, and one line `[name:channel] text` on the serial port. The kernel sets the time, the program and
-	// the thread of each record, so a program cannot write a record of another program.
+	// the thread of each record, so a program cannot write a record of another program. The operation writes
+	// the records only; the tick of the first processor writes their line on the serial port after it, so a
+	// `Log` never waits for the lines of other programs.
 	//
 	// **Arguments**
 	//
@@ -277,8 +279,9 @@ Operation :: enum u32 {
 	// - `Bad_Handle`, `No_Right`: `log` is not a log handle with **Write**.
 	// - `Bad_Address`: `length` is above 4096, or the program cannot read the text and its runs.
 	// - `Bad_Operation`: `level` is above `Error`, or `runs` is above `LOG_CALL_RUN_LIMIT`.
-	// - `No_Budget`: the budget of the program, or a budget above it, accepted all the records of its limit
-	//   in this second (`Budget_Amounts`, `log_records`).
+	// - `No_Budget`: the budget of the program accepted all the records of its amount in this second
+	//   (`Budget_Amounts`, `log_records`). No other budget counts the record, so the refusal says nothing of
+	//   what other programs wrote.
 	Memory_Create  = 2, // (budget, pages, flags: Memory_Flags) -> memory handle.
 	// Makes a memory object of `pages` pages of 4096 bytes, and gives a handle to it with each right of
 	// memory: **Give**, **Read**, **Write** and **Execute**. The memory is zero. The budget pays now, so an
@@ -750,10 +753,10 @@ Operation :: enum u32 {
 	// ```
 	Budget_Create  = 21, // (budget, pages, programs, threads, processor, log_records) -> budget handle.
 	// Makes a budget from a budget, and gives a handle to it with **Give**, **Read**, **Spend** and
-	// **Commit** (`Budget_Amounts` says what each amount is). The pages, the program slots and the thread
-	// slots move from `budget` to the new budget. The processor time and the log records are limits for
-	// each second, for the new budget and each budget that comes from it. When the last handle to the new
-	// budget closes, what it holds returns to `budget`, which pays for its objects.
+	// **Commit** (`Budget_Amounts` says what each amount is). The pages, the program slots, the thread
+	// slots and the log records of each second move from `budget` to the new budget. The processor time is
+	// a limit for each second, for the new budget and each budget that comes from it. When the last handle
+	// to the new budget closes, what it holds returns to `budget`, which pays for its objects.
 	//
 	// **Arguments**
 	//
@@ -761,7 +764,7 @@ Operation :: enum u32 {
 	// - `pages`, `programs`, `threads`: what moves to the new budget.
 	// - `processor`: microseconds of processor time in each second, on all the processors together: at most
 	//   the limit of `budget`.
-	// - `log_records`: records of the log in each second: at most the limit of `budget`.
+	// - `log_records`: records of the log in each second, which move to the new budget.
 	//
 	// **Results**: the budget handle.
 	//
@@ -783,7 +786,7 @@ Operation :: enum u32 {
 	// 2. the program slots that it can still pay;
 	// 3. the thread slots that it can still pay;
 	// 4. its limit of processor time: microseconds in each second;
-	// 5. its limit of log records in each second;
+	// 5. the log records of each second that it holds: its amount, after the budgets that came from it;
 	// 6. the microseconds of processor time that its threads used since it was made;
 	// 7. the log records that the kernel refused to it.
 	//
@@ -1689,17 +1692,19 @@ Module_Report :: struct {
 // object from nothing: Memory_Create, Program_Create and Thread_Create take
 // a budget handle, and the budget pays.
 //
-// The record holds five amounts. Three of them are **amounts that move**:
+// The record holds five amounts. Four of them are **amounts that move**:
 // `Budget_Create` takes them from a budget for a new budget, and an object
-// that ends gives them back. Time does not return, so the two others are
-// **limits for each period**.
+// or a budget that ends gives them back. The log records of each second
+// move too: a budget counts only the records of its own programs against
+// what it holds, so a refusal tells a program nothing of what the others
+// wrote. Processor time is a **limit for each period**.
 //
 // A limit is for a budget and for each budget that came from it: what a
 // thread uses counts in its budget and in each budget above. A new budget
 // cannot have a limit above the limit of the budget that it came from. With
-// the limit 0 a budget has no time: its threads do not run, and Log gives
-// No_Budget. The processor limit holds in each period of 100 ms, the log
-// limit in each second.
+// the limit 0 a budget has no time: its threads do not run. With no log
+// records, Log gives No_Budget. The processor limit holds in each period of
+// 100 ms, the log records in each second.
 //
 // The kernel gives one budget to the root service: all the free memory and
 // all the slots. Budget_Create moves a part of a budget to a new budget.
@@ -1720,7 +1725,7 @@ Budget_Amounts :: struct {
 	programs:    u64, // Moves. Program slots: one for each `Program_Create`.
 	threads:     u64, // Moves. Thread slots: one for each thread that runs, the first one included.
 	processor:   u64, // A limit. Microseconds of processor time in each second, on all the processors together: 1 000 000 is one full processor.
-	log_records: u64, // A limit. Records on the log in each second; `Log` gives `No_Budget` above it.
+	log_records: u64, // Moves. Records on the log in each second; `Log` gives `No_Budget` above it.
 }
 
 // One word of a word wait: the address of 32 bits of memory, and the value
@@ -2683,7 +2688,7 @@ Status :: enum u32 {
 	// that needs it asks the holder of a handle with that right for a new grant.
 	No_Budget     = 8, // The budget cannot pay for the operation.
 	// The budget, or a budget above it, does not hold the pages, the program slot or the thread slot that the
-	// operation takes; or for `Log`, the budget accepted all the records of its limit in this second. See
+	// operation takes; or for `Log`, the budget accepted all the records of its amount in this second. See
 	// `Budget_Amounts`.
 }
 
@@ -3011,7 +3016,7 @@ Lock_Kind :: enum u64 {
 	Region  = 3, // One memory object: it gives a page on first use one frame.
 	Frame   = 4, // The page frames, the reserved pages, the pages of the budgets, the slots of the memory objects.
 	Cache   = 5, // The stack of free page frames of one processor (its frame cache).
-	Log     = 6, // The serial port and the records of the log.
+	Log     = 6, // The records of the log and the own log rings. The serial port has its own writer.
 	Wait    = 7, // One bucket of the wait table: the threads that wait on its words.
 	Run     = 8, // The run queue of one processor, and the scheduling state of its threads.
 }
@@ -3106,6 +3111,21 @@ LOG_PAGES :: 128
 // The records that the log keeps: the pages of the log less the head, in
 // records of 256 bytes.
 LOG_RECORD_CAPACITY :: LOG_PAGES * 4096 / size_of(Log_Record) - 1
+// The log records that the kernel writes for itself in each second after
+// its first tick, at most: the stops on a fault, the refused returns, the
+// full fault rings, that a program can cause as fast as it faults. A line
+// past the bound is counted, and one record says the count.
+LOG_RECORDS_OF_THE_KERNEL :: 64
+// The log records of each second of a program of normal use: what the root
+// service gives each program that it starts.
+LOG_RECORDS_OF_A_PROGRAM :: 1000
+// The program slots of the kernel.
+PROGRAM_SLOTS_OF_THE_MACHINE :: 64
+// The log records of each second of the whole machine: the amount of the
+// root budget, which divides it among every budget, a program of normal use
+// in each program slot. The serial port can lose the lines of a flood of
+// these records, and says how many (src/md/features/log_side_channels.md).
+LOG_RECORDS_OF_THE_MACHINE :: PROGRAM_SLOTS_OF_THE_MACHINE * LOG_RECORDS_OF_A_PROGRAM
 
 // The pages of the own log ring of a program: the kernel keeps a copy of
 // each record of the program there, which only the records of that program

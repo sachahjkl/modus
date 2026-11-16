@@ -36,7 +36,7 @@ The reason of a new operation: the own log ring is memory of the kernel that the
 
 **The records of a lent program come from its ring too.** `program_records` and `program_value_runs` call `Log_Read` with the slot and the serial of the lent program. So a storm of one child never pushes out the records of another child, nor the own records of the starter.
 
-**A log storm now evicts only the own records of its writer.** A program that writes many records fills its own ring and pushes its own records out. In the whole log it still pushes the records of the others out, but only a reader that acts for the principal reads the whole log, and that reader sees each record of each program: the eviction tells it nothing that it does not see. The log limit of each second still limits the storm (`Budget_Amounts.log_records`).
+**A log storm now evicts only the own records of its writer.** A program that writes many records fills its own ring and pushes its own records out. In the whole log it still pushes the records of the others out, but only a reader that acts for the principal reads the whole log, and that reader sees each record of each program: the eviction tells it nothing that it does not see. The log records of each second of its budget still limit the storm (`Budget_Amounts.log_records`), and only its own budget counts them ([log_side_channels.md](log_side_channels.md)).
 
 ## Refused forms
 
@@ -63,4 +63,4 @@ The reason of a new operation: the own log ring is memory of the kernel that the
 
 Built: the own log ring of each program, paid by its budget at `Program_Create` and freed with its slot or at the first run of a guest; the copy under the log lock into a buffer of the processor; the two copies of each record; the operation `Log_Read`; the log service that reads with it the own records of a caller and the records of a lent program; `op.own_log_window` with host tests; the machine test where a child of `log_reader` writes more records than the whole log keeps, after which `log_reader` still reads its one record and the one record of each of its two other children, which stopped before, and the whole log still reads in order.
 
-Left: two other side channels of the log stay open for a reader of its own records. The log limit of each second is also counted in each budget above the budget of a program, so a refused `Log` can say that the others wrote much. The `Log` operation waits for the serial port under the one log lock, so the time of a `Log` says how much the others wrote. A precise clock is not yet a grant.
+The two other side channels of the log, the log limit counted in each budget above a program and the wait of a `Log` for the serial port under the log lock, are closed or narrowed by [log_side_channels.md](log_side_channels.md), with what stays of them.

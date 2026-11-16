@@ -251,6 +251,9 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 	}
 }
 
+// The log records of each second that a call host gets by default.
+CALL_HOST_LOG_RECORDS :: 100
+
 // call_host_start starts a call host (the program "host" of the boot
 // image) for one module, and maps the file of the module and of its
 // imports in it, read-only: the call host has the call ring and the call
@@ -258,8 +261,11 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 // image. values_with_seed has the random seed of the call host, which the
 // caller draws from its own generator (random.values_with_seed of no
 // values): a program does not start with no seed. On a failure of the load,
-// load_error has the record that the call host wrote.
-call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error) -> (connection: Call_Connection, status: Status) {
+// load_error has the record that the call host wrote. log_records are the
+// log records of each second that the call host takes from the budget of
+// the caller: 100 by default, so a caller with 1000 records starts nine
+// hosts and keeps 100; a caller that starts more gives each fewer.
+call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS) -> (connection: Call_Connection, status: Status) {
 	files: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry
 	source := Load_Source {
 		image = image,
@@ -302,7 +308,7 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	grants[isolated.GRANT_REGION] = {connection.region_memory, {.Read, .Write}}
 	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
 	values[isolated.VALUE_FILE_SIZE] = offset
-	connection.program = program_start(image_find(image, "host"), name, grants, values, {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = 100}, mappings[:count + 1]) or_return
+	connection.program = program_start(image_find(image, "host"), name, grants, values, {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = log_records}, mappings[:count + 1]) or_return
 	// The first completion says if the call host loaded the module.
 	limit := time() + 5000
 	for {

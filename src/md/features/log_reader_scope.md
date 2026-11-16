@@ -87,4 +87,4 @@ The program `log_reader` starts two children, and reads its own records and the 
 
 Built: the program serial and the own number in the log record, the two rules of a reader of the whole log, the contract package `log_scope`, the grant that the root service writes for each connection to the log service, the check of the room of each service ring before a revocation, the own records in `records` and `value_runs` and the records of a lent program in `program_records` and `program_value_runs`, each from the own log ring of that program, host tests of the form and of the edge of the ring, and the program `log_reader` with its two children, its storm child and its machine test of two runs.
 
-Left: the whole log is not split by principal. A caller that acts for principal 1 reads the records of the programs of principal 0 too. The side channels of the log that stay are in [own_log_ring.md](own_log_ring.md), "State".
+Left: the whole log is not split by principal. A caller that acts for principal 1 reads the records of the programs of principal 0 too. The side channels of the log that stay are in [log_side_channels.md](log_side_channels.md), "Subtle points".

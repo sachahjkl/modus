@@ -29,7 +29,7 @@ The line is written at the end of the first read of the ring. At that moment, th
 
 ## Subtle points
 
-- During the first read, the reader is at the oldest record: the writer writes over the record right before it. A copy of a record is a copy of memory, and the kernel writes each record with its line on the serial port, so a reader that keeps up moves away from the writer. A reader that does not keep up loses records there: that loss is real and counts as "lost since".
+- During the first read, the reader is at the oldest record: the writer writes over the record right before it. A copy of a record is a copy of memory. A writer writes a record through a kernel entry, and no longer waits for the serial port ([log_side_channels.md](log_side_channels.md)), so the reader keeps up only while it copies faster than the writers enter the kernel. A reader that does not keep up loses records there: that loss is real and counts as "lost since".
 ## The other checks of the log in the main test
 
 A check that reads a record of the boot through the ring has the same fault as one count: it holds only while the boot is short. So each check of the log reads a fact that the ring still holds when it runs, or reads the boot where each line stays:
