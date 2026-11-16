@@ -2329,7 +2329,7 @@ Do not use: login, sign in, authentication.
 
 The lock of a session is the act that ends the session of a named principal: each program of the session stops, and an unlock is needed again (`lock()` in the console).
 
-The programs stop; they are not frozen. A program that keeps its state in its store at each change loses nothing. The lock of a session is not a lock of memory.
+The programs stop; they are not frozen. A program that keeps its state in its store at each change loses nothing. The lock also stops the window of `unlock` that the session asked for (a change of the passphrase, a machine passphrase, a seal of the machine key), so nobody at the locked machine reads its recovery key; such a window writes nothing before Enter, so the stop loses no recovery key (`PRINCIPALS.md`, "4. The unlock and the lock"). The lock of a session is not a lock of memory.
 
 Do not use: log out, sign out.
 
