@@ -639,23 +639,35 @@ page_log :: proc "contextless" () -> int {
 	return exports
 }
 
-// about gives the line that says what a module is, by name. The text is empty when the boot image has no module with this name.
+// about gives the line that says what a module is, by name.
+//
+// **Result**: the count of bytes of the line, or a negative number with an error record:
+//
+// - `Absent` (-1): no module of the boot image has this name.
+//
+// A module with no documentation gives an empty text and 0: an answer, not a failure.
 @(export, link_name = "about")
-about :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
+about :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	index := find(name^)
 	if index < 0 {
-		return 0
+		return errors.fail(error, -1, .Absent, .Modules, 1)
 	}
 	line, _ := module.documentation(file_of(&system.image_entries(image)[index]))
 	return text_result(line, result)
 }
 
-// signature gives the description of one export of a module as a text: its name, the name and the type of each parameter, and the type of the result. The exports have the numbers from 1. The text is empty when the module has no such export.
+// signature gives the description of one export of a module as a text: its name, the name and the type of each parameter, and the type of the result. The exports have the numbers from 1.
+//
+// **Result**: the count of bytes of the text, or a negative number with an error record:
+//
+// - `Absent` (-1): no module of the boot image has this name.
+// - `Bad_Value` (-2): the module has no export with this number; the record gives the count of its exports as the
+//   limit.
 @(export, link_name = "signature")
-signature :: proc "c" (name: ^string, export: i64, result: ^[]u8) -> i64 {
+signature :: proc "c" (name: ^string, export: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	index := find(name^)
-	if index < 0 || export < 1 {
-		return 0
+	if index < 0 {
+		return errors.fail(error, -1, .Absent, .Modules, 1)
 	}
 	file := file_of(&system.image_entries(image)[index])
 	head, _ := module.header(file)
@@ -675,7 +687,8 @@ signature :: proc "c" (name: ^string, export: i64, result: ^[]u8) -> i64 {
 			return text_result(system.written(&writer), result)
 		}
 	}
-	return 0
+	// The loop counted each described export: number is their count.
+	return errors.fail(error, -2, .Bad_Value, .None, 2, export, number)
 }
 
 // The entry of the manual: it opens its service and its window, then serves calls and keys until the principal

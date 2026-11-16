@@ -621,6 +621,12 @@ FAULT_STATUS_TIME_OUT_ERROR :: u32(1) << 6 // An invalidation of the cache of a 
 FAULT_STATUS_CLEARED_AT_START :: FAULT_STATUS_OVERFLOW | FAULT_STATUS_QUEUE_ERROR | FAULT_STATUS_COMPLETION_ERROR | FAULT_STATUS_TIME_OUT_ERROR
 FAULT_EVENT_MASKED :: u32(1) << 31
 
+// The most levels of the tables of a domain, on each vendor: addresses of
+// 48 bits. The kernel frees a table level by level, one frame of its
+// stack for each level.
+DOMAIN_TABLE_LEVELS_MOST :: 4
+#assert(AMD_LEVELS <= DOMAIN_TABLE_LEVELS_MOST)
+
 // capability_levels gives the levels of the second-level tables that the
 // kernel uses: 4 for addresses of 48 bits, else 3 for 39 bits, else 0 (the
 // unit offers neither).
@@ -628,7 +634,7 @@ capability_levels :: proc "contextless" (capability: u64) -> u32 {
 	widths := capability >> 8 & 0x1F
 	switch {
 	case widths & 4 != 0:
-		return 4
+		return DOMAIN_TABLE_LEVELS_MOST
 	case widths & 2 != 0:
 		return 3
 	}

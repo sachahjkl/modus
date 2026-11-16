@@ -246,6 +246,13 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, " is damaged: a block of it has a wrong check")
 		}
 	case .Device:
+		if errors.Unit(record.unit) == .Dropped_Writes {
+			write_part(writer, "the disk did not keep ")
+			write_part(writer, record.found)
+			write_part(writer, record.found == 1 ? " block of the commit" : " blocks of the commit")
+			write_part(writer, ": the commit is refused, and the store keeps its state before it")
+			return
+		}
 		write_part(writer, "the device reported an error")
 		if record.found != 0 {
 			write_part(writer, ": the status ")

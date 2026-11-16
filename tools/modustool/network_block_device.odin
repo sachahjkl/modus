@@ -21,7 +21,8 @@ import "core:thread"
 // torn: power_loss.odin builds these images and checks each one.
 //
 // The disk can also drop one write: it answers Ok and keeps nothing, as a
-// disk with a fault that reports none (dropped_write.odin).
+// disk with a fault that reports none; and hide one: it answers Ok, gives
+// the bytes at a read, and never makes them durable (dropped_write.odin).
 //
 // The protocol: https://github.com/NetworkBlockDevice/nbd/blob/master/doc/proto.md
 // All numbers on the wire are big-endian.
@@ -83,65 +84,106 @@ Network_Block_Device :: struct {
 	powered_off:           bool,
 	// The dropped write (dropped_write.odin): not empty, the disk answers Ok
 	// to the first write that holds a block whose bytes start with this
-	// marker, and does not keep it.
+	// marker, and keeps nothing of that block: a read gives its bytes from
+	// before. It keeps the other blocks of the request, and each later
+	// write.
 	drop_marker:       string,
-	drop_state:        Drop_State,
-	dropped_block:     u64, // The first block of the dropped write.
+	dropped:           bool,
+	dropped_block:     u64, // The block that the disk did not keep.
+	// The dropped root: not empty, the disk keeps the first write of a
+	// block whose bytes start with this marker, then answers Ok to the next
+	// write of a root and keeps nothing of it.
+	root_drop_marker:  string,
+	root_drop_state:   Root_Drop_State,
+	// The hidden dropped write: not empty, the disk answers Ok to the first
+	// write that holds a block whose bytes start with this marker, gives
+	// those bytes at each read, and never makes them durable: a cache that
+	// a loss of power empties, and that hides the loss from a read back.
+	hide_marker:       string,
+	hide_state:        Hide_State,
+	hidden_block:      u64, // The block that a loss of power loses.
+	// A copy of the durable image when the first root after the hidden
+	// write became durable: the image that a loss of power at that moment
+	// leaves.
+	durable_at_hidden_root: []u8,
 }
 
-// The states of the dropped write, in their order. The disk keeps every
-// write until the root of the commit with the dropped write is durable,
-// then takes no more write, so that no later commit names the wrong block.
-Drop_State :: enum {
-	Armed, // No write was dropped yet.
-	Dropped, // The write with the marker was answered and not kept.
-	Root_Written, // A root was written after the dropped write.
-	Root_Durable, // A flush made that root durable: the next write powers the disk off.
-	Powered_Off, // A write came after the durable root: no write is kept or answered any more.
+// The states of the dropped root, in their order.
+Root_Drop_State :: enum {
+	Armed, // No block with the marker was written yet.
+	Marker_Written, // The block with the marker was kept: the next root is dropped.
+	Root_Dropped, // A write of a root was answered and not kept.
+}
+
+// The states of the hidden dropped write, in their order.
+Hide_State :: enum {
+	Armed, // No write was hidden yet.
+	Hidden, // The block with the marker is in the current image only.
+	Root_Written, // A root was written after it.
+	Root_Durable, // A flush made that root durable, and the disk copied its durable image.
 }
 
 // The two places of the root block (docs/STORAGE.md, "3.1 The blocks"):
 // a write below them is the write of a root.
 ROOT_BLOCK_PLACES :: 2
 
-// Drop_Outcome says what the disk does with one write.
-Drop_Outcome :: enum {
-	Keep, // The disk keeps the write and answers it.
-	Drop, // The disk answers Ok and keeps nothing.
-	Power_Off, // The disk keeps nothing and answers nothing.
+// marker_block gives the place in `bytes` of the first block whose bytes
+// start with `marker`, or -1. QEMU can join the writes of several blocks
+// into one request: each block of it is compared, and the disk changes
+// only the block with the marker, so the storage service finds one block.
+@(private = "file")
+marker_block :: proc(offset: u64, bytes: []u8, marker: string) -> int {
+	if marker == "" || offset < ROOT_BLOCK_PLACES * format.BLOCK_SIZE {
+		return -1
+	}
+	for start := 0; start + len(marker) <= len(bytes); start += format.BLOCK_SIZE {
+		if string(bytes[start:][:len(marker)]) == marker {
+			return start
+		}
+	}
+	return -1
 }
 
-// drop_decide moves the dropped write to its next state for one write, and
-// says what the disk does with it. The caller holds the lock.
-drop_decide :: proc(server: ^Network_Block_Device, offset: u64, bytes: []u8) -> Drop_Outcome {
-	if server.drop_marker == "" {
-		return .Keep
-	}
-	switch server.drop_state {
+// drop_decide moves the dropped writes to their next state for one write.
+// It gives the place in `bytes` of the block that the disk does not keep
+// at all, and of the block that it does not make durable; -1 for none. The
+// caller holds the lock.
+drop_decide :: proc(server: ^Network_Block_Device, offset: u64, bytes: []u8) -> (dropped_start: int, hidden_start: int) {
+	dropped_start, hidden_start = -1, -1
+	switch server.root_drop_state {
 	case .Armed:
+		if marker_block(offset, bytes, server.root_drop_marker) >= 0 {
+			server.root_drop_state = .Marker_Written
+		}
+	case .Marker_Written:
 		if offset < ROOT_BLOCK_PLACES * format.BLOCK_SIZE {
-			return .Keep
+			// A root is written alone: the whole write is the root.
+			server.root_drop_state = .Root_Dropped
+			return 0, -1
 		}
-		marker_length := len(server.drop_marker)
-		// QEMU can join the writes of several blocks into one request: each
-		// block of it is compared.
-		for start := 0; start + marker_length <= len(bytes); start += format.BLOCK_SIZE {
-			if string(bytes[start:][:marker_length]) == server.drop_marker {
-				server.drop_state = .Dropped
-				server.dropped_block = offset / format.BLOCK_SIZE
-				return .Drop
-			}
-		}
-	case .Dropped:
-		if offset < ROOT_BLOCK_PLACES * format.BLOCK_SIZE {
-			server.drop_state = .Root_Written
-		}
-	case .Root_Written:
-	case .Root_Durable, .Powered_Off:
-		server.drop_state = .Powered_Off
-		return .Power_Off
+	case .Root_Dropped:
 	}
-	return .Keep
+	if !server.dropped {
+		dropped_start = marker_block(offset, bytes, server.drop_marker)
+		if dropped_start >= 0 {
+			server.dropped = true
+			server.dropped_block = (offset + u64(dropped_start)) / format.BLOCK_SIZE
+		}
+	}
+	switch server.hide_state {
+	case .Armed:
+		hidden_start = marker_block(offset, bytes, server.hide_marker)
+		if hidden_start >= 0 {
+			server.hide_state = .Hidden
+			server.hidden_block = (offset + u64(hidden_start)) / format.BLOCK_SIZE
+		}
+	case .Hidden:
+		if offset < ROOT_BLOCK_PLACES * format.BLOCK_SIZE {
+			server.hide_state = .Root_Written
+		}
+	case .Root_Written, .Root_Durable:
+	}
+	return dropped_start, hidden_start
 }
 
 // disk_server_start serves an image: `image` is the disk at the start, and
@@ -191,7 +233,8 @@ disk_server_free :: proc(server: ^Network_Block_Device) {
 	delete(server.pending)
 	delete(server.current)
 	delete(server.durable)
-	server.current, server.durable = nil, nil
+	delete(server.durable_at_hidden_root)
+	server.current, server.durable, server.durable_at_hidden_root = nil, nil, nil
 }
 
 disk_server_run :: proc(server: ^Network_Block_Device) {
@@ -352,16 +395,26 @@ disk_server_serve :: proc(server: ^Network_Block_Device, client: net.TCP_Socket)
 				put_u32(reply[4:], NBD_ERROR_INVALID)
 			} else {
 				sync.mutex_lock(&server.lock)
-				outcome := drop_decide(server, offset, data[:length])
-				if outcome == .Keep {
-					copy(server.current[offset:][:length], data[:length])
-					if flags & NBD_COMMAND_FLAG_FUA != 0 {
-						// Durable at its reply: the disk keeps it through a loss of
-						// power, with no flush.
-						copy(server.durable[offset:][:length], data[:length])
-					} else {
-						append(&server.pending, Pending_Write{offset = offset, bytes = clone_bytes(data[:length])})
-					}
+				dropped_start, hidden_start := drop_decide(server, offset, data[:length])
+				if dropped_start >= 0 {
+					// The block that the disk does not keep: the write puts back
+					// the bytes that the disk holds there.
+					dropped_length := min(format.BLOCK_SIZE, int(length) - dropped_start)
+					copy(data[dropped_start:][:dropped_length], server.current[offset + u64(dropped_start):][:dropped_length])
+				}
+				copy(server.current[offset:][:length], data[:length])
+				if hidden_start >= 0 {
+					// The block that a read sees and that never becomes durable:
+					// the durable part of the write keeps the durable bytes there.
+					hidden_length := min(format.BLOCK_SIZE, int(length) - hidden_start)
+					copy(data[hidden_start:][:hidden_length], server.durable[offset + u64(hidden_start):][:hidden_length])
+				}
+				if flags & NBD_COMMAND_FLAG_FUA != 0 {
+					// Durable at its reply: the disk keeps it through a loss of
+					// power, with no flush.
+					copy(server.durable[offset:][:length], data[:length])
+				} else {
+					append(&server.pending, Pending_Write{offset = offset, bytes = clone_bytes(data[:length])})
 				}
 				server.writes += 1
 				off := server.power_off_after_write != 0 && server.writes >= server.power_off_after_write && offset < ROOT_BLOCK_PLACES * format.BLOCK_SIZE && flags & NBD_COMMAND_FLAG_FUA == 0
@@ -369,9 +422,6 @@ disk_server_serve :: proc(server: ^Network_Block_Device, client: net.TCP_Socket)
 				if off {
 					sync.atomic_store(&server.powered_off, true)
 					return // No reply: the machine waits for a disk that has no power.
-				}
-				if outcome == .Power_Off {
-					return // No reply: the commit after the dropped write never reaches the disk.
 				}
 			}
 			if !send_all(client, reply[:]) {
@@ -386,8 +436,9 @@ disk_server_serve :: proc(server: ^Network_Block_Device, client: net.TCP_Socket)
 			}
 			clear(&server.pending)
 			server.flushes += 1
-			if server.drop_state == .Root_Written {
-				server.drop_state = .Root_Durable
+			if server.hide_state == .Root_Written {
+				server.hide_state = .Root_Durable
+				server.durable_at_hidden_root = clone_bytes(server.durable)
 			}
 			sync.mutex_unlock(&server.lock)
 			if !send_all(client, reply[:]) {
