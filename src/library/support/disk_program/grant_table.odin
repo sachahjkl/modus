@@ -10,13 +10,26 @@ package disk_program
 // carries a tag of keyed BLAKE2b under a key that only the passphrase of the
 // principal gives, so a reader of the disk cannot add a grant.
 //
+// The table also holds the client keys of `remote` that its principal
+// allowed (src/md/features/remote_client_keys.md), so such a grant lasts
+// across a restart under the same tag as the grants of the disk programs.
+// The client table of the root service is the form of these keys while the
+// machine runs.
+//
 // See [disk grant table](term:disk-grant-table) and [nickname](term:nickname).
 
+import "modus:contract/remote"
 import "modus:contract/start_grant"
 import blake2 "modus:support/cryptography/_blake2"
 
 // The rows of one table: the disk programs with a grant, of one principal.
 ROW_CAPACITY :: 16
+
+// The client keys of `remote` in one table: as many as the client table
+// gives one principal, so each key of the table can have its row there.
+CLIENT_KEY_CAPACITY :: remote.CLIENT_ROWS_OF_ONE_PRINCIPAL
+// The bytes of a client key: an Ed25519 public key.
+CLIENT_KEY_SIZE :: 32
 
 // The grants that a command gives to a disk program.
 Disk_Grant :: enum u8 {
@@ -109,6 +122,11 @@ Grant_Table :: struct {
 	rows:              [ROW_CAPACITY]Grant_Row,
 	count:             int,
 	forget_by_default: bool, // The global setting: false, each row persists unless its exception says Forget.
+	// The client keys of `remote` that the principal allowed, in the order
+	// of the allows. Never 32 zero bytes, and never one key two times. They
+	// follow the global setting: no key has an exception of its own.
+	client_keys:       [CLIENT_KEY_CAPACITY][CLIENT_KEY_SIZE]u8,
+	client_key_count:  int,
 }
 
 row_nickname :: proc "contextless" (row: ^Grant_Row) -> string {
@@ -135,6 +153,7 @@ Table_Problem :: enum u8 {
 	Not_Held, // The row does not hold the grant.
 	Same_File, // The nickname names this file already.
 	Zero_Hash, // The hash is 32 zero bytes.
+	Zero_Key, // The client key is 32 zero bytes.
 }
 
 // start_file decides which file a start of a nickname runs, and with which
@@ -235,6 +254,60 @@ table_persistence_set :: proc "contextless" (table: ^Grant_Table, nickname: stri
 	return .None
 }
 
+// table_client_key_find gives the place of a client key of `remote` in the
+// table, or -1.
+table_client_key_find :: proc "contextless" (table: ^Grant_Table, key: [CLIENT_KEY_SIZE]u8) -> int {
+	for place in 0 ..< clamp(table.client_key_count, 0, CLIENT_KEY_CAPACITY) {
+		if table.client_keys[place] == key {
+			return place
+		}
+	}
+	return -1
+}
+
+// table_client_key_add records a client key of `remote` that the principal
+// allowed. A key that the table holds already is no change.
+table_client_key_add :: proc "contextless" (table: ^Grant_Table, key: [CLIENT_KEY_SIZE]u8) -> Table_Problem {
+	if key == {} {
+		return .Zero_Key
+	}
+	if table_client_key_find(table, key) >= 0 {
+		return .None
+	}
+	if table.client_key_count >= CLIENT_KEY_CAPACITY {
+		return .Full
+	}
+	table.client_keys[table.client_key_count] = key
+	table.client_key_count += 1
+	return .None
+}
+
+// table_client_key_remove takes a client key of `remote` out of the table.
+// The keys after it move one place down, so the keys keep the order of the
+// allows.
+table_client_key_remove :: proc "contextless" (table: ^Grant_Table, key: [CLIENT_KEY_SIZE]u8) -> Table_Problem {
+	place := table_client_key_find(table, key)
+	if place < 0 {
+		return .Absent
+	}
+	count := clamp(table.client_key_count, 0, CLIENT_KEY_CAPACITY)
+	for index in place ..< count - 1 {
+		table.client_keys[index] = table.client_keys[index + 1]
+	}
+	table.client_keys[count - 1] = {}
+	table.client_key_count = count - 1
+	return .None
+}
+
+// table_persisted_client_keys counts the client keys that table_encode
+// writes: each one, unless the global setting is to forget.
+table_persisted_client_keys :: proc "contextless" (table: ^Grant_Table) -> int {
+	if table.forget_by_default {
+		return 0
+	}
+	return clamp(table.client_key_count, 0, CLIENT_KEY_CAPACITY)
+}
+
 // table_persisted_rows counts the rows that table_encode writes.
 table_persisted_rows :: proc "contextless" (table: ^Grant_Table) -> int {
 	count := 0
@@ -330,14 +403,15 @@ row_persists :: proc "contextless" (table: ^Grant_Table, row: ^Grant_Row) -> boo
 // The persisted table: the object that the root service keeps in a store
 // of the principal. Each number is little-endian.
 TABLE_MAGIC :: "DISKGRNT" // The first 8 bytes.
-TABLE_FORMAT :: u32(1) // A table of another format number is refused.
+TABLE_FORMAT :: u32(2) // A table of another format number is refused.
 KEY_SIZE :: 32 // The bytes of the key of the tag.
 TAG_SIZE :: 32 // The bytes of the tag: keyed BLAKE2b with an output of 32 bytes.
 TABLE_OFFSET_MAGIC :: 0 // 8 bytes.
 TABLE_OFFSET_FORMAT :: 8 // u32.
 TABLE_OFFSET_COUNT :: 12 // u8: the rows that follow, ROW_CAPACITY at most.
 TABLE_OFFSET_SETTING :: 13 // u8: 1 when the global setting is to forget, else 0.
-TABLE_HEADER_SIZE :: 16 // Two zero bytes after the setting.
+TABLE_OFFSET_CLIENT_KEY_COUNT :: 14 // u8: the client keys of remote after the rows, CLIENT_KEY_CAPACITY at most.
+TABLE_HEADER_SIZE :: 16 // One zero byte after the count of the client keys.
 // A row: the length of the nickname (u8), the nickname with zero bytes
 // after it (NAME_LIMIT bytes), the hash, the grants (u8), the persistence
 // (u8), two zero bytes.
@@ -347,18 +421,27 @@ ROW_OFFSET_HASH :: ROW_OFFSET_NICKNAME + NAME_LIMIT // 24.
 ROW_OFFSET_GRANTS :: ROW_OFFSET_HASH + HASH_SIZE // 56.
 ROW_OFFSET_PERSISTENCE :: ROW_OFFSET_GRANTS + 1 // 57.
 ROW_SIZE :: 60
-// The tag covers each byte before it. The rows after the count are zero
-// bytes: the table always has this size.
-TABLE_OFFSET_TAG :: TABLE_HEADER_SIZE + ROW_CAPACITY * ROW_SIZE // 976.
-TABLE_SIZE :: TABLE_OFFSET_TAG + TAG_SIZE // 1008.
-#assert(TABLE_SIZE == 1008)
+// The client keys of remote follow the rows: CLIENT_KEY_SIZE bytes each.
+TABLE_OFFSET_CLIENT_KEYS :: TABLE_HEADER_SIZE + ROW_CAPACITY * ROW_SIZE // 976.
+// The tag covers each byte before it. The rows after the count of the rows,
+// and the keys after the count of the keys, are zero bytes: the table
+// always has this size.
+TABLE_OFFSET_TAG :: TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_CAPACITY * CLIENT_KEY_SIZE // 1104.
+TABLE_SIZE :: TABLE_OFFSET_TAG + TAG_SIZE // 1136.
+#assert(TABLE_SIZE == 1136)
+// The bytes of a table of the format 1, which had no client keys. This
+// system does not read it; the size only names it in the log, so that no
+// one restores a version that cannot verify.
+OLDER_FORMAT_TABLE_SIZE :: 1008
+#assert(OLDER_FORMAT_TABLE_SIZE != TABLE_SIZE)
 #assert(ROW_OFFSET_PERSISTENCE + 1 <= ROW_SIZE)
 
 // Why `table_decode` refused a table. The sentence of each one is in
 // `table_problem_sentences`.
 Table_File_Problem :: enum u8 {
 	None,
-	Wrong_Size, // Not TABLE_SIZE bytes.
+	Wrong_Size, // Not TABLE_SIZE bytes, nor OLDER_FORMAT_TABLE_SIZE.
+	Older_Format, // OLDER_FORMAT_TABLE_SIZE bytes: a table of the format 1, which this system does not read.
 	Not_Authentic, // The tag does not verify under the key: another key, or a changed byte.
 	Wrong_Magic,
 	Wrong_Format,
@@ -367,13 +450,15 @@ Table_File_Problem :: enum u8 {
 	Bad_Row, // A nickname that a grant cannot name, a hash of zero bytes, an unknown grant or persistence, or a byte that must be zero.
 	Two_Rows, // Two rows with one nickname.
 	Bytes_After_Rows, // A byte after the last row is not zero.
+	Bad_Client_Keys, // More than CLIENT_KEY_CAPACITY client keys, a key of zero bytes, one key two times, or a byte after the last key that is not zero.
 }
 
 // The sentence of each problem of a persisted table, for the log.
 @(rodata)
 table_problem_sentences := [Table_File_Problem]string {
 	.None             = "",
-	.Wrong_Size       = "the table does not have 1008 bytes",
+	.Wrong_Size       = "the table does not have 1136 bytes",
+	.Older_Format     = "the table has 1008 bytes: it has the format 1 of an older system, which this system does not read; no version of it can be restored to verify",
 	.Not_Authentic    = "its tag does not verify under the key of the principal: another key wrote it, or a byte changed",
 	.Wrong_Magic      = "the table does not start with DISKGRNT",
 	.Wrong_Format     = "the table has another format number",
@@ -382,6 +467,13 @@ table_problem_sentences := [Table_File_Problem]string {
 	.Bad_Row          = "a row has a nickname that no grant names, a hash of zero bytes, an unknown grant or persistence, or a byte that must be zero",
 	.Two_Rows         = "two rows have one nickname",
 	.Bytes_After_Rows = "the table has bytes that are not zero after its last row",
+	.Bad_Client_Keys  = "the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or a byte after the last key is not zero",
+}
+
+// table_problem_is_format says if a refusal is a format that this system
+// does not read: a restored version of the table has that format too.
+table_problem_is_format :: proc "contextless" (problem: Table_File_Problem) -> bool {
+	return problem == .Older_Format || problem == .Wrong_Format
 }
 
 // table_tag gives the keyed BLAKE2b of the bytes before the tag.
@@ -419,8 +511,9 @@ table_u32_get :: proc "contextless" (bytes: []u8) -> u32 {
 }
 
 // table_encode writes the persisted table: the global setting, then each
-// row that persists (row_persists), then the tag under the key. A row that
-// lasts until the machine stops is not written.
+// row that persists (row_persists), then the client keys of remote unless
+// the global setting is to forget, then the tag under the key. A row or a
+// key that lasts until the machine stops is not written.
 table_encode :: proc "contextless" (table: ^Grant_Table, key: ^[KEY_SIZE]u8, out: ^[TABLE_SIZE]u8) {
 	out^ = {}
 	copy(out^[TABLE_OFFSET_MAGIC:][:8], TABLE_MAGIC)
@@ -441,6 +534,11 @@ table_encode :: proc "contextless" (table: ^Grant_Table, key: ^[KEY_SIZE]u8, out
 		count += 1
 	}
 	out^[TABLE_OFFSET_COUNT] = u8(count)
+	client_key_count := table_persisted_client_keys(table)
+	for place in 0 ..< client_key_count {
+		copy(out^[TABLE_OFFSET_CLIENT_KEYS + place * CLIENT_KEY_SIZE:][:CLIENT_KEY_SIZE], table.client_keys[place][:])
+	}
+	out^[TABLE_OFFSET_CLIENT_KEY_COUNT] = u8(client_key_count)
 	tag := table_tag(key, out)
 	copy(out^[TABLE_OFFSET_TAG:][:TAG_SIZE], tag[:])
 }
@@ -450,6 +548,9 @@ table_encode :: proc "contextless" (table: ^Grant_Table, key: ^[KEY_SIZE]u8, out
 // is checked first, so no field of a table that the key did not write is
 // read.
 table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: Grant_Table, problem: Table_File_Problem) {
+	if len(bytes) == OLDER_FORMAT_TABLE_SIZE {
+		return {}, .Older_Format
+	}
 	if len(bytes) != TABLE_SIZE {
 		return {}, .Wrong_Size
 	}
@@ -471,7 +572,7 @@ table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: 
 		return {}, .Too_Many_Rows
 	}
 	setting := kept[TABLE_OFFSET_SETTING]
-	if setting > 1 || kept[TABLE_OFFSET_SETTING + 1] != 0 || kept[TABLE_OFFSET_SETTING + 2] != 0 {
+	if setting > 1 || kept[TABLE_OFFSET_CLIENT_KEY_COUNT + 1] != 0 {
 		return {}, .Bad_Setting
 	}
 	table.forget_by_default = setting == 1
@@ -513,9 +614,27 @@ table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: 
 		row.persistence = Persistence(place[ROW_OFFSET_PERSISTENCE])
 		table.count = index + 1
 	}
-	for after in kept[TABLE_HEADER_SIZE + count * ROW_SIZE:TABLE_OFFSET_TAG] {
+	for after in kept[TABLE_HEADER_SIZE + count * ROW_SIZE:TABLE_OFFSET_CLIENT_KEYS] {
 		if after != 0 {
 			return {}, .Bytes_After_Rows
+		}
+	}
+	client_key_count := int(kept[TABLE_OFFSET_CLIENT_KEY_COUNT])
+	if client_key_count > CLIENT_KEY_CAPACITY {
+		return {}, .Bad_Client_Keys
+	}
+	for place in 0 ..< client_key_count {
+		client_key: [CLIENT_KEY_SIZE]u8
+		copy(client_key[:], kept[TABLE_OFFSET_CLIENT_KEYS + place * CLIENT_KEY_SIZE:][:CLIENT_KEY_SIZE])
+		if client_key == ([CLIENT_KEY_SIZE]u8{}) || table_client_key_find(&table, client_key) >= 0 {
+			return {}, .Bad_Client_Keys
+		}
+		table.client_keys[place] = client_key
+		table.client_key_count = place + 1
+	}
+	for after in kept[TABLE_OFFSET_CLIENT_KEYS + client_key_count * CLIENT_KEY_SIZE:TABLE_OFFSET_TAG] {
+		if after != 0 {
+			return {}, .Bad_Client_Keys
 		}
 	}
 	return table, .None

@@ -86,6 +86,14 @@ Persisted_Table :: struct {
 	argument_count: int,
 	bytes:          [disk_program.TABLE_SIZE]u8, // The table that a write sends.
 	deadline:       u64, // The time at which the call ends with no answer.
+	// Why the table on the disk was refused, in the state Refused: the
+	// sentence of a refused change depends on it.
+	refused_problem: disk_program.Table_File_Problem,
+	// The client keys of remote revoked before a read of the table in this
+	// run: the read takes them out of the table that it gives, so a key
+	// that the disk still holds does not come back.
+	revoked_keys:      [disk_program.CLIENT_KEY_CAPACITY][disk_program.CLIENT_KEY_SIZE]u8,
+	revoked_key_count: int,
 }
 
 persisted_tables: [principals.PRINCIPAL_CAPACITY]Persisted_Table
@@ -344,7 +352,11 @@ persisted_table_refusal :: proc "contextless" (principal: u64) -> bool {
 	case .Unread:
 		system.log_in("programs", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": the store programs did not give it, so a write could lose it")
 	case .Refused:
-		system.log_in("programs", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": the table on the disk does not verify under ", key_words(principal), ", and it is kept; restore a version of it that verifies, then start the machine again")
+		if disk_program.table_problem_is_format(persisted_tables[principal].refused_problem) {
+			system.log_in("programs", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": the table on the disk has a format that this system does not read, and it is kept; do not restore a version of it, as no version has a format that this system reads")
+		} else {
+			system.log_in("programs", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": the table on the disk does not verify under ", key_words(principal), ", and it is kept; restore a version of it that verifies, then start the machine again")
+		}
 	case .Unwritten:
 		system.log_in("programs", .Warning, "root: refused a change of the disk grant table of principal ", principal, ": its last change is not on the disk; start the machine again")
 	}
@@ -366,6 +378,68 @@ persisted_table_changed :: proc "contextless" (principal: u64) {
 		}
 		persisted_table_write_begin(principal)
 	}
+}
+
+// persisted_table_revocation writes the disk grant table of a principal
+// after the revocation of one of its client keys of remote, and says if the
+// key can still come back from the disk. A revocation is never refused: it
+// ends a grant at once, so it does what each state of the table allows.
+// - Kept: the table is written.
+// - Unwritten: the revocation starts the writes again, as the table in
+//   memory holds each change since the last good write.
+// - Reading, Awaited, Unread: the key is kept as revoked, and the next read
+//   of this run takes it out of the table that it gives. The machine can
+//   stop before that read, but in Reading, which ends at once.
+// - Refused, Record_Unreadable: nothing is written over the table on the
+//   disk, which can hold the key.
+persisted_table_revocation :: proc "contextless" (principal: u64, key: [disk_program.CLIENT_KEY_SIZE]u8) -> (can_come_back: bool) {
+	table := &persisted_tables[principal]
+	switch table.state {
+	case .No_Passphrase:
+		return false
+	case .Kept:
+		persisted_table_changed(principal)
+		return false
+	case .Unwritten:
+		table.state = .Kept
+		table.write_failures = 0
+		table.write_again = false
+		system.log_in("programs", .Warning, "root: a revocation of a client key of remote starts the writes of the disk grant table of principal ", principal, " again")
+		persisted_table_write_begin(principal)
+		return false
+	case .Reading, .Awaited, .Unread:
+		already := false
+		for place in 0 ..< table.revoked_key_count {
+			if table.revoked_keys[place] == key {
+				already = true
+			}
+		}
+		if !already && table.revoked_key_count < disk_program.CLIENT_KEY_CAPACITY {
+			table.revoked_keys[table.revoked_key_count] = key
+			table.revoked_key_count += 1
+		}
+		can_come_back = table.state != .Reading
+	case .Refused, .Record_Unreadable:
+		can_come_back = true
+	}
+	if can_come_back {
+		head: [16]u8
+		system.log_in("calls", .Warning, "root: the revocation of the client key ", key_head_text(&head, key), " of remote is not written in the disk grant table of principal ", principal, ", which takes no change now: the key can come back at the next start of the machine")
+	}
+	return can_come_back
+}
+
+// persisted_table_revoked_keys_take takes the keys revoked before the read
+// out of the table that the read gives, and gives their count.
+persisted_table_revoked_keys_take :: proc "contextless" (table: ^Persisted_Table, from_disk: ^disk_program.Grant_Table) -> (count: int) {
+	for place in 0 ..< clamp(table.revoked_key_count, 0, disk_program.CLIENT_KEY_CAPACITY) {
+		if disk_program.table_client_key_remove(from_disk, table.revoked_keys[place]) == .None {
+			count += 1
+		}
+	}
+	table.revoked_keys = {}
+	table.revoked_key_count = 0
+	return count
 }
 
 // persisted_table_open opens the connection of this service to the store
@@ -568,7 +642,14 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 			from_disk, problem = disk_program.table_decode(text, &table.key)
 		}
 		persisted_table_end(principal)
-		switch disk_program.table_read_decision(absent, problem, table.key_new) {
+		decision := disk_program.table_read_decision(absent, problem, table.key_new)
+		if decision != .Take {
+			// The table in memory is written, or nothing is: a key revoked
+			// before is in neither.
+			table.revoked_keys = {}
+			table.revoked_key_count = 0
+		}
+		switch decision {
 		case .Write_Over:
 			table.state = .Kept
 			if absent {
@@ -581,18 +662,30 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 			return
 		case .Keep:
 			table.state = .Refused
+			table.refused_problem = problem
 			system.log_in("programs", .Warning, "root: refused the disk grant table of principal ", principal, " from the store programs: ", disk_program.table_problem_sentences[problem], "; it gives no grant, and it is kept: no change is written over it")
 			return
 		case .Take:
 		}
 		table.state = .Kept
 		replaced := disk_grant_tables[principal].count
-		disk_grant_tables[principal] = from_disk
 		if replaced > 0 {
-			system.log_in("programs", .Info, "root: read the disk grant table of principal ", principal, " from the store programs: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal), "; it replaces ", u64(replaced), " rows made before the key came")
+			system.log_in("programs", .Info, "root: read the disk grant table of principal ", principal, " from the store programs: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal), "; ", u64(from_disk.client_key_count), " client keys of remote; it replaces ", u64(replaced), " rows made before the key came")
 		} else {
-			system.log_in("programs", .Info, "root: read the disk grant table of principal ", principal, " from the store programs: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal))
+			system.log_in("programs", .Info, "root: read the disk grant table of principal ", principal, " from the store programs: ", u64(from_disk.count), " rows, with the tag of ", key_words(principal), "; ", u64(from_disk.client_key_count), " client keys of remote")
 		}
+		// A key revoked before the read stays revoked: the disk still held
+		// it, and it is written there no more.
+		revoked := persisted_table_revoked_keys_take(table, &from_disk)
+		disk_grant_tables[principal] = from_disk
+		if revoked > 0 {
+			system.log_in("calls", .Info, "root: the disk grant table of principal ", principal, " held ", u64(revoked), " client keys of remote revoked before its read: they stay revoked, and the table is written again")
+			table.write_failures = 0
+			persisted_table_write_begin(principal)
+		}
+		// The client keys of the table hold again, and a key allowed before
+		// the read that the table does not hold ends, as a row does.
+		client_keys_after_read(principal)
 	case .Write:
 		if status != .Ok {
 			sentence: [240]u8
@@ -605,7 +698,7 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 		table.write_failures = 0
 		// The rows of the bytes that went to the disk: a row that lasts
 		// until the machine stops is not among them.
-		system.log_in("programs", .Info, "root: the disk grant table of principal ", principal, " is written in the store programs: ", u64(table.bytes[disk_program.TABLE_OFFSET_COUNT]), " rows, with the tag of ", key_words(principal))
+		system.log_in("programs", .Info, "root: the disk grant table of principal ", principal, " is written in the store programs: ", u64(table.bytes[disk_program.TABLE_OFFSET_COUNT]), " rows, with the tag of ", key_words(principal), "; ", u64(table.bytes[disk_program.TABLE_OFFSET_CLIENT_KEY_COUNT]), " client keys of remote")
 		if table.write_again {
 			table.write_again = false
 			persisted_table_write_begin(principal)

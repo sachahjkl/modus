@@ -49,6 +49,42 @@ client_table_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, table.version, version)
 }
 
+// A key of the disk grant table of a principal: its own row holds; a free
+// row takes it; a row of another principal becomes contested, and holds no
+// grant for either; a contested row stays so; a full table is said.
+@(test)
+client_restore_decides_one_key_for_one_principal :: proc(t: ^testing.T) {
+	clients: [CLIENT_CAPACITY]Client
+	own := [32]u8{0 = 0x11}
+	other := [32]u8{0 = 0x22}
+	fresh := [32]u8{0 = 0x33}
+	clients[1] = {key = own, principal = 1, serial = 5}
+	clients[2] = {key = other, principal = 0, serial = 6}
+	action, place := client_restore_decision(&clients, own, 1)
+	testing.expect(t, action == .Holds && place == 1)
+	action, place = client_restore_decision(&clients, fresh, 1)
+	testing.expect(t, action == .Take_Row && place == 0)
+	// The key that principal 0 allowed in this run, and that the table of
+	// principal 1 holds: contested.
+	action, place = client_restore_decision(&clients, other, 1)
+	testing.expect(t, action == .Contest && place == 2)
+	clients[2].contested = 1 + 1
+	clients[2].serial = 7
+	testing.expect(t, !client_grant_holds(&clients, 2, 7), "a contested row holds no grant")
+	action, place = client_restore_decision(&clients, other, 1)
+	testing.expect(t, action == .Contested && place == 2)
+	// The holder too finds its row contested: its own row, with no grant.
+	action, place = client_restore_decision(&clients, other, 0)
+	testing.expect(t, action == .Holds && place == 2)
+	for &client, index in clients {
+		if client.serial == 0 {
+			client = {key = [32]u8{0 = 0x40, 1 = u8(index)}, principal = 0, serial = u64(10 + index)}
+		}
+	}
+	action, place = client_restore_decision(&clients, fresh, 1)
+	testing.expect(t, action == .No_Free_Row && place == -1)
+}
+
 // The code of the end of a connection whose grant ended has its name.
 @(test)
 revoked_has_its_name :: proc(t: ^testing.T) {
