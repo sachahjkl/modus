@@ -223,6 +223,8 @@ Site :: struct {
 	document_headings_pending: bool, // While the guides are read for their headings only: no reference is counted.
 	declarations: Site_Declaration_Index, // Each declaration of the sources of the system (docs/SITE.md, "The declarations of the sources").
 	declaration_spans: Site_Declaration_Span_Counts, // What became of the code spans that have the form of a name.
+	byte_layouts: map[string]Byte_Layout, // Each byte layout that a fence of a guide can name (docs/SITE.md, "The byte layouts").
+	byte_layout_problems: [dynamic]string, // The faults of the fences of byte layouts: each one stops the command.
 }
 
 run_site :: proc(args: []string) -> int {
@@ -637,6 +639,10 @@ site_build :: proc(address: string) -> bool {
 	// The declarations of the sources, before any guide is rendered: a code
 	// span of a guide links to them.
 	site_declarations_read(&site) or_return
+	// The byte layouts, before any guide is rendered: a fence of a guide
+	// names them.
+	site.byte_layouts = byte_layouts_read() or_return
+	site.byte_layout_problems = make([dynamic]string, context.temp_allocator)
 
 	if !reset_folder(SITE_FOLDER) {
 		return false
@@ -742,6 +748,15 @@ site_build :: proc(address: string) -> bool {
 	// A pointer to a document whose label finds no place is stale, and a
 	// link of a comment whose target names nothing is false: the command
 	// stops with its file and its line, so that none comes back.
+	// A fence of byte layouts whose text is not the text of the code would
+	// show a reader of the raw Markdown a layout that the code does not have.
+	if len(site.byte_layout_problems) > 0 {
+		for problem in site.byte_layout_problems {
+			fmt.eprintfln("modustool: site: %s", problem)
+		}
+		fmt.eprintfln("modustool: site: %d fences of byte layouts are wrong; no page is written", len(site.byte_layout_problems))
+		return false
+	}
 	pointer_problems := site_document_pointer_problems(&site)
 	if len(pointer_problems) > 0 {
 		for problem in pointer_problems {
