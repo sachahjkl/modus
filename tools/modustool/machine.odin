@@ -514,7 +514,9 @@ scenario_network := [?]Step {
 	{kind = .Launch, text = "manual"},
 	{kind = .Wait, text = "compositor: surface manual"},
 	{kind = .Launch, text = "remote"},
-	{kind = .Wait, text = "root: started remote"},
+	// The service prints its key while the root service starts it: the key
+	// can come before the line of the start.
+	{kind = .Wait, text = "root: started remote", any_order = true},
 	{kind = .Remote_Key, text = "remote: the public key of this service: "},
 	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
 	// Six malformed call requests, each on its own stream: each one has its
@@ -666,7 +668,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is closed by the key super"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "memory()"},
-	{kind = .Wait, text = "free_pages_no_budget_holds  0"},
+	{kind = .Wait, text = "free_no_budget_holds  0 pages"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
@@ -1519,6 +1521,19 @@ scenario := [?]Step {
 	{kind = .Wait, text = ": Memory (Give, Read, Write, Execute)"},
 	{kind = .Shot, text = "records"},
 
+	// Each field in the color of its value kind: a handle in a record, then
+	// a table with a text, two numbers, a size in pages and two times, each
+	// unit once in the head of its column. The row of the table is the last
+	// line but one: the picture waits for it, then for the count of rows.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "Span(b, 96, 10)"},
+	{kind = .Wait, text = "[console]   count   10"},
+	{kind = .Type, text = "columns(where(programs(), \"name\", \"console\"), \"name slot threads resident time started\")"},
+	{kind = .Wait, text = "[console] name     slot  threads  resident (pages)  time (ms)  started (us)"},
+	{kind = .Wait, text = "[console] console  "},
+	{kind = .Wait, text = "[console] 1 row of Program"},
+	{kind = .Shot, text = "console_value_kinds"},
+
 	// Revocation. The console revokes what it lent at the end of each
 	// call: the mapping that the module kept is gone, and the next read
 	// stops the program of the module on a page fault.
@@ -1682,7 +1697,9 @@ scenario := [?]Step {
 	// press on, the tool reads the place of the pointer from the compositor
 	// and corrects it before each press.
 	{kind = .Launch, text = "remote"},
-	{kind = .Wait, text = "root: started remote"},
+	// The service prints its key while the root service starts it: the key
+	// can come before the line of the start.
+	{kind = .Wait, text = "root: started remote", any_order = true},
 	{kind = .Remote_Key, text = "remote: the public key of this service: "},
 	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
 	{kind = .Call, text = "compositor.pointer()", expected = "1 rows of Pointer", pointer = true},
@@ -3005,7 +3022,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " over 512 names (512 names of 128 bytes, the least of 20 batches of 10)"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
-	{kind = .Wait, text = "free_pages_no_budget_holds  0"},
+	{kind = .Wait, text = "free_no_budget_holds  0 pages"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
@@ -3475,14 +3492,16 @@ log_last_line :: proc(machine: ^Machine, text: string) -> string {
 
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status. With user_network, the
-// listener of the tool also serves served_files (web_host.odin).
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, served_files: []Listener_File = nil, tpm_state: string = "", entropy_device := false) -> bool {
+// listener of the tool also serves served_files (web_host.odin). With
+// tpm_device, the machine has a software TPM, on any firmware; tpm_state is
+// the state that the machines of a part share, or "" for a new one.
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, served_files: []Listener_File = nil, tpm_state: string = "", entropy_device := false, tpm_device := false) -> bool {
 	machine_test_started := time.tick_now()
 	// The software TPM runs before QEMU and ends after it, with a folder of
 	// its own for each machine, and a state of its own unless the machines
 	// of a part share one (tpm_start).
 	tpm: Tpm_Process
-	if firmware == .With_Tpm && !tpm_start(&tpm, output, tpm_state) {
+	if tpm_device && !tpm_start(&tpm, output, tpm_state) {
 		return false
 	}
 	defer tpm_stop(&tpm)
@@ -3502,7 +3521,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		forward = {host_port = port, listener = &listener}
 	}
 	defer listener_stop(&listener)
-	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor, firmware, vnc, paused, iommu, entropy_device)
+	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor, firmware, vnc, paused, iommu, entropy_device, tpm_device)
 	if !ok {
 		return false
 	}
@@ -3538,7 +3557,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	// A scenario that failed between Film_Start and Film_Stop: its worker
 	// ends before the connections to QEMU close.
 	_ = film_stop(&machine)
-	if !passed && firmware != .Usual {
+	if !passed && (firmware != .Usual || tpm_device) {
 		// While QEMU still runs: what the firmware shows and wrote.
 		firmware_failure_report(&machine, output)
 	}
@@ -3595,15 +3614,6 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		log, _ := os.read_entire_file(output, context.temp_allocator)
 		if strings.contains(string(log), TEST_KERNEL_WITHOUT_RETURN_CHECK_LINE) {
 			fmt.eprintfln("modustool: test failed: the machine of %s ran the kernel of the test with a check skipped: \"%s\"", volume, TEST_KERNEL_WITHOUT_RETURN_CHECK_LINE)
-			passed = false
-		}
-	}
-	// The root service that seals with no Secure Boot runs only from the
-	// volumes of the test of the seal, in the same way.
-	if passed && volume != BOOT_VOLUME_SEAL_TEST && volume != BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM {
-		log, _ := os.read_entire_file(output, context.temp_allocator)
-		if strings.contains(string(log), TEST_ROOT_SEAL_WITHOUT_SECURE_BOOT_LINE) {
-			fmt.eprintfln("modustool: test failed: the machine of %s ran the root service of the test of the seal: \"%s\"", volume, TEST_ROOT_SEAL_WITHOUT_SECURE_BOOT_LINE)
 			passed = false
 		}
 	}

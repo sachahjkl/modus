@@ -353,7 +353,7 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 	}
 	added := RELEASE_VOLUME_RESOURCES
 	if len(modules) != len(build_modules_table) || len(resources) != len(build_resources) + len(added) {
-		return fmt.tprintf("%s does not hold the modules and the resources of the boot image of the build: a boot image of a test, such as the test of the seal by the TPM or a measure run, is never published", image_path)
+		return fmt.tprintf("%s does not hold the modules and the resources of the boot image of the build: a boot image of a test, such as a measure run, is never published", image_path)
 	}
 	for index in 0 ..< len(modules) + len(build_resources) {
 		entry := index < len(modules) ? &modules[index] : &resources[index - len(modules)]
@@ -365,7 +365,7 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 			return fmt.tprintf("the entry %s of %s or of the boot image of the build points outside it", name, image_path)
 		}
 		if name != system_description.name_of(&build_entry.name) || blake3.hash(bytes) != blake3.hash(build_bytes) {
-			return fmt.tprintf("the entry %s of %s is not the entry of the boot image of the build at its place: a boot image of a test, such as the test of the seal by the TPM, is never published", name, image_path)
+			return fmt.tprintf("the entry %s of %s is not the entry of the boot image of the build at its place: a boot image of a test, such as one with a changed module, is never published", name, image_path)
 		}
 	}
 	for name, index in added {

@@ -117,7 +117,7 @@ scenario_tcp := [?]Step {
 	{kind = .Wait, text = "network: the endpoint of server, TCP: this service read each payload byte one time on receive, for the copy, and on send only the 8 bytes of each header that it checks, and 0 bytes of the data; it computed no checksum: as it must"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "memory()"},
-	{kind = .Wait, text = "free_pages_no_budget_holds  0"},
+	{kind = .Wait, text = "free_no_budget_holds  0 pages"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

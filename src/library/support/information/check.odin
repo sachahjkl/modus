@@ -15,7 +15,7 @@ Problem_Kind :: enum u32 {
 	Export    = 6, // An export names a description that the table does not have, or code outside the memory of the module.
 	Text      = 7, // A name or a text is not inside the string table.
 	Function  = 8, // A description of an export has more than module.PARAMETER_CAPACITY arguments, or a type that does not exist, or names no record.
-	Record    = 9, // A record description has a field outside the record, a field of no type, or more than 256 bytes.
+	Record    = 9, // A record description has a field outside the record, a field of no type, a field unit out of the contract, or more than 256 bytes.
 	Slot      = 10, // A slot names no import.
 	Refused   = 11, // The kernel refused a report: `value` is the status. The machine handle needs the right Inspect.
 	Direction = 12, // A direction of a parameter is not Read, Change or Append, or a parameter that is not a Table or Bytes has one.
@@ -321,6 +321,11 @@ record_check :: proc "contextless" (file: []u8, index: u32) -> Problem {
 		// An Integer is at a multiple of its size.
 		if item.type == .Integer && item.offset % size != 0 {
 			return {kind = .Record, table = .Fields, index = field, offset = field_at + u64(offset_of(module.Field, offset)), value = u64(item.offset), limit = u64(size)}
+		}
+		// A reader shows the unit of a field, so a unit out of the contract,
+		// or a unit on a field that is not an Integer, is a fault of the file.
+		if !module.field_integer_unit_valid(item) {
+			return {kind = .Record, table = .Fields, index = field, offset = field_at + u64(offset_of(module.Field, integer_unit)), value = u64(item.integer_unit.kind) | u64(item.integer_unit.unit) << 8}
 		}
 	}
 	return {}

@@ -216,8 +216,8 @@ One drawer exists for each kind of result. A drawer knows no command: it reads t
 |---|---|
 | Integer | The decimal text |
 | Text | The bytes, one line for each line of the text. An empty text is one empty line |
-| Record | The name of the record, then one line for each field: two spaces, the name of the field, and its value. The values start at one column |
-| Table | A line with the names of the fields, a line for each row, a line with the count of rows and the name of the record. Each column has the least width that holds its head and its values, with two spaces between two columns. A number is at the right of its column, a text at the left |
+| Record | The name of the record, then one line for each field: two spaces, the name of the field, and its value. The values start at one column. A field that counts a size or a time has its unit after its value: `time  120 ms` |
+| Table | A line with the names of the fields, a line for each row, a line with the count of rows and the name of the record. Each column has the least width that holds its head and its values, with two spaces between two columns. A number is at the right of its column, a text at the left. The head of a field that counts a size or a time has its unit in parentheses, one time for the column: `time (ms)` |
 | Handle | `Handle`, its number, the kind of its object, and its rights in parentheses. A handle that names no object: `Handle 7: no object` |
 | Bytes | Rows of 16 bytes: the place of the first byte of the row in 8 hexadecimal digits, the bytes in hexadecimal, their characters (a byte that is no character is `.`). The last line is the count of bytes |
 | An error | "The drawer of an error", below |
@@ -230,12 +230,31 @@ notes    store  held           0  machine
 2 rows of Grant
 > memory()
 Memory
-  memory_mebibytes            256
-  free_mebibytes              201
+  memory                256 MiB
+  free                  201 MiB
   ...
+> columns(where(programs(), "name", "console"), "name slot threads resident time started")
+name     slot  threads  resident (pages)  time (ms)  started (us)
+console     4        3               412         38       1830211
+1 row of Program
 ```
 
-**The colors.** A value has the color of its value kind, from the one table that the window of the log and the site read (`src/library/support/graphics/value_colors.odin`; `docs/DESIGN.md`, "The colors of values"): an Integer is a number, a handle a handle, the name of a record and the kind of an object a type, an error kind a status, the operation of an error an operation. The name of a field, the head of a column and a line about the result (the count of rows) are dim. A text value is plain: the drawer has only the type of a field, and no text is classified by its look.
+![A table of the console: each field in the color of its value kind](screenshots/console_value_kinds.png)
+
+**The colors.** A value has the color of its value kind, from the one table that the window of the log and the site read (`src/library/support/graphics/value_colors.odin`; `docs/DESIGN.md`, "The colors of values"). The kind of a field comes from the description of its record (`MODULE_CONTRACT.md`, "The unit of an Integer field"):
+
+| Value | Value kind | Color |
+|---|---|---|
+| An Integer field with no unit, an Integer | Number | Memory |
+| An Integer field with a unit of size | Size | Memory, and its unit |
+| An Integer field with a unit of time | Time | Boot program, and its unit |
+| A handle | Handle | Kernel |
+| A Text field | none | The color of the text |
+| The name of a record, the kind of an object | Type | Firmware |
+| An error kind | Status | Failed |
+| The operation of an error | Operation | Kernel |
+
+The name of a field, the head of a column with its unit, and a line about the result (the count of rows) are dim. A text value is plain: the description states no kind for a text, and no text is classified by its look. A color is never the only sign: a size and a number have one color, and the unit tells them apart. The design: `src/md/features/console_value_colors.md`.
 
 **No value is cut.** The terminal draws no byte past its last column. The console starts a new row when a line reaches the last column of its window (`WINDOW_COLUMNS`, 96), so a long value goes on in the next row, under the start of its column when that column starts in the left half of the window. The log has the line whole. A text that a command writes in a field of a fixed size, and that is longer than the field, ends with the cut mark and the count of the missing bytes (`GLOSSARY.md`, "Cut mark"): the help of a command in `help()`; `describe(name)` gives it whole.
 
@@ -280,9 +299,9 @@ When the export has a table of error details and wrote more than one detail, one
 | `events()`, `wait_stop(milliseconds)` | Table of `Event_Row` | `thread`, `kind`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
 | `stop_report(program)` | Table of `Stop_Frame_Row` | The frames of a disk program that stopped on a fault, with no attach: `frame`, `module`, `procedure`, `offset`, `file`, `line`, `stop` |
 | `program_modules()` | Table of `Program_Module` | One row for each module of each program: `slot`, `program`, `module`, `replaces`, `hash_head` |
-| `memory()` | Record `Memory` | The memory of the machine and the counters of the kernel. `free_pages_no_budget_holds` is 0 when each page is free or paid |
+| `memory()` | Record `Memory` | The memory of the machine and the counters of the kernel: `memory` and `free` in MiB, `used`, `reserved`, `budgets` and `free_no_budget_holds` in pages, then counts. `free_no_budget_holds` is 0 pages when each page is free or paid |
 | `locks()` | Table of `Lock` | One row for each kind of kernel lock: `lock`, `waits`, `takes` |
-| `modules()` | Table of `Module` | One row for each module of the boot image: `name`, `bytes`, `hash_head` |
+| `modules()` | Table of `Module` | One row for each module of the boot image: `name`, `size` in bytes, `hash_head` |
 | `load(name)`, `isolate(name)`, `connect(name)` | Record `Loaded` | `module`, `commands`, `call` (`direct`, `isolated` or `service`), `hash_head` |
 | `unload(name)` | Record `Unloaded` | `module`, `commands`, `memory`: what became of the memory of the module |
 | `loaded()` | Table of `Loaded_Module` | The modules and the services whose exports are commands, and the imports of the modules: `module`, `call`, `imported_by`, `in_place_of`, `hash_head` |
@@ -313,14 +332,14 @@ When the export has a table of error details and wrote more than one detail, one
 | `variables()` | Table of `Variable` | `name`, `type`, `value` |
 | `clear()`, `shutdown()` | none | |
 | `history_clear()` | Integer | The lines that the history forgot |
-| `measure_completion()` | Table of `Completion_Measure` | Two rows, in nanoseconds; the same measure goes to the log in microseconds |
+| `measure_completion()` | Table of `Completion_Measure` | Two rows: `names_of`, `names`, and the times `collect`, `rank`, `rows`, `colors` in nanoseconds; the same measure goes to the log in microseconds |
 | `where`, `sort`, `join`, `columns`, `first`, `skip` | Table | "Tables as values" |
 | `rows(table)` | Integer | |
 | `row(table, number)` | Record | |
 
 A `hash_head` is the head of a BLAKE3 hash: its first 8 bytes, as 16 hexadecimal digits. `manual.modules()` gives the whole hash of a module.
 
-**How a built-in command makes a table.** It gives the name of its record and its columns (`made_table` in `src/programs/console/results.odin`), then adds rows. The console writes the description of the record in the format of the module contract (`console_results.description_write`), in the memory of the tables of the line: a table of a command and a table of an export are one kind of value.
+**How a built-in command makes a table.** It gives the name of its record and its columns (`made_table` in `src/programs/console/results.odin`), then adds rows. A column that counts a size or a time states its unit (`size_column`, `time_column`), so the drawer shows its kind. The console writes the description of the record in the format of the module contract (`console_results.description_write`), in the memory of the tables of the line: a table of a command and a table of an export are one kind of value.
 
 ## The log records of a line
 
