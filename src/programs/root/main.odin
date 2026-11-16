@@ -183,7 +183,9 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// boot image for the description of the exports of that service and
 		// for the module of its children. It starts them on its own budget,
 		// and the handle of each child is its grant to read the records of
-		// that child (src/md/features/log_reader_scope.md).
+		// that child (src/md/features/log_reader_scope.md). One child writes
+		// more records than the whole log keeps
+		// (src/md/features/own_log_ring.md).
 		return {.Connect, .Image}
 	case "boot":
 		return {.Inspect, .Image} // It shows the modules of the boot image.
@@ -465,7 +467,7 @@ own_records_amount_of :: proc "contextless" (caller: ^Started) -> u64 {
 // the log to them.
 log_grant :: proc "contextless" (name: string) -> system.Grant {
 	rights := system.Rights{.Write}
-	if name == "console" || name == "rings" || name == "errors" || name == "fault_ring" || name == "debugged" || name == "log_reader" { // errors gives it to its child, which measures a refused Log; the child of fault_ring that repairs logs its own cases; a child of debugged writes one line from a buffer that its debugger watches; each child of log_reader writes the record that its starter reads back.
+	if name == "console" || name == "rings" || name == "errors" || name == "fault_ring" || name == "debugged" || name == "log_reader" { // errors gives it to its child, which measures a refused Log; the child of fault_ring that repairs logs its own cases; a child of debugged writes one line from a buffer that its debugger watches; each child of log_reader writes the records that its starter reads back, one of them more than the whole log keeps.
 		rights += {.Give}
 	}
 	return {system.context_record().handles[op.CONTEXT_LOG], rights}

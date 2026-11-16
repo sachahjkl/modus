@@ -2452,41 +2452,57 @@ scenario := [?]Step {
 	// The children are not in its own records. A memory object in place of
 	// a program handle is refused, and the program handle of the log
 	// service from connect, with Read and no Give, cannot be lent.
+	// After the two children stopped, a third child, "log_reader storm",
+	// writes more records than the whole log keeps, which push the records
+	// of log_reader and of its two children out of the whole log. Each
+	// check above runs after that storm, and still finds each record: the
+	// own log ring of each program keeps it, the ring of a stopped child
+	// too, while log_reader holds its handle.
+	{kind = .Type, text = "start(\"log_reader\")"},
+	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader storm] log_reader storm: the last record, after more records than the whole log keeps", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
+	{kind = .Wait, text = "[log_reader] log_reader: its own records: 1 rows from the own number 0, its first record, in the slot ", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = ", lost 0: no row of another program or of an earlier run: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the value runs: 1 rows, each of a record of this program, with the run of its value 42: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the records of log_reader child 1: 1 rows from the own number 0, its one record, lost 0: no row of this program, of the other child or of an earlier run: as it must", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: the value runs of log_reader child 1: 1 rows, the run of its value 1: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the records of log_reader child 2: 1 rows from the own number 0, its one record, lost 0: no row of this program, of the other child or of an earlier run: as it must", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader] log_reader: the value runs of log_reader child 2: 1 rows, the run of its value 2: as it must"},
+	{kind = .Wait, text = " records after the records of this program and of its two children, more than the "},
+	{kind = .Wait, text = " that the whole log keeps, and the own log ring of each one kept its records: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: a memory object in place of a program handle: the log service refused it with Handle_Kind: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the program handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: ok"},
+	{kind = .Wait, text = "root: log_reader stopped with code 0"},
 	// The remote service acts for the principal and still reads the whole
-	// log: the record of the root service about log_reader, and the record
-	// of log_reader.
+	// log in order: the last record of the storm child, then the line of
+	// log_reader after it, then the stop that the root service writes. The
+	// earlier records of the run are gone from the whole log.
+	{kind = .Record, program = "log_reader storm", level = "info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
+	{kind = .Record, program = "log_reader", level = "info", text = "log_reader: ok"},
+	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: log_reader stopped with code 0"},
 	{kind = .Type, text = "start(\"log_reader\")"},
-	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1"},
-	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2"},
+	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
+	{kind = .Wait, text = "[log_reader storm] log_reader storm: the last record, after more records than the whole log keeps", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
-	{kind = .Wait, text = "[log_reader] log_reader: its own records: 1 rows from the own number 0, its first record, in the slot "},
+	{kind = .Wait, text = "[log_reader] log_reader: its own records: 1 rows from the own number 0, its first record, in the slot ", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = ", lost 0: no row of another program or of an earlier run: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: the value runs: 1 rows, each of a record of this program, with the run of its value 42: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: the records of log_reader child 1: 1 rows from the own number 0, its one record, lost 0: no row of this program, of the other child or of an earlier run: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the records of log_reader child 1: 1 rows from the own number 0, its one record, lost 0: no row of this program, of the other child or of an earlier run: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: the value runs of log_reader child 1: 1 rows, the run of its value 1: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: the records of log_reader child 2: 1 rows from the own number 0, its one record, lost 0: no row of this program, of the other child or of an earlier run: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the records of log_reader child 2: 1 rows from the own number 0, its one record, lost 0: no row of this program, of the other child or of an earlier run: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: the value runs of log_reader child 2: 1 rows, the run of its value 2: as it must"},
+	{kind = .Wait, text = " that the whole log keeps, and the own log ring of each one kept its records: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: a memory object in place of a program handle: the log service refused it with Handle_Kind: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: the program handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	{kind = .Wait, text = "root: log_reader stopped with code 0"},
-	{kind = .Type, text = "start(\"log_reader\")"},
-	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1"},
-	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2"},
-	{kind = .Wait, text = "root: connected log_reader to the service log, for principal 0"},
-	{kind = .Wait, text = "[log_reader] log_reader: its own records: 1 rows from the own number 0, its first record, in the slot "},
-	{kind = .Wait, text = ", lost 0: no row of another program or of an earlier run: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: the value runs: 1 rows, each of a record of this program, with the run of its value 42: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: the records of log_reader child 1: 1 rows from the own number 0, its one record, lost 0: no row of this program, of the other child or of an earlier run: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: the value runs of log_reader child 1: 1 rows, the run of its value 1: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: the records of log_reader child 2: 1 rows from the own number 0, its one record, lost 0: no row of this program, of the other child or of an earlier run: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: the value runs of log_reader child 2: 1 rows, the run of its value 2: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: a memory object in place of a program handle: the log service refused it with Handle_Kind: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: the program handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must"},
-	{kind = .Wait, text = "[log_reader] log_reader: ok"},
-	{kind = .Wait, text = "root: log_reader stopped with code 0"},
-	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: started log_reader", any_order = true},
-	{kind = .Record, program = "log_reader", level = "info", text = "log_reader: the record that this program reads back, with the value 42"},
+	{kind = .Record, program = "log_reader storm", level = "info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
+	{kind = .Record, program = "log_reader", level = "info", text = "log_reader: ok"},
+	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: log_reader stopped with code 0"},
 	// The refusals of the root service give an error record: the console
 	// writes its sentence.
 	// No window drew in a picture on the screen: each surface has two

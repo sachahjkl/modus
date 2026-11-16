@@ -22,13 +22,25 @@
 // earlier run, which has the same name and the same text. The records of
 // its children are not in its own records. It also lends a memory object
 // in place of a program handle, and the program handle of the log service
-// that `connect` gave it with Read and no Give, and checks both refusals. The machine test
-// starts it two times (src/md/features/log_reader_scope.md).
+// that `connect` gave it with Read and no Give, and checks both refusals.
+//
+// The kernel keeps the records of each program in its
+// [own log ring](term:own-log-ring), which only the records of that program
+// fill. So after the two children, this program starts a third child,
+// `log_reader storm`, which writes more records than the whole log keeps
+// and pushes the records of this program and of its two children out of
+// the whole log. Each check above runs after that storm, and still finds
+// each record, with nothing lost. The machine test starts it two times.
+// The designs: (src/md/features/log_reader_scope.md) and
+// (src/md/features/own_log_ring.md).
 //
 // **What a reader sees.** It has no window. Start it with
 // `start("log_reader")` in the console. It writes on the log:
 //
 // - `log_reader: the record that this program reads back, with the value 42`;
+// - its storm child writes `log_reader storm: a record` many times, then
+//   `log_reader storm: the last record, after more records than the whole
+//   log keeps`;
 // - `log_reader: its own records: 1 rows from the own number 0, its first
 //   record, in the slot <slot>, lost 0: no row of another program or of an
 //   earlier run: as it must`;
@@ -39,6 +51,10 @@
 //   of the other child or of an earlier run: as it must`, and `log_reader:
 //   the value runs of log_reader child 1: 1 rows, the run of its value 1:
 //   as it must`;
+// - `log_reader: a child wrote <count> records after the records of this
+//   program and of its two children, more than the <capacity> that the
+//   whole log keeps, and the own log ring of each one kept its records: as
+//   it must`;
 // - `log_reader: a memory object in place of a program handle: the log
 //   service refused it with Handle_Kind: as it must`;
 // - `log_reader: the program handle of the log service from connect, with
@@ -55,7 +71,7 @@
 // **Its grants**: **Connect**, to the log service only, with no grant to
 // act for the principal; **Image**, for the description of the exports of
 // the log service and for the module of its children; and the log with the
-// right Give, so that each child writes its record. A child receives the
+// right Give, so that each child writes its records. A child receives the
 // log only.
 package log_reader
 
@@ -67,10 +83,10 @@ import "modus:contract/value_kinds"
 import "modus:support/random"
 import "modus:support/system"
 
-// Its rows and its call region, 64 pages, and the budgets of its two
-// children, CHILD_PAGES each: no window, its one thread and the thread of
-// each child.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 576, programs = 3, threads = 3}
+// Its rows and its call region, 64 pages, the budgets of its two children,
+// CHILD_PAGES each, and the budget of its storm child, STORM_PAGES: no
+// window, its one thread and the thread of each child.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1152, programs = 4, threads = 4}
 
 // The children: the same module, with the value VALUE_CHILD of the
 // context. The root service writes no value there, so a program that it
@@ -89,6 +105,23 @@ CHILD_TEXT :: "log_reader child: the record that the starter reads back, with th
 child_names := [CHILD_COUNT]string{"log_reader child 1", "log_reader child 2"}
 @(rodata)
 child_lines := [CHILD_COUNT]string{CHILD_TEXT + "1", CHILD_TEXT + "2"}
+
+// The storm child: the same module, with the value VALUE_STORM of the
+// context, which the root service never sets. It writes more records than
+// the whole log keeps, after the records of this program and of its two
+// children. In the one ring of before, they pushed those records out.
+VALUE_STORM :: 8
+STORM_NAME :: "log_reader storm"
+STORM_RECORDS :: op.LOG_RECORD_CAPACITY + 64
+STORM_LINE :: "log_reader storm: a record"
+STORM_LAST_LINE :: "log_reader storm: the last record, after more records than the whole log keeps"
+// The storm child pays its own copy of the module, its stack, its page
+// tables and its own log ring. It may write the log limit of this program
+// in each second: its records count in the limit of each budget above it.
+STORM_PAGES :: 512
+STORM_AMOUNTS :: system.Budget_Amounts{pages = STORM_PAGES, programs = 1, threads = 1, processor = 1_000_000, log_records = 1000}
+// The log limit of a budget counts the records of each second.
+MILLISECONDS_OF_A_SECOND :: 1000
 
 // The parameter of log.program_records that holds the program handle, from
 // 1: the argument that its error record names.
@@ -130,11 +163,11 @@ OWN_VALUE :: 42
 // The whole text of its record: the value is written as a number.
 OWN_LINE :: "log_reader: the record that this program reads back, with the value 42"
 // The rows of one call: 64 rows of 256 bytes take 16 KiB of the call
-// region, which has 64 KiB.
+// region, which has 64 KiB. An own log ring holds as many records.
 ROWS :: 64
-// The calls of one read of the log: the log keeps 2047 records, so 32
-// calls of 64 rows read all of them; more calls mean that the service
-// gives no end.
+#assert(ROWS >= op.OWN_LOG_RECORD_CAPACITY)
+// The calls of one read of the log: one call reads the whole own log ring;
+// more calls mean that the service gives no end.
 CALL_LIMIT :: 64
 
 record_rows: [ROWS]Record
@@ -188,6 +221,9 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	if problem := children_start(ctx, image); problem != "" {
 		return problem
 	}
+	if problem := storm_run(ctx, image); problem != "" {
+		return problem
+	}
 	if ctx.handles[system.GRANT_ROOT] == 0 {
 		return "this program has no ring to the root service"
 	}
@@ -205,9 +241,10 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	// would be the records of the kernel and of every program since the
 	// oldest one that the log keeps; without the program serial, they would
 	// hold the records of an earlier run of this program in the same slot,
-	// with the same name and the same texts. This program wrote one record
-	// before it connected, so it must receive exactly that one: the own
-	// number 0, with nothing lost.
+	// with the same name and the same texts; without the own log ring, the
+	// storm child would have pushed the record of this program out (`lost`
+	// 1, and no row). This program wrote one record before it connected, so
+	// it must receive exactly that one: the own number 0, with nothing lost.
 	other_rows := 0
 	found_own_record := false
 	own_number: i64 = -1
@@ -255,7 +292,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 		return "the log service gave records of other programs"
 	}
 	if !found_own_record {
-		system.log("log_reader: WRONG: the log service gave ", u64(own_count), " rows, and not the record that this program wrote")
+		system.log("log_reader: WRONG: the log service gave ", u64(own_count), " rows, the first with lost ", first_lost, ", and not the record that this program wrote")
 		return "the log service did not give the record of this program"
 	}
 	if slot == 0 || slots_differ {
@@ -302,6 +339,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 			return problem
 		}
 	}
+	system.log("log_reader: a child wrote ", u64(STORM_RECORDS), " records after the records of this program and of its two children, more than the ", u64(op.LOG_RECORD_CAPACITY), " that the whole log keeps, and the own log ring of each one kept its records: as it must")
 	if problem := lent_memory_refused(&connection, file, program_records_export); problem != "" {
 		return problem
 	}
@@ -336,9 +374,22 @@ lent_service_handle_refused :: proc "contextless" (connection: ^system.Call_Conn
 	return ""
 }
 
+// child_wait waits until a child stopped, and gives its stop code. The
+// bound only ends a hang.
+child_wait :: proc "contextless" (child: system.Handle) -> (code: u32, stopped: bool) {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+		if state, stop_code := system.program_state(child); state == .Stopped {
+			return stop_code, true
+		}
+		system.sleep(system.time() + 10)
+	}
+	return 0, false
+}
+
 // children_start starts the two children, and waits until each one
-// stopped: then each one wrote its record. It gives the reason of the
-// first failure, or "".
+// stopped: then each one wrote its record. This program keeps the handle
+// of each child, so the own log ring of each one stays after its stop. It
+// gives the reason of the first failure, or "".
 children_start :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 	file := system.image_find(image, PROGRAM_NAME)
 	if file == nil {
@@ -361,24 +412,86 @@ children_start :: proc "contextless" (ctx: ^system.Context, image: []u8) -> stri
 		children[index] = program
 	}
 	for index in 0 ..< CHILD_COUNT {
-		// The bound only ends a hang.
-		stopped := false
-		for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
-			if state, _ := system.program_state(children[index]); state == .Stopped {
-				stopped = true
-				break
-			}
-			system.sleep(system.time() + 10)
-		}
+		code, stopped := child_wait(children[index])
 		if !stopped {
 			system.log("log_reader: WRONG: ", child_names[index], " did not stop")
 			return "a child did not stop"
 		}
-		if _, code := system.program_state(children[index]); code != 0 {
+		if code != 0 {
 			system.log("log_reader: WRONG: ", child_names[index], " stopped with the code ", u64(code))
 			return "a child did not write its record"
 		}
 	}
+	return ""
+}
+
+// next_second waits until the next second of the clock: the log limit of a
+// budget then has room again.
+next_second :: proc "contextless" () {
+	system.sleep((system.time() / MILLISECONDS_OF_A_SECOND + 1) * MILLISECONDS_OF_A_SECOND)
+}
+
+// storm_write writes one record of the storm child, and writes it again in
+// the next second when the log limit refused it: each record of the storm
+// must be in the log. false: the kernel refused it for another reason.
+storm_write :: proc "contextless" (log: u64, text: string) -> bool {
+	for {
+		_, status := system.call(.Log, log, u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0, 0, 0)
+		#partial switch status {
+		case .Ok:
+			return true
+		case .No_Budget:
+			next_second()
+		case:
+			return false
+		}
+	}
+}
+
+// storm is the storm child: it writes STORM_RECORDS records, then its last
+// line, and stops with the code 0; with the code 1 when the kernel refused
+// a record for another reason than the log limit.
+storm :: proc "contextless" (ctx: ^system.Context) -> ! {
+	log := u64(ctx.handles[op.CONTEXT_LOG])
+	for _ in 0 ..< STORM_RECORDS {
+		if !storm_write(log, STORM_LINE) {
+			system.stop(1)
+		}
+	}
+	if !storm_write(log, STORM_LAST_LINE) {
+		system.stop(1)
+	}
+	system.stop(0)
+}
+
+// storm_run starts the storm child after the two children stopped, and
+// waits for its stop. It gives the reason of the first check that fails,
+// or "".
+storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
+	file := system.image_find(image, PROGRAM_NAME)
+	if file == nil {
+		return "the boot image has no module log_reader"
+	}
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	grants[op.CONTEXT_LOG] = {ctx.handles[op.CONTEXT_LOG], {.Write}}
+	values: [op.CONTEXT_VALUES]u64
+	values[VALUE_STORM] = 1
+	child, status := system.program_start(file, STORM_NAME, grants, random.values_with_seed(&program_generator, values), STORM_AMOUNTS, nil, nil, {image = image})
+	if status != .Ok {
+		system.log("log_reader: WRONG: ", STORM_NAME, " did not start: ", op.STATUS_NAMES[status])
+		return "the storm child did not start"
+	}
+	defer system.close(child)
+	code, stopped := child_wait(child)
+	if !stopped {
+		return "the storm child did not stop within the hang bound"
+	}
+	if code != 0 {
+		return "the storm child stopped with a code other than 0"
+	}
+	// The records of the storm child count in the log limit of this
+	// program: the next second has room for the lines of this program.
+	next_second()
 	return ""
 }
 
@@ -387,7 +500,9 @@ children_start :: proc "contextless" (ctx: ^system.Context, image: []u8) -> stri
 // gives the reason of the first check that fails, or "". The child wrote
 // one record, so the answer is that one record, as the own number 0: a row
 // of this program, of the other child, or of a child of an earlier run,
-// which has the same name and the same text, would be a second row.
+// which has the same name and the same text, would be a second row. The
+// storm child pushed that record out of the whole log: the own log ring of
+// the child keeps it.
 child_records_check :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, records_export: u32, value_runs_export: u32, index: int) -> string {
 	name := child_names[index]
 	arguments := [2]isolated.Argument{{integer = u64(children[index])}, {integer = 0}}
@@ -471,6 +586,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if number, is_child := child_number_of(ctx.values[VALUE_CHILD]); is_child {
 		system.log(CHILD_TEXT, number)
 		system.stop(0)
+	}
+	if ctx.values[VALUE_STORM] != 0 {
+		storm(ctx)
 	}
 	system.log(OWN_TEXT, u64(OWN_VALUE))
 	if problem := check(ctx); problem != "" {

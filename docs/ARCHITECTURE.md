@@ -110,7 +110,7 @@ The same picture in text:
 
 ## Kernel systems
 
-The kernel is small on purpose: it does only what a program cannot do safely for itself (P1, P4). It has five systems, and 34 kernel operations reach them (`src/library/contract/operation`, `Operation`). Each system owns a small set of flat tables of fixed size (P13), so the kernel allocates nothing while it runs.
+The kernel is small on purpose: it does only what a program cannot do safely for itself (P1, P4). It has five systems, and 35 kernel operations reach them (`src/library/contract/operation`, `Operation`). Each system owns a small set of flat tables of fixed size (P13), so the kernel allocates nothing while it runs.
 
 The fixed sizes of the tables, from `src/kernel/program.odin`, `src/kernel/processor.odin` and `src/library/contract/operation`:
 
@@ -750,7 +750,7 @@ A program names one of its threads as its fault handler (`Fault_Handler_Set`, op
 
 **The answer `Stop`** writes the stop report of the fault (`program_fault_report`, the same code as a fault with no handler: the stop code `STOP_CODE_FAULT` plus the vector, the vector, the instruction, the address of a page fault), with the stack trace of the waiting thread: the answering thread is of the same program, so the page table of its processor is the one of the program. The instruction address and the frame pointer of the report are those of the fault, which `fault_deliver` keeps in the thread: a write of `Thread_Control` while the thread waits changes its frame, and the report still names the instruction that faulted.
 
-**The kernel operations**: 30 `Fault_Handler_Set` and 31 `Fault_Answer`. With `Events_Set` (32, "Kernel events"), `Thread_Control` (33, "The control of a thread") and `Guest_Run` (34, "A guest"), the kernel has 34 operations.
+**The kernel operations**: 30 `Fault_Handler_Set` and 31 `Fault_Answer`. With `Events_Set` (32, "Kernel events"), `Thread_Control` (33, "The control of a thread"), `Guest_Run` (34, "A guest") and `Log_Read` (35, "The own log ring of a program"), the kernel has 35 operations.
 
 **The address of a fault** is read from `cr2` once, at the start of `kernel_interrupt`, and each path of the page fault (`page_fault`, `fault_deliver`, `program_fault`) takes that value. For another kind the address is 0.
 
@@ -1484,6 +1484,17 @@ The test machine gets SVM from KVM on an AMD host whose module `kvm_amd` has nes
 - Long mode in a guest: the program cannot answer a write of `EFER` or of a control register, so a guest stays in real mode or protected mode.
 - An exception or an interrupt that the program injects into the guest.
 - A translation cache kept across runs: each entry flushes it.
+
+## The own log ring of a program
+
+The kernel writes each log record of a program in two places: the whole log, the one ring that the root service receives as `ROOT_LOG_RECORDS`, and the own log ring of the program (`GLOSSARY.md`). The own log ring keeps the last `op.OWN_LOG_RECORD_CAPACITY` (64) records of its program in `op.OWN_LOG_PAGES` (4) pages. Only the records of that program fill it, so a log storm of another program never pushes them out. A record of the kernel goes to the whole log only. The design is `src/md/features/own_log_ring.md`.
+
+- **Who pays.** `Program_Create` takes the 4 pages from the budget that pays the program, beside its top table. A budget with too few pages gives `No_Budget`. The free of the slot (`program_free`, after the stop, when the last handle to the program closes) gives the pages back to that budget. Until then a holder of the program handle, such as its starter, still reads the ring through the log service. A guest gives its ring back at its first `Guest_Run`.
+- **Who reads.** `Log_Read(memory, program, serial, after, records, count) -> copied, lost, total` copies the ring of the program with that slot and that serial, from the own number `after` on (`op.own_log_window`). Its authority is a handle of the memory of the log with **Read**: its holder already reads each record of the whole log. The root service gives that handle to the log service only, which reads with it the own records of a caller and the records of a child whose handle a starter lends ("Who reads which records" in `docs/TOOLS.md`).
+- **Locks.** The kernel writes the ring, sets its frames in `Program_Create`, clears them when the slot is free (or at the first `Guest_Run` of a guest, which writes no record), and copies it in `Log_Read`, each under the log lock. `Log_Read` makes the pages of the caller present before it takes the log lock, because a page on first use takes the frame lock, which comes before the log lock. Under the lock it copies the ring into a buffer of the processor record (`own_log_copy`), and to the caller after the lock, so a reader never makes the other programs wait for a copy to its memory. The kernel stack cannot hold that buffer of 16 KiB ("The deepest stack of the kernel" in `docs/TOOLS.md`). A copy under the lock is never torn: the two rules of a reader of the whole log (`op.log_first_kept`, `op.log_copy_kept`) are not needed for it.
+- **The cost.** One more store of 256 bytes for each record of a program, under the log lock; 16 KiB for each program, and 16 KiB in the record of each processor.
+
+The reason for one more operation: the ring is memory of the kernel that the budget of a program pays, and the log service holds no handle of that program. A mapping of the rings by the log service needs a shoot-down in the log service at each stop of a program; `Inspect` copies records of the kernel, but needs the machine handle with **Inspect**, which shows the whole machine.
 
 ## How the systems depend on each other
 

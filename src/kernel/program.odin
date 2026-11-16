@@ -365,11 +365,18 @@ Program :: struct {
 	ports_serial: u64, // Changes with each Ports handle of the program. It stays when the slot serves a new program.
 	cleaned:      bool, // program_cleanup ran: the slot can be free when no handle names it. Control lock.
 	serial:       u32, // Changes for each new program in the slot. It stays when the slot serves a new program.
-	// The log records of this program: the own number of its next record
-	// (op.Log_Record.own_number). Log lock; program_create sets it to 0,
-	// when no thread of the slot runs. A new program starts at 0, so its
-	// own numbers say nothing of the programs before it in the slot.
-	log_records_written:  u32,
+	// The log records of this program: the count of its next record, whose
+	// low 32 bits are its own number (op.Log_Record.own_number). Log lock;
+	// program_create sets it to 0, when no thread of the slot runs. A new
+	// program starts at 0, so its own numbers say nothing of the programs
+	// before it in the slot. 64 bits: the window of the own log ring
+	// (op.own_log_window) needs the count, not its low bits.
+	log_records_written:  u64,
+	// The frames of the own log ring of this program (op.OWN_LOG_PAGES),
+	// which its budget paid: a copy of each record of the program, which
+	// only its own records push out (src/md/features/own_log_ring.md).
+	// Set and cleared under the log lock; all 0: no ring.
+	log_ring_frames:      [op.OWN_LOG_PAGES]u64,
 	// The fault ring (fault_ring.odin), under the program lock. 0: no fault
 	// handler, and every fault stops the program.
 	fault_handler:        u32, // The thread whose thread record holds the fault ring.
@@ -1406,15 +1413,30 @@ program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 			program = {ports_serial = ports_serial, serial = serial}
 			return 0, .No_Budget
 		}
+		// The own log ring: the budget of the program pays it, as it pays
+		// the top table, so a program with many records fills memory that
+		// it paid for.
+		ring_frames, ring_taken := own_log_ring_take(&program.budget)
+		if !ring_taken {
+			address_space_free(program.table, &program.budget)
+			program = {ports_serial = ports_serial, serial = serial}
+			return 0, .No_Budget
+		}
 		budgets[budget].amounts.programs -= 1
 		copy(program.name[:len(program.name) - 1], name)
 		// The time page: read only. A program cannot remove it (Memory_Unmap).
 		if _, map_status := map_region(&program, time_region, op.TIME_ADDRESS, {}, 0, 1); map_status != .Ok {
+			own_log_ring_give_back(ring_frames, &program.budget)
 			address_space_free(program.table, &program.budget)
 			budgets[budget].amounts.programs += 1
 			program = {ports_serial = ports_serial, serial = serial}
 			return 0, map_status
 		}
+		// Under the log lock: Log_Read finds the frames of the ring only
+		// with the serial of this program, which the reset above wrote.
+		log_taken := log_take()
+		program.log_ring_frames = ring_frames
+		log_free(log_taken)
 		program.state = .Created
 		program.start_time = microseconds(cycles_now())
 		return index, .Ok
@@ -1425,11 +1447,17 @@ program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 // program_free frees the slot of a stopped program that no handle names,
 // after its cleanup. Stopped alone does not say that the cleanup ran: a
 // thread of it can still run on a processor. The caller holds the control
-// lock.
+// lock, and no lock after the program lock.
+//
+// The own log ring ends here, not at the cleanup: while a handle names the
+// program, its holder can read its last records (Log_Read with the slot
+// and the serial). Its pages return to the budget with the slot, before
+// the slot can serve a new program.
 program_free :: proc "contextless" (program: ^Program) {
 	if program.state != .Stopped || !program.cleaned {
 		return
 	}
+	own_log_ring_end(program)
 	program.state = .None
 	budgets[program.budget].amounts.programs += 1
 }
@@ -1825,6 +1853,9 @@ program_cleanup :: proc "contextless" (index: u32) {
 	guest_end(index)
 	address_space_free(program.table, &program.budget)
 	program.table = 0
+	// The own log ring stays until the slot is free (program_free): a
+	// holder of the program handle, such as the starter, still reads the
+	// last records of a program that stopped.
 	program.cleaned = true
 	program_unlock(index, taken)
 	for &other, other_index in programs[1:] {

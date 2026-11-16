@@ -21,7 +21,12 @@ import "base:intrinsics"
 // the records of a child: it lends the program handle of the child, which
 // is what lets it see that child. This program holds the memory of the
 // log, so it makes the choice: a reader never maps that memory
-// (src/md/features/log_reader_scope.md).
+// (src/md/features/log_reader_scope.md). The whole log is the ring of that
+// memory. The records of one program, the own records of a caller or the
+// records of a lent child, come from the own log ring of that program,
+// which the kernel copies for the holder of that memory (Log_Read): the
+// records of other programs never push them out
+// (src/md/features/own_log_ring.md).
 
 // One row of the log: records(). A row has 256 bytes, the most that a
 // record of a description has, and holds one log record: its text has the
@@ -64,13 +69,63 @@ level_names := [system.Log_Level]string {
 service: system.Service
 reader_head: ^op.Log_Head
 reader_records: [^]op.Log_Record
+log_memory: system.Handle // The memory of the log: the whole log, and the authority of Log_Read.
 
-// first_asked gives the number in the whole log of the first record that a
-// call reads: `after` for the whole log. A reader of its own records counts
-// `after` in its own numbers, which are no place in the ring: the call reads
-// each record that the ring keeps.
-first_asked :: proc "contextless" (scope: log_scope.Scope, after: i64) -> u64 {
-	return scope.whole_log ? u64(max(after, 0)) : 0
+// The copy of the own log ring of a caller. The service answers one call
+// at a time, on its one thread, so one copy serves each call.
+own_copy: [op.OWN_LOG_RECORD_CAPACITY]op.Log_Record
+
+// own_records_read copies the own log ring of the program of a scope from
+// the own number `after` on: the records, the own records from `after` that
+// the ring no longer keeps, and the records of the ring from the first one
+// to the last one. A scope that names no program, and a program that has
+// no ring now, give none.
+own_records_read :: proc "contextless" (scope: log_scope.Scope, after: i64) -> (copies: []op.Log_Record, lost: u64, total: u64) {
+	if !log_scope.reads_own_records(scope) {
+		return nil, 0, 0
+	}
+	// An own number has 32 bits: `after` counts modulo 2^32.
+	own_after := u64(u32(max(after, 0)))
+	results, status := system.call(.Log_Read, u64(log_memory), scope.program, scope.program_serial, own_after, u64(uintptr(&own_copy[0])), u64(len(own_copy)))
+	if status != .Ok {
+		return nil, 0, 0
+	}
+	return own_copy[:int(min(results[0], u64(len(own_copy))))], results[1], results[2]
+}
+
+// row_fill writes the row of a record with its number: the number in the
+// whole log, or the own number for a reader of its own records.
+row_fill :: proc "contextless" (row: ^Record, number: i64, record: ^op.Log_Record) {
+	text_count := min(int(record.text_count), len(record.text))
+	row^ = {number = number, time = i64(record.time), slot = i64(record.program)}
+	copy(row.program[:len(row.program) - 1], system.name_of(record.name[:]))
+	if record.level <= max(system.Log_Level) {
+		copy(row.level[:], level_names[record.level])
+	}
+	copy(row.channel[:], system.name_of(record.channel[:]))
+	copy(row.text[:], record.text[:text_count])
+	row.continues = record.more != 0 ? 1 : 0
+	row.runs = i64(min(int(record.run_count), len(record.runs)))
+}
+
+// runs_add adds the rows of the value runs of a record with its number,
+// and counts each run, also the ones that do not fit in the result.
+runs_add :: proc "contextless" (number: i64, record: ^op.Log_Record, result: ^[]Value_Run, total: ^int, count: ^int) {
+	text_count := min(int(record.text_count), len(record.text))
+	for index in 0 ..< min(int(record.run_count), len(record.runs)) {
+		run := record.runs[index]
+		start, end, ok := value_kinds.value_run_in_text(run, text_count)
+		if !ok {
+			continue
+		}
+		total^ += 1
+		if count^ < len(result^) {
+			row := &result[count^]
+			row^ = {number = number, start = i64(start), length = i64(end - start)}
+			copy(row.kind[:], value_kinds.VALUE_KIND_NAMES[run.kind])
+			count^ += 1
+		}
+	}
 }
 
 // record_copy copies the record `number` of the whole log, and says if the
@@ -81,19 +136,6 @@ record_copy :: proc "contextless" (number: u64) -> (record: op.Log_Record, whole
 	record = reader_records[number % op.LOG_RECORD_CAPACITY]
 	intrinsics.atomic_thread_fence(.Acquire)
 	return record, op.log_copy_kept(number, intrinsics.atomic_load(&reader_head.written))
-}
-
-// record_given says if a caller with a scope receives a whole record when it
-// asks from `after` on, and gives the number of its row: the number in the
-// whole log, or the own number for a reader of its own records.
-record_given :: proc "contextless" (scope: log_scope.Scope, record: ^op.Log_Record, after: i64) -> (number: i64, given: bool) {
-	if scope.whole_log {
-		return i64(record.sequence), true
-	}
-	if !log_scope.record_in_scope(scope, record) || !log_scope.own_number_at_or_after(record.own_number, after) {
-		return 0, false
-	}
-	return i64(record.own_number), true
 }
 
 // caller_scope gives the log scope of the caller of the export that runs.
@@ -161,10 +203,11 @@ scope_of_lent_program :: proc "contextless" (program: system.Handle, error: ^err
 // `lost` in the first row counts the records after `after` that the kernel
 // wrote over before the read, and the rows start after them. For a reader
 // of its own records, `after`, `number` and `lost` count its own records
-// only: no number or count of the records of other programs. The one ring
-// still lets the records of others push its own records out
-// (src/md/features/log_reader_scope.md). A reader whose records are all
-// gone receives no row, so no `lost` either.
+// only: no number or count of the records of other programs. Its rows come
+// from the own log ring of its program, which keeps its last 64 records and
+// which the records of others never fill
+// (src/md/features/own_log_ring.md). A reader whose records are all gone
+// receives no row, so no `lost` either.
 //
 // **Grant**: the [log scope](term:log-scope) of the connection. A caller
 // that **acts for the principal** receives the whole log: the records are
@@ -195,7 +238,10 @@ records :: proc "c" (after: i64, result: ^[]Record) -> i64 {
 //
 // **A row** (`Record`): as for `records`. `number` is the own number of the
 // record among the records of that program; `lost` in the first row counts
-// the records of that program after `after` that the kernel wrote over.
+// the records of that program after `after` that its own log ring no longer
+// keeps. The rows come from that ring, which keeps the last 64 records of
+// the program, also after its stop while a handle names it; the records of
+// other programs never fill it.
 //
 // **Grant**: the lent handle. Each caller with a connection to the log
 // service receives the records of the program of the handle only, also a
@@ -213,53 +259,42 @@ program_records :: proc "c" (program: system.Lent({.Read}), after: i64, result: 
 }
 
 // records_in_scope gives the rows of records() for one scope: see records.
+// A scope of one program, its own records or a lent program, reads the own
+// log ring of that program: the records of other programs never push them
+// out (src/md/features/own_log_ring.md).
 records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, result: ^[]Record) -> i64 {
+	if !scope.whole_log {
+		// The numbers and `lost` count the records of that program only,
+		// so the reader learns no count of the records of others.
+		own, own_lost, own_total := own_records_read(scope, after)
+		own_count := min(len(own), len(result^))
+		for index in 0 ..< own_count {
+			row_fill(&result[index], i64(own[index].own_number), &own[index])
+		}
+		if own_count > 0 {
+			result[0].lost = i64(own_lost)
+		}
+		return i64(own_total)
+	}
 	written := intrinsics.atomic_load(&reader_head.written)
-	next, ring_lost := op.log_first_kept(first_asked(scope, after), written)
-	// A reader of its own records learns no count of the records of other
-	// programs: its `lost` comes from its own numbers only.
-	lost: u64 = scope.whole_log ? ring_lost : 0
+	next, lost := op.log_first_kept(u64(max(after, 0)), written)
 	count := 0
 	total: u64
 	for ; next < written; next += 1 {
-		if scope.whole_log && count == len(result^) {
+		if count == len(result^) {
 			// The rest of the whole log does not fit: each record is a row.
 			total += written - next
 			break
 		}
 		record, whole := record_copy(next)
 		if !whole {
-			if scope.whole_log {
-				lost += 1
-			}
+			lost += 1
 			continue
-		}
-		// The choice is made on the whole copy, which the kernel no longer
-		// changes.
-		number, given := record_given(scope, &record, after)
-		if !given {
-			continue
-		}
-		if !scope.whole_log && total == 0 {
-			lost = log_scope.own_records_lost(record.own_number, after)
 		}
 		total += 1
-		if count == len(result^) {
-			continue
-		}
 		// Each place of the result has a row (a Table result: the caller
 		// reads min(count, capacity) rows).
-		text_count := min(int(record.text_count), len(record.text))
-		row := &result[count]
-		row^ = {number = number, time = i64(record.time), slot = i64(record.program)}
-		copy(row.program[:len(row.program) - 1], system.name_of(record.name[:]))
-		if record.level <= max(system.Log_Level) {
-			copy(row.level[:], level_names[record.level])
-		}
-		copy(row.channel[:], system.name_of(record.channel[:]))
-		copy(row.text[:], record.text[:text_count])
-		row.continues = record.more != 0 ? 1 : 0
-		row.runs = i64(min(int(record.run_count), len(record.runs)))
+		row_fill(&result[count], i64(record.sequence), &record)
 		count += 1
 	}
 	if count > 0 {
@@ -319,36 +354,26 @@ program_value_runs :: proc "c" (program: system.Lent({.Read}), after: i64, resul
 }
 
 // value_runs_in_scope gives the rows of value_runs() for one scope: see
-// value_runs.
+// value_runs. A scope of one program reads its own log ring, as
+// records_in_scope does.
 value_runs_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, result: ^[]Value_Run) -> i64 {
-	written := intrinsics.atomic_load(&reader_head.written)
-	next, _ := op.log_first_kept(first_asked(scope, after), written)
 	total := 0
 	count := 0
+	if !scope.whole_log {
+		own, _, _ := own_records_read(scope, after)
+		for &record in own {
+			runs_add(i64(record.own_number), &record, result, &total, &count)
+		}
+		return i64(total)
+	}
+	written := intrinsics.atomic_load(&reader_head.written)
+	next, _ := op.log_first_kept(u64(max(after, 0)), written)
 	for ; next < written; next += 1 {
 		record, whole := record_copy(next)
 		if !whole {
 			continue
 		}
-		number, given := record_given(scope, &record, after)
-		if !given {
-			continue
-		}
-		text_count := min(int(record.text_count), len(record.text))
-		for index in 0 ..< min(int(record.run_count), len(record.runs)) {
-			run := record.runs[index]
-			start, end, ok := value_kinds.value_run_in_text(run, text_count)
-			if !ok {
-				continue
-			}
-			total += 1
-			if count < len(result^) {
-				row := &result[count]
-				row^ = {number = number, start = i64(start), length = i64(end - start)}
-				copy(row.kind[:], value_kinds.VALUE_KIND_NAMES[run.kind])
-				count += 1
-			}
-		}
+		runs_add(i64(record.sequence), &record, result, &total, &count)
 	}
 	return i64(total)
 }

@@ -173,7 +173,7 @@ Handle :: distinct u32
 // `Write` and gives no copy of it, because it has no **Give**.
 Right :: enum u32 {
 	Give    = 0, // Each kind: give a copy of the handle to another program.
-	Read    = 1, // Memory: map it. Program, Thread: read its state. Interrupt: read its count. Budget: read what it holds (Budget_Read).
+	Read    = 1, // Memory: map it; the memory of the log: also copy the own log ring of a program (Log_Read). Program, Thread: read its state. Interrupt: read its count. Budget: read what it holds (Budget_Read).
 	// Memory: map it with Write. Log: write text on the log. Thread: write its registers and its extended state
 	// while it is held (Thread_Control): full control of the code that its program runs.
 	Write   = 2,
@@ -389,8 +389,9 @@ Operation :: enum u32 {
 	//
 	// **Arguments**
 	//
-	// - `budget`: a budget handle with **Spend**. It pays for one program slot and for the page tables of
-	//   the program. The program keeps it: it pays for its first thread at `Program_Start`, and for each
+	// - `budget`: a budget handle with **Spend**. It pays for one program slot, for the page tables of
+	//   the program, and for the `OWN_LOG_PAGES` pages of its own log ring, which return to it when the
+	//   slot of the program is free. The program keeps it: it pays for its first thread at `Program_Start`, and for each
 	//   page table of the program after.
 	// - `name`, `name_length`: the name of the program, at most 31 bytes, in memory that the program can
 	//   read: the reports and the log show it. Each byte is a printable character of ASCII or the
@@ -403,7 +404,8 @@ Operation :: enum u32 {
 	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
 	// - `Bad_Address`: `name_length` is above 31, or the program cannot read the name.
 	// - `Bad_Operation`: a byte of the name is outside 32 to 126.
-	// - `No_Budget`: the budget has no program slot or no page left, or it cannot pay the page tables.
+	// - `No_Budget`: the budget has no program slot or no page left, or it cannot pay the page tables or
+	//   the own log ring.
 	// - `No_Slot`: the table of the programs of the kernel is full, or the handle table of the program.
 	Program_Start  = 7, // (program, entry, stack, context).
 	// Starts a program that `Program_Create` made: its first thread runs at `entry`, and the program goes
@@ -1181,7 +1183,8 @@ Operation :: enum u32 {
 	// handle itself, and gives that exit ([a guest](docs/ARCHITECTURE.md#a-guest)). The program is a guest:
 	// a program that `Program_Create` made and that no thread ran. Its addresses are the guest physical
 	// addresses: `Memory_Map` with its handle gives the guest memory. The first run makes the program a
-	// guest: its budget pays two pages, the time page leaves it, and `Program_Start` of it gives `Bad_State`
+	// guest: its budget pays two pages, the time page leaves it, the `OWN_LOG_PAGES` pages of its own log
+	// ring return to its budget (a guest writes no log record), and `Program_Start` of it gives `Bad_State`
 	// after. The guest processor starts in 16-bit real mode, with each segment at base 0.
 	//
 	// The kernel gives a page on first use of a mapping of the guest its frame when the guest touches it,
@@ -1218,6 +1221,46 @@ Operation :: enum u32 {
 	//
 	// ```odin
 	// exit, status := system.guest_run(guest, &registers)
+	// ```
+	Log_Read = 35, // (memory, program, serial, after, records: Log_Record, count) -> copied, lost, total.
+	// Copies the records of the own log ring of one program: the last `OWN_LOG_RECORD_CAPACITY` records
+	// that the program wrote, which only its own records push out. The ring lives until the slot of the
+	// program is free: after its stop, while a handle names it, it is still read. The log service reads
+	// the [own records](term:own-records) of a caller with it, and the records of a program whose handle
+	// a starter lends (src/md/features/own_log_ring.md). The kernel
+	// copies whole records under the log lock, so no copy is torn, and gives them to the caller after
+	// the lock. A guest has no own log ring after its first `Guest_Run`.
+	//
+	// **Arguments**
+	//
+	// - `memory`: a handle of the memory of the log (`ROOT_LOG_RECORDS`) with **Read**. Its holder reads
+	//   each record of the whole log, so a copy of an own log ring gives it no new fact.
+	// - `program`, `serial`: the program slot and the program serial of the program, as `Program_State`
+	//   gives them.
+	// - `after`: an own number (`Log_Record.own_number`), modulo 2^32: the first record to copy. An `after`
+	//   past the count of the records of the program gives no record (`own_log_window`).
+	// - `records`: the address of `count` records that the program can write.
+	// - `count`: the records that fit at `records`, at most `OWN_LOG_RECORD_CAPACITY`.
+	//
+	// **Results**
+	//
+	// 1. the records copied, in the order of their own numbers;
+	// 2. the own records from `after` that the ring no longer keeps: the program wrote more records after
+	//    them than the ring holds;
+	// 3. the records that the ring keeps from the first one copied to the last one: more than the first
+	//    result when `count` is too small.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `memory` is not a handle of the memory of the log with **Read**.
+	// - `Bad_Operation`: `program` is 0 or past the program slots, or `count` is above
+	//   `OWN_LOG_RECORD_CAPACITY`.
+	// - `Bad_State`: the slot holds no program with this serial and an own log ring: the slot is free,
+	//   another program has it, or the program is a guest.
+	// - `Bad_Address`: the program cannot write the `count` records at `records`.
+	//
+	// ```odin
+	// results, status := system.call(.Log_Read, u64(log_memory), slot, serial, after, u64(uintptr(&rows[0])), u64(len(rows)))
 	// ```
 }
 
@@ -3064,6 +3107,17 @@ LOG_PAGES :: 128
 // records of 256 bytes.
 LOG_RECORD_CAPACITY :: LOG_PAGES * 4096 / size_of(Log_Record) - 1
 
+// The pages of the own log ring of a program: the kernel keeps a copy of
+// each record of the program there, which only the records of that program
+// push out (src/md/features/own_log_ring.md). The budget that pays the
+// program pays them at `Program_Create`. 4 pages hold 64 records: the rows
+// of one call of a reader with 64 rows, for 16 KiB of each program.
+OWN_LOG_PAGES :: 4
+// The records that an own log ring keeps. The ring has no head: the kernel
+// keeps the count of the records of the program, and the record with the
+// count n is in the place n % OWN_LOG_RECORD_CAPACITY.
+OWN_LOG_RECORD_CAPACITY :: OWN_LOG_PAGES * 4096 / size_of(Log_Record)
+
 // The head of the memory of the log: the first 256 bytes, before the
 // records. A reader reads `written`, copies the records that it has not
 // read, then reads `written` again: a record that the kernel wrote over in
@@ -3084,7 +3138,9 @@ Log_Head :: struct {
 // another program. The program slot with the program serial names one
 // program: the log service gives a reader that does not act for the
 // principal the records of those two numbers only, numbered by `own_number`
-// (modus:contract/log_scope). The slots have one byte each: the kernel has
+// (modus:contract/log_scope), from the own log ring of its program
+// (`Log_Read`): the kernel writes each record of a program in the whole log
+// and in that ring. The slots have one byte each: the kernel has
 // at most 256 program slots and 256 thread slots, which leaves room for the
 // two numbers in 256 bytes. See [log record](term:log-record).
 //

@@ -208,7 +208,40 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		log_bytes({']', ' '})
 		log_bytes(log_text[:v[2]])
 		log_bytes({'\r', '\n'})
-		log_record(program_index, intrinsics.atomic_load(&program.serial), &program.log_records_written, index, name, channel[:channel_count], op.Log_Level(v[3]), log_text[:v[2]], log_runs)
+		log_record(program_index, intrinsics.atomic_load(&program.serial), program, index, name, channel[:channel_count], op.Log_Level(v[3]), log_text[:v[2]], log_runs)
+		return .Ok
+
+	case .Log_Read:
+		// The authority is the memory of the log: its holder reads each
+		// record of the whole log, so the own log ring of a program tells it
+		// nothing new (src/md/features/own_log_ring.md).
+		memory := handle_find(program, v[0], .Memory, {.Read}) or_return
+		if log_region == 0 || memory.object != log_region {
+			return .Bad_Handle
+		}
+		if v[1] == 0 || v[1] >= PROGRAM_CAPACITY || v[5] > op.OWN_LOG_RECORD_CAPACITY {
+			return .Bad_Operation
+		}
+		// The pages of the caller are present before the log lock: a page on
+		// first use takes the frame lock, which comes before it. The program
+		// lock of the caller keeps them mapped until the copy ends.
+		record_size := u64(size_of(op.Log_Record))
+		if !user_range(program, v[4], v[5] * record_size, true) {
+			return .Bad_Address
+		}
+		// The records go to the buffer of this processor under the log
+		// lock, and to the caller after it.
+		buffer := &processor_self().own_log_copy
+		copied, lost, total, found := own_log_ring_copy(&programs[v[1]], v[2], u32(v[3]), v[5], buffer)
+		if !found {
+			return .Bad_State
+		}
+		if copied > 0 {
+			user_copy(rawptr(uintptr(v[4])), &buffer[0], copied * record_size)
+		}
+		results[0] = copied
+		results[1] = lost
+		results[2] = total
 		return .Ok
 
 	case .Memory_Create:

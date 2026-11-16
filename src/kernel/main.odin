@@ -251,7 +251,8 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	record.handles[op.CONTEXT_BUDGET] = handle_insert(program, {kind = .Budget, rights = RIGHTS_BUDGET, object = ROOT_BUDGET})
 	record.handles[op.CONTEXT_LOG] = handle_insert(program, {kind = .Log, rights = RIGHTS_LOG})
 	if log_head != nil {
-		record.handles[op.ROOT_LOG_RECORDS] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read}, object = region_device(physical_of(log_head), op.LOG_PAGES)})
+		log_region = region_device(physical_of(log_head), op.LOG_PAGES)
+		record.handles[op.ROOT_LOG_RECORDS] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read}, object = log_region})
 	}
 	record.handles[op.ROOT_MACHINE] = handle_insert(program, {kind = .Machine, rights = RIGHTS_MACHINE})
 	framebuffer := boot.framebuffer
