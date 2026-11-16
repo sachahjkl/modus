@@ -96,7 +96,9 @@
     # virt-firmware (virt-fw-vars): enrols the certificate of the firmware
     # signing key in a variable store of the firmware, with Secure Boot on.
     # openssl also makes the firmware signing key ("modustool key new").
-    buildTools = [odin llvm pkgs.llvmPackages.lld pkgs.nasm qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware];
+    # zstd: compresses the release image ("modustool release image") and
+    # decompresses it for its machine of "test trusted_boot".
+    buildTools = [odin llvm pkgs.llvmPackages.lld pkgs.nasm qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware pkgs.zstd];
 
     # The pointer theme of the owner (docs/POINTERS.md): "Posy's Cursor", the
     # package of nixpkgs, pinned by flake.lock. Its license is CC-BY-NC-4.0,
@@ -229,7 +231,9 @@
 
     devShells.${system} = {
       default = pkgs.mkShell ({
-          packages = buildTools ++ [modustool pkgs.ffmpeg] ++ preCommitCheck.enabledPackages; # ffmpeg: the command "film" of modustool.
+          # ffmpeg: the command "film" of modustool. sops: the keys of the
+          # publisher in secrets/production.yaml (secrets/README.md).
+          packages = buildTools ++ [modustool pkgs.ffmpeg pkgs.sops] ++ preCommitCheck.enabledPackages;
           inherit (preCommitCheck) shellHook;
         }
         // firmware
