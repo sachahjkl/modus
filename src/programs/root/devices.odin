@@ -1,6 +1,7 @@
 package root
 
 import "modus:contract/block"
+import "modus:contract/entropy_service"
 import "modus:contract/frame"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -40,6 +41,8 @@ DRIVER_FRAME :: Driver{"frame", pci.DEVICE_VIRTIO_NETWORK, frame.RING_CAPACITY, 
 // The test device service of the IOMMU, for its one client `iommu`, on the
 // disk of the measures (src/md/infrastructure/iommu.md, "The proof").
 DRIVER_IOMMU_DEVICE :: Driver{"iommu_device", pci.DEVICE_VIRTIO_BLOCK, block.RING_CAPACITY, block.SERVICE_RING}
+// The entropy service, whose one client is this service (entropy.odin).
+DRIVER_ENTROPY :: Driver{"entropy", pci.DEVICE_VIRTIO_ENTROPY, entropy_service.RING_CAPACITY, entropy_service.SERVICE_RING}
 
 // configuration_open takes the ports of the configuration, once.
 configuration_open :: proc "contextless" () -> system.Status {

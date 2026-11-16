@@ -170,8 +170,7 @@ disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refu
 		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the name is the name of the object of the disk grant table")
 		return true
 	}
-	of_the_system := name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" || name == "frame"
-	if of_the_system || grants_of(name) != {} || callable_of(name) != nil {
+	if name_is_a_system_part(name) || grants_of(name) != {} || callable_of(name) != nil {
 		values^ = disk_refused(name, errors.ring_fail(kind, .Reserved, .None, 1), "the grant table of the root service names it, and a disk program takes no grant by its name")
 		return true
 	}

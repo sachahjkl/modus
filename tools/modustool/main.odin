@@ -103,6 +103,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/web",
 	SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
 	SOURCE_FOLDER_SUPPORT + "/random",
+	SOURCE_FOLDER_CONTRACT + "/entropy_service",
 	TOOL_SOURCE_FOLDER,
 	SOURCE_FOLDER_CONTRACT + "/fixed_addresses",
 	SOURCE_FOLDER_CONTRACT + "/settings",
@@ -1143,6 +1144,8 @@ processor_models := [Processor_Model]string {
 // The network device goes to the peer (`-netdev dgram`), or, when forward
 // has a port, to QEMU user networking with its TCP (web_host.odin).
 // processor gives the processor of the machine (Processor_Model).
+// entropy_device gives the machine the entropy device of virtio at the place
+// pci.ENTROPY_DEVICE (src/md/features/entropy_device.md).
 // The IOMMU of a machine: none, the unit of Intel, or the unit of AMD
 // (src/md/infrastructure/iommu.md).
 Machine_Iommu :: enum {
@@ -1151,7 +1154,7 @@ Machine_Iommu :: enum {
 	Amd,
 }
 
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None) -> (command: []string, ok: bool) {
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false) -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -1303,6 +1306,13 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// the IOMMU of AMD the disk of the measures needs it as every other
 		// disk does. With no IOMMU, virtio_iommu is empty.
 		append(&list, "-device", fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x%s", pci.SCRATCH_DISK_DEVICE, virtio_iommu))
+	}
+	if entropy_device {
+		// The bytes come from the generator of QEMU. Two vectors give the
+		// device a table of message interrupts: the root service gives a
+		// device service its entry 0, and starts none for a device with no
+		// table.
+		append(&list, "-device", fmt.tprintf("virtio-rng-pci,disable-legacy=on,vectors=2,addr=0x%x%s", pci.ENTROPY_DEVICE, virtio_iommu))
 	}
 	if firmware != .Usual {
 		if test_output == "" {
