@@ -327,6 +327,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		for &mapping in to.mappings {
 			if mapping.page_count != 0 && mapping.address == v[1] && mapping.address < op.THREAD_AREA_BASE {
+				// The registers of a function behind a conventional bridge can
+				// end the domain of its group: the control lock, as for a close.
+				if regions[mapping.region].bridge_function != 0 && need_control() {
+					return STATUS_RETRY
+				}
 				unmap(to, &mapping)
 				return .Ok
 			}
@@ -578,8 +583,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Handle_Close:
 		slot := handle_find(program, v[0], .None) or_return
 		// A machine handle with Events can end the event table, which
-		// changes under the control lock (events.odin).
-		if (handle_needs_control(slot.kind) || slot.kind == .Machine && .Events in slot.rights) && need_control() {
+		// changes under the control lock (events.odin). The registers of a
+		// function behind a conventional bridge can end the domain of its
+		// group, and the interrupt entries of the group with it, which
+		// change under the control lock (src/md/infrastructure/iommu.md,
+		// "The domain of a conventional bridge").
+		bridge_registers := slot.kind == .Memory && regions[slot.object].bridge_function != 0
+		if (handle_needs_control(slot.kind) || slot.kind == .Machine && .Events in slot.rights || bridge_registers) && need_control() {
 			return STATUS_RETRY
 		}
 		handle_close(program, slot)
@@ -687,8 +697,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			}
 			regions[region].uncached = true
 			// The function whose registers these are: the program that holds
-			// the handle is its service for the IOMMU.
-			regions[region].requester = iommu_requester_of(v[2])
+			// the handle is its service for the IOMMU. Behind a conventional
+			// bridge, the requester is the one that the devices there share.
+			regions[region].requester, regions[region].bridge_function = iommu_requester_of(v[2])
 			handle := handle_insert(program, {kind = .Memory, rights = {.Give, .Read, .Write}, object = region})
 			if handle == 0 {
 				regions[region].references = 1
@@ -697,6 +708,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			}
 			results[0] = u64(handle)
 			results[1] = transmute(u64)iommu_device_facts(regions[region].requester)
+			// A function behind a conventional bridge that the check of its
+			// group did not count ends the domain of the group.
+			iommu_bridge_function_made(region)
 			return .Ok
 		case .Message:
 			message := u32(INTERRUPT_CAPACITY)

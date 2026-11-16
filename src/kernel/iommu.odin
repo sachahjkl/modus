@@ -424,43 +424,69 @@ bridge_read :: proc "contextless" (bus, device, function: u32) -> (secondary: u3
 	return secondary, subordinate, true
 }
 
-// bridge_passes reads the first 256 bytes of the configuration of a
-// bridge and says if it gives each device behind it its own requester.
+// bridge_kind reads the first 256 bytes of the configuration of a bridge
+// and says if it gives each device behind it its own requester; if not,
+// shared is the requester that it gives each of them.
 @(private = "file")
-bridge_passes :: proc "contextless" (bus, device, function: u32) -> bool {
+bridge_kind :: proc "contextless" (bus, device, function, secondary: u32) -> (passes: bool, shared: u16) {
 	configuration: [iommu.CONFIGURATION_WORDS]u32
 	for &word, index in configuration {
 		word = configuration_read(bus, device, function, u32(index) * 4)
 	}
-	return iommu.bridge_passes_requesters(&configuration)
+	if iommu.bridge_passes_requesters(&configuration) {
+		return true, 0
+	}
+	return false, iommu.bridge_shared_requester(&configuration, bus, device, function, secondary)
 }
 
 // A walk of the buses: bus 0, then the secondary bus of each bridge, each
 // bus once. With `physical`, it stops at the function whose memory
 // register starts there; with make_tables, it makes the entries of the bus
-// of each function that a unit covers (function_found_at_start).
+// of each function that a unit covers (function_found_at_start), and of
+// each shared requester; with `group`, it counts the functions that share
+// that requester, and checks that `holder` holds the registers of each.
 Bus_Walk :: struct {
 	physical:                   u64,
 	make_tables:                bool,
 	found:                      bool,
 	requester:                  u16, // The function that was found.
 	behind_conventional_bridge: bool, // A conventional bridge is on its way from bus 0: it shares its requester.
+	shared_requester:           u16, // Behind a conventional bridge: the requester that the function shares with each device there.
+	group:                      u32, // 1 + a shared requester whose functions the walk checks. 0: none.
+	holder:                     ^Program, // The program that must hold the registers of each function of the group.
+	member_count:               u32, // The functions of the group, bridges excepted.
+	unheld:                     bool, // A function of the group whose registers the holder does not hold, or that has no memory registers, or a bridge that the walk cannot follow.
+	unheld_requester:           u16, // The first such function.
+	odd_bridge:                 bool, // The first such function is a bridge of the group whose secondary bus the walk cannot follow.
 	no_memory:                  bool, // A context table had no frame.
 	bus_count:                  u32,
 }
+
+// The shared requester of the devices of each bus, 1 + it, as the walk at
+// the start found it: 0 for a bus that no conventional bridge is in front
+// of. A reserved memory range of a device on such a bus is not mapped for
+// the requester of the device, which the unit never sees; an alias of
+// AMD-Vi to a shared requester must have its sources on its buses.
+iommu_shared_of_bus: [256]u32
 
 @(private)
 buses_walk :: proc "contextless" (walk: ^Bus_Walk) {
 	// A bus is queued at most once, so the queue holds at most 256 buses.
 	// A bus is behind a conventional bridge when one bridge on its way is.
+	// Its devices share the requester that the conventional bridge nearest
+	// to bus 0 gives them: that bridge makes their requests on PCI Express.
 	queue: [256]u8
 	queued: [256]bool
 	conventional: [256]bool
+	shared: [256]u16
 	count := 1
 	queued[0] = true
 	for next := 0; next < count; next += 1 {
 		bus := u32(queue[next])
 		walk.bus_count += 1
+		if walk.make_tables && conventional[bus] {
+			iommu_shared_of_bus[bus] = 1 + u32(shared[bus])
+		}
 		for device in u32(0) ..< 32 {
 			for function in u32(0) ..< 8 {
 				header := header_read(bus, device, function)
@@ -477,11 +503,32 @@ buses_walk :: proc "contextless" (walk: ^Bus_Walk) {
 				}
 				if iommu.header_is_bridge(header) {
 					secondary, _ := iommu.bridge_buses(header)
-					if secondary > bus && secondary <= iommu_last_bus && !queued[secondary] {
+					followed := secondary > bus && secondary <= iommu_last_bus && !queued[secondary]
+					// A bridge of the group whose secondary bus the walk does
+					// not follow can route devices that share the requester and
+					// that the check does not count.
+					if !followed && walk.group != 0 && conventional[bus] && u32(shared[bus]) + 1 == walk.group && !walk.unheld {
+						walk.unheld, walk.unheld_requester, walk.odd_bridge = true, identifier, true
+					}
+					if followed {
 						queued[secondary] = true
-						conventional[secondary] = conventional[bus] || !bridge_passes(bus, device, function)
+						if conventional[bus] {
+							conventional[secondary], shared[secondary] = true, shared[bus]
+						} else if passes, shared_requester := bridge_kind(bus, device, function, secondary); !passes {
+							conventional[secondary], shared[secondary] = true, shared_requester
+							// A bridge from PCI Express to PCI shares the requester of
+							// its secondary bus: the entries of that bus serve it.
+							if walk.make_tables && shared_requester != identifier && !function_found_at_start(shared_requester) {
+								walk.no_memory = true
+								return
+							}
+						}
 						queue[count] = u8(secondary)
 						count += 1
+					}
+				} else if walk.group != 0 {
+					if conventional[bus] && u32(shared[bus]) + 1 == walk.group {
+						group_member_check(walk, header, identifier)
 					}
 				} else if walk.physical != 0 {
 					bases, base_count := iommu.header_memory_bases(header)
@@ -490,6 +537,7 @@ buses_walk :: proc "contextless" (walk: ^Bus_Walk) {
 							walk.found = true
 							walk.requester = identifier
 							walk.behind_conventional_bridge = conventional[bus]
+							walk.shared_requester = shared[bus]
 							return
 						}
 					}
@@ -499,6 +547,19 @@ buses_walk :: proc "contextless" (walk: ^Bus_Walk) {
 				}
 			}
 		}
+	}
+}
+
+// group_member_check counts one function that shares the requester of a
+// group walk, and notes the first one whose registers the holder does not
+// hold. A function with no memory base address register cannot be held:
+// it can still read and write memory, through its ports.
+@(private = "file")
+group_member_check :: proc "contextless" (walk: ^Bus_Walk, header: [iommu.HEADER_WORDS]u32, identifier: u16) {
+	walk.member_count += 1
+	_, base_count := iommu.header_memory_bases(header)
+	if !walk.unheld && (base_count == 0 || !registers_held(walk.holder, walk.group, 1 + u32(identifier), nil, nil)) {
+		walk.unheld, walk.unheld_requester = true, identifier
 	}
 }
 
@@ -524,6 +585,30 @@ requester_aliased :: proc "contextless" (requester: u16) -> bool {
 	}
 	_, _, aliased := iommu.amd_unit_of(&iommu_ivrs, requester)
 	return aliased
+}
+
+// requester_alias_agrees says if the table of the firmware gives the
+// accesses of a requester the shared requester that the walk found behind
+// a conventional bridge, or no other one: an alias of AMD-Vi must name it.
+// VT-d has no alias in its table.
+@(private = "file")
+requester_alias_agrees :: proc "contextless" (requester: u16, shared: u16) -> bool {
+	if iommu_vendor != .Amd {
+		return true
+	}
+	return iommu.amd_alias_agrees(&iommu_ivrs, requester, shared)
+}
+
+// shared_alias_sources_behind says if every alias of AMD-Vi whose target is
+// a shared requester has its sources on the buses behind its bridge, as the
+// walk at the start found them: a device outside the group would else reach
+// the domain of the group, and the check of the group never counts it.
+@(private = "file")
+shared_alias_sources_behind :: proc "contextless" (shared: u16) -> bool {
+	if iommu_vendor != .Amd {
+		return true
+	}
+	return iommu.amd_alias_sources_behind(&iommu_ivrs, shared, &iommu_shared_of_bus)
 }
 
 // bus_translated says if the unit has the entries of a bus, so that a
@@ -681,12 +766,14 @@ standing_domains_make :: proc "contextless" () -> bool {
 		if !covered {
 			continue // Its accesses pass every unit: the firmware keeps its range with no table.
 		}
-		if !bus_translated(unit_index, iommu.requester_bus(item.requester)) || requester_aliased(item.requester) {
-			// A bus that the walk from bus 0 did not reach: another root bus,
-			// or a bus behind a conventional bridge; or a device whose
-			// accesses carry another requester. The device faults on its
-			// range, as on every access.
-			log("kernel: IOMMU: the device at bus ", u64(iommu.requester_bus(item.requester)), ", device ", u64(iommu.requester_device(item.requester)), ", function ", u64(iommu.requester_function(item.requester)), " of a reserved memory range is on a bus with no entries of the unit, or has an alias: the range is not mapped for it, and its accesses are refused")
+		item_bus := iommu.requester_bus(item.requester)
+		if !bus_translated(unit_index, item_bus) || iommu_shared_of_bus[item_bus & 0xFF] != 0 || requester_aliased(item.requester) {
+			// A bus that the walk from bus 0 did not reach: another root bus;
+			// a bus behind a conventional bridge, whose devices carry the
+			// requester of the bridge; or a device whose accesses carry
+			// another requester. The device faults on its range, as on every
+			// access.
+			log("kernel: IOMMU: the device at bus ", u64(item_bus), ", device ", u64(iommu.requester_device(item.requester)), ", function ", u64(iommu.requester_function(item.requester)), " of a reserved memory range is on a bus with no entries of the unit, is behind a conventional bridge, or has an alias: the range is not mapped for it, and its accesses are refused")
 			continue
 		}
 		if existing, _ := standing_of(item.requester); existing != nil {
@@ -1140,51 +1227,111 @@ iommu_owns_range :: proc "contextless" (start: u64, page_count: u64) -> bool {
 	return meets(start, end, iommu_configuration, iommu_configuration_size)
 }
 
-// iommu_requester_of gives 1 + the requester of the function whose memory
-// base address register starts at this physical address: the device of a
-// memory object that Device_Create makes over its registers. 0: none, no
-// IOMMU in use, or a device that gets no domain, with one line that says
-// why. It walks the buses through bridges, and writes nothing: the root
-// service owns the bus.
-iommu_requester_of :: proc "contextless" (physical: u64) -> u32 {
+// iommu_requester_of gives 1 + the requester that the unit sees for the
+// accesses of the function whose memory base address register starts at
+// this physical address: the device of a memory object that Device_Create
+// makes over its registers. 0: none, no IOMMU in use, or a device that gets
+// no domain, with one line that says why. Behind a conventional bridge it is
+// the shared requester of the bridge, and bridge_function is 1 + the
+// requester of the function itself: the domain of the shared requester is
+// made only for a service that holds the registers of each function that
+// shares it (iommu_declare). It walks the buses through bridges, and writes
+// nothing: the root service owns the bus.
+iommu_requester_of :: proc "contextless" (physical: u64) -> (requester: u32, bridge_function: u32) {
 	if !iommu_in_use {
-		return 0
+		return 0, 0
 	}
 	walk := Bus_Walk{physical = physical}
 	buses_walk(&walk)
 	if !walk.found {
-		return 0
+		return 0, 0
 	}
-	requester := walk.requester
-	bus, device, function := u64(iommu.requester_bus(requester)), u64(iommu.requester_device(requester)), u64(iommu.requester_function(requester))
-	// Every device behind a conventional bridge gives the requester of the
-	// bridge: one domain of it would let each of them reach what the service
-	// of another declared.
-	if walk.behind_conventional_bridge {
-		log("kernel: IOMMU: the device at bus ", bus, ", device ", device, ", function ", function, " is behind a conventional bridge, whose requester each device behind it shares: it gets no domain, and each of its accesses is refused")
-		return 0
-	}
-	unit, covered := unit_of(requester)
+	function_requester := walk.requester
+	bus, device, function := u64(iommu.requester_bus(function_requester)), u64(iommu.requester_device(function_requester)), u64(iommu.requester_function(function_requester))
+	// The requester that the unit sees: behind a conventional bridge, the
+	// one that each device there shares.
+	seen := walk.behind_conventional_bridge ? walk.shared_requester : function_requester
+	unit, covered := unit_of(seen)
 	// A function that no unit covers gives its accesses past the units: a
 	// domain would isolate nothing. Such a device can write every page, the
 	// tables of the units too, so it ends the isolation of each device: the
 	// log says so.
 	if !covered {
 		log("kernel: IOMMU: the device at bus ", bus, ", device ", device, ", function ", function, " is not behind a unit: it reaches all memory, the tables of the units too, and no device is isolated from it")
-		return 0
+		return 0, 0
 	}
-	// An alias of the table of AMD-Vi makes two requesters one, as a
-	// conventional bridge does: a domain of the source or of the target
-	// would let the other device reach what its service declared.
-	if requester_aliased(requester) {
+	if walk.behind_conventional_bridge {
+		// The table of AMD-Vi names the devices behind such a bridge by an
+		// alias to the shared requester. An alias to another requester
+		// means that the table and the bus disagree on what the unit sees.
+		if !requester_alias_agrees(function_requester, seen) || !requester_alias_agrees(seen, seen) {
+			log("kernel: IOMMU: the device at bus ", bus, ", device ", device, ", function ", function, " is behind a conventional bridge, and the I/O virtualization table gives its accesses another requester than the bridge does: it gets no domain, and each of its accesses is refused")
+			return 0, 0
+		}
+		// An alias to the shared requester from a device outside the bridge
+		// would put that device in the domain of the group.
+		if !shared_alias_sources_behind(seen) {
+			log("kernel: IOMMU: the device at bus ", bus, ", device ", device, ", function ", function, " is behind a conventional bridge, and the I/O virtualization table gives the requester of the bridge to a device outside it: it gets no domain, and each of its accesses is refused")
+			return 0, 0
+		}
+	} else if requester_aliased(function_requester) {
+		// An alias of the table of AMD-Vi that no conventional bridge
+		// explains makes two requesters one: a domain of the source or of
+		// the target would let the other device reach what its service
+		// declared.
 		log("kernel: IOMMU: the device at bus ", bus, ", device ", device, ", function ", function, " shares its requester with another device through an alias of the I/O virtualization table: it gets no domain, and each of its accesses is refused")
-		return 0
+		return 0, 0
 	}
-	if !bus_translated(unit, u32(bus)) {
+	if !bus_translated(unit, iommu.requester_bus(seen)) {
 		log("kernel: IOMMU: the device at bus ", bus, ", device ", device, ", function ", function, " is on a bus that the kernel did not find at its start: it gets no domain, and each of its accesses is refused")
-		return 0
+		return 0, 0
 	}
-	return 1 + u32(requester)
+	if walk.behind_conventional_bridge {
+		return 1 + u32(seen), 1 + u32(function_requester)
+	}
+	return 1 + u32(seen), 0
+}
+
+// iommu_bridge_function_made follows Device_Create of the registers of a
+// function behind a conventional bridge, after the handle is in the caller.
+// When a domain of its shared requester lives and the owner does not hold
+// that function, the check of the group did not count it: it appeared
+// behind the bridge after the check, and it would reach what the owner
+// declared, so the domain ends. A program gets the registers of a function
+// only through Device_Create, so each function of a group passes here
+// before a program can drive it. The caller holds the control lock, under
+// which no hold of a function of a group ends and no domain of a shared
+// requester is made or ends. A hold can still be added without it (the
+// owner maps its own handle, or gives it to itself), and that only makes the
+// owner hold what it held: the read of the holds of the owner with no lock
+// of the owner is then right. The frame lock orders the end of the domain
+// with the declarations of the owner, which make it again only after a
+// check.
+iommu_bridge_function_made :: proc "contextless" (region_index: u32) {
+	region := &regions[region_index]
+	if !iommu_in_use || region.bridge_function == 0 {
+		return
+	}
+	ended: u32
+	{
+		lock_take(&frame_lock, .Frame)
+		defer lock_free(&frame_lock, .Frame)
+		for &device, slot in iommu_devices {
+			owner := intrinsics.atomic_load(&device.owner)
+			if owner == 0 || u32(device.requester) + 1 != region.requester || device.owner_serial != programs[owner].serial {
+				continue
+			}
+			if registers_held(&programs[owner], region.requester, region.bridge_function, nil, nil) {
+				continue
+			}
+			function := u16(region.bridge_function - 1)
+			shared := device.requester
+			log("kernel: IOMMU: the device at bus ", u64(iommu.requester_bus(function)), ", device ", u64(iommu.requester_device(function)), ", function ", u64(iommu.requester_function(function)), " behind the conventional bridge of the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), " was not counted when its domain was made: the domain of the service ", program_name(&programs[owner]), " ends")
+			domains_end(owner, 1 << u32(slot))
+			ended |= 1 << u32(slot)
+		}
+	}
+	domains_ended(ended)
 }
 
 // iommu_device_facts gives what Device_Create of registers says of their
@@ -1219,41 +1366,69 @@ iommu_device_facts :: proc "contextless" (requester: u32) -> (facts: op.Device_M
 // it refuses its memory accesses, and a device that no unit covers sends it
 // past the units. The caller holds the control lock, which orders the
 // message interrupts and their entries.
+//
+// Behind a conventional bridge, the entry names the shared requester, which
+// each device of the group can send: it is present only while a domain of
+// that requester lives, which the check of the group made, and while its
+// owner holds the interrupt (group_messages_follow). Device_Create records
+// the binding, and writes the entry only when that holds already.
 iommu_message_bind :: proc "contextless" (index: u32, physical: u64) -> (address: u64, value: u64) {
 	vector := u64(VECTOR_MESSAGE_BASE) + u64(index)
 	compatible := 0xFEE0_0000 | u64(processors[0].apic_id & 0xFF) << 12
 	if !iommu_interrupt_remapping {
 		return compatible, vector
 	}
-	requester := iommu_requester_of(physical)
+	requester, bridge_function := iommu_requester_of(physical)
 	if requester == 0 {
 		return compatible, vector
 	}
+	if bridge_function != 0 {
+		iommu_message_shared[index] = requester
+		iommu_message_live[index] = message_entry_due(index) && message_entry_write(index, u16(requester - 1))
+	} else if !message_entry_write(index, u16(requester - 1)) {
+		return compatible, vector
+	}
 	if iommu_vendor == .Amd {
-		if !amd_message_bind(index, u16(requester - 1)) {
-			return compatible, vector
-		}
 		return iommu.amd_message_address(u8(processors[0].apic_id & 0xFF)), u64(index)
 	}
+	return iommu.message_address(u16(index)), 0
+}
+
+// The message interrupts bound to a shared requester, by index: 1 + that
+// requester, or 0 for a message interrupt of another device. Control lock.
+iommu_message_shared: [op.MESSAGE_CAPACITY]u32
+// The entry of such a message interrupt is present: a domain of its shared
+// requester lives. Control lock.
+iommu_message_live: [op.MESSAGE_CAPACITY]bool
+
+// message_entry_write makes the interrupt entry of a message interrupt
+// present for a requester, and invalidates it: on VT-d the entry of the one
+// table, on AMD-Vi an entry of the table of the requester. false: no free
+// table of AMD-Vi, which the count of the message interrupts excludes. The
+// caller holds the control lock, and not the frame lock, which the
+// invalidation takes.
+@(private = "file")
+message_entry_write :: proc "contextless" (index: u32, requester: u16) -> bool {
+	if iommu_vendor == .Amd {
+		return amd_message_bind(index, requester)
+	}
+	vector := u64(VECTOR_MESSAGE_BASE) + u64(index)
 	entry := direct(iommu_interrupt_table + u64(index) * iommu.INTERRUPT_ENTRY_SIZE, [2]u64)
-	words := iommu.interrupt_entry(u8(vector), u8(processors[0].apic_id & 0xFF), u16(requester - 1))
+	words := iommu.interrupt_entry(u8(vector), u8(processors[0].apic_id & 0xFF), requester)
 	// The second word first: a unit reads an entry whose first word is
 	// present as whole.
 	intrinsics.volatile_store(&entry[1], words[1])
 	intrinsics.volatile_store(&entry[0], words[0])
 	write_back(physical_of(entry), iommu.INTERRUPT_ENTRY_SIZE)
 	interrupt_entry_invalidate(index)
-	return iommu.message_address(u16(index)), 0
+	return true
 }
 
-// iommu_message_end clears the interrupt entry of a message interrupt
-// whose last handle closed, before the index can be given again: the old
-// device then sends nothing at that index. handle_close calls it with the
-// control lock.
-iommu_message_end :: proc "contextless" (index: u32) {
-	if !iommu_interrupt_remapping {
-		return
-	}
+// message_entry_clear clears the interrupt entry of a message interrupt,
+// and invalidates it. An entry that was never written stays as it is. The
+// caller holds the control lock, and not the frame lock.
+@(private = "file")
+message_entry_clear :: proc "contextless" (index: u32) {
 	if iommu_vendor == .Amd {
 		amd_message_end(index)
 		return
@@ -1266,6 +1441,89 @@ iommu_message_end :: proc "contextless" (index: u32) {
 	intrinsics.volatile_store(&entry[1], 0)
 	write_back(physical_of(entry), iommu.INTERRUPT_ENTRY_SIZE)
 	interrupt_entry_invalidate(index)
+}
+
+// iommu_message_end clears the interrupt entry of a message interrupt
+// whose last handle closed, before the index can be given again: the old
+// device then sends nothing at that index. handle_close calls it with the
+// control lock.
+iommu_message_end :: proc "contextless" (index: u32) {
+	if !iommu_interrupt_remapping {
+		return
+	}
+	group, live := iommu_message_shared[index] != 0, iommu_message_live[index]
+	iommu_message_shared[index], iommu_message_live[index] = 0, false
+	if group && !live {
+		return // The entry of a group with no domain was never written.
+	}
+	message_entry_clear(index)
+}
+
+// shared_domain_owner gives the program that owns the domain of a shared
+// requester (1 + it), or 0 when none lives: the check of its group made
+// it, and its owner still holds each function of the group. The caller
+// holds the control lock, under which the domain of a shared requester is
+// made and ends.
+@(private = "file")
+shared_domain_owner :: proc "contextless" (requester: u32) -> u32 {
+	for &device in iommu_devices {
+		owner := intrinsics.atomic_load(&device.owner)
+		if owner != 0 && device.present && u32(device.requester) + 1 == requester && device.owner_serial == programs[owner].serial {
+			return owner
+		}
+	}
+	return 0
+}
+
+// message_entry_due says if the entry of a message interrupt of a shared
+// requester must be present: a domain of that requester lives, and its
+// owner is the program that holds the interrupt (interrupt_owner). Else a
+// service that let one device of the group go, and kept its interrupts,
+// would get them back when another service takes the group. The caller
+// holds the control lock, under which interrupt_owner changes.
+@(private = "file")
+message_entry_due :: proc "contextless" (index: u32) -> bool {
+	owner := shared_domain_owner(iommu_message_shared[index])
+	return owner != 0 && owner == intrinsics.atomic_load(&interrupt_owner[INTERRUPT_LINES + index])
+}
+
+// iommu_interrupt_owner_changed follows a change of the program that holds
+// a message interrupt (handle_insert, handle_close, handle_insert_undo):
+// the entry of a message interrupt of a shared requester follows that
+// program (message_entry_due). The caller holds the control lock, as for
+// each handle of an interrupt, and not the frame lock.
+iommu_interrupt_owner_changed :: proc "contextless" (object: u32) {
+	if !iommu_in_use || object < INTERRUPT_LINES || iommu_message_shared[object - INTERRUPT_LINES] == 0 {
+		return
+	}
+	group_messages_follow()
+}
+
+// group_messages_follow makes the interrupt entry of each message
+// interrupt of a shared requester present while message_entry_due holds,
+// and clears it when it does not: a device of the group then sends the
+// message interrupts of the group only to the service that holds each
+// function of the group. The caller holds the control lock, and not the
+// frame lock, which each invalidation takes.
+@(private = "file")
+group_messages_follow :: proc "contextless" () {
+	if !iommu_interrupt_remapping {
+		return
+	}
+	for index in u32(0) ..< op.MESSAGE_CAPACITY {
+		requester := iommu_message_shared[index]
+		if requester == 0 {
+			continue
+		}
+		lives := message_entry_due(index)
+		switch {
+		case lives && !iommu_message_live[index]:
+			iommu_message_live[index] = message_entry_write(index, u16(requester - 1))
+		case !lives && iommu_message_live[index]:
+			message_entry_clear(index)
+			iommu_message_live[index] = false
+		}
+	}
 }
 
 // interrupt_entry_invalidate makes each unit forget the interrupt entry of
@@ -1286,7 +1544,11 @@ interrupt_entry_invalidate :: proc "contextless" (index: u32) {
 // owned_devices gives a bit for each device slot whose domain this
 // program owns. The caller holds the frame lock, or the program lock of
 // this program: only its own declarations, under that lock, make it an
-// owner.
+// owner, and its own paths end its domains, except one: a function behind
+// a conventional bridge that appears after the check ends the domain of
+// its group under the control and the frame locks only
+// (iommu_bridge_function_made). The frame loop of declare checks the
+// owner of each slot again for that.
 @(private = "file")
 owned_devices :: proc "contextless" (program_index: u32) -> (owned: u32) {
 	serial := programs[program_index].serial
@@ -1300,7 +1562,10 @@ owned_devices :: proc "contextless" (program_index: u32) -> (owned: u32) {
 
 // owned_of gives the slots that a program owns for one requester (1 + the
 // identifier, as a memory object keeps it). The caller holds the frame
-// lock.
+// lock, or the program lock of this program, as for owned_devices: under
+// that lock the slots of the program change only by the one exception that
+// owned_devices names (iommu_bridge_function_made, under the control and
+// the frame locks), which the frame loop of declare checks again.
 @(private = "file")
 owned_of :: proc "contextless" (program_index: u32, requester: u32) -> (owned: u32) {
 	all := owned_devices(program_index)
@@ -1635,22 +1900,72 @@ holds_with :: proc "contextless" (program: ^Program, region_index: u32, except: 
 }
 
 // registers_held says if a program holds a handle or a mapping of the
-// registers of a device (1 + its requester), other than the handle and the
-// mapping that end. A mapping of the registers drives the device as a
-// handle does, so it keeps the domain. The caller holds the program lock.
+// registers of a function (1 + the requester of its domain, and its
+// bridge_function as a memory object keeps it), other than the handle and
+// the mapping that end. A mapping of the registers drives the device as a
+// handle does, so it keeps the domain. Behind a conventional bridge, each
+// function that shares the requester counts apart: the domain lives only
+// while its owner holds every one of them. The caller holds the program
+// lock.
 @(private = "file")
-registers_held :: proc "contextless" (program: ^Program, requester: u32, closed: ^Handle_Slot, unmapped: ^Mapping) -> bool {
+registers_held :: proc "contextless" (program: ^Program, requester: u32, bridge_function: u32, closed: ^Handle_Slot, unmapped: ^Mapping) -> bool {
 	for &other in program.handles {
-		if &other != closed && other.kind == .Memory && regions[other.object].requester == requester {
+		if &other != closed && other.kind == .Memory && regions[other.object].requester == requester && regions[other.object].bridge_function == bridge_function {
 			return true
 		}
 	}
 	for &mapping in program.mappings {
-		if &mapping != unmapped && mapping.page_count != 0 && regions[mapping.region].requester == requester {
+		if &mapping != unmapped && mapping.page_count != 0 && regions[mapping.region].requester == requester && regions[mapping.region].bridge_function == bridge_function {
 			return true
 		}
 	}
 	return false
+}
+
+// shares_requester says if a program holds registers behind a conventional
+// bridge whose shared requester is this one (1 + it). The caller holds the
+// program lock.
+@(private = "file")
+shares_requester :: proc "contextless" (program: ^Program, requester: u32) -> bool {
+	for &other in program.handles {
+		if other.kind == .Memory && regions[other.object].requester == requester && regions[other.object].bridge_function != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// The last device whose refusal of a domain behind a conventional bridge
+// the log has (1 + its requester): a service that declares in a loop with
+// the same missing device writes one line. Atomic.
+iommu_bridge_refusal_last: u32
+
+// bridge_domain_check walks the bus to the functions that share a
+// requester (1 + it) behind a conventional bridge, before the first
+// declaration of its domain: a service that does not hold the registers of
+// each of them gets Bad_State, with one line, as the device that it misses
+// would reach what it declares. member_count: the functions of the group.
+// The caller holds the program lock; the walk reads the bus with no lock.
+@(private = "file")
+bridge_domain_check :: proc "contextless" (program: ^Program, requester: u32) -> (member_count: u32, status: op.Status) {
+	walk := Bus_Walk{group = requester, holder = program}
+	buses_walk(&walk)
+	if !walk.unheld && walk.member_count != 0 {
+		return walk.member_count, .Ok
+	}
+	if !walk.unheld {
+		return 0, .Bad_State // The root service numbered the bus again: no function shares it now.
+	}
+	if intrinsics.atomic_exchange(&iommu_bridge_refusal_last, 1 + u32(walk.unheld_requester)) == 1 + u32(walk.unheld_requester) {
+		return 0, .Bad_State
+	}
+	shared := u16(requester - 1)
+	if walk.odd_bridge {
+		log("kernel: IOMMU: the bridge at bus ", u64(iommu.requester_bus(walk.unheld_requester)), ", device ", u64(iommu.requester_device(walk.unheld_requester)), ", function ", u64(iommu.requester_function(walk.unheld_requester)), ", behind the conventional bridge of the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), ", has a secondary bus that the walk cannot follow: the declaration is refused, and the devices behind it get no domain")
+	} else {
+		log("kernel: IOMMU: the service ", program_name(program), " does not hold the registers of the device at bus ", u64(iommu.requester_bus(walk.unheld_requester)), ", device ", u64(iommu.requester_device(walk.unheld_requester)), ", function ", u64(iommu.requester_function(walk.unheld_requester)), ", which shares the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), " behind a conventional bridge: the declaration is refused, and they get no domain")
+	}
+	return 0, .Bad_State
 }
 
 // region_end_for takes the pages of a memory object out of the domains of
@@ -1704,8 +2019,23 @@ new_entry_needs_invalidation :: proc "contextless" (unit: ^Iommu_Unit, device_en
 // none gets a write that it did not have. A device keeps the write only
 // while the program holds a handle with Write. The invalidation runs only
 // when a domain changed, for that domain. The caller holds the program
-// lock.
+// lock. The domain of a shared requester is made under the control lock:
+// the call asks for it (STATUS_RETRY), and after the frame lock the message
+// interrupts of the groups follow their domains (group_messages_follow).
+// They follow whatever the status: a call that fails after it made the
+// domain of a shared requester for an earlier device of the call keeps that
+// domain, and its interrupts then come with it.
 iommu_declare :: proc "contextless" (program_index: u32, region_index: u32, writable: bool) -> (address: u64, status: op.Status) {
+	address, status = declare(program_index, region_index, writable)
+	if lock_held(.Control) {
+		group_messages_follow()
+	}
+	return address, status
+}
+
+// declare is iommu_declare up to the end of the frame lock.
+@(private = "file")
+declare :: proc "contextless" (program_index: u32, region_index: u32, writable: bool) -> (address: u64, status: op.Status) {
 	region := &regions[region_index]
 	if !iommu_in_use || region.device {
 		if !region.contiguous {
@@ -1753,6 +2083,32 @@ iommu_declare :: proc "contextless" (program_index: u32, region_index: u32, writ
 			return 0, .Bad_Operation
 		}
 	}
+	// The devices behind a conventional bridge share one requester, so one
+	// domain: it is made only for a service that holds the registers of
+	// each of them. The walk of the bus runs before the first declaration of
+	// the domain only: the end of the domain at the end of any one hold
+	// keeps the rule true after it. The domain is made under the control
+	// lock, under which no hold of a function of the group and no domain of
+	// a shared requester changes.
+	member_counts: [IOMMU_DEVICES_OF_A_SERVICE]u32
+	shared_requesters: u32 // A bit for each requester of the call that is shared.
+	for requester, index in requesters[:count] {
+		if !shares_requester(program, requester) {
+			continue
+		}
+		shared_requesters |= 1 << u32(index)
+		if owned_of(program_index, requester) != 0 {
+			continue
+		}
+		if need_control() {
+			return 0, STATUS_RETRY
+		}
+		members, check_status := bridge_domain_check(program, requester)
+		if check_status != .Ok {
+			return 0, check_status
+		}
+		member_counts[index] = members
+	}
 	if region.contiguous {
 		if region.physical + region.page_count * PAGE_SIZE > iommu.WINDOW_BASE {
 			return 0, .Bad_Operation
@@ -1776,10 +2132,18 @@ iommu_declare :: proc "contextless" (program_index: u32, region_index: u32, writ
 	defer lock_free(&frame_lock, .Frame)
 	added, write_allowed, changed, made: u32
 	status = .Ok
-	for requester in requesters[:count] {
+	for requester, index in requesters[:count] {
 		slot: u32
 		slot, status = device_slot(u16(requester - 1), program_index)
 		if status != .Ok {
+			break
+		}
+		// A domain of a shared requester that this call did not check: its
+		// owner held it at the check above, and another path ended it since
+		// (a function that appeared behind the bridge). It is made again
+		// only after a check, under the control lock.
+		if iommu_devices[slot].owner == 0 && shared_requesters & (1 << u32(index)) != 0 && member_counts[index] == 0 {
+			status = need_control() ? STATUS_RETRY : op.Status.Bad_State
 			break
 		}
 		change: Declaration_Change
@@ -1818,6 +2182,15 @@ iommu_declare :: proc "contextless" (program_index: u32, region_index: u32, writ
 	if status != .Ok {
 		return 0, status
 	}
+	for members, index in member_counts[:count] {
+		if members == 0 {
+			continue
+		}
+		// The next refusal of a device behind a bridge has its line again.
+		intrinsics.atomic_store(&iommu_bridge_refusal_last, 0)
+		shared := u16(requesters[index] - 1)
+		log("kernel: IOMMU: the service ", program_name(program), " holds the registers of each of the ", u64(members), " devices that share the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), " behind a conventional bridge: they have one domain")
+	}
 	return device_address(region_index), .Ok
 }
 
@@ -1840,7 +2213,9 @@ iommu_region_end_held :: proc "contextless" (region_index: u32) {
 //   each domain of the program;
 // - the last handle to the registers of a device, with no mapping of them
 //   left: the domain of that device ends, so a device given to another
-//   service reaches nothing of this one.
+//   service reaches nothing of this one. Behind a conventional bridge, the
+//   last hold of any one device that shares the requester ends the domain
+//   of all of them.
 //
 // Each change is invalidated before the close returns. handle_close calls
 // it with the program lock of the program, before the release of the
@@ -1855,27 +2230,35 @@ iommu_handle_closed :: proc "contextless" (program: ^Program, closed: ^Handle_Sl
 	if intrinsics.atomic_load(&region.declared) == 0 && requester == 0 {
 		return
 	}
+	if region.bridge_function != 0 && !lock_held(.Control) {
+		bridge_control_missing()
+	}
 	holds, writes := holds_with(program, closed.object, closed)
-	held := requester == 0 || registers_held(program, requester, closed, nil)
+	held := requester == 0 || registers_held(program, requester, region.bridge_function, closed, nil)
 	program_index := index_of_program(program)
-	lock_take(&frame_lock, .Frame)
-	defer lock_free(&frame_lock, .Frame)
-	owned := owned_devices(program_index)
-	changed: u32
-	switch {
-	case !holds:
-		changed = region_end_for(closed.object, owned)
-	case !writes:
-		changed = write_deny_for(closed.object, owned)
-	}
-	if !held {
-		if ended := owned_of(program_index, requester); ended != 0 {
-			// It invalidates each ended domain; the others changed above.
-			domains_end(program_index, ended)
-			changed &~= ended
+	ended: u32
+	{
+		lock_take(&frame_lock, .Frame)
+		defer lock_free(&frame_lock, .Frame)
+		owned := owned_devices(program_index)
+		changed: u32
+		switch {
+		case !holds:
+			changed = region_end_for(closed.object, owned)
+		case !writes:
+			changed = write_deny_for(closed.object, owned)
 		}
+		if !held {
+			ended = owned_of(program_index, requester)
+			if ended != 0 {
+				// It invalidates each ended domain; the others changed above.
+				domains_end(program_index, ended)
+				changed &~= ended
+			}
+		}
+		invalidate_slots(changed, 0)
 	}
-	invalidate_slots(changed, 0)
+	domains_ended(ended)
 }
 
 // iommu_mapping_ended follows the end of a mapping: the last mapping of the
@@ -1888,29 +2271,80 @@ iommu_mapping_ended :: proc "contextless" (program: ^Program, mapping: ^Mapping)
 		return
 	}
 	requester := regions[mapping.region].requester
-	if requester == 0 || registers_held(program, requester, nil, mapping) {
+	if regions[mapping.region].bridge_function != 0 && !lock_held(.Control) {
+		bridge_control_missing()
+	}
+	if requester == 0 || registers_held(program, requester, regions[mapping.region].bridge_function, nil, mapping) {
 		return
 	}
 	program_index := index_of_program(program)
-	lock_take(&frame_lock, .Frame)
-	defer lock_free(&frame_lock, .Frame)
-	if ended := owned_of(program_index, requester); ended != 0 {
-		domains_end(program_index, ended)
+	ended: u32
+	{
+		lock_take(&frame_lock, .Frame)
+		defer lock_free(&frame_lock, .Frame)
+		ended = owned_of(program_index, requester)
+		if ended != 0 {
+			domains_end(program_index, ended)
+		}
 	}
+	domains_ended(ended)
 }
 
 // iommu_program_end ends each domain that a program owns.
 // program_cleanup calls it before the handles and the mappings of the
-// program end.
+// program end, with the control lock.
 iommu_program_end :: proc "contextless" (program_index: u32) {
 	if !iommu_in_use {
 		return
 	}
-	lock_take(&frame_lock, .Frame)
-	defer lock_free(&frame_lock, .Frame)
-	if owned := owned_devices(program_index); owned != 0 {
-		domains_end(program_index, owned)
+	ended: u32
+	{
+		lock_take(&frame_lock, .Frame)
+		defer lock_free(&frame_lock, .Frame)
+		ended = owned_devices(program_index)
+		if ended != 0 {
+			domains_end(program_index, ended)
+		}
 	}
+	domains_ended(ended)
+}
+
+// domains_ended follows the end of the domains of a mask of slots, after
+// the frame lock: the message interrupts of a shared requester whose
+// domain ended lose their entries (group_messages_follow). The end of the
+// domain of a shared requester holds the control lock: the close of a
+// handle and the unmap of a mapping of the registers of a function behind a
+// conventional bridge ask for it (enter.odin), and the revocation and the
+// end of a program hold it. The end of the domain of another device needs
+// no follow, and may come with no control lock: then no present entry of a
+// group may have lost its domain, else the kernel has a fault
+// (bridge_control_missing).
+@(private = "file")
+domains_ended :: proc "contextless" (ended: u32) {
+	if ended == 0 {
+		return
+	}
+	if lock_held(.Control) {
+		group_messages_follow()
+		return
+	}
+	for index in u32(0) ..< op.MESSAGE_CAPACITY {
+		if iommu_message_live[index] && shared_domain_owner(iommu_message_shared[index]) == 0 {
+			bridge_control_missing()
+		}
+	}
+}
+
+// bridge_control_missing stops the machine: a path of the kernel ends the
+// hold of the registers of a function behind a conventional bridge, or the
+// domain of its group, with no control lock. The interrupt entries of the
+// group would then outlive its domain, with no line: a fault of the kernel,
+// as a broken lock order.
+@(private = "file")
+bridge_control_missing :: proc "contextless" () -> ! {
+	fault_report_begin()
+	log("kernel: IOMMU: the hold of the registers of a function behind a conventional bridge, or the domain of its group, ends with no control lock: the machine stops")
+	machine_stop(3)
 }
 
 // domains_end ends the domains of the device slots of a mask, which a

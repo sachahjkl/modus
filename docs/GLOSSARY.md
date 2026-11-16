@@ -2981,7 +2981,7 @@ Do not use: DMA remapper, SMMU.
 
 A remapping unit is one part of the IOMMU, with its own registers and tables, that translates the accesses of the devices that the table DMAR or IVRS gives it.
 
-A machine of Intel has several: one for its graphics device, and one that covers every other device (the flag `INCLUDE_PCI_ALL`). The table DMAR names the devices of a unit by device scopes: an endpoint, or a bridge and each bus behind it. A unit of AMD is itself a function of the bus, and the table IVRS names its devices by ranges of requesters; a device whose range is an alias sends its accesses with another requester, and gets no domain. The kernel programs at most 4 units, and gives each device the unit that names it, else the unit that covers every device. A device has its domain, its invalidations and its DMA faults on its unit. A device that no unit covers reaches all memory, and `Device_Create` of its registers writes one line that says so.
+A machine of Intel has several: one for its graphics device, and one that covers every other device (the flag `INCLUDE_PCI_ALL`). The table DMAR names the devices of a unit by device scopes: an endpoint, or a bridge and each bus behind it. A unit of AMD is itself a function of the bus, and the table IVRS names its devices by ranges of requesters; a device whose range is an alias sends its accesses with another requester, and gets no domain, unless that requester is the shared requester of a conventional bridge in front of it. The kernel programs at most 4 units, and gives each device the unit that names it, else the unit that covers every device. A device has its domain, its invalidations and its DMA faults on its unit. A device that no unit covers reaches all memory, and `Device_Create` of its registers writes one line that says so.
 
 A remapping unit is not a device domain: a unit holds the domains of many devices.
 
@@ -2993,13 +2993,25 @@ Do not use: DRHD, IOMMU unit.
 
 A device domain is the memory that one device can reach through the IOMMU: the pages that its service declared, at their device addresses.
 
-The kernel keeps one domain for each device that has a service: an entry for the requester of the device on its remapping unit (a context entry of Intel, or an entry of the device table of AMD), and page tables that map each declared page at its device address. A page is writable for the device only while the service holds a handle with **Write** to its object. The first program that declares memory to a device owns its domain; its budget pays for the tables. A declared object leaves the domain when the service closes or loses its last handle to it, or when the object ends, before its frames are free; the whole domain ends when its service stops, or when it holds neither a handle nor a mapping of the registers of the device. A device with no service has no context entry on Intel, and on AMD an entry that names an empty table with neither read nor write: an empty domain, in which each access is refused. A device that a reserved memory range names has a standing domain with its ranges instead. A device behind a conventional bridge of PCI gets no domain: every device behind that bridge gives the same requester. Example: the block service of the data disk declares its queue and the data region of the storage service, and its device reaches those pages and no other.
+The kernel keeps one domain for each device that has a service: an entry for the requester of the device on its remapping unit (a context entry of Intel, or an entry of the device table of AMD), and page tables that map each declared page at its device address. A page is writable for the device only while the service holds a handle with **Write** to its object. The first program that declares memory to a device owns its domain; its budget pays for the tables. A declared object leaves the domain when the service closes or loses its last handle to it, or when the object ends, before its frames are free; the whole domain ends when its service stops, or when it holds neither a handle nor a mapping of the registers of the device. A device with no service has no context entry on Intel, and on AMD an entry that names an empty table with neither read nor write: an empty domain, in which each access is refused. A device that a reserved memory range names has a standing domain with its ranges instead. The devices behind a conventional bridge of PCI have one domain, of their shared requester, which the kernel makes only for a service that holds the registers of each of them (see "Shared requester"). Example: the block service of the data disk declares its queue and the data region of the storage service, and its device reaches those pages and no other.
 
 A device domain is not an address space of a program, and it gives no right to a program.
 
 The design: `src/md/infrastructure/iommu.md`, "Mechanism in the kernel, policy outside".
 
 Do not use: IOMMU domain, DMA window.
+
+### Shared requester
+
+A shared requester is the one requester that a conventional bridge of PCI gives the accesses of each device behind it.
+
+A bridge from PCI Express to PCI gives its secondary bus with the device 0 and the function 0; another conventional bridge gives its own requester. Behind several conventional bridges, the one nearest to bus 0 decides. The IOMMU sees only the shared requester, so it cannot tell those devices apart: they have one device domain. The kernel makes that domain at the first declaration of a service only when the service holds the registers of each device behind the bridge, and ends it when the service no longer holds one of them; else the declaration gives `Bad_State`, with one line that names the device that it misses. A device of the group whose registers `Device_Create` makes after the domain, and that the owner does not hold, ends the domain too. The interrupt entries of the message interrupts of the group are present only while the domain lives. The root service gives every device behind a conventional bridge to the service of the first one that it starts. On AMD-Vi, the table IVRS names those devices by an alias to the shared requester, and an alias to it from a device outside the bridge leaves the group with no domain. Example: on the machine of the part `iommu_amd` of the test, the disk of the measures and an entropy device behind the bridge at 0:1C.0 both give the requester 0:1C.0, and the test device service holds both.
+
+A shared requester is not the requester of a device of PCI Express behind a root port, which keeps its own.
+
+The design: `src/md/infrastructure/iommu.md`, "The domain of a conventional bridge".
+
+Do not use: alias requester, DMA alias.
 
 ### Device address
 

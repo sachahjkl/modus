@@ -2,7 +2,9 @@
 // and writes the configuration of each device through two ports; it holds
 // them, and no other program does. It gives a device service exactly one
 // device (GRANT_ roles below): the memory of its registers, one message
-// interrupt, memory for its queues, and a copy of its configuration.
+// interrupt, memory for its queues, and a copy of its configuration. A
+// device behind a conventional bridge comes with the registers of each
+// other device behind that bridge.
 //
 // The device service does not write the configuration: the root service
 // enables the device, gives it the right to use memory (bus master), and
@@ -18,6 +20,12 @@ GRANT_MACHINE :: 3 // The machine, with the right Physical only.
 GRANT_CONFIGURATION :: 4 // Memory, with Read: one page, the first 256 bytes of the configuration.
 GRANT_BAR :: 5 // GRANT_BAR + n: memory, the registers in BAR n. 0: not given.
 BAR_COUNT :: 6 // The base address registers of a device of type 0.
+// GRANT_BRIDGE_DEVICE + n: memory, the registers of the first memory BAR of
+// another device behind the same conventional bridge. Every device there
+// shares one requester, and the kernel makes its domain only for a service
+// that holds the registers of each of them. 0: not given.
+GRANT_BRIDGE_DEVICE :: GRANT_BAR + BAR_COUNT
+BRIDGE_DEVICE_COUNT :: 3 // The other devices behind one conventional bridge that a device service can hold.
 
 CONFIGURATION_SIZE :: 256 // The bytes of the configuration of a device that the copy holds: the space of PCI before PCI Express.
 QUEUE_PAGES :: 8 // The pages of the memory of the queues that the root service gives a device service.
@@ -133,12 +141,13 @@ capability :: proc "contextless" (configuration: []u8, kind: u8) -> u32 {
 // The fixed machine: the system targets one fixed machine at a time, so the
 // places of its devices are constants. The tool puts each disk at a place on bus
 // 0. The boot volume is at another place: no service receives it. The
-// machine with the IOMMU puts the disk of the measures behind a root port
-// of PCI Express at SCRATCH_BRIDGE_DEVICE, at the place 0 of its secondary
-// bus, so that a device behind a bridge is tested.
+// machines with the IOMMU put the disk of the measures behind a bridge at
+// SCRATCH_BRIDGE_DEVICE, at the place 0 of its secondary bus, so that a
+// device behind a bridge is tested: a root port of PCI Express with the
+// IOMMU of Intel, a conventional bridge with the IOMMU of AMD.
 DATA_DISK_DEVICE :: 0x10 // The disk of the storage service.
 SCRATCH_DISK_DEVICE :: 0x11 // A disk for the measures of the block service.
-SCRATCH_BRIDGE_DEVICE :: 0x1C // The root port in front of the disk of the measures, on the machine with the IOMMU.
+SCRATCH_BRIDGE_DEVICE :: 0x1C // The bridge in front of the disk of the measures, on the machines with the IOMMU.
 NETWORK_DEVICE :: 0x12 // The network device of the frame service.
 // The entropy device of the entropy service, when the machine has one: a
 // machine with no such device still starts (src/md/features/entropy_device.md).

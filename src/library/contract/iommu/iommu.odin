@@ -346,9 +346,9 @@ HEADER_WORDS :: 16
 // header_memory_bases gives the base address of each memory base address
 // register of a device: 6 registers. A bridge gives no base: a device of
 // conventional PCI behind it sends its accesses with the requester of the
-// bridge, so a domain of the bridge would also be a domain of each device
-// behind it. A register of ports, or a base of 0, gives no base. A
-// register of 64 bits takes the next register as its high half.
+// bridge, so the registers of the bridge name no device of a service. A
+// register of ports, or a base of 0, gives no base. A register of 64 bits
+// takes the next register as its high half.
 header_memory_bases :: proc "contextless" (header: [HEADER_WORDS]u32) -> (bases: [6]u64, count: int) {
 	register_count := 0
 	if header[3] >> 16 & 0x7F == 0 {
@@ -403,30 +403,52 @@ STATUS_CAPABILITIES :: u32(1) << 20 // The bit of the status, in the word 1: the
 PORT_ROOT :: 4
 PORT_SWITCH_UPSTREAM :: 5
 PORT_SWITCH_DOWNSTREAM :: 6
+// The port type of a bridge from PCI Express to PCI: a conventional bridge
+// that gives the devices behind it the requester of its secondary bus.
+PORT_PCI_EXPRESS_TO_PCI :: 7
 
-// bridge_passes_requesters says if a bridge gives each device behind it
-// its own requester. A bridge of PCI Express does. A conventional bridge (a
-// bridge from PCI Express to PCI, or one with no capability of PCI Express)
-// gives the accesses of the devices behind it its own requester, or the
-// one of its secondary bus, so they all share it. The walk of the
+// express_port_type gives the port type of the capability of PCI Express of
+// a function. found: the function has that capability. The walk of the
 // capabilities stops after 48, as a list that loops would never end.
-bridge_passes_requesters :: proc "contextless" (configuration: ^[CONFIGURATION_WORDS]u32) -> bool {
+express_port_type :: proc "contextless" (configuration: ^[CONFIGURATION_WORDS]u32) -> (port: u32, found: bool) {
 	if configuration[1] & STATUS_CAPABILITIES == 0 {
-		return false
+		return 0, false
 	}
 	offset := configuration[0x34 / 4] & 0xFC
 	for _ in 0 ..< 48 {
 		if offset < 0x40 || offset > 0xFC {
-			return false
+			return 0, false
 		}
 		word := configuration[offset / 4]
 		if word & 0xFF == CAPABILITY_PCI_EXPRESS {
-			port := word >> 20 & 0xF
-			return port == PORT_ROOT || port == PORT_SWITCH_UPSTREAM || port == PORT_SWITCH_DOWNSTREAM
+			return word >> 20 & 0xF, true
 		}
 		offset = word >> 8 & 0xFC
 	}
-	return false
+	return 0, false
+}
+
+// bridge_passes_requesters says if a bridge gives each device behind it
+// its own requester. A bridge of PCI Express does. A conventional bridge (a
+// bridge from PCI Express to PCI, or one with no capability of PCI Express)
+// gives the accesses of the devices behind it one shared requester
+// (bridge_shared_requester).
+bridge_passes_requesters :: proc "contextless" (configuration: ^[CONFIGURATION_WORDS]u32) -> bool {
+	port, found := express_port_type(configuration)
+	return found && (port == PORT_ROOT || port == PORT_SWITCH_UPSTREAM || port == PORT_SWITCH_DOWNSTREAM)
+}
+
+// bridge_shared_requester gives the requester that a conventional bridge at
+// a place, with its secondary bus, gives the accesses of each device behind
+// it: the shared requester. A bridge from PCI Express to PCI makes each
+// request with its secondary bus, the device 0 and the function 0; another
+// conventional bridge makes it with its own requester. QEMU 10 and Linux
+// take the same rule.
+bridge_shared_requester :: proc "contextless" (configuration: ^[CONFIGURATION_WORDS]u32, bus, device, function, secondary: u32) -> u16 {
+	if port, found := express_port_type(configuration); found && port == PORT_PCI_EXPRESS_TO_PCI {
+		return requester(secondary, 0, 0)
+	}
+	return requester(bus, device, function)
 }
 
 // requester gives the requester identifier of a function: the name of a

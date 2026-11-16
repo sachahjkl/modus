@@ -30,6 +30,12 @@
 // The forged messages come before the DMA fault: a virtio device of QEMU
 // that needs a reset does no more requests.
 //
+// 6. Behind a conventional bridge, where the root service gives it the
+//    registers of the other device there too, it starts its device again,
+//    then closes those registers: its domain ends, its next declaration is
+//    refused, with a line of the kernel, and a read of the device into a
+//    page that it declared before does not arrive.
+//
 // Then it answers the commands of the block ring, so that its client
 // sees that the machine goes on.
 //
@@ -114,7 +120,9 @@ Outcome :: enum {
 // used it, or it needs a reset. The configuration interrupt of a device
 // that needs a reset and the interrupt of the queue are one message
 // interrupt, so each wakes this thread. The hang bound only ends a hang.
-request_end :: proc "contextless" () -> Outcome {
+// With no interrupt (the end of the domain clears the interrupt entries of
+// its group), it reads the two conditions again with no wait.
+request_end :: proc "contextless" (interrupt_arrives := true) -> Outcome {
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		wait := system.wait_begin()
@@ -127,7 +135,9 @@ request_end :: proc "contextless" () -> Outcome {
 		if system.time() >= deadline {
 			return .Hang
 		}
-		system.wait_end(&wait, deadline)
+		if interrupt_arrives {
+			system.wait_end(&wait, deadline)
+		}
 	}
 }
 
@@ -268,6 +278,60 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("iommu_device: a read into a page that was not declared: the device gave the request back with the status ", u64(status^), ", and the page keeps its 4096 bytes: as it must")
 	case:
 		system.log("iommu_device: a read into a page that was not declared: the device did not end the request before the hang bound")
+	}
+
+	// 6. Behind a conventional bridge only: the devices there share one
+	// requester, and this service holds the registers of the other device
+	// too. Without them, its domain ends, and a new declaration is refused:
+	// the other device would reach what it declares.
+	if other_device := ctx.handles[pci.GRANT_BRIDGE_DEVICE]; other_device != 0 {
+		// The device needs a reset after the refused read of step 4: it
+		// starts again while its domain lives, so that its next request
+		// shows the end of the domain and not that state.
+		if _, restart_error := virtio.start(&device, 0); restart_error != .None {
+			fail("the device did not start again")
+		}
+		virtio.store_16(device.common + virtio.COMMON_CONFIG_VECTOR, 0)
+		if queue, queue_error = virtio.queue_start(&device, 0, uintptr(queue_address), queue_physical, 3, 0); queue_error != .None {
+			fail("the queue of the device did not start again")
+		}
+		virtio.ready(&device)
+		system.close(other_device)
+		refused, refused_status := system.memory_create(1, 0, {.Contiguous})
+		if refused_status != .Ok {
+			fail("no memory for the page of the refused declaration")
+		}
+		_, declare_status := system.memory_physical(machine, refused)
+		if declare_status != .Bad_State {
+			fail("without the registers of the other device behind the conventional bridge, a declaration was not refused")
+		}
+		system.close(refused)
+		system.log("iommu_device: without the registers of the other device behind the conventional bridge, a declaration is refused: as it must")
+		// The domain ended: a read into the second page of the data, which
+		// this service declared in step 1 and still holds, does not arrive.
+		second_page := ([^]u8)(uintptr(data_address) + block.BLOCK_SIZE)
+		for index in 0 ..< block.BLOCK_SIZE {
+			second_page[index] = PATTERN_KEPT
+		}
+		// The end of the domain cleared the interrupt entries of the group
+		// and waited for each unit: no interrupt counted from now on came
+		// through them. The count before is read and dropped.
+		_, _ = system.call(.Interrupt_Read, u64(interrupt))
+		request(REQUEST_READ, data_physical + block.BLOCK_SIZE)
+		// A device of QEMU that cannot read its queue needs a reset, and
+		// sends its configuration interrupt, which the unit refuses.
+		ended_outcome := request_end(interrupt_arrives = false)
+		if !page_holds(second_page, PATTERN_KEPT) || (ended_outcome == .Used && status^ == 0) {
+			fail("after the end of its domain, the device read a block into a page that this service declared before")
+		}
+		if ended_outcome != .Needs_Reset {
+			fail("after the end of its domain, the device did not stop on its queue before the hang bound")
+		}
+		after_end, _ := system.call(.Interrupt_Read, u64(interrupt))
+		if after_end[0] != 0 {
+			fail("after the end of its domain, the device sent an interrupt that arrived")
+		}
+		system.log("iommu_device: after the end of its domain, a read of the device into a page that this service declared before does not arrive, the device needs a reset, no interrupt of it arrives, and the page keeps its 4096 bytes: as it must")
 	}
 
 	// Then it answers its client: the machine goes on.

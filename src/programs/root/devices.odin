@@ -3,6 +3,7 @@ package root
 import "modus:contract/block"
 import "modus:contract/entropy_service"
 import "modus:contract/frame"
+import "modus:contract/iommu"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:support/pci"
@@ -70,6 +71,112 @@ scratch_disk_place :: proc "contextless" () -> pci.Place {
 	return pci.Place{bus = pci.read_32(bridge, pci.OFFSET_BUS_NUMBERS) >> 8 & 0xFF, device = 0}
 }
 
+// The service of a device behind a conventional bridge holds the registers
+// of each other device there in the grants after those of its own BARs.
+#assert(pci.GRANT_BRIDGE_DEVICE + pci.BRIDGE_DEVICE_COUNT <= op.CONTEXT_LOG)
+
+// The buses behind a conventional bridge. Every device there gives its
+// accesses one shared requester, so the IOMMU cannot tell them apart: the
+// kernel gives them one domain, and only for a service that holds the
+// registers of each of them (src/md/infrastructure/iommu.md, "Bridges").
+// This service gives them all to the service of the first one that it
+// starts.
+Bridge_Group :: struct {
+	first_bus: u32,
+	last_bus:  u32,
+}
+
+// bridge_group_of gives the buses behind the conventional bridge nearest to
+// bus 0 on the way to a bus: the bridge that makes the requests of each
+// device behind it. found: no conventional bridge is on that way.
+bridge_group_of :: proc "contextless" (bus: u32) -> (group: Bridge_Group, found: bool) {
+	current := u32(0)
+	// Each level goes down at least one bus, so 256 levels end the walk.
+	levels: for _ in 0 ..< 256 {
+		if current == bus {
+			return {}, false
+		}
+		for device in u32(0) ..< 32 {
+			for function in u32(0) ..< 8 {
+				place := pci.Place{bus = current, device = device, function = function}
+				if pci.read_32(place, 0) & 0xFFFF == 0xFFFF {
+					if function == 0 {
+						break // No device at this place.
+					}
+					continue
+				}
+				header_type := pci.read_32(place, pci.OFFSET_HEADER_TYPE) >> 16 & 0xFF
+				if header_type & 0x7F == 1 {
+					numbers := pci.read_32(place, pci.OFFSET_BUS_NUMBERS)
+					secondary, subordinate := numbers >> 8 & 0xFF, numbers >> 16 & 0xFF
+					if secondary > current && secondary <= bus && bus <= subordinate {
+						configuration: [iommu.CONFIGURATION_WORDS]u32
+						for &word, index in configuration {
+							word = pci.read_32(place, u32(index * 4))
+						}
+						if !iommu.bridge_passes_requesters(&configuration) {
+							return {first_bus = secondary, last_bus = subordinate}, true
+						}
+						current = secondary
+						continue levels
+					}
+				}
+				if function == 0 && header_type & 0x80 == 0 {
+					break // One function only.
+				}
+			}
+		}
+		return {}, false // No bridge leads to the bus.
+	}
+	return {}, false
+}
+
+// bridge_devices_hold makes a handle to the registers of the first memory
+// BAR of each device behind a conventional bridge but the one at a place:
+// the device service of that place holds them all. A device with no memory
+// BAR gets no handle, and the kernel then refuses the domain of all of
+// them. More than pci.BRIDGE_DEVICE_COUNT other devices give No_Slot, with
+// one line.
+bridge_devices_hold :: proc "contextless" (group: Bridge_Group, place: pci.Place) -> (handles: [pci.BRIDGE_DEVICE_COUNT]system.Handle, count: u32, status: system.Status) {
+	for bus in group.first_bus ..= group.last_bus {
+		for device in u32(0) ..< 32 {
+			for function in u32(0) ..< 8 {
+				member := pci.Place{bus = bus, device = device, function = function}
+				if pci.read_32(member, 0) & 0xFFFF == 0xFFFF {
+					if function == 0 {
+						break
+					}
+					continue
+				}
+				header_type := pci.read_32(member, pci.OFFSET_HEADER_TYPE) >> 16 & 0xFF
+				// A bridge behind the conventional bridge makes no request of
+				// its own: only the devices behind it, which are on these buses.
+				if header_type & 0x7F == 0 && member != place {
+					if count == pci.BRIDGE_DEVICE_COUNT {
+						system.log_in("devices", .Error, "root: more than ", u64(pci.BRIDGE_DEVICE_COUNT + 1), " devices behind the conventional bridge in front of the bus ", u64(group.first_bus), ": no service for them")
+						return handles, count, .No_Slot
+					}
+					member_bars := pci.bars(member)
+					for bar in member_bars {
+						if bar.size != 0 {
+							handles[count], _, status = device_handle(.Memory, bar.address, (bar.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+							if status != .Ok {
+								return handles, count, status
+							}
+							break
+						}
+					}
+					count += 1
+				}
+				if function == 0 && header_type & 0x80 == 0 {
+					break
+				}
+			}
+		}
+	}
+	return handles, count, .Ok
+}
+
 // driver_start starts the device service of the device at a place of the
 // bus. It gives the ring of the device service: this service gives it to
 // the client. The lines of the log name a device of bus 0 by its place
@@ -85,9 +192,10 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		}
 		return nil, 0, .Bad_Handle
 	}
+	group, behind_conventional_bridge := bridge_group_of(place.bus)
 	for &item in started {
-		if item.program != 0 && item.is_driver && item.device == place {
-			return nil, 0, .Bad_State // One service for one device.
+		if item.program != 0 && item.is_driver && (item.device == place || (behind_conventional_bridge && item.bridge_group == group)) {
+			return nil, 0, .Bad_State // One service for one device, and for all the devices behind one conventional bridge.
 		}
 	}
 	for &item in started {
@@ -111,6 +219,28 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	grants[op.CONTEXT_LOG] = log_grant(kind.name)
 	grants[pci.GRANT_MACHINE] = {machine, {.Physical}}
+
+	// Behind a conventional bridge, the registers of each other device
+	// there: no other service can then drive a device that reaches what
+	// this one declares.
+	bridge_devices: [pci.BRIDGE_DEVICE_COUNT]system.Handle
+	bridge_device_count: u32
+	defer for handle in bridge_devices {
+		if handle != 0 {
+			system.close(handle)
+		}
+	}
+	if behind_conventional_bridge {
+		bridge_devices, bridge_device_count, status = bridge_devices_hold(group, place)
+		if status != .Ok {
+			return nil, 0, status
+		}
+		for handle, index in bridge_devices {
+			if handle != 0 {
+				grants[pci.GRANT_BRIDGE_DEVICE + index] = {handle, {.Read, .Write}}
+			}
+		}
+	}
 
 	// The device: no line interrupt, its memory, and its message interrupt.
 	command := pci.read_16(place, pci.OFFSET_COMMAND)
@@ -211,6 +341,9 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	}
 	driver.is_driver = true
 	driver.device = place
+	if behind_conventional_bridge {
+		driver.bridge_group = group
+	}
 	driver.role = {.System_Part}
 	driver.granted = {.Log}
 	copy(driver.name[:len(driver.name) - 1], kind.name)
@@ -218,6 +351,9 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		system.log_in("devices", .Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(place.device), " of the bus")
 	} else {
 		system.log_in("devices", .Info, "root: started ", system.Module_Name{kind.name}, " for the device at the place ", u64(place.device), " of the bus ", u64(place.bus), ", behind a bridge")
+	}
+	if behind_conventional_bridge {
+		system.log_in("devices", .Info, "root: ", system.Module_Name{kind.name}, " also holds the registers of each other device behind the conventional bridge in front of the bus ", u64(group.first_bus), ", which shares its requester; other devices: ", u64(bridge_device_count))
 	}
 	return driver, ring_memory, .Ok
 }
