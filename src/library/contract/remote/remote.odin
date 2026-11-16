@@ -24,6 +24,11 @@
 // The host trusts nothing in an answer: answer_check checks the header
 // against the bytes of the stream.
 //
+// The client proves its own Ed25519 key in the handshake (a raw public key
+// in mutual TLS 1.3), and the remote service takes it only when a principal
+// allowed it: the client table (client_table.odin) gives the principal that
+// each call acts for.
+//
 // All numbers are little-endian. A header has no text but fixed names of 32
 // bytes, and no field whose size depends on a language or a machine.
 //
@@ -83,6 +88,10 @@ Stream_Error :: enum u64 {
 	// The host gave up the call: a reset of the host. A call that ran keeps
 	// its effects.
 	Cancelled = 3,
+	// A CONNECTION_CLOSE of the remote service: the grant of the key of the
+	// client ended while the connection was open. Its principal revoked it,
+	// or locked its session (client_table.odin).
+	Revoked   = 4,
 }
 
 // The name of each code, for the log of the two sides.
@@ -92,6 +101,7 @@ STREAM_ERROR_NAMES := [Stream_Error]string {
 	.Too_Large = "Too_Large",
 	.Timeout   = "Timeout",
 	.Cancelled = "Cancelled",
+	.Revoked   = "Revoked",
 }
 
 // stream_error_name gives the name of an application error code, or "" for

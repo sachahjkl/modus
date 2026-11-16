@@ -2335,11 +2335,31 @@ Do not use: master key, device key.
 
 Acts for the principal is a grant of the root service (`acts_for_principal`): in each service that the program is connected to, it sees what the service holds for all callers, for the principal of its session.
 
-Without it, a caller of a service sees only its own data. The console and the remote service have it; `revoke("remote", "acts_for_principal")` ends it, and the next call is refused. The grant travels in bit 63 of the grant of each connection (`isolated.CALLER_ACTS_FOR_PRINCIPAL`).
+Without it, a caller of a service sees only its own data. The console and the remote service have it; `revoke("remote", "acts_for_principal")` ends it, and the next call is refused. The grant travels in bit 63 of the grant of each connection (`isolated.CALLER_ACTS_FOR_PRINCIPAL`). A connection of the remote service acts for the principal of the client key that it is for, not for the session of the remote service.
 
 The design: `docs/PRINCIPALS.md`, "The session".
 
 Do not use: superuser, privileged, person.
+
+### Client key
+
+A client key is the Ed25519 public key that a client of the remote service proves in the QUIC handshake, and that a principal allows so that each call of that client acts for it.
+
+The client sends it as a raw public key, with a CertificateVerify signed by its private key (mutual TLS 1.3). A principal allows it from a console that acts for it, with `remote_allow(key)`, and ends the grant with `remote_disallow(key)`. One key belongs to one principal. A key that no principal allowed is refused in the handshake with the alert access_denied, before any call. The key of the server of `remote` is another key: the pinned key of the client.
+
+The design: `docs/PRINCIPALS.md`, "The client keys of remote".
+
+Do not use: client certificate, API key.
+
+### Client table
+
+The client table is the page in which the root service keeps each client key that a principal allowed, with that principal and a serial; the remote service reads it and never writes it.
+
+Each row is one grant (`remote.Client`). Its serial names that grant: a new row, a lock and an unlock of the session of its principal each give a new one, and a connection to a service that the root service made for a row ends when the serial of the row changes. The remote service maps the table with the right Read only, by its start grant `Remote_Clients`, and waits on its version, which the root service wakes at each change. It holds 8 rows, 4 of them for one principal at most, and lasts until the machine stops.
+
+The design: `src/library/contract/remote/client_table.odin`; `docs/PRINCIPALS.md`, "The client keys of remote".
+
+Do not use: allow list, access list, key ring.
 
 ### Input
 
@@ -5784,7 +5804,7 @@ A raw public key is a public key that a TLS peer sends in its Certificate messag
 
 The server sends the SubjectPublicKeyInfo of its Ed25519 key: 12 fixed bytes and the 32 bytes of the key, 44 bytes in all. The client offers `server_certificate_type` with the one type RawPublicKey, and the server answers with that type. No other DER is read and no X.509 certificate is read: a parser of certificates is a large parser of hostile input, and the system has no certificate authority, no name and no date to check.
 
-The client trusts the key only when it is the pinned key, and CertificateVerify proves that the server holds its private key, over the transcript. `quic_echo` and `remote` make a new Ed25519 key at each start and write the public key on the log ("remote: the public key of this service: " and 64 hexadecimal digits). The OpenSSL client of the host speaks to `quic_echo` with `-enable_server_rpk`.
+The client trusts the key only when it is the pinned key, and CertificateVerify proves that the server holds its private key, over the transcript. `quic_echo` and `remote` make a new Ed25519 key at each start and write the public key on the log ("remote: the public key of this service: " and 64 hexadecimal digits). The OpenSSL client of the host speaks to `quic_echo` with `-enable_server_rpk`. A client proves its own key the same way when the server asks for it (`client_certificate_type`, a CertificateRequest): the client key of `remote`.
 
 The design: `docs/QUIC.md`, "4. TLS 1.3 for QUIC (the second layer, built)".
 

@@ -108,6 +108,7 @@ import "modus:support/disk_program"
 import "modus:support/storage"
 import "modus:contract/settings"
 import "modus:contract/palette_table"
+import "modus:contract/remote"
 import "modus:contract/start_grant"
 
 ROOT_MARK :: "root: ok"
@@ -274,12 +275,15 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// with the grant Network.
 		return {.Network_Device}
 	case "remote":
-		// The calls of the host: a listen grant of UDP that admits the
-		// address of the host only (QUIC in the program, the module
-		// cryptography through its imports), connections to the services of
-		// callable_of, and the grant to act for the principal of its session
-		// (docs/MODULE_CONTRACT.md, "A call from the host").
-		return {.Connect, .Network, .Acts_For_Principal}
+		// The calls of another machine: a listen grant of UDP that admits
+		// the address of the host only (QUIC in the program, the module
+		// cryptography through its imports), the client table, which names
+		// the key of each client that a principal allowed, connections to
+		// the services of callable_of, each for one row of that table, and
+		// the grant to act for the principal of that row
+		// (docs/MODULE_CONTRACT.md, "A call from the host";
+		// docs/PRINCIPALS.md, "The client keys of remote").
+		return {.Connect, .Network, .Acts_For_Principal, .Remote_Clients}
 	case "interface_through_module":
 		return {.Image} // It reads the size of the code of interface_module.
 	case "debugger_window":
@@ -509,6 +513,11 @@ Started :: struct {
 	// handle: the grant `debug` is a grant of this caller. nil with no
 	// debugger.
 	debug_for:       ^Started,
+	// The row of the client table of the connection of debug_for that
+	// asked (Client_Grant.place): the clients of two principals are the
+	// one caller `remote`, and the debugging of one must not be ended or
+	// taken through the connection of the other. 0: a caller with no row.
+	debug_for_row:   int,
 }
 
 // The size of the terminal of each program, and what it shows.
@@ -529,6 +538,10 @@ Connection :: struct {
 	// (Root_Command.Connect_History): its grant is the limit of that store,
 	// never the private store and never the grant to act for the principal.
 	history: bool,
+	// A connection of `remote` for one row of the client table: it acts
+	// for the principal of the row, and ends when the grant of the row
+	// ends (remote_clients.odin). place 0: none.
+	client:  Client_Grant,
 }
 
 // The blocks of the store of a line history. One object of one block
@@ -543,6 +556,9 @@ HISTORY_STORE_LIMIT :: 4
 connection_grant :: proc "contextless" (connection: ^Connection) -> u64 {
 	if connection.history {
 		return isolated.caller_grant_make(.History in connection.caller.revoked ? 0 : HISTORY_STORE_LIMIT, connection.caller.principal, false)
+	}
+	if connection.client.place != 0 {
+		return client_connection_grant(connection.caller, connection.client)
 	}
 	return grant_for(connection.caller, connection.service)
 }
@@ -742,6 +758,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		replacement_table = (^system.Replacement_Table)(table)
 	}
+	remote_clients_create()
 
 	// The input service: the ports and the interrupts of the PS/2 controller.
 	input_memory: system.Handle
@@ -931,7 +948,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The completion of a load from the disk comes when the
 				// load ends: this loop goes on meanwhile.
 				held := false
+				// A refusal that wrote its own error record.
+				own_refusal := false
 				#partial switch command {
+				case .Remote_Client:
+					result = remote_client_command(&item, record, &completion.values)
+					own_refusal = true
 				case .Start_From_Disk:
 					result, held = disk_start_begin(&item, record, &completion.values)
 				case .Disk_Grant:
@@ -954,7 +976,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					result = machine_key_take(record.values)
 					key_ring_erase(&item.requests.commands)
 				case .Connect:
-					result = connect(&item, system.name_of(name[:]), &completion.values)
+					if .Remote_Clients in item.role || record.values[4] != 0 {
+						// The program of the client table connects for one
+						// of its rows, and for no other principal.
+						client, client_status := client_grant_of(&item, record.values[4], record.values[5], &completion.values)
+						result = client_status
+						own_refusal = client_status != .Ok
+						if client_status == .Ok {
+							result = connect(&item, system.name_of(name[:]), &completion.values, client = client)
+						}
+					} else {
+						result = connect(&item, system.name_of(name[:]), &completion.values)
+					}
 				case .Connect_History:
 					result = .No_Right
 					if .History_Store in grants_of(system.name_of(item.name[:])) && .History not_in item.revoked && system.name_of(name[:]) == "storage" {
@@ -968,7 +1001,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					// ends its calls to the storage service.
 					result = .Bad_Handle
 					for &connection in connections {
-						if connection.caller == &item && !connection.history && system.name_of(connection.service.name[:]) == system.name_of(name[:]) {
+						// values[4]: the row of the client table that the
+						// connection is for, as Connect named it; 0 for none.
+						if connection.caller == &item && !connection.history && connection.client.place == int(min(record.values[4], u64(max(int)))) && system.name_of(connection.service.name[:]) == system.name_of(name[:]) {
 							disconnect(&connection)
 							result = .Ok
 						}
@@ -1029,7 +1064,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// cause that only replace knows. A refused Debug_Store wrote
 				// its own, as Debug does. A refused Principal_Change wrote its
 				// own: the grant that refuses is a fact of the caller.
-				if result != .Ok && command != .Debug && command != .Debug_Store && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key && command != .Principal_Unlock && command != .Replace && command != .Principal_Change && command != .Principal_Change_End {
+				// A refused Remote_Client, and a Connect for a row of the
+				// client table that its check refused, wrote their own: a
+				// key or a row is where a name would be.
+				if result != .Ok && !own_refusal && command != .Debug && command != .Debug_Store && command != .Start_From_Disk && command != .Disk_Grant && command != .Nickname_Move && command != .Disk_Grant_Persistence && command != .Machine_Key && command != .Principal_Unlock && command != .Replace && command != .Principal_Change && command != .Principal_Change_End {
 					completion.values = refusal(system.Root_Command(record.kind), system.name_of(name[:]), record.values[4], result)
 				}
 				completion.kind = u32(result)
@@ -1406,6 +1444,9 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	if .Replacements in role {
 		grants[system.GRANT_REPLACEMENTS] = {replacement_memory, {.Read}}
 	}
+	if .Remote_Clients in role {
+		grants[remote.GRANT_CLIENT_TABLE] = {client_table_memory, {.Read}}
+	}
 	if .Settings in role {
 		grants[settings.GRANT_PAGE] = {settings_memory, {.Read, .Write}}
 		values[settings.VALUE_BOOT_PASS] = u64(settings_boot_pass)
@@ -1630,12 +1671,14 @@ debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) 
 //   machine key during a request;
 // - Debugger: a ring of its own, and the debuggings of its callers;
 // - System_Part: handles that no other grant names;
-// - Versions_Erase: the versions of the objects of its own store.
+// - Versions_Erase: the versions of the objects of its own store;
+// - Remote_Clients: a connection for a row of the client table acts for the
+//   principal of that row, which is not the principal of the caller.
 // Each other grant reaches one thing that each of its holders reaches: the
 // machine by its rights, the boot image, the debug image, the replacement
 // table, the settings page, the date page, the records of the log, the
 // commands of the root ring.
-GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part, .Versions_Erase}
+GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part, .Versions_Erase, .Remote_Clients}
 
 // debug gives the debugger service the handle of the program with a name,
 // with the right Debug and no other, on behalf of one of its callers:
@@ -1672,9 +1715,16 @@ GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Stor
 debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u64, end: bool, values: ^[7]u64) -> system.Status {
 	kind := u32(system.Root_Command.Debug)
 	caller: ^Started
+	// The principal that the caller acts for through this connection: a
+	// connection of `remote` for a row of the client table acts for the
+	// principal of the row, not for the session of `remote`.
+	caller_principal: u64
+	caller_row: int
 	for &connection in connections {
 		if connection.caller != nil && connection.service == holder && !connection.history && u64(connection.ring) == connection_ring {
 			caller = connection.caller
+			caller_principal = connection_principal(&connection)
+			caller_row = connection.client.place
 		}
 	}
 	if caller == nil {
@@ -1689,7 +1739,7 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 	// The service ended the debugging of the program for this caller: this
 	// service forgets the debug access, and another caller can ask for it.
 	if end {
-		if target.debugger != holder || target.debug_for != caller {
+		if target.debugger != holder || target.debug_for != caller || target.debug_for_row != caller_row {
 			values^ = errors.ring_fail(kind, .Absent, .Debugged_Programs, 1)
 			return .Bad_State
 		}
@@ -1705,7 +1755,7 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 		values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1)
 		return .No_Right
 	}
-	if .Acts_For_Principal not_in grants_held(caller) || target.principal != caller.principal {
+	if .Acts_For_Principal not_in grants_held(caller) || target.principal != caller_principal {
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		return .Bad_Operation
 	}
@@ -1715,7 +1765,7 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 		return .Bad_State
 	}
 	// One debugger for one program: the kernel has the same rule.
-	if target.debugger != nil && (target.debugger != holder || target.debug_for != caller) {
+	if target.debugger != nil && (target.debugger != holder || target.debug_for != caller || target.debug_for_row != caller_row) {
 		values^ = errors.ring_fail(kind, .Full, .Debugged_Programs, 1, 0, 1)
 		return .Bad_State
 	}
@@ -1726,10 +1776,11 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 	}
 	target.debugger = holder
 	target.debug_for = caller
+	target.debug_for_row = caller_row
 	caller.granted += {.Debug}
 	hash := transmute([4]u64)target.hash
 	values^ = {u64(given), hash[0], hash[1], hash[2], hash[3], target.principal, 0}
-	system.log_in("programs", .Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " the right to debug ", system.Module_Name{name}, " for ", system.Module_Name{system.name_of(caller.name[:])}, ", for principal ", caller.principal)
+	system.log_in("programs", .Info, "root: gave ", system.Module_Name{system.name_of(holder.name[:])}, " the right to debug ", system.Module_Name{name}, " for ", system.Module_Name{system.name_of(caller.name[:])}, ", for principal ", caller_principal)
 	return .Ok
 }
 
@@ -1740,7 +1791,7 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 // of the holdings that ended.
 debug_end :: proc "contextless" (target: ^Started) -> (count: u64) {
 	holder, caller := target.debugger, target.debug_for
-	target.debugger, target.debug_for = nil, nil
+	target.debugger, target.debug_for, target.debug_for_row = nil, nil, 0
 	// The connection to the store of the debug object is a part of the
 	// debug access, and ends with it.
 	debug_store_end(target)
@@ -2062,9 +2113,10 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 // connect makes a connection from a caller to the service with a name: a
 // new call ring and a new call region, that the two programs receive. This
 // service pays for the two memory objects and does not keep them. values is
-// the completion of Root_Command.Connect.
-connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, history := false) -> system.Status {
-	free, service, ring_memory, region_memory := connection_open(caller, name, history) or_return
+// the completion of Root_Command.Connect. client: the row of the client
+// table that the connection is for, or none.
+connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, history := false, client: Client_Grant = {}) -> system.Status {
+	free, service, ring_memory, region_memory := connection_open(caller, name, history, client) or_return
 	defer system.close(ring_memory)
 	defer system.close(region_memory)
 	// The caller receives its handles through its ring to this service.
@@ -2087,6 +2139,9 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	acts := connection_grant(free) & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 	if history {
 		system.log_in("calls", .Info, "root: connected ", system.Module_Name{system.name_of(caller.name[:])}, " to the store of its line history in the service ", system.Module_Name{name}, ", ", system.Size{HISTORY_STORE_LIMIT, .Blocks}, ", for principal ", caller.principal)
+	} else if client.place != 0 {
+		head: [16]u8
+		system.log_in("calls", .Info, "root: connected ", system.Module_Name{system.name_of(caller.name[:])}, " to the service ", system.Module_Name{name}, acts ? ", acting for principal " : ", for principal ", client.principal, ", for the client key ", key_head_text(&head, client.key))
 	} else {
 		system.log_in("calls", .Info, "root: connected ", system.Module_Name{system.name_of(caller.name[:])}, " to the service ", system.Module_Name{name}, acts ? ", acting for principal " : ", for principal ", caller.principal)
 	}
@@ -2097,7 +2152,7 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 // the service with a name, and starts the service if it starts on demand.
 // It gives the call ring and the call region: give them to the caller,
 // then close them.
-connection_open :: proc "contextless" (caller: ^Started, name: string, history := false) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, status: system.Status) {
+connection_open :: proc "contextless" (caller: ^Started, name: string, history := false, client: Client_Grant = {}) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, status: system.Status) {
 	for pass in 0 ..< 2 {
 		for &item in started {
 			if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
@@ -2120,7 +2175,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 			free = &connection
 		} else if connection.service == service {
 			count += 1
-			if connection.caller == caller && connection.history == history {
+			if connection.caller == caller && connection.history == history && connection.client.place == client.place {
 				return nil, nil, 0, 0, .Bad_State
 			}
 		}
@@ -2150,7 +2205,10 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		if caller.from_disk {
 			program_of_the_store = disk_program.store_program_name(&disk_store_name, program_of_the_store)
 		}
-		if !principals.store_name_write(&store_name, program_of_the_store, caller.principal, history) {
+		// A connection for a row of the client table belongs to the
+		// principal of the row.
+		principal_of_the_store := client.place != 0 ? client.principal : caller.principal
+		if !principals.store_name_write(&store_name, program_of_the_store, principal_of_the_store, history) {
 			system.log_in("calls", .Warning, "root: the name of the store of ", system.Module_Name{system.name_of(caller.name[:])}, " for principal ", caller.principal, " has more than 31 bytes: no connection")
 			return nil, nil, 0, 0, .Bad_Operation
 		}
@@ -2174,7 +2232,15 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		return nil, nil, 0, 0, status
 	}
 	caller_name := transmute([4]u64)store_name
-	grant := history ? isolated.caller_grant_make(HISTORY_STORE_LIMIT, caller.principal, false) : grant_for(caller, service)
+	grant: u64
+	switch {
+	case history:
+		grant = isolated.caller_grant_make(HISTORY_STORE_LIMIT, caller.principal, false)
+	case client.place != 0:
+		grant = client_connection_grant(caller, client)
+	case:
+		grant = grant_for(caller, service)
+	}
 	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), values = {0 = u64(in_service_ring), 1 = u64(in_service_region), 2 = caller_name[0], 3 = caller_name[1], 4 = caller_name[2], 5 = caller_name[3], 6 = grant}}) {
 		system.close(ring_memory)
 		system.close(region_memory)
@@ -2191,6 +2257,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		ring    = in_service_ring,
 		region  = in_service_region,
 		history = history,
+		client  = client,
 	}
 	return free, service, ring_memory, region_memory, .Ok
 }
@@ -2233,7 +2300,7 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 	// still call it.
 	if !connection.history {
 		for &other in started {
-			if other.program != 0 && other.debugger == connection.service && other.debug_for == connection.caller {
+			if other.program != 0 && other.debugger == connection.service && other.debug_for == connection.caller && other.debug_for_row == connection.client.place {
 				debug_end(&other)
 			}
 		}
