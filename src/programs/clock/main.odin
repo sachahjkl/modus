@@ -54,9 +54,6 @@ LINE :: interface.TABLE_LINE
 WIDTH :: 816
 HEIGHT :: 312 + LINE
 
-COLOR_PAGE :: 0x58D878
-COLOR_ENTRY :: 0x5890E0
-
 Measure :: struct {
 	name:    string,
 	done:    bool,
@@ -181,7 +178,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 		line := interface.column_take(&column, LINE)
 		interface.table_band(&frame, {line.x - 8, line.y, line.width + 16, line.height}, index)
 		interface.row_split(line, sizes[:], cells[:], 16)
-		color := graphics.Color(index == 0 ? COLOR_PAGE : COLOR_ENTRY)
+		// The time page is memory that the kernel shares; the other way is
+		// a kernel entry.
+		color := index == 0 ? graphics.colors.memory : graphics.colors.kernel
 		interface.cell_text(&frame, cells[0], measure.name, color)
 		if !measure.done {
 			interface.cell_text(&frame, cells[1], "...", graphics.colors.dim)

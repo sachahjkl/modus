@@ -81,6 +81,50 @@ own_numbers_in_order :: proc(t: ^testing.T) {
 	testing.expect_value(t, own_records_lost(2, i64(last)), 3)
 }
 
+// A starter that lends the handle of its child receives the records of that
+// child only: not its own records, not the records of another child, not
+// the records of an earlier program of the slot of the child, and not the
+// records of the kernel.
+@(test)
+records_of_a_lent_program :: proc(t: ^testing.T) {
+	CHILD_SLOT :: 9
+	CHILD_SERIAL :: 4
+	child := lent_program_scope(CHILD_SLOT, CHILD_SERIAL)
+	testing.expect(t, !child.whole_log)
+
+	of_the_child := op.Log_Record{program = CHILD_SLOT, program_serial = CHILD_SERIAL}
+	of_the_starter := op.Log_Record{program = CHILD_SLOT - 1, program_serial = CHILD_SERIAL}
+	of_another_child := op.Log_Record{program = CHILD_SLOT + 1, program_serial = CHILD_SERIAL + 1}
+	of_an_earlier_child_in_the_slot := op.Log_Record{program = CHILD_SLOT, program_serial = CHILD_SERIAL - 1}
+	of_a_later_program_in_the_slot := op.Log_Record{program = CHILD_SLOT, program_serial = CHILD_SERIAL + 1}
+	kernel := op.Log_Record{}
+
+	testing.expect(t, record_in_scope(child, &of_the_child))
+	testing.expect(t, !record_in_scope(child, &of_the_starter))
+	testing.expect(t, !record_in_scope(child, &of_another_child))
+	testing.expect(t, !record_in_scope(child, &of_an_earlier_child_in_the_slot))
+	testing.expect(t, !record_in_scope(child, &of_a_later_program_in_the_slot))
+	testing.expect(t, !record_in_scope(child, &kernel))
+}
+
+// The scope of a lent program does not depend on the grant of the
+// connection: a caller that acts for the principal and lends a handle
+// receives the records of that program only, and the slot 0, which no
+// program handle names, gives no record.
+@(test)
+lent_program_is_never_the_whole_log :: proc(t: ^testing.T) {
+	whole := scope_of(isolated.caller_grant_make(0, 0, true))
+	testing.expect(t, whole.whole_log)
+	child := lent_program_scope(3, 2)
+	testing.expect(t, !child.whole_log)
+	other := op.Log_Record{program = 4, program_serial = 2}
+	testing.expect(t, !record_in_scope(child, &other))
+
+	none := lent_program_scope(0, 0)
+	kernel := op.Log_Record{}
+	testing.expect(t, !record_in_scope(none, &kernel))
+}
+
 // The grant of a caller with no amount names no program: it receives no
 // record, not the records of the kernel.
 @(test)

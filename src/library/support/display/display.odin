@@ -214,9 +214,8 @@ Window :: struct {
 PICTURES_MEASURED :: 10 // The pictures after which a measure run writes its last line.
 // In a measure run (system.measure_run), the log has the time of the
 // pictures of each window, after 1, 3 and 10 pictures. A usual run writes
-// none of these lines: the ring of the log keeps 1023 records, and the main
-// scenario reads its oldest records (the channel boot) late in the run,
-// with about 13 records of room.
+// none of these lines: they would add three lines for each window to the
+// log of each test.
 
 // picture_begin marks the start of a picture, for the measure of present.
 picture_begin :: proc "contextless" (window: ^Window) {

@@ -106,12 +106,6 @@ scroll_identity :: proc "contextless" () -> interface.Element_Identity {
 // The scroll bar moved the text in the last frame: the next frame shows it.
 text_moved_by_scroll_bar: bool
 
-COLOR_SELECTED :: 0x2C3A4C
-COLOR_TITLE :: 0xF0C050
-COLOR_HEADING :: 0x6CB4F0
-COLOR_EXPORT :: 0x7CD890
-COLOR_CODE :: 0xE0A878
-
 image: []u8
 built: [16384]u8 // The lines that this program writes: the signatures and the facts.
 built_count: int
@@ -152,14 +146,15 @@ page_back :: proc "contextless" () {
 }
 
 // page_rebuild writes the page that the window shows again, at the same
-// row: the widths of the words change with the font.
+// row: the widths of the words change with the font, and each row keeps the
+// color of the appearance in which it was made.
 page_rebuild :: proc "contextless" () {
 	kept := first_line
 	switch page_kind {
 	case .Module:
 		page_build()
 	case .Overview:
-		return // The table is in the font of the cells.
+		overview_build()
 	case .Link_Page:
 		link_page_build(link_page_index)
 	}
@@ -266,7 +261,8 @@ USE_INDENT :: 2
 // hold the two, the description is on the row under the call: the two
 // texts never meet.
 put_use :: proc "contextless" (call, name, description: string) {
-	put_built(USE_INDENT, COLOR_CODE, call, "(\"", name, "\")")
+	// Code is in the font of the cells, in the text color.
+	put_built(USE_INDENT, graphics.colors.text, call, "(\"", name, "\")")
 	column := max(USE_INDENT + len("connect(\"\")") + len(name) + 2, 24)
 	if fits_after(description, column) {
 		put(description, column, graphics.colors.text)
@@ -291,7 +287,7 @@ page_build :: proc "contextless" () {
 	name := system.name_of(entry.name[:])
 	file := file_of(entry)
 	if file == nil {
-		put_built(0, COLOR_TITLE, name)
+		put_built(0, graphics.colors.failed, name)
 		put("This file is not a valid module.", 0, graphics.colors.text)
 		return
 	}
@@ -301,7 +297,8 @@ page_build :: proc "contextless" () {
 	has_entry := head.entry_export != 0
 	imports := int(max(module.count(file, .Imports), 1)) - 1
 
-	put_built(0, COLOR_TITLE, name)
+	// The title has the color of the module in the list.
+	put_built(0, module_color(exports, has_entry), name)
 	put_paragraph(about, 0, graphics.colors.text)
 	put("", 0, 0)
 	hash: [16]u8
@@ -314,7 +311,7 @@ page_build :: proc "contextless" () {
 	put_built(0, graphics.colors.dim, "exports   ", u64(exports), has_entry ? ", and an entry" : ", and no entry")
 	put("", 0, 0)
 
-	put("HOW TO USE IT", 0, COLOR_HEADING)
+	put("HOW TO USE IT", 0, graphics.colors.dim)
 	if has_entry {
 		put_use("start", name, "a program: the module has an entry")
 	}
@@ -337,35 +334,38 @@ page_build :: proc "contextless" () {
 		}
 	}
 	if imports > 0 || replaced_count > 0 {
-		put_built(0, COLOR_HEADING, "IMPORTS (", u64(imports), ")")
+		put_built(0, graphics.colors.dim, "IMPORTS (", u64(imports), ")")
 		for number in 1 ..= u32(imports) {
 			record, _ := module.record(file, .Imports, number, module.Import)
-			put_built(2, COLOR_CODE, module_text(record.hash))
+			// A module, in the color of its value kind: the color of a
+			// program. A replacement is a fact of this machine: the color
+			// of the machine.
+			put_built(2, graphics.colors.program, module_text(record.hash))
 			for item in replaced {
 				if item.from == record.hash {
-					put_built(4, COLOR_TITLE, "on this machine a loader gives ", module_text(item.to), " in its place")
+					put_built(4, graphics.colors.machine, "on this machine a loader gives ", module_text(item.to), " in its place")
 				}
 			}
 		}
 		for item in replaced {
 			if item.from == entry.hash {
-				put_built(2, COLOR_TITLE, "on this machine ", module_text(item.to), " replaces this module in each import")
+				put_built(2, graphics.colors.machine, "on this machine ", module_text(item.to), " replaces this module in each import")
 			}
 			if item.to == entry.hash {
-				put_built(2, COLOR_TITLE, "on this machine this module replaces ", module_text(item.from), " in each import")
+				put_built(2, graphics.colors.machine, "on this machine this module replaces ", module_text(item.from), " in each import")
 			}
 		}
 		put("", 0, 0)
 	}
 
 	information_page(entry.hash)
-	put("DOCUMENTATION", 0, COLOR_HEADING)
+	put("DOCUMENTATION", 0, graphics.colors.dim)
 	put_markdown(text, 0, graphics.colors.text)
 	if exports == 0 {
 		return
 	}
 	put("", 0, 0)
-	put_built(0, COLOR_HEADING, "EXPORTS (", u64(exports), ")")
+	put_built(0, graphics.colors.dim, "EXPORTS (", u64(exports), ")")
 	for index in 1 ..< module.count(file, .Exports) {
 		function, ok := module.function(file, index)
 		if !ok || index == head.entry_export || function.name_count == 0 {
@@ -379,7 +379,9 @@ page_build :: proc "contextless" () {
 		if wanted_export != "" && module.string_at(file, function.name_offset, function.name_count) == wanted_export {
 			wanted_row = row_count
 		}
-		put(system.written(&writer), 0, COLOR_EXPORT)
+		// The signature of a procedure: the color of the value kind
+		// Procedure, the kernel blue.
+		put(system.written(&writer), 0, graphics.colors.kernel)
 		put_markdown(module.string_at(file, function.text_offset, function.text_count), 4, graphics.colors.text)
 		put("", 0, 0)
 	}
@@ -388,7 +390,7 @@ page_build :: proc "contextless" () {
 	if records <= 1 {
 		return
 	}
-	put_built(0, COLOR_HEADING, "RECORDS (", u64(records - 1), ")")
+	put_built(0, graphics.colors.dim, "RECORDS (", u64(records - 1), ")")
 	for index in 1 ..< records {
 		described, ok := module.record_type(file, index)
 		if !ok {
@@ -397,7 +399,9 @@ page_build :: proc "contextless" () {
 		if wanted_record != "" && module.string_at(file, described.name_offset, described.name_count) == wanted_record {
 			wanted_row = row_count
 		}
-		put_built(0, COLOR_EXPORT, module.string_at(file, described.name_offset, described.name_count), "  ", u64(described.size), " bytes")
+		// A record is a type: the accent of the value kind Type, the
+		// firmware violet.
+		put_built(0, graphics.colors.firmware, module.string_at(file, described.name_offset, described.name_count), "  ", u64(described.size), " bytes")
 		for number in 0 ..< described.field_count {
 			item, _ := module.field(file, described, number)
 			writer := system.Writer {
@@ -508,10 +512,6 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 	}
 }
 
-// COLOR_FOCUS is the line under the link with the focus: white, as the
-// frame of the focus of a button.
-COLOR_FOCUS :: 0xFFFFFF
-
 draw_records :: proc "contextless" (frame: ^interface.Frame) {
 	table := frame.table
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
@@ -527,15 +527,19 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 			break
 		}
 		y := 4 + (start - first_row) * CELL_HEIGHT
-		if index == selected && page_kind == .Module {
-			interface.draw_rectangle(table, 0, y, LIST_WIDTH, (end - start) * CELL_HEIGHT, COLOR_SELECTED)
-		}
 		exports := list_exports[index]
-		interface.draw_text_wrapped(table, 8, y, list_name_room(exports), system.name_of(entries[index].name[:]), list_colors[index])
+		name_color, count_color := module_color(exports, list_has_entry[index]), graphics.colors.dim
+		// The chosen row of a list: the chosen blue, its texts in white
+		// (docs/DESIGN.md, "The chosen row").
+		if index == selected && page_kind == .Module {
+			interface.draw_rectangle(table, 0, y, LIST_WIDTH, (end - start) * CELL_HEIGHT, graphics.colors.chosen)
+			name_color, count_color = graphics.COLOR_WHITE, graphics.COLOR_WHITE
+		}
+		interface.draw_text_wrapped(table, 8, y, list_name_room(exports), system.name_of(entries[index].name[:]), name_color)
 		if exports > 0 {
 			buffer: [8]u8
 			count := system.format(buffer[:], u64(exports))
-			interface.draw_text(table, LIST_WIDTH - 8 - len(count) * CELL_WIDTH, y, count, graphics.colors.dim)
+			interface.draw_text(table, LIST_WIDTH - 8 - len(count) * CELL_WIDTH, y, count, count_color)
 		}
 	}
 
@@ -560,13 +564,16 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 		}
 		focused := part.link > 0 && int(part.link) == focused_link
 		if focused {
-			// The band is the box of the part: it covers no other text.
-			interface.draw_rectangle(table, x, y, int(part.width), CELL_HEIGHT, COLOR_SELECTED)
+			// The band is the box of the part: it covers no other text. It
+			// is the track, as a button: the color of a link keeps its
+			// contrast there in both appearances.
+			interface.draw_rectangle(table, x, y, int(part.width), CELL_HEIGHT, graphics.colors.track)
 		}
 		interface.draw_text(table, x, y, part.text, part.color, part.font)
 		switch {
 		case focused:
-			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 2, COLOR_FOCUS)
+			// The outline of the focus, in the strong text color.
+			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 2, graphics.colors.text_strong)
 		case .Opens_A_Page in part.flags:
 			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, part.color)
 		case .Underlined in part.flags:
@@ -600,8 +607,26 @@ LIST_ROWS :: (HEIGHT - 8) / CELL_HEIGHT // The lines of the list in the window.
 LIST_ENTRY_CAPACITY :: 1024
 list_row: [LIST_ENTRY_CAPACITY + 1]int // The first line of each module, and at list_count the count of the lines.
 list_exports: [LIST_ENTRY_CAPACITY]int // The count of the described exports of each module.
-list_colors: [LIST_ENTRY_CAPACITY]graphics.Color
+// Whether each module has an entry. The list keeps the facts and not their
+// colors: a color is of the appearance in force, which can change.
+list_has_entry: [LIST_ENTRY_CAPACITY]bool
 list_count: int
+
+// module_color gives the color of a module, in the list and in the title of
+// its page: a program that also serves calls, in the color of a program; a
+// library, the color of a module with no entry; a program with no exports,
+// the text; anything else, the dim text.
+module_color :: proc "contextless" (exports: int, has_entry: bool) -> graphics.Color {
+	switch {
+	case exports > 0 && has_entry:
+		return graphics.colors.program
+	case exports > 0:
+		return graphics.colors.no_entry
+	case has_entry:
+		return graphics.colors.text
+	}
+	return graphics.colors.dim
+}
 
 // list_name_room gives the width of the box of a name of the list, in
 // pixels: the list without its margins and without the count of the
@@ -627,16 +652,7 @@ list_build :: proc "contextless" () {
 		file := file_of(entry)
 		head, _ := module.header(file)
 		exports := described_exports(file)
-		color := graphics.Color(graphics.colors.dim)
-		switch {
-		case exports > 0 && head.entry_export != 0:
-			color = COLOR_EXPORT
-		case exports > 0:
-			color = COLOR_TITLE
-		case head.entry_export != 0:
-			color = graphics.colors.text
-		}
-		list_row[index], list_exports[index], list_colors[index] = line, exports, color
+		list_row[index], list_exports[index], list_has_entry[index] = line, exports, head.entry_export != 0
 		line += max(interface.text_wrapped_line_count(nil, {}, system.name_of(entry.name[:]), list_name_room(exports)), 1)
 	}
 	list_row[list_count] = line
