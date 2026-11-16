@@ -52,8 +52,8 @@ RANGE_SPAN :: SLOT
 // member, is not a fixed range, and the check of the tool refuses it.
 //
 // A starter maps a range in its child before the child runs. For the
-// settings page, the glyph caches, the date page, the debug image and the
-// disk program page, it
+// settings page, the glyph caches, the date page, the debug image, the
+// disk program page and the fresh bytes page, it
 // also sets the bit of the range in the value 20 of the context of the
 // child (`range_mapped_add`). The child reads nothing at a range whose bit
 // is clear (`ranges_mapped`): an address that is not mapped faults at the
@@ -125,6 +125,10 @@ Fixed_Range :: enum u8 {
 	// The root service creates one ring for each program of the boot image
 	// that it starts with a ring to the compositor, maps it here, and gives
 	// it to the font service.
+	Fresh_Bytes_Page, // The fresh bytes page of the program, read-only (modus:contract/fresh_bytes).
+	// The root service writes there, now and then, 32 bytes of its stream
+	// for this program alone, after a read of the entropy device; the
+	// random generator of the program mixes them into its key.
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
 
@@ -166,6 +170,7 @@ DEBUG_IMAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Debug_Image)
 DISK_PROGRAM_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Disk_Program_Page)
 DEMAND_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Demand_Cache)
 GLYPH_REQUESTS_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Glyph_Requests)
+FRESH_BYTES_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Fresh_Bytes_Page)
 
 // The addresses of one range.
 Address_Range :: struct {

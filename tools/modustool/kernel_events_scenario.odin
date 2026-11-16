@@ -82,9 +82,10 @@ scenario_kernel_events := [?]Step {
 // turn. The four counts are measures on the log.
 //
 // The machine runs the program to its end with either outcome. After the
-// machine, the tool reads the boot line "kernel: performance counters" of
-// that machine, which says what the kernel found, and checks the lines of
-// that outcome (thread_counters_outcome_check). The host is read only to
+// machine, the tool reads the last boot line "kernel: performance counters"
+// of that machine, which says what the kernel found and whether its
+// registers passed their trial, and checks the lines of that outcome
+// (thread_counters_outcome_check). The host is read only to
 // explain an outcome: QEMU can fall back to TCG, and a hypervisor below
 // the host can hide its counters, so the host does not decide.
 @(rodata)
@@ -95,10 +96,14 @@ scenario_thread_counters := [?]Step {
 	{kind = .Wait, text = "counters: ok", fails_on = "counters: failed: "},
 }
 
-// The boot line of the kernel that names its counter plan, and the part of
-// it that says that the machine has none (src/kernel/thread_counters.odin).
+// The boot line of the kernel that names its counter plan, the part of it
+// that says that the machine has none, and the part that says that the
+// first processor passed the trial of its registers
+// (src/kernel/thread_counters.odin). A processor whose trial fails writes a
+// later line with the same start: the last one decides.
 THREAD_COUNTERS_BOOT_LINE :: "kernel: performance counters"
 THREAD_COUNTERS_NONE :: ": none that the kernel uses: "
+THREAD_COUNTERS_TRIAL_PASSED :: "; the first processor passed the trial of the registers"
 
 // The lines of the program counters on a machine with a counter plan, in
 // their order.
@@ -120,12 +125,13 @@ thread_counters_lines_unsupported := [?]string {
 	"counters: Read_Counters and Start_Counters gave Bad_Operation with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must",
 }
 
-// thread_counters_outcome_check reads the log of the machine: the boot line
-// of the counter plan decides the outcome, and each line of that outcome
-// must come, in its order. It gives the outcome for the message of the
-// tool, and the first line that did not come.
+// thread_counters_outcome_check reads the log of the machine: the last boot
+// line of the counter plan decides the outcome, and each line of that
+// outcome must come, in its order. A plan needs the trial of the first
+// processor in its line. It gives the outcome for the message of the tool,
+// and the first line that did not come.
 thread_counters_outcome_check :: proc(log: string) -> (counted: bool, missing: string, ok: bool) {
-	boot_at := strings.index(log, THREAD_COUNTERS_BOOT_LINE)
+	boot_at := strings.last_index(log, THREAD_COUNTERS_BOOT_LINE)
 	if boot_at < 0 {
 		return false, THREAD_COUNTERS_BOOT_LINE, false
 	}
@@ -134,6 +140,9 @@ thread_counters_outcome_check :: proc(log: string) -> (counted: bool, missing: s
 		boot_line = boot_line[:end]
 	}
 	counted = !strings.contains(boot_line, THREAD_COUNTERS_NONE)
+	if counted && !strings.contains(boot_line, THREAD_COUNTERS_TRIAL_PASSED) {
+		return counted, THREAD_COUNTERS_TRIAL_PASSED, false
+	}
 	lines := counted ? thread_counters_lines_counted[:] : thread_counters_lines_unsupported[:]
 	rest := log[boot_at:]
 	for line in lines {

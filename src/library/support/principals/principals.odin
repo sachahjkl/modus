@@ -160,6 +160,17 @@ change_problem :: proc "contextless" (form: Principal_Record_Form, mode: u64, ha
 	return .None
 }
 
+// recovery_key_offered_at_unlock says if the passphrase prompt of an unlock
+// offers the recovery key of a file of the form `form` at once (Ctrl+R in
+// `unlock`). Only the form PRINCIPT has a copy under a recovery key, and
+// only with the TPM service does its prompt ask for the passphrase: with no
+// service it asks for the recovery key already. A principal who lost the
+// passphrase then types no wrong try, which the TPM would count against the
+// machine passphrase too.
+recovery_key_offered_at_unlock :: proc "contextless" (form: Principal_Record_Form, has_tpm: bool) -> bool {
+	return form == .Sealed_By_The_Tpm && has_tpm
+}
+
 // The key derivation: Argon2id (RFC 9106) with the first parameter set of
 // the OWASP password storage cheat sheet: 19 MiB, 2 passes, 1 lane. A file
 // with other parameters is refused: no file names its own cost.

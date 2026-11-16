@@ -8,7 +8,9 @@
 // and 0x19. The design is src/md/features/processor_counters.md.
 //
 // The kernel reads the CPUID values once at boot, and plan_of_identification
-// gives the counter plan: a pure function, with host tests.
+// gives the counter plan: a pure function, with host tests. Each processor
+// then takes the trial of the registers of the plan (trial_steps_of_plan,
+// trial_step_outcome), pure functions too.
 package processor_counters
 
 // The four events of the thread counters, in the order of
@@ -105,9 +107,16 @@ Absence :: enum u8 {
 	Intel_Event_Absent       = 4, // Leaf 0xA says that one of the four events is absent.
 	Amd_No_Core_Extension    = 5, // No core counter extension.
 	Amd_Family_Before_Zen    = 6, // A family before 0x17: other event numbers.
+	// The outcomes of the trial of the registers (trial_step_outcome). Each
+	// one names the register of the step that failed.
+	Register_Refused         = 7, // The processor refused an access with a protection fault.
+	Counter_In_Use           = 8, // A select was on: another user counts with its counter.
+	Counter_Not_Kept         = 9, // A counter did not give back the value that the kernel wrote.
 }
 
-// The text of each absence, after "none that the kernel uses: ".
+// The text of each absence, after "none that the kernel uses: ". The text
+// of an outcome of the trial ends with the register, which the kernel
+// writes after it.
 @(rodata)
 ABSENCE_TEXTS := [Absence]string {
 	.None                   = "",
@@ -117,6 +126,15 @@ ABSENCE_TEXTS := [Absence]string {
 	.Intel_Event_Absent     = "Intel, and CPUID leaf 0xA says that one of the four events is absent",
 	.Amd_No_Core_Extension  = "AMD with no core counter extension",
 	.Amd_Family_Before_Zen  = "AMD before the family 0x17 (Zen)",
+	.Register_Refused       = "CPUID lists the counters, and the processor refused a trial access with a protection fault, to the register",
+	.Counter_In_Use         = "a counter was on before the kernel: another user counts with it, at the select register",
+	.Counter_Not_Kept       = "a counter did not give back the value that the kernel wrote, at the register",
+}
+
+// absence_names_a_register says if the line of an absence names a register:
+// the outcomes of the trial do.
+absence_names_a_register :: proc "contextless" (absence: Absence) -> bool {
+	return absence == .Register_Refused || absence == .Counter_In_Use || absence == .Counter_Not_Kept
 }
 
 // The counter plan of a machine: for each event, its select register, its
@@ -212,4 +230,83 @@ plan_of_identification :: proc "contextless" (identification: Identification) ->
 		return plan, .None
 	}
 	return {}, .Unknown_Vendor
+}
+
+// The trial of the registers of a plan. CPUID lists the counters, but a
+// hypervisor can list them and refuse each access to their registers, or
+// take the writes and keep nothing; and a firmware can leave a counter on.
+// So each processor, at its start and before any thread runs, takes each
+// access that the kernel makes later, once, in this order, and the first
+// step that fails ends the trial.
+
+// The value that the trial writes to each counter and reads back. Bit 31 is
+// clear: on Intel with no full-width writes, a write to a counter keeps 32
+// bits and extends bit 31, and this value reads back the same.
+TRIAL_COUNTER_VALUE :: u64(0xABCD)
+
+Trial_Step_Kind :: enum u8 {
+	Read_Select_Off = 0, // Read a select: Enable must be clear, else another user counts with it.
+	Write           = 1, // Write the value.
+	Read_Back       = 2, // Read the register: it must give the value.
+	Add_Bits        = 3, // Read the register, then write it with the bits of the value added.
+}
+
+// One access of the trial to one register.
+Trial_Step :: struct {
+	kind:     Trial_Step_Kind,
+	register: u32,
+	value:    u64,
+}
+
+// The most steps of a trial: a read of each select; for each counter, a
+// write, a read back and a write of 0, then the select value and 0 to its
+// select; and the global control.
+TRIAL_STEP_CAPACITY :: 6 * EVENT_COUNT + 1
+
+// trial_steps_of_plan gives the steps of the trial of a plan, in their
+// order. Each select is read before the trial writes any register: a select
+// that is on belongs to another user, and the kernel then writes nothing.
+// The trial ends with each counter and each select at 0, as the switch
+// leaves them.
+trial_steps_of_plan :: proc "contextless" (plan: Plan) -> (steps: [TRIAL_STEP_CAPACITY]Trial_Step, count: u32) {
+	if plan.vendor == .None {
+		return
+	}
+	for event in Event {
+		steps[count] = {.Read_Select_Off, plan.select_registers[event], 0}
+		count += 1
+	}
+	for event in Event {
+		steps[count + 0] = {.Write, plan.counter_registers[event], TRIAL_COUNTER_VALUE}
+		steps[count + 1] = {.Read_Back, plan.counter_registers[event], TRIAL_COUNTER_VALUE}
+		steps[count + 2] = {.Write, plan.counter_registers[event], 0}
+		steps[count + 3] = {.Write, plan.select_registers[event], plan.select_values[event]}
+		steps[count + 4] = {.Write, plan.select_registers[event], 0}
+		count += 5
+	}
+	if plan.global_control != 0 {
+		steps[count] = {.Add_Bits, plan.global_control, plan.global_control_value}
+		count += 1
+	}
+	return
+}
+
+// trial_step_outcome judges one step: accepted is false when the processor
+// refused an access of the step with a protection fault, and value_read is
+// the value of its read.
+trial_step_outcome :: proc "contextless" (step: Trial_Step, accepted: bool, value_read: u64) -> Absence {
+	if !accepted {
+		return .Register_Refused
+	}
+	#partial switch step.kind {
+	case .Read_Select_Off:
+		if value_read & SELECT_ENABLE != 0 {
+			return .Counter_In_Use
+		}
+	case .Read_Back:
+		if value_read != step.value {
+			return .Counter_Not_Kept
+		}
+	}
+	return .None
 }
