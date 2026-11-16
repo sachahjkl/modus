@@ -101,14 +101,18 @@ a_signature_while_another_thread_changes_the_message :: proc(t: ^testing.T) {
 	shared.place = 7
 	shared.first = shared.bytes[7]
 	shared.second = 0xEE
-	changer := thread.create_and_start_with_data(&shared, flip_until_stopped)
 	error: errors.Error_Record
 	of_first, of_second, of_neither := 0, 0, 0
+	// The two messages are copied before the thread that flips the byte
+	// starts: a copy during the flips can take the second value, and the
+	// two messages are then the same.
 	first_message, second_message: [64]u8
 	copy(first_message[:], shared.bytes[:64])
 	copy(second_message[:], shared.bytes[:64])
-	second_message[7] = 0xEE
+	first_message[shared.place] = shared.first
+	second_message[shared.place] = shared.second
 	first_text, second_text := string(first_message[:]), string(second_message[:])
+	changer := thread.create_and_start_with_data(&shared, flip_until_stopped)
 	for _ in 0 ..< 20_000 {
 		message := string(shared.bytes[:shared.count])
 		signature: [64]u8

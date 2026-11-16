@@ -2916,6 +2916,17 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] > \"{[|]}#@\\~\""},
 	{kind = .Wait, text = "[console] {[|]}#@\\~"},
+	// AltGr with e gives the euro sign, a character past the Latin-1
+	// Supplement: the keys 3, Shift 5, space, AltGr e, 3 type "5 €". The
+	// names are the keys of a QWERTY keyboard: "%" is Shift with the key
+	// of 5.
+	{kind = .Keys, text = "3% "},
+	{kind = .Key, text = "alt_r-e"},
+	{kind = .Keys, text = "3"},
+	{kind = .Key, text = "esc"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] > \"5 €\""},
+	{kind = .Wait, text = "[console] 5 €"},
 	// Backspace removes a whole character: "étéx", Backspace two times,
 	// gives "ét".
 	{kind = .Keys, text = "32t2x"},
@@ -2925,7 +2936,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "esc"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] > \"ét\""},
-	// The vector font draws é, ê and ^ from the glyph cache: no
+	// The vector font draws é, ê, ^ and € from the glyph cache: no
 	// replacement box in the console.
 	{kind = .Shot, text = "keys_french"},
 	{kind = .Call, text = "settings.set(\"keyboard_layout\", \"us\")", expected = "1"},
