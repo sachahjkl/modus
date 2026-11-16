@@ -60,7 +60,6 @@ NAME_ROOM :: program_page.NICKNAME_LIMIT * graphics.CELL_WIDTH
 PAGES_X :: 10 + NAME_ROOM + 8
 BAR_X :: PAGES_X + 68
 BAR_WIDTH :: 190
-COLOR_BAR :: 0x48B0E0
 // The share at the right of its bar: "100%" in the font of the cells.
 #assert(BAR_X + BAR_WIDTH + 8 + 4 * graphics.CELL_WIDTH <= WIDTH)
 
@@ -145,7 +144,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			interface.draw_text(table, x, y, " MiB", graphics.colors.text)
 			y += LINE
 			interface.draw_rectangle(table, 10, y, WIDTH - 20, 10, graphics.colors.track)
-			interface.draw_rectangle(table, 10, y, int(u64(WIDTH - 20) * used / max(report.page_count, 1)), 10, COLOR_BAR)
+			// The pages in use are memory.
+			interface.draw_rectangle(table, 10, y, int(u64(WIDTH - 20) * used / max(report.page_count, 1)), 10, graphics.colors.memory)
 			y += LINE
 			x = interface.draw_text(table, 10, y, "kernel entries ", graphics.colors.dim)
 			interface.draw_unsigned(table, x, y, report.entries, graphics.colors.text)
@@ -219,7 +219,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 				interface.draw_unsigned(table, PAGES_X, y, program.present_pages, graphics.colors.text)
 				interface.draw_rectangle(table, BAR_X, y + 2, BAR_WIDTH, 10, graphics.colors.track)
-				interface.draw_rectangle(table, BAR_X, y + 2, int(share) * BAR_WIDTH / 100, 10, COLOR_BAR)
+				// The share of the processor that a program took: a measure
+				// of a program.
+				interface.draw_rectangle(table, BAR_X, y + 2, int(share) * BAR_WIDTH / 100, 10, graphics.colors.program)
 				x = interface.draw_unsigned(table, BAR_X + BAR_WIDTH + 8, y, share, graphics.colors.text)
 				interface.draw_text(table, x, y, "%", graphics.colors.text)
 				y += row_height

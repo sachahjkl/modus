@@ -73,10 +73,26 @@ One color is one concept, as one term is one concept.
 | Text | `colors.text` | `0xDCE4EC` | `0x0B1018` |
 | Dim text | `colors.dim` | `0x7C8A99` | `0x4A525B` |
 | Strong text: the text that an input types, the outline of the focus | `colors.text_strong` | `0xFFFFFF` | `0x000000` |
+| Warning: a state that asks for attention and is not a failure (a warning of the log, a full ring) | `colors.warning` | `0xF0C050` | `0x886D2D` |
+| Link | `colors.link` | `0x6CB4F0` | `0x3B6283` |
 
-- The state of a thing has three colors: the color of the boot program while it starts, the color of a program when it runs, the color "failed" when it failed.
+- The state of a thing has three colors: the color of the boot program while it starts, the color of a program when it runs, the color "failed" when it failed. A state that asks for attention is a warning; a thing that is stopped and cannot be used is "not usable".
 - Two neighbours of one concept take two shades of its color, so that their limit is visible.
 - If a thing has an identity (a hash), its color can come from the hash. A thing that changes takes a new color.
+- **The series colors** (`colors.series`) tell apart the members of one series: several things of one kind that no concept tells apart, as the threads of a program, the programs of the log, the records of a ring, the protections of a page. A member takes the series color of its number; a ninth member takes the first color again. A member is never the only sign: a number or a word names it.
+
+| Number | Dark | Light |
+|---|---|---|
+| 0 | `0x4696FF` | `0x3471C1` |
+| 1 | `0xFF963C` | `0xA35F26` |
+| 2 | `0x5AE66E` | `0x32803D` |
+| 3 | `0xDC64FA` | `0xA44ABB` |
+| 4 | `0xE06890` | `0xB05171` |
+| 5 | `0x60D8D0` | `0x367A76` |
+| 6 | `0xD8D860` | `0x747433` |
+| 7 | `0x9CC040` | `0x617828` |
+
+- A program takes each color from the tokens, by its meaning: no window holds a color value of its own. A picture that a program computes keeps its pixels: its legend takes the token.
 - A color never stands alone for a fact: a text or a place says the same fact.
 
 ### The appearances
@@ -87,8 +103,8 @@ The desktop has two appearances: dark and light. The setting `appearance` choose
 - **The light appearance is the light form of the site.** The background is the light background of the mark, a card is white, the text is the dark background of the dark appearance. A concept is its accent at the shade that its value kind has on the light page of the site: the same color in a window and on a page.
 - **What does not change.** The blue of the title bar, the chosen blue, the red of the close button, and white on them: white keeps its contrast on them in both. The pointer is black and white. The boot display is dark: the boot program draws before any setting is read, and the display is the model of the rules. A picture keeps its pixels; the mark of the bar takes the colors of the light background of the mark.
 - **The colors of code, of values and of the scroll bar** have a value in each appearance: `code_class_color`, `value_kind_color` and `scroll_bar_colors_of` take the appearance.
-- **The contrast.** Each pair that a rule of this guide names keeps its bound in both appearances: a text 4.5 to 1, a large text and a graphic 3 to 1. Host tests compute each pair from the table (`src/library/support/graphics/appearance_test.odin`, `palette_colors_test.odin`, `value_colors_test.odin`). A concept is never a text on the track: in the light appearance it has about 3.6 to 1 there.
-- **The colors that a program owns** (the measures of `clock`, the states of `rings`, the headings of `manual`, the levels of `log`) keep their value in both appearances. Their light values are planned work (`ROADMAP.md`).
+- **The contrast.** Each pair that a rule of this guide names keeps its bound in both appearances: a text 4.5 to 1, a large text and a graphic 3 to 1. A series color is a text on the background and on a card, and a graphic on the track; a link keeps 4.5 to 1 on the track, the band of a link with the focus. Host tests compute each pair from the table (`src/library/support/graphics/appearance_test.odin`, `palette_colors_test.odin`, `value_colors_test.odin`). A concept is never a text on the track: in the light appearance it has about 3.6 to 1 there.
+- **The windows of the programs** take each color from the tokens, so each follows the appearance. Two things stay dark: the boot display, and the stage of `heron`, a picture of the dark mark on its dark background.
 
 ### The colors of code
 
@@ -112,19 +128,19 @@ Code has one set of colors wherever it is shown: on the site, and in the console
 
 A technical value has one color wherever it is shown: on the site, and in the programs of the system that show values of mixed kinds, as the log does. The kinds are the value kinds (`GLOSSARY.md`, `src/library/contract/value_kinds`), one enumeration for the site and the system. The colors are one table, `src/library/support/graphics/value_colors.odin` (`value_kind_colors`); the site (`tools/modustool/site_values.odin`), the program `log` and the drawers of the console read it. The console gives a field of a record the kind that its description states (`CONSOLE.md`, "The drawers"). The site keeps only what is its own: the title and the meaning of each kind (`docs/SITE.md`, "The kinds of values"). The icon of each kind is one table too ("The icons of the kinds"). No kind and no color is new: the log uses the kinds of the site, so no new decoration exists.
 
-The kinds that the log writes, on a dark surface (contrast on the background `0x0B1018`, the top of a card `0x17212E`, the band of a row of the log `0x131B26`):
+The kinds that the log writes, on a dark surface (contrast on the background `0x0B1018`, the top of a card `0x17212E`; a band of a row of the log is the top of a card):
 
 | Kind | Accent | Color | Contrast |
 |---|---|---|---|
-| Number | Memory | `0x38C0B0` | 8.47 / 7.22 / 7.70 |
-| Size | Memory | `0x38C0B0` | 8.47 / 7.22 / 7.70 |
-| Time | Boot program | `0xE0A040` | 8.42 / 7.17 / 7.65 |
-| Module | Program | `0x58D878` | 10.45 / 8.90 / 9.49 |
-| Version | Boot program | `0xE0A040` | 8.42 / 7.17 / 7.65 |
-| Status | Failed | `0xF06060` | 5.94 / 5.06 / 5.40 |
+| Number | Memory | `0x38C0B0` | 8.47 / 7.22 |
+| Size | Memory | `0x38C0B0` | 8.47 / 7.22 |
+| Time | Boot program | `0xE0A040` | 8.42 / 7.17 |
+| Module | Program | `0x58D878` | 10.45 / 8.90 |
+| Version | Boot program | `0xE0A040` | 8.42 / 7.17 |
+| Status | Failed | `0xF06060` | 5.94 / 5.06 |
 
 - A part with no kind has the color of the text around it.
-- Each kind has at least 4.5 to 1 on the background, on both colors of a card and on the band of a row of the log (`src/library/support/graphics/value_colors_test.odin`), and on both surfaces of a table of the site in both forms (`tools/modustool/site_values_test.odin`).
+- Each kind has at least 4.5 to 1 on the background and on both colors of a card, in both appearances (`src/library/support/graphics/value_colors_test.odin`), and on both surfaces of a table of the site in both forms (`tools/modustool/site_values_test.odin`).
 - A color is never the only sign: the text of the value and its unit say the same fact.
 
 ### The icons of the kinds
@@ -704,7 +720,7 @@ With the boot image of the last build (77 modules and 9 resources), the card nam
 
 - The boot display follows all rules.
 - The desktop (the compositor: background, bar, menus, windows, pointer, palette) follows all rules. The pointer pictures of both pointer themes are the one exception of their own (section 9, "Pointer"). New windows and windows that the pointer drags are on the grid of 8.
-- `clock`, the window of `remote`, the palette of the compositor, `interface_elements`, `vector_glyphs`, `settings` and `hall_of_fame` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `src/library/support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
-- Each other program takes from `src/library/support/graphics` the colors that have a role of the rules: the background, the card (a panel or a band), the text, the dim color, the track (the empty part of a bar), an expected answer (`colors.program`) and a failure (`colors.failed`), where its own color had that role. The colors that mean something of one program stay in it: a refusal that the program expects, an answer that is not the expected one (`0xE0B040` in eight programs), the measures of `flow`, `crowd`, `disk` and `clock`, the bars of `budget` and `processors`, the states of `rings`, `threads` and `terminal`, the headings of `manual`, the count of `tally`, the paper of `paint`, the levels of `log`, the kinds of pages of `pages`. Some of them have the value of a rule color with another meaning (`0xE0A040` for kernel entries): a color of the rules for them is a change of meaning, which is not done.
-- The appearances (section 4, "The appearances"): the desktop, the palette, each window of the interface package, the terminal with its tones, the console and its results follow the light appearance. The colors that a program owns keep their dark value in the light appearance: those of `budget`, `clock`, `crowd`, `disk`, `flow`, `frames`, `imports`, `limits`, `log`, `manual`, `monitor`, `notes`, `origin`, `pages`, `processors`, `rights`, `rings`, `tally`, `threads` and `workers`. The paper of `paint` is light in both. The boot display, and the program `boot` that shows it, are dark in both.
-- The windows below the level of the boot display, `remote` and `scheduler`, from the farthest: `paint` (a light paper), `manual` (its own colors for headings, no cards), `monitor` (one list, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.
+- `clock`, the window of `remote`, the palette of the compositor, `interface_elements`, `vector_glyphs`, `settings` and `hall_of_fame` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `src/library/support/graphics`.
+- Each other program takes each of its colors from `src/library/support/graphics`, by its meaning (`src/md/features/appearance.md`, "The colors of the programs"): an expected answer and a failure, the kernel entries in the kernel blue, the pages in the color of memory, the levels of the log, the states of `rings` and `threads`, the members of a series. The terminal has its tones in both appearances.
+- The appearances (section 4, "The appearances"): the desktop, the palette, each window of a program, the terminal with its tones, the console and its results follow the light appearance. The paper of `paint` is light in both. The boot display, the program `boot` that shows it, and the stage of `heron` are dark in both.
+- The windows below the level of the boot display, `remote` and `scheduler`, from the farthest: `paint` (a light paper), `manual` (headings in the dim color, no cards), `monitor` (one list, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.

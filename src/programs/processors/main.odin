@@ -66,9 +66,6 @@ PROCESSOR_ROWS :: 8 // The panel shows at most this number of processors.
 ITERATIONS :: 4000
 LINE :: 20
 
-COLOR_WAITS :: 0xE0B040
-COLOR_BAR :: 0x4A90E0
-
 // One picture to compute: the threads share it, the lock keeps it correct.
 Job :: struct {
 	lock:    system.Lock,
@@ -111,12 +108,18 @@ together: u64 // The most processors that ran this program at one time.
 spin_stop: u32
 times: [len(thread_counts)]u64 // The milliseconds of the last picture with thread_counts[n] threads.
 
+// The picture is in the series color of each thread in the dark appearance:
+// a picture keeps its pixels in both appearances. The legend of a thread
+// takes its series color of the appearance in force: the same hue.
+#assert(WORKER_COUNT <= graphics.SERIES_COLOR_COUNT)
 @(rodata)
-tints := [WORKER_COUNT][3]u32{{70, 150, 255}, {255, 150, 60}, {90, 230, 110}, {220, 100, 250}}
+picture_series := graphics.DARK_SERIES
 
+// tint_color gives the color of a pixel of the picture: the series color of
+// the thread, at the level 0 (black) to 255 (the color itself).
 tint_color :: proc "contextless" (number: int, level: u32) -> graphics.Color {
-	tint := tints[number]
-	return graphics.rgb(tint[0] * level / 255, tint[1] * level / 255, tint[2] * level / 255)
+	tint := picture_series[number]
+	return graphics.rgb((tint >> 16 & 0xFF) * level / 255, (tint >> 8 & 0xFF) * level / 255, (tint & 0xFF) * level / 255)
 }
 
 // spin is the entry of the threads of the first test: they compute until
@@ -338,7 +341,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for &processor, index in processors[:min(processor_count, PROCESSOR_ROWS)] {
 			interface.draw_unsigned(table, x, y, u64(index), graphics.colors.dim)
 			interface.draw_rectangle(table, x + 20, y + 3, 80, 10, graphics.colors.track)
-			interface.draw_rectangle(table, x + 20, y + 3, int(processor.load) * 80 / 100, 10, COLOR_BAR)
+			// A processor is a device of the machine.
+			interface.draw_rectangle(table, x + 20, y + 3, int(processor.load) * 80 / 100, 10, graphics.colors.machine)
 			interface.draw_text(table, x + 108, y, system.name_of(processor.name[:]), graphics.colors.text)
 			y += LINE
 		}
@@ -351,7 +355,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if times[index] != 0 {
 				after = interface.draw_unsigned(table, x + 72, y, times[index], color)
 				interface.draw_text(table, after, y, " ms", color)
-				interface.draw_rectangle(table, x + 152, y + 3, int(times[index] * 88 / max(times[0], times[index])), 10, COLOR_BAR)
+				// The time that the program took for one picture.
+				interface.draw_rectangle(table, x + 152, y + 3, int(times[index] * 88 / max(times[0], times[index])), 10, graphics.colors.program)
 			}
 			y += LINE
 		}
@@ -359,14 +364,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.draw_text(table, x, y, "thread   rows of this picture", graphics.colors.dim)
 		y += LINE
 		for &worker, index in workers {
-			interface.draw_unsigned(table, x, y, u64(index + 1), tint_color(index, 255))
+			interface.draw_unsigned(table, x, y, u64(index + 1), graphics.colors.series[index])
 			interface.draw_unsigned(table, x + 72, y, u64(worker.rows), graphics.colors.text)
-			interface.draw_rectangle(table, x + 112, y + 3, int(worker.rows) * 128 / PICTURE_HEIGHT, 10, tint_color(index, 255))
+			interface.draw_rectangle(table, x + 112, y + 3, int(worker.rows) * 128 / PICTURE_HEIGHT, 10, graphics.colors.series[index])
 			y += LINE
 		}
 		y += 4
-		after = interface.draw_text(table, x, y, "lock waits ", COLOR_WAITS)
-		interface.draw_unsigned(table, after, y, u64(job.lock.waits), COLOR_WAITS)
+		// A wait of the lock is a wait in the kernel.
+		after = interface.draw_text(table, x, y, "lock waits ", graphics.colors.kernel)
+		interface.draw_unsigned(table, after, y, u64(job.lock.waits), graphics.colors.kernel)
 		interface.window_frame_end(&drawing, &frame, &window)
 		for _ in display.next_event(&window) {}
 		display.wait(&window, now + FRAME_TIME)

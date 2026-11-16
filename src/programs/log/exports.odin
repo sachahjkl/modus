@@ -1,5 +1,6 @@
 package log
 
+import "modus:contract/errors"
 import "modus:contract/log_scope"
 import "modus:contract/value_kinds"
 import op "modus:contract/operation"
@@ -16,9 +17,11 @@ import "base:intrinsics"
 // no other program: the exports give the whole log only to a caller that
 // acts for the principal, and to each other caller its own records, by the
 // program slot and the program serial that the root service wrote in the
-// grant of its connection (modus:contract/log_scope). This program holds
-// the memory of the log, so it makes the choice: a reader never maps that
-// memory (src/md/features/log_reader_scope.md).
+// grant of its connection (modus:contract/log_scope). A starter also reads
+// the records of a child: it lends the program handle of the child, which
+// is what lets it see that child. This program holds the memory of the
+// log, so it makes the choice: a reader never maps that memory
+// (src/md/features/log_reader_scope.md).
 
 // One row of the log: records(). A row has 256 bytes, the most that a
 // record of a description has, and holds one log record: its text has the
@@ -103,6 +106,34 @@ caller_scope :: proc "contextless" () -> log_scope.Scope {
 	return log_scope.scope_of(caller.grant)
 }
 
+// The result of an export that fails: the error record says why.
+ERROR :: -1
+
+// The parameter of program_records and program_value_runs that holds the
+// lent program handle, from 1: the argument of their error records.
+LENT_PROGRAM_ARGUMENT :: 1
+
+// scope_of_lent_program gives the scope of a call that names a program by
+// the handle that its caller lent: the records of that program. The service
+// proved that the handle came through the call ring with the right Read,
+// but not its kind: a caller can lend any handle. ok is false, with the
+// error record, for a handle that names no program.
+scope_of_lent_program :: proc "contextless" (program: system.Handle, error: ^errors.Error_Record) -> (scope: log_scope.Scope, ok: bool) {
+	kind, _, _ := system.handle_state(program)
+	if kind != .Program {
+		errors.fail(error, ERROR, .Handle_Kind, .None, LENT_PROGRAM_ARGUMENT, i64(program), i64(op.Object_Kind.Program), i64(kind))
+		return {}, false
+	}
+	// The lent handle keeps the slot of the program for the whole call, so
+	// the slot and the serial name that program, also after it stopped.
+	results, status := system.call(.Program_State, u64(program))
+	if status != .Ok {
+		errors.fail(error, ERROR, .Refused, .None, LENT_PROGRAM_ARGUMENT, 0, 0, i64(status))
+		return {}, false
+	}
+	return log_scope.lent_program_scope(results[3], results[4]), true
+}
+
 // records gives the log records of the log scope of the caller from the number `after` on, one row each: the number, the time in microseconds, the program and its slot, the level, the channel, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows of the scope from `after` to the last record.
 //
 // **What it is for.** A reader of the log checks the program, the channel
@@ -149,7 +180,40 @@ caller_scope :: proc "contextless" () -> log_scope.Scope {
 // ```
 @(export, link_name = "records")
 records :: proc "c" (after: i64, result: ^[]Record) -> i64 {
-	scope := caller_scope()
+	return records_in_scope(caller_scope(), after, result)
+}
+
+// program_records gives the log records of one program whose program handle the caller lends, from the own number `after` on, one row each, as records() gives its own records to a caller. A starter reads what its children wrote this way. The result is the count of the rows of that program from `after` to the last record.
+//
+// **What it is for.** A program that starts programs, such as a test,
+// shows what each child wrote, with no right to read the whole log. The
+// handle that it received when it started the child is the proof that it
+// may see that child.
+//
+// **Parameters**: `program`, the program handle of the child, lent with the
+// right Read; `after`, the own number of the first record to give, from 0.
+//
+// **A row** (`Record`): as for `records`. `number` is the own number of the
+// record among the records of that program; `lost` in the first row counts
+// the records of that program after `after` that the kernel wrote over.
+//
+// **Grant**: the lent handle. Each caller with a connection to the log
+// service receives the records of the program of the handle only, also a
+// caller that acts for the principal. The records of a grandchild need its
+// handle, which only the child holds and can give.
+//
+// **Errors**: `Handle_Kind` for a handle that names no program.
+@(export, link_name = "program_records")
+program_records :: proc "c" (program: system.Lent({.Read}), after: i64, result: ^[]Record, error: ^errors.Error_Record) -> i64 {
+	scope, ok := scope_of_lent_program(program.handle, error)
+	if !ok {
+		return ERROR
+	}
+	return records_in_scope(scope, after, result)
+}
+
+// records_in_scope gives the rows of records() for one scope: see records.
+records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, result: ^[]Record) -> i64 {
 	written := intrinsics.atomic_load(&reader_head.written)
 	next, ring_lost := op.log_first_kept(first_asked(scope, after), written)
 	// A reader of its own records learns no count of the records of other
@@ -231,7 +295,32 @@ records :: proc "c" (after: i64, result: ^[]Record) -> i64 {
 // ```
 @(export, link_name = "value_runs")
 value_runs :: proc "c" (after: i64, result: ^[]Value_Run) -> i64 {
-	scope := caller_scope()
+	return value_runs_in_scope(caller_scope(), after, result)
+}
+
+// program_value_runs gives the value runs of the log records of one program whose program handle the caller lends, from the own number `after` on, as value_runs() gives the runs of its own records. The result is the count of the runs of that program from `after` to the last record.
+//
+// **What it is for.** A starter joins these rows to the rows of
+// `program_records` of the same child by `number`.
+//
+// **Parameters**: `program`, the program handle, lent with the right Read;
+// `after`, as for `program_records`.
+//
+// **Grant**: the lent handle, as for `program_records`.
+//
+// **Errors**: `Handle_Kind` for a handle that names no program.
+@(export, link_name = "program_value_runs")
+program_value_runs :: proc "c" (program: system.Lent({.Read}), after: i64, result: ^[]Value_Run, error: ^errors.Error_Record) -> i64 {
+	scope, ok := scope_of_lent_program(program.handle, error)
+	if !ok {
+		return ERROR
+	}
+	return value_runs_in_scope(scope, after, result)
+}
+
+// value_runs_in_scope gives the rows of value_runs() for one scope: see
+// value_runs.
+value_runs_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, result: ^[]Value_Run) -> i64 {
 	written := intrinsics.atomic_load(&reader_head.written)
 	next, _ := op.log_first_kept(first_asked(scope, after), written)
 	total := 0

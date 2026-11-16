@@ -136,10 +136,6 @@ reset :: proc "c" () -> i64 {
 	return before
 }
 
-COLOR_COUNT :: 0xF0C050
-COLOR_PLUS :: 0x58C878
-COLOR_MINUS :: 0xE06C60
-
 // draw builds a frame of the window with the interface package.
 draw :: proc "contextless" (window: ^display.Window, service: ^system.Service) {
 	if drawing.now.records == nil {
@@ -187,19 +183,23 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^syst
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	buffer: [24]u8
 	x := interface.draw_text(table, 12, 10, "count ", graphics.colors.dim)
-	x = interface.draw_text(table, x, 10, system.format(buffer[:], count), COLOR_COUNT)
+	// The count is the data of the module, in the memory of the program
+	// that runs it: the color of memory.
+	x = interface.draw_text(table, x, 10, system.format(buffer[:], count), graphics.colors.memory)
 	x = interface.draw_text(table, x + 24, 10, "adds ", graphics.colors.dim)
 	interface.draw_text(table, x, 10, system.format(buffer[:], calls), graphics.colors.text)
-	interface.draw_rectangle(table, 12, 32, WIDTH - 24, 1, 0x30363C)
+	interface.draw_rectangle(table, 12, 32, WIDTH - 24, 1, graphics.colors.track)
 	// The notes, the last one first.
 	for row in 0 ..< min(calls, NOTE_CAPACITY) {
 		item := &notes[u64(calls - 1 - row) % NOTE_CAPACITY]
 		y := 40 + int(row) * 18
 		amount := system.format(buffer[:], item.amount)
+		// An amount is a value: the text color. Its sign says whether it
+		// adds or takes away.
 		if item.amount >= 0 {
-			interface.draw_text(table, 12, y, "+", COLOR_PLUS)
+			interface.draw_text(table, 12, y, "+", graphics.colors.text)
 		}
-		interface.draw_text(table, item.amount >= 0 ? 20 : 12, y, amount, item.amount >= 0 ? COLOR_PLUS : COLOR_MINUS)
+		interface.draw_text(table, item.amount >= 0 ? 20 : 12, y, amount, graphics.colors.text)
 		interface.draw_text(table, 92, y, string(item.text[:item.count]), row == 0 ? graphics.colors.text : graphics.colors.dim)
 	}
 	// The band of the action bar, from edge to edge, with the counts of the

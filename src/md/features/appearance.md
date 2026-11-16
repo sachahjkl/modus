@@ -6,7 +6,7 @@ The desktop has two appearances: dark and light. The principal chooses one, or `
 
 - **One table of color tokens.** A color token is a named color of the design rules: a surface, a concept, a part of the desktop. `graphics.Color_Tokens` holds each token, and `graphics.DARK_COLOR_TOKENS` and `graphics.LIGHT_COLOR_TOKENS` give its value in each appearance. The table is the one place of the values: the desktop, the programs and the light and dark forms of the site read it.
 - **A drawer reads a token through the appearance in force.** `graphics.colors` is the record of the tokens of the appearance in force in this program: `graphics.colors.text`, `graphics.colors.card_top`. `graphics.appearance_use` copies the record of one appearance into it. No program holds a value of a token as its own constant.
-- **The dark values stay as constants for what is always dark.** `graphics.DARK_KERNEL` and the other `DARK_` constants are the values of the dark appearance. The mark and the tables of the colors of code and of values read them as the accents of the concepts, because those tables are constant data. A program that draws a window never names a `DARK_` constant: its window would stay dark in the light appearance.
+- **The dark values stay as constants for what is always dark.** `graphics.DARK_KERNEL` and the other `DARK_` constants are the values of the dark appearance. The mark and the tables of the colors of code and of values read them as the accents of the concepts, because those tables are constant data. A program that draws a window never names a `DARK_` constant for what it draws: its window would stay dark in the light appearance. The one use is the pixels of a picture that the program computes, which keep their colors in both appearances.
 - **The colors of code and of values follow.** `code_class_color` and `value_kind_color` take the appearance. In the light appearance a class or a kind takes the shade that the light form of the site takes. The scroll bar takes `scroll_bar_colors_of(appearance)`: the light form of the scroll bar is the one of the site.
 - **The light appearance is the light form of the site.** The background is the light background of the mark, the cards are white, the text is the dark background of the rules. A concept takes its accent at the shade that keeps 4.5 to 1 on the light surfaces. The blue of the title bar, the chosen blue, the red of the close button and white on them do not change: white keeps its contrast on them in both appearances.
 
@@ -30,6 +30,9 @@ The desktop has two appearances: dark and light. The principal chooses one, or `
 | `text` | `0xDCE4EC` | `0x0B1018` | The text |
 | `dim` | `0x7C8A99` | `0x4A525B` | The dim text: the dim color at 60 % in the light appearance |
 | `text_strong` | `0xFFFFFF` | `0x000000` | The text that an input types, and the outline of the focus |
+| `warning` | `0xF0C050` | `0x886D2D` | A state that asks for attention and is not a failure: a warning of the log, a full ring. At 57 % |
+| `link` | `0x6CB4F0` | `0x3B6283` | A link of a page of `manual`. At 55 %: it keeps 4.5 to 1 on the track too, the band of a link with the focus |
+| `series` | `0x4696FF`, `0xFF963C`, `0x5AE66E`, `0xDC64FA`, `0xE06890`, `0x60D8D0`, `0xD8D860`, `0x9CC040` | `0x3471C1`, `0xA35F26`, `0x32803D`, `0xA44ABB`, `0xB05171`, `0x367A76`, `0x747433`, `0x617828`: at 76, 64, 56, 75, 79, 57, 54, 63 % | Eight colors that tell apart the members of one series |
 | `title` | `0x3F7CC4` | `0x3F7CC4` | The title bar of the window in front, at its left |
 | `title_end` | `0x162C45` | `0x162C45` | At its right |
 | `chosen` | `0x3C76BB` | `0x3C76BB` | A chosen row |
@@ -47,7 +50,9 @@ White (`COLOR_WHITE`) and black (`COLOR_BLACK`) are not tokens: white is a text 
 The host tests compute each pair that a rule of `docs/DESIGN.md` names, in each appearance (`src/library/support/graphics/appearance_test.odin`, `palette_colors_test.odin`, `value_colors_test.odin`):
 
 - the text and the dim color on the background and on both colors of a card, and the text on the track, at 4.5 to 1;
-- each concept that is drawn as a text (the firmware, the boot program, the kernel, a program, memory, the machine, a module with no entry, a resource, a failure) on the background and on both colors of a card, at 4.5 to 1;
+- each concept that is drawn as a text (the firmware, the boot program, the kernel, a program, memory, the machine, a module with no entry, a resource, a failure, a warning, a link) on the background and on both colors of a card, at 4.5 to 1;
+- a link on the track, at 4.5 to 1;
+- each series color on the background and on both colors of a card, at 4.5 to 1, and on the track as a graphic, at 3 to 1;
 - white on the chosen blue and on the red of the close button, at 4.5 to 1;
 - the strong text on the track, at 4.5 to 1; the dim text on the track as a large text, at 3 to 1;
 - each class of code on the track and on both colors of a card, at 4.5 to 1;
@@ -76,6 +81,8 @@ A concept is not a text on the track: the track holds the label of a button in t
 
 - **Each window once.** The compositor reads the page after each wake. When the values or the appearance in force differ from what it told the windows last, it sends `Settings_Changed` to each window, draws its whole screen again, and writes one line on the log. `display.next_event` gives the new appearance to the program before the event, as it gives the new font.
 - **Each frame reads the appearance.** `interface.window_frame_begin` reads the appearance in force from the page. When it differs from the appearance of the last frame, the next frame of each picture is a whole frame. So a window that the interface package draws never shows two appearances, also when it draws a frame before the event.
+- **One line at the first frame of a new appearance.** A window of the interface package writes `interface: <title>: a frame in the light appearance` when it presents its first frame in another appearance than its frame before. A machine test waits for that line before it takes a picture of the window: the picture then holds the new colors. The first frame of a window writes nothing, so the line is one for each window at each change.
+- **A window that draws its canvas whole.** `log` draws again at the event `Settings_Changed`, also with no new record. `pages` draws its whole canvas at each read of its reports, each 500 ms.
 - **The compositor** draws the background again with its grid of points, the bar, the title bars and the frames of the windows, the menus and the palette, in the tokens of the new appearance. The mark of the bar is drawn again over the new color of the bar, in the colors of the light background in the light appearance.
 - **The terminal, the console and the results of the console** draw their cells in the tokens: the text, the dim color, the colors of code, the colors of values, the completion list.
 
@@ -84,7 +91,22 @@ A concept is not a text on the track: the track holds the label of a button in t
 - **The pictures.** A Picture record shows pixels that a program holds: a portrait of the hall of fame, the stage of the program `heron`, the pictures of `paint`. The mark of the bar is the one picture that follows: the compositor draws it again in the colors of the light background of the mark (its darker neck), as the bar of the light page of the site shows it.
 - **The pointer.** It is black and white, and its themes are pictures: [../../../docs/POINTERS.md](../../../docs/POINTERS.md).
 - **The boot display.** The boot program has no settings page: it draws before the root service exists. The root service draws the boot display again before the boot pass of `settings` reads the store. Both are dark. The program `boot` shows the same display in a window, dark too: the display is the model of the rules, and its colors are its facts.
-- **The colors that are a program's own.** A program that holds a color of its own, with a meaning of that program (the measures of `clock`, `flow`, `crowd`, `disk`; the states of `rings`, `threads`; the headings of `manual`; the levels of `log`; the kinds of pages of `pages`; the paper of `paint`), keeps it in both appearances. Its surfaces and its text follow the tokens. Such a color on the light background can have less than 4.5 to 1: the work to give each of them a light value is in `ROADMAP.md`.
+- **The stage of `heron`.** It is a picture of the program: the mark in its dark variant, on the dark background of the mark, drawn in pixels that the program keeps between frames. A light stage is a second set of pixels of the light variant, drawn again at each change: the stage is the model of the dark mark, and it stays dark. The band under it follows the tokens.
+- **A picture that a program computes.** The pictures of `processors` and `workers` are in the series color of each thread in the dark appearance (`graphics.DARK_SERIES`). The legend of a thread takes its series color of the appearance in force: the same hue at another shade.
+
+## The colors of the programs
+
+Each window takes each of its colors from the tokens: no program holds a color value of its own. Where a program drew a color of its own, the color became the token of its meaning:
+
+- **An expected answer and a check that did not pass.** The expected answer is `program`, a refusal that the program expects too: the words of the answer say that it is a refusal (`budget`, `rights`, `origin`, `frames`, `imports`, `limits`). Another answer is `failed`, as the token says: a check that did not pass. A lost addition of `workers` is `failed`.
+- **The concepts of a measure.** The records that a program moves are `program`, the kernel entries `kernel` (`clock`, `crowd`, `disk`, `flow`); the time page of `clock` is `memory`. The pages of `budget` and of `monitor` are `memory`; the share of the processor of a program is `program`; the load of a processor is `machine`; the waits of a lock are waits in the kernel, `kernel` (`processors`, `workers`). The run of `crowd` with one lock is the comparison: `dim`.
+- **Values.** A value is in the text color, or in the color of its value kind: the count of `tally` and of `notes` is memory, a generation of `notes` is a version (the color of the boot program). The amounts of `tally` are values in the text color: the sign says whether an amount adds. The mark of a limit of `limits` says the number of the limit: the text color.
+- **States.** A warning of the log and a full ring of `rings` are `warning`. A stopped node of `rings` is there and cannot be used: its border is `not_usable`, and its word, which is a text, is `dim`. The word "stopped" of `threads` is `text`: more weight than the dim count of frames of a thread that runs. A guard page of `pages` is a place where an access fails: `failed`.
+- **The surfaces.** A band of a row of the log, a chip of a channel and a node of `rings` are `card_top`, as a band of a table and a card. A line of a ring is `dim`; the empty part of the work of a node is `track`; the line under the counts of `tally` is `track`.
+- **`manual`.** A module has one color in the list, in the overview and in the title of its page: `program` for a program that serves calls or that runs, `no_entry` for a library, `failed` for a module that breaks a rule. A heading names the part under it: `dim`, as a name and the title of a column. An export is a procedure, `kernel`; a record is a type, `firmware`; an import is a module, `program`; a replacement is a fact of the machine, `machine`. Code is in the font of the cells and in the text color. A link is `link`. The chosen module of the list is a chosen row: `chosen`, its texts in white. The link with the focus is on a band of the track, with the line of the focus in `text_strong`.
+- **Members of a series.** The threads of `limits`, `processors` and `workers`, the programs of the log, the records of `rings` and the three protections of a run of `pages` (execute, write, read) take the series color of their number. A record of `rings` carries its series number, not a color, so it keeps its identity when the appearance changes; `rings` takes the number modulo the count of the series, because a node, another program, writes it.
+
+Three tokens came with this work, each because no token had the meaning: `warning` (the log had the color of the boot program for a warning, a second meaning of one color), `link` (the color of a link is a rule of [`docs/DESIGN.md`](../../../docs/DESIGN.md), "5. Text", and had no token), and `series` (the threads, the programs of the log and the records of a ring each had their own list of hues).
 
 ## The refused forms
 
@@ -94,7 +116,10 @@ A concept is not a text on the track: the track holds the label of a button in t
 - **The appearance in force computed by each reader.** Each program would need the date page and the rule, and two programs could draw two appearances at one moment. One word on the page is one answer for all.
 - **The appearance as a second set of constants that each program chooses.** A program would hold an `if` for each color, and a program that forgot one would draw a dark part in the light appearance with no fault of the build. The tokens are one record that one procedure changes; the `DARK_` constants are the one exception, and their name says that they do not follow.
 - **A remap of each pixel by its color.** A table from each dark value to its light value, applied to the pixels of a surface, misses each color that `mix`, `shade` or a gradient computed, and changes the colors of a picture. The tokens change the colors before the draw.
-- **A dark and a light value for each color that a program owns.** This file does not choose the light values of the colors that a program owns: each needs a decision of that program, and the roadmap holds that work.
+- **A dark and a light value for each color that a program owns.** Twenty programs held about sixty colors. Each with two values in its program is sixty pairs that no host test reads, and two programs could give one meaning two colors. Each became the token of its meaning, and only three meanings needed a new token.
+- **A token named by its program.** A token `rings_blocked` or `manual_heading` holds a color for one window, and a second program with the same meaning takes another. A token is named by its meaning.
+- **A color of the rules by its value.** The kernel entries had the value of the boot program, `0xE0A040`. A token by value is a color with a wrong meaning: the kernel entries take the kernel blue.
+- **The light series as the dark series at one shade.** At one shade the darkest hue fails on white, or the lightest hue is far darker than it must be. Each member has the shade that keeps 4.5 to 1.
 
 ## Subtle points
 
@@ -105,6 +130,6 @@ A concept is not a text on the track: the track holds the label of a button in t
 
 ## State
 
-Built: the two appearances as one table of tokens, the setting and the appearance in force on the settings page, the rule of the day with its host tests, the edge in the root service, the compositor, the interface package, the palette, the terminal and the results of the console in the tokens, the host tests of the contrast in both appearances, and the machine test that sets `light`, `dark` and `auto` and takes `desktop_light.png` and `console_light.png`.
+Built: the two appearances as one table of tokens, the setting and the appearance in force on the settings page, the rule of the day with its host tests, the edge in the root service, the compositor, the interface package, the palette, the terminal and the results of the console in the tokens, each window of a program in the tokens, the host tests of the contrast in both appearances, and the machine test that sets `light`, `dark` and `auto` and takes `desktop_light.png`, `console_light.png`, `monitor_light.png`, `rings_light.png` and `clock_light.png`.
 
-Left: the light values of the colors that programs own (`ROADMAP.md`).
+Left: none of the work of this design.
