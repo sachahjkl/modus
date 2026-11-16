@@ -60,6 +60,22 @@ Window_Drawing :: struct {
 	// writes the lines of what differs (element_places_publish).
 	element_places_written: Element_Places,
 	element_places_dropped_logged: bool, // The line of a frame with element names that it did not keep is on the log: a window writes it one time.
+	// The appearance of the last frame that the window presented, so that
+	// the first frame of a new appearance writes one line
+	// (appearance_presented_note).
+	appearance_presented:       graphics.Appearance,
+	appearance_presented_known: bool,
+}
+
+// appearance_presented_note writes one line when the window presents its
+// first frame in an appearance other than the one of its frame before: a
+// machine test waits for it before it takes a picture of the window in the
+// new appearance. The first frame of a window writes nothing.
+appearance_presented_note :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) {
+	if drawing.appearance_presented_known && drawing.appearance_presented != graphics.appearance {
+		system.log_in("programs", .Info, "interface: ", string(window.title[:window.title_count]), ": a frame in the ", graphics.appearance == .Light ? "light" : "dark", " appearance")
+	}
+	drawing.appearance_presented, drawing.appearance_presented_known = graphics.appearance, true
 }
 
 // element_places_write writes on the log the element places of a frame
@@ -492,6 +508,9 @@ window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^disp
 		display.picture_due_set(window, false)
 	}
 	drawing.drawn = sent && draw_table_copy(&drawing.before, &drawing.now)
+	if sent && changes.present.count > 0 {
+		appearance_presented_note(drawing, window)
+	}
 	return drawing.damage.count
 }
 

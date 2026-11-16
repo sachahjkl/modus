@@ -58,11 +58,12 @@ KERNEL_ROWS :: 22
 PROGRAM_ROWS :: 10
 INTERVAL :: 500
 
-COLOR_PANEL :: 0x131B26
-COLOR_EXECUTE :: 0x4A9CF0
-COLOR_WRITE :: 0xE0A040
-COLOR_READ :: 0x58D878
-COLOR_GUARD :: 0xF06060
+// The three protections of a run are a series: three things of one kind
+// that no concept of the rules tells apart. The words of each run say its
+// protection too.
+PROTECTION_EXECUTE :: 0
+PROTECTION_WRITE :: 1
+PROTECTION_READ :: 2
 
 kernel_half: op.Mapping_Report
 program_half: op.Mapping_Report
@@ -158,8 +159,11 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 	line := line
 	text: Text
 	y := MARGIN + line * LINE
-	graphics.fill(canvas, MARGIN, y, WIDTH - 2 * MARGIN, 2, kernel ? COLOR_EXECUTE : COLOR_READ)
-	x := graphics.text(canvas, MARGIN, y + 6, title, kernel ? COLOR_EXECUTE : COLOR_READ)
+	// The title of a half in the color of its concept: the kernel or a
+	// program.
+	accent := kernel ? graphics.colors.kernel : graphics.colors.program
+	graphics.fill(canvas, MARGIN, y, WIDTH - 2 * MARGIN, 2, accent)
+	x := graphics.text(canvas, MARGIN, y + 6, title, accent)
 	put(&text, "  ")
 	put_number(&text, report.pages)
 	put(&text, " pages, ")
@@ -172,18 +176,19 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 	shown := min(int(report.run_count), rows, op.MAPPING_RUN_CAPACITY)
 	for run, index in report.runs[:shown] {
 		y = MARGIN + line * LINE
-		color: graphics.Color = COLOR_READ
+		color := graphics.colors.series[PROTECTION_READ]
 		switch {
 		case .Execute in run.flags:
-			color = COLOR_EXECUTE
+			color = graphics.colors.series[PROTECTION_EXECUTE]
 		case .Write in run.flags:
-			color = COLOR_WRITE
+			color = graphics.colors.series[PROTECTION_WRITE]
 		}
-		// A place with no page before a kernel stack is a guard.
+		// A place with no page before a kernel stack is a guard: an access
+		// there fails, so its mark has the color of a failure.
 		if kernel && run.start >= op.KERNEL_STACK_BASE && run.start < u64(info.KERNEL_BASE) {
-			graphics.fill(canvas, MARGIN, y, 8, 3, COLOR_GUARD)
+			graphics.fill(canvas, MARGIN, y, 8, 3, graphics.colors.failed)
 			if index + 1 == shown || report.runs[index + 1].start >= u64(info.KERNEL_BASE) {
-				graphics.fill(canvas, MARGIN, y + LINE - 3, 8, 3, COLOR_GUARD)
+				graphics.fill(canvas, MARGIN, y + LINE - 3, 8, 3, graphics.colors.failed)
 			}
 		}
 		graphics.fill(canvas, MARGIN, y + 4, 8, 8, color)
@@ -220,8 +225,8 @@ half :: proc "contextless" (canvas: graphics.Canvas, line: int, title: string, r
 
 rule :: proc "contextless" (canvas: graphics.Canvas, line: int, kept: bool, text: ^Text) {
 	y := MARGIN + line * LINE
-	graphics.fill(canvas, MARGIN, y + 4, 8, 8, kept ? graphics.colors.program : COLOR_GUARD)
-	show(canvas, MARGIN + 16, y, text, kept ? graphics.colors.text : COLOR_GUARD)
+	graphics.fill(canvas, MARGIN, y + 4, 8, 8, kept ? graphics.colors.program : graphics.colors.failed)
+	show(canvas, MARGIN + 16, y, text, kept ? graphics.colors.text : graphics.colors.failed)
 }
 
 draw :: proc "contextless" (canvas: graphics.Canvas) {

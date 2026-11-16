@@ -80,8 +80,6 @@ COUNT_BLOCKS :: 3
 COUNT_WORDS :: COUNT_BLOCKS * 512
 RUN_STEPS :: 1000
 
-COLOR_LIT :: 0xE0A040
-
 client: storage.Client
 note: [NOTE_CAPACITY]u8
 note_count: int
@@ -218,9 +216,13 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	buffer: [32]u8
 	x := interface.draw_text(table, 12, 12, "note  ", graphics.colors.dim)
 	x = interface.draw_text(table, x, 12, string(note[:note_count]), graphics.colors.text)
-	interface.draw_rectangle(table, x + 1, 12, 2, 16, COLOR_LIT)
+	// The caret of a text input (docs/DESIGN.md, "10. Elements").
+	interface.draw_rectangle(table, x + 1, 12, 2, 16, graphics.colors.title)
+	// The count is a number, and the generations are versions: each in the
+	// color of its value kind (docs/DESIGN.md, "The colors of values"),
+	// which is the token of its accent in both appearances.
 	x = interface.draw_text(table, 12, 40, "count ", graphics.colors.dim)
-	x = interface.draw_text(table, x, 40, system.format(buffer[:], count), COLOR_LIT)
+	x = interface.draw_text(table, x, 40, system.format(buffer[:], count), graphics.colors.memory)
 	if generation > 0 { // The generation of the last commit of this program, after its first change.
 		x = interface.draw_text(table, x + 24, 40, "generation ", graphics.colors.dim)
 		interface.draw_text(table, x, 40, system.format(buffer[:], generation), graphics.colors.text)
@@ -229,7 +231,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	for cell in 0 ..< 400 {
 		cell_x := 12 + cell % 50 * 10
 		cell_y := 68 + cell / 50 * 10
-		interface.draw_rectangle(table, cell_x, cell_y, 8, 8, u64(cell) < count % 400 ? COLOR_LIT : graphics.colors.track)
+		interface.draw_rectangle(table, cell_x, cell_y, 8, 8, u64(cell) < count % 400 ? graphics.colors.memory : graphics.colors.track)
 	}
 	// The status of the start, then, when the store is gone, what that
 	// means for the keys: each in the width of the window.
@@ -246,7 +248,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	interface.draw_text(table, x, 196, system.format(buffer[:], max(history_total - 1, 0)), graphics.colors.text)
 	if shown >= 0 {
 		x = interface.draw_text(table, MARGIN, 212, "showing generation ", graphics.colors.dim)
-		x = interface.draw_text(table, x, 212, system.format(buffer[:], history[shown].generation), COLOR_LIT)
+		x = interface.draw_text(table, x, 212, system.format(buffer[:], history[shown].generation), graphics.colors.boot_program)
 		if history[shown].date != 0 {
 			interface.draw_text(table, x + 16, 212, calendar.iso_text(buffer[:], history[shown].date), graphics.colors.text)
 		}
@@ -257,7 +259,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		for place in 0 ..< count {
 			mark_x := MARGIN + (count == 1 ? track - 4 : place * (track - 4) / (count - 1))
 			lit := place == shown || shown < 0 && place == count - 1
-			interface.draw_rectangle(table, mark_x, lit ? 232 : 234, lit ? 4 : 2, lit ? 16 : 12, lit ? COLOR_LIT : graphics.colors.dim)
+			interface.draw_rectangle(table, mark_x, lit ? 232 : 234, lit ? 4 : 2, lit ? 16 : 12, lit ? graphics.colors.boot_program : graphics.colors.dim)
 		}
 	}
 	if shown >= 0 {

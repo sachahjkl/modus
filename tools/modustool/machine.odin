@@ -3106,6 +3106,14 @@ scenario := [?]Step {
 	// Appearance_Auto checks the line by the rule over the date that it
 	// names, and that date against the clock of the machine.
 	{kind = .Call, text = "settings.set(\"appearance\", \"light\")", expected = "1"},
+	// Each window of a program takes each color from the tokens
+	// (src/md/features/appearance.md, "The colors of the programs"). A
+	// window writes one line at its first frame in the new appearance; a
+	// window can read the page before the compositor writes its line, so
+	// these waits do not move the place of the log.
+	{kind = .Wait, text = "interface: monitor: a frame in the light appearance", any_order = true},
+	{kind = .Wait, text = "interface: rings: a frame in the light appearance", any_order = true},
+	{kind = .Wait, text = "interface: clock: a frame in the light appearance", any_order = true},
 	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light; kept in the store"},
 	{kind = .Wait, text = "settings: the appearance in force is light: the setting light"},
 	{kind = .Wait, text = "compositor: the pointer form in use: light", any_order = true},
@@ -3121,6 +3129,15 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   module     settings"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Shot, text = "console_light"},
+	// Three windows whose colors were their own: each drew its frame in the
+	// light appearance (the waits above), and the front window is whole on
+	// the screen.
+	{kind = .Front, text = "monitor"},
+	{kind = .Shot, text = "monitor_light"},
+	{kind = .Front, text = "rings"},
+	{kind = .Shot, text = "rings_light"},
+	{kind = .Front, text = "clock"},
+	{kind = .Shot, text = "clock_light"},
 	{kind = .Call, text = "settings.set(\"appearance\", \"dark\")", expected = "1"},
 	{kind = .Wait, text = "settings: the appearance in force is dark: the setting dark"},
 	{kind = .Wait, text = "compositor: the pointer form in use: dark", any_order = true},

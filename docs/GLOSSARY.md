@@ -5356,6 +5356,36 @@ The design: `src/md/features/appearance.md`, and `src/library/support/graphics/r
 
 Do not use: palette color (the palette is a panel of the desktop), design token, swatch.
 
+### Series color
+
+A series color is one of eight color tokens that tell apart the members of one series: several things of one kind that no concept of the design rules tells apart.
+
+A member takes the series color of its number (`graphics.colors.series[number]`), and a ninth member takes the first color again. The threads of `limits`, `processors` and `workers`, the programs of the window of the log, the records of `rings` and the three protections of a run of `pages` are series. A series color is never the only sign: a number or a word names the member. Each has a dark and a light value that keeps 4.5 to 1 on the surfaces of its appearance. A record of `rings` carries its series number, not its color, so that it keeps its member when the appearance changes. A series color is not a concept: a thread of a series is not the kernel because it is blue.
+
+The design: `src/md/features/appearance.md`, "The colors of the programs", and `docs/DESIGN.md`, "4. Color".
+
+Do not use: identity color, tint, palette, hue (for this).
+
+### Warning color
+
+The warning color is the color token of a state that asks for attention and is not a failure.
+
+A record of the log of the level Warning and a ring of `rings` that is full have it (`graphics.colors.warning`). It is a yellow apart from the orange of the boot program, so that "starts" and "take care" are two colors; a failure has the color `failed`. A warning color is never the only sign: the level or a word says the state.
+
+The design: `src/md/features/appearance.md`, "The colors of the programs".
+
+Do not use: caution color, alert color.
+
+### Link color
+
+The link color is the color token of a link: a name in a page that leads to another page.
+
+`manual` draws each link of a page in it (`graphics.colors.link`). A link has the band of the track when it has the focus, so the link color keeps 4.5 to 1 on the track as on the background and a card, in both appearances. The site draws a link in the text color with a line under it: its pages have a form of their own.
+
+The design: `docs/DESIGN.md`, "5. Text", and `src/md/features/appearance.md`.
+
+Do not use: hyperlink color, accent (for this).
+
 ### Monospace font
 
 A monospace font is a font whose characters all have one advance, so that a text is a row of equal cells.

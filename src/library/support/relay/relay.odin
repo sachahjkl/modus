@@ -17,14 +17,17 @@ GRANT_STATE :: 3 // Memory: one State record. This node writes it.
 VALUE_WORK_TIME :: 0 // Milliseconds that the node keeps a record.
 
 // The kind of a record in a ring between two nodes, or in a control ring.
-// values[0] is the color of the record; values[1] counts the nodes that it passed.
+// values[0] is the series number of the record: `rings` draws it in the
+// series color of that number, in the appearance in force. A number and not
+// a color, so that the record keeps its identity when the appearance
+// changes. values[1] counts the nodes that it passed.
 RECORD :: 1
 
 // What a node says about itself, in shared memory. No ring carries it.
 State :: struct {
 	holding: u32, // 1: the node has a record.
 	blocked: u32, // 1: the ring after the node is full.
-	color:   u32, // The color of the record that the node holds.
+	series:  u32, // The series number of the record that the node holds.
 	since:   u64, // When the node took the record.
 	release: u64, // When the node gives the record.
 	passed:  u64, // Records that the node gave to the ring after it.

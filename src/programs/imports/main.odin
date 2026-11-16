@@ -82,7 +82,6 @@ HEIGHT :: 560
 // A line of a measure is a text of at most 112 bytes in the font of the cells.
 #assert(112 * graphics.CELL_WIDTH <= WIDTH - 2 * LEFT)
 
-COLOR_WRONG :: 0xE0B040
 
 // One case: what the program asked the loader, and the answer.
 Case :: struct {
@@ -423,7 +422,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		column := interface.column_of({LEFT, CASES_Y - 3, WIDTH - 2 * LEFT, CASES_HEIGHT})
 		not_shown := 0
 		for item, index in cases[:case_count] {
-			if _, drawn := interface.case_lines(&frame, &column, index, item.text, item.answer, ANSWER_X, graphics.colors.text, item.right ? graphics.colors.program : COLOR_WRONG, LINE); !drawn {
+			if _, drawn := interface.case_lines(&frame, &column, index, item.text, item.answer, ANSWER_X, graphics.colors.text, item.right ? graphics.colors.program : graphics.colors.failed, LINE); !drawn {
 				not_shown += 1
 			}
 		}
