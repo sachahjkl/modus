@@ -231,8 +231,14 @@ Run_Part :: enum u8 {
 	Type      = 6, // The name of a record.
 	Status    = 7, // An error kind.
 	Operation = 8, // The operation of an error.
+	Size      = 9, // A field that counts a size, and its unit.
+	Time      = 10, // A field that counts a time, and its unit.
 	End_Line  = 255, // The line ends.
 }
+
+// The last part of a run that holds text: a byte past it, but End_Line, is
+// refused.
+RUN_PART_LAST :: Run_Part.Time
 
 // name_hash gives the 64-bit FNV-1a hash of a name: a choice carries it, so
 // that the provider never runs an entry that the panel did not show.
@@ -430,7 +436,7 @@ result_valid :: proc "contextless" (runs: []u8) -> bool {
 			lines += 1
 			continue
 		}
-		if part > u8(Run_Part.Operation) || length > len(runs) - place || !text_encoding.text_valid(runs[place:][:length]) {
+		if part > u8(RUN_PART_LAST) || length > len(runs) - place || !text_encoding.text_valid(runs[place:][:length]) {
 			return false
 		}
 		place += length

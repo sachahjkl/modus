@@ -23,6 +23,10 @@ screen_settle_problem_names_what_is_not_settled :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(screen_settle_problem(before, windows, true, before), "the desktop"), "a change of the desktop that waits")
 	waiting := []Settle_Window{{title = "notes", presents = 2, waits = true}}
 	testing.expect(t, strings.contains(screen_settle_problem(before, waiting, false, before), "the window notes has a picture that no frame drew yet"), "a Present that waits")
+	// A terminal that waits on its clock with a line that it did not draw
+	// is in a wait with the same kernel entries: only its word says it.
+	due := []Settle_Window{{title = "notes", presents = 2, due = true}}
+	testing.expect(t, strings.contains(screen_settle_problem(before, due, false, before), "the program of the window notes has a change that waits for its next picture"), "a picture that is due")
 	ready := []Settle_Program{{slot = 7, name = "notes", state = "ready", entries = 120}}
 	testing.expect(t, strings.contains(screen_settle_problem(before, windows, false, ready), "the program of the window notes is ready"), "the program runs at the second read")
 	testing.expect(t, strings.contains(screen_settle_problem(ready, windows, false, before), "the program of the window notes was ready"), "the program ran at the first read")

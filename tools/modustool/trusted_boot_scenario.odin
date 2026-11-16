@@ -22,9 +22,12 @@ import "modus:contract/system_description"
 //      back; the tool computes the value from the description and compares;
 //   7. another system, one byte of the module lonely changed before the
 //      description was made and signed: it boots, and its measure is the
-//      other value that the tool computes for it.
+//      other value that the tool computes for it. Its boot program is
+//      signed for Secure Boot too, for the machines of `test principals`;
+//      this firmware does not check the signature.
 // With Secure Boot on, the certificate of the test firmware signing key
-// enrolled, and no TPM device (the measure is the work of machines 6 and 7):
+// enrolled, and no TPM device (the measure is the work of machines 6 and 7;
+// the machines of the TPM of `test principals` have Secure Boot and a TPM):
 //   8. the signed boot program starts, and says that the firmware verified
 //      it;
 //   9. the signed boot program with one byte changed does not start;
@@ -52,11 +55,13 @@ TEST_OUTPUT_SECURE_BOOT :: BUILD_FOLDER + "/test_output_secure_boot.txt"
 TEST_OUTPUT_SECURE_BOOT_CHANGED :: BUILD_FOLDER + "/test_output_secure_boot_changed.txt"
 TEST_OUTPUT_SECURE_BOOT_UNSIGNED :: BUILD_FOLDER + "/test_output_secure_boot_unsigned.txt"
 
-// The firmware of a test machine.
+// The firmware of a test machine. The TPM device is another option of the
+// machine (machine_test, tpm_device): a firmware with a TPM driver and no
+// device runs as on a machine with no TPM.
 Machine_Firmware :: enum {
 	Usual, // OVMF_CODE and OVMF_VARS: no TPM driver, no Secure Boot.
-	With_Tpm, // OVMF_TPM_CODE and OVMF_TPM_VARS: a TPM driver, no Secure Boot, no system management mode; a software TPM on the CRB interface.
-	With_Secure_Boot, // OVMF_FULL_CODE with SECURE_BOOT_VARIABLES: the certificate of the firmware signing key enrolled, Secure Boot on, system management mode; no TPM device.
+	With_Tpm_Driver, // OVMF_TPM_CODE and OVMF_TPM_VARS: a TPM driver, no Secure Boot, no system management mode.
+	With_Secure_Boot, // OVMF_FULL_CODE with SECURE_BOOT_VARIABLES: the certificate of the firmware signing key enrolled, Secure Boot on, system management mode, a TPM driver.
 }
 
 // The steps of a machine of the TPM or of Secure Boot after "boot program:
@@ -262,10 +267,14 @@ scenario_stated_hash := [?]Step {
 }
 
 MEASURE_LINE :: "boot program: PCR 11 = "
+// The line of the boot program that says who verified it: the firmware
+// with Secure Boot, or the boot program alone.
+SECURE_BOOT_VERIFIED_LINE :: "boot program: verified by the firmware (Secure Boot), then by the boot program"
+BOOT_PROGRAM_ONLY_VERIFIED_LINE :: "boot program: verified by the boot program, which the firmware did not verify"
 
 scenario_measured := [?]Step {
 	{kind = .Wait, text = "boot program: started", seconds = TPM_MACHINE_FIRST_WAIT_SECONDS},
-	{kind = .Wait, text = "boot program: verified by the boot program, which the firmware did not verify", seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = BOOT_PROGRAM_ONLY_VERIFIED_LINE, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Wait, text = "boot program: the kernel and each module and resource have the hash of the system description", seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Wait, text = MEASURE_LINE, fails_on = MEASURE_REFUSED_LINE, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: ", seconds = TPM_MACHINE_STEP_SECONDS},
@@ -286,7 +295,7 @@ scenario_other_system := [?]Step {
 
 scenario_secure_boot := [?]Step {
 	{kind = .Wait, text = "boot program: started", seconds = TPM_MACHINE_FIRST_WAIT_SECONDS},
-	{kind = .Wait, text = "boot program: verified by the firmware (Secure Boot), then by the boot program", seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = SECURE_BOOT_VERIFIED_LINE, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Wait, text = "root: verified by the firmware (Secure Boot), then by the boot program", seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Wait, text = "compositor: surface console", any_order = true, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Launch, text = "boot"},
@@ -316,8 +325,8 @@ trusted_boot_tests_run :: proc() -> bool {
 	refused_machine_run(scenario_changed_kernel[:], BOOT_VOLUME_CHANGED_KERNEL, TEST_OUTPUT_CHANGED_KERNEL) or_return
 	refused_machine_run(scenario_without_description[:], BOOT_VOLUME_WITHOUT_DESCRIPTION, TEST_OUTPUT_WITHOUT_DESCRIPTION) or_return
 	refused_machine_run(scenario_stated_hash[:], BOOT_VOLUME_STATED_HASH, TEST_OUTPUT_STATED_HASH) or_return
-	measured := measure_machine_run(scenario_measured[:], BOOT_VOLUME, TEST_OUTPUT_MEASURED, .With_Tpm) or_return
-	other := measure_machine_run(scenario_other_system[:], BOOT_VOLUME_OTHER_SYSTEM, TEST_OUTPUT_OTHER_SYSTEM, .With_Tpm) or_return
+	measured := measure_machine_run(scenario_measured[:], BOOT_VOLUME, TEST_OUTPUT_MEASURED, .With_Tpm_Driver) or_return
+	other := measure_machine_run(scenario_other_system[:], BOOT_VOLUME_OTHER_SYSTEM, TEST_OUTPUT_OTHER_SYSTEM, .With_Tpm_Driver) or_return
 	if measured == other {
 		fmt.eprintln("modustool: test failed: a system with one byte of one module changed has the same measure")
 		return false
@@ -400,12 +409,12 @@ refused_machine_run :: proc(steps: []Step, volume, output: string, firmware: Mac
 	return true
 }
 
-// measure_machine_run runs a machine with the TPM, then compares the value
-// of the measure register that the boot program read back with the value
-// that the tool computes from the system description of the volume.
+// measure_machine_run runs a machine with a software TPM, then compares the
+// value of the measure register that the boot program read back with the
+// value that the tool computes from the system description of the volume.
 measure_machine_run :: proc(steps: []Step, volume, output: string, firmware: Machine_Firmware) -> (value: [32]u8, ok: bool) {
 	// The tool ends QEMU: status 0.
-	passed := machine_test(steps, volume, output, 0, firmware = firmware)
+	passed := machine_test(steps, volume, output, 0, firmware = firmware, tpm_device = true)
 	tpm_traffic_report(output)
 	if !passed {
 		return

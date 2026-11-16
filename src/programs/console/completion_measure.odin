@@ -51,7 +51,7 @@ measure_line_write :: proc "contextless" () {
 }
 
 measure_completion :: proc "contextless" (arguments: []Value) -> Value {
-	columns := [6]Column{text_column("names_of", 32), integer_column("names"), integer_column("collect_nanoseconds"), integer_column("rank_nanoseconds"), integer_column("rows_nanoseconds"), integer_column("colors_nanoseconds")}
+	columns := [6]Column{text_column("names_of", 32), integer_column("names"), time_column("collect", .Nanoseconds), time_column("rank", .Nanoseconds), time_column("rows", .Nanoseconds), time_column("colors", .Nanoseconds)}
 	table, made := made_table("Completion_Measure", columns[:])
 	if !made {
 		return fail("measure_completion: the line has no room for the description")

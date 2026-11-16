@@ -147,10 +147,12 @@ Duration :: struct {
 	unit:  Duration_Unit, // The unit.
 }
 
-// What an Integer counts, as a command states it for one parameter: a size
-// or a time, and the unit of that kind. See
-// [integer unit](term:integer-unit). The palette shows the unit after the
-// number of the field, and the principal types the number in that unit.
+// What an Integer counts, as a command states it for one parameter and a
+// description of a record for one field: a size or a time, and the unit of
+// that kind. See [integer unit](term:integer-unit). The palette shows the
+// unit after the number of the field, and the principal types the number
+// in that unit. The console draws a field with a unit in the color of its
+// kind, with the unit in the head of its column.
 //
 // Example: the parameter of `buffer` is `{.Size, u8(Size_Unit.Pages)}`.
 Integer_Unit :: struct {

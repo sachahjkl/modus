@@ -17,24 +17,28 @@
 //
 // - `Column`, `description_write`, `row_text_set`, `row_integer_set`: a
 //   record description in the format of the module contract, and its rows.
+//   `size_column` and `time_column` give an Integer column its integer
+//   unit, so the drawers show it in the color of its value kind.
 // - `Sink`, `Part`: where a drawer writes.
 // - `draw_integer`, `draw_text`, `draw_record`, `draw_table`, `draw_handle`,
 //   `draw_bytes`, `draw_failure`: the drawers.
 package console_results
 
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "modus:support/sentence"
 
 // A field of a record that the console describes: a column of a table that
 // a command makes, or a field that `join` or `columns` takes from a table.
 Column :: struct {
-	name:     string, // The name of the field.
-	type:     module.Type, // Integer, Handle or Text.
-	detail:   u32, // An Integer: its size in bytes. A Text: its size in bytes.
-	unsigned: bool, // An Integer: true for an unsigned integer.
-	side:     int, // For join: the field comes from the left table (0) or from the right table (1).
-	from:     u32, // For join and columns: the offset of the field in the record of its table.
-	offset:   u32, // The offset of the field in the new record: description_write gives it.
+	name:         string, // The name of the field.
+	type:         module.Type, // Integer, Handle or Text.
+	detail:       u32, // An Integer: its size in bytes. A Text: its size in bytes.
+	unsigned:     bool, // An Integer: true for an unsigned integer.
+	integer_unit: value_kinds.Integer_Unit, // An Integer: what it counts, {} for a plain number.
+	side:         int, // For join: the field comes from the left table (0) or from the right table (1).
+	from:         u32, // For join and columns: the offset of the field in the record of its table.
+	offset:       u32, // The offset of the field in the new record: description_write gives it.
 }
 
 // text_column gives a Text column of a size in bytes.
@@ -42,9 +46,23 @@ text_column :: proc "contextless" (name: string, size: u32) -> Column {
 	return {name = name, type = .Text, detail = size}
 }
 
-// integer_column gives an Integer column of 8 bytes with a sign.
+// integer_column gives an Integer column of 8 bytes with a sign: a plain
+// number.
 integer_column :: proc "contextless" (name: string) -> Column {
 	return {name = name, type = .Integer, detail = 8}
+}
+
+// size_column gives an Integer column of 8 bytes with a sign that counts a
+// size in a unit. The drawer writes the unit in the head, so the name does
+// not say it: `size_column("used", .Pages)`, not "used_pages".
+size_column :: proc "contextless" (name: string, unit: value_kinds.Size_Unit) -> Column {
+	return {name = name, type = .Integer, detail = 8, integer_unit = value_kinds.size_in(unit)}
+}
+
+// time_column gives an Integer column of 8 bytes with a sign that counts a
+// time in a unit: `time_column("collect", .Nanoseconds)`.
+time_column :: proc "contextless" (name: string, unit: value_kinds.Duration_Unit) -> Column {
+	return {name = name, type = .Integer, detail = 8, integer_unit = value_kinds.time_in(unit)}
 }
 
 // description_write writes the description of one record in the format of
@@ -110,11 +128,12 @@ description_write :: proc "contextless" (buffer: []u8, name: string, columns: []
 	(^module.Record)(&buffer[records + size_of(module.Record)])^ = record
 	for column, index in columns {
 		item := module.Field {
-			offset     = column.offset,
-			type       = column.type,
-			detail     = column.detail,
-			unsigned   = column.unsigned,
-			name_count = u32(len(column.name)),
+			offset       = column.offset,
+			type         = column.type,
+			detail       = column.detail,
+			unsigned     = column.unsigned,
+			integer_unit = column.integer_unit,
+			name_count   = u32(len(column.name)),
 		}
 		field_name, field_fits := text(buffer, strings, &text_count, column.name)
 		if !field_fits {
@@ -134,7 +153,7 @@ description_write :: proc "contextless" (buffer: []u8, name: string, columns: []
 // column_field gives the field of a column, as a reader of the description
 // finds it.
 column_field :: proc "contextless" (column: Column) -> module.Field {
-	return {offset = column.offset, type = column.type, detail = column.detail, unsigned = column.unsigned}
+	return {offset = column.offset, type = column.type, detail = column.detail, unsigned = column.unsigned, integer_unit = column.integer_unit}
 }
 
 // row_text_set writes a text in a Text column of a row. A text longer than

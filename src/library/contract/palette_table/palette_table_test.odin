@@ -81,6 +81,15 @@ the_runs_of_a_result :: proc(t: ^testing.T) {
 	testing.expect(t, result_valid(area[:writer.count]))
 	testing.expect_value(t, area[0], u8(Run_Part.Label))
 	testing.expect_value(t, string(area[2:9]), "pages  ")
+	// A size and a time of a field are runs of their own kind; a byte past
+	// the last kind, but the end of a line, is refused.
+	kinds := Result_Writer{buffer = area[:], fits = true}
+	result_run(&kinds, .Size, "120 pages")
+	result_run(&kinds, .Time, "45 ms")
+	result_line_end(&kinds)
+	testing.expect(t, result_valid(area[:kinds.count]))
+	area[0] = u8(RUN_PART_LAST) + 1
+	testing.expect(t, !result_valid(area[:kinds.count]))
 	// A line wider than the panel.
 	wide := Result_Writer{buffer = area[:], fits = true}
 	for _ in 0 ..< RESULT_COLUMN_CAPACITY / 10 + 1 {

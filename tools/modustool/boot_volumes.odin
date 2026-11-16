@@ -51,7 +51,7 @@ BOOT_PROGRAM_OBJECT_FILE_NAME :: "boot.obj"
 // The name of the main volume: the name of its object folder.
 MAIN_BOOT_VOLUME_NAME :: "main"
 
-// boot_volumes gives every boot volume of the build: 15 fixed ones and one
+// boot_volumes gives every boot volume of the build: 13 fixed ones and one
 // for each test of the kernel on itself. The list is new at each call: the
 // path of a self test volume is a text of the temporary memory.
 boot_volumes :: proc() -> []Boot_Volume {
@@ -69,7 +69,12 @@ boot_volumes :: proc() -> []Boot_Volume {
 	// another system that it must accept and measure.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_CHANGED_MODULE, image = BOOT_IMAGE, kernel = "kernel", change = {module_changed_after_description = CHANGED_MODULE}})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_WRONG_SIGNATURE, image = BOOT_IMAGE, kernel = "kernel", change = {signature_changed = true}})
-	append(&volumes, Boot_Volume{path = BOOT_VOLUME_OTHER_SYSTEM, image = BOOT_IMAGE, kernel = "kernel", change = {module_changed_before_description = OTHER_SYSTEM_MODULE}})
+	// The other system is signed for Secure Boot too: the machines of the
+	// TPM start it with Secure Boot on, for a second PCR 11 under the PCR 7
+	// of Secure Boot, and with Secure Boot off, for the same PCR 11 under
+	// another PCR 7. The signature changes no byte of the boot image, so no
+	// PCR 11.
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_OTHER_SYSTEM, image = BOOT_IMAGE, kernel = "kernel", change = {module_changed_before_description = OTHER_SYSTEM_MODULE}, firmware_signature = .Signed})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_CHANGED_KERNEL, image = BOOT_IMAGE, kernel = "kernel", change = {kernel_changed_after_description = true}})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_WITHOUT_DESCRIPTION, image = BOOT_IMAGE, kernel = "kernel", change = {description_left_out = true}})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_STATED_HASH, image = BOOT_IMAGE, kernel = "kernel", change = {stated_hash_changed_module = CHANGED_MODULE}})
@@ -78,11 +83,6 @@ boot_volumes :: proc() -> []Boot_Volume {
 	// with one byte changed.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SECURE_BOOT, image = BOOT_IMAGE, kernel = "kernel", firmware_signature = .Signed, with_secure_boot_variables = true})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SECURE_BOOT_CHANGED, image = BOOT_IMAGE, kernel = "kernel", firmware_signature = .Signed_Then_Changed})
-	// The test of the seal by the TPM: the boot image whose root service
-	// seals with no Secure Boot, and another system of it (another PCR 11).
-	// No other volume holds that image.
-	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SEAL_TEST, image = BOOT_IMAGE_SEAL_TEST, kernel = "kernel"})
-	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM, image = BOOT_IMAGE_SEAL_TEST, kernel = "kernel", change = {module_changed_before_description = OTHER_SYSTEM_MODULE}})
 	// One volume for each test of the kernel on itself.
 	for test in self_tests {
 		append(&volumes, Boot_Volume{path = fmt.tprintf(BOOT_VOLUME_SELF_TEST, test.number), image = BOOT_IMAGE, kernel = "kernel", self_test = test.number})
@@ -756,10 +756,10 @@ test_part_volumes := [?]Volumes_Of_Part {
 	{part = "iommu", procedures = {"iommu_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "iommu_amd", procedures = {"iommu_amd_tests_run"}, volumes = {BOOT_VOLUME}},
 	{part = "guest", procedures = {"guest_tests_run"}, volumes = {BOOT_VOLUME}},
-	// The machines of the machine key sealed by the TPM too: the two volumes
-	// of the test of the seal, and the main volume, on which the seal is
-	// refused.
-	{part = "principals", procedures = {"principals_tests_run", "principals_tpm_tests_run", "principals_tpm_principal_tests_run", "tpm_key_machine_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_SEAL_TEST, BOOT_VOLUME_SEAL_TEST_OTHER_SYSTEM}},
+	// The machines of the keys sealed by the TPM too: the signed main
+	// volume, whose build writes the variable store of Secure Boot, and the
+	// other system, signed.
+	{part = "principals", procedures = {"principals_tests_run", "principals_tpm_tests_run", "principals_tpm_principal_tests_run", "tpm_key_machine_run"}, volumes = {BOOT_VOLUME, BOOT_VOLUME_SECURE_BOOT, BOOT_VOLUME_OTHER_SYSTEM}},
 	// No machine starts: the part needs the built modules, which the build
 	// of a volume gives.
 	{part = "outside_module", procedures = {"outside_module_examples_check"}, volumes = {BOOT_VOLUME}},

@@ -2,6 +2,7 @@ package modustool
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "base:runtime"
 import "core:odin/tokenizer"
 import "core:testing"
@@ -136,9 +137,9 @@ describe_reads_records_and_handles :: proc(t: ^testing.T) {
 	testing.expect_value(t, span.size, 24)
 	testing.expect_value(t, len(span.fields), 3)
 	if len(span.fields) == 3 {
-		testing.expect_value(t, span.fields[0], Field_Description{"memory", 0, .Handle, transmute(u32)op.Rights{.Read}, false})
-		testing.expect_value(t, span.fields[1], Field_Description{"first", 8, .Integer, 0, false})
-		testing.expect_value(t, span.fields[2], Field_Description{"count", 16, .Integer, 0, false})
+		testing.expect_value(t, span.fields[0], Field_Description{"memory", 0, .Handle, transmute(u32)op.Rights{.Read}, false, {}})
+		testing.expect_value(t, span.fields[1], Field_Description{"first", 8, .Integer, 0, false, {}})
+		testing.expect_value(t, span.fields[2], Field_Description{"count", 16, .Integer, 0, false, {}})
 	}
 	swap, sum := list[0], list[1]
 	testing.expect_value(t, swap.result, module.Type.Record)
@@ -186,13 +187,58 @@ describe_reads_tables :: proc(t: ^testing.T) {
 	testing.expect_value(t, row.size, 40)
 	testing.expect_value(t, len(row.fields), 3)
 	if len(row.fields) == 3 {
-		testing.expect_value(t, row.fields[0], Field_Description{"name", 0, .Text, 20, false})
-		testing.expect_value(t, row.fields[1], Field_Description{"count", 24, .Integer, 0, false})
-		testing.expect_value(t, row.fields[2], Field_Description{"tag", 32, .Text, 3, false})
+		testing.expect_value(t, row.fields[0], Field_Description{"name", 0, .Text, 20, false, {}})
+		testing.expect_value(t, row.fields[1], Field_Description{"count", 24, .Integer, 0, false, {}})
+		testing.expect_value(t, row.fields[2], Field_Description{"tag", 32, .Text, 3, false, {}})
 	}
 	testing.expect_value(t, list[0].result, module.Type.Table)
 	testing.expect_value(t, list[0].result_detail, 1)
 	testing.expect_value(t, len(list[0].parameters), 1)
+}
+
+@(private = "file")
+TABLE_WITH_UNITS_SOURCE :: `// A table whose fields count a size and a time.
+package sample
+
+import "modus:contract/value_kinds"
+
+Usage :: struct {
+	name:  [16]u8,
+	used:  value_kinds.Size_In_Pages,
+	wait:  value_kinds.Time_In_Milliseconds,
+	count: i64,
+}
+
+// usages gives the rows of a sample, in the memory of the caller.
+@(export)
+usages :: proc "c" (result: ^[]Usage) -> i64 {return 0}
+`
+
+// A field of a type of the contract such as value_kinds.Size_In_Pages is
+// an Integer of 8 bytes with a sign, and states its integer unit; a plain
+// i64 and a Text state none. The module file then holds the unit in the
+// field, and the reader of the contract gives it back.
+@(test)
+describe_reads_the_unit_of_a_field :: proc(t: ^testing.T) {
+	list := make([dynamic]Export_Description, context.temp_allocator)
+	records: []Record_Description
+	testing.expect(t, describe_source("sample.odin", TABLE_WITH_UNITS_SOURCE, &list, nil, &records))
+	if len(list) != 1 || len(records) != 1 {
+		testing.expectf(t, false, "%d exports and %d records", len(list), len(records))
+		return
+	}
+	usage := records[0]
+	testing.expect_value(t, usage.size, 40)
+	expected := [?]Field_Description {
+		{"name", 0, .Text, 16, false, {}},
+		{"used", 16, .Integer, 0, false, value_kinds.size_in(.Pages)},
+		{"wait", 24, .Integer, 0, false, value_kinds.time_in(.Milliseconds)},
+		{"count", 32, .Integer, 0, false, {}},
+	}
+	testing.expect_value(t, len(usage.fields), len(expected))
+	for item, index in expected[:min(len(expected), len(usage.fields))] {
+		testing.expect_value(t, usage.fields[index], item)
+	}
 }
 
 @(private = "file")
@@ -236,14 +282,14 @@ describe_reads_table_parameters :: proc(t: ^testing.T) {
 	draw := records[0]
 	testing.expect_value(t, draw.size, 32)
 	expected := [?]Field_Description {
-		{"kind", 0, .Integer, 1, true},
-		{"scale", 1, .Integer, 1, true},
-		{"x", 4, .Integer, 4, false},
-		{"y", 8, .Integer, 4, false},
-		{"color", 12, .Integer, 4, true},
-		{"text_start", 16, .Integer, 4, true},
-		{"text_count", 20, .Integer, 4, true},
-		{"element", 24, .Integer, 0, true},
+		{"kind", 0, .Integer, 1, true, {}},
+		{"scale", 1, .Integer, 1, true, {}},
+		{"x", 4, .Integer, 4, false, {}},
+		{"y", 8, .Integer, 4, false, {}},
+		{"color", 12, .Integer, 4, true, {}},
+		{"text_start", 16, .Integer, 4, true, {}},
+		{"text_count", 20, .Integer, 4, true, {}},
+		{"element", 24, .Integer, 0, true, {}},
 	}
 	testing.expect_value(t, len(draw.fields), len(expected))
 	for item, index in expected[:min(len(expected), len(draw.fields))] {
