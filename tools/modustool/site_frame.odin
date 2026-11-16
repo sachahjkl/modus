@@ -175,6 +175,8 @@ Site :: struct {
 	author:       string, // The holder of the line "Copyright" of LICENSE, or "".
 	commit:       string, // "" when the tool cannot read it.
 	release:      string,
+	release_public_key: string, // The public key of the release signing key in base64url, or "" when the repository holds none (site_download.odin).
+	firmware_certificate_present: bool, // The repository holds the certificate of the firmware signing key of the publisher (site_download.odin).
 	build_time:   string,
 	documents:    map[string]string, // A Markdown file ("docs/NETWORK.md" and "NETWORK.md") to its page.
 	glossary:     Glossary, // docs/GLOSSARY.md, as glossary_read gives it.
@@ -671,6 +673,10 @@ site_build :: proc(address: string) -> bool {
 	// of the file of the repository, which `modustool check` compares.
 	mark_font := mark_font_of_the_repository() or_return
 	site_write_file(&site, SITE_MARK_FONT, mark_font) or_return
+	// The public key of the release signing key, for a reader who verifies
+	// the files of a release with no tool, and the certificate that a
+	// principal enrols for Secure Boot.
+	site_publisher_key_files_write(&site) or_return
 
 	// The pictures of the screen: the table of the gallery, checked against
 	// the folder of the pictures. A picture that no row and no line of the
