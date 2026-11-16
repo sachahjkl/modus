@@ -63,6 +63,7 @@ import op "modus:contract/operation"
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
+import rounds "modus:support/kernel_events_rounds"
 import "modus:support/random"
 import "modus:support/system"
 
@@ -135,44 +136,8 @@ STOP_BY_PARENT :: 9
 LOAD_AMOUNTS :: system.Budget_Amounts{pages = 256 + LOADERS_MOST * (16 + 3), programs = 1, threads = 1 + LOADERS_MOST, processor = (1 + LOADERS_MOST) * 1_000_000, log_records = 0}
 WAITER_AMOUNTS :: system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 0}
 
-// The rounds of the load child. The parent writes the word of a round in
-// the shared page, so each value is explicit.
-Round :: enum u32 {
-	None              = 0, // No round yet: the word of the page before the first round.
-	Exact             = 1,
-	One_In            = 2,
-	Full              = 3,
-	Taken_Away        = 4,
-	// One first use of a new page: the child writes its address in the
-	// page that it shares.
-	First_Use_All     = 5,
-	First_Use_Named   = 6,
-	// The loaders start, then stop.
-	Loaders_Start     = 7,
-	Loaders_Stop      = 8,
-	// The rounds of the measure: the load child runs its loop of
-	// Memory_Size for MEASURE_TIME, and writes its own count and its own
-	// time.
-	Measure_No_Rule   = 9,
-	Measure_Other     = 10,
-	Measure_Nothing   = 11,
-	Measure_Each      = 12,
-	// The right revoked: CALLS operations before the revocation, CALLS
-	// after.
-	Before_Revocation = 13,
-	After_Revocation  = 14,
-}
-
-// round_of_word reads the word of the shared page. A word that names no
-// round is refused: the child runs no round in its place.
-round_of_word :: proc "contextless" (word: u32) -> (round: Round, ok: bool) {
-	for member in Round {
-		if u32(member) == word {
-			return member, true
-		}
-	}
-	return {}, false
-}
+// The rounds of the load child: modus:support/kernel_events_rounds.
+Round :: rounds.Round
 
 // The page that the parent shares with each child, at SHARED_ADDRESS in the
 // child.
@@ -355,6 +320,16 @@ round_run :: proc "contextless" (load: ^Child, round: Round) -> bool {
 		done := intrinsics.atomic_load(&load.shared.done)
 		if done == u32(round) {
 			return true
+		}
+		// A child that refused the round stopped: its stop code says so at
+		// once, and the wait for a round that never runs ends now.
+		if results, status := system.call(.Program_State, u64(load.program)); status == .Ok && op.Program_State(results[0]) == .Stopped {
+			if results[1] == rounds.REFUSED_ROUND_STOP_CODE {
+				system.log("kernel_events: the load child refused the round ", u64(round), ": its word names no round to run")
+			} else {
+				system.log("kernel_events: the load child stopped with the code ", results[1], " before the end of the round ", u64(round))
+			}
+			return false
 		}
 		system.word_wait(&load.shared.done, done, system.time() + 100)
 	}
@@ -827,10 +802,10 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 			round_word = intrinsics.atomic_load(&shared.go)
 			// The border of the shared page: a word that names no round, or
 			// the word of no round, runs nothing, and the child stops.
-			round, round_ok := round_of_word(round_word)
-			if !round_ok || round == .None {
+			round, round_ok := rounds.round_of_word(round_word)
+			if !round_ok {
 				system.log("kernel_events: the load child got the round ", u64(round_word), ", which names no round: it stops")
-				system.stop(21)
+				system.stop(rounds.REFUSED_ROUND_STOP_CODE)
 			}
 			switch round {
 			case .None:

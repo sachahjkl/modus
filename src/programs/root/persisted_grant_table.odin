@@ -205,22 +205,19 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 	table := &persisted_tables[principals.MACHINE]
 	state := table.state
 	waiting := state == .No_Passphrase || state == .Awaited || state == .Record_Unreadable
-	// A word that names no state is refused, and changes nothing.
-	reported, reported_ok := system.member_of_word(system.Machine_Key_State, values[4])
-	if !reported_ok {
-		return .Bad_Operation
+	// A word that names no state or no form is refused, and changes nothing.
+	report, report_status := system.machine_key_report_of_values(values)
+	if report_status != .Ok {
+		return report_status
 	}
+	reported := report.state
 	switch reported {
 	case .Awaited:
-		key_form, key_form_ok := system.member_of_word(system.Machine_Key_Form, values[5])
-		if !key_form_ok {
-			return .Bad_Operation
-		}
 		if !waiting {
 			return .Bad_State
 		}
 		table.state = .Awaited
-		switch key_form {
+		switch report.form {
 		case .Sealed_By_The_Tpm:
 			system.log_in("programs", .Info, "root: the machine key is sealed by the TPM: the disk grants of principal 0 wait for the unseal, and the machine runs")
 		case .Passphrase:
@@ -273,8 +270,8 @@ principal_key_take :: proc "contextless" (number: u64, values: [7]u64) -> system
 	table := &persisted_tables[number]
 	key := transmute([disk_program.KEY_SIZE]u8)[4]u64{values[0], values[1], values[2], values[3]}
 	defer key_erase(key[:])
-	origin, origin_ok := system.member_of_word(system.Principal_Key_Origin, values[5])
-	if key == {} || !origin_ok {
+	origin, origin_status, _ := system.ring_member_of_word(system.Principal_Key_Origin, values[5], .Principal_Unlock, 0)
+	if key == {} || origin_status != .Ok {
 		return .Bad_Operation
 	}
 	if origin == .New && !principal_created_in_this_run[number] {

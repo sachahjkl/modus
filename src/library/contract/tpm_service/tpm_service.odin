@@ -185,6 +185,38 @@ status_of_word :: proc "contextless" (word: u32) -> (status: Status, ok: bool) {
 	return {}, false
 }
 
+// A request of the ring, past its border.
+Request :: struct {
+	command:       Command, // .Seal or .Unseal.
+	authorization: Authorization,
+}
+
+// request_of_record is the border of the service: the command of a record
+// and its authorization (values[0] of Seal, values[4] of Unseal). A kind
+// that names no command, the kind of None, or an authorization that names
+// none gives Bad_Command; the service then does no work. It reads and
+// changes no state.
+request_of_record :: proc "contextless" (kind: u32, values: [7]u64) -> (request: Request, status: Status) {
+	command, command_ok := command_of_word(kind)
+	if !command_ok {
+		return {}, .Bad_Command
+	}
+	authorization_word: u64
+	switch command {
+	case .None:
+		return {}, .Bad_Command
+	case .Seal:
+		authorization_word = values[0]
+	case .Unseal:
+		authorization_word = values[4]
+	}
+	authorization, authorization_ok := authorization_of_word(authorization_word)
+	if !authorization_ok {
+		return {}, .Bad_Command
+	}
+	return {command = command, authorization = authorization}, .Ok
+}
+
 device_step_of_word :: proc "contextless" (word: u64) -> (step: Device_Step, ok: bool) {
 	for member in Device_Step {
 		if u64(member) == word {

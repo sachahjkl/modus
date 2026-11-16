@@ -658,10 +658,10 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		return .No_Right
 	}
-	action, action_ok := system.member_of_word(system.Disk_Grant_Action, record.values[4])
-	if !action_ok {
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, 0, i64(min(record.values[4], 1 << 62)), i64(max(system.Disk_Grant_Action)))
-		return .Bad_Operation
+	action, action_status, action_refusal := system.ring_member_of_word(system.Disk_Grant_Action, record.values[4], .Disk_Grant, 0)
+	if action_status != .Ok {
+		values^ = action_refusal
+		return action_status
 	}
 	number := record.values[5]
 	if number > u64(max(start_grant.Grant)) {

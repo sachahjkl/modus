@@ -316,15 +316,15 @@ principal_change_end :: proc "contextless" (values: [7]u64, completion: ^[7]u64)
 		completion^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	end, end_ok := system.member_of_word(principals.Change_End, values[4])
-	if !end_ok {
-		completion^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(values[4], 1 << 62)), i64(max(principals.Change_End)))
-		return .Bad_Operation
+	end, end_status, end_refusal := system.ring_member_of_word(principals.Change_End, values[4], .Principal_Change_End, 2)
+	if end_status != .Ok {
+		completion^ = end_refusal
+		return end_status
 	}
-	problem, problem_ok := system.member_of_word(principals.Change_Problem, values[5])
-	if !problem_ok {
-		completion^ = errors.ring_fail(kind, .Bad_Value, .None, 3, i64(min(values[5], 1 << 62)), i64(max(principals.Change_Problem)))
-		return .Bad_Operation
+	problem, problem_status, problem_refusal := system.ring_member_of_word(principals.Change_Problem, values[5], .Principal_Change_End, 3)
+	if problem_status != .Ok {
+		completion^ = problem_refusal
+		return problem_status
 	}
 	principal_change_finish(end, problem)
 	return .Ok
@@ -383,10 +383,10 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		return .No_Right, false
 	}
-	asked, asked_ok := system.member_of_word(system.Principal_Change, change)
-	if !asked_ok {
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(change, 1 << 62)), i64(max(system.Principal_Change)))
-		return .Bad_Operation, false
+	asked, asked_status, asked_refusal := system.ring_member_of_word(system.Principal_Change, change, .Principal_Change, 2)
+	if asked_status != .Ok {
+		values^ = asked_refusal
+		return asked_status, false
 	}
 	mode: principals.Unlock_Mode
 	switch asked {

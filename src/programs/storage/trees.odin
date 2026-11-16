@@ -968,6 +968,9 @@ Add_Row :: struct {
 
 added_rows: [ADD_LIMIT]Add_Row
 added_names: [ADD_LIMIT]Kept_Name
+// The kind of each row, read once at the border of the call: the commit
+// passes the member, never the word of the row.
+added_kinds: [ADD_LIMIT]format.Entry_Kind
 
 // entries_add adds empty objects and empty trees to one tree, in one
 // commit: all of them or none. The rows and the names are in the call
@@ -978,9 +981,12 @@ entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []
 	}
 	count := copy(added_rows[:], rows)
 	for &row, number in added_rows[:count] {
-		if row.kind != i64(format.Entry_Kind.Object) && row.kind != i64(format.Entry_Kind.Tree) {
+		// A word that names no kind, and the kind None, are refused.
+		added_kind, kind_ok := system.member_of_word(format.Entry_Kind, transmute(u64)row.kind)
+		if !kind_ok || added_kind == .None {
 			return errors.fail(error, ERROR_NAME, .Bad_Value, .Records, 2, row.kind, i64(format.Entry_Kind.Tree), i64(number + 1))
 		}
+		added_kinds[number] = added_kind
 		if row.name_offset < 0 || row.name_count < 0 || row.name_offset > i64(len(names)) || row.name_count > i64(len(names)) - row.name_offset {
 			return errors.fail(error, ERROR_NAME, .Out_Of_Range, .Bytes, 3, row.name_offset + row.name_count, i64(len(names)), i64(number + 1))
 		}
@@ -1010,8 +1016,8 @@ entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []
 	generation := root.generation + 1
 	now := time_now()
 	date := date_now()
-	for &row, number in added_rows[:count] {
-		value := Entry{kind = format.Entry_Kind(row.kind), generation = generation, time = now, date = date}
+	for number in 0 ..< count {
+		value := Entry{kind = added_kinds[number], generation = generation, time = now, date = date}
 		if value.kind == .Object {
 			value.hash = blake3.hash(nil) // The hash of an object of no byte.
 		}

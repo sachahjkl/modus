@@ -92,6 +92,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_MODULES + "/sample",
 	SOURCE_FOLDER_SUPPORT + "/system",
 	SOURCE_FOLDER_SUPPORT + "/twins",
+	SOURCE_FOLDER_SUPPORT + "/kernel_events_rounds",
 	SOURCE_FOLDER_CONTRACT + "/tpm_service",
 	SOURCE_FOLDER_SUPPORT + "/storage",
 	SOURCE_FOLDER_SUPPORT + "/bar",

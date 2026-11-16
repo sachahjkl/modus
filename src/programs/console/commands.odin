@@ -2331,20 +2331,33 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	#partial switch system.Status(completion.kind) {
+	// The status and the kind of the record come from the root service: each
+	// is read at its border, and a word that names no member is said.
+	status, status_ok := system.member_of_word(system.Status, u64(completion.kind))
+	if !status_ok {
+		return fail("the root service gave the status ", u64(completion.kind), " to the replacement, which names no status")
+	}
+	switch status {
 	case .Ok:
 		return {}
 	case .No_Right:
 		// The root service writes a replacement only for a row that the
 		// signing key of the system signed (docs/MODULE_CONTRACT.md, "Who may
 		// replace a module"); its log line gives the whole reason.
-		#partial switch errors.Kind(errors.completion_record(completion.values).kind) {
+		kind_word := errors.completion_record(completion.values).kind
+		kind, kind_ok := system.member_of_word(errors.Kind, transmute(u64)kind_word)
+		if !kind_ok {
+			return fail("the root service refused the replacement of ", name, " by ", by, " with the kind ", kind_word, ", which names no kind")
+		}
+		switch kind {
 		case .Absent:
 			return fail("the root service refused the replacement of ", name, " by ", by, ": no signed row names it")
 		case .Not_Authentic:
 			return fail("the root service refused the replacement of ", name, " by ", by, ": its signature does not verify")
 		case .Refused:
 			return fail("the root service refused the replacement of ", name, " by ", by, ": the replacement list breaks its format")
+		case .None, .Empty, .Too_Long, .Too_Small, .Bad_Value, .Bad_Flags, .Bad_Byte, .Bad_Address, .Handle_Absent, .Handle_Ended, .Handle_Kind, .Handle_Rights, .Budget, .Budget_Hidden, .Over_Limit, .Full, .State, .Damaged, .Device, .No_Grant, .Malformed, .No_Target, .Overlap, .Unknown_Operation, .No_Answer, .Unsupported, .Link_Down, .Busy, .Out_Of_Range, .Reserved, .Not_Payer, .Object_Shared, .Object_Marked, .Whole_Only, .Not_Multiple, .Seed_Too_Weak, .Exists, .Starter_Module:
+			// No record of a signed row: the grant of the console is missing.
 		}
 		return fail("the console has no grant to change the replacement table")
 	case .Bad_State:
@@ -2353,6 +2366,8 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("the replacement table is full")
 	case .Bad_Operation:
 		return fail("a module does not replace itself")
+	case .Bad_Handle, .Bad_Address, .No_Memory, .No_Budget:
+		return fail(by == "" ? "no replacement of the module " : "no module has the name ", name)
 	}
 	return fail(by == "" ? "no replacement of the module " : "no module has the name ", name)
 }

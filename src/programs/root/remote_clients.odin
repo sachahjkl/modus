@@ -105,10 +105,10 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		values^ = errors.ring_fail(kind, .Absent, .Principals, 0)
 		return .Bad_State
 	}
-	action, action_ok := system.member_of_word(system.Remote_Client_Action, record.values[4])
-	if !action_ok {
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(record.values[4], 1 << 62)), i64(max(system.Remote_Client_Action)))
-		return .Bad_Operation
+	action, action_status, action_refusal := system.ring_member_of_word(system.Remote_Client_Action, record.values[4], .Remote_Client, REMOTE_CLIENT_ACTION_ARGUMENT)
+	if action_status != .Ok {
+		values^ = action_refusal
+		return action_status
 	}
 	if action == .Read {
 		place := record.values[5]
@@ -155,7 +155,11 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 	head: [16]u8
 	switch action {
 	case .Read:
-		// Served above, before the check of the key.
+		// Served above, before the check of the key: this arm is reached
+		// only if that block moves, and then it refuses, never answers Ok
+		// with values that it did not write.
+		values^ = errors.ring_fail(kind, .Bad_Value, .None, REMOTE_CLIENT_ACTION_ARGUMENT, i64(min(record.values[4], 1 << 62)), i64(max(system.Remote_Client_Action)))
+		return .Bad_Operation
 	case .Allow:
 		if place >= 0 {
 			if client_table.clients[place].principal != principal {
@@ -233,8 +237,14 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		client_keys_restore()
 		return .Ok
 	}
-	return .Ok
+	// Each arm returns: only an action that skipped the border reaches here.
+	values^ = errors.ring_fail(kind, .Bad_Value, .None, REMOTE_CLIENT_ACTION_ARGUMENT, i64(min(record.values[4], 1 << 62)), i64(max(system.Remote_Client_Action)))
+	return .Bad_Operation
 }
+
+// The argument of the error record of a refused action: the place of the
+// action among the values of the command.
+REMOTE_CLIENT_ACTION_ARGUMENT :: 2
 
 // client_connections_end ends each connection to a service that this
 // service made for a row of the client table, and gives their count.

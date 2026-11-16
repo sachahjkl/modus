@@ -679,41 +679,29 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// their members here, and a word that names no member is answered
 			// with Bad_Command before any work. The secret and the value of
 			// such a request are erased from the region all the same.
-			requested, requested_ok := tpm_service.command_of_word(command.kind)
-			authorization_word: u64
-			if requested_ok {
-				switch requested {
-				case .None:
-					requested_ok = false
-				case .Seal:
-					authorization_word = command.values[0]
-				case .Unseal:
-					authorization_word = command.values[4]
-				}
-			}
-			authorization_kind, authorization_ok := tpm_service.authorization_of_word(authorization_word)
-			if !requested_ok || !authorization_ok {
+			request, request_status := tpm_service.request_of_record(command.kind, command.values)
+			if request_status != .Ok {
 				erase(region[tpm_service.REGION_SECRET:][:tpm2.SECRET_SIZE])
 				erase(region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
-				if !system.send(&clients.completions, ring.Record{kind = u32(tpm_service.Status.Bad_Command), tag = command.tag}) {
+				if !system.send(&clients.completions, ring.Record{kind = u32(request_status), tag = command.tag}) {
 					system.log_in("devices", .Warning, "tpm: the completion queue of the TPM ring is full: a completion is lost")
 				}
 				continue
 			}
-			if !lockout_checked && authorization_kind == .Value {
+			if !lockout_checked && request.authorization == .Value {
 				lockout_checked = true
 				lockout_authorization_check(seeded)
 			}
 			request_deadline = system.time() + REQUEST_BOUND_MILLISECONDS
 			authorization_used = false
-			switch requested {
+			switch request.command {
 			case .None:
 				// Refused at the border above.
 				outcome = {status = .Bad_Command}
 			case .Seal:
-				outcome = seal(authorization_kind)
+				outcome = seal(request.authorization)
 			case .Unseal:
-				outcome = unseal(command.values[0], command.values[1], command.values[2], command.values[3], authorization_kind)
+				outcome = unseal(command.values[0], command.values[1], command.values[2], command.values[3], request.authorization)
 			}
 			// After the flushes of the request, before its completion: the
 			// client learns the outcome only once the TPM is orderly again.

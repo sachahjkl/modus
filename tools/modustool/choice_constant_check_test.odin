@@ -53,7 +53,8 @@ a_family_used_in_a_switch_and_as_an_argument_is_refused :: proc(t: ^testing.T) {
 	}
 	family := families[0]
 	testing.expect_value(t, family.folder, "src/library/support/choices")
-	testing.expect_value(t, family.first_word, "MODE")
+	testing.expect_value(t, family.word, "MODE")
+	testing.expect_value(t, family.word_place, Choice_Word_Place.First)
 	testing.expect_value(t, len(family.members), 2)
 	if len(family.members) == 2 {
 		testing.expect_value(t, family.members[0], "MODE_STOP")
@@ -111,9 +112,9 @@ each_form_of_a_use_as_a_choice_is_refused :: proc(t: ^testing.T) {
 	families, ok := choice_families_of_sources(sources)
 	testing.expect(t, ok)
 	Expected :: struct {
-		folder:     string,
-		first_word: string,
-		form:       Choice_Use_Form,
+		folder: string,
+		word:   string,
+		form:   Choice_Use_Form,
 	}
 	// MODE_ has one member that the code uses as a choice: one constant
 	// is a constant, and no family.
@@ -128,10 +129,75 @@ each_form_of_a_use_as_a_choice_is_refused :: proc(t: ^testing.T) {
 			break
 		}
 		testing.expect_value(t, family.folder, expected[index].folder)
-		testing.expect_value(t, family.first_word, expected[index].first_word)
+		testing.expect_value(t, family.word, expected[index].word)
 		testing.expect_value(t, family.use_form, expected[index].form)
 		testing.expect_value(t, len(family.members), 2)
 	}
+}
+
+// The forms of a family that a first word and a literal do not show: a
+// family by its last word, character constants, values computed from
+// other constants, and several constants in one declaration. Each is
+// refused once.
+@(private = "file")
+CHOICES_OF_OTHER_FORMS :: `package other_forms
+
+READ_REQUEST :: 0
+WRITE_REQUEST :: 1
+
+ACCENT_GRAVE :: '` + "`" + `'
+ACCENT_TILDE :: '~'
+
+BASE :: 0x10
+LEVEL_LOW :: BASE + 1
+LEVEL_HIGH :: (BASE | 0x20) + 2
+
+STAGE_ONE, STAGE_TWO :: 1, 2
+
+serve :: proc "contextless" (request: u32, accent: rune, level: u64, stage: int) -> int {
+	if request == READ_REQUEST || request == WRITE_REQUEST {
+		return 1
+	}
+	switch accent {
+	case ACCENT_GRAVE, ACCENT_TILDE:
+		return 2
+	}
+	switch level {
+	case LEVEL_LOW, LEVEL_HIGH:
+		return 3
+	}
+	if stage == STAGE_ONE || stage == STAGE_TWO {
+		return 4
+	}
+	return 0
+}
+`
+
+@(test)
+families_by_the_last_word_characters_and_computed_values_are_refused :: proc(t: ^testing.T) {
+	sources := []Export_Source{{path = "src/programs/other_forms/main.odin", text = CHOICES_OF_OTHER_FORMS}}
+	families, ok := choice_families_of_sources(sources)
+	testing.expect(t, ok)
+	Expected :: struct {
+		word:  string,
+		place: Choice_Word_Place,
+	}
+	// In the order of the list: the first words, then the last word.
+	expected := [?]Expected{{"ACCENT", .First}, {"LEVEL", .First}, {"STAGE", .First}, {"REQUEST", .Last}}
+	testing.expect_value(t, len(families), len(expected))
+	for family, index in families {
+		if index >= len(expected) {
+			break
+		}
+		testing.expect_value(t, family.word, expected[index].word)
+		testing.expect_value(t, family.word_place, expected[index].place)
+		testing.expect_value(t, len(family.members), 2)
+	}
+	testing.expect_value(t, last_word_of("READ_REQUEST"), "REQUEST")
+	testing.expect_value(t, last_word_of("REQUEST"), "REQUEST")
+	testing.expect_value(t, last_word_of("REQUEST_"), "REQUEST_")
+	testing.expect_value(t, choice_family_text("REQUEST", .Last), "_REQUEST")
+	testing.expect_value(t, choice_family_text("MODE", .First), "MODE_")
 }
 
 // A source that the parser refuses stops the check: it is never read as a
@@ -145,8 +211,9 @@ a_source_that_does_not_parse_stops_the_check :: proc(t: ^testing.T) {
 
 // The forms that are not choices come last, and give no family: sizes and
 // limits used as quantities, a comparison with a name that is not a
-// choice, values past the limit of a choice, one constant used as a choice,
-// a character in a switch, an enum in a switch.
+// choice, two constants compared, values past the limit of a choice, one
+// constant used as a choice, a character in a switch, an enum in a switch,
+// a switch on a length.
 @(private = "file")
 CONSTANTS_THAT_KEEP_THE_RULE :: `package quantities
 
@@ -155,6 +222,13 @@ SIZE_LARGE :: 8
 MASK_LOW :: 0x100
 MASK_HIGH :: 0x200
 MODE_ONLY :: 1
+FORM_COLUMNS_MOST :: 32
+FORM_ROWS_MOST :: 26
+BOX_FORM_COLUMNS :: 30 + 2
+BOX_FORM_ROWS :: 26
+
+#assert(BOX_FORM_COLUMNS == FORM_COLUMNS_MOST)
+#assert(BOX_FORM_ROWS == FORM_ROWS_MOST)
 
 Colour :: enum u8 {
 	Red,
@@ -180,6 +254,11 @@ measure :: proc "contextless" (count: int, flags: u64, mode: u64, character: u8,
 	switch colour {
 	case .Red, .Blue:
 	}
+	// A switch on a length: its cases are quantities.
+	switch len(buffer) {
+	case SIZE_SMALL, SIZE_LARGE:
+		return 4
+	}
 	return SIZE_SMALL + SIZE_LARGE
 }
 `
@@ -190,7 +269,7 @@ quantities_limits_and_enums_keep_the_rule :: proc(t: ^testing.T) {
 	families, ok := choice_families_of_sources(sources)
 	testing.expect(t, ok)
 	for family in families {
-		testing.expectf(t, false, "%s: the family %s_ is not a closed set of choices", family.folder, family.first_word)
+		testing.expectf(t, false, "%s: the family %s is not a closed set of choices", family.folder, choice_family_text(family.word, family.word_place))
 	}
 }
 
@@ -221,16 +300,16 @@ choice_constants_of_the_repository :: proc(t: ^testing.T) {
 	testing.expect(t, file_count > 100)
 	for family in families {
 		if choice_exception_of(family) == nil {
-			testing.expectf(t, false, "%s:%d: the constants %s_ of %s are a closed set of choices", family.use_file, family.use_line, family.first_word, family.folder)
+			testing.expectf(t, false, "%s:%d: the constants %s of %s are a closed set of choices", family.use_file, family.use_line, choice_family_text(family.word, family.word_place), family.folder)
 		}
 	}
 	for exception in CHOICE_CONSTANT_EXCEPTIONS {
 		matched := false
 		for family in families {
-			if exception.folder == family.folder && exception.first_word == family.first_word {
+			if choice_exception_matches(exception, family) {
 				matched = true
 			}
 		}
-		testing.expectf(t, matched, "the exception %s_ of %s names no family", exception.first_word, exception.folder)
+		testing.expectf(t, matched, "the exception %s of %s names no family", choice_family_text(exception.word, exception.word_place), exception.folder)
 	}
 }

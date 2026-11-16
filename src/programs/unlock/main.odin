@@ -783,41 +783,47 @@ tpm_service_runs :: proc "contextless" () -> bool {
 // tpm_request sends one command to the TPM service and waits for its
 // completion. The stop of the service is an event of this thread, as it
 // holds the handle of the service: the wait ends at once, and no TPM is
-// asked again in this run.
-tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64) -> (completion: ring.Record, answered: bool) {
+// asked again in this run. status is the member of the status of the
+// completion, read only when answered.
+tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64) -> (completion: ring.Record, status: tpm_service.Status, answered: bool) {
 	tpm_tag += 1
 	if !system.send(&tpm_requests.commands, ring.Record{kind = u32(command), tag = tpm_tag, values = values}) {
-		return {}, false
+		return {}, {}, false
 	}
 	limit := system.time() + TPM_ANSWER_LIMIT
 	for {
 		wait := system.wait_begin()
 		for record in system.receive(&tpm_requests.completions) {
-			if record.tag == tpm_tag {
-				return record, true
+			if record.tag != tpm_tag {
+				continue
 			}
+			// The one border of the status: a word that names no status is
+			// no answer that this program can read. It is said here, and the
+			// caller takes it as no answer.
+			read, read_ok := tpm_service.status_of_word(record.kind)
+			if !read_ok {
+				system.log("unlock: the TPM service gave the status ", u64(record.kind), " to the command ", u64(command), ", which names no status")
+				return record, {}, false
+			}
+			return record, read, true
 		}
 		if !tpm_service_runs() {
 			system.log("unlock: the TPM service stopped during a request")
 			has_tpm = false
-			return {}, false
+			return {}, {}, false
 		}
 		system.wait_records(&wait, &tpm_requests.completions)
 		if system.wait_end(&wait, limit) >= limit {
-			return {}, false
+			return {}, {}, false
 		}
 	}
 }
 
-// tpm_refusal_log writes why the TPM service did not do a request.
-tpm_refusal_log :: proc "contextless" (what: string, completion: ring.Record, answered: bool) {
+// tpm_refusal_log writes why the TPM service did not do a request. status
+// is read only when answered.
+tpm_refusal_log :: proc "contextless" (what: string, completion: ring.Record, status: tpm_service.Status, answered: bool) {
 	if !answered {
 		system.log("unlock: the TPM service gave no answer to the ", what)
-		return
-	}
-	status, status_ok := tpm_service.status_of_word(completion.kind)
-	if !status_ok {
-		system.log("unlock: the TPM service gave the status ", u64(completion.kind), " to the ", what, ", which names no status")
 		return
 	}
 	switch status {
@@ -828,7 +834,8 @@ tpm_refusal_log :: proc "contextless" (what: string, completion: ring.Record, an
 	case .Refused:
 		system.log("unlock: the TPM refuses the ", what, ": response code ", system.Hex(completion.values[0]), " to the command ", system.Hex(completion.values[1]))
 	case .Device_Error:
-		if step, step_ok := tpm_service.device_step_of_word(completion.values[0]); step_ok {
+		// .None is no failed step: a Device_Error with it names no step.
+		if step, step_ok := tpm_service.device_step_of_word(completion.values[0]); step_ok && step != .None {
 			system.log("unlock: the interface of the TPM failed at the ", what, ": ", tpm_service.device_step_words[step])
 		} else {
 			system.log("unlock: the interface of the TPM failed at the ", what, ": the step ", completion.values[0], " names no step")
@@ -859,13 +866,13 @@ authorization_put :: proc "contextless" (authorization: []u8) -> tpm_service.Aut
 // keeps its parts.
 tpm_seal :: proc "contextless" (secret: ^[tpm_service.SECRET_SIZE]u8, authorization: []u8, object: ^principals.Sealed_Object) -> bool {
 	copy(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE], secret^[:])
-	completion, answered := tpm_request(.Seal, {0 = u64(authorization_put(authorization))})
+	completion, status, answered := tpm_request(.Seal, {0 = u64(authorization_put(authorization))})
 	// The service erases the secret and the value when it takes the
 	// request; a service that did not answer can leave them in the region.
 	erase(tpm_region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
-	if status, status_ok := tpm_service.status_of_word(completion.kind); !answered || !status_ok || status != .Ok {
+	if !answered || status != .Ok {
 		erase(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE])
-		tpm_refusal_log("seal", completion, answered)
+		tpm_refusal_log("seal", completion, status, answered)
 		return false
 	}
 	// The counts come from the service: they are checked before a copy.
@@ -898,22 +905,15 @@ tpm_unseal :: proc "contextless" (object: ^principals.Sealed_Object, authorizati
 	copy(tpm_region[tpm_service.REGION_CREATION_TICKET:][:ticket_bytes], object.creation_ticket[:ticket_bytes])
 	kind := authorization_put(authorization)
 	completion: ring.Record
-	completion, answered = tpm_request(.Unseal, {0 = u64(public_bytes), 1 = u64(private_bytes), 2 = u64(creation_bytes), 3 = u64(ticket_bytes), 4 = u64(kind)})
+	completion, status, answered = tpm_request(.Unseal, {0 = u64(public_bytes), 1 = u64(private_bytes), 2 = u64(creation_bytes), 3 = u64(ticket_bytes), 4 = u64(kind)})
 	defer erase(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE])
 	erase(tpm_region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
 	if !answered {
-		tpm_refusal_log("unseal", completion, answered)
-		return .Device_Error, false
-	}
-	// A status that names no member is no answer that this program can
-	// read: it is said on the log, and taken as no answer.
-	status_ok: bool
-	if status, status_ok = tpm_service.status_of_word(completion.kind); !status_ok {
-		tpm_refusal_log("unseal", completion, answered)
+		tpm_refusal_log("unseal", completion, status, answered)
 		return .Device_Error, false
 	}
 	if status != .Ok {
-		tpm_refusal_log("unseal", completion, answered)
+		tpm_refusal_log("unseal", completion, status, answered)
 		return status, true
 	}
 	if completion.values[0] != tpm_service.SECRET_SIZE {

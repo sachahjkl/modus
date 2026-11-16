@@ -1,6 +1,7 @@
 package system
 
 import "base:intrinsics"
+import "modus:contract/errors"
 import module "modus:contract/module"
 
 // The roles of the context of a program that the root service starts.
@@ -426,6 +427,48 @@ member_of_word :: proc "contextless" ($Enum: typeid, word: u64) -> (member: Enum
 		}
 	}
 	return {}, false
+}
+
+// ring_member_of_word is the border of a word of a root command: the
+// member, or the refusal that the root service answers. A word that names
+// no member gives Bad_Operation and the error record Bad_Value of
+// `argument`, with the word (at most 2^62) and the largest member. It reads
+// and changes no state, so a refused word changes nothing.
+ring_member_of_word :: proc "contextless" ($Enum: typeid, word: u64, command: Root_Command, argument: i64) -> (member: Enum, status: Status, refusal: [7]u64) where intrinsics.type_is_enum(Enum) {
+	read, ok := member_of_word(Enum, word)
+	if ok {
+		return read, .Ok, {}
+	}
+	return {}, .Bad_Operation, errors.ring_fail(u32(command), .Bad_Value, .None, argument, i64(min(word, 1 << 62)), i64(max(Enum)))
+}
+
+// The report of a Machine_Key command, read from its record: the state in
+// values[4], and for .Awaited the form in values[5]. form is read only
+// with .Awaited.
+Machine_Key_Report :: struct {
+	state: Machine_Key_State,
+	form:  Machine_Key_Form,
+}
+
+// machine_key_report_of_values is the border of a Machine_Key command. A
+// state that names no member, or for .Awaited a form that names no member,
+// gives Bad_Operation: the root service then changes no table.
+machine_key_report_of_values :: proc "contextless" (values: [7]u64) -> (report: Machine_Key_Report, status: Status) {
+	state, state_ok := member_of_word(Machine_Key_State, values[4])
+	if !state_ok {
+		return {}, .Bad_Operation
+	}
+	report.state = state
+	switch state {
+	case .Awaited:
+		form, form_ok := member_of_word(Machine_Key_Form, values[5])
+		if !form_ok {
+			return {}, .Bad_Operation
+		}
+		report.form = form
+	case .Opened, .New, .Unreadable:
+	}
+	return report, .Ok
 }
 
 // The state of a principal in the root service.
