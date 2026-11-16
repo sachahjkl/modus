@@ -1,15 +1,16 @@
 // The format of the link pages of the manual (src/md/features/manual_links.md):
-// the pages of the terms of the glossary and of the headings of the guides
-// that the documentation of the modules of the boot image links, in one
-// resource that the modus tool writes and the program `manual` reads in
-// place. All numbers are little-endian.
+// the pages of the terms of the glossary, of the headings of the guides and
+// of the declarations of the sources that no module describes, which the
+// documentation of the modules of the boot image links, in one resource
+// that the modus tool writes and the program `manual` reads in place. All
+// numbers are little-endian.
 //
 //   Header      32 bytes, at 0
 //   Page_Entry  24 bytes, page_count times, at 32, in the order of the bytes of their targets
 //   text        text_size bytes, at text_offset: the targets, the titles and the texts
 //
 // A target is the target of a link as a comment writes it: `term:handle`,
-// `docs/ARCHITECTURE.md#the-fault-ring`. A title is one line. A text is
+// `docs/ARCHITECTURE.md#the-fault-ring`, `system.word_wait`. A title is one line. A text is
 // Markdown of a source comment, with line feeds.
 //
 // A reader does not trust the file: `validate` checks each count, each
