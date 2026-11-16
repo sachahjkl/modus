@@ -402,10 +402,12 @@ windows_log :: proc "contextless" () {
 // first appears between two frames (the second shown then jumps from the
 // time since boot to the date, and the next frame shows it).
 date_page: ^date.Page
-// The zone of the last line "the bar shows the local time": a line at the
-// first date and at each new zone, which the machine test checks. No zone
-// is this large, so the first date writes one.
-bar_zone_logged := max(i64)
+// The zone of the last line "the bar shows the local time", which the
+// machine test checks: a line at each change of the zone, and none for the
+// default, UTC, at the first date. The log has a fixed room, and a line at
+// each boot that says nothing new takes it from the records that a reader
+// needs.
+bar_zone_logged: i64
 
 second_of_bar :: proc "contextless" (now: u64) -> u64 {
 	if milliseconds, known := date.milliseconds_now(date_page, now); known {
