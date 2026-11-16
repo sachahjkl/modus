@@ -9,8 +9,10 @@
 // The build tool takes all of it from the comments of the source of the module, and the text keeps their Markdown.
 // The manual reads it: a bold word is in the bold weight, a word in italics has a thin line under it, a name of
 // code is in the font of the cells, a list item has its mark and its indentation, and an example is a block. A
-// link is a colored name; a link to a module or to an export of the boot image has a line under it, and a click on
-// it shows that page. This program reads the file only: it **does not load the module**, and it does not start it.
+// link is a colored name. A link that opens has a line under it: a link to a module, to an export or to a record of
+// the boot image, and a link to a term of the glossary or to a heading of a guide, whose
+// [link page](term:link-page) the boot image carries in the resource `manual_pages`. An address of another host is shown after its link, and does not open.
+// This program reads the file only: it **does not load the module**, and it does not start it.
 //
 // The page of a module also says how the module can be used. The system has *one kind of file* for a program, a
 // library and a service, so the answer comes from two facts: the module has an entry or not, and it has exports
@@ -21,7 +23,10 @@
 // - up, down: the module before, the module after;
 // - page up, page down: move the text;
 // - home: the start of the text;
-// - Tab: the table of all the modules, as `overview()` shows it.
+// - Tab, Shift+Tab: the focus on the next link, or the one before;
+// - Enter: open the link with the focus;
+// - Backspace: back to the page before;
+// - o: the table of all the modules, as `overview()` shows it.
 //
 // A click on a name of the list shows that module. A click on a link with a line under it shows the page that it
 // names.
@@ -51,7 +56,9 @@ package manual
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
+import "modus:support/manual_navigation"
 import info "modus:contract/boot_info"
+import "modus:contract/manual_pages"
 import module "modus:contract/module"
 import "modus:support/system"
 
@@ -102,8 +109,56 @@ COLOR_CODE :: 0xE0A878
 image: []u8
 built: [16384]u8 // The lines that this program writes: the signatures and the facts.
 built_count: int
-selected: int // The index of the module of the page, in the boot image.
+selected: int // The index of the module of the list, in the boot image: the module of the page when the page is a module page.
 first_line: int // The first line that the window shows.
+page_kind: manual_navigation.Page_Kind // What the page shows.
+link_page_index: int // Link_Page: the index of the page in the resource manual_pages.
+history: manual_navigation.History // The pages that the principal left: Backspace goes back.
+
+// navigation_leave keeps the page that the window shows in the history,
+// before a change of the page.
+navigation_leave :: proc "contextless" () {
+	index := page_kind == .Link_Page ? link_page_index : selected
+	manual_navigation.history_push(&history, {kind = page_kind, index = i32(index), first_line = i32(first_line)})
+}
+
+// page_back shows the last page of the history, at its first row, and
+// writes it on the log.
+page_back :: proc "contextless" () {
+	place, ok := manual_navigation.history_back(&history)
+	if !ok {
+		system.log("manual: back: no page before")
+		return
+	}
+	system.log("manual: back to the page before")
+	switch place.kind {
+	case .Module:
+		select(int(place.index))
+	case .Overview:
+		overview_build()
+	case .Link_Page:
+		link_page_build(int(place.index))
+	}
+	first_line = clamp(int(place.first_line), 0, max(rows() - ROWS, 0))
+	if place.kind != .Overview {
+		page_log()
+	}
+}
+
+// page_rebuild writes the page that the window shows again, at the same
+// row: the widths of the words change with the font.
+page_rebuild :: proc "contextless" () {
+	kept := first_line
+	switch page_kind {
+	case .Module:
+		page_build()
+	case .Overview:
+		return // The table is in the font of the cells.
+	case .Link_Page:
+		link_page_build(link_page_index)
+	}
+	first_line = clamp(kept, 0, max(rows() - ROWS, 0))
+}
 
 // file_of gives the file of an entry of the boot image, or nothing when the
 // file is not a valid module.
@@ -219,6 +274,9 @@ put_use :: proc "contextless" (call, name, description: string) {
 page_build :: proc "contextless" () {
 	page_clear()
 	wanted_row = -1
+	// Before the text: a link to a record looks first in the module of the
+	// page.
+	page_kind = .Module
 	entries := system.image_entries(image)
 	if selected < 0 || selected >= len(entries) {
 		return
@@ -330,6 +388,9 @@ page_build :: proc "contextless" () {
 		if !ok {
 			continue
 		}
+		if wanted_record != "" && module.string_at(file, described.name_offset, described.name_count) == wanted_record {
+			wanted_row = row_count
+		}
 		put_built(0, COLOR_EXPORT, module.string_at(file, described.name_offset, described.name_count), "  ", u64(described.size), " bytes")
 		for number in 0 ..< described.field_count {
 			item, _ := module.field(file, described, number)
@@ -354,7 +415,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	}
 	frame := interface.window_frame_begin(&drawing, window)
-	draw_records(frame.table)
+	draw_records(&frame)
 	// The scroll bar of the text: the pointer on it moves the text as Page
 	// Up and Page Down do, and the wheel over the text moves it too.
 	moved := interface.scroll_bar(&frame, scroll_area(), scroll_identity(), .Vertical, {total = rows(), visible = ROWS, first = first_line}, {page = ROWS - 2}, "", text_view_area())
@@ -365,7 +426,12 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 }
 
-draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
+// COLOR_FOCUS is the line under the link with the focus: white, as the
+// frame of the focus of a button.
+COLOR_FOCUS :: 0xFFFFFF
+
+draw_records :: proc "contextless" (frame: ^interface.Frame) {
+	table := frame.table
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	interface.draw_rectangle(table, 0, 0, LIST_WIDTH, HEIGHT, graphics.COLOR_CARD_TOP)
 	entries := system.image_entries(image)
@@ -379,7 +445,7 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 			break
 		}
 		y := 4 + (start - first_row) * CELL_HEIGHT
-		if index == selected && !showing_overview {
+		if index == selected && page_kind == .Module {
 			interface.draw_rectangle(table, 0, y, LIST_WIDTH, (end - start) * CELL_HEIGHT, COLOR_SELECTED)
 		}
 		exports := list_exports[index]
@@ -393,7 +459,7 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 
 	left := LIST_WIDTH + MARGIN
 	row := -first_line - 1
-	for &part in row_parts[:row_part_count] {
+	for &part, part_index in row_parts[:row_part_count] {
 		if .Row_Start in part.flags {
 			row += 1
 			if row >= ROWS {
@@ -410,17 +476,29 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 			// of the text, on each of its rows.
 			interface.draw_rectangle(table, x - 4, y, left + TEXT_WIDTH + 4 - (x - 4), CELL_HEIGHT, graphics.COLOR_TRACK)
 		}
+		focused := part.link > 0 && int(part.link) == focused_link
+		if focused {
+			// The band is the box of the part: it covers no other text.
+			interface.draw_rectangle(table, x, y, int(part.width), CELL_HEIGHT, COLOR_SELECTED)
+		}
 		interface.draw_text(table, x, y, part.text, part.color, part.font)
 		switch {
+		case focused:
+			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 2, COLOR_FOCUS)
 		case .Opens_A_Page in part.flags:
 			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, part.color)
 		case .Underlined in part.flags:
 			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, graphics.COLOR_DIM)
 		}
+		// A link names itself by its label, at its first part: a machine
+		// test presses it by that name (src/md/infrastructure/test_pointer.md).
+		if part.link > 0 && int(part.link) <= page_link_count && page_links[part.link - 1].first_part == part_index {
+			interface.element_name(frame, {x, y, int(part.width), CELL_HEIGHT}, page_links[part.link - 1].label)
+		}
 	}
 	bottom := HEIGHT - CELL_HEIGHT - 6
 	interface.draw_rectangle(table, LIST_WIDTH, bottom - 4, WIDTH - LIST_WIDTH, 1, 0x30363C)
-	hint := interface.draw_text(table, left, bottom, "up, down: module   page up, page down: text", graphics.COLOR_DIM)
+	hint := interface.draw_text(table, left, bottom, "up, down: module  Tab, Enter: link  Backspace: back", graphics.COLOR_DIM)
 	buffer: [64]u8
 	total := rows()
 	place := system.format(buffer[:], "rows ", u64(min(first_line + 1, total)), " to ", u64(min(first_line + ROWS, total)), " of ", u64(total))
@@ -534,13 +612,18 @@ show :: proc "c" (name: ^string) -> i64 {
 	if index < 0 {
 		return -1
 	}
+	navigation_leave()
 	select(index)
 	return i64(page_log())
 }
 
 // page_log writes on the log which page the window shows. It gives the
-// count of exports of the module.
+// count of exports of the module of a module page.
 page_log :: proc "contextless" () -> int {
+	if page_kind == .Link_Page {
+		system.log("manual: the page ", manual_pages.target_of(link_pages, link_page_index), ": ", manual_pages.title_of(link_pages, link_page_index), ", ", u64(rows()), " rows")
+		return 0
+	}
 	entries := system.image_entries(image)
 	file := file_of(&entries[selected])
 	head, _ := module.header(file)
@@ -616,6 +699,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Ok {
 		replacement_table = (^system.Replacement_Table)(address)
 	}
+	// Before the first page: its links to terms and guides read the
+	// resource.
+	link_pages_open()
 	information_start(ctx)
 	list_build()
 	entries := system.image_entries(image)
@@ -661,11 +747,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_whole_window_next(&drawing)
 				// The widths of the words changed with the font: the rows
 				// of the page are made again, at the same place.
-				if !showing_overview {
-					kept := first_line
-					page_build()
-					first_line = clamp(kept, 0, max(rows() - ROWS, 0))
-				}
+				// The focus stays on its link.
+				focus_kept := focused_link
+				page_rebuild()
+				focused_link = clamp(focus_kept, 0, page_link_count)
 				changed = true
 			case .Key:
 				if !event.pressed {
@@ -674,9 +759,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				changed = true
 				switch event.code {
 				case display.KEY_UP:
+					navigation_leave()
 					select(selected - 1)
 					page_log()
 				case display.KEY_DOWN:
+					navigation_leave()
 					select(selected + 1)
 					page_log()
 				case display.KEY_PAGE_UP:
@@ -685,8 +772,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					scroll(ROWS - 2)
 				case display.KEY_HOME:
 					scroll(-ROW_PART_CAPACITY)
-				case KEY_TAB:
-					overview_build()
+				case interface.KEY_TAB:
+					link_focus_move(event.modifiers & display.MODIFIER_SHIFT != 0)
+				case display.KEY_ENTER:
+					link_open(focused_link)
+				case display.KEY_BACKSPACE:
+					page_back()
+				case:
+					if event.character == 'o' {
+						navigation_leave()
+						overview_build()
+					}
 				}
 			case .Pointer:
 				// The scroll bar of the text takes the pointer from the input
@@ -702,14 +798,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				down := event.buttons & display.BUTTON_LEFT != 0
 				if down && !pressed && event.x >= 0 && event.x < LIST_WIDTH {
 					if index := list_index_at(event.y); index >= 0 {
+						navigation_leave()
 						select(index)
 						page_log()
 						changed = true
 					}
 				}
 				if down && !pressed && event.x >= LIST_WIDTH {
-					if target := link_at_place(event.x, event.y); target != "" {
-						link_open(target)
+					if number := link_at_place(event.x, event.y); number > 0 {
+						link_open(number)
 						changed = true
 					}
 				}

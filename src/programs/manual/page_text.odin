@@ -1,6 +1,9 @@
 package manual
 
+import "modus:contract/blake3"
+import "modus:contract/manual_pages"
 import "modus:support/display"
+import "modus:support/manual_navigation"
 import "modus:support/graphics"
 import "modus:support/interface"
 import markdown "modus:support/source_comment_markdown"
@@ -25,29 +28,61 @@ Row_Part_Flag :: enum u8 {
 	Underlined, // A word in italics: the system has no italic face, so a thin line is under it.
 	Code_Block, // A row of an example: a band is behind it.
 	From_Markdown, // The part comes from a documentation text.
-	Opens_A_Page, // A link to a module or to an export of the boot image: a click shows its page.
+	Opens_A_Page, // A part of a link that opens a page: a press, or Enter with the focus, shows it.
 }
 Row_Part_Flags :: bit_set[Row_Part_Flag;u8]
 
-// One run of text of the page. The text is in the file of the module, or
-// in built.
+// One run of text of the page. The text is in the file of the module, in
+// the resource of the link pages, or in built.
 Row_Part :: struct {
-	text:   string,
-	x:      i32, // From the left of the text, in pixels.
-	width:  i32, // In the font that draws it, in pixels.
-	color:  graphics.Color,
-	font:   interface.Font,
-	flags:  Row_Part_Flags,
-	target: string, // Opens_A_Page: the target of the link.
+	text:  string,
+	x:     i32, // From the left of the text, in pixels.
+	width: i32, // In the font that draws it, in pixels.
+	color: graphics.Color,
+	font:  interface.Font,
+	flags: Row_Part_Flags,
+	link:  i32, // Opens_A_Page: the number of its link in page_links, from 1. 0: no link.
 }
+
+// Where a link goes (src/md/features/manual_links.md).
+Link_Destination_Kind :: enum u8 {
+	None, // No page: the link is drawn with no line under it.
+	Address, // An address of another host: shown, not opened.
+	Module, // The page of a module of the boot image.
+	Export, // The page of a module, from the signature of an export.
+	Record, // The page of a module, from the description of a record.
+	Link_Page, // A page of the resource manual_pages: a term or a heading of a guide.
+}
+
+Link_Destination :: struct {
+	kind:   Link_Destination_Kind,
+	index:  int, // Module, Export, Record: the module in the boot image. Link_Page: the page in the resource.
+	name:   string, // Export, Record: its name, in the module file.
+}
+
+// One link of the page that opens: its target, where it goes, the text of
+// its first part (its element name), the row and the part where it starts.
+Page_Link :: struct {
+	target:      string,
+	destination: Link_Destination,
+	label:       string,
+	first_row:   int,
+	first_part:  int,
+}
+
+PAGE_LINK_CAPACITY :: 512 // A link past it is drawn with no line, and takes no press.
+page_links: [PAGE_LINK_CAPACITY]Page_Link
+page_link_count: int
+focused_link: int // The link with the focus, from 1. 0: no focus.
 
 row_parts: [ROW_PART_CAPACITY]Row_Part
 row_part_count: int
 row_count: int // The rows of the page.
 
-// The export that the next page shows first, and the row of its signature
-// on that page, or -1.
+// The export or the record that the next page shows first, and the row of
+// its signature or of its description on that page, or -1.
 wanted_export: string
+wanted_record: string
 wanted_row: int
 
 // What the documentation texts of the page hold: the entry checks the page
@@ -60,15 +95,20 @@ page_marks: Page_Marks
 // page_clear empties the page.
 page_clear :: proc "contextless" () {
 	row_part_count, row_count, built_count, first_line = 0, 0, 0, 0
+	page_link_count, focused_link = 0, 0
 	page_marks = {}
 }
 
-row_part_add :: proc "contextless" (part: Row_Part) {
-	if row_part_count < ROW_PART_CAPACITY {
-		row_parts[row_part_count] = part
-		row_part_count += 1
-		row_count += int(.Row_Start in part.flags)
+// row_part_add adds a part to the page. It gives false when the page is
+// full.
+row_part_add :: proc "contextless" (part: Row_Part) -> bool {
+	if row_part_count >= ROW_PART_CAPACITY {
+		return false
 	}
+	row_parts[row_part_count] = part
+	row_part_count += 1
+	row_count += int(.Row_Start in part.flags)
+	return true
 }
 
 // put adds a text in the font of the cells, at an indentation in cells: one
@@ -112,14 +152,14 @@ rows :: proc "contextless" () -> int {
 
 // The font, the color and the signs of a word of a documentation text.
 Text_Style :: struct {
-	font:   interface.Font,
-	color:  graphics.Color,
-	flags:  Row_Part_Flags,
-	target: string,
+	font:  interface.Font,
+	color: graphics.Color,
+	flags: Row_Part_Flags,
+	link:  i32, // The number of its link in page_links, from 1, or 0.
 }
 
 same_style :: proc "contextless" (first, second: Text_Style) -> bool {
-	return first.font == second.font && first.color == second.color && first.flags == second.flags && raw_data(first.target) == raw_data(second.target) && len(first.target) == len(second.target)
+	return first.font == second.font && first.color == second.color && first.flags == second.flags && first.link == second.link
 }
 
 // One word of the row that is being filled, or a part of a word where its
@@ -146,6 +186,14 @@ Flow :: struct {
 	mark_on_row:  bool, // The mark of a list item is on the row that is being filled: the row has its start.
 	pieces:       [PIECE_CAPACITY]Piece,
 	piece_count:  int,
+	// The link of the spans that are being placed: the spans of one link
+	// share the range of its target in the text, so a new range is a new
+	// link. -1: the last span was no link.
+	link_target_start: int,
+	link_number:       i32, // Its number in page_links, or 0 when it does not open.
+	// The address of the last link, "(https://...)", which follows its
+	// label when the link ends.
+	pending_address:   string,
 }
 flow: Flow
 
@@ -166,11 +214,15 @@ put_markdown :: proc "contextless" (text: string, indent: int, color: graphics.C
 	flow.space = max(measure(interface.FONT_INTERFACE, " "), 2)
 	flow.space_before, flow.any_block, flow.lines, flow.mark_on_row = false, false, false, false
 	flow.piece_count = 0
+	flow.link_target_start, flow.link_number, flow.pending_address = -1, 0, ""
 	markdown.read(text, {block = markdown_block, span = markdown_span})
+	link_address_place()
 	row_flush(flow.piece_count)
 }
 
 markdown_block :: proc "contextless" (data: rawptr, text: string, block: markdown.Block) {
+	link_address_place()
+	flow.link_target_start, flow.link_number = -1, 0
 	row_flush(flow.piece_count)
 	if block.after_empty_line && flow.any_block {
 		put("", 0, 0)
@@ -226,13 +278,16 @@ markdown_span :: proc "contextless" (data: rawptr, text: string, span: markdown.
 	}
 	if .Link in span.styles {
 		style.color = COLOR_LINK
-		page_marks.links += 1
-		target := text[span.target_start:span.target_end]
-		if module_index, _ := link_place(target); module_index >= 0 {
-			style.flags += {.Opens_A_Page}
-			style.target = target
-			page_marks.links_that_open += 1
+		if span.target_start != flow.link_target_start {
+			link_begin(text, span)
 		}
+		if flow.link_number != 0 {
+			style.flags += {.Opens_A_Page}
+			style.link = flow.link_number
+		}
+	} else {
+		link_address_place()
+		flow.link_target_start, flow.link_number = -1, 0
 	}
 	index := 0
 	for index < len(part) {
@@ -383,7 +438,18 @@ row_flush :: proc "contextless" (count: int) {
 			flags += {.Row_Start}
 		}
 		flow.mark_on_row = true // The row has its start: the next parts are on it.
-		row_part_add({text = merged, x = i32(x), width = i32(width), color = piece.style.color, font = piece.style.font, flags = flags, target = piece.style.target})
+		link := piece.style.link
+		if row_part_add({text = merged, x = i32(x), width = i32(width), color = piece.style.color, font = piece.style.font, flags = flags, link = link}) && link > 0 && int(link) <= page_link_count {
+			// The first part of a link gives its row, its place and its
+			// element name.
+			link_record := &page_links[link - 1]
+			if link_record.first_part < 0 {
+				link_record.first_part, link_record.first_row = row_part_count - 1, row_count - 1
+				if link_record.label == "" {
+					link_record.label = merged
+				}
+			}
+		}
 		x += width
 	}
 	flow.mark_on_row = false
@@ -399,14 +465,97 @@ row_flush :: proc "contextless" (count: int) {
 	flow.piece_count = kept
 }
 
-// link_place gives the module of the boot image that the target of a link
-// names, and the export of it, or -1. A target is the name of a module
-// ("math") or a module and its export ("manual.show"). A term, a guide, a
-// declaration and a kernel operation have no page in the system.
-link_place :: proc "contextless" (target: string) -> (index: int, export: string) {
-	name := target
-	for character, place in target {
-		if character == '.' {
+// link_begin starts a new link of the documentation text: it finds where
+// its target goes, and gives it a number in page_links when it opens.
+link_begin :: proc "contextless" (text: string, span: markdown.Span) {
+	link_address_place()
+	flow.link_target_start, flow.link_number = span.target_start, 0
+	page_marks.links += 1
+	target := text[span.target_start:span.target_end]
+	destination := link_resolve(target)
+	switch destination.kind {
+	case .None:
+	case .Address:
+		// The bytes around the target are "(" and ")" when the reader
+		// found a link of Markdown, its label in square brackets and its
+		// target in parentheses: the address is shown with them.
+		flow.pending_address = target
+		if span.target_start > 0 && span.target_end < len(text) && text[span.target_start - 1] == '(' && text[span.target_end] == ')' {
+			flow.pending_address = text[span.target_start - 1:span.target_end + 1]
+		}
+	case .Module, .Export, .Record, .Link_Page:
+		if page_link_count >= PAGE_LINK_CAPACITY {
+			return
+		}
+		page_links[page_link_count] = {target = target, destination = destination, label = link_label(text, span.target_start), first_row = -1, first_part = -1}
+		page_link_count += 1
+		flow.link_number = i32(page_link_count)
+		page_marks.links_that_open += 1
+	}
+}
+
+// link_label gives the whole label of a link, in built, from the bytes of
+// a link of Markdown (its label in square brackets, its target in
+// parentheses) before its target: with no marks of code or bold, and
+// a line feed as a space. A link that wraps keeps one name. It gives ""
+// when the bytes before the target are not "](", and the text of the first
+// part of the link is its label then.
+link_label :: proc "contextless" (text: string, target_start: int) -> string {
+	if target_start < 2 || target_start > len(text) || text[target_start - 1] != '(' || text[target_start - 2] != ']' {
+		return ""
+	}
+	label_end := target_start - 2
+	label_start := label_end
+	for label_start > 0 && text[label_start - 1] != '[' {
+		label_start -= 1
+	}
+	writer := system.Writer {
+		buffer = built[built_count:],
+	}
+	for index in label_start ..< label_end {
+		switch text[index] {
+		case '`', '*':
+		case '\n', '\r', '\t':
+			system.write_part(&writer, " ")
+		case:
+			system.write_part(&writer, text[index:index + 1])
+		}
+	}
+	built_count += writer.count
+	return system.written(&writer)
+}
+
+// link_address_place puts the address of the link that just ended after
+// its label: in the font of the cells, in the dim color.
+link_address_place :: proc "contextless" () {
+	if flow.pending_address == "" {
+		return
+	}
+	address := flow.pending_address
+	flow.pending_address = ""
+	flow.space_before = true
+	word_place(address, {font = {}, color = graphics.COLOR_DIM, flags = {.From_Markdown}})
+}
+
+// link_resolve gives where the target of a link goes
+// (src/md/features/manual_links.md, "The chosen form"): an address is
+// shown; a term and a guide open their link page when the resource has
+// it; a name opens a module, a module and its export, or a record that a
+// module describes, first in the module of the page.
+link_resolve :: proc "contextless" (target: string) -> Link_Destination {
+	switch manual_pages.link_target_kind(target) {
+	case .Address:
+		return {kind = .Address}
+	case .Term, .Guide:
+		if index, found := manual_pages.find(link_pages, target); found {
+			return {kind = .Link_Page, index = index}
+		}
+		return {}
+	case .Name:
+	}
+	name, export := target, ""
+	for place in 0 ..< len(target) {
+		if target[place] == '.' {
 			name, export = target[:place], target[place + 1:]
 			break
 		}
@@ -414,33 +563,66 @@ link_place :: proc "contextless" (target: string) -> (index: int, export: string
 	if len(export) > 2 && export[len(export) - 2:] == "()" {
 		export = export[:len(export) - 2]
 	}
-	index = find(name)
-	if index < 0 {
-		return -1, ""
-	}
-	file := file_of(&system.image_entries(image)[index])
-	if file == nil {
-		return -1, ""
-	}
-	if export == "" {
-		return index, ""
-	}
-	head, _ := module.header(file)
-	for export_index in 1 ..< module.count(file, .Exports) {
-		function, ok := module.function(file, export_index)
-		if ok && export_index != head.entry_export && function.name_count != 0 && module.string_at(file, function.name_offset, function.name_count) == export {
-			return index, export
+	if index := find(name); index >= 0 {
+		if file := file_of(&system.image_entries(image)[index]); file != nil {
+			if export == "" {
+				return {kind = .Module, index = index}
+			}
+			head, _ := module.header(file)
+			for export_index in 1 ..< module.count(file, .Exports) {
+				function, ok := module.function(file, export_index)
+				if ok && export_index != head.entry_export && function.name_count != 0 && module.string_at(file, function.name_offset, function.name_count) == export {
+					return {kind = .Export, index = index, name = export}
+				}
+			}
 		}
 	}
-	return -1, ""
+	// A record: the last name of the target ("information.Module" names the
+	// record Module). The package of a declaration is no module name, so
+	// the module of the page comes first.
+	record := target
+	for place := len(target) - 1; place >= 0; place -= 1 {
+		if target[place] == '.' {
+			record = target[place + 1:]
+			break
+		}
+	}
+	if page_kind == .Module && record_described(selected, record) {
+		return {kind = .Record, index = selected, name = record}
+	}
+	for index in 0 ..< len(system.image_entries(image)) {
+		if record_described(index, record) {
+			return {kind = .Record, index = index, name = record}
+		}
+	}
+	return {}
 }
 
-// link_at_place gives the target of the link that opens a page at a place
-// of the window, or "".
-link_at_place :: proc "contextless" (x, y: int) -> string {
+// record_described says if a module of the boot image describes a record
+// with this name.
+record_described :: proc "contextless" (index: int, name: string) -> bool {
+	entries := system.image_entries(image)
+	if index < 0 || index >= len(entries) || name == "" {
+		return false
+	}
+	file := file_of(&entries[index])
+	if file == nil {
+		return false
+	}
+	for record_index in 1 ..< module.count(file, .Records) {
+		if described, ok := module.record_type(file, record_index); ok && module.string_at(file, described.name_offset, described.name_count) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// link_at_place gives the number of the link that opens a page at a place
+// of the window, or 0.
+link_at_place :: proc "contextless" (x, y: int) -> int {
 	left := LIST_WIDTH + MARGIN
 	if y < MARGIN || y >= MARGIN + ROWS * CELL_HEIGHT {
-		return ""
+		return 0
 	}
 	wanted := first_line + (y - MARGIN) / CELL_HEIGHT
 	row := -1
@@ -449,29 +631,123 @@ link_at_place :: proc "contextless" (x, y: int) -> string {
 		if row > wanted {
 			break
 		}
-		if row == wanted && .Opens_A_Page in part.flags && x >= left + int(part.x) && x < left + int(part.x + part.width) {
-			return part.target
+		if row == wanted && part.link > 0 && x >= left + int(part.x) && x < left + int(part.x + part.width) {
+			return int(part.link)
 		}
 	}
-	return ""
+	return 0
 }
 
-// link_open shows the page that the target of a link names: the page of
-// the module, from the signature of the export when the link names one.
-link_open :: proc "contextless" (target: string) {
-	index, export := link_place(target)
-	if index < 0 {
+// link_open shows the page of a link of the page, by its number, and keeps
+// the page that it leaves in the history.
+link_open :: proc "contextless" (number: int) {
+	if number < 1 || number > page_link_count {
 		return
 	}
-	// The bytes of the name are in the boot image: they stay when the page
-	// changes.
-	wanted_export = export
-	select(index)
-	wanted_export = ""
-	if wanted_row >= 0 {
-		first_line = clamp(wanted_row, 0, max(rows() - ROWS, 0))
+	// A copy: the next page clears the table. The target and the label
+	// are bytes of a module file, of the resource or of built; the log
+	// line is written before the page changes.
+	link := page_links[number - 1]
+	system.log("manual: the link ", link.label, " opens ", link.target)
+	navigation_leave()
+	destination_show(link.destination)
+}
+
+// destination_show shows the page where a link goes, and writes it on the
+// log.
+destination_show :: proc "contextless" (destination: Link_Destination) {
+	switch destination.kind {
+	case .None, .Address:
+	case .Module, .Export, .Record:
+		// The bytes of the name are in the boot image or in the resource:
+		// they stay when the page changes.
+		wanted_export = destination.kind == .Export ? destination.name : ""
+		wanted_record = destination.kind == .Record ? destination.name : ""
+		select(destination.index)
+		wanted_export, wanted_record = "", ""
+		if wanted_row >= 0 {
+			first_line = clamp(wanted_row, 0, max(rows() - ROWS, 0))
+		}
+		page_log()
+	case .Link_Page:
+		link_page_build(destination.index)
+		page_log()
 	}
-	page_log()
+}
+
+// link_focus_move moves the focus to the next link of the page that opens,
+// or to the one before, and scrolls the page so that the view shows it.
+link_focus_move :: proc "contextless" (backward: bool) {
+	first_in_view := page_link_count
+	for index in 0 ..< page_link_count {
+		if page_links[index].first_row >= first_line {
+			first_in_view = index
+			break
+		}
+	}
+	next := manual_navigation.focus_step(page_link_count, focused_link - 1, first_in_view, backward)
+	if next < 0 {
+		focused_link = 0
+		system.log("manual: the page has no link that opens")
+		return
+	}
+	focused_link = next + 1
+	link := &page_links[next]
+	if link.first_row >= 0 && (link.first_row < first_line || link.first_row >= first_line + ROWS) {
+		first_line = clamp(link.first_row - ROWS / 3, 0, max(rows() - ROWS, 0))
+	}
+	system.log("manual: the focus is on the link ", link.label, " to ", link.target)
+}
+
+// The link pages: the resource manual_pages of the boot image, validated
+// once at the start. With no valid resource, a link to a term or a guide
+// has no page.
+link_pages: manual_pages.Pages
+
+// link_pages_open finds the resource of the link pages, checks the hash of
+// its bytes against its entry and its format, and writes the result on
+// the log.
+link_pages_open :: proc "contextless" () {
+	entry := system.image_resource_find(image, manual_pages.RESOURCE_NAME)
+	if entry == nil {
+		system.log("manual: the boot image has no link pages")
+		return
+	}
+	bytes := image[entry.offset:][:entry.size]
+	if blake3.hash(bytes) != entry.hash {
+		system.log_in("", .Warning, "manual: the link pages do not have the hash of their entry: not read")
+		return
+	}
+	pages, problem := manual_pages.validate(bytes)
+	if problem != .None {
+		system.log_in("", .Warning, "manual: the link pages break the rule ", u64(problem), " of their format: not read")
+		return
+	}
+	link_pages = pages
+	system.log("manual: ", u64(pages.count), " link pages")
+}
+
+// link_page_build writes a link page: its title, where it comes from, and
+// its text.
+link_page_build :: proc "contextless" (index: int) {
+	page_clear()
+	wanted_row = -1
+	page_kind, link_page_index = .Link_Page, index
+	target := manual_pages.target_of(link_pages, index)
+	put(manual_pages.title_of(link_pages, index), 0, COLOR_TITLE)
+	source := "docs/GLOSSARY.md"
+	if manual_pages.link_target_kind(target) == .Guide {
+		source = target
+		for place in 0 ..< len(target) {
+			if target[place] == '#' {
+				source = target[:place]
+				break
+			}
+		}
+	}
+	put_built(0, graphics.COLOR_DIM, "from ", source)
+	put("", 0, 0)
+	put_markdown(manual_pages.text_of(link_pages, index), 0, graphics.COLOR_TEXT)
 }
 
 // markdown_check checks the documentation texts of the page that the

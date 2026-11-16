@@ -125,6 +125,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/console_results",
 	SOURCE_FOLDER_SUPPORT + "/key_path",
 	SOURCE_FOLDER_SUPPORT + "/kind_icons",
+	SOURCE_FOLDER_CONTRACT + "/manual_pages",
+	SOURCE_FOLDER_SUPPORT + "/manual_navigation",
 }
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 // The boot program of the main boot volume, and its object: each boot
