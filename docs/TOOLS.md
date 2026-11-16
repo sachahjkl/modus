@@ -1028,10 +1028,12 @@ Each processor has one kernel stack of 16 pages (65 536 bytes, `op.KERNEL_STACK_
 **The rules that the listing cannot give.** Each one is a row of a table, with its reason:
 
 - A call through a register: the table of the indirect calls names its procedure and what it reaches (the self test, which reaches no procedure of the kernel).
-- A procedure that calls itself: the table of the recursions gives the most levels of it on one chain. `execute` has two: a command with a table of error details runs its operation under two frames of `execute`. The overflow of the self test has none: the measure leaves it out.
+- A direct call into data: the table of the calls into data names the caller and the data symbol (the self test calls the array `test_code`).
+- A procedure that calls itself: the table of the recursions gives the most levels of it on one chain. `execute` has two: a command with a table of error details runs its operation under two frames of `execute`. `tables_free` of the IOMMU and `walk` of `mappings_report` have one level for each level of their table: `iommu.DOMAIN_TABLE_LEVELS_MOST` and `info.PAGE_TABLE_LEVELS`, 4 each. The overflow of the self test has none: the measure leaves it out.
+- A cycle break (`GLOSSARY.md`): a cycle through several procedures that a state of the kernel cuts. `lock_order_broken` logs, and the log takes a lock; but it starts the report of a fault first, and from then the log takes no lock. The measure takes the depth of `lock_order_broken` with `lock_take` left out.
 - A compiled procedure that no entry reaches: a row of the table of the procedures that no code calls (the conversions of 16-bit floating point numbers that Odin adds).
 
-The measure stops the build with a line that names the procedure when a chain reaches a procedure with no frame, when a call goes to an address where no procedure starts, when a reached procedure has an indirect call or calls itself with no row, when a cycle passes through several procedures, and when a compiled procedure has no row and no entry reaches it.
+The measure stops the build with a line that names the procedure when a chain reaches a procedure with no frame, when a call goes to an address where no procedure starts, when a reached procedure has an indirect call or calls itself with no row, when a cycle passes through several procedures with no cycle break, and when a compiled procedure has no row and no entry reaches it.
 
 **One interrupt over the kernel.** The kernel takes an interrupt of the machine only in `idle_wait`. The measure adds, to the deepest chain to `idle_wait`, 8 bytes of alignment, the frame of the interrupt, a return address and the deepest chain of `kernel_interrupt`.
 

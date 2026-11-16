@@ -235,7 +235,7 @@ mappings_report :: proc "contextless" (report: ^op.Mapping_Report, table: u64, f
 				continue
 			}
 			address := base | index << (12 + 9 * level)
-			if level == 3 && index >= 256 {
+			if level == info.PAGE_TABLE_LEVELS - 1 && index >= 256 {
 				address |= 0xFFFF_0000_0000_0000
 			}
 			flags := inherited
@@ -259,7 +259,9 @@ mappings_report :: proc "contextless" (report: ^op.Mapping_Report, table: u64, f
 		}
 	}
 	report^ = {}
-	walk(report, table, 3, 0, first, last, {.Write, .Execute, .Program})
+	// One call of walk for each level: the measure of the kernel stack
+	// counts that many frames of it.
+	walk(report, table, info.PAGE_TABLE_LEVELS - 1, 0, first, last, {.Write, .Execute, .Program})
 	report.kernel_guard = u64(user_access_guard)
 	report.kernel_no_execute = u64(kernel_no_execute)
 	if first < 256 {

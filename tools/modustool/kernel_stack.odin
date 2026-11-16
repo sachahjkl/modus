@@ -1,6 +1,7 @@
 package modustool
 
 import info "modus:contract/boot_info"
+import iommu "modus:contract/iommu"
 import op "modus:contract/operation"
 import "core:fmt"
 import "core:os"
@@ -60,6 +61,21 @@ Kernel_Stack_Indirect_Call :: struct {
 	targets: []string,
 }
 
+// A direct call of a procedure into data: the address is no procedure of
+// the kernel, and the listing names the data symbol.
+Kernel_Stack_Data_Call :: struct {
+	caller: string,
+	data:   string,
+}
+
+// A cycle of calls that a state of the kernel cuts: below procedure, no
+// chain runs never_reaches again. The measure takes the depth of
+// procedure with never_reaches left out.
+Kernel_Stack_Cycle_Break :: struct {
+	procedure:     string,
+	never_reaches: string,
+}
+
 // The tables and the sizes of one measure. The build gives
 // kernel_stack_rules; a host test gives its own.
 Kernel_Stack_Rules :: struct {
@@ -70,6 +86,8 @@ Kernel_Stack_Rules :: struct {
 	assembly_frames:          []Kernel_Stack_Assembly_Frame,
 	recursions:               []Kernel_Stack_Recursion,
 	indirect_calls:           []Kernel_Stack_Indirect_Call,
+	data_calls:               []Kernel_Stack_Data_Call,
+	cycle_breaks:             []Kernel_Stack_Cycle_Break,
 	// Compiled procedures that no code calls.
 	not_run:                  []string,
 	interrupt_entry:          string, // The procedure that each interrupt runs.
@@ -123,12 +141,28 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		{"kernel::execute", 2},
 		// The self test fills the stack on purpose, until the guard page.
 		{"kernel::self_test.overflow", 0},
+		// One call for each level of the tables of a domain of the IOMMU.
+		{"kernel::[iommu.odin]::tables_free", iommu.DOMAIN_TABLE_LEVELS_MOST},
+		// One call for each level of a page table of the processor.
+		{"kernel::mappings_report.walk", info.PAGE_TABLE_LEVELS},
 	},
 	indirect_calls = {
-		// The self test calls data of the kernel and code of a program, to
-		// prove that the processor refuses both: it faults at the first
-		// instruction, and the fault stops the machine.
+		// The self test calls the code of a program, to prove that the
+		// processor refuses it: it faults at the first instruction, and the
+		// fault stops the machine.
 		{"kernel::self_test", {}},
+	},
+	data_calls = {
+		// The self test calls data of the kernel, to prove that the processor
+		// refuses to run it: it faults at the first instruction, and the
+		// fault stops the machine. llc makes the call direct.
+		{"kernel::self_test", "kernel::test_code"},
+	},
+	cycle_breaks = {
+		// lock_order_broken calls fault_report_begin first: from then the log
+		// writes the serial port only and takes no lock (log_take), and
+		// machine_stop takes none. So no lock is taken below it.
+		{"kernel::[lock.odin]::lock_order_broken", "kernel::lock_take"},
 	},
 	// The conversions of 16-bit floating point numbers that Odin defines in
 	// each module: the kernel has no floating point number.
@@ -148,7 +182,7 @@ Stack_Procedure :: struct {
 	edges:               [dynamic]Stack_Edge,
 	indirect_calls:      int,
 	first_indirect_call: string, // The text of the first one.
-	unknown_call:        string, // A call to an address where no procedure starts.
+	unknown_calls:       [dynamic]string, // The calls to an address where no procedure starts.
 }
 
 Stack_Edge :: struct {
@@ -377,19 +411,21 @@ kernel_call_graph_read :: proc(listing: string, frames: map[u64]int) -> []Stack_
 						append(&procedures[current].names, name)
 						continue
 					}
-					if current >= 0 && !compiled {
-						// A label of nasm inside the procedure: "name.label".
-						is_label := false
-						for symbol in procedures[current].names {
-							is_label ||= strings.has_prefix(name, symbol) && len(name) > len(symbol) && name[len(symbol)] == '.'
-						}
-						if is_label {
+					// A label of nasm inside a procedure of assembly:
+					// "procedure.label", with no frame from llc. The listing
+					// gives one name to an address, which can be another name
+					// of the procedure: "memcpy", whose labels are
+					// "copy_bytes_without_overlap.over16". So the name before
+					// the dot is not compared.
+					if current >= 0 && !compiled && strings.contains(name, ".") {
+						_, current_compiled := frames[procedures[current].address]
+						if !current_compiled {
 							continue
 						}
 					}
 					names := make([dynamic]string, context.temp_allocator)
 					append(&names, name)
-					append(&procedures, Stack_Procedure{names = names, address = address, edges = make([dynamic]Stack_Edge, context.temp_allocator)})
+					append(&procedures, Stack_Procedure{names = names, address = address, edges = make([dynamic]Stack_Edge, context.temp_allocator), unknown_calls = make([dynamic]string, context.temp_allocator)})
 					current = len(procedures) - 1
 					current_has_instructions = false
 					continue
@@ -445,8 +481,8 @@ kernel_call_graph_read :: proc(listing: string, frames: map[u64]int) -> []Stack_
 		target, is_start := starts[call.address]
 		if !is_start {
 			// A jump to an address inside a procedure is a branch.
-			if !call.tail && procedures[call.from].unknown_call == "" {
-				procedures[call.from].unknown_call = call.instruction
+			if !call.tail {
+				append(&procedures[call.from].unknown_calls, call.instruction)
 			}
 			continue
 		}
@@ -466,6 +502,20 @@ Depth_Search :: struct {
 	next:       []int, // The callee of the deepest chain; -1: none.
 	next_tail:  []bool,
 	recursive:  []bool, // The deepest chain holds more than one level of it.
+	// For a procedure of a cycle break: the procedure that no chain below
+	// it runs; -1 for the others.
+	cut:        []int,
+	start:      int, // The cycle break whose search this is; -1: none.
+	below:      []^Depth_Search, // The search below each cycle break, made at its first use.
+}
+
+// cut_levels gives a copy of levels with the procedure cut left out.
+@(private = "file")
+cut_levels :: proc(levels: []int, cut: int) -> []int {
+	copied := make([]int, len(levels), context.temp_allocator)
+	copy(copied, levels)
+	copied[cut] = 0
+	return copied
 }
 
 @(private = "file")
@@ -479,6 +529,16 @@ DEPTH_NO_CHAIN :: -2
 @(private = "file")
 depth_of :: proc(search: ^Depth_Search, index: int) -> int {
 	if search.depth[index] != DEPTH_NOT_COMPUTED {
+		return search.depth[index]
+	}
+	if search.cut[index] >= 0 && index != search.start {
+		// A cycle break: its depth comes from a search where the procedure
+		// that no chain below it runs is left out.
+		if search.below[index] == nil {
+			search.below[index] = new(Depth_Search, context.temp_allocator)
+			search.below[index]^ = depth_search_make(search.procedures, search.frames, cut_levels(search.levels, search.cut[index]), search.target, search.cut, index)
+		}
+		search.depth[index] = depth_of(search.below[index], index)
 		return search.depth[index]
 	}
 	// A cycle was a problem before the search; a mark ends it if one stays.
@@ -518,7 +578,7 @@ depth_of :: proc(search: ^Depth_Search, index: int) -> int {
 }
 
 @(private = "file")
-depth_search_make :: proc(procedures: []Stack_Procedure, frames, levels: []int, target: int) -> Depth_Search {
+depth_search_make :: proc(procedures: []Stack_Procedure, frames, levels: []int, target: int, cut: []int, start: int) -> Depth_Search {
 	search := Depth_Search {
 		procedures = procedures,
 		frames     = frames,
@@ -528,6 +588,9 @@ depth_search_make :: proc(procedures: []Stack_Procedure, frames, levels: []int, 
 		next       = make([]int, len(procedures), context.temp_allocator),
 		next_tail  = make([]bool, len(procedures), context.temp_allocator),
 		recursive  = make([]bool, len(procedures), context.temp_allocator),
+		cut        = cut,
+		start      = start,
+		below      = make([]^Depth_Search, len(procedures), context.temp_allocator),
 	}
 	for index in 0 ..< len(procedures) {
 		search.depth[index] = DEPTH_NOT_COMPUTED
@@ -540,9 +603,14 @@ depth_search_make :: proc(procedures: []Stack_Procedure, frames, levels: []int, 
 @(private = "file")
 chain_text :: proc(search: ^Depth_Search, start: int) -> string {
 	text := strings.builder_make(context.temp_allocator)
+	search := search
 	index := start
 	tail := false
 	for index >= 0 {
+		// Below a cycle break, the chain is the one of its own search.
+		if search.below[index] != nil && index != search.start {
+			search = search.below[index]
+		}
 		if index != start {
 			strings.write_string(&text, " -> ")
 		}
@@ -568,12 +636,18 @@ Cycle_Color :: enum u8 {
 }
 
 // cycle_find gives the procedures of one cycle of calls that passes
-// through more than one procedure, or nil.
+// through more than one procedure, or nil. A cycle break other than start
+// is an end: the search below it, with its cut procedure left out, is its
+// own.
 @(private = "file")
-cycle_find :: proc(procedures: []Stack_Procedure, levels: []int, colors: []Cycle_Color, path: ^[dynamic]int, index: int) -> []int {
+cycle_find :: proc(procedures: []Stack_Procedure, levels, cut: []int, start: int, colors: []Cycle_Color, path: ^[dynamic]int, index: int) -> []int {
 	colors[index] = .On_Path
 	append(path, index)
-	for edge in procedures[index].edges {
+	edges := procedures[index].edges[:]
+	if cut[index] >= 0 && index != start {
+		edges = nil
+	}
+	for edge in edges {
 		if edge.target == index || levels[edge.target] == 0 {
 			continue
 		}
@@ -585,7 +659,7 @@ cycle_find :: proc(procedures: []Stack_Procedure, levels: []int, colors: []Cycle
 				}
 			}
 		case .Not_Seen:
-			if found := cycle_find(procedures, levels, colors, path, edge.target); found != nil {
+			if found := cycle_find(procedures, levels, cut, start, colors, path, edge.target); found != nil {
 				return found
 			}
 		case .Done:
@@ -647,6 +721,20 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 		}
 	}
 
+	cut := make([]int, count, context.temp_allocator)
+	for index in 0 ..< count {
+		cut[index] = -1
+	}
+	for row in rules.cycle_breaks {
+		at := stack_procedure_named(procedures, row.procedure)
+		never := stack_procedure_named(procedures, row.never_reaches)
+		if at < 0 || never < 0 {
+			append(&measure.problems, fmt.tprintf("the cycle break of %s names a procedure that the listing does not have: %s or %s", row.procedure, row.procedure, row.never_reaches))
+			continue
+		}
+		cut[at] = never
+	}
+
 	// The entries, and what they reach.
 	entry_indexes := make([]int, len(rules.entries), context.temp_allocator)
 	reached := make([]bool, count, context.temp_allocator)
@@ -706,8 +794,16 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 		if frame_of[index] < 0 {
 			append(&measure.problems, fmt.tprintf("a chain reaches %s, which has no frame: llc wrote none (a variable size on the stack), and the table of the assembly procedures has no row for it", name))
 		}
-		if procedure.unknown_call != "" {
-			append(&measure.problems, fmt.tprintf("%s calls an address where no procedure starts: %s", name, procedure.unknown_call))
+		for call in procedure.unknown_calls {
+			// A stated call into data: the listing names the data symbol
+			// itself, at no offset, and no procedure has that name.
+			stated := false
+			for row in rules.data_calls {
+				stated ||= stack_procedure_matches(procedure, row.caller) && strings.has_suffix(call, strings.concatenate({"<", row.data, ">"}, context.temp_allocator)) && stack_procedure_named(procedures, row.data) < 0
+			}
+			if !stated {
+				append(&measure.problems, fmt.tprintf("%s calls an address where no procedure starts: %s", name, call))
+			}
 		}
 		if procedure.indirect_calls > 0 && !indirect_stated[index] {
 			append(&measure.problems, fmt.tprintf("%s has %d indirect calls (%s), and the table of the indirect calls has no row for it", name, procedure.indirect_calls, procedure.first_indirect_call))
@@ -722,20 +818,32 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 	if len(not_reached) > 0 {
 		append(&measure.problems, fmt.tprintf("%d compiled procedures are reached from no entry: an entry that the table does not know, or code that no code calls: %s", len(not_reached), strings.join(not_reached[:min(len(not_reached), 12)], ", ", context.temp_allocator)))
 	}
-	colors := make([]Cycle_Color, count, context.temp_allocator)
-	path := make([dynamic]int, context.temp_allocator)
+	// The graph of the entries, where each cycle break is an end, then the
+	// graph below each cycle break, with its cut procedure left out.
+	searches := make([dynamic]int, context.temp_allocator)
+	append(&searches, -1)
 	for index in 0 ..< count {
-		if !reached[index] || colors[index] != .Not_Seen {
-			continue
+		if cut[index] >= 0 && reached[index] {
+			append(&searches, index)
 		}
-		clear(&path)
-		if cycle := cycle_find(procedures, levels, colors, &path, index); cycle != nil {
-			names := make([dynamic]string, context.temp_allocator)
-			for item in cycle {
-				append(&names, procedures[item].names[0])
+	}
+	search_cycles: for start in searches {
+		search_levels := start < 0 ? levels : cut_levels(levels, cut[start])
+		colors := make([]Cycle_Color, count, context.temp_allocator)
+		path := make([dynamic]int, context.temp_allocator)
+		for index in 0 ..< count {
+			if (start >= 0 && index != start) || !reached[index] || colors[index] != .Not_Seen {
+				continue
 			}
-			append(&measure.problems, fmt.tprintf("a cycle of calls has no depth: %s", strings.join(names[:], " -> ", context.temp_allocator)))
-			break
+			clear(&path)
+			if cycle := cycle_find(procedures, search_levels, cut, start, colors, &path, index); cycle != nil {
+				names := make([dynamic]string, context.temp_allocator)
+				for item in cycle {
+					append(&names, procedures[item].names[0])
+				}
+				append(&measure.problems, fmt.tprintf("a cycle of calls has no depth: %s", strings.join(names[:], " -> ", context.temp_allocator)))
+				break search_cycles
+			}
 		}
 	}
 	if len(measure.problems) > 0 {
@@ -743,8 +851,8 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 	}
 
 	// The depths.
-	deepest := depth_search_make(procedures, frame_of, levels, -1)
-	to_idle := depth_search_make(procedures, frame_of, levels, idle_wait)
+	deepest := depth_search_make(procedures, frame_of, levels, -1, cut, -1)
+	to_idle := depth_search_make(procedures, frame_of, levels, idle_wait, cut, -1)
 	handler := depth_of(&deepest, interrupt_entry)
 	measure.deepest = -1
 	deepest_text := ""

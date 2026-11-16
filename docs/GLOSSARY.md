@@ -920,6 +920,16 @@ The design: `src/md/infrastructure/kernel_stack_depth.md`.
 
 Do not use: stack depth (for the chain), call stack (for this), worst-case stack.
 
+### Cycle break
+
+A cycle break is a stated rule of the measure of the kernel stack: below one procedure, no chain runs a named other procedure again, so a cycle of calls through them has a depth.
+
+The listing of the kernel shows a cycle when a procedure can reach itself through others, and a cycle has no depth. A state of the kernel can cut it: `lock_order_broken` logs, and the log takes a lock, but it starts the report of a fault first, and from then the log takes no lock. The row names the two procedures and its reason in the source of the tool; the measure takes the depth of the first with the second left out, and a cycle with no row stops the build.
+
+The design: `src/md/infrastructure/kernel_stack_depth.md`.
+
+Do not use: cycle exception, recursion bound (for this).
+
 ### Direct map
 
 The direct map is the part of the kernel half of the addresses that shows all physical memory.

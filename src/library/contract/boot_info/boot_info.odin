@@ -32,6 +32,7 @@ DIRECT_MAP_BASE :: uintptr(0xFFFF_8000_0000_0000)
 // The address of the kernel module: the last 2 GiB of the addresses.
 KERNEL_BASE :: uintptr(0xFFFF_FFFF_8000_0000)
 PAGE_SIZE :: 4096 // The page of the processor.
+PAGE_TABLE_LEVELS :: 4 // The levels of a page table of the processor: addresses of 48 bits.
 // The pages of the stack on which the boot program starts the kernel.
 BOOT_STACK_PAGES :: 16
 // The bound of the debug image (Boot_Info.debug_image): its pages stay taken

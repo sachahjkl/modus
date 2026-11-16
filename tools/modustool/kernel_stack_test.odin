@@ -69,8 +69,9 @@ kernel_stack_test_elf :: proc(frames: []Kernel_Stack_Test_Frame) -> []u8 {
 
 // A listing in the form of llvm-objdump, with: a call, a tail call, a
 // recursion of two levels, a branch inside a procedure, a jump through a
-// register, two names at one address, a label of nasm, the idle wait, and
-// a procedure on another stack.
+// register, a procedure of assembly that the listing names by another of
+// its names (memcpy) with labels of nasm under its first name, the idle
+// wait, and a procedure on another stack.
 KERNEL_STACK_TEST_LISTING :: `
 build/modules/kernel/linked.elf:	file format elf64-x86-64
 
@@ -93,7 +94,7 @@ Disassembly of section .text:
     120c:      	notrack	jmpq	*%rax
 
 0000000000001300 <kernel::log>:
-    1300:      	callq	0x1500 <copy_bytes_without_overlap>
+    1300:      	callq	0x1500 <memcpy>
     1305:      	retq
 
 0000000000001400 <idle_wait>:
@@ -102,15 +103,18 @@ Disassembly of section .text:
     1402:      	cli
     1403:      	retq
 
-0000000000001500 <copy_bytes_without_overlap>:
 0000000000001500 <memcpy>:
     1500:      	ja	0x1510 <copy_bytes_without_overlap.over16>
-    1502:      	retq
+    1502:      	jb	0x1513 <copy_bytes_without_overlap.done>
+    1504:      	retq
 
 0000000000001510 <copy_bytes_without_overlap.over16>:
     1510:      	pushq	%rbx
     1511:      	popq	%rbx
     1512:      	retq
+
+0000000000001513 <copy_bytes_without_overlap.done>:
+    1513:      	retq
 
 0000000000001600 <kernel::first_run>:
     1600:      	callq	0x1300 <kernel::log>
@@ -139,7 +143,7 @@ kernel_stack_test_rules :: proc(stack_bytes, least_free_bytes: int) -> Kernel_St
 	other_stack_entries[0] = "entry"
 	assembly_frames := make([]Kernel_Stack_Assembly_Frame, 2, context.temp_allocator)
 	assembly_frames[0] = {"idle_wait", 0}
-	// The row names the second name of the procedure.
+	// The row names the name that the listing gives the procedure.
 	assembly_frames[1] = {"memcpy", 8}
 	recursions := make([]Kernel_Stack_Recursion, 1, context.temp_allocator)
 	recursions[0] = {"kernel::execute", 2}
@@ -208,7 +212,7 @@ kernel_stack_measure_golden :: proc(t: ^testing.T) {
 	if !testing.expect_value(t, len(measure.lines), 2) {
 		return
 	}
-	testing.expect_value(t, measure.lines[0], "the kernel stack of kernel: the deepest chain uses 992 of 4096 bytes, 3104 bytes free, and the build fails under 1024 bytes free: an interrupt at the idle wait over kernel_interrupt -> idle_wait (232 bytes), then kernel_interrupt -> kernel::command_run -> kernel::execute (2 levels) -> kernel::log -> copy_bytes_without_overlap")
+	testing.expect_value(t, measure.lines[0], "the kernel stack of kernel: the deepest chain uses 992 of 4096 bytes, 3104 bytes free, and the build fails under 1024 bytes free: an interrupt at the idle wait over kernel_interrupt -> idle_wait (232 bytes), then kernel_interrupt -> kernel::command_run -> kernel::execute (2 levels) -> kernel::log -> memcpy")
 	testing.expect_value(t, measure.lines[1], "the kernel stack of kernel: each entry: an entry from a program 752 bytes, the first run 104 bytes; an interrupt at the idle wait 992 bytes; a fault of the kernel over the deepest chain 1752 bytes (not checked); kernel_interrupt with its frame 752 bytes, on an interrupt stack of 2048 bytes and on the stack of the double fault of 4096 bytes (not checked)")
 }
 
@@ -284,4 +288,113 @@ kernel_stack_names_match_without_the_number :: proc(t: ^testing.T) {
 	testing.expect(t, !stack_name_matches("kernel::self_test.overflow", "kernel::self_test"))
 	testing.expect(t, !stack_name_matches("kernel::execute-", "kernel::execute"))
 	testing.expect(t, !stack_name_matches("kernel::execute-1a", "kernel::execute"))
+}
+
+// A listing with a call into data, a recursion over the levels of a table
+// and a cycle that a state of the kernel cuts.
+KERNEL_STACK_TEST_BREAK_LISTING :: "0000000000001000 <kernel_interrupt>:\n" +
+	"    1000:      \tcallq\t0x1100 <kernel::lock_take>\n" +
+	"    1005:      \tcallq\t0x1300 <kernel::self_test>\n" +
+	"    100a:      \tcallq\t0x1400 <idle_wait>\n" +
+	"0000000000001100 <kernel::lock_take>:\n" +
+	"    1100:      \tcallq\t0x1200 <kernel::lock_order_broken>\n" +
+	"0000000000001200 <kernel::lock_order_broken>:\n" +
+	"    1200:      \tcallq\t0x1250 <kernel::log>\n" +
+	"0000000000001250 <kernel::log>:\n" +
+	"    1250:      \tcallq\t0x1100 <kernel::lock_take>\n" +
+	"0000000000001300 <kernel::self_test>:\n" +
+	"    1300:      \tcallq\t0x900 <kernel::test_code>\n" +
+	"    1305:      \tcallq\t0x1350 <kernel::self_test.walk-12>\n" +
+	"0000000000001350 <kernel::self_test.walk-12>:\n" +
+	"    1350:      \tcallq\t0x1350 <kernel::self_test.walk-12>\n" +
+	"0000000000001400 <idle_wait>:\n" +
+	"    1400:      \tretq\n"
+
+@(rodata)
+kernel_stack_test_break_frames := [?]Kernel_Stack_Test_Frame {
+	{0x1000, 16}, // kernel_interrupt
+	{0x1100, 32}, // kernel::lock_take
+	{0x1200, 48}, // kernel::lock_order_broken
+	{0x1250, 64}, // kernel::log
+	{0x1300, 24}, // kernel::self_test
+	{0x1350, 40}, // kernel::self_test.walk-12
+}
+
+// The levels of the recursion of the test.
+KERNEL_STACK_TEST_WALK_LEVELS :: 4
+
+// kernel_stack_test_break_rules gives the rules of the listing of the
+// breaks, each stated rule given or left out.
+kernel_stack_test_break_rules :: proc(with_data_call, with_cycle_break: bool) -> Kernel_Stack_Rules {
+	entries := make([]Kernel_Stack_Entry, 2, context.temp_allocator)
+	entries[0] = {"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a program"}
+	entries[1] = {"kernel::lock_take", RETURN_ADDRESS_BYTES, "a lock"}
+	assembly_frames := make([]Kernel_Stack_Assembly_Frame, 1, context.temp_allocator)
+	assembly_frames[0] = {"idle_wait", 0}
+	recursions := make([]Kernel_Stack_Recursion, 1, context.temp_allocator)
+	recursions[0] = {"kernel::self_test.walk", KERNEL_STACK_TEST_WALK_LEVELS}
+	rules := Kernel_Stack_Rules {
+		entries = entries,
+		assembly_frames = assembly_frames,
+		recursions = recursions,
+		interrupt_entry = "kernel_interrupt",
+		idle_wait = "idle_wait",
+		stack_bytes = 4096,
+		least_free_bytes = 1024,
+		interrupt_stack_bytes = 2048,
+		double_fault_stack_bytes = 4096,
+	}
+	if with_data_call {
+		data_calls := make([]Kernel_Stack_Data_Call, 1, context.temp_allocator)
+		data_calls[0] = {"kernel::self_test", "kernel::test_code"}
+		rules.data_calls = data_calls
+	}
+	if with_cycle_break {
+		cycle_breaks := make([]Kernel_Stack_Cycle_Break, 1, context.temp_allocator)
+		cycle_breaks[0] = {"kernel::lock_order_broken", "kernel::lock_take"}
+		rules.cycle_breaks = cycle_breaks
+	}
+	return rules
+}
+
+// The depths of the listing of the breaks:
+//   below lock_order_broken, lock_take is left out: log 64, then
+//   lock_order_broken 48 + 8 + 64 = 120, lock_take 32 + 8 + 120 = 160;
+//   walk four levels: 3 * (40 + 8) + 40 = 184; self_test 24 + 8 + 184 = 216;
+//   kernel_interrupt 16 + 8 + 216 = 240, and 184 above it: 424;
+//   the entry a lock: 8 + 160 = 168;
+//   the interrupt at the idle wait: 184 + 16 + 8 + 0 = 208, then
+//   8 + 176 + 8 + 240: 640, the deepest.
+@(test)
+kernel_stack_measure_takes_the_stated_breaks :: proc(t: ^testing.T) {
+	frames, _ := kernel_stack_frames_read(kernel_stack_test_elf(kernel_stack_test_break_frames[:]))
+	measure := kernel_stack_measure("kernel", KERNEL_STACK_TEST_BREAK_LISTING, frames, kernel_stack_test_break_rules(true, true))
+	testing.expectf(t, len(measure.problems) == 0, "%v", measure.problems[:])
+	testing.expect_value(t, measure.deepest, 640)
+	if !testing.expect_value(t, len(measure.lines), 2) {
+		return
+	}
+	testing.expect(t, strings.has_suffix(measure.lines[0], "then kernel_interrupt -> kernel::self_test -> kernel::self_test.walk-12 (4 levels)"), measure.lines[0])
+	testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a program 424 bytes, a lock 168 bytes;"), measure.lines[1])
+
+	without_data_call := kernel_stack_measure("kernel", KERNEL_STACK_TEST_BREAK_LISTING, frames, kernel_stack_test_break_rules(false, true))
+	testing.expectf(t, len(without_data_call.problems) == 1 && without_data_call.problems[0] == "kernel::self_test calls an address where no procedure starts: callq\t0x900 <kernel::test_code>", "%v", without_data_call.problems[:])
+
+	without_cycle_break := kernel_stack_measure("kernel", KERNEL_STACK_TEST_BREAK_LISTING, frames, kernel_stack_test_break_rules(true, false))
+	testing.expectf(t, len(without_cycle_break.problems) == 1 && without_cycle_break.problems[0] == "a cycle of calls has no depth: kernel::lock_take -> kernel::lock_order_broken -> kernel::log", "%v", without_cycle_break.problems[:])
+}
+
+// The chain below a cycle break is named through it.
+@(test)
+kernel_stack_chain_passes_a_cycle_break :: proc(t: ^testing.T) {
+	frames, _ := kernel_stack_frames_read(kernel_stack_test_elf(kernel_stack_test_break_frames[:]))
+	rules := kernel_stack_test_break_rules(true, true)
+	// With 1000 bytes above it, the entry a lock is the deepest: 1160.
+	rules.entries[1].bytes_above = 1000
+	measure := kernel_stack_measure("kernel", KERNEL_STACK_TEST_BREAK_LISTING, frames, rules)
+	testing.expectf(t, len(measure.problems) == 0, "%v", measure.problems[:])
+	testing.expect_value(t, measure.deepest, 1160)
+	if len(measure.lines) == 2 {
+		testing.expect(t, strings.has_suffix(measure.lines[0], "a lock, 1000 bytes above it: kernel::lock_take -> kernel::lock_order_broken -> kernel::log"), measure.lines[0])
+	}
 }
