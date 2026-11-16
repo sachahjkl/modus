@@ -156,8 +156,10 @@ The signing key is an Ed25519 key pair of the principal that signs the system. I
 1. Run `nix develop -c modustool key new <folder>`, with a folder outside the repository.
 2. The tool writes `<folder>/signing_key`: the private key, 64 hexadecimal digits, readable by its owner only, in a folder that only its owner can open. It writes `<folder>/signing_key.public`: the public key. It creates each file exclusively: a file or a symbolic link at that path makes it stop.
 3. The tool then writes the firmware signing key with `openssl`: `<folder>/firmware_signing_key.pem` (the RSA-2048 private key) and `<folder>/firmware_signing_key.crt` (its certificate).
-4. The tool refuses to replace an existing key.
-5. To enrol the certificate in the firmware of a real machine, someone present at the machine uses the setup of the firmware: the certificate `firmware_signing_key.crt` as the platform key, the key exchange key and the entry of `db`, then Secure Boot on. The steps depend on the firmware of the machine.
+4. The tool then writes the release signing key: `<folder>/release_signing_key` (its 32-byte seed in base64url with no padding, readable by its owner only) and `<folder>/release_signing_key.public` ("The release signing key", below).
+5. The tool refuses to replace an existing key.
+6. To enrol the certificate in the firmware of a real machine, someone present at the machine uses the setup of the firmware: the certificate `firmware_signing_key.crt` as an entry of `db`, or as the platform key, the key exchange key and the one entry of `db`, then Secure Boot on. The steps depend on the firmware of the machine (`INSTALL.md`, "4. Start with Secure Boot").
+7. For a release, commit `release_signing_key.public` as `resources/keys/release_signing_key.public` and the certificate as `resources/keys/firmware_signing_key.crt`, and put the four values of the folder in the secrets of the repository (`secrets/README.md`).
 
 ### Use
 
@@ -179,6 +181,16 @@ The signing key is an Ed25519 key pair of the principal that signs the system. I
 ### Theft
 
 Anyone who has the private key can sign a system that the boot program accepts. Make a new key and a new boot program at once. No list of revoked keys exists.
+
+### The release signing key
+
+The release signing key is a third key, an Ed25519 key, in the same folder. It signs the checksum list of the files of a release; it signs no system (`INSTALL.md`, "2. Verify the files"). The design is `src/md/infrastructure/release_image.md`.
+
+- **Where it lives**: `<folder>/release_signing_key`, beside the signing key. `modustool release image` finds it from `SYSTEM_SIGNING_KEY`, with the rules of a private key file above.
+- **Its public key** is `resources/keys/release_signing_key.public`, and the site publishes it. The release command refuses a key whose public key is another one.
+- **The form**: a key is 32 bytes in base64url with no padding, and a release signature covers the context `modus release checksums 1` and an end of line, then the checksum list: the forms of the package `signing` of gui_toolkit.
+- **Loss or theft**: make a new key, commit its public key, and replace its secret. No machine holds it, so no machine changes. A stolen key signs files that `modustool verify` accepts, until the commit of the new public key.
+- **A release refuses the test keys**: with no `SYSTEM_SIGNING_KEY`, with the test signing key or the test firmware signing key, `modustool release image` stops before its build.
 
 ## 6. The measure
 
@@ -216,9 +228,10 @@ What the test machines do:
 - **What each machine of the TPM prints**: the count of `Startup` commands, the count of abandoned commands, and the name of the command before the first cancel. A good machine has one `Startup` and no abandoned command. QEMU writes a trace of the device with the time of each line (`<machine>_qemu_tpm_trace.log`: each command that the device received, each write of the firmware to the device, a start or a cancel).
 - **The firmware with Secure Boot and a software TPM failed at each run with the QEMU that waits through io_uring**, with system management mode (`OVMFFull`) and without it. Its trace showed the same fault: a `TPM2_PCR_Extend` that swtpm answered, and a cancel of the firmware 152 s later. That firmware has not run with a TPM on the QEMU with no io_uring. It has the TPM driver, and the variable store with the enrolled certificate exists. A machine of Secure Boot with a TPM needs the tool to start swtpm and to add the TPM device for that firmware too: today the choice of the firmware also decides the TPM device. The machines of the seal then start the signed main volume, and the test volumes of the seal go. The roadmap holds that work.
 - **So the seal is proven on a test system without Secure Boot.** A seal needs the verifier `Firmware_And_Boot_Program` (`PRINCIPALS.md`, "The machine key sealed by the TPM"). The root service of the test boot image `boot_seal_test.image` is the module `root_seal_test`: the same sources, built with the setting `SEAL_WITHOUT_SECURE_BOOT_FOR_A_TEST`, which also takes the verifier `Boot_Program`. It writes at boot "root: this system seals with no Secure Boot: a test system, never a release". Only the volumes `seal_test` and `seal_test_other_system` hold that image; a host test checks it, and `machine_test` fails each machine of another volume that prints that line.
-- **Why it cannot reach a release.** A release publishes no boot volume. The volume that a principal installs is the main volume, whose boot image holds the module `root`, built with no setting: there the constant is false, and the `when` keeps the rule. The system description of the main volume names the hash of that module, so a boot image with the module of the test is another system, with another PCR 11.
+- **Why it cannot reach a release.** A release publishes one boot volume, the release volume, in a disk image (`INSTALL.md`, "1. The files of a release"). Its boot image is the main boot image, which holds the module `root`, built with no setting: there the constant is false, and the `when` keeps the rule. `modustool release image` refuses a boot image whose module `root` is not the module `root` of the build, so the boot image of the test of the seal, which holds `root_seal_test` under that name, is never packaged; it refuses the test keys too (`src/md/infrastructure/release_image.md`). The system description of the release volume names the hash of the module `root`, so a boot image with the module of the test is another system, with another PCR 11.
 - **A real machine keeps the rule.** The sixth machine of the part starts the main volume on the same firmware: the TPM refuses (another PCR 11), the recovery key opens the key, `unlock` does not seal it again, and `machine_seal()` is refused, because the firmware did not verify the boot program.
 - **The run.** `modustool test principals` runs them, and so does each full check (`PRINCIPALS.md`, "8. The tests").
+- **The software TPM alone.** After the last machine of `test principals`, the tool starts swtpm with no QEMU on the state of the TPM of the part: its commands on a TCP port of the loopback, with the flags `not-need-init,startup-clear`, so swtpm starts the TPM itself. The tool sends `TPM2_DictionaryAttackLockReset` there, as another system on the machine can, and reads the answer. It sends the same command first to a new state, to show that the bytes reset a TPM whose lockout value is empty (`PRINCIPALS.md`, "8. The tests").
 
 The steps of a machine of the TPM or of Secure Boot after `boot program: started` have a bound of 300 s each, and the wait for `boot program: PCR 11 = ` ends at once with the line of a refusal.
 
@@ -233,6 +246,7 @@ Secure Boot makes the firmware check the boot program before it runs it, which c
 3. **The signature of the boot program**: `sbsign --key <key> --cert <certificate> --output <signed> <unsigned>`, of the package `sbsigntool`. The build keeps the unsigned boot program as its output and writes the signed copy beside it.
 4. **The variable store of the test machine**: `virt-fw-vars` of the package `python3Packages.virt-firmware` writes a copy of `OVMF_FULL_VARS` with the certificate as PK, KEK and the one entry of `db`, and Secure Boot on (`--set-pk`, `--add-kek`, `--add-db`, `--secure-boot`). No certificate of a vendor is enrolled.
 5. **The machines** of `modustool test trusted_boot`: the signed boot program starts, and its trust record says `Firmware_And_Boot_Program`; these machines have no TPM device; the signed boot program with one byte changed does not start; the unsigned boot program does not start. For the last two, the tool waits for the line `BdsDxe: failed to load Boot` of the firmware, then checks that the log has no line `boot program: started`.
+6. **The release image**: after the machines of Secure Boot, the tool packages their signed volume as the files of a release, with a release signing key of the test and the one packaging that accepts the test keys, verifies the files, decompresses the image with zstd, and starts a machine with the usual firmware from the GPT disk, up to the console (`src/md/infrastructure/release_image.md`).
 
 The machines with this firmware run with four processors, as every other machine, with the system management mode of QEMU (`-machine q35,smm=on`). The first wait of such a machine is the line `boot program: started`, by name, with a bound of 600 seconds: this firmware starts slower than the usual one, and slower still on a loaded host. The tool prints the time of the first wait of each machine.
 
@@ -255,7 +269,8 @@ The machines with this firmware run with four processors, as every other machine
 | The line of the trust and the line of the check on the boot display | `src/library/support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
 | The places of the card of the boot image | `src/library/support/bootscreen/image_card` |
 | The signature, the keys, the command `key` | `tools/modustool/system_description.odin` |
-| The ten machines of `test trusted_boot` | `tools/modustool/trusted_boot_scenario.odin` |
+| The eleven machines of `test trusted_boot` | `tools/modustool/trusted_boot_scenario.odin` |
 | The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/modustool/secure_boot.odin` |
+| The release volume, the GPT disk, the release signature, `release`, `verify`, `key write` | `tools/modustool/release_image.odin` |
 | The Ed25519 code of the boot program | `src/library/support/cryptography/ed25519` (`docs/CRYPTOGRAPHY.md`) |
 | The TPM service, after the start | `src/programs/tpm`, `src/library/support/tpm2`, `src/library/contract/tpm_service` |

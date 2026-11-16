@@ -16,7 +16,14 @@
 //     management mode), for the machines of Secure Boot
 //   SYSTEM_SIGNING_KEY (not set by the shell): the private key of the
 //     principal that signs the system description; with none,
-//     the test signing key of resources/keys (system_description.odin)
+//     the test signing key of resources/keys (system_description.odin).
+//     Its folder also holds the firmware signing key and the release
+//     signing key (release_image.odin)
+//   SYSTEM_SIGNING_KEY_TEXT, FIRMWARE_SIGNING_KEY_TEXT,
+//     FIRMWARE_CERTIFICATE_TEXT, RELEASE_SIGNING_KEY_TEXT (not set by the
+//     shell): the values of a key folder, for the command "key write"
+//   on the path for "release image" and the release machine of
+//     "test trusted_boot": zstd
 //   MODUS_SYSTEM (not set by the shell): the folder of the system, for the
 //     command "module-build" run from the folder of another project
 //     (outside_module.odin)
@@ -559,6 +566,31 @@ COMMANDS :: [?]Command {
 	// Prints the number of the newest release of `CHANGELOG.md`, as `0.91.0`:
 	// the number that a workflow gives to a release.
 	{name = "release_number", about = "print the release number of the system: the newest release of `" + CHANGELOG_FILE + "`", run = run_release_number},
+	// Makes the files of a release: the disk image of the system that a
+	// principal writes to a USB key, its checksum list and the release
+	// signature of the list (docs/INSTALL.md).
+	//
+	// - `image`: a whole build with the keys of the publisher of the
+	//   system, the release volume (the main boot image with its boot
+	//   program signed for Secure Boot), then a GPT disk around it,
+	//   compressed with zstd, `SHA256SUMS.txt` and `SHA256SUMS.txt.sig` in
+	//   `dist/`, and the notes of the release in `build/release_notes.md`.
+	//   It refuses the test keys, a release signing key whose public key is
+	//   not `resources/keys/release_signing_key.public`, and every volume of
+	//   a test.
+	// - `tag-check <tag>`: checks that a tag is `v` and the release number.
+	//
+	// The workflow of a release runs it on each tag `v*`.
+	{name = "release", about = "image: build the release volume with the keys of the publisher (" + SIGNING_KEY_VARIABLE + "), and write the compressed GPT disk image, " + RELEASE_CHECKSUM_FILE_NAME + " and its release signature in " + RELEASE_OUTPUT_FOLDER + "/; `release tag-check <tag>`: check that the tag is v and the release number", run = run_release},
+	// Verifies the files of a release: the release signature of the
+	// checksum list with the public key of the repository, then the SHA-256
+	// of the image against its line. The signature file is beside the
+	// checksum list, with the suffix `.sig`.
+	//
+	// ```
+	// nix develop -c modustool verify modus-0.93.0-x86_64.img.zst SHA256SUMS.txt
+	// ```
+	{name = "verify", about = "verify <image> <" + RELEASE_CHECKSUM_FILE_NAME + ">: check the release signature of the checksum list with " + RELEASE_PUBLIC_KEY_FILE + ", then the SHA-256 of the image", run = run_verify},
 	// Records the hash of the file of each module of the build, or compares
 	// the build with such a record. It builds nothing: run `build` first.
 	//
@@ -588,13 +620,18 @@ COMMANDS :: [?]Command {
 	//
 	// - `new <folder>`: writes a new private key, readable by its owner only,
 	//   and its public key, in a folder outside the repository, with the
-	//   firmware signing key of Secure Boot beside them.
+	//   firmware signing key of Secure Boot and the release signing key
+	//   beside them.
+	// - `write <folder>`: writes the same key folder from the variables
+	//   `SYSTEM_SIGNING_KEY_TEXT`, `FIRMWARE_SIGNING_KEY_TEXT`,
+	//   `FIRMWARE_CERTIFICATE_TEXT` and `RELEASE_SIGNING_KEY_TEXT`: the
+	//   secrets of the workflow of a release (secrets/README.md).
 	// - `show`: prints the public key that the build uses: the key of
 	//   `SYSTEM_SIGNING_KEY`, or the test signing key of the repository.
 	//
 	// A system signed with the test key is for a test machine only: its
 	// private key is published.
-	{name = "key", about = "key new <folder outside the repository>: write a new signing key of the system description (the private key, readable by its owner only, and the public key); `key show`: print the public key that the build uses (" + SIGNING_KEY_VARIABLE + ", or the test signing key)", run = run_key},
+	{name = "key", about = "key new <folder outside the repository>: write a new signing key of the system description (the private key, readable by its owner only, and the public key), with the firmware signing key and the release signing key; `key write <folder>`: the same folder from the variables of the secrets of a workflow; `key show`: print the public key that the build uses (" + SIGNING_KEY_VARIABLE + ", or the test signing key)", run = run_key},
 }
 
 main :: proc() {

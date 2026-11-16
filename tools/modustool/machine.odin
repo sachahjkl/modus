@@ -2832,6 +2832,25 @@ scenario := [?]Step {
 	{kind = .Key, text = "esc"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] ê^z"},
+	// AltGr, the right Alt key, gives the third level: the keys of 4, 5, 6,
+	// the key right of 0, the key of =, 3, 0 and 8 give {[|]}#@\. AltGr
+	// with the key of 2 is the dead tilde: the end quote after it gives ~
+	// and the quote. The names are the keys of a QWERTY keyboard.
+	{kind = .Keys, text = "3"},
+	{kind = .Key, text = "alt_r-4"},
+	{kind = .Key, text = "alt_r-5"},
+	{kind = .Key, text = "alt_r-6"},
+	{kind = .Key, text = "alt_r-minus"},
+	{kind = .Key, text = "alt_r-equal"},
+	{kind = .Key, text = "alt_r-3"},
+	{kind = .Key, text = "alt_r-0"},
+	{kind = .Key, text = "alt_r-8"},
+	{kind = .Key, text = "alt_r-2"},
+	{kind = .Keys, text = "3"},
+	{kind = .Key, text = "esc"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] > \"{[|]}#@\\~\""},
+	{kind = .Wait, text = "[console] {[|]}#@\\~"},
 	// Backspace removes a whole character: "étéx", Backspace two times,
 	// gives "ét".
 	{kind = .Keys, text = "32t2x"},

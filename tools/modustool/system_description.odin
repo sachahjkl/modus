@@ -73,6 +73,11 @@ Signed_Image :: struct {
 	signed_by_test_key: bool,
 }
 
+// The two texts of the file beside a boot volume that says which key
+// signed it. The release command packages a volume only with the second.
+SIGNED_BY_TEST_KEY_TEXT :: "the TEST signing key, whose private key is published: do not install this volume on a real machine\n"
+SIGNED_BY_PUBLISHER_KEY_TEXT :: "the signing key of SYSTEM_SIGNING_KEY\n"
+
 // signed_by_file_path gives the file beside a boot volume that says which
 // key signed its system description. A volume that the test signing key
 // signed must not be installed on a real machine: the file says so, and a
@@ -130,21 +135,33 @@ signing_key_read :: proc() -> (key: Signing_Key, ok: bool) {
 signing_key_file_read :: proc(path: string) -> (bytes: [SIGNING_KEY_SIZE]u8, ok: bool) {
 	data := read_file(path) or_return
 	defer crypto.zero_explicit(raw_data(data), len(data))
-	text := strings.trim_space(string(data))
-	if len(text) != 2 * SIGNING_KEY_SIZE {
-		fmt.eprintfln("modustool: %s must hold 64 hexadecimal digits; it holds %d characters", path, len(text))
+	problem: string
+	bytes, problem = signing_key_text_decode(string(data))
+	if problem != "" {
+		fmt.eprintfln("modustool: %s %s", path, problem)
 		return
+	}
+	return bytes, true
+}
+
+// signing_key_text_decode reads the text of a key file: 64 hexadecimal
+// digits, with white space around them. problem says what is wrong, or is
+// "".
+signing_key_text_decode :: proc(data: string) -> (bytes: [SIGNING_KEY_SIZE]u8, problem: string) {
+	text := strings.trim_space(data)
+	if len(text) != 2 * SIGNING_KEY_SIZE {
+		return {}, fmt.tprintf("must hold 64 hexadecimal digits; it holds %d characters", len(text))
 	}
 	for index in 0 ..< SIGNING_KEY_SIZE {
 		high, high_valid := signing_key_digit(text[2 * index])
 		low, low_valid := signing_key_digit(text[2 * index + 1])
 		if !high_valid || !low_valid {
-			fmt.eprintfln("modustool: %s must hold hexadecimal digits only", path)
-			return
+			crypto.zero_explicit(&bytes, size_of(bytes))
+			return {}, "must hold hexadecimal digits only"
 		}
 		bytes[index] = high << 4 | low
 	}
-	return bytes, true
+	return bytes, ""
 }
 
 signing_key_digit :: proc(character: u8) -> (value: u8, valid: bool) {
@@ -462,9 +479,11 @@ measure_expected :: proc(description: []u8) -> (value: [32]u8) {
 // run_key: `key new <folder>` writes a new signing key: <folder>/signing_key
 // (the private key, readable by its owner only, in a folder that only its
 // owner can open) and <folder>/signing_key.public, then the firmware signing
-// key in the same folder (secure_boot.odin). `key show` prints the public
-// key that the build uses. `key test-firmware-new` writes the test firmware
-// signing key of the repository.
+// key and the release signing key in the same folder (secure_boot.odin,
+// release_image.odin). `key write <folder>` writes such a folder from the
+// secrets of a workflow. `key show` prints the public key that the build
+// uses. `key test-firmware-new` writes the test firmware signing key of the
+// repository.
 run_key :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "show" {
 		key, ok := signing_key_read()
@@ -480,8 +499,11 @@ run_key :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "test-firmware-new" {
 		return firmware_signing_key_new(RESOURCE_FOLDER + "/keys", true) ? 0 : EXIT_FAILURE
 	}
+	if len(args) == 2 && args[0] == "write" {
+		return key_folder_write(args[1]) ? 0 : EXIT_FAILURE
+	}
 	if len(args) != 2 || args[0] != "new" {
-		fmt.eprintln("modustool: key new <folder outside the repository> | key show | key test-firmware-new")
+		fmt.eprintln("modustool: key new <folder outside the repository> | key write <folder outside the repository> | key show | key test-firmware-new")
 		return EXIT_USAGE
 	}
 	folder := args[1]
@@ -493,7 +515,9 @@ run_key :: proc(args: []string) -> int {
 	public_path := strings.concatenate({private_path, SIGNING_KEY_PUBLIC_SUFFIX}, context.temp_allocator)
 	firmware_key_path := strings.concatenate({folder, "/", FIRMWARE_SIGNING_KEY_FILE_NAME}, context.temp_allocator)
 	firmware_certificate_path := strings.concatenate({folder, "/", FIRMWARE_CERTIFICATE_FILE_NAME}, context.temp_allocator)
-	if os.exists(private_path) || os.exists(public_path) || os.exists(firmware_key_path) || os.exists(firmware_certificate_path) {
+	release_key_path := strings.concatenate({folder, "/", RELEASE_SIGNING_KEY_FILE_NAME}, context.temp_allocator)
+	release_public_path := strings.concatenate({release_key_path, SIGNING_KEY_PUBLIC_SUFFIX}, context.temp_allocator)
+	if os.exists(private_path) || os.exists(public_path) || os.exists(firmware_key_path) || os.exists(firmware_certificate_path) || os.exists(release_key_path) || os.exists(release_public_path) {
 		fmt.eprintfln("modustool: %s already holds a signing key: a new key does not replace one", folder)
 		return EXIT_FAILURE
 	}
@@ -545,6 +569,11 @@ run_key :: proc(args: []string) -> int {
 	fmt.printfln("modustool: wrote %s and %s; public key %s", private_path, public_path, string(public_digits[:]))
 	// The firmware signing key, for Secure Boot, in the same folder.
 	if !firmware_signing_key_new(folder, false) {
+		return EXIT_FAILURE
+	}
+	// The release signing key, for the files of a release, in the same
+	// folder.
+	if !release_signing_key_new(folder) {
 		return EXIT_FAILURE
 	}
 	fmt.printfln("modustool: keep a copy of %s on a second medium, offline; then set %s=%s for each build (docs/TRUSTED_BOOT.md, \"The signing key\")", private_path, SIGNING_KEY_VARIABLE, private_path)

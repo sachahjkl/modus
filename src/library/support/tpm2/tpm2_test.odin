@@ -594,3 +594,175 @@ the_codes_of_an_authorization_value_are_named :: proc(t: ^testing.T) {
 	// The format 0 codes are no format 1 failure.
 	testing.expect(t, !authorization_fails(RESPONSE_LOCKOUT))
 }
+
+// The commands of the lockout hierarchy: the read of the properties, the
+// change of the lockout authorization value with the empty one, and the
+// reset of the count that only the tool sends.
+@(test)
+the_commands_of_the_lockout_hierarchy_have_their_bytes :: proc(t: ^testing.T) {
+	buffer: [256]u8
+	count := properties_command(buffer[:], PROPERTY_LOCKOUT_COUNTER, u32(COUNT_LIMIT_PROPERTIES))
+	expected_properties := [?]u8 {
+		0x80, 0x01, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x01, 0x7A, // The header: 22 bytes, TPM2_GetCapability.
+		0x00, 0x00, 0x00, 0x06, // TPM_CAP_TPM_PROPERTIES.
+		0x00, 0x00, 0x02, 0x0E, // From TPM_PT_LOCKOUT_COUNTER,
+		0x00, 0x00, 0x00, 0x04, // four properties.
+	}
+	testing.expect_value(t, count, len(expected_properties))
+	testing.expect(t, string(buffer[:count]) == string(expected_properties[:]))
+	count = properties_command(buffer[:], PROPERTY_PERMANENT, 1)
+	testing.expect_value(t, count, len(expected_properties))
+	testing.expect_value(t, buffer[16], u8(0x02)) // TPM_PT_PERMANENT, 0x200, after the header and the capability.
+	testing.expect_value(t, buffer[17], u8(0x00))
+	testing.expect_value(t, buffer[21], u8(0x01))
+	testing.expect_value(t, properties_command(buffer[:len(expected_properties) - 1], PROPERTY_PERMANENT, 1), 0)
+
+	value: [AUTHORIZATION_VALUE_SIZE]u8
+	for index in 0 ..< AUTHORIZATION_VALUE_SIZE {
+		value[index] = u8(0xC0 + index)
+	}
+	count = lockout_authorization_change_command(buffer[:], value[:])
+	expected_change_head := [?]u8 {
+		0x80, 0x02, 0x00, 0x00, 0x00, 0x3D, 0x00, 0x00, 0x01, 0x29, // The header: 61 bytes, TPM2_HierarchyChangeAuth.
+		0x40, 0x00, 0x00, 0x0A, // The lockout hierarchy.
+		0x00, 0x00, 0x00, 0x09, 0x40, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, // The empty password: the value of now.
+		0x00, 0x20, // The new value: 32 bytes.
+	}
+	testing.expect_value(t, count, len(expected_change_head) + AUTHORIZATION_VALUE_SIZE)
+	testing.expect(t, string(buffer[:len(expected_change_head)]) == string(expected_change_head[:]))
+	testing.expect(t, string(buffer[len(expected_change_head):count]) == string(value[:]))
+	// An empty value changes nothing, and a value longer than the digest of
+	// the hash of the TPM is refused by it: neither gives a command.
+	too_long: [AUTHORIZATION_VALUE_SIZE + 1]u8
+	testing.expect_value(t, lockout_authorization_change_command(buffer[:], nil), 0)
+	testing.expect_value(t, lockout_authorization_change_command(buffer[:], too_long[:]), 0)
+	testing.expect_value(t, lockout_authorization_change_command(buffer[:len(expected_change_head)], value[:]), 0)
+
+	count = dictionary_attack_lock_reset_command(buffer[:])
+	expected_reset := [?]u8 {
+		0x80, 0x02, 0x00, 0x00, 0x00, 0x1B, 0x00, 0x00, 0x01, 0x39, // The header: 27 bytes, TPM2_DictionaryAttackLockReset.
+		0x40, 0x00, 0x00, 0x0A, // The lockout hierarchy.
+		0x00, 0x00, 0x00, 0x09, 0x40, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, // The empty password.
+	}
+	testing.expect_value(t, count, len(expected_reset))
+	testing.expect(t, string(buffer[:count]) == string(expected_reset[:]))
+}
+
+// properties_answer_write writes an answer of TPM2_GetCapability of the
+// properties: the bit moreData, the capability, and the pairs given, each
+// a property and its value.
+@(private = "file")
+properties_answer_write :: proc(buffer: []u8, capability: u32, pairs: [][2]u32) -> []u8 {
+	writer := begin(buffer, TAG_NO_SESSIONS, RESPONSE_SUCCESS)
+	put_u8(&writer, 0)
+	put_u32(&writer, capability)
+	put_u32(&writer, u32(len(pairs)))
+	for pair in pairs {
+		put_u32(&writer, pair[0])
+		put_u32(&writer, pair[1])
+	}
+	return buffer[:end(&writer)]
+}
+
+// The answer of the count limits, as libtpms gives it with no setup: no
+// failure counted, a lockout after 3, one forgiven each 1000 seconds; and
+// each hostile form of it refused with no value given.
+@(test)
+the_answer_of_the_properties_is_read_and_checked :: proc(t: ^testing.T) {
+	buffer: [256]u8
+	limits := [?][2]u32 {
+		{PROPERTY_LOCKOUT_COUNTER, 0},
+		{PROPERTY_MAXIMUM_AUTHORIZATION_FAILURES, 3},
+		{PROPERTY_LOCKOUT_INTERVAL, 1000},
+		{PROPERTY_LOCKOUT_RECOVERY, 1000},
+	}
+	answer := properties_answer_write(buffer[:], CAPABILITY_TPM_PROPERTIES, limits[:])
+	testing.expect_value(t, len(answer), 10 + 1 + 4 + 4 + COUNT_LIMIT_PROPERTIES * 8)
+	values: [COUNT_LIMIT_PROPERTIES]u32
+	code, problem := properties_answer(answer, PROPERTY_LOCKOUT_COUNTER, values[:])
+	testing.expect_value(t, problem, Answer_Problem.None)
+	testing.expect_value(t, code, RESPONSE_SUCCESS)
+	testing.expect_value(t, values[PROPERTY_MAXIMUM_AUTHORIZATION_FAILURES - PROPERTY_LOCKOUT_COUNTER], u32(3))
+	testing.expect_value(t, values[PROPERTY_LOCKOUT_INTERVAL - PROPERTY_LOCKOUT_COUNTER], u32(1000))
+	testing.expect_value(t, values[PROPERTY_LOCKOUT_RECOVERY - PROPERTY_LOCKOUT_COUNTER], u32(1000))
+
+	// The bit lockoutAuthSet, alone and among other bits.
+	permanent_buffer: [64]u8
+	permanent_pairs := [1][2]u32{{PROPERTY_PERMANENT, PERMANENT_LOCKOUT_AUTHORIZATION_SET | 1 << 0 | 1 << 10}}
+	permanent: [1]u32
+	_, problem = properties_answer(properties_answer_write(permanent_buffer[:], CAPABILITY_TPM_PROPERTIES, permanent_pairs[:]), PROPERTY_PERMANENT, permanent[:])
+	testing.expect_value(t, problem, Answer_Problem.None)
+	testing.expect(t, lockout_authorization_set(permanent[0]))
+	testing.expect(t, !lockout_authorization_set(1 << 0 | 1 << 1 | 1 << 9 | 1 << 10)) // The other bits: the owner, the endorsement, inLockout, tpmGeneratedEPS.
+
+	// expect_refused checks that an answer is refused and gives no value.
+	expect_refused :: proc(t: ^testing.T, refused_answer: []u8, wanted: Answer_Problem) {
+		refused_values: [COUNT_LIMIT_PROPERTIES]u32
+		for &item in refused_values {
+			item = 0xFFFF_FFFF
+		}
+		_, refused_problem := properties_answer(refused_answer, PROPERTY_LOCKOUT_COUNTER, refused_values[:])
+		testing.expect_value(t, refused_problem, wanted)
+		testing.expect(t, refused_values == [COUNT_LIMIT_PROPERTIES]u32{})
+	}
+	other_buffer: [256]u8
+	// A property missing: the TPM gives three of the four.
+	expect_refused(t, properties_answer_write(other_buffer[:], CAPABILITY_TPM_PROPERTIES, limits[:3]), .Malformed)
+	// One property more than asked.
+	more := [?][2]u32{limits[0], limits[1], limits[2], limits[3], {PROPERTY_LOCKOUT_RECOVERY + 1, 0}}
+	expect_refused(t, properties_answer_write(other_buffer[:], CAPABILITY_TPM_PROPERTIES, more[:]), .Malformed)
+	// Two properties in the wrong order, and one property twice.
+	swapped := [?][2]u32{limits[0], limits[2], limits[1], limits[3]}
+	expect_refused(t, properties_answer_write(other_buffer[:], CAPABILITY_TPM_PROPERTIES, swapped[:]), .Malformed)
+	twice := [?][2]u32{limits[0], limits[1], limits[1], limits[3]}
+	expect_refused(t, properties_answer_write(other_buffer[:], CAPABILITY_TPM_PROPERTIES, twice[:]), .Malformed)
+	// Another capability.
+	expect_refused(t, properties_answer_write(other_buffer[:], CAPABILITY_TPM_PROPERTIES + 1, limits[:]), .Malformed)
+	// A count of the list far past the bytes that came, then the same
+	// count as asked with the answer cut before the last value.
+	huge := buffer
+	huge[15], huge[16], huge[17], huge[18] = 0xFF, 0xFF, 0xFF, 0xFF
+	expect_refused(t, huge[:len(answer)], .Malformed)
+	cut := buffer
+	cut[5] -= 4
+	expect_refused(t, cut[:len(answer) - 4], .Malformed)
+	// A byte after the list, counted in the size of the header.
+	longer := buffer
+	longer[5] += 1
+	expect_refused(t, longer[:len(answer) + 1], .Malformed)
+	// A bit moreData that is neither 0 nor 1.
+	more_data := buffer
+	more_data[10] = 2
+	expect_refused(t, more_data[:len(answer)], .Malformed)
+	// The tag of an answer with sessions: a command with none never has it.
+	with_sessions := buffer
+	with_sessions[1] = 0x02
+	expect_refused(t, with_sessions[:len(answer)], .Malformed)
+	// A refusal of the TPM gives its code.
+	refusal := [?]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x01, 0xC4}
+	expect_refused(t, refusal[:], .Refused)
+	_, code, _ = answer_begin(refusal[:])
+	testing.expect_value(t, code, u32(0x1C4))
+	expect_refused(t, nil, .Malformed)
+}
+
+// The answers to the lockout hierarchy: a TPM with a lockout value refuses
+// the empty one, and counts it (TPM_RC_AUTH_FAIL of session 1); a lockout
+// hierarchy that waits after such a failure answers TPM_RC_LOCKOUT.
+@(test)
+the_refusals_of_the_lockout_hierarchy_are_named :: proc(t: ^testing.T) {
+	refused := [?]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x09, 0x8E}
+	code, problem := status_answer(refused[:])
+	testing.expect_value(t, problem, Answer_Problem.Refused)
+	testing.expect(t, authorization_fails(code))
+	waits := [?]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x09, 0x21}
+	code, problem = status_answer(waits[:])
+	testing.expect_value(t, problem, Answer_Problem.Refused)
+	testing.expect(t, locked_out(code))
+	// The answer of a change that the TPM took: no parameter, and the area
+	// of the session of the password.
+	taken := [?]u8{0x80, 0x02, 0x00, 0x00, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00}
+	code, problem = status_answer(taken[:])
+	testing.expect_value(t, problem, Answer_Problem.None)
+	testing.expect_value(t, code, RESPONSE_SUCCESS)
+}
