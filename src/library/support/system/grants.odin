@@ -105,8 +105,8 @@ Root_Command :: enum u32 {
 	// The commands of the principals (docs/PRINCIPALS.md). The root service
 	// takes Principal_Create, Principal_Lock, Principals and
 	// Machine_Passphrase from a program with the grant Root_Ring, and
-	// Principal_Record, Principal_Unlock and Machine_Key from the program
-	// `unlock` only.
+	// Principal_Record, Principal_Unlock, Machine_Key and
+	// Principal_Change_End from the program `unlock` only.
 	//
 	// Principal_Create records a new named principal: the name is in
 	// values[0..4]. The root service starts `unlock`, which asks for the
@@ -296,7 +296,32 @@ Root_Command :: enum u32 {
 	// (unit `Principals`); a machine with no TPM service with `Unsupported`
 	// (unit `Principals`); while `unlock` runs, `Busy`.
 	Machine_Seal = 23,
+	// Principal_Change starts `unlock` to change the passphrase of the
+	// named principal of the session of the caller (values[4]
+	// PRINCIPAL_CHANGE_PASSPHRASE), or to make it a new recovery key
+	// (PRINCIPAL_CHANGE_RECOVERY_KEY): the window asks for the current
+	// passphrase first (docs/PRINCIPALS.md, "A change of the passphrase").
+	// The completion comes when the change ends, which takes the time of
+	// the typing: values[0] the end (principals.Change_End), values[1] for
+	// the end Refused the cause (principals.Change_Problem). A stop of
+	// `unlock` before the end gives the end None. The caller must act for
+	// its principal (`No_Grant`, unit `Acts_For_Principal`); a caller of
+	// principal 0, or of a principal whose session is locked, is refused at
+	// once with `Absent` (unit `Principals`); another value with
+	// `Bad_Value`; while `unlock` runs, `Busy`.
+	Principal_Change = 24,
+	// Principal_Change_End comes from `unlock` only: the change that a
+	// Principal_Change started ended. values[4] the end
+	// (principals.Change_End), values[5] the cause (principals.Change_Problem).
+	// The root service gives both to the caller of Principal_Change. With
+	// no change in progress, `Bad_State`; a value out of its enum,
+	// `Bad_Operation`.
+	Principal_Change_End = 25,
 }
+
+// The change of a Principal_Change command, in values[4].
+PRINCIPAL_CHANGE_PASSPHRASE :: 1
+PRINCIPAL_CHANGE_RECOVERY_KEY :: 2
 
 // The action of a Disk_Grant command, in values[4].
 DISK_GRANT_ALLOW :: 1
@@ -423,6 +448,8 @@ root_command_names := [Root_Command]string {
 	.Disk_Grant_Persistence = "Disk_Grant_Persistence",
 	.Debug_Store = "Debug_Store",
 	.Machine_Seal = "Machine_Seal",
+	.Principal_Change = "Principal_Change",
+	.Principal_Change_End = "Principal_Change_End",
 }
 
 // root_command_name gives the name of a command of the root ring, or "an
@@ -453,6 +480,8 @@ root_argument_name :: proc "contextless" (command: i64, argument: i64) -> string
 			return "grant"
 		case .Disk_Grant_Persistence:
 			return "setting"
+		case .Principal_Change:
+			return "change"
 		}
 	}
 	return ""

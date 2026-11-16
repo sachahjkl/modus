@@ -631,3 +631,88 @@ the_keys_of_a_principal_sealed_by_the_tpm_differ :: proc(t: ^testing.T) {
 	testing.expect(t, principal_recovery_seal_key(&recovery) != recovery_seal_key(&recovery))
 	testing.expect_value(t, len(authorization), tpm2.AUTHORIZATION_VALUE_SIZE)
 }
+
+// Which change a file takes: a new recovery key needs a copy under a
+// recovery key, the form PRINCIPT needs the TPM for the proof, and only a
+// new seal by the TPM needs the right to seal.
+@(test)
+the_changes_that_a_file_takes :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		form:         Principal_Record_Form,
+		mode:         u64,
+		has_tpm:      bool,
+		seal_allowed: bool,
+		problem:      Change_Problem,
+	} {
+		{.Sealed_By_The_Tpm, MODE_CHANGE_PASSPHRASE, true, true, .None},
+		{.Sealed_By_The_Tpm, MODE_NEW_RECOVERY_KEY, true, true, .None},
+		// A new recovery key seals nothing by the TPM.
+		{.Sealed_By_The_Tpm, MODE_NEW_RECOVERY_KEY, true, false, .None},
+		{.Sealed_By_The_Tpm, MODE_CHANGE_PASSPHRASE, true, false, .Seal_Not_Allowed},
+		{.Sealed_By_The_Tpm, MODE_CHANGE_PASSPHRASE, false, true, .No_Tpm_Service},
+		{.Sealed_By_The_Tpm, MODE_NEW_RECOVERY_KEY, false, true, .No_Tpm_Service},
+		// The form under the passphrase alone needs no TPM.
+		{.Passphrase, MODE_CHANGE_PASSPHRASE, false, false, .None},
+		{.Passphrase, MODE_CHANGE_PASSPHRASE, true, true, .None},
+		{.Passphrase, MODE_NEW_RECOVERY_KEY, true, true, .No_Recovery_Copy},
+		{.Passphrase, MODE_NEW_RECOVERY_KEY, false, false, .No_Recovery_Copy},
+		{.Unknown, MODE_CHANGE_PASSPHRASE, true, true, .Unknown_Form},
+		// The other modes of unlock are no change.
+		{.Sealed_By_The_Tpm, MODE_UNLOCK, true, true, .Unknown_Change},
+		{.Sealed_By_The_Tpm, MODE_CREATE_PRINCIPAL, true, true, .Unknown_Change},
+		{.Passphrase, MODE_SEAL_MACHINE_KEY, true, true, .Unknown_Change},
+		{.Passphrase, MODE_NEW_RECOVERY_KEY + 1, true, true, .Unknown_Change},
+	}
+	for item in cases {
+		testing.expect_value(t, change_problem(item.form, item.mode, item.has_tpm, item.seal_allowed), item.problem)
+	}
+	for problem in Change_Problem {
+		testing.expect(t, len(change_problem_sentences[problem]) > 0)
+	}
+	// The window of unlock shows the sentence of an end on one line of
+	// 63 cells after its margin: no sentence is cut.
+	WINDOW_LINE_CELLS :: 63
+	for end in Change_End {
+		testing.expect(t, len(change_end_sentences[end]) > 0)
+		testing.expect(t, len(change_end_sentences[end]) <= WINDOW_LINE_CELLS)
+	}
+	// The modes of a change are not modes of a start that unlocks.
+	modes := [?]u64{MODE_UNLOCK, MODE_CREATE_PRINCIPAL, MODE_SET_MACHINE_PASSPHRASE, MODE_UNLOCK_MACHINE_KEY_HELD, MODE_SEAL_MACHINE_KEY}
+	for mode in modes {
+		testing.expect(t, mode != MODE_CHANGE_PASSPHRASE && mode != MODE_NEW_RECOVERY_KEY)
+	}
+}
+
+// A new recovery key changes only the copy under the recovery key: the two
+// additional data stay, so the seal under the seal key still opens, and a
+// new passphrase keeps the copy under the recovery key.
+@(test)
+a_new_recovery_key_keeps_the_seal_of_the_passphrase :: proc(t: ^testing.T) {
+	file := test_principal_tpm_file()
+	before: [PRINCIPAL_TPM_FILE_SIZE]u8
+	principal_tpm_file_encode(&file, &before)
+	renewed := file
+	for index in 0 ..< NONCE_SIZE {
+		renewed.recovery_nonce[index] ~= 0xff
+	}
+	for index in 0 ..< SEALED_SIZE {
+		renewed.recovery_sealed[index] ~= 0xff
+	}
+	after: [PRINCIPAL_TPM_FILE_SIZE]u8
+	principal_tpm_file_encode(&renewed, &after)
+	testing.expect(t, string(principal_tpm_file_additional_data(&before)) == string(principal_tpm_file_additional_data(&after)))
+	testing.expect(t, string(principal_tpm_file_recovery_additional_data(&before)) == string(principal_tpm_file_recovery_additional_data(&after)))
+	// Each byte before the copy under the recovery key stays.
+	testing.expect(t, string(before[:PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE]) == string(after[:PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE]))
+	testing.expect(t, string(before[PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE:]) != string(after[PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE:]))
+	_, _, problem := principal_tpm_file_decode(after[:])
+	testing.expect_value(t, problem, File_Problem.None)
+	// A new salt changes the additional data of the seal under the seal
+	// key, and not the one of the copy under the recovery key.
+	salted := file
+	salted.salt[0] ~= 1
+	salted_bytes: [PRINCIPAL_TPM_FILE_SIZE]u8
+	principal_tpm_file_encode(&salted, &salted_bytes)
+	testing.expect(t, string(principal_tpm_file_additional_data(&before)) != string(principal_tpm_file_additional_data(&salted_bytes)))
+	testing.expect(t, string(principal_tpm_file_recovery_additional_data(&before)) == string(principal_tpm_file_recovery_additional_data(&salted_bytes)))
+}

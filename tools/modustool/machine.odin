@@ -3693,12 +3693,18 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			step.text = generation_expand(step.text, generation_base)
 			step.expected = generation_expand(step.expected, generation_base)
 		}
-		if strings.contains(step.text, SCREEN_TEXT_MARK) {
-			if screen_text_kept == "" {
-				fmt.eprintfln("modustool: test failed: step %d names %s before a step Screen_Text", index + 1, SCREEN_TEXT_MARK)
-				return false
-			}
-			step.text = screen_text_expand(step.text, screen_text_kept)
+		has_kept_mark := strings.contains(step.text, SCREEN_TEXT_MARK)
+		has_before_mark := strings.contains(step.text, SCREEN_TEXT_BEFORE_MARK)
+		if has_kept_mark && screen_text_kept == "" {
+			fmt.eprintfln("modustool: test failed: step %d names %s before a step Screen_Text", index + 1, SCREEN_TEXT_MARK)
+			return false
+		}
+		if has_before_mark && screen_text_before == "" {
+			fmt.eprintfln("modustool: test failed: step %d names %s before two steps Screen_Text", index + 1, SCREEN_TEXT_BEFORE_MARK)
+			return false
+		}
+		if has_kept_mark || has_before_mark {
+			step.text = screen_text_expand(step.text, screen_text_kept, screen_text_before)
 		}
 		switch step.kind {
 		case .Wait:
@@ -3845,8 +3851,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			element_wheel(machine, step.text, step.element, step.notches, index) or_return
 		case .Screen_Text:
 			read := screen_text_read(machine, step.text, step.element, index) or_return
-			delete(screen_text_kept)
-			screen_text_kept = strings.clone(read)
+			screen_text_keep(read)
 		case .Click, .Drag, .Launch, .Move, .Close:
 			step := step
 			moved_title: string

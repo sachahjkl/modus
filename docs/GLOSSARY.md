@@ -2197,6 +2197,16 @@ The design: `docs/PRINCIPALS.md`, "The passphrase".
 
 Do not use: password, PIN.
 
+### Change of the passphrase
+
+A change of the passphrase is the act by which a named principal, in its session, proves its current passphrase in the window of `unlock` and has its keys sealed again under a new passphrase, or under a new recovery key.
+
+A console of the session asks with `passphrase_change()` or `recovery_key_change()`; the console of the machine cannot. The current passphrase opens the keys as an unlock does, and the TPM counts a wrong one. The change ends on a screen of the window, and the line of the console gives the same end. The keys themselves do not change, and the store keeps the file from before as a version on the same disk, so that version still opens with the old passphrase or the old recovery key until the old versions can be erased. A lost passphrase is not changed this way: the recovery key replaces it.
+
+The design: `src/md/features/tpm_sealed_principal_keys.md`; `docs/PRINCIPALS.md`, "A change of the passphrase".
+
+Do not use: password reset, password change.
+
 ### Machine passphrase
 
 A machine passphrase is an optional passphrase of principal 0, the machine, that guards the machine key.
@@ -6100,7 +6110,7 @@ Do not use: bound to the TPM, TPM-encrypted, locked (for this).
 
 A recovery key is a key of 20 random bytes, shown one time as 32 characters of base32 in 8 groups of 4, that opens a copy of the machine key, or of the keys of a named principal, when the TPM does not release them.
 
-The window of `unlock` shows it after `machine_seal()`, or after the creation of a named principal whose keys the TPM seals, and never again: it is not kept on the disk and never written on the log. The record holds the key, or the keys, sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key, with a text for each use. When the TPM refuses (an update of the system, another machine, no TPM, a lockout), the window asks for it; it accepts upper or lower case, with or without the `-`. After a recovery, `unlock` seals the key again to the system that runs, so the next start needs no recovery key; for a named principal it first asks for a new passphrase, so the recovery key also replaces a lost passphrase. Its 160 random bits need no slow derivation.
+The window of `unlock` shows it after `machine_seal()`, after the creation of a named principal whose keys the TPM seals, or after `recovery_key_change()` in a session of that principal, and never again: it is not kept on the disk and never written on the log. The record holds the key, or the keys, sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key, with a text for each use. When the TPM refuses (an update of the system, another machine, no TPM, a lockout), the window asks for it; it accepts upper or lower case, with or without the `-`. After a recovery, `unlock` seals the key again to the system that runs, so the next start needs no recovery key; for a named principal it first asks for a new passphrase, so the recovery key also replaces a lost passphrase. A new recovery key of a named principal opens the files written after it; the one before still opens the version from before that the store keeps on the same disk. Its 160 random bits need no slow derivation.
 
 Example: `MZXW-6YTB-MZXW-6YTB-MZXW-6YTB-MZXW-6YTB`.
 
@@ -6136,7 +6146,7 @@ Do not use: lockout password, lockout PIN.
 
 The TPM secret is the 32 random bytes that the TPM seals for a named principal: with the key of the passphrase it gives the seal key of the secret keys of the principal.
 
-The seal key is keyed BLAKE2b of the TPM secret over the key of the passphrase. So the keys need the TPM, the measure of the system and the passphrase together, and a reader of the TPM secret still runs Argon2id for each guess. A new passphrase after a recovery gives a new TPM secret.
+The seal key is keyed BLAKE2b of the TPM secret over the key of the passphrase. So the keys need the TPM, the measure of the system and the passphrase together, and a reader of the TPM secret still runs Argon2id for each guess. A new passphrase, after a recovery or a change of the passphrase, gives a new TPM secret.
 
 It is not the machine key, and not a key of the principal: it signs and opens nothing alone.
 

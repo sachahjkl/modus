@@ -78,6 +78,87 @@ MODE_UNLOCK_MACHINE_KEY_HELD :: 3
 // Make a machine key that the TPM service seals to the measure of the
 // system, and show its recovery key one time.
 MODE_SEAL_MACHINE_KEY :: 4
+// Change the passphrase of the named principal whose session runs: the
+// current passphrase first, then the new one two times.
+MODE_CHANGE_PASSPHRASE :: 5
+// Make a new recovery key for the named principal whose session runs,
+// after its current passphrase, and show it one time.
+MODE_NEW_RECOVERY_KEY :: 6
+
+// Change_Problem says why a file cannot take a change that a principal
+// asks for, before the window asks for any passphrase.
+Change_Problem :: enum u8 {
+	None, // The change can be made.
+	No_Recovery_Copy, // A new recovery key for the form PRINCIPL: that form has no copy under a recovery key.
+	No_Tpm_Service, // The form PRINCIPT with no TPM service: the current passphrase opens nothing without the TPM.
+	Seal_Not_Allowed, // A new passphrase for the form PRINCIPT with Secure Boot off: a new seal would trust a boot program that nothing verified.
+	Unknown_Form, // The file has neither form.
+	Unknown_Change, // A mode that is not a change.
+}
+
+@(rodata)
+change_problem_sentences := [Change_Problem]string {
+	.None             = "the change can be made",
+	.No_Recovery_Copy = "the keys are sealed under the passphrase alone, and a recovery key for that form is not built",
+	.No_Tpm_Service   = "the keys are sealed by the TPM, and no TPM service runs: the current passphrase opens nothing without it",
+	.Seal_Not_Allowed = "the firmware did not verify the boot program (Secure Boot is off): a new seal by the TPM would trust a boot program that nothing verified",
+	.Unknown_Form     = "the file of the principal has neither form",
+	.Unknown_Change   = "the mode is not a change",
+}
+
+// How a change ended: `unlock` gives it to the root service
+// (Principal_Change_End), which gives it to the console that asked. Each
+// sentence fits on one line of the window of `unlock`: 63 cells.
+Change_End :: enum u8 {
+	None, // `unlock` stopped before the end of the change: a lock, a close, a fault.
+	Passphrase_Changed, // The file has the new passphrase.
+	Recovery_Key_Changed, // The file has the copy under the new recovery key.
+	Cancelled, // Enter with nothing: nothing changed.
+	Refused, // The file cannot take this change: a Change_Problem says why.
+	Seed_Too_Weak, // No key from the generator: nothing changed.
+	Seal_Failed, // The TPM or the seal failed: nothing changed.
+	Store_Failed, // The store did not keep the new file: nothing changed.
+	Store_Unknown, // The store did not answer, and the file could not be read back: the old or the new secret opens it.
+}
+
+@(rodata)
+change_end_sentences := [Change_End]string {
+	.None                 = "unlock stopped before the end of the change",
+	.Passphrase_Changed   = "the passphrase is changed",
+	.Recovery_Key_Changed = "the new recovery key is kept; the old one opens no new file",
+	.Cancelled            = "the change is cancelled: nothing changed",
+	.Refused              = "the file cannot take this change",
+	.Seed_Too_Weak        = "nothing changed: the seed is too weak for a key",
+	.Seal_Failed          = "nothing changed: the keys are not sealed again",
+	.Store_Failed         = "nothing changed: the store did not keep the new file",
+	.Store_Unknown        = "the store did not answer: the old or the new one opens",
+}
+
+// change_problem says if a file of the form `form` takes the change of the
+// mode `mode` (MODE_CHANGE_PASSPHRASE or MODE_NEW_RECOVERY_KEY), on a
+// machine with or without the TPM service and the right to seal. A new
+// recovery key seals no object by the TPM, so it needs no right to seal.
+change_problem :: proc "contextless" (form: Principal_Record_Form, mode: u64, has_tpm: bool, seal_allowed: bool) -> Change_Problem {
+	if mode != MODE_CHANGE_PASSPHRASE && mode != MODE_NEW_RECOVERY_KEY {
+		return .Unknown_Change
+	}
+	switch form {
+	case .Unknown:
+		return .Unknown_Form
+	case .Passphrase:
+		if mode == MODE_NEW_RECOVERY_KEY {
+			return .No_Recovery_Copy
+		}
+	case .Sealed_By_The_Tpm:
+		if !has_tpm {
+			return .No_Tpm_Service
+		}
+		if mode == MODE_CHANGE_PASSPHRASE && !seal_allowed {
+			return .Seal_Not_Allowed
+		}
+	}
+	return .None
+}
 
 // The key derivation: Argon2id (RFC 9106) with the first parameter set of
 // the OWASP password storage cheat sheet: 19 MiB, 2 passes, 1 lane. A file
