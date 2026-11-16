@@ -628,7 +628,7 @@ entropy_report: random.Entropy_Report
 // 7. starts `input` with the ports and the interrupts of the PS/2
 //    controller, then the compositor with the framebuffer, then the entropy
 //    service when the machine has an entropy device, with no wait for its
-//    bytes;
+//    bytes, then the font service with the demand cache (font_service.odin);
 // 8. starts `date`, then the console, then the settings that were kept,
 //    then the TPM service when the system is measured into a TPM, then
 //    `unlock`.
@@ -816,6 +816,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// first place of the table of the programs. The loop below mixes its
 	// bytes when they come (entropy.odin).
 	entropy_service_start()
+	// The font service, before the programs with a surface: each one gets a
+	// request ring to it (font_service.odin).
+	font_service_start()
 	// The date: the program `date` reads the real-time clock. The programs
 	// that start before it writes the page read no date until then.
 	if status = start("date"); status != .Ok {
@@ -1133,7 +1136,7 @@ refusal :: proc "contextless" (command: system.Root_Command, name: string, value
 // with its own grants: a command Start does not start them, and a disk
 // program does not take one of their names.
 @(rodata)
-system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy"}
+system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", FONT_SERVICE_NAME}
 
 // name_is_a_system_part says if a name is one of system_part_names.
 name_is_a_system_part :: proc "contextless" (name: string) -> bool {
@@ -1251,8 +1254,8 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	slot.principal = principal // The name of its store carries the principal.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	// The storage file, the date page, the settings page, five glyph caches, the file of a service, the debug image, the disk program page.
-	mappings: [12]system.Mapping
+	// The storage file, the date page, the settings page, five glyph caches, the file of a service, the debug image, the disk program page, the demand cache and the request ring.
+	mappings: [14]system.Mapping
 	mapping_count := 0
 	// This service closes its handles of the connection after the start.
 	store_ring, store_region: system.Handle
@@ -1390,9 +1393,11 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	if .Inspect in role {
 		disk_program_page_give(mappings[:], &mapping_count, &values)
 	}
-	// A program with a surface: the settings page and the glyph cache, read-only.
+	// A program with a surface: the settings page and the glyph cache, read-only;
+	// the demand cache, read-only, and its request ring to the font service.
 	if .Terminal not_in role {
 		text_settings_give(mappings[:], &mapping_count, &values)
+		font_requests_give(slot, name, mappings[:], &mapping_count, &values)
 	}
 	// A service: the service ring, and its own file, to read the
 	// descriptions of its exports.
@@ -2207,6 +2212,7 @@ release :: proc "contextless" (item: ^Started) {
 	}
 	tpm_service_end(item)
 	entropy_service_end(item)
+	font_service_end(item)
 	endpoint_close(item)
 	disk_load_forget(item)
 	principal_change_forget(item)

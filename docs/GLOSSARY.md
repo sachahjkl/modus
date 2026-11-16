@@ -4988,7 +4988,7 @@ Do not use: fault (for this), bad byte, mojibake.
 
 The replacement glyph is the outline of a box that a reader draws in place of a character that the font lacks and of an invalid sequence.
 
-It is drawn by code, in each font and at each scale, so no font needs a glyph for it: the box goes from the top of a capital letter to the baseline, inside one cell. It shows that a character is there: a byte is never drawn as a glyph, and a `?` would read as a question mark. Text shaping places it as `REPLACEMENT_GLYPH`, with the advance of `0`.
+It is drawn by code, in each font and at each scale, so no font needs a glyph for it: the box goes from the top of a capital letter to the baseline, inside one cell. It shows that a character is there: a byte is never drawn as a glyph, and a `?` would read as a question mark. Text shaping places it as `REPLACEMENT_GLYPH`, with the advance of `0`. A character that the demand cache does not hold yet, in a frame before the font service drew its subset, draws it too, until the frame after the answer of the service.
 
 The design: `src/md/data/text_encoding.md`.
 
@@ -4998,7 +4998,7 @@ Do not use: tofu, missing glyph, question mark (for this).
 
 A font is a set of glyphs of one design, with the measures that place them side by side.
 
-The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126, the Latin-1 Supplement and the euro sign, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs once on the host and never in a program.
+The system draws all its text from fonts, and a program never reads a font file at run time. The modus tool reads each font file at the build, subsets it to the characters 32 to 126, the Latin-1 Supplement and the euro sign, and draws it into a glyph cache: the program reads the cache only. So a parser of font files, which reads hostile input, runs on the host, and at run time only in the font service, which reads the subset of the interface font that its module holds and draws the characters past the glyph cache into the demand cache.
 
 The system has three fonts:
 
@@ -5018,7 +5018,7 @@ A glyph is the form of one character in one font.
 
 The character is the number (the byte 0x30 is the character `0`); the glyph is the drawing of it. One character can have several glyphs in one font: Paper Mono has a plain zero (glyph 294) and a slashed zero (glyph 304), and a font feature chooses between them. A glyph has an outline and an advance; in a glyph cache it is a box of words of coverage.
 
-The system has glyphs for the characters 32 to 126, the Latin-1 Supplement (U+00A0 to U+00FF) and the euro sign U+20AC only. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
+The glyph caches hold glyphs for the characters 32 to 126, the Latin-1 Supplement (U+00A0 to U+00FF) and the euro sign U+20AC only. The font service draws the Greek letters of the interface font on demand, into the demand cache, for a program that reads it. Each other character of a text, and each invalid sequence, draws the replacement glyph, in a text of cells and in text shaping, so that the reader sees that a character is there that the font does not draw.
 
 The design: `docs/FONTS.md`, "5. The glyph cache".
 
@@ -5030,7 +5030,7 @@ An outline is the set of closed contours of line segments and quadratic curves t
 
 The outline is what a TrueType font stores in its table `glyf`: points in units of the font (1000 to one em for Paper Mono, 2000 for B612), each on or off the curve. The renderer of `src/library/support/vector_font` cuts each quadratic curve into 1 to 16 segments, each at most 1/8 of a pixel from the curve, scales the points to the grid, applies the grid fit, and accumulates the coverage of each pixel in fixed point, with no floating point. The sum of the coverage of a closed outline is exactly the area of the polygon of its cut points.
 
-Only the modus tool reads outlines: it draws them once into a glyph cache at the build. A glyph made of glyphs (`i` and `j` in Paper Mono) is made a simple outline in the subset. Outlines of CFF (cubic curves) are not read.
+The modus tool reads outlines and draws them once into a glyph cache at the build. At run time only the font service reads outlines: the characters past the glyph cache, into the demand cache. A glyph made of glyphs (`i` and `j` in Paper Mono) is made a simple outline in the subset. Outlines of CFF (cubic curves) are not read.
 
 The design: `docs/FONTS.md`, "4. Fixed point".
 
@@ -5080,7 +5080,7 @@ A glyph cache moves all the work of a font out of the programs. The modus tool b
 
 The format is `src/library/contract/glyph_cache`, version 4: a header of 128 bytes, an entry for each scale (1, 2, 3), an entry of 12 bytes for each glyph at each position and scale, the advance of each character, the pairs of each scale, then the words. Each table keys a character by its character index. A glyph keeps only its rows with ink. All zero is valid: a program with no cache draws Spleen 8x16.
 
-The cache has a fixed capacity and holds every glyph that the grid can draw, so it never fills on demand and never evicts. It is not an atlas of a GPU and not a cache that a program fills: no program writes it, and its address and its size never come from another program.
+The cache has a fixed capacity and holds every glyph of its 192 characters, so it never fills on demand and never evicts. It is not an atlas of a GPU and not a cache that a program fills: no program writes it, and its address and its size never come from another program. A character past it is in the demand cache, which the font service writes.
 
 The design: `docs/FONTS.md`, "5. The glyph cache", and "Who can write a cache".
 
@@ -5124,6 +5124,26 @@ A text of cells refuses a proportional cache (`graphics.cell_cache_problem`, the
 The design: `docs/FONTS.md`, "12.4 The glyph cache with subpixel positions".
 
 Do not use: proportional font cache.
+
+### Font service
+
+The font service is the program `glyphs`: it draws the glyphs of the characters past the glyph cache into the demand cache.
+
+It is the only program that reads outlines at run time: the subset of the interface font that its module holds. At its start, before it reads a request, it draws each character of that subset, so the demand cache holds the same entries whatever the programs draw; a character outside the subset is absent. It draws a glyph with the renderer of the build, at each scale and each position of the glyph cache of the same font file, so a glyph on demand has the pixels that the build would give it. The root service starts it after the compositor as a part of the system, and gives it the demand cache with Write and a control ring that names the request ring of each program. It answers each request with the generation of the demand cache and the counts of drawn, absent and refused characters. It is not a font file and not a renderer in each program, and a program never waits for it: a character that is not ready draws the replacement glyph.
+
+The design: `src/md/features/glyphs_on_demand.md`.
+
+Do not use: font server, rasterizer service, glyph daemon.
+
+### Demand cache
+
+The demand cache is the memory where the font service writes the glyphs past the glyph caches, and which each program with a request ring maps read-only.
+
+It holds a header with the hash of its font file and a generation, a hash table of 1024 entries by code point, and 1 MiB of words of coverage in the form of a glyph cache (`src/library/contract/demand_cache`). The font service writes an entry, then its code point, then the generation; an entry never changes after that. A program reads the generation once at the start of a frame, so the measure and the draw of the frame agree, and it copies and checks each entry before it draws a word of it. A program asks for a missing character through its request ring, a ring of the fixed range `Glyph_Requests`. The demand cache is not a glyph cache: it is not in the boot image, it changes while programs read it, and a program does not validate it once.
+
+The design: `src/md/features/glyphs_on_demand.md`.
+
+Do not use: atlas, shared glyph cache, dynamic cache.
 
 ### Setting
 

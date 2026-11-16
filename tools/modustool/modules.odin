@@ -193,6 +193,7 @@ module_builds := [?]Module_Build {
 	{name = "text_shaping", source = MODULE_SOURCES + "text_shaping", image = true},
 	{name = "vector_glyphs", source = PROGRAM_SOURCES + "vector_glyphs", image = true},
 	{name = "interface_font", source = PROGRAM_SOURCES + "interface_font", image = true},
+	{name = "glyphs", source = PROGRAM_SOURCES + "glyphs", image = true},
 	{name = "pointers", source = PROGRAM_SOURCES + "pointers", image = true},
 	{name = "settings", source = PROGRAM_SOURCES + "settings", image = true},
 	{name = "date", source = PROGRAM_SOURCES + "date", image = true},
