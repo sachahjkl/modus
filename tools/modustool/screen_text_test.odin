@@ -64,3 +64,15 @@ the_text_before_is_the_text_of_the_read_before :: proc(t: ^testing.T) {
 	testing.expect_value(t, screen_text_kept, "")
 	testing.expect_value(t, screen_text_before, "")
 }
+
+// A read with a blank cell at its start or its end is what the window
+// showed before the element: the read goes on.
+@(test)
+a_text_with_a_blank_cell_at_an_end_does_not_fill_its_box :: proc(t: ^testing.T) {
+	testing.expect(t, text_fills_its_box("4AUQ-MSA4"))
+	testing.expect(t, text_fills_its_box("A B"))
+	testing.expect(t, !text_fills_its_box(""))
+	testing.expect(t, !text_fills_its_box("   "))
+	testing.expect(t, !text_fills_its_box(" 4AUQ"))
+	testing.expect(t, !text_fills_its_box("4AUQ "))
+}
