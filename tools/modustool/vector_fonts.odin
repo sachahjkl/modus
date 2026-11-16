@@ -821,6 +821,10 @@ font_outlines_write :: proc() -> (resource: Resource_File, ok: bool) {
 	names := FONT_OUTLINES_FONTS
 	fonts: [len(names)]font_outlines.Font_Input
 	for name, index in names {
+		if len(name) == 0 || len(name) >= font_outlines.NAME_SIZE {
+			fmt.eprintfln("modustool: the font %s has a name of %d bytes; the font outlines hold names of 1 to %d bytes", name, len(name), font_outlines.NAME_SIZE - 1)
+			return {}, false
+		}
 		bytes := read_file(join(VECTOR_FONT_FOLDER, "/", name, ".ttf")) or_return
 		fonts[index] = {name = name, bytes = bytes}
 	}

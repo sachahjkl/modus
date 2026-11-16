@@ -27,9 +27,12 @@ import op "modus:contract/operation"
 MAGIC :: u64(0x53454E494C54554F) // The bytes "OUTLINES".
 VERSION :: 1 // The version of the format. A reader refuses another.
 HEADER_SIZE :: 64 // The bytes of `Header`.
-RECORD_SIZE :: 64 // The bytes of `Font_Record`.
+RECORD_SIZE :: 80 // The bytes of `Font_Record`.
 RECORDS_OFFSET :: HEADER_SIZE // The records follow the header.
-NAME_SIZE :: 16 // The bytes of a font name, its zero bytes included.
+// The bytes of a font name, its zero bytes included: the size of a name
+// of the boot image, so each subset of resources/fonts has room
+// (paper_mono_semibold has 19 bytes).
+NAME_SIZE :: 32
 FONT_LIMIT :: 8 // The most fonts of one resource.
 RESOURCE_NAME :: "font_outlines" // The name of the resource in the boot image.
 ADDRESS :: fixed_addresses.FONT_OUTLINES_ADDRESS // Where a program maps it, read-only.
@@ -117,8 +120,8 @@ name_valid :: proc "contextless" (name: [NAME_SIZE]u8) -> bool {
 	if length == 0 || length == NAME_SIZE {
 		return false
 	}
-	for after in name[length:] {
-		if after != 0 {
+	for index in length ..< NAME_SIZE {
+		if name[index] != 0 {
 			return false
 		}
 	}

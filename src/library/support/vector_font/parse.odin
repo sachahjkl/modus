@@ -273,8 +273,8 @@ glyph_advance :: proc "contextless" (font: ^Font_File, glyph: int) -> int {
 }
 
 // glyph_data gives the bytes of a glyph in the glyf table; empty for a
-// glyph with no outline (a space).
-@(private)
+// glyph with no outline (a space). A test of another package reads it to
+// damage the outline of one glyph.
 glyph_data :: proc "contextless" (font: ^Font_File, glyph: int) -> (data: []u8, problem: Font_Problem) {
 	if glyph < 0 || glyph >= font.glyph_count {
 		return nil, .No_Glyph

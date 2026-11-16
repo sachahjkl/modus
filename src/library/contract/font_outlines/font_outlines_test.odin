@@ -36,8 +36,8 @@ the_writer_refuses_a_wrong_list :: proc(t: ^testing.T) {
 	for &font, index in too_many {
 		font = {names[index], file}
 	}
-	long_name := "abcdefghijklmnop"
-	#assert(len("abcdefghijklmnop") == NAME_SIZE)
+	long_name := "abcdefghijklmnopqrstuvwxyz012345"
+	#assert(len("abcdefghijklmnopqrstuvwxyz012345") == NAME_SIZE)
 	lists := [?][]Font_Input {
 		{},
 		too_many[:],
@@ -64,6 +64,15 @@ the_writer_refuses_a_wrong_list :: proc(t: ^testing.T) {
 	written: int
 	written, ok = resource_write(good[:], bytes)
 	testing.expect(t, ok && written == size)
+	// The longest names that fit: NAME_SIZE - 1 bytes, and the longest
+	// name of the resource of the build.
+	longest := [2]Font_Input{{long_name[:NAME_SIZE - 1], file}, {"paper_mono_semibold", file}}
+	written, ok = resource_write(longest[:], bytes)
+	testing.expect(t, ok && written == resource_size(longest[:]))
+	outlines, problem := validate(bytes[:written])
+	testing.expect_value(t, problem.kind, Problem_Kind.None)
+	testing.expect_value(t, name_of(&outlines.records[0]), long_name[:NAME_SIZE - 1])
+	testing.expect_value(t, name_of(&outlines.records[1]), "paper_mono_semibold")
 }
 
 // validate refuses each damaged resource: too short, another magic,
