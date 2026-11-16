@@ -2,7 +2,7 @@
 
 A release publishes a disk image of the system that a principal writes to a USB key and starts on a real machine. Beside it are a checksum list and the signature of that list. This file records why the image has its form, why the published files are signed with a key of their own, and why a published image is never a test image.
 
-The guide for a reader is [`docs/INSTALL.md`](../../docs/INSTALL.md), "1. The files of a release". The keys are in [`docs/TRUSTED_BOOT.md`](../../docs/TRUSTED_BOOT.md), "5. The signing key".
+The guide for a reader is [`docs/INSTALL.md`](../../../docs/INSTALL.md), "1. The files of a release". The keys are in [`docs/TRUSTED_BOOT.md`](../../../docs/TRUSTED_BOOT.md), "5. The signing key".
 
 ## Purpose
 
@@ -92,7 +92,7 @@ The packaging procedure takes one of two values: `Publisher_Keys_Only`, which th
 
 `modustool verify <image> <checksum list>` verifies the release signature with the public key of the repository, then reads the checksum list, then compares the SHA-256 of the image with its line. The signature comes first: the tool reads no line of a list that the publisher did not sign.
 
-A principal with no tool verifies with OpenSSL 3 and `sha256sum` ([`docs/INSTALL.md`](../../docs/INSTALL.md), "2. Verify the files"). OpenSSL verifies a raw Ed25519 signature over a file (`openssl pkeyutl -verify -rawin`): the file to verify is the context then the checksum list, which `printf` and `cat` make. The site publishes the public key in PEM for it. A plain `openssl dgst` or a verification of the checksum list alone fails: the signed message starts with the context.
+A principal with no tool verifies with OpenSSL 3 and `sha256sum` ([`docs/INSTALL.md`](../../../docs/INSTALL.md), "2. Verify the files"). OpenSSL verifies a raw Ed25519 signature over a file (`openssl pkeyutl -verify -rawin`): the file to verify is the context then the checksum list, which `printf` and `cat` make. The site publishes the public key in PEM for it. A plain `openssl dgst` or a verification of the checksum list alone fails: the signed message starts with the context.
 
 ### The release workflow
 
