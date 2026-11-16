@@ -11,9 +11,12 @@
 // date. A program that another program starts has none either.
 //
 // The date of now is milliseconds_at_time_zero + the milliseconds of the
-// time page (system.time()): no kernel entry. The date is in UTC; the time
-// zone will be a setting of the owner (not built). Leap seconds are not
-// counted: a day has 86400 seconds, as in the time of POSIX.
+// time page (system.time()): no kernel entry. The date is in UTC. The page
+// also holds the time zone of the principal, a fixed offset from UTC: the
+// program `date` copies it from the setting `time_zone` of the settings
+// page (src/md/features/time_zone.md), and the local time is the date and
+// that offset. Leap seconds are not counted: a day has 86400 seconds, as in
+// the time of POSIX.
 //
 // A change: the writer makes change_count odd, writes the fields, makes it
 // even again. A reader copies the fields while change_count stays even and
@@ -47,9 +50,24 @@ Page :: struct {
 	change_count:              u32, // Even when the page is stable. Each change adds 2.
 	source:                    Source, // Where the date comes from. None: no date is known.
 	milliseconds_at_time_zero: i64, // Milliseconds since 1970-01-01 00:00:00 UTC at the time 0 of the system.
-	zone_offset_seconds:       i64, // The time zone of the owner: 0, UTC, until the settings have it.
+	zone_offset_seconds:       i64, // The time zone of the principal: the local time is the date of UTC and this. 0: UTC.
 }
 #assert(size_of(Page) <= 4096)
+
+// The largest time zone of the earth is 14 hours from UTC: a reader cuts a
+// zone of the page to this, so that a sum with a date never wraps.
+ZONE_OFFSET_SECONDS_LIMIT :: i64(14 * 3_600)
+
+// zone_offset_seconds_read gives the time zone of a page, cut to
+// ZONE_OFFSET_SECONDS_LIMIT; 0 with no page. The zone is one word that the
+// writer stores whole, so a reader gets the old or the new zone.
+zone_offset_seconds_read :: proc "contextless" (page: ^Page) -> i64 {
+	if page == nil {
+		return 0
+	}
+	zone := intrinsics.atomic_load_explicit(&page.zone_offset_seconds, .Relaxed)
+	return clamp(zone, -ZONE_OFFSET_SECONDS_LIMIT, ZONE_OFFSET_SECONDS_LIMIT)
+}
 
 // page_of gives the date page of a program, or nil.
 page_of :: proc "contextless" (ctx: ^op.Context) -> ^Page {
@@ -94,6 +112,15 @@ milliseconds_now :: proc "contextless" (page: ^Page, system_milliseconds: u64) -
 		return milliseconds, true
 	}
 	return 0, false
+}
+
+// zone_write sets the time zone, in one change of the page. The one writer
+// is the program `date`; it wakes the waiters of change_count after (this
+// package has no kernel call).
+zone_write :: proc "contextless" (page: ^Page, zone_offset_seconds: i64) {
+	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
+	intrinsics.atomic_store_explicit(&page.zone_offset_seconds, zone_offset_seconds, .Release)
+	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
 }
 
 // write sets the date of the time 0. The one writer is the program `date`.

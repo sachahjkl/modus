@@ -36,7 +36,9 @@ appearance_open :: proc "contextless" () {
 // computes the rule over the pages of now, writes the appearance in force
 // when the settings page holds another one, sets the deadline of the next
 // edge, and adds the change count of the date page to the wait: a date that
-// comes after the boot pass of `settings` changes the rule.
+// comes after the boot pass of `settings`, and a new time zone, change the
+// rule. The program `date` writes both, and wakes this word for them
+// (src/md/features/time_zone.md).
 //
 // The program `settings` writes the values and their appearance in one
 // change, and can write between the read of this service and its store.
@@ -56,6 +58,13 @@ appearance_step :: proc "contextless" (wait: ^system.Wait) {
 		choice := settings.read(settings_page)
 		if choice.change_count & 1 != 0 {
 			return // A writer stopped in a change: the page has the defaults until its next write.
+		}
+		// A read that gave up with an even count gives the defaults too: the
+		// count then moved after the read, as it only grows. This service
+		// does not wait on the settings page, so it reads again in this
+		// bounded loop.
+		if intrinsics.atomic_load_explicit(&settings_page.change_count, .Acquire) != choice.change_count {
+			continue
 		}
 		now := system.time()
 		moment := appearance.moment_of(appearance_date_page, now)

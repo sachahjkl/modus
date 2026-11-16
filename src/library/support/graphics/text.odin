@@ -1,5 +1,6 @@
 package graphics
 
+import "modus:contract/demand_cache"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 import "modus:support/text_shaping"
@@ -287,6 +288,27 @@ glyph_entry_draw :: proc "contextless" (cache: ^glyph_cache.Cache, entry: glyph_
 	blend_glyph_rows(canvas.pixels[(y + int(entry.first_row)) * canvas.stride + column_x:], canvas.stride, words, width, first_row, last_row, first_column, last_column, color, order, square_root, tables)
 }
 
+// demand_glyph_draw draws one glyph of the demand cache: the entry was
+// copied and checked by demand_cache.find, so its words are inside the
+// words of the cache, and the draw is the draw of a glyph of a glyph cache.
+@(private)
+demand_glyph_draw :: proc "contextless" (demand: ^demand_cache.Reader, entry: glyph_cache.Glyph_Entry, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color) #no_bounds_check {
+	if entry.row_count == 0 {
+		return
+	}
+	column_x := x + int(entry.left)
+	width := int(entry.width)
+	first_column := max(0, -column_x)
+	last_column := min(width, canvas.width - column_x)
+	first_row := max(0, -(y + int(entry.first_row)))
+	last_row := min(int(entry.row_count), canvas.height - y - int(entry.first_row))
+	if first_column >= last_column || first_row >= last_row {
+		return
+	}
+	words := ([^]u32)(&demand.words[int(entry.word_offset)])
+	blend_glyph_rows(canvas.pixels[(y + int(entry.first_row)) * canvas.stride + column_x:], canvas.stride, words, width, first_row, last_row, first_column, last_column, color, order, square_root, tables)
+}
+
 // character_vector_reference draws one character of a glyph cache that
 // glyph_cache.validate accepted: each entry and each word is inside the
 // file, so the loop has no bounds check (the rows and the columns are cut
@@ -372,24 +394,29 @@ PROPORTIONAL_INK_MARGIN :: 2
 // the origin of the text in 1/64 of a pixel, y the top of its line. Each
 // glyph is drawn at the nearest of the positions of its scale, through the
 // blend of the text of cells, cut to the canvas. The state of the program
-// gives the order of the stripes and the blend tables.
-text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, cache: ^glyph_cache.Cache, scale: int, color: Color) {
+// gives the order of the stripes and the blend tables. A glyph of the
+// demand cache (text_shaping.DEMAND_GLYPH_FIRST and past) is drawn from
+// `demand`, the reader that the shaper used in the same frame; with no
+// reader, or an entry that the frame does not see, it is the replacement
+// glyph.
+text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, cache: ^glyph_cache.Cache, scale: int, color: Color, demand: ^demand_cache.Reader = nil) {
 	if text_state.square_root[4095] == 0 {
 		square_root_table_fill(&text_state.square_root)
 	}
-	text_proportional_with(cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, place, y, placed, scale, color)
+	text_proportional_with(cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, place, y, placed, scale, color, demand)
 }
 
 // text_proportional_with is text_proportional with its state given: the
 // tests draw with it, each with its own tables.
-text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, scale: int, color: Color) {
+text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, scale: int, color: Color, demand: ^demand_cache.Reader = nil) {
 	if scale < 1 || scale > len(cache.sizes) {
 		return
 	}
 	position_count := int(cache.sizes[scale - 1].position_count)
 	for glyph in placed {
 		replacement := glyph.glyph == text_shaping.REPLACEMENT_GLYPH
-		if glyph.glyph >= cache.header.character_count && !replacement {
+		on_demand := !replacement && glyph.glyph >= text_shaping.DEMAND_GLYPH_FIRST
+		if glyph.glyph >= cache.header.character_count && !replacement && !on_demand {
 			continue
 		}
 		pixel, position := glyph_cache.position_of(place + i64(glyph.x), position_count)
@@ -400,6 +427,22 @@ text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_
 		}
 		if replacement {
 			character_replacement(canvas, int(pixel), y, color, scale)
+			continue
+		}
+		if on_demand {
+			drawn := false
+			if demand != nil {
+				entry, state := demand_cache.find(demand, rune(glyph.glyph - text_shaping.DEMAND_GLYPH_FIRST))
+				if state == .Drawn {
+					if demand_glyph, has_glyph := demand_cache.glyph_of_entry(&entry, scale, position); has_glyph {
+						demand_glyph_draw(demand, demand_glyph, square_root, tables, order, canvas, int(pixel), y, color)
+						drawn = true
+					}
+				}
+			}
+			if !drawn {
+				character_replacement(canvas, int(pixel), y, color, scale)
+			}
 			continue
 		}
 		_, entry, found := glyph_cache.glyph_of_index(cache, int(glyph.glyph), scale, position)

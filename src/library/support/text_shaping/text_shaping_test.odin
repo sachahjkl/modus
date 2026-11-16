@@ -1,8 +1,10 @@
 #+build !freestanding
 package text_shaping
 
+import "modus:contract/demand_cache"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
+import "core:mem"
 import "core:testing"
 import "modus:support/vector_font"
 
@@ -138,6 +140,67 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	_, _, ok = shape(&spacing, long, placed[:])
 	testing.expect(t, !ok)
 	testing.expect_value(t, placed[0], Placed_Glyph{})
+}
+
+// With a demand cache: a character past the glyph cache is the replacement
+// glyph, with the advance of "0", and wanted, until the cache holds it at
+// the generation of the frame; then it is a glyph of the demand cache with
+// its own advance, and no pair. An absent character and an invalid
+// sequence are never wanted.
+@(test)
+a_character_on_demand_is_placed_from_the_next_frame :: proc(t: ^testing.T) {
+	spacing, memory := test_spacing(t)
+	defer delete(memory)
+	file := ([^]u8)(raw_data(memory))[:int((^glyph_cache.Header)(raw_data(memory)).file_size)]
+	cache, _ := glyph_cache.validate(file)
+	bytes, allocation := mem.alloc_bytes(demand_cache.SIZE, demand_cache.PAGE_SIZE)
+	testing.expect(t, allocation == nil)
+	defer mem.free_bytes(bytes)
+	base := uintptr(raw_data(bytes))
+	writer := demand_cache.writer_open(base, cache.header.font_hash, vector_font.RENDERER_VERSION, cache.header.flags)
+	reader, ok := demand_cache.reader_of(base, &cache)
+	testing.expect(t, ok)
+	spacing.demand = &reader
+	OMEGA :: rune(0x03A9)
+	A_MACRON :: rune(0x0101)
+	text := "AΩB\xffā"
+	demand_cache.reader_frame_begin(&reader)
+	placed: [8]Placed_Glyph
+	count, width, shaped := shape(&spacing, transmute([]u8)text, placed[:])
+	testing.expect(t, shaped && count == 5)
+	zero := spacing.advances['0' - glyph_cache.ASCII_FIRST]
+	testing.expect_value(t, placed[1].glyph, REPLACEMENT_GLYPH)
+	testing.expect_value(t, placed[1].advance, zero)
+	testing.expect_value(t, reader.wanted_count, 2) // Ω and ā; not the invalid byte.
+	testing.expect_value(t, reader.wanted[0], OMEGA)
+	testing.expect_value(t, reader.wanted[1], A_MACRON)
+	// The font service publishes Ω, and ā as absent.
+	entry := demand_cache.Entry{state = .Drawn, advances = {700, 1400, 2100}}
+	place, _ := demand_cache.place_find(&writer, OMEGA)
+	demand_cache.publish(&writer, place, OMEGA, entry)
+	place, _ = demand_cache.place_find(&writer, A_MACRON)
+	demand_cache.publish(&writer, place, A_MACRON, demand_cache.Entry{state = .Absent})
+	// The same frame: the same placed glyphs.
+	_, again, _ := shape(&spacing, transmute([]u8)text, placed[:])
+	testing.expect_value(t, again, width)
+	// The next frame.
+	demand_cache.reader_frame_begin(&reader)
+	count, width, shaped = shape(&spacing, transmute([]u8)text, placed[:])
+	testing.expect(t, shaped && count == 5)
+	testing.expect_value(t, placed[1].glyph, DEMAND_GLYPH_FIRST + u32(OMEGA))
+	testing.expect_value(t, placed[1].advance, i32(700)) // No pair with a glyph on demand.
+	testing.expect_value(t, placed[0].advance, spacing.advances['A' - glyph_cache.ASCII_FIRST])
+	testing.expect_value(t, placed[2].x, placed[1].x + 700)
+	testing.expect_value(t, placed[4].glyph, REPLACEMENT_GLYPH)
+	testing.expect_value(t, reader.wanted_count, 0)
+	// At scale 3 the advance of scale 3.
+	spacing.scale = 3
+	shape(&spacing, transmute([]u8)string("Ω"), placed[:1])
+	testing.expect_value(t, placed[0].advance, i32(2100))
+	// The module has no demand cache: the replacement glyph.
+	spacing.demand = nil
+	shape(&spacing, transmute([]u8)string("Ω"), placed[:1])
+	testing.expect_value(t, placed[0].glyph, REPLACEMENT_GLYPH)
 }
 
 // 10 000 texts in one call give the widths of 10 000 calls of one text.
