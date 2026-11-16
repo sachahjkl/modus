@@ -207,6 +207,10 @@ Processor :: struct {
 	// this processor.
 	log_text:       [4096]u8,
 	log_runs:       [op.LOG_CALL_RUN_LIMIT]value_kinds.Value_Run_In_Call,
+	// The copy of an own log ring that Log_Read makes under the log lock,
+	// then gives to the caller after the lock: a copy to memory of a
+	// program never lengthens the hold of the one log lock.
+	own_log_copy:   [op.OWN_LOG_RECORD_CAPACITY]op.Log_Record,
 	boot_report:    op.Boot_Report,
 	mapping_report: op.Mapping_Report,
 	module_report:  op.Module_Report,

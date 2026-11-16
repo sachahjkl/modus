@@ -383,7 +383,8 @@ guest_frame_return :: proc "contextless" (program: ^Program, frame: u64) {
 
 // guest_create makes a program a guest, at its first Guest_Run: the budget
 // of the program pays the control block and the extended state; the time
-// page leaves the program, and the kernel half leaves its top table, so
+// page and the own log ring leave the program, and the kernel half leaves
+// its top table, so
 // that the guest reaches only what its program mapped. Nothing changes when
 // the budget cannot pay. The caller holds the program lock; the program is
 // Created, with no thread.
@@ -406,6 +407,9 @@ guest_create :: proc "contextless" (index: u32) -> op.Status {
 			break
 		}
 	}
+	// A guest has no thread, so it never writes a log record: its own log
+	// ring returns to its budget, as the time page leaves it.
+	own_log_ring_end(program)
 	// No processor uses this table as its cr3: the program has no thread,
 	// and Program_Start refuses it from now.
 	for &entry in direct(program.table, [512]u64)^[256:] {

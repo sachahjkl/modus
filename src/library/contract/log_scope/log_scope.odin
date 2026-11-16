@@ -11,7 +11,9 @@
 //   (isolated.CALLER_ACTS_FOR_PRINCIPAL).
 // - **Its own records**: each other caller. The amount of the grant names
 //   the program of the caller by its program slot and its program serial,
-//   which the kernel writes in each log record (operation.Log_Record). Its
+//   which the kernel writes in each log record (operation.Log_Record). The
+//   log service reads them from the own log ring of that program
+//   (operation.Operation.Log_Read), which only its own records fill. Its
 //   rows are numbered by their own number, and `lost` counts its own
 //   records only: no number or count of the records of other programs.
 //
@@ -28,7 +30,6 @@
 package log_scope
 
 import "modus:contract/isolated"
-import op "modus:contract/operation"
 
 OWN_SERIAL_BITS :: 32 // The bits of the program serial in the amount: bits 0 to 31.
 OWN_SERIAL_MASK :: u64(1) << OWN_SERIAL_BITS - 1
@@ -66,42 +67,10 @@ scope_of :: proc "contextless" (grant: u64) -> Scope {
 	}
 }
 
-// A reader of its own records sees no number of the whole log: its rows
-// carry the own number of each record (operation.Log_Record.own_number),
-// which counts the records of its program only. The own number has 32 bits
-// and starts again from 0 after 2^32 records, so two own numbers are
-// compared by their distance: a reader can copy at most
-// op.LOG_RECORD_CAPACITY - 1 records, far fewer than 2^31. An `after` more
-// than 2^31 past an own number is read modulo 2^32, so it gives that record
-// with a meaningless `lost`: the caller asked a meaningless thing, and the
-// answer holds its own records only.
-OWN_NUMBER_HALF :: u32(1) << 31
-
-// own_number_at_or_after says if a record with an own number comes at
-// `after` or later, for a reader that asks from `after` on. A negative
-// `after` is 0; `after` counts in the own numbers, modulo 2^32.
-//
-// Example: `own_number_at_or_after(3, 2)` is true; after a wrap,
-// `own_number_at_or_after(1, 0xFFFF_FFFE)` is true too.
-own_number_at_or_after :: proc "contextless" (own_number: u32, after: i64) -> bool {
-	return own_number - u32(max(after, 0)) < OWN_NUMBER_HALF
-}
-
-// own_records_lost gives the own records from `after` that come before the
-// first own record that the reader receives: the kernel wrote over them.
-// The own numbers of one program follow each other, so the gap is the
-// count, and it counts records of that program only.
-own_records_lost :: proc "contextless" (first_own_number: u32, after: i64) -> u64 {
-	return u64(first_own_number - u32(max(after, 0)))
-}
-
-// record_in_scope says if a caller with a scope receives a record: each
-// record for the whole log; else only a record of the program of the scope,
-// by its slot and its serial. A record of the kernel (slot 0) is never an
-// own record.
-record_in_scope :: proc "contextless" (scope: Scope, record: ^op.Log_Record) -> bool {
-	if scope.whole_log {
-		return true
-	}
-	return scope.program != 0 && u64(record.program) == scope.program && u64(record.program_serial) == scope.program_serial
+// reads_own_records says if a caller with a scope reads the own log ring of
+// a program (operation.Operation.Log_Read): it does not act for the
+// principal, and its amount names a program. The slot 0 is the kernel,
+// which has no own log ring: a caller with the amount 0 reads no record.
+reads_own_records :: proc "contextless" (scope: Scope) -> bool {
+	return !scope.whole_log && scope.program != 0
 }

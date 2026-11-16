@@ -663,6 +663,10 @@ frame_paid_held :: proc "contextless" (budget_field: ^u32) -> u64 {
 	return frame
 }
 
+// The tables below the top table that the map of the time page can pay, in
+// a new address space: one at each level under the top.
+TIME_PAGE_TABLES :: info.PAGE_TABLE_LEVELS - 1
+
 // address_space_create gives a top level table with the kernel half only.
 // The budget pays for it. 0: the budget has no page.
 address_space_create :: proc "contextless" (budget: ^u32) -> u64 {

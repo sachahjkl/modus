@@ -392,8 +392,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_in("log", .Error, "log: cannot read the records of the log: status ", u64(status))
 		system.stop(1)
 	}
-	// The service reads the same memory object: exports.odin.
+	// The service reads the same memory object: exports.odin. Its handle
+	// also reads the own log ring of a caller (Log_Read).
 	reader_head, reader_records = reader.head, reader.records
+	log_memory = ctx.handles[system.GRANT_LOG_RECORDS]
 	service, _ = system.service_open(ctx)
 	logged := false
 	picture_owed := true // The window does not show each record that was taken.

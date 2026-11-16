@@ -37,3 +37,48 @@ log_first_kept :: proc "contextless" (after: u64, written: u64) -> (next: u64, l
 log_copy_kept :: proc "contextless" (number: u64, written_after_copy: u64) -> bool {
 	return written_after_copy - number < LOG_RECORD_CAPACITY
 }
+
+// The rules of an own log ring (src/md/features/own_log_ring.md). The
+// kernel copies it under the log lock, so a copy is never torn: the two
+// rules above are for the whole log only.
+
+// The distance below which an own number names a record before the count:
+// the own number has 32 bits, and the ring holds far fewer records.
+OWN_NUMBER_HALF :: u64(1) << 31
+
+// own_log_window gives which records of an own log ring a reader receives
+// when it asks from the own number `after` on, and the program wrote
+// `written` records: the count of the first one, the own records from
+// `after` that the ring no longer keeps, and the records from the first one
+// to the last one. `after` is an own number, the low 32 bits of a count: it
+// names the count below `written` with these low bits, up to 2^31 before
+// it. An `after` past `written` gives no record.
+//
+// Example: with `written = OWN_LOG_RECORD_CAPACITY + 10` and `after = 0`,
+// the first record is 10, 10 records are lost, and the ring gives
+// OWN_LOG_RECORD_CAPACITY records.
+own_log_window :: proc "contextless" (written: u64, after: u32) -> (first: u64, lost: u64, total: u64) {
+	distance := u64(u32(written) - after)
+	if distance >= OWN_NUMBER_HALF {
+		return written, 0, 0
+	}
+	first = written - min(distance, written)
+	oldest := written - min(written, OWN_LOG_RECORD_CAPACITY)
+	if first < oldest {
+		lost = oldest - first
+		first = oldest
+	}
+	return first, lost, written - first
+}
+
+// own_log_place gives where the record with the count `number` of a
+// program is in its own log ring: the page of the ring, and the offset in
+// that page. A page holds whole records.
+own_log_place :: proc "contextless" (number: u64) -> (page: u64, offset: u64) {
+	RECORDS_OF_A_PAGE :: 4096 / size_of(Log_Record)
+	place := number % OWN_LOG_RECORD_CAPACITY
+	return place / RECORDS_OF_A_PAGE, place % RECORDS_OF_A_PAGE * size_of(Log_Record)
+}
+
+#assert(4096 % size_of(Log_Record) == 0)
+#assert(OWN_LOG_RECORD_CAPACITY == OWN_LOG_PAGES * (4096 / size_of(Log_Record)))

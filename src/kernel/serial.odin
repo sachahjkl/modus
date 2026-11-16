@@ -66,6 +66,10 @@ KERNEL_LOG_RUN_LIMIT :: 12
 
 log_head: ^op.Log_Head // nil before log_start.
 log_records: [^]op.Log_Record
+// The memory object of the log, which the root service receives. A handle
+// of it with Read is the authority of Log_Read: its holder reads each
+// record already. 0: no log.
+log_region: u32
 // A record keeps the slot of its program and of its thread in one byte
 // each, so that it has room for the program serial and the own number in
 // its 256 bytes.
@@ -73,7 +77,8 @@ log_records: [^]op.Log_Record
 #assert(THREAD_TABLE_CAPACITY <= 1 << 8)
 log_serial_only: bool // The kernel reports its own fault: it takes no lock, and writes the serial port only.
 // The log lock protects the serial port, the records of the log and their
-// counter (docs/ARCHITECTURE.md, "Locks of the kernel").
+// counter, and the own log ring of each program with its count and its
+// frames (docs/ARCHITECTURE.md, "Locks of the kernel").
 log_lock: Lock
 
 // The processor that reports a fault of the kernel: its identifier plus one,
@@ -278,6 +283,76 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log
 	log_free(taken)
 }
 
+// own_log_ring_take takes the frames of the own log ring of a new program,
+// zero, and the budget pays each one. false: the budget has too few pages,
+// and none is taken.
+own_log_ring_take :: proc "contextless" (budget: ^u32) -> (frames: [op.OWN_LOG_PAGES]u64, ok: bool) {
+	for &frame in frames {
+		frame = frame_paid(budget)
+		if frame == 0 {
+			own_log_ring_give_back(frames, budget)
+			return {}, false
+		}
+	}
+	return frames, true
+}
+
+// own_log_ring_give_back frees the frames of an own log ring, and the
+// budget gets their pages back. A frame of 0 was never taken. The caller
+// does not hold the log lock: the frame lock comes before it.
+own_log_ring_give_back :: proc "contextless" (frames: [op.OWN_LOG_PAGES]u64, budget: ^u32) {
+	lock_take(&frame_lock, .Frame)
+	for frame in frames {
+		if frame != 0 {
+			frames_free_held(frame, 1)
+			budgets[budget^].amounts.pages += 1
+		}
+	}
+	lock_free(&frame_lock, .Frame)
+}
+
+// own_log_ring_end frees the own log ring of a program, if it has one, and
+// its pages return to its budget. The frames are cleared under the log
+// lock, so no Log_Read copies the ring after its pages leave; the frame
+// lock comes after the log lock is free. The caller holds the program lock.
+own_log_ring_end :: proc "contextless" (owner: ^Program) {
+	log_taken := log_take()
+	ring_frames := owner.log_ring_frames
+	owner.log_ring_frames = {}
+	log_free(log_taken)
+	own_log_ring_give_back(ring_frames, &owner.budget)
+}
+
+// own_log_ring_copy copies, under the log lock, the records of the own log
+// ring of a program from the own number `after` on into a buffer: at most
+// `count`, in the order of their own numbers (op.own_log_window). found is
+// false when the slot holds no program with this serial and a ring. The
+// frames, the serial and the count of the owner change only under the log
+// lock while a ring exists: program_create sets the frames after the
+// serial, and the end of the ring clears them first.
+own_log_ring_copy :: proc "contextless" (owner: ^Program, serial: u64, after: u32, count: u64, buffer: ^[op.OWN_LOG_RECORD_CAPACITY]op.Log_Record) -> (copied: u64, lost: u64, total: u64, found: bool) {
+	taken := log_take()
+	defer log_free(taken)
+	if owner.log_ring_frames[0] == 0 || u64(intrinsics.atomic_load(&owner.serial)) != serial {
+		return 0, 0, 0, false
+	}
+	first: u64
+	first, lost, total = op.own_log_window(owner.log_records_written, after)
+	copied = min(total, count, u64(op.OWN_LOG_RECORD_CAPACITY))
+	for number in 0 ..< copied {
+		buffer[number] = own_log_record(owner, first + number)^
+	}
+	return copied, lost, total, true
+}
+
+// own_log_record gives the place of the record with the count `number` in
+// the own log ring of a program, through the direct map. The caller holds
+// the log lock, and the program has a ring.
+own_log_record :: proc "contextless" (owner: ^Program, number: u64) -> ^op.Log_Record {
+	page, offset := op.own_log_place(number)
+	return direct(owner.log_ring_frames[page] + offset, op.Log_Record)
+}
+
 // log_record adds a text to the memory object of the log: one record, or
 // more if the text is long. Each record keeps the part of the value runs
 // that falls in its text; the runs are in order and inside the text
@@ -285,11 +360,15 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log
 //
 // The program slot and the program serial together name the program: the
 // log service gives a reader the records of its own program by the two
-// (src/md/features/log_reader_scope.md). `own_written` counts the records
-// of that program, under the log lock: each record takes the next own
-// number, so a reader of its own records numbers them with no count of the
-// records of other programs. nil for a record of the kernel.
-log_record :: proc "contextless" (program: u32, program_serial: u32, own_written: ^u32, thread: u32, name: []u8, channel: []u8, level: op.Log_Level, text: []u8, runs: []value_kinds.Value_Run_In_Call) {
+// (src/md/features/log_reader_scope.md). `owner` is that program, nil for a
+// record of the kernel. Its count of records takes one for each record,
+// under the log lock: each record takes the next own number, so a reader
+// of its own records numbers them with no count of the records of other
+// programs. Each record of a program also goes to its own log ring, which
+// only its own records fill: a reader of its own records reads them there,
+// and the records of the others never push them out
+// (src/md/features/own_log_ring.md).
+log_record :: proc "contextless" (program: u32, program_serial: u32, owner: ^Program, thread: u32, name: []u8, channel: []u8, level: op.Log_Level, text: []u8, runs: []value_kinds.Value_Run_In_Call) {
 	if log_head == nil || log_serial_only {
 		return
 	}
@@ -312,10 +391,10 @@ log_record :: proc "contextless" (program: u32, program_serial: u32, own_written
 		// Between two calls the log lock orders them; inside one long text
 		// only this fence does. On x86 it only stops the compiler.
 		intrinsics.atomic_thread_fence(.Release)
-		own_number: u32
-		if own_written != nil {
-			own_number = own_written^
-			own_written^ += 1 // It wraps at 2^32: a reader compares own numbers by their distance.
+		own_count: u64
+		if owner != nil {
+			own_count = owner.log_records_written
+			owner.log_records_written += 1
 		}
 		record := &log_records[written % op.LOG_RECORD_CAPACITY]
 		record^ = {
@@ -324,7 +403,7 @@ log_record :: proc "contextless" (program: u32, program_serial: u32, own_written
 			program        = u8(program),
 			thread         = u8(thread),
 			program_serial = program_serial,
-			own_number     = own_number,
+			own_number     = u32(own_count), // The low bits: a reader names a record by its distance to the count (op.own_log_window).
 			level          = level,
 			more           = u8(len(rest) != 0),
 			text_count     = u16(len(part)),
@@ -334,6 +413,11 @@ log_record :: proc "contextless" (program: u32, program_serial: u32, own_written
 		copy(record.text[:], part)
 		record.run_count = u8(value_kinds.value_runs_of_record(runs, offset, len(part), record.runs[:]))
 		offset += len(part)
+		// The same bytes in the own log ring. No reader maps that ring: a
+		// copy comes only from Log_Read, under the log lock, so no fence.
+		if owner != nil && owner.log_ring_frames[0] != 0 {
+			own_log_record(owner, own_count)^ = record^
+		}
 		// The record is complete before a reader can see it.
 		intrinsics.atomic_store(&log_head.written, written + 1)
 		if len(rest) == 0 {

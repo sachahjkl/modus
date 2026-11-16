@@ -43,3 +43,87 @@ the_first_kept_record_agrees_with_the_copy_rule :: proc(t: ^testing.T) {
 	testing.expect_value(t, end_next, written)
 	testing.expect_value(t, end_lost, 0)
 }
+
+// An own log ring keeps the last OWN_LOG_RECORD_CAPACITY records of its
+// program: a reader from the own number 0 loses the records before them,
+// and a reader with fewer records than that loses none.
+@(test)
+an_own_log_ring_keeps_the_last_records :: proc(t: ^testing.T) {
+	short_first, short_lost, short_total := own_log_window(5, 0)
+	testing.expect_value(t, short_first, 0)
+	testing.expect_value(t, short_lost, 0)
+	testing.expect_value(t, short_total, 5)
+
+	full_first, full_lost, full_total := own_log_window(OWN_LOG_RECORD_CAPACITY, 0)
+	testing.expect_value(t, full_first, 0)
+	testing.expect_value(t, full_lost, 0)
+	testing.expect_value(t, full_total, OWN_LOG_RECORD_CAPACITY)
+
+	written := u64(OWN_LOG_RECORD_CAPACITY + 10)
+	first, lost, total := own_log_window(written, 0)
+	testing.expect_value(t, first, 10)
+	testing.expect_value(t, lost, 10)
+	testing.expect_value(t, total, OWN_LOG_RECORD_CAPACITY)
+
+	// From a record that the ring keeps: nothing lost, the rest of the ring.
+	kept_first, kept_lost, kept_total := own_log_window(written, 20)
+	testing.expect_value(t, kept_first, 20)
+	testing.expect_value(t, kept_lost, 0)
+	testing.expect_value(t, kept_total, written - 20)
+
+	// At the count, and past it: no record, nothing lost.
+	end_first, end_lost, end_total := own_log_window(written, u32(written))
+	testing.expect_value(t, end_first, written)
+	testing.expect_value(t, end_lost, 0)
+	testing.expect_value(t, end_total, 0)
+	ahead_first, ahead_lost, ahead_total := own_log_window(written, u32(written) + 3)
+	testing.expect_value(t, ahead_first, written)
+	testing.expect_value(t, ahead_lost, 0)
+	testing.expect_value(t, ahead_total, 0)
+}
+
+// The own number has 32 bits and the count of the kernel 64: an `after`
+// names the count below the count of the program with the same low bits,
+// across the wrap at 2^32.
+@(test)
+an_own_number_names_its_record_across_the_wrap :: proc(t: ^testing.T) {
+	written := u64(1) << 32 + 3 // The own numbers 0xFFFF_FFFF, 0, 1 and 2 are the last ones.
+	first, lost, total := own_log_window(written, 0xFFFF_FFFF)
+	testing.expect_value(t, first, written - 4)
+	testing.expect_value(t, lost, 0)
+	testing.expect_value(t, total, 4)
+	testing.expect_value(t, u32(first), 0xFFFF_FFFF)
+
+	// The own number 0 of the start of the program is far before the ring:
+	// it reads as the count 2^32, and the ring keeps the records from there.
+	start_first, start_lost, start_total := own_log_window(written, 0)
+	testing.expect_value(t, start_first, written - 3)
+	testing.expect_value(t, start_lost, 0)
+	testing.expect_value(t, start_total, 3)
+
+	// An own number more than 2^31 before the count reads as past it.
+	far_first, _, far_total := own_log_window(written, u32(3 + OWN_NUMBER_HALF))
+	testing.expect_value(t, far_first, written)
+	testing.expect_value(t, far_total, 0)
+}
+
+// The place of each record: whole records in each page, the pages in turn,
+// and the record after the last place back at the first one.
+@(test)
+the_places_of_an_own_log_ring :: proc(t: ^testing.T) {
+	records_of_a_page := u64(4096 / size_of(Log_Record))
+	page, offset := own_log_place(0)
+	testing.expect_value(t, page, 0)
+	testing.expect_value(t, offset, 0)
+	last_page, last_offset := own_log_place(records_of_a_page - 1)
+	testing.expect_value(t, last_page, 0)
+	testing.expect_value(t, last_offset, 4096 - size_of(Log_Record))
+	next_page, next_offset := own_log_place(records_of_a_page)
+	testing.expect_value(t, next_page, 1)
+	testing.expect_value(t, next_offset, 0)
+	end_page, _ := own_log_place(OWN_LOG_RECORD_CAPACITY - 1)
+	testing.expect_value(t, end_page, OWN_LOG_PAGES - 1)
+	wrap_page, wrap_offset := own_log_place(OWN_LOG_RECORD_CAPACITY)
+	testing.expect_value(t, wrap_page, 0)
+	testing.expect_value(t, wrap_offset, 0)
+}

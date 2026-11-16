@@ -1028,11 +1028,21 @@ Do not use: my log, private log, log of a program (for this).
 
 The own number of a log record is its place among the records of its program: 0 for the first record that the program wrote, 1 for the next one (`op.Log_Record.own_number`).
 
-The kernel counts the records of each program and writes the count in each record. A reader of its own records receives the own number as the number of each row, gives `after` in own numbers, and its count `lost` is a gap in its own numbers: it receives no number or count of the records of other programs. The one ring still lets their records push its own records out. A reader of the whole log receives the number of the record in the whole log. The own number has 32 bits and starts again from 0 after 2^32 records; two own numbers are compared by their distance.
+The kernel counts the records of each program and writes the count in each record. A reader of its own records receives the own number as the number of each row, gives `after` in own numbers, and its count `lost` is a gap in its own numbers: it receives no number or count of the records of other programs. Its rows come from the own log ring of its program, which the records of other programs never fill. A reader of the whole log receives the number of the record in the whole log. The own number has 32 bits and starts again from 0 after 2^32 records; the kernel keeps a count of 64 bits, and reads an own number by its distance to that count.
 
 The design: `src/md/features/log_reader_scope.md`.
 
 Do not use: local sequence, private number, cursor (for this).
+
+### Own log ring
+
+The own log ring of a program is the ring of its last 64 log records that the kernel keeps beside the whole log, and that only its own records fill (`op.OWN_LOG_RECORD_CAPACITY`).
+
+The kernel writes each record of a program in the whole log and in its own log ring. A log storm of another program pushes records out of the whole log, never out of this ring: a reader of its own records reads them here, through the log service, so it learns nothing of how many records the others wrote. The budget of the program pays the 4 pages of the ring at `Program_Create`; they return to the budget when the program stops. Only the holder of the memory of the log reads a ring, with the kernel operation `Log_Read`: the log service. A record of the kernel has no own log ring. It is not the whole log, and not a copy that the program maps.
+
+The design: `src/md/features/own_log_ring.md`.
+
+Do not use: per-program buffer, log buffer, log mailbox.
 
 ### Log scope
 
@@ -1556,7 +1566,7 @@ Do not use: core, supervisor.
 
 A kernel operation is one request that a program makes to the kernel: a command record in the kernel ring of its thread.
 
-The kernel has 34 operations (`op.Operation`), a counted limit that only a change of `docs/PROPERTIES.md` changes. A thread writes up to 32 commands in its kernel ring, then enters the kernel once with `syscall`; the kernel runs them in order and writes one completion record for each: a status, and the results or an error record. The entry can also wait until a wake or a time.
+The kernel has 35 operations (`op.Operation`), a counted limit that only a change of `docs/PROPERTIES.md` changes. A thread writes up to 32 commands in its kernel ring, then enters the kernel once with `syscall`; the kernel runs them in order and writes one completion record for each: a status, and the results or an error record. The entry can also wait until a wake or a time.
 
 A kernel operation needs a handle for each object that it acts on: no operation works without one.
 

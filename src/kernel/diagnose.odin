@@ -827,7 +827,8 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	case .Program_Create:
 		unit, asked, held = .Programs, 1, holds.programs
 		if holds.programs != 0 {
-			unit, held = .Pages, holds.pages // The page tables.
+			// The top table, the own log ring, and the tables of the time page.
+			unit, asked, held = .Pages, 1 + op.OWN_LOG_PAGES + TIME_PAGE_TABLES, holds.pages
 		}
 	case .Thread_Create:
 		unit, asked, held = .Threads, 1, holds.threads
