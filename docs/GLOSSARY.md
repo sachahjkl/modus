@@ -6170,7 +6170,7 @@ Do not use: db key (for the pair), Secure Boot key.
 
 The test firmware signing key is the firmware signing key of the tests, whose private key is published, so that a boot program that it signed is never trusted.
 
-The pair is `resources/keys/test_firmware_signing_key.pem` and `.crt`; `modustool key test-firmware-new` wrote it once. The variable store of the test machines of Secure Boot has its certificate as PK, KEK and the one entry of `db`. `modustool test trusted_boot` checks with it that the signed boot program starts, and that a boot program with one byte changed, or unsigned, does not.
+The pair is `resources/keys/test_firmware_signing_key.pem` and `.crt`; `modustool key test-firmware-new` wrote it once. The variable store of the test machines of Secure Boot has its certificate as PK, KEK and the one entry of `db`. `modustool test trusted_boot` checks with it that the signed boot program starts, and that a boot program with one byte changed, or unsigned, does not. The machines of the keys sealed by the TPM in `modustool test principals` start from the same variable store, with a software TPM.
 
 The design: `docs/TRUSTED_BOOT.md`, "7. Secure Boot".
 

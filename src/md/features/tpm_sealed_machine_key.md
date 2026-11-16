@@ -13,7 +13,7 @@ The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The machine k
 - **The measure is PCR 11** ([`docs/TRUSTED_BOOT.md`](../../../docs/TRUSTED_BOOT.md), "6. The measure"). The firmware measures the state of Secure Boot into PCR 7.
 - **No update path exists in the system.** A new system is a new boot volume that the tool writes. So the old system cannot know the measure of the next one before the update.
 - **No administrator.** A lost key is lost data (property 21, "Cost"). So recovery comes with the first version of the seal.
-- **No test machine has Secure Boot and a TPM.** The machines of the TPM use the firmware without Secure Boot; the machines of Secure Boot have no TPM device. The firmware with Secure Boot lost an answer of the software TPM at each start on the QEMU that waits through io_uring, most likely the same fault of QEMU that the machines of the TPM had; it has not run with a TPM since the fix ([`docs/TRUSTED_BOOT.md`](../../../docs/TRUSTED_BOOT.md), "The machines of the TPM"). A seal needs Secure Boot. So the seal is proven on a test system: a boot image whose root service is built with the setting `SEAL_WITHOUT_SECURE_BOOT_FOR_A_TEST`, which also takes a boot program that only the boot program verified. That service writes a line at boot that names it a test system; only its two volumes hold it, and the tool fails each other machine that prints the line. A release publishes no volume, and the main volume holds the root service with no setting, so the rule holds on each real machine; a machine of the test on the main volume checks it.
+- **The seal is tested on the real rule.** A seal needs Secure Boot, and the root service has one build: no test setting lets it seal without Secure Boot. So the machines of the test that seal run the firmware with Secure Boot and a TPM, on signed volumes ([`docs/TRUSTED_BOOT.md`](../../../docs/TRUSTED_BOOT.md), "The machines of the TPM"). In the tool, the TPM device is an option of the machine, apart from the firmware.
 
 ## The chosen form
 
@@ -85,7 +85,7 @@ A pin would be a value that the TPM keeps, such as an index of its memory that s
 
 ### Who may seal
 
-A seal and a new seal after a recovery run only when the firmware verified the boot program (the trust record says `Firmware_And_Boot_Program`). With Secure Boot off, PCR 7 says "off", and a replaced boot program can extend PCR 11 with the hash of a correct description: a seal then trusts a boot program that nothing verified. The rule matters most after a recovery: an attacker who turns Secure Boot off makes the TPM refuse, as an update does, and a new seal after the recovery would bind the key to "Secure Boot off". The root service refuses `machine_seal()` then, and gives `unlock` the context value `VALUE_SEAL_ALLOWED`; `unlock` skips the new seal with a line of the log. An unseal stays allowed: it opens only a seal that was made with Secure Boot on. The one exception is a build of the test: the root service of `boot_seal_test.image` takes a boot program that only the boot program verified (see "Constraints").
+A seal and a new seal after a recovery run only when the firmware verified the boot program (the trust record says `Firmware_And_Boot_Program`). With Secure Boot off, PCR 7 says "off", and a replaced boot program can extend PCR 11 with the hash of a correct description: a seal then trusts a boot program that nothing verified. The rule matters most after a recovery: an attacker who turns Secure Boot off makes the TPM refuse, as an update does, and a new seal after the recovery would bind the key to "Secure Boot off". The root service refuses `machine_seal()` then, and gives `unlock` the context value `VALUE_SEAL_ALLOWED`; `unlock` skips the new seal with a line of the log. An unseal stays allowed: it opens only a seal that was made with Secure Boot on. The rule has no exception, in a test either.
 
 ### One client, and a client that learns a stop
 
@@ -107,6 +107,14 @@ The root service starts `unlock` only from its own procedure `unlock_start`, and
 
 The root service starts no TPM service when the trust record does not say `Measured`: no TPM, a TPM that refused the measure, or a PCR that the boot program did not read. `unlock` then has no ring of the TPM. A machine passphrase works as before. `machine_seal()` is refused with a sentence. A record `MACHINET` asks for its recovery key.
 
+### The machines of the test
+
+The test needs two systems with the same PCR 7 and two values of PCR 11, and one system with two values of PCR 7 and the same PCR 11.
+
+- **Secure Boot on.** The machines that seal run the firmware with Secure Boot, the enrolled variable store and a software TPM. The first system is the signed main volume (`boot_volume_secure_boot`). The second is the volume of the other system of the trusted boot (`boot_volume_other_system`): one byte of a module changed before its description was made and signed, so another PCR 11. Its boot program is signed for Secure Boot too. A signature of the boot program changes no byte of the boot image, so it changes no PCR 11.
+- **Secure Boot off.** One machine starts the same other system on the firmware with a TPM driver and no Secure Boot. That firmware starts a signed boot program too. Its PCR 11 is the PCR 11 of the last seal, and only PCR 7 differs: the TPM refuses because of PCR 7 alone, and the rule refuses the new seal.
+- **The TPM device is an option of the machine.** The firmware decides the driver and Secure Boot. The device decides if a TPM answers. Each firmware of the test that has a TPM driver can take the device.
+
 ## Refused forms
 
 - **A raw command from the client.** The client could extend PCR 11 or clear the TPM. The service builds each command, and a command has two forms only.
@@ -126,6 +134,9 @@ The root service starts no TPM service when the trust record does not say `Measu
 - **The check of the current PCR values by a read of the PCRs.** The unseal already needs the PCRs to hold the values of the policy, and the policy is checked against the creation data: a read adds a command and proves nothing more.
 - **A pin of the form in the memory of the TPM with no policy.** Another system removes it with the empty authorization of the owner.
 - **A seal with Secure Boot off.** It trusts a boot program that nothing verified.
+- **A build of the root service for a test that seals with Secure Boot off.** It was the form of the test while no machine of the test had Secure Boot and a TPM together. The test then did not run the rule that a real machine runs, and a boot image of a test held a root service that a release must never hold. With a software TPM on the firmware with Secure Boot, the test needs no such build.
+- **A second signed volume for the other system.** The signature does not change PCR 11, so the volume of the other system of the trusted boot serves the machines of the measure and of the seal. A second volume adds a build and proves nothing more.
+- **The firmware that decides the TPM device.** The firmware with Secure Boot has a TPM driver. When the firmware decided the device, a machine could not have Secure Boot and a TPM together.
 
 ## Subtle points
 
@@ -139,7 +150,7 @@ The root service starts no TPM service when the trust record does not say `Measu
 
 ## Built and left
 
-Built: the TPM service with the CRB interface, its ring and its two commands; the encoding of the TPM commands and of their answers, with host tests; the proof of the creation (the ticket, the creation data, the public area), with host tests of a forged object; the record `MACHINET` of format 2, the recovery key and the key check, with host tests; `machine_seal()` with Secure Boot on only; the unseal at each start; the recovery key in the window of `unlock`; the new seal after a recovery, with Secure Boot on only; one `unlock` at a time; the test in `modustool test principals`, part of each full check, on six machines with one software TPM and no Secure Boot, five of them on the test system that seals with no Secure Boot and one on the main volume, where the seal is refused, in which the tool reads the recovery key off the screen, and one machine finds a record whose creation ticket has one byte changed and the TPM refuses it. No machine test makes a forged object with the policy of this system: it needs a second system that makes objects on the same TPM; the host tests refuse one.
+Built: the TPM service with the CRB interface, its ring and its two commands; the encoding of the TPM commands and of their answers, with host tests; the proof of the creation (the ticket, the creation data, the public area), with host tests of a forged object; the record `MACHINET` of format 2, the recovery key and the key check, with host tests; `machine_seal()` with Secure Boot on only; the unseal at each start; the recovery key in the window of `unlock`; the new seal after a recovery, with Secure Boot on only; one `unlock` at a time; the test in `modustool test principals`, part of each full check, on six machines with one software TPM: five with Secure Boot on, on signed volumes, in which the tool reads the recovery key off the screen, and one machine finds a record whose creation ticket has one byte changed and the TPM refuses it; one with Secure Boot off, where the TPM refuses for PCR 7 alone and the new seal is refused. No machine test makes a forged object with the policy of this system: it needs a second system that makes objects on the same TPM; the host tests refuse one.
 
 Left:
 
@@ -148,4 +159,3 @@ Left:
 - **The machine passphrase and the TPM together.** The machine passphrase as the authorization value of the sealed object, so the TPM counts the wrong tries. The keys of a named principal have this form ([tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md)); the TPM service already seals with an authorization value.
 - **A seal to the measure of the next system.** A signed policy of the publisher of the system, with a counter of the TPM that refuses an older system.
 - **A change of the recovery key**, and a new one when the old one is lost while the TPM still opens the key.
-- **The seal tested with Secure Boot on.** A machine of Secure Boot with a TPM tests the seal on the real rule, with no test volume.

@@ -12,7 +12,7 @@ The guide for a reader is [`docs/INSTALL.md`](../../../docs/INSTALL.md), "1. The
 
 ## Constraints
 
-- **A published volume is never a test volume.** A volume that the test signing key signed, the volumes of the test of the seal by the TPM, the boot image of a measure run, and any boot image that a test changed must never reach a release. A volume of the test signing key starts any system that anyone signs: its private key is published.
+- **A published volume is never a test volume.** A volume that the test signing key signed, the boot image of a measure run, and any boot image that a test changed must never reach a release. A volume of the test signing key starts any system that anyone signs: its private key is published.
 - **The production keys come from the environment.** They never enter the repository. The release command refuses to run with no key of the publisher: it never falls back to the test keys, as `build` does.
 - **The release ships the bytes that the tests ran.** The modules and the kernel of the image are those of the build that the machine tests boot: the build with the checks of the kernel. No other kind of build exists for a release.
 - **The tool uses the Odin standard library only**, with the source library of the system (`AGENTS.md`). The compression runs a program of the development shell, as the signature of the boot program runs `sbsign`.
@@ -81,7 +81,7 @@ In the build, `sbverify` checks the signed boot program with the certificate: a 
 After the build, the packaging checks the files that the build of the volume wrote beside it:
 
 - the file `<volume>.signed_by` must be the text of the key of the publisher; the text of the test signing key is refused, and so is a missing file;
-- the boot image of the volume must hold each module and each resource of the boot image of the build (`build/boot.image`), with the same name and the same BLAKE3 hash of its bytes, in the same order, then only the three resources that the build of a volume adds: the replacement list, the system description and its signature. The boot image of the test of the seal holds `root_seal_test` under the name `root` (the kernel starts the module of that name), so a check of the names does not find it; its bytes differ. The boot image of a measure run has one resource more. A module that a test changed has other bytes;
+- the boot image of the volume must hold each module and each resource of the boot image of the build (`build/boot.image`), with the same name and the same BLAKE3 hash of its bytes, in the same order, then only the three resources that the build of a volume adds: the replacement list, the system description and its signature. A boot image that holds another build of a module under the same name passes a check of the names; its bytes differ. The boot image of a measure run has one resource more. A module that a test changed has other bytes;
 - the system description of the volume must name the BLAKE3 hash of the kernel module of the build for the kernel. The boot program refuses a kernel with another hash at each start, so the kernel of the volume is the kernel of the build.
 
 The check reads the signed boot image beside the volume, not the volume itself: inside the volume the boot image is in the boot program, and the tool has no reader of a boot program. The release command builds the volume and the files beside it in one call, so they cannot come from two builds there.
