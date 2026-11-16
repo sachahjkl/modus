@@ -705,6 +705,22 @@ the_prompts_that_offer_the_recovery_key :: proc(t: ^testing.T) {
 	}
 }
 
+// The line of a lock names what the `unlock` that it stops ran for: each
+// mode that a session can ask for has words of its own, and a mode that
+// only unlocks says so.
+@(test)
+the_words_of_each_mode_of_unlock :: proc(t: ^testing.T) {
+	asked := [?]u64{MODE_CREATE_PRINCIPAL, MODE_SET_MACHINE_PASSPHRASE, MODE_SEAL_MACHINE_KEY, MODE_CHANGE_PASSPHRASE, MODE_NEW_RECOVERY_KEY}
+	for mode, index in asked {
+		testing.expect(t, mode_words(mode) != mode_words(MODE_UNLOCK))
+		for other in asked[index + 1:] {
+			testing.expect(t, mode_words(mode) != mode_words(other))
+		}
+	}
+	testing.expect_value(t, mode_words(MODE_UNLOCK_MACHINE_KEY_HELD), mode_words(MODE_UNLOCK))
+	testing.expect_value(t, mode_words(MODE_NEW_RECOVERY_KEY + 1), mode_words(MODE_UNLOCK))
+}
+
 // A new recovery key changes only the copy under the recovery key: the two
 // additional data stay, so the seal under the seal key still opens, and a
 // new passphrase keeps the copy under the recovery key.
