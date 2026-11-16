@@ -350,6 +350,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// the control lock, which this operation holds: the creation is
 		// then wholly before the write or after.
 		weight_limit := creation_weight_limit(index)
+		processor_self().thread_create_weight_limit = weight_limit
 		if _, accepted := op.thread_schedule_of_new_thread(weight_limit, v[4], v[5]); !accepted {
 			return .Bad_Operation
 		}

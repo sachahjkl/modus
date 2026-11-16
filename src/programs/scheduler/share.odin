@@ -337,7 +337,12 @@ program_limits_written: [PROGRAM_SLOT_LIMIT]Program_Limit_Written
 
 // program_limit_write gives a program its new-thread weight limit, through
 // the machine handle. It writes only a value that changes: the kernel keeps
-// the value of a program until the next write.
+// the value of a program until the next write. Only the policy writes the
+// value of a program, as only the policy writes a limit of a thread: the
+// root service gives the right Schedule to this program only. Another
+// holder of that right that wrote the value would not be corrected until
+// the next give-back; the order "write before the report" stays, because
+// the value is in the kernel.
 program_limit_write :: proc "contextless" (slot, serial: u64, limit: u32) {
 	written := &program_limits_written[slot]
 	if written.serial == serial && written.limit == limit {
@@ -1087,14 +1092,15 @@ unseen_threads_check :: proc "contextless" (program: Share_Program, new_part: u3
 // value is the condition that breaks that form, the sum is evidence only.
 // The case runs one round only before it reads: the round writes the
 // value of the program before it reads the report, so a thread that the
-// round did not see was created after that write. Two more conditions are
-// states of the kernel after that round: this program cannot create a
-// thread with a weight above the value, although its first thread has a
-// higher weight limit; and the first thread of a program that it starts
-// has the value. One more condition is an order of counts of ticks, as in
-// the case of the four programs: the part of the program of short threads
-// against the program of one thread is smaller with the policy than
-// without it.
+// round did not see was created after that write. The conditions that
+// break a kernel that ignores the value of the program are states after
+// the machine handle gave the first thread of this program a new-thread
+// weight limit of its own above the value: a weight above the value is
+// refused with the value in the error record, a thread with the weight 0
+// gets the value, and the first thread of a program that this thread
+// starts gets the value. The parts of the two programs over two intervals
+// are printed as a measure: they depend on where the balance places the
+// threads.
 short_threads_case :: proc "contextless" () -> bool {
 	if image == nil || self_slot == 0 {
 		system.log("scheduler: the share policy is not checked against short threads: no boot image, or the program did not find its own threads")
@@ -1146,20 +1152,44 @@ short_threads_case :: proc "contextless" () -> bool {
 	unseen_right := unseen.checked >= SHORT_THREADS_CHECKED && unseen.wrong == 0 && unseen.sum_most < op.WEIGHT_FULL
 	system.log("scheduler: the share policy and a program that keeps ", u64(SHORT_THREADS_ALIVE), " short threads alive, after one round: ", min(unseen.checked, SHORT_THREADS_CHECKED), " of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit ", u64(new_part), ": ", u64(unseen.wrong == 0), ", and those of one read summed to under 1024: ", u64(unseen.sum_most < op.WEIGHT_FULL), unseen_right ? string(": as it must") : string(": WRONG"))
 
-	// This program under the policy: its value and the value of its first
-	// thread are the small value, while the weight limit of its first
-	// thread is its part, which is higher. A weight between the two is
-	// refused, and the error record names the small value.
-	own_program, own_program_status := system.program_schedule_read(machine, self_slot, self_serial)
+	// The value of the program alone. The round gave the first thread of
+	// this program the small value too, so a creation by it holds by the
+	// value of the thread alone. The machine handle now gives that thread
+	// the full new-thread weight limit, which the kernel lowers to its
+	// weight limit, its part: above the small value. Its weight, request
+	// and weight limit stay, so nothing is raised. From here each check
+	// holds only when a creation takes the value of the program.
+	opened_status := system.Status.Bad_State
+	if before_open, before_open_status := system.thread_schedule_read(machine, self_machine_number); before_open_status == .Ok {
+		opened := before_open
+		opened.new_thread_weight_limit = op.WEIGHT_FULL
+		opened_status = system.thread_schedule_write(machine, self_machine_number, opened)
+	}
 	first, first_status := system.thread_schedule_read(machine, self_machine_number)
+	first_open := opened_status == .Ok && first_status == .Ok && first.new_thread_weight_limit > new_part + 1
+	own_program, own_program_status := system.program_schedule_read(machine, self_slot, self_serial)
+	// A weight between the value of the program and the value of the
+	// thread is refused, and the error record names the value of the
+	// program.
 	error: errors.Error_Record
 	_, between_status := system.thread_start(brief, nil, weight = u64(new_part) + 1, error = &error)
-	refused_right := own_program_status == .Ok && own_program.new_thread_weight_limit == new_part && first_status == .Ok && first.weight_limit > new_part + 1
-	refused_right &&= between_status == .Bad_Operation && error.limit == i64(new_part)
-	system.log("scheduler: under the share policy this program has the new-thread weight limit ", u64(own_program.new_thread_weight_limit), ", and the weight limit of its first thread is above ", u64(new_part) + 1, ": ", u64(first.weight_limit > new_part + 1), "; a new thread with the weight ", u64(new_part) + 1, " ", op.STATUS_NAMES[between_status], ", and the error record names ", u64(error.limit), refused_right ? string(": as it must") : string(": WRONG"))
+	// A thread with the weight 0 gets the value of the program as its
+	// weight and as its two limits.
+	limited_child = {read = .Bad_State, raise = .Ok}
+	child, child_status := system.thread_start(limited_child_run, nil)
+	if child_status == .Ok {
+		system.thread_wait(child)
+	}
+	child_schedule := limited_child.schedule
+	child_right := child_status == .Ok && limited_child.read == .Ok && child_schedule.weight == new_part && child_schedule.weight_limit == new_part && child_schedule.new_thread_weight_limit == new_part
+	refused_right := first_open && own_program_status == .Ok && own_program.new_thread_weight_limit == new_part
+	refused_right &&= between_status == .Bad_Operation && error.limit == i64(new_part) && child_right
+	system.log("scheduler: under the share policy the first thread of this program got through the machine handle a new-thread weight limit of its own above ", u64(new_part) + 1, ": ", u64(first_open), ", and the program has the new-thread weight limit ", u64(own_program.new_thread_weight_limit), "; a new thread with the weight ", u64(new_part) + 1, " ", op.STATUS_NAMES[between_status], ", and the error record names ", u64(error.limit), "; a new thread with the weight 0 has the weight, the weight limit and the new-thread weight limit ", u64(child_schedule.weight), ", ", u64(child_schedule.weight_limit), " and ", u64(child_schedule.new_thread_weight_limit), refused_right ? string(": as it must") : string(": WRONG"))
 
-	// A program that this program starts under the policy: its first
-	// thread has the small value, before any round wrote it.
+	// A program that this program starts under the policy, from the first
+	// thread whose own value is above the small value: its first thread
+	// has the value of the program of its starter, before any round wrote
+	// it.
 	started_right := case_programs_start(started_under_policy[:], started_described[:])
 	started_weights: Program_Weights
 	if started_right {
@@ -1167,15 +1197,17 @@ short_threads_case :: proc "contextless" () -> bool {
 		started_right = started_weights.threads == 1 && started_weights.most == new_part && started_weights.limit_most == new_part && started_weights.new_thread_limit_most == new_part
 	}
 	case_programs_stop(started_under_policy[:])
-	system.log("scheduler: the first thread of a program started under the share policy has the weight, the weight limit and the new-thread weight limit ", u64(started_weights.most), ", ", u64(started_weights.limit_most), " and ", u64(started_weights.new_thread_limit_most), started_right ? string(": as it must") : string(": WRONG"))
+	system.log("scheduler: the first thread of a program started under the share policy, by a thread whose own new-thread weight limit is above ", u64(new_part) + 1, ", has the weight, the weight limit and the new-thread weight limit ", u64(started_weights.most), ", ", u64(started_weights.limit_most), " and ", u64(started_weights.new_thread_limit_most), started_right && first_open ? string(": as it must") : string(": WRONG"))
 	with, with_ran := case_programs_interval(short_case_programs[:], true)
 	if !policy_weights_give_back() {
 		system.log("scheduler: after the case of the short threads, a write that gives the full weight limits back was refused")
 		return false
 	}
 
-	order_right := without_ran && with_ran && with[0] * without[1] < without[0] * with[1]
-	system.log("scheduler: the program of short threads against the program of one long thread, by the ticks of the kernel over one interval: its part is smaller under the share policy than without it", order_right ? string(": as it must") : string(": WRONG"))
-	system.log("scheduler: the program of short threads got ", without[0] * 100 / max(without[1], 1), " % of the program of one long thread without the share policy, and ", with[0] * 100 / max(with[1], 1), " % with it (measures)")
-	return unseen_right && refused_right && started_right && order_right
+	// The parts of the two programs are a measure, not a condition: a
+	// weight orders the share only between threads of one queue, and the
+	// balance places the threads, so no order of the two intervals follows
+	// from the weights.
+	system.log("scheduler: the program of short threads got ", without[0] * 100 / max(without[1], 1), " % of the program of one long thread without the share policy, and ", with[0] * 100 / max(with[1], 1), " % with it; each interval ended on its count of ticks: ", u64(without_ran), " and ", u64(with_ran), " (measures)")
+	return unseen_right && refused_right && started_right && first_open
 }

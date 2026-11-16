@@ -583,7 +583,12 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 				command := op.Thread_Control_Command(v[2])
 				rights = op.thread_control_rights(command)
 				machine_rights, by_machine_number := op.thread_control_machine_rights(command)
-				if slot, found := read_handle_find(program, v[0], .None); found && slot.kind == .Machine && by_machine_number {
+				if op.thread_control_names_a_program(command) {
+					// The schedule of a program: the machine handle only,
+					// so each other handle is explained as a handle of the
+					// wrong kind.
+					kind, rights = .Machine, machine_rights
+				} else if slot, found := read_handle_find(program, v[0], .None); found && slot.kind == .Machine && by_machine_number {
 					kind, rights = .Machine, machine_rights
 				} else if op.thread_control_needs_the_debugger(command) || found && slot.kind == .Program && op.thread_control_takes_debug_handle(command) {
 					// The debugger of a program names a thread by the
@@ -1168,8 +1173,9 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 	case .Thread_Create:
 		// The most of a weight is the limit of a new thread of the calling
 		// thread, which is the full weight unless the holder of the machine
-		// lowered it.
-		weight_limit := u64(creation_weight_limit(processor_self().current))
+		// lowered it: the value that the operation checked, kept on the
+		// processor.
+		weight_limit := u64(processor_self().thread_create_weight_limit)
 		switch {
 		case v[4] > weight_limit:
 			record_set(record, .Bad_Value, .None, 5, v[4], weight_limit, 0)

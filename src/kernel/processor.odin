@@ -226,6 +226,12 @@ Processor :: struct {
 	thread_write_refusal:       op.Thread_Write_Refusal,
 	thread_write_refused_value: u64,
 	thread_write_refused_limit: u64, // The most that the refused value can be. 0: the part has no range.
+	// The limit of a new thread that the last Thread_Create on this
+	// processor checked the weight against: the error record of a refusal
+	// takes it from here, not from a second read, which a write of the
+	// holder of the machine can change between the operation and the
+	// record.
+	thread_create_weight_limit: u32,
 	segments:      [7]u64,
 	task_state:    Task_State,
 }

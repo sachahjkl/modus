@@ -1842,12 +1842,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "scheduler: shares of the programs with 1, 2, 4 and 8 spinning threads under EEVDF, by the ticks of the kernel: without the share policy "},
 	{kind = .Wait, text = "scheduler: one round of the share policy, over "},
 	// A program that keeps short threads alive: the threads that no round
-	// saw have the new-thread weight limit of their program, a state; and
-	// an order of two counts of ticks.
+	// saw have the new-thread weight limit of their program; a creating
+	// thread whose own value is full creates under the value of its
+	// program. All are states; the parts of the two programs are a measure.
 	{kind = .Wait, text = "scheduler: the share policy and a program that keeps 6 short threads alive, after one round: 24 of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit 32: 1, and those of one read summed to under 1024: 1: as it must"},
-	{kind = .Wait, text = "scheduler: under the share policy this program has the new-thread weight limit 32, and the weight limit of its first thread is above 33: 1; a new thread with the weight 33 Bad_Operation, and the error record names 32: as it must"},
-	{kind = .Wait, text = "scheduler: the first thread of a program started under the share policy has the weight, the weight limit and the new-thread weight limit 32, 32 and 32: as it must"},
-	{kind = .Wait, text = "scheduler: the program of short threads against the program of one long thread, by the ticks of the kernel over one interval: its part is smaller under the share policy than without it: as it must"},
+	{kind = .Wait, text = "scheduler: under the share policy the first thread of this program got through the machine handle a new-thread weight limit of its own above 33: 1, and the program has the new-thread weight limit 32; a new thread with the weight 33 Bad_Operation, and the error record names 32; a new thread with the weight 0 has the weight, the weight limit and the new-thread weight limit 32, 32 and 32: as it must"},
+	{kind = .Wait, text = "scheduler: the first thread of a program started under the share policy, by a thread whose own new-thread weight limit is above 33, has the weight, the weight limit and the new-thread weight limit 32, 32 and 32: as it must"},
 	{kind = .Wait, text = "scheduler: the program of short threads got "},
 	{kind = .Wait, text = "scheduler: ok, no spinner starved under 3 strategies, a wake ended "},
 	{kind = .Wait, text = "scheduler: the window took "},
