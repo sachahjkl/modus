@@ -634,11 +634,14 @@ schedule :: proc "contextless" () -> ! {
 			continue
 		}
 		// The serial port: an idle processor writes the lines of the log
-		// that it does not have yet, until a queue receives a thread. The
-		// idle flag is set, so a waker sends an interrupt, which the window
-		// after the next byte takes (src/md/features/log_side_channels.md).
-		serial_drain_while_idle(cpu, pushes)
-		if queue_pushes() != pushes {
+		// that it does not have yet, until a queue receives a thread or an
+		// interrupt comes. The idle flag is set, so a waker sends an
+		// interrupt, which the window after the next byte takes. After an
+		// interrupt, as after idle_wait, the processor looks at its queues
+		// and sets its flag again: a wake of kick_all pushes no thread and
+		// clears the flag (src/md/features/log_side_channels.md).
+		interrupted := serial_drain_while_idle(cpu, pushes)
+		if interrupted || queue_pushes() != pushes {
 			intrinsics.atomic_store(&cpu.idle, false)
 			continue
 		}

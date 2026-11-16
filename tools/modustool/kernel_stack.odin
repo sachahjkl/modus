@@ -1197,7 +1197,11 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 	// Each place where an interrupt comes over the kernel: the idle wait,
 	// then each window.
 	interrupt_places := make([dynamic]int, 0, 1 + len(rules.interrupt_windows), context.temp_allocator)
-	append(&interrupt_places, idle_wait)
+	// A missing idle wait is a problem above, and the measure fails: -1
+	// would name any procedure.
+	if idle_wait >= 0 {
+		append(&interrupt_places, idle_wait)
+	}
 	for name in rules.interrupt_windows {
 		place := stack_procedure_named(procedures, name)
 		if place < 0 {

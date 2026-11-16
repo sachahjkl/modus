@@ -507,7 +507,7 @@ A processor takes locks only in this order. It takes a lock of a kind only if it
 8. **Wait lock** (one for each bucket of the wait table). One at a time.
 9. **Run lock** (one for each processor). Two at a time only to move a thread from a queue to another, in the order of the processor index: the balance, and a move for the placement of a thread.
 
-Interrupts are off in the kernel, so a processor never takes a lock again in an interrupt. Two places take an interrupt, and each holds no lock: `idle_wait`, and `interrupt_window`, after each byte of the drain of the serial port in the idle loop. A processor that waits for a lock answers `processor_sync` while it waits.
+Interrupts are off in the kernel, so a processor never takes a lock again in an interrupt. Two places take an interrupt, and each holds no lock and no serial writer: `idle_wait`, and `interrupt_window`, after each byte of the drain of the serial port in the idle loop, which frees the serial writer before the window and takes it again after. A processor that waits for a lock answers `processor_sync` while it waits.
 
 ### Rules that keep each path correct
 

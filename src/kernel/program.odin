@@ -2005,7 +2005,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// An interrupt in the idle loop: the drain of the serial port there
 		// leaves after it, as idle_wait returns after one interrupt, so the
 		// processor looks at the queues again (serial_drain_while_idle).
-		cpu.idle_interrupts += 1
+		intrinsics.atomic_add(&cpu.idle_interrupts, 1)
 	}
 	// The thread of a program entry is the current thread of this
 	// processor: no other processor takes it away.
