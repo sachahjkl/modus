@@ -1,0 +1,3 @@
+type: Changed
+
+**The light values of the colors that programs own.** Each window of the twenty programs that drew colors of their own (`monitor`, `clock`, `log`, `manual`, `rings` and others) now takes each color from the color tokens by its meaning, so it follows the light appearance with 4.5 to 1 for each text: the kernel entries are in the kernel blue, the pages in the color of memory, a wrong answer in the color of a failure. Three tokens are new: the warning color, the link color and eight series colors that tell apart the threads, the programs of the log, the records of a ring and the protections of a page. The boot display and the stage of `heron` stay dark.

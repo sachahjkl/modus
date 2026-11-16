@@ -281,7 +281,7 @@ overview_build :: proc "contextless" () -> int {
 	page_kind = .Overview
 	count := min(information.modules(catalog(), module_rows[:]), len(module_rows))
 	run_count, _ := information.running(machine, catalog(), running_rows[:])
-	put_built(0, COLOR_TITLE, "ALL MODULES (", u64(count), ")")
+	put_built(0, graphics.colors.text, "ALL MODULES (", u64(count), ")")
 	put("The flat tables of each module of the boot image, read by modus:support/information.", 0, graphics.colors.dim)
 	put("Sizes in bytes of memory. o: this table; up, down: the page of a module.", 0, graphics.colors.dim)
 	put("", 0, 0)
@@ -291,7 +291,7 @@ overview_build :: proc "contextless" () -> int {
 	for &row in module_rows[:count] {
 		name_width = max(name_width, len(system.name_of(row.name[:])))
 	}
-	put_built(0, COLOR_HEADING, padded("name", name_width), " code   const    data    zero  exports imports  by  runs")
+	put_built(0, graphics.colors.dim, padded("name", name_width), " code   const    data    zero  exports imports  by  runs")
 	totals: [4]i64
 	export_total, import_total, run_total := 0, 0, 0
 	for &row in module_rows[:count] {
@@ -302,11 +302,11 @@ overview_build :: proc "contextless" () -> int {
 		color := graphics.Color(graphics.colors.text)
 		switch {
 		case row.problem[0] != 0:
-			color = 0xF07070
+			color = graphics.colors.failed
 		case runs > 0:
-			color = COLOR_EXPORT
+			color = graphics.colors.program
 		case row.entry == 0:
-			color = COLOR_TITLE
+			color = graphics.colors.no_entry
 		}
 		put_built(0, color, padded(name, name_width), right(row.code, 6), right(row.constants, 8), right(row.data, 8), right(row.zero, 8), right(row.exports, 9), right(row.imports, 8), right(i64(by), 4), right(i64(runs), 6))
 		totals += {row.code, row.constants, row.data, row.zero}
@@ -364,32 +364,32 @@ information_page :: proc "contextless" (hash: [32]u8) {
 		}
 		information.problem_write(&writer, found.name, problem)
 		built_count += writer.count
-		put("PROBLEM", 0, COLOR_HEADING)
-		put_paragraph(system.written(&writer), 0, 0xF07070)
+		put("PROBLEM", 0, graphics.colors.dim)
+		put_paragraph(system.written(&writer), 0, graphics.colors.failed)
 		put("", 0, 0)
 		return
 	}
 	row: information.Module
 	information.module_row(found, &row)
-	put("SIZES", 0, COLOR_HEADING)
+	put("SIZES", 0, graphics.colors.dim)
 	put_built(2, graphics.colors.text, "code ", u64(row.code), ", constants ", u64(row.constants), ", data ", u64(row.data), ", zero data ", u64(row.zero), " bytes")
 	put("", 0, 0)
 	count := min(information.importers(catalog(), hash, import_rows[:]), len(import_rows))
-	put_built(0, COLOR_HEADING, "IMPORTED BY (", u64(count), ")")
+	put_built(0, graphics.colors.dim, "IMPORTED BY (", u64(count), ")")
 	for &item in import_rows[:count] {
 		replacement := system.name_of(item.replacement[:])
 		module_name := system.name_of(item.module[:])
 		if replacement != "" {
-			put_built(2, COLOR_CODE, module_name, ", import ", u64(item.number), ", slots ", u64(item.slots), ", through the replacement of ", system.name_of(item.name[:]))
+			put_built(2, graphics.colors.program, module_name, ", import ", u64(item.number), ", slots ", u64(item.slots), ", through the replacement of ", system.name_of(item.name[:]))
 		} else {
-			put_built(2, COLOR_CODE, module_name, ", import ", u64(item.number), ", slots ", u64(item.slots))
+			put_built(2, graphics.colors.program, module_name, ", import ", u64(item.number), ", slots ", u64(item.slots))
 		}
 	}
 	put("", 0, 0)
 	run_count, _ := information.running(machine, catalog(), running_rows[:])
 	text := hex_of(hash)
 	programs := running_count(text, run_count)
-	put_built(0, COLOR_HEADING, "PROGRAMS THAT RUN IT (", u64(programs), ")")
+	put_built(0, graphics.colors.dim, "PROGRAMS THAT RUN IT (", u64(programs), ")")
 	for &item in running_rows[:min(run_count, len(running_rows))] {
 		if string(item.hash[:]) != text {
 			continue
@@ -397,9 +397,9 @@ information_page :: proc "contextless" (hash: [32]u8) {
 		program := system.name_of(item.program[:])
 		if item.replaces[0] != 0 {
 			replaced, _ := information.hash_parse(string(item.replaces[:]))
-			put_built(2, COLOR_EXPORT, program, " (slot ", u64(item.slot), ") at ", system.Hex(u64(item.base)), ", in place of ", module_text(replaced))
+			put_built(2, graphics.colors.program, program, " (slot ", u64(item.slot), ") at ", system.Hex(u64(item.base)), ", in place of ", module_text(replaced))
 		} else {
-			put_built(2, COLOR_EXPORT, program, " (slot ", u64(item.slot), ") at ", system.Hex(u64(item.base)))
+			put_built(2, graphics.colors.program, program, " (slot ", u64(item.slot), ") at ", system.Hex(u64(item.base)))
 		}
 	}
 	put("", 0, 0)

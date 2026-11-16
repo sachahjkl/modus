@@ -62,8 +62,6 @@ WORKER_COUNT :: 4
 ITERATIONS :: 600
 ADD_TIME :: 150 // Milliseconds: each thread adds for this time.
 
-COLOR_WAITS :: 0xE0B040
-
 // The queue of work: the threads share it, the lock keeps it correct.
 Queue :: struct {
 	lock:    system.Lock,
@@ -95,12 +93,18 @@ made_locked, made_free: u64
 nothing: u64 // Always 0.
 sum_lock: system.Lock
 
+// The picture is in the series color of each thread in the dark appearance:
+// a picture keeps its pixels in both appearances. The legend of a thread
+// takes its series color of the appearance in force: the same hue.
+#assert(WORKER_COUNT <= graphics.SERIES_COLOR_COUNT)
 @(rodata)
-tints := [WORKER_COUNT][3]u32{{70, 150, 255}, {255, 150, 60}, {90, 230, 110}, {220, 100, 250}}
+picture_series := graphics.DARK_SERIES
 
+// tint_color gives the color of a pixel of the picture: the series color of
+// the thread, at the level 0 (black) to 255 (the color itself).
 tint_color :: proc "contextless" (number: int, level: u32) -> graphics.Color {
-	tint := tints[number]
-	return graphics.rgb(tint[0] * level / 255, tint[1] * level / 255, tint[2] * level / 255)
+	tint := picture_series[number]
+	return graphics.rgb((tint >> 16 & 0xFF) * level / 255, (tint >> 8 & 0xFF) * level / 255, (tint & 0xFF) * level / 255)
 }
 
 // One thread that adds to the number, and the additions that it made.
@@ -288,21 +292,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.draw_unsigned(table, after, y + 28, COLUMNS * ROWS, graphics.colors.dim)
 		for &worker, index in workers {
 			line := y + 60 + index * 44
-			after = interface.draw_text(table, x + 8, line, "thread ", tint_color(index, 255))
-			after = interface.draw_unsigned(table, after, line, u64(index + 1), tint_color(index, 255))
+			after = interface.draw_text(table, x + 8, line, "thread ", graphics.colors.series[index])
+			after = interface.draw_unsigned(table, after, line, u64(index + 1), graphics.colors.series[index])
 			interface.draw_unsigned(table, after + 16, line, u64(worker.share), graphics.colors.text)
 			// The part of the tiles of this picture that the thread took.
 			interface.draw_rectangle(table, x + 8, line + 20, PANEL - 16, 8, graphics.colors.background)
-			interface.draw_rectangle(table, x + 8, line + 20, int(worker.share) * (PANEL - 16) / (COLUMNS * ROWS), 8, tint_color(index, 255))
+			interface.draw_rectangle(table, x + 8, line + 20, int(worker.share) * (PANEL - 16) / (COLUMNS * ROWS), 8, graphics.colors.series[index])
 		}
 		line := y + 60 + WORKER_COUNT * 44 + 4
-		after = interface.draw_text(table, x + 8, line, "lock waits ", COLOR_WAITS)
-		interface.draw_unsigned(table, after, line, u64(queue.lock.waits), COLOR_WAITS)
+		// A wait of the lock is a wait in the kernel.
+		after = interface.draw_text(table, x + 8, line, "lock waits ", graphics.colors.kernel)
+		interface.draw_unsigned(table, after, line, u64(queue.lock.waits), graphics.colors.kernel)
 		interface.draw_text(table, x + 8, line + 24, "4 threads, 1 number", graphics.colors.dim)
 		after = interface.draw_text(table, x + 8, line + 42, "lock:    lost ", graphics.colors.text)
 		interface.draw_unsigned(table, after, line + 42, made_locked - sum_locked, graphics.colors.text)
 		after = interface.draw_text(table, x + 8, line + 60, "no lock: lost ", graphics.colors.text)
-		interface.draw_unsigned(table, after, line + 60, made_free - sum_free, COLOR_WAITS)
+		// The additions that the run with no lock lost: a sum that is wrong.
+		interface.draw_unsigned(table, after, line + 60, made_free - sum_free, graphics.colors.failed)
 		interface.window_frame_end(&drawing, &frame, &window)
 		display.wait(&window, now + FRAME_TIME)
 	}

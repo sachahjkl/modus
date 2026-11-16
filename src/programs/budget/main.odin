@@ -60,9 +60,6 @@ PART_PAGES :: 256
 FIRST_PAGES :: 200
 SECOND_PAGES :: 100
 
-COLOR_REFUSED :: 0xF06060
-COLOR_WRONG :: 0xE0B040
-COLOR_BAR :: 0x4A90E0
 
 // One step of the program: what it asked, the answer of the kernel, and
 // the pages that the budget holds after the step.
@@ -202,13 +199,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.colors.card_top)
 			}
 			interface.draw_text(table, 12, y, row.text, graphics.colors.text)
-			color: graphics.Color = row.refused ? COLOR_REFUSED : graphics.colors.program
-			if !row.correct {
-				color = COLOR_WRONG
-			}
+			// The expected answer, a refusal too, is the expected answer of
+			// the rules; another answer is a check that did not pass. The
+			// words of the answer say whether it is a refusal.
+			color := row.correct ? graphics.colors.program : graphics.colors.failed
 			interface.draw_text(table, ANSWER_X, y, string(row.buffer[:row.count]), color)
 			interface.draw_rectangle(table, BAR_X, y + 2, BAR_WIDTH, 10, graphics.colors.track)
-			interface.draw_rectangle(table, BAR_X, y + 2, int(row.pages * BAR_WIDTH / max(start.pages, 1)), 10, COLOR_BAR)
+			// The pages of a budget are memory.
+			interface.draw_rectangle(table, BAR_X, y + 2, int(row.pages * BAR_WIDTH / max(start.pages, 1)), 10, graphics.colors.memory)
 			interface.draw_unsigned(table, BAR_X + BAR_WIDTH + 8, y, row.pages, graphics.colors.text)
 			y += LINE
 		}

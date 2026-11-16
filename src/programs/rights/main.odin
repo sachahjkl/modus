@@ -60,8 +60,6 @@ ATTEMPT_CAPACITY :: 9
 HEIGHT :: 332
 #assert(HEIGHT == 12 + 5 * LINE + ATTEMPT_CAPACITY * LINE + 12)
 
-COLOR_REFUSED :: 0xF06060
-COLOR_WRONG :: 0xE0B040
 
 // One operation that the program asked, and the answer of the kernel.
 Attempt :: struct {
@@ -198,10 +196,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.colors.card_top)
 			}
 			interface.draw_text(table, 12, y, attempt.text, graphics.colors.text)
-			color: graphics.Color = attempt.status == .Ok ? graphics.colors.program : COLOR_REFUSED
-			if attempt.status != attempt.expected {
-				color = COLOR_WRONG
-			}
+			// The expected answer, a refusal too, is the expected answer of
+			// the rules; another answer is a check that did not pass. The
+			// words of the answer say whether it is a refusal.
+			color := attempt.status == attempt.expected ? graphics.colors.program : graphics.colors.failed
 			interface.draw_text(table, ANSWER_X, y, answer(attempt.status), color)
 			y += LINE
 		}
