@@ -320,7 +320,7 @@ Do not use: errno, exception, error code, detail record, error message.
 
 ### Error detail
 
-An error detail is one thing that a call that failed has to say, as one record of the error form of the call: an error record for an export, a load error for the loader.
+An error detail is one thing that a call that failed has to say, as one record of the error form of the call: an error record for an export and a kernel command, a load error for the loader.
 
 An error record holds one failure: the first argument that is wrong. A caller that wants each failure gives a table of error details, and the callee appends one detail for each thing that it finds, in order. The error record of the call is the first detail, so a caller with no table receives the same first answer.
 
@@ -332,13 +332,15 @@ Do not use: sub-error, cause, inner error, error list, diagnostic.
 
 ### Table of error details
 
-A table of error details is an optional Append table parameter of error details, in memory of the caller: the last parameter of an export that has an error record.
+A table of error details is an optional Append table of error details, in memory of the caller: the last parameter of an export that has an error record, or the table that a kernel command names in its last value.
 
 The table follows the rules of each Append table: the callee writes the details that fit, and the count is the count of all the details, also those that did not fit. With no table (`nil` in a direct call, the capacity 0 in an isolated call) the call gives its error record only. On success the callee does not touch the table, so the path of success costs nothing.
 
 In Odin the parameter is `details: ^system.Table_To_Append(errors.Error_Record)`. A reader finds it with `module.error_details_parameter`.
 
-The design: `docs/MODULE_CONTRACT.md`, "The table of error details".
+A kernel command names its table with bit 31 of its kind (`op.COMMAND_NAMES_ERROR_DETAILS`) and the address of the table in its last value: `system.call_with_error_details`. When the kernel refuses the command, it writes the error record, then one detail for each other argument that it finds wrong: a handle, a count, a set of flags or a choice. In the source of the kernel, a command with no table runs no added line.
+
+The design: `docs/MODULE_CONTRACT.md`, "The table of error details"; for a kernel command, "Kernel operations".
 
 Do not use: error list, error buffer, error stack, error chain.
 

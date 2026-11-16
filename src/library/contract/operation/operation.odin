@@ -233,6 +233,10 @@ Object_Kind :: enum u8 {
 // completion are an [error record](errors.Error_Record): the
 // argument that was wrong, its value, and what the kernel found (the
 // [errors of the kernel](docs/MODULE_CONTRACT.md#8-errors-that-diagnose)).
+// A command whose kind has the bit `COMMAND_NAMES_ERROR_DETAILS` also
+// receives one error detail for each other wrong argument, in the
+// [table of error details](term:table-of-error-details) that its last value
+// names.
 //
 // A handle argument names an object of this program by the number that a
 // grant or an operation gave. When the handle names no object of the kind

@@ -1220,7 +1220,7 @@ The calls that give, or gave, a status or a bool only, and the error record of e
 
 ### The table of error details
 
-The table of error details exists for the exports, the loader and the call from the host. It is optional, and costs nothing on the path of success.
+The table of error details exists for the exports, the loader, the call from the host and the kernel operations. It is optional, and costs nothing on the path of success.
 
 An error record stays one record of 56 bytes. A call that has more than one thing to say gives each thing as one error detail, in a table of error details that the caller gives (`GLOSSARY.md`). The table is optional: a caller that gives none receives the error record alone.
 
@@ -1261,13 +1261,16 @@ The answer of `remote` carries the details of a call that failed (section "A cal
 - `remote.Answer.details` (the place that was `reserved`) is the count of details of the full answer that the field holds after the call, at most `max(u32)`. When the export failed, the bytes of the answer are the details: `min(count, capacity)` records from the start of the field, cut to the call region (`remote.details_bytes`). The remote service reads the field after the call, and trusts none of its numbers: the service wrote it.
 - The tool gives a table of 16 details. It reads whole records only, and at most the count that the answer names (`remote.details_shown`): bytes that are not whole records, or more records than the count, are a lie of the answer, and the tool prints the records that are sound and one line that says what was wrong. A count larger than the records that came is the Append rule: the tool says how many did not come.
 
-#### Kernel operations (design only)
+#### Kernel operations
 
-The completion record of a kernel operation has a fixed size: its seven values are the error record. A table of details does not fit there. The place of the table, when a user needs it:
+The completion record of a kernel operation has a fixed size: its seven values are the error record. A table of details does not fit there: it is memory of the program, which the command names. The design: `src/md/features/kernel_error_details.md`.
 
-- **In the command, not in the thread.** One bit of the `kind` of a command record (bit 31, "the command names a table of error details") says that the last value of the command, `values[6]`, is the address of a table place of error records in memory of the program. An operation that uses all seven values has no table of details. A place in the thread record is refused: it is a value outside the call, the defect of `errno` (section "The three places").
-- **The kernel reads it on a failure only**: `diagnose` runs after the operation failed; it copies the table place from user memory with the checked copy of each address argument, appends a record for each cause that it finds now (each thread area that is full, each mapping that overlaps), and writes the count back. The Append rule and its checks are those of a callee.
-- **The cost on success**: the dispatch of a command removes the bit from the kind before it chooses the operation: one `and` instruction for each command. That is the one cost on the path of success, and it is the reason this is not done before a user needs it.
+- **In the command, not in the thread.** Bit 31 of the `kind` of a command record (`op.COMMAND_NAMES_ERROR_DETAILS`) says that the last value of the command, `values[6]`, is the address of a table place of error records in memory of the program (`op.Error_Details_Place`, the layout of `system.Error_Details`). A program calls `system.call_with_error_details(&error, &details, operation, values...)`. A place in the thread record is refused: it is a value outside the call, the defect of `errno` (section "The three places").
+- **Which operations**: each operation whose last value is not a parameter (`op.command_takes_error_details`), except `Guest_Run`, which the kernel runs before the dispatch of the others. A command of `Log`, which uses its last value, or of `Guest_Run` with the bit is refused with `Bad_Operation` and the record `Unsupported`, and the kernel writes no detail.
+- **What the kernel writes**: the error record of the completion is the first detail. Then one detail for each other argument, in their order, at most one for each argument, that a check finds wrong after the refusal: a handle (absent, ended, of the wrong kind, without the rights that the operation needs), a count above the limit of its form (`Too_Long`), a flag outside the flags of its form (`Bad_Flags`), a choice above its largest value or 0 where 0 names nothing (`Bad_Value`). A command has at most 7 details. A budget that cannot pay, a full table and the state of another program are not wrong arguments: the error record names them when they explain the status, and no detail does.
+- **An argument that the operation does not read** with the other values gets no detail (`op.argument_is_read`): the budget of a decommit, the thread of `Thread_Control` with a command out of range, the thread of `Fault_Handler_Set` that ends the delivery.
+- **The Append rule**: the kernel copies the table place once, writes the details that fit after `count` with the checked copy of a write under the program lock, and sets `count` to the count of the full answer: a detail past the capacity is counted and not written. A table place that the program cannot read stops everything. A record inside the capacity that the program cannot receive ends the answer there, and the count names the records written only. The completion holds the error record in each case.
+- **The cost on success.** A kind with bit 31 is no operation, so the dispatch takes it to its default branch, which refuses an unknown operation. Only that branch reads the bit: it removes it and runs the operation. In the source, a command with no table runs the same lines as before, except the event point of an operation when a rule of the kernel events observes operations. The machine code of `execute` can still differ (its prologue, its frame), because its default branch now calls it. A command with a table that succeeds pays one more pass through the dispatch, and one more frame of `execute` on the kernel stack. The kernel reads the table only in the path of a failure, after the operation freed its locks. The program `errors` prints the measures: a command that succeeds and one that is refused, each with no table and with a table.
 - **What a batch does**: each command of a batch has its own table, or none.
 
 ### A fault: the stack trace
@@ -1283,7 +1286,7 @@ Rule 8 below requires frame pointers. The kernel walks them when a thread faults
 ### What the records do not explain
 
 - The kernel finds the record after the operation, from the operation table: an operation that refuses for a reason that the table does not know gives `Refused` with the status.
-- A record holds one failure: the first argument that is wrong. A caller that wants each one gives a table of error details (section "The table of error details"); an export gives details only when its description declares the table.
+- A record holds one failure: the first argument that is wrong. A caller that wants each one gives a table of error details (section "The table of error details"); an export gives details only when its description declares the table, and a kernel command only when its kind has the bit of the table.
 - The record of an isolated call comes from another program: the caller checks the kind and the unit, and cannot prove the values.
 - The stack trace has 16 frames at most, and a function that does not keep `rbp` (code that is not built by the modus tool) cuts it.
 
