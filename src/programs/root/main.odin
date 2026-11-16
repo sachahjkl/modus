@@ -699,7 +699,9 @@ entropy_report: random.Entropy_Report
 // Then one loop runs for ever. It waits on the control ring of the
 // compositor (a start or a stop from the desktop), on the root ring of each
 // program, and on the answers of the network service and of the entropy
-// service, whose bytes it mixes into its generator. It checks each command
+// service, whose bytes it mixes into its generator; every 30 seconds it
+// asks the entropy service for the fresh bytes of the running programs
+// (entropy.odin). It checks each command
 // against the grants of the caller, runs it, and sends a completion. After
 // each pass, `reap` frees what this service held for the programs that
 // stopped. The root service never returns.
@@ -751,6 +753,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	date_page_create()
 	appearance_open() // appearance_edge.odin
 	disk_program_page_create()
+	fresh_bytes_create() // fresh_bytes.odin
 	show("the root service starts input", .Running, .Input)
 	{
 		table: rawptr
@@ -819,7 +822,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The compositor is also a service (src/programs/compositor/exports.odin):
 		// a service ring and its own file, as start() gives to a service.
 		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
-		// The file, two pointer themes, the settings page, five glyph caches, the date page.
+		// The file, two pointer themes, the settings page, five glyph caches, the date page, the fresh bytes page.
 		mappings: [12]system.Mapping
 		mapping_count := 0
 		served := &started[0]
@@ -854,6 +857,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		text_settings_give(mappings[:], &mapping_count, &values)
 		date_page_give(mappings[:], &mapping_count, &values)
+		fresh_bytes_page_give(served, mappings[:], &mapping_count, &values)
 		// The compositor imports the drawing module: its load needs the
 		// boot image as the source of its imports.
 		compositor_load_error: module.Load_Error
@@ -1104,8 +1108,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		appearance_step(&wait)
 		// A load from the disk and a call for the disk grant table have a
 		// deadline: the wait ends there, with or without an answer of the
-		// storage service.
-		system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), appearance_deadline))
+		// storage service. The next read of the fresh bytes has one too
+		// (entropy.odin).
+		system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), appearance_deadline, fresh_bytes_deadline))
 	}
 }
 
@@ -1341,9 +1346,12 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	slot.principal = principal // The name of its store carries the principal.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	// The storage file, the date page, the settings page, five glyph caches, the file of a service, the debug image, the disk program page, the demand cache and the request ring.
+	// The storage file, the date page, the fresh bytes page, the settings page, five glyph caches, the file of a service, the debug image, the disk program page, the demand cache and the request ring: 14 places for the union, and the largest role uses 13.
 	mappings: [14]system.Mapping
 	mapping_count := 0
+	// A mapping that the program cannot start without did not fit: the
+	// start fails after its line (mapping_needed_log).
+	mappings_full := false
 	// This service closes its handles of the connection after the start.
 	store_ring, store_region: system.Handle
 	defer if store_ring != 0 {
@@ -1374,6 +1382,11 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 		for &item in system.image_entries(image) {
 			if system.name_of(item.name[:]) == "storage" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 				values[storage.VALUE_FILE_SIZE] = item.size
+				if mapping_count >= len(mappings) {
+					mapping_needed_log("the file of the storage service", name, len(mappings))
+					mappings_full = true
+					continue
+				}
 				mappings[mapping_count] = {memory = image_memory, address = storage.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
 				mapping_count += 1
 			}
@@ -1409,7 +1422,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(slot.client)}})
 		grants[system.GRANT_DISPLAY] = {shared[0], {.Read, .Write}}
 	}
-	status := system.Status.Ok
+	status := mappings_full ? system.Status.No_Slot : system.Status.Ok
 	if .Root_Ring in role || .Connect in role || .Principals in role || .Debugger in role {
 		slot.requests_memory, slot.requests, status = system.ring_create()
 		grants[system.GRANT_ROOT] = {slot.requests_memory, {.Read, .Write}}
@@ -1478,8 +1491,9 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 			grants[date.GRANT_PORTS] = {clock_ports, {}}
 		}
 	}
-	// Each program: the date page, read-only.
+	// Each program: the date page and its fresh bytes page, read-only.
 	date_page_give(mappings[:], &mapping_count, &values)
+	fresh_bytes_page_give(slot, mappings[:], &mapping_count, &values)
 	// Each program: whether the machine runs for a measure. The boot image
 	// says it, so the modules of a measure run are the modules of a test.
 	if system.image_resource_find(image, system.MEASURE_RUN_RESOURCE) != nil {
@@ -1501,6 +1515,10 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	}
 	// A service: the service ring, and its own file, to read the
 	// descriptions of its exports.
+	if .Serve in role && status == .Ok && entry.offset % system.PAGE_SIZE == 0 && mapping_count >= len(mappings) {
+		mapping_needed_log("the file of the service", name, len(mappings))
+		status = .No_Slot
+	}
 	if .Serve in role && status == .Ok && entry.offset % system.PAGE_SIZE == 0 {
 		slot.service_memory, slot.service, status = system.ring_create()
 		grants[system.GRANT_SERVICE] = {slot.service_memory, {.Read, .Write}}
@@ -2384,6 +2402,7 @@ release :: proc "contextless" (item: ^Started) {
 	}
 	tpm_service_end(item)
 	entropy_service_end(item)
+	fresh_bytes_forget(item)
 	font_service_end(item)
 	endpoint_close(item)
 	disk_load_forget(item)
