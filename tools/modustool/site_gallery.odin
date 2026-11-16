@@ -198,6 +198,8 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "settings.png", group = .Interface, guide = "docs/FONTS.md", caption = "The program settings: the font, the subpixel order, the pointer theme and the grid fit change while the programs run."},
 	{file = "desktop_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The light appearance: the bar, the console and the settings in the light form of the color tokens, set with settings.set(\"appearance\", \"light\")."},
 	{file = "console_light.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The console in the light appearance: each value kind keeps its color, in its light value."},
+	{file = "action_bar.png", group = .Interface, guide = "docs/INTERFACE.md", caption = "The action bar of a window: each key combination drawn as keycaps, then the name of its action, a thin divider between items."},
+	{file = "action_bar_more.png", group = .Interface, guide = "docs/INTERFACE.md", caption = "A narrow action bar: the items of lowest priority wait in the list of the more button, which opens upward at the right edge of the bar."},
 	{file = "keys_french.png", group = .Interface, guide = "docs/FONTS.md", caption = "The layout of France in the console: é from its key, ê from the dead key ^, € from AltGr with e, each drawn from the glyph cache with no box."},
 	{file = "settings_kept.png", group = .Interface, guide = "docs/FONTS.md", caption = "A setting kept across a restart of the machine: the next start finds the font Spleen in the store of settings."},
 
