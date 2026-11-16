@@ -493,28 +493,44 @@ commands_start :: proc "contextless" () {
 	// ```
 	//
 	// The grant lasts until `remote_disallow`, and holds no call while the
-	// session of the principal is locked. It does not last across a restart
-	// of the machine.
+	// session of the principal is locked. It is a key of the disk grant
+	// table of the principal, so it lasts across a restart of the machine
+	// when that table does: principal 0 needs a machine passphrase or a
+	// machine key sealed by the TPM, and `disk_persistence("", "forget")`
+	// keeps it until the machine stops.
 	//
 	// Errors: this console does not act for its principal; the key has a
-	// wrong form; another principal allowed the key; the table is full.
+	// wrong form; another principal allowed the key; the principal has 4
+	// keys, or the table is full; the disk grant table of the principal
+	// takes no change now (the log says why).
 	command("remote_allow", {.Text}, .None, "let a client of remote call for the principal of this console, by its key", remote_allow)
 	// Revokes the key of a client of `remote` that the principal of this
 	// console allowed. `remote` ends the open connection of the client, and
-	// refuses the key in its next handshake. It gives the count of the
-	// connections to services that ended.
+	// refuses the key in its next handshake. It gives a sentence with the
+	// count of the connections to services that ended, and says when the
+	// disk grant table did not take the revocation: the key can then come
+	// back at the next start of the machine.
 	//
 	// - `key`: the key, as `remote_allow` took it.
 	//
+	// ```
+	// > remote_disallow("6a1f...")
+	// 4 connections to services ended
+	// ```
+	//
 	// Errors: the principal of this console did not allow the key.
-	command("remote_disallow", {.Text}, .Integer, "end the grant of a client key of remote", remote_disallow)
+	command("remote_disallow", {.Text}, .Text, "end the grant of a client key of remote", remote_disallow)
 	// Gives one row for each key of a client of `remote` that the principal
-	// of this console allowed.
+	// of this console allowed, with its state: `holds` (each call of the
+	// client acts for the principal), `locked` (the session of the
+	// principal is locked), or `contested` (another principal allowed the
+	// key too, one in this run and one in its disk grant table: it acts for
+	// neither until one of them revokes it).
 	//
 	// ```
 	// > remote_clients()
-	// key                                                               principal
-	// 6a1f...                                                                   0
+	// key                                                               principal  state
+	// 6a1f...                                                                   0  holds
 	// 1 row of Remote_Client
 	// ```
 	command("remote_clients", {}, .Table, "the client keys of remote that the principal of this console allowed", remote_clients)
@@ -2559,19 +2575,24 @@ remote_disallow :: proc "contextless" (arguments: []Value) -> Value {
 	if refused {
 		return refusal
 	}
-	return {kind = .Integer, integer = i64(completion.values[0])}
+	if completion.values[1] == system.REMOTE_CLIENT_KEY_CAN_COME_BACK {
+		return {kind = .Text, text = scratch_text(completion.values[0], " connections to services ended; the disk grant table of this principal did not take the revocation, so the key can come back at the next start of the machine: revoke it again then")}
+	}
+	return {kind = .Text, text = scratch_text(completion.values[0], " connections to services ended")}
 }
 
 // remote_clients gives one row for each key of a client of `remote` that
 // the principal of this console allowed: the root service gives a caller
 // the rows of its own principal only.
 remote_clients :: proc "contextless" (arguments: []Value) -> Value {
-	columns := [2]Column{text_column("key", 64), integer_column("principal")}
+	columns := [3]Column{text_column("key", 64), integer_column("principal"), text_column("state", 9)}
 	table, made := made_table("Remote_Client", columns[:])
 	if !made {
 		return fail("remote_clients: the line has no room for the description")
 	}
-	for place in u64(0) ..< remote.CLIENT_CAPACITY {
+	// The rows of the client table, then the contested keys of the disk
+	// grant table, whose rows are rows of another principal.
+	for place in u64(0) ..< remote.CLIENT_READ_PLACES {
 		completion, answered := disk_request(.Remote_Client, {4 = system.REMOTE_CLIENT_READ, 5 = place}, 3000)
 		if !answered {
 			return fail_no_answer()
@@ -2592,6 +2613,14 @@ remote_clients :: proc "contextless" (arguments: []Value) -> Value {
 		row := made_row(&table)
 		made_text(&table, row, 0, string(digits[:]))
 		made_integer(&table, row, 1, i64(completion.values[4]))
+		state := "holds"
+		switch completion.values[6] {
+		case system.REMOTE_CLIENT_LOCKED:
+			state = "locked"
+		case system.REMOTE_CLIENT_CONTESTED:
+			state = "contested"
+		}
+		made_text(&table, row, 2, state)
 	}
 	return made_value(&table, "remote_clients")
 }

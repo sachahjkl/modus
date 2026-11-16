@@ -1008,6 +1008,9 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// The charts of the measure history, on the page of the measured
 	// numbers, which take the cards of the charts of the home.
 	strings.write_string(&builder, SITE_MEASURE_HISTORY_RULES)
+	// The byte layouts of the guides: their colors are the tokens above,
+	// so they follow the light form with no rule of their own.
+	strings.write_string(&builder, byte_layout_rules())
 	// The colors of the states of a control, in the dark form.
 	site_control_variables(&builder, false)
 	// The colors and the widths of the tiles of the boot image: they come

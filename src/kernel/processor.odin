@@ -60,6 +60,11 @@ foreign _ {
 	// sti, hlt, cli: wait for one interrupt. It stays in processor.asm: the
 	// compiler takes hlt as the end of the flow of a template.
 	idle_wait :: proc "c" () ---
+	// sti, nop, cli: take the interrupts that wait, with no wait. The
+	// drain of the serial port in the idle loop opens it after each byte,
+	// so an interrupt waits one port write at most
+	// (src/md/features/log_side_channels.md).
+	interrupt_window :: proc "c" () ---
 	// The load of the segment table also loads cs with a far return: it
 	// uses its own return address.
 	gdt_load :: proc "c" (descriptor: rawptr) ---
@@ -175,6 +180,7 @@ Processor :: struct {
 	// the reports add the counts of all processors.
 	entries:       u64, // Kernel entries.
 	interrupts:    u64, // Device interrupts.
+	idle_interrupts: u64, // Interrupts that came over the kernel: at idle_wait or in interrupt_window.
 	first_use_faults: u64, // Page faults after which the page was present.
 	lock_counts:   [op.LOCK_KIND_CAPACITY]op.Lock_Count, // By Lock_Kind (lock.odin).
 	held:          [op.Lock_Kind]u32, // The locks of each kind that the processor holds.

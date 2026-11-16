@@ -2181,7 +2181,7 @@ Do not use: program table, origin page.
 
 A disk grant table is the table of the root service that binds each nickname of one principal to the hash of one module file, with the grants of that file.
 
-The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The persisted form is the object `grant_table` of the store `programs` of the principal, with a tag of keyed BLAKE2b under a key that a passphrase gives. For principal 0 that passphrase is optional (see "Machine passphrase", below): with none, the table lasts until the machine stops; with one, the root service reads the table after it is typed and writes it after each change. For a named principal the key comes from its unlock key at its unlock: the root service reads the table at the first unlock of the run, and a console of its session changes it. A table whose tag fails is refused, and gives no grant.
+The root service keeps one disk grant table for each principal, with 16 rows. `allow` and `disallow` change the grants of a row, `nickname_move` points its nickname to another file, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. It also keeps the client keys of `remote` that its principal allowed, 4 at most (see "Client key", below). The persisted form is the object `grant_table` of the store `programs` of the principal, with a tag of keyed BLAKE2b under a key that a passphrase gives. For principal 0 that passphrase is optional (see "Machine passphrase", below): with none, the table lasts until the machine stops; with one, the root service reads the table after it is typed and writes it after each change. For a named principal the key comes from its unlock key at its unlock: the root service reads the table at the first unlock of the run, and a console of its session changes it. A table whose tag fails is refused, and gives no grant.
 
 A disk grant table is not the grant table of the root service (`grants_of`), which gives the programs of the boot image their grants by their names, and which a disk program never reaches.
 
@@ -2403,7 +2403,7 @@ Do not use: superuser, privileged, person.
 
 A client key is the Ed25519 public key that a client of the remote service proves in the QUIC handshake, and that a principal allows so that each call of that client acts for it.
 
-The client sends it as a raw public key, with a CertificateVerify signed by its private key (mutual TLS 1.3). A principal allows it from a console that acts for it, with `remote_allow(key)`, and ends the grant with `remote_disallow(key)`. One key belongs to one principal. A key that no principal allowed is refused in the handshake with the alert access_denied, before any call. The key of the server of `remote` is another key: the pinned key of the client.
+The client sends it as a raw public key, with a CertificateVerify signed by its private key (mutual TLS 1.3). A principal allows it from a console that acts for it, with `remote_allow(key)`, and ends the grant with `remote_disallow(key)`. One key belongs to one principal. The disk grant table of the principal keeps the key, so it lasts across a restart as the other grants of the principal do. A key that no principal allowed is refused in the handshake with the alert access_denied, before any call. The key of the server of `remote` is another key: the pinned key of the client.
 
 The design: `docs/PRINCIPALS.md`, "The client keys of remote".
 
@@ -2413,7 +2413,7 @@ Do not use: client certificate, API key.
 
 The client table is the page in which the root service keeps each client key that a principal allowed, with that principal and a serial; the remote service reads it and never writes it.
 
-Each row is one grant (`remote.Client`). Its serial names that grant: a new row, a lock and an unlock of the session of its principal each give a new one, and a connection to a service that the root service made for a row ends when the serial of the row changes. The remote service maps the table with the right Read only, by its start grant `Remote_Clients`, and waits on its version, which the root service wakes at each change. It holds 8 rows, 4 of them for one principal at most, and lasts until the machine stops.
+Each row is one grant (`remote.Client`). Its serial names that grant: a new row, a lock and an unlock of the session of its principal each give a new one, and a connection to a service that the root service made for a row ends when the serial of the row changes. The remote service maps the table with the right Read only, by its start grant `Remote_Clients`, and waits on its version, which the root service wakes at each change. It holds 8 rows, 4 of them for one principal at most. The table itself lasts until the machine stops: the disk grant table of each principal keeps its keys, and after the read of that table the root service gives each key a row again, with a new serial. A row whose key another principal allowed too, one in this run and one in its disk grant table, is contested: it holds no grant for either principal until one of them revokes the key.
 
 The design: `src/library/contract/remote/client_table.odin`; `docs/PRINCIPALS.md`, "The client keys of remote".
 
@@ -2956,6 +2956,8 @@ Device memory is a memory object over the registers of a device, at physical add
 A device service drives its device by reads and writes of its registers. Device memory gives it these registers as an ordinary memory object, with a handle and the rights of a handle, so a device service needs no special access and can reach only the registers of its own device.
 
 The root service makes it with `Device_Create`, the kind `Memory`, a physical address (a multiple of 4096) and a count of pages. This needs the machine handle with the right **Devices**, which only the root service holds. The kernel refuses a range that meets memory that the firmware gave as free or as loaded, so device memory never reaches the memory of a program or of the kernel. The result is a memory handle with **Give**, **Read** and **Write**. The root service reads the base address registers of the device on the bus, makes one device memory object for each of them, and gives each to the device service in its context (the roles `GRANT_BAR + n` of `src/library/support/pci`). A mapping of it uses no cache, because a read of a register has an effect and must reach the device each time.
+
+The kind `Display_Memory` makes the same object over the video memory of a display, which holds its screen pages. Its mapping has the page attribute of the framebuffer of the firmware, not "no cache": a read of a pixel has no effect, and a write of each pixel to the device would make each frame slow. The kernel accepts it only for a range that holds the address of the framebuffer of the firmware, and gives it no requester for the IOMMU.
 
 Device memory is not the memory that a device reads and writes for data: that is ordinary memory made `Contiguous`, such as the data region or the memory of the queues. It pays nothing from a budget, because it is not memory.
 
@@ -4467,15 +4469,41 @@ It is a rule of the system for every window, and a program writes no code for it
 
 The compositor counts, for each window, the `Present` records that named the picture that it already read: `pictures_drawn_again` in a row of `compositor.windows()`. It is 0 for a program that keeps the rule. The rule does not stop a hostile program, which holds the right to write both pictures: such a program spoils its own window, and no other.
 
+The rule holds for the frames of the compositor too: on a display with two screen pages, the compositor writes the page that the display does not show, then a page flip shows the frame whole (`frames_on_the_shown_page` is 0 in the row of `compositor.screen()`).
+
 The design: `src/md/infrastructure/whole_frame.md`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: tear-free, double buffering, vertical synchronization.
+
+### Screen page
+
+A screen page is one whole screen in the video memory of the display: the display shows one screen page at a time.
+
+The standard VGA of the test machine has 16 MiB of video memory, and a screen of 1024 by 768 pixels takes 3 MiB, so it holds two screen pages. The page 0 is the framebuffer of the firmware. The compositor writes each frame into the page that the display does not show, then a page flip shows it. A screen page holds the frame of two frames before: the compositor keeps, for each page, the rectangles where it differs from its frame in memory, as the window layer does for the two pictures of a surface. On a display with no page flip, the compositor has one screen page, and writes the page that the display shows.
+
+A screen page is not a picture: a picture is in the memory of a surface of a program, and the compositor reads it.
+
+The design: `src/md/infrastructure/whole_frame.md`.
+
+Do not use: back buffer, front buffer, framebuffer (for the page 1).
+
+### Page flip
+
+A page flip is the one write of a display register that makes the display show another screen page.
+
+The compositor writes the first line of the page in the register `Offset_Y` of the display registers of Bochs, then reads it back: a value that differs says that the display refused the page, and the compositor goes back to one screen page with one line on the log. On the standard VGA of QEMU, the flip takes effect when the write returns, so the page that the display showed before is free at once. A real display takes the new page at its next vertical blank, which this form does not wait for. `compositor.screen()` counts the flips in `page_flips`.
+
+A page flip is not a `Present`: a `Present` names the picture of a surface that the compositor reads next; a page flip names the screen page that the display shows.
+
+The design: `src/md/infrastructure/whole_frame.md`.
+
+Do not use: buffer swap, vsync.
 
 ### Compositor
 
 The compositor is the service that owns the display: it combines the surfaces of the programs into the framebuffer and routes the input to the program that has the focus.
 
-The compositor is the one program that writes the screen. The root service gives it the framebuffer, a ring to the input service, and a ring to each program with a surface (`Client_Add`). It draws the background, the bar, each window (a title bar over the surface of its program, with a border), the two menus of the bar, the palette and the pointer. It draws again only the damage rectangles of a frame. It sends each key to the program in front, and each pointer event over a surface to the program of that surface, in the coordinates of the surface.
+The compositor is the one program that writes the screen. The root service gives it the framebuffer, or the two screen pages of the display with its display registers, a ring to the input service, and a ring to each program with a surface (`Client_Add`). It draws the background, the bar, each window (a title bar over the surface of its program, with a border), the two menus of the bar, the palette and the pointer. It draws again only the damage rectangles of a frame, and puts each frame on the screen by a page flip. It sends each key to the program in front, and each pointer event over a surface to the program of that surface, in the coordinates of the surface.
 
 In the first version, it is also the desktop shell: it starts a program from its menus or the palette by the command `Start` to the root service, and it stops a program when its window closes. It serves exports, such as `compositor.pointer()`, which the machine tests read through the remote service.
 
@@ -5339,7 +5367,7 @@ Do not use: proportional font cache.
 
 The font service is the program `glyphs`: it draws the glyphs of the characters past the glyph cache into the demand cache.
 
-It is the only program that reads outlines at run time: the subsets of the interface font and of the two weights of the font of the cells that its module holds. At its start, before it reads a request, it draws each character of the subset of each demand face, so the demand cache holds the same entries whatever the programs draw; a character outside the subset is absent. Then it sets the word `subset_drawn` of the demand cache and wakes the programs that wait on it. It draws a glyph with the renderer of the build, at each scale and each position of the glyph cache of the same font file, so a glyph on demand has the pixels that the build would give it. The root service starts it after the compositor as a part of the system, and gives it the demand cache with Write and a control ring that names the request ring of each program. It answers each request with the generation of the demand cache and the counts of drawn, absent and refused characters. It is not a font file and not a renderer in each program, and a program never waits for it: a character that is not ready draws the replacement glyph.
+It is the only program that reads outlines at run time: the subsets of the interface font and of the two weights of the font of the cells that its module holds. At its start, before it reads a request, it draws each character of the subset of each demand face, so the demand cache holds the same entries whatever the programs draw; a character outside the subset is absent. Then it sets the word `subset_drawn` of the demand cache and wakes the programs that wait on it. It draws a glyph with the renderer of the build, at each scale and each position of the glyph cache of the same font file, so a glyph on demand has the pixels that the build would give it. The root service starts it after the compositor as a part of the system, and gives it the demand cache with Write and a control ring that names the request ring of each program. It answers each request with the generation of the demand cache and the counts of drawn, absent and refused characters, and reads the requests of each program within its budget of requests. It is not a font file and not a renderer in each program, and a program never waits for it: a character that is not ready draws the replacement glyph.
 
 The design: `src/md/features/glyphs_on_demand.md`.
 
@@ -5364,6 +5392,16 @@ The demand cache keeps the glyphs of each face apart, because a glyph on demand 
 The design: `src/md/features/glyphs_on_demand.md`.
 
 Do not use: font slot, font index.
+
+### Budget of requests
+
+A budget of requests is the most requests of one program that the font service reads in one window of time: 32 in each window of 1000 ms.
+
+It bounds the time that one program costs the font service, which the bound of a turn does not: a program that writes its request ring with no end gets its budget, then its requests wait in its ring until the window ends. They are read then, not dropped. The answer of the request that spends the last of a window names the end of the window, each answer gives the count of the windows in which the program passed, and the log has one line for each program at its first pass. Each program has its own budget and its own count, so a hold tells it nothing of the requests of another. A program that asks only for what it draws never meets it. It is not a budget of the kernel, which pays for kernel objects, and not a budget of work of QUIC, which is a token bucket.
+
+The design: `src/md/features/glyphs_on_demand.md`; the guide: `docs/FONTS.md`, "13.2.4 The budget of requests of a program".
+
+Do not use: request quota, rate limit (for this), request budget.
 
 ### Setting
 
@@ -7493,6 +7531,16 @@ The size, the alignment, the offsets and the values come from the compiler that 
 The design: `docs/SITE.md`, "The types".
 
 Do not use: tooltip, type info, hover card (for this).
+
+### Byte layout
+
+A byte layout is the diagram of the bytes of one record of a format: rows of 8 bytes, the offset of each row, and each field as a rectangle over its bytes with its name and its size.
+
+It answers "where is each byte?" in the manner of the header diagrams of the RFCs. The offsets and the sizes come from the compiler that builds the tool (`type_info_of`), and the type and the comment of each field from the source, so the diagram cannot differ from the code. A guide marks its place with a fence `byte-layout`, whose body is the same layout as a list of text for a reader of the raw Markdown; the tool writes that list and checks it. The guide of the module contract shows the header, the table directory and the record of each table of a module file. A byte layout is not a type card: the card lists the fields of a type; the layout draws them in place.
+
+The design: `docs/SITE.md`, "The byte layouts".
+
+Do not use: packet diagram, struct diagram, byte map.
 
 ### Identity card
 

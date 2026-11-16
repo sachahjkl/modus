@@ -103,6 +103,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/network",
 	SOURCE_FOLDER_SUPPORT + "/tcp",
 	SOURCE_FOLDER_SUPPORT + "/virtio",
+	SOURCE_FOLDER_SUPPORT + "/bochs_display",
 	SOURCE_FOLDER_SUPPORT + "/web",
 	SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
 	SOURCE_FOLDER_SUPPORT + "/random",
@@ -579,6 +580,16 @@ COMMANDS :: [?]Command {
 	// and removed in the commit that ends the work
 	// (docs/TOOLS.md, "The roadmap").
 	{name = "roadmap", about = "check: the planned work of `" + ROADMAP_FILE + "`, in the sections Now, Next, Later and Maybe, for the page of the roadmap of the site", run = run_roadmap},
+	// Works on the fences `byte-layout` of the guides, whose body is the
+	// text form of the byte layout of a record of a format.
+	//
+	// - `write`: writes the body of each fence again from the code: the
+	//   offsets and the sizes from the compiler, the types from the source.
+	// - `check`: checks that each body is that text. `modustool check` runs
+	//   it, and `modustool site` stops on such a fault too.
+	//
+	// The design: (docs/SITE.md, "The byte layouts").
+	{name = "byte-layouts", about = "write | check: the text of each fence `" + BYTE_LAYOUT_FENCE_LANGUAGE + "` of the guides, the byte layout of a record of a format from the code", run = run_byte_layouts},
 	// Writes the site in `build/site/`: the home, the guides, the reference
 	// tables read from the code, the status, the news, the releases, the
 	// roadmap, the index of the search and its script.
@@ -1145,6 +1156,9 @@ run_check :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	if !roadmap_check() {
+		return EXIT_FAILURE
+	}
+	if !byte_layouts_check() {
 		return EXIT_FAILURE
 	}
 	if !reuse_list_check() {

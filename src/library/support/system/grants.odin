@@ -332,16 +332,28 @@ Root_Command :: enum u32 {
 	// principal of the caller: each call of that client then acts for it.
 	// REMOTE_CLIENT_REVOKE frees the row of the key: the root service ends
 	// each connection to a service that was made for the row, and the remote
-	// service ends the open connection of the client. REMOTE_CLIENT_READ
-	// reads the row values[5]: the completion has the key in values[0..3],
-	// the principal in values[4], and 1 in values[5] when the row is in use.
+	// service ends the open connection of the client. The allow and the
+	// revocation also change the disk grant table of the principal, which
+	// keeps the key across a restart. The completion of a revocation has
+	// the count of the connections that ended in values[0], and
+	// REMOTE_CLIENT_KEY_CAN_COME_BACK in values[1] when the disk grant table
+	// did not take the revocation. REMOTE_CLIENT_READ reads the place
+	// values[5], below remote.CLIENT_READ_PLACES: a row of the client table,
+	// then a contested key of the disk grant table of the caller, whose row
+	// is a row of another principal. The completion has the key in
+	// values[0..3], the principal in values[4], 1 in values[5] for a key of
+	// the principal of the caller, and its state in values[6]
+	// (REMOTE_CLIENT_HOLDS, REMOTE_CLIENT_LOCKED, REMOTE_CLIENT_CONTESTED).
 	// The caller must act for its principal (`No_Grant`, unit
 	// `Acts_For_Principal`). A key of zeros is refused with `Bad_Value`; a
 	// key that another principal allowed with `Exists` (unit `Grants`); a
 	// full table, or a principal with remote.CLIENT_ROWS_OF_ONE_PRINCIPAL
-	// rows, with `Full` (unit `Grants`); a revocation of a key that the
-	// principal of the caller did not allow with `Absent` (unit `Grants`).
-	// The allow of a key that the principal allowed already changes nothing.
+	// keys, with `Full` (unit `Grants`); an allow while the disk grant table
+	// of the principal takes no change with `Refused`; a revocation of a key
+	// that the principal of the caller did not allow with `Absent` (unit
+	// `Grants`). A revocation is never refused for the state of the disk
+	// grant table. The allow of a key that the principal allowed already
+	// changes nothing.
 	Remote_Client = 26,
 }
 
@@ -349,6 +361,17 @@ Root_Command :: enum u32 {
 REMOTE_CLIENT_ALLOW :: 1
 REMOTE_CLIENT_REVOKE :: 2
 REMOTE_CLIENT_READ :: 3
+
+// The state of a client key in values[6] of the completion of a
+// REMOTE_CLIENT_READ.
+REMOTE_CLIENT_HOLDS :: 0 // Each call of its client acts for the principal.
+REMOTE_CLIENT_LOCKED :: 1 // The session of the principal is locked: the key opens no connection until the unlock.
+REMOTE_CLIENT_CONTESTED :: 2 // Two principals allowed the key, one in this run and one in its disk grant table: it acts for neither until one of them revokes it.
+
+// The flag of values[1] of the completion of a REMOTE_CLIENT_REVOKE: the
+// disk grant table of the principal did not take the revocation, so the
+// key can come back at the next start of the machine.
+REMOTE_CLIENT_KEY_CAN_COME_BACK :: 1
 
 // The change of a Principal_Change command, in values[4].
 PRINCIPAL_CHANGE_PASSPHRASE :: 1

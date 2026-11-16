@@ -569,6 +569,9 @@ Operation :: enum u32 {
 	//   - `Memory`: `a` the physical address, a multiple of 4096, and `b` the count of pages of the
 	//     registers of a device: a memory handle with **Give**, **Read** and **Write**, mapped with no cache.
 	//     The range meets no memory that the firmware gave as free or as loaded;
+	//   - `Display_Memory`: as `Memory`, for the video memory of a display: the range must hold the
+	//     address of the framebuffer of the firmware; the mapping has the page attribute of that
+	//     framebuffer, not "no cache", and the object has no requester for the IOMMU;
 	//   - `Message`: `a` the physical address where a memory base address register of the device starts:
 	//     a message interrupt (MSI-X) of the first processor, for that device: an interrupt handle with
 	//     **Give** and **Read**. With interrupt remapping in use, the entry of the message names that device,
@@ -580,7 +583,7 @@ Operation :: enum u32 {
 	// 2. for `Message`: the address that the device writes: the remappable form of the entry with
 	//    interrupt remapping of Intel in use, else the compatible form of the first processor; for
 	//    `Memory`: the `Device_Memory_Facts` of the device whose base address register starts at `a`
-	//    (empty with no IOMMU in use);
+	//    (empty with no IOMMU in use, and always empty for `Display_Memory`);
 	// 3. for `Message` only: the value that the device writes there: 0 in the remappable form; the
 	//    index of the entry in the interrupt table of the device with interrupt remapping of AMD in use;
 	//    else the vector.
@@ -589,7 +592,9 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Devices**.
 	// - `Bad_Address`: the ports, the line or the range of memory is out of its range.
-	// - `Bad_Operation`: `kind` is `None` or a kind that the kernel does not know.
+	// - `Bad_Operation`: `kind` is `None` or a kind that the kernel does not know; or `Display_Memory` over
+	//   a range that does not hold the framebuffer of the firmware: the error record has the kind
+	//   `Bad_Value` for `a`, with the address of that framebuffer as its limit.
 	// - `No_Slot`: no free memory object, no free message interrupt (`MESSAGE_CAPACITY`), or the handle
 	//   table of the program is full.
 	Inspect        = 14, // (machine, kind: Inspect_Kind, index, address, size) -> bytes written.
@@ -2889,6 +2894,13 @@ Device_Kind :: enum u64 {
 	Interrupt = 2, // A line of the 8259: `a` from 1 to 15.
 	Memory    = 3, // The registers of a device: `a` the physical address, `b` the count of pages; mapped with no cache.
 	Message   = 4, // A message interrupt (MSI-X): the results give the address and the value that the device writes.
+	// The video memory of a display, which holds its screen pages: `a` the physical address, `b` the count of
+	// pages; the range must hold the address of the framebuffer of the firmware. The same device memory as
+	// `Memory`, with no requester for the IOMMU, and its mapping has the page attribute of the framebuffer of the
+	// firmware: the default entry of the page attribute table, so the memory type ranges (MTRR) that the
+	// firmware set decide the type. A mapping with no cache makes each write of a pixel a write to the device
+	// (src/md/infrastructure/whole_frame.md).
+	Display_Memory = 5,
 }
 
 // What `Device_Create` of the kind `Memory` says of the device whose

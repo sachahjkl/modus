@@ -66,6 +66,8 @@ Screen :: struct {
 	presents: i64, // The Present records of all the programs since the start.
 	damage:   i64, // The damage rectangles that wait for the next frame.
 	desktop:  i64, // 1: a change of the desktop itself waits for the next frame: the pointer, the bar, a menu, the palette, a window that appeared, moved or closed.
+	page_flips: i64, // The page flips since the start: each one showed a frame whole.
+	frames_on_the_shown_page: i64, // The frames that the compositor wrote into the screen page that the display showed. 0 on a display with two screen pages.
 }
 
 ERROR_ACTS_FOR_PRINCIPAL :: -1
@@ -240,7 +242,7 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 	return i64(order_count)
 }
 
-// screen gives the frames that the compositor drew, the Present records that it received, the damage rectangles that wait for the next frame, and whether a change of the desktop itself waits, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+// screen gives the frames that the compositor drew, the Present records that it received, the damage rectangles that wait for the next frame, whether a change of the desktop itself waits, and how its frames reached the screen, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
 //
 // **What it is for.** A caller that takes a picture of the screen from
 // outside, as the machine test does through the remote service, reads if
@@ -258,6 +260,13 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 //   frame: the pointer, the bar, a menu, the palette, a window that
 //   appeared, moved or closed. The `Present` of a program is not in it:
 //   `windows()` gives it for each window, in `waits`.
+// - `page_flips`: the [page flips](term:page-flip) since the start. With
+//   two [screen pages](term:screen-page), each frame goes into the page
+//   that the display does not show, and a flip shows it whole.
+// - `frames_on_the_shown_page`: the frames that the compositor wrote into
+//   the screen page that the display showed, which the display could show
+//   in part. It is 0 on a display with two screen pages. With one, or after
+//   a flip that the display refused, it counts each frame.
 //
 // The row counts each record that a program sent before the call: the
 // compositor reads the ring of each window before it answers. It does not
@@ -278,7 +287,7 @@ screen_state :: proc "c" (result: ^[]Screen, error: ^errors.Error_Record) -> i64
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	if len(result^) > 0 {
-		result[0] = {frames = i64(frames), presents = i64(presents), damage = i64(damage_count), desktop = desktop_change_waits ? 1 : 0}
+		result[0] = {frames = i64(frames), presents = i64(presents), damage = i64(damage_count), desktop = desktop_change_waits ? 1 : 0, page_flips = i64(page_flips), frames_on_the_shown_page = i64(frames_on_the_shown_page)}
 	}
 	return 1
 }

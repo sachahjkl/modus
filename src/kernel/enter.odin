@@ -690,20 +690,31 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .Bad_Address
 			}
 			slot = {kind = .Interrupt, rights = RIGHTS_INTERRUPT, object = u32(v[2])}
-		case .Memory:
+		case .Memory, .Display_Memory:
 			// The registers of the IOMMU and the configuration of the bus
 			// that it reads belong to the kernel while it is in use.
 			if !device_range(v[2], v[3]) || iommu_owns_range(v[2], v[3]) {
 				return .Bad_Address
 			}
+			registers := op.Device_Kind(v[1]) == .Memory
+			if !registers && !display_memory_range(v[2], v[3]) {
+				return .Bad_Operation
+			}
 			region := region_device(v[2], v[3])
 			if region == 0 {
 				return .No_Slot
 			}
-			regions[region].uncached = true
+			// A read of a register has an effect, so it must reach the
+			// device each time. The pixels of a screen page do not: they
+			// keep the rule of the framebuffer of the firmware, which the
+			// kernel maps with no attribute of its own.
+			regions[region].uncached = registers
 			// The function whose registers these are: the program that holds
-			// the handle is its service for the IOMMU.
-			regions[region].requester = iommu_requester_of(v[2])
+			// the handle is its service for the IOMMU. Pixels program no
+			// access of the device: video memory has no requester.
+			if registers {
+				regions[region].requester = iommu_requester_of(v[2])
+			}
 			handle := handle_insert(program, {kind = .Memory, rights = {.Give, .Read, .Write}, object = region})
 			if handle == 0 {
 				regions[region].references = 1
