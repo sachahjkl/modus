@@ -52,7 +52,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **Every Greek letter in the cells.** A monospace font with the whole Greek block, or a wider Paper Mono, gives the cells of the terminal α to ω, and not only the five Greek letters of Paper Mono. [Design](src/md/features/glyphs_on_demand.md)
 - **Eviction from the demand cache.** The font service reuses the place of a glyph that no frame of a program can still draw, by the frame generation of each program. The demand cache then holds the characters of a long session in a fixed memory. [Design](src/md/features/glyphs_on_demand.md)
 - **More scripts on demand.** The font service holds a font with Latin Extended-A and other scripts, which B612 does not have. A principal then writes the languages of Central Europe with no larger glyph caches. [Design](src/md/features/glyphs_on_demand.md)
-- **A budget of requests for each program.** The font service counts the requests of each program in a time and tells once a program that passes its budget. A program that writes its request ring with no end then costs the service a bounded time, and not only a bounded share of each turn. [Design](src/md/features/glyphs_on_demand.md)
 - **A processor time that the other programs do not set.** The processor time of a program is an amount that its budget holds and divides among its children, as its log records are. A thread then cannot learn from its own share that a sibling ran. [Design](src/md/features/log_side_channels.md)
 
 ## Maybe
