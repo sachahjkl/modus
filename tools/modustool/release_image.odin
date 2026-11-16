@@ -887,7 +887,11 @@ release_image_command :: proc() -> int {
 		return EXIT_FAILURE
 	}
 	volume := release_boot_volume()
-	if !make_folder(BOOT_OBJECT_FOLDER) || !system_public_key_write() || !boot_volume_build(volume) {
+	if problem := boot_volume_release_problem(volume); problem != "" {
+		fmt.eprintfln("modustool: release: %s: a release never ships it", problem)
+		return EXIT_FAILURE
+	}
+	if !make_folder(BOOT_OBJECT_FOLDER) || !system_key_write() || !boot_volume_build(volume) {
 		return EXIT_FAILURE
 	}
 	build_measure_print()
