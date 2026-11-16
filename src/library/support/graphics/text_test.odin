@@ -74,8 +74,9 @@ text_without_cache_is_spleen :: proc(t: ^testing.T) {
 	testing.expect(t, first == second)
 }
 
-// A character of the Latin-1 Supplement draws its glyph of Spleen, not the
-// replacement glyph; a character past U+00FF draws the replacement glyph.
+// A character of the Latin-1 Supplement and the euro sign draw their glyph
+// of Spleen, not the replacement glyph; another character past U+00FF
+// draws the replacement glyph.
 // "été" takes three cells, one for each character.
 @(test)
 text_of_the_latin_supplement_is_drawn :: proc(t: ^testing.T) {
@@ -97,6 +98,16 @@ text_of_the_latin_supplement_is_drawn :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, !cell_font_draws(glyph_cache.ASCII_LAST + 1))
 	testing.expect(t, !cell_font_draws(glyph_cache.LATIN_FIRST - 1))
+	// The euro sign, an added character, draws its glyph of Spleen: ink,
+	// and not the replacement glyph.
+	testing.expect(t, cell_font_draws(glyph_cache.EURO_SIGN))
+	drawn, glyph = {}, {}
+	testing.expect_value(t, text(a, 0, 0, "€", COLOR_TEXT), CELL_WIDTH)
+	character_spleen(b, 0, 0, glyph_cache.EURO_SIGN, COLOR_TEXT)
+	testing.expect(t, drawn == glyph)
+	testing.expect(t, drawn != replacement)
+	no_ink: [8 * 16]Color
+	testing.expect(t, drawn != no_ink)
 }
 
 // The cost of one glyph from the glyph cache against one glyph of Spleen,

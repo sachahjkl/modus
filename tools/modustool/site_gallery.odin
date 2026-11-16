@@ -195,7 +195,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "font_without_grid_fit.png", group = .Interface, guide = "docs/FONTS.md", caption = "The setting of the grid fit turned off: the vector font drawn from its second glyph cache."},
 	{file = "font_candidates.png", group = .Interface, guide = "docs/FONTS.md", caption = "Six candidate fonts beside Spleen 8x16, each from a glyph cache in fixed point, and a word of each enlarged."},
 	{file = "settings.png", group = .Interface, guide = "docs/FONTS.md", caption = "The program settings: the font, the subpixel order, the pointer theme and the grid fit change while the programs run."},
-	{file = "keys_french.png", group = .Interface, guide = "docs/FONTS.md", caption = "The layout of France in the console: é from its key, ê from the dead key ^, each drawn from the glyph cache with no box."},
+	{file = "keys_french.png", group = .Interface, guide = "docs/FONTS.md", caption = "The layout of France in the console: é from its key, ê from the dead key ^, € from AltGr with e, each drawn from the glyph cache with no box."},
 	{file = "settings_kept.png", group = .Interface, guide = "docs/FONTS.md", caption = "A setting kept across a restart of the machine: the next start finds the font Spleen in the store of settings."},
 
 	// The network, the cryptography and the randomness.

@@ -1,8 +1,8 @@
 Copyright 2012 The B612 Project Authors (https://github.com/polarsys/b612)
 
 This file is a subset of b612, made by "modustool vector_fonts" (docs/FONTS.md):
-the characters 32 to 126, the characters U+00A0 to U+00FF and the glyph
-.notdef, each glyph a simple glyph
+the characters 32 to 126, the characters U+00A0 to U+00FF, the characters U+20AC
+and the glyph .notdef, each glyph a simple glyph
 (0 glyphs made of glyphs were made simple), no hinting instructions, no
 OpenType layout tables; the 878 pair adjustments of its table kern between
 these characters. The subset carries the name "B612 ASCII".

@@ -124,6 +124,13 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 	testing.expect_value(t, placed[1].glyph, u32(e_acute))
 	testing.expect_value(t, placed[1].cluster, u32(1))
 	testing.expect_value(t, placed[2].cluster, u32(3))
+	// "€", an added character, is in the cache: three bytes and the glyph
+	// of its character index, after the Latin-1 Supplement.
+	count, _, ok = shape(&spacing, transmute([]u8)string("5 €"), placed[:])
+	testing.expect(t, ok && count == 3)
+	testing.expect_value(t, placed[2].glyph, u32(glyph_cache.ADDED_FIRST_INDEX))
+	testing.expect_value(t, placed[2].cluster, u32(2))
+	testing.expect_value(t, placed[2].advance, spacing.advances[glyph_cache.ADDED_FIRST_INDEX])
 	// A text over the limit writes nothing.
 	long := make([]u8, TEXT_LIMIT + 1)
 	defer delete(long)
