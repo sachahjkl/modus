@@ -201,24 +201,24 @@ case_run :: proc "contextless" (item: ^Case) {
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE RETURN TO A PROGRAM", "each child gives the kernel a thread that the processor would refuse at iretq", graphics.COLOR_KERNEL)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE RETURN TO A PROGRAM", "each child gives the kernel a thread that the processor would refuse at iretq", graphics.colors.kernel)
 	column := interface.column_of(content)
 	builder: interface.Text_Builder
 	for &item in cases {
 		builder.count = 0
-		color: graphics.Color = graphics.COLOR_DIM
+		color: graphics.Color = graphics.colors.dim
 		if !item.ran {
 			interface.text_put(&builder, "not run yet")
 		} else {
 			interface.text_put(&builder, item.right ? "stopped as its own fault, or returned clean; the machine goes on" : "WRONG: see the log")
-			color = item.right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED
+			color = item.right ? graphics.colors.program : graphics.colors.failed
 		}
 		// The answer is a sentence, wider than its box: it has the lines
 		// that it needs, and the next case starts under them.
 		interface.label_value_lines(&frame, &column, item.name, interface.text_of(&builder), 400, color, LINE)
 	}
 	interface.column_take(&column, 8)
-	interface.cell_text(&frame, interface.column_take(&column, LINE), with_avx ? "the child of the instruction address holds values in the high halves of ymm0 to ymm15" : "no AVX here: the child of the instruction address holds no ymm values", graphics.COLOR_DIM)
+	interface.cell_text(&frame, interface.column_take(&column, LINE), with_avx ? "the child of the instruction address holds values in the high halves of ymm0 to ymm15" : "no AVX here: the child of the instruction address holds no ymm values", graphics.colors.dim)
 	interface.window_frame_end(&drawing, &frame, window)
 }
 

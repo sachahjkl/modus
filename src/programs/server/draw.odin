@@ -41,10 +41,10 @@ write_large :: proc "contextless" (canvas: graphics.Canvas, x, y: int, character
 // card draws the frame of one subject and gives the canvas of its content.
 card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, accent: graphics.Color) -> graphics.Canvas {
 	graphics.block(canvas, x, y, width, height, graphics.shade(accent, 28), graphics.shade(accent, 14))
-	graphics.block(canvas, x + 1, y + 1, width - 2, height - 2, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
+	graphics.block(canvas, x + 1, y + 1, width - 2, height - 2, graphics.colors.card_top, graphics.colors.card_bottom)
 	graphics.block(canvas, x + CARD_MARGIN, y + 12, 4, 16, graphics.shade(accent, 130), accent)
 	after := graphics.text(canvas, x + CARD_MARGIN + 12, y + 12, title, accent)
-	graphics.text(canvas, after + 16, y + 12, caption, graphics.COLOR_DIM)
+	graphics.text(canvas, after + 16, y + 12, caption, graphics.colors.dim)
 	return graphics.view(canvas, x + CARD_MARGIN, y + CARD_TITLE, width - 2 * CARD_MARGIN, height - CARD_TITLE - 8)
 }
 
@@ -56,9 +56,10 @@ right :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, c
 // fact draws "name   value" on one line of a card.
 // A name and its value. The value starts at value_column: one character of
 // 8 pixels after the longest name of its card.
-fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value: string, color: graphics.Color = graphics.COLOR_TEXT, value_column := 120) {
-	graphics.text(canvas, 0, y, name, graphics.COLOR_DIM)
-	graphics.text(canvas, value_column, y, value, value == "" ? graphics.COLOR_DIM : color)
+fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value: string, color: Maybe(graphics.Color) = nil, value_column := 120) {
+	graphics.text(canvas, 0, y, name, graphics.colors.dim)
+	value_color := color.? or_else graphics.colors.text
+	graphics.text(canvas, value_column, y, value, value == "" ? graphics.colors.dim : value_color)
 }
 
 size_text :: proc "contextless" (buffer: []u8, bytes: u64) -> string {
@@ -100,13 +101,13 @@ state_names := [tcp.State]string {
 state_color :: proc "contextless" (state: tcp.State) -> graphics.Color {
 	#partial switch state {
 	case .Syn_Sent, .Syn_Received:
-		return graphics.COLOR_BOOT_PROGRAM
+		return graphics.colors.boot_program
 	case .Established, .Close_Wait:
-		return graphics.COLOR_PROGRAM
+		return graphics.colors.program
 	case .Closed:
-		return graphics.COLOR_NOT_USABLE
+		return graphics.colors.not_usable
 	}
-	return graphics.COLOR_KERNEL // FIN states and TIME-WAIT: the end of a connection.
+	return graphics.colors.kernel // FIN states and TIME-WAIT: the end of a connection.
 }
 
 // The columns of the table of connections (a card 536 pixels wide).
@@ -139,18 +140,18 @@ TABLES_HEIGHT :: HEIGHT - TABLES_Y - 8
 
 connection_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, connection: ^tcp.Connection, how: string, band: bool) {
 	if band {
-		graphics.fill(canvas, -8, y - 4, canvas.width + 16, LINE, graphics.COLOR_TRACK)
+		graphics.fill(canvas, -8, y - 4, canvas.width + 16, LINE, graphics.colors.track)
 	}
 	ended := how != ""
-	text_color := graphics.Color(ended ? graphics.COLOR_DIM : graphics.COLOR_TEXT)
+	text_color := graphics.Color(ended ? graphics.colors.dim : graphics.colors.text)
 	buffer: [48]u8
 	writer := system.Writer{buffer = buffer[:]}
 	network.address_write(&writer, connection.remote_address)
 	system.write_bytes(&writer, {':'})
 	system.write_unsigned(&writer, u64(connection.remote_port))
-	graphics.text(canvas, 0, y, system.written(&writer), ended ? graphics.COLOR_DIM : graphics.COLOR_MACHINE)
+	graphics.text(canvas, 0, y, system.written(&writer), ended ? graphics.colors.dim : graphics.colors.machine)
 	if ended {
-		graphics.text(canvas, COLUMN_STATE, y, how, how == "reset" || how == "timed out" || how == "aborted" ? graphics.COLOR_FAILED : graphics.COLOR_NOT_USABLE)
+		graphics.text(canvas, COLUMN_STATE, y, how, how == "reset" || how == "timed out" || how == "aborted" ? graphics.colors.failed : graphics.colors.not_usable)
 	} else {
 		graphics.text(canvas, COLUMN_STATE, y, state_names[connection.state], state_color(connection.state))
 	}
@@ -158,22 +159,22 @@ connection_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, conn
 	right(canvas, COLUMN_OUT, y, size_text(buffer[:], connection.bytes_sent), text_color)
 	right(canvas, COLUMN_RTT, y, connection.rtt_samples == 0 ? "-" : time_text(buffer[:], connection.smoothed_rtt), text_color)
 	// The congestion window: its width is its size, against the window limit of 64 KiB.
-	graphics.fill(canvas, COLUMN_WINDOW, y + 4, WINDOW_BAR, 8, graphics.COLOR_TRACK)
+	graphics.fill(canvas, COLUMN_WINDOW, y + 4, WINDOW_BAR, 8, graphics.colors.track)
 	window := min(u64(connection.congestion_window), u64(tcp.WINDOW_LIMIT))
 	filled := int(window * WINDOW_BAR / tcp.WINDOW_LIMIT)
 	if filled > 0 {
-		bar(canvas, COLUMN_WINDOW, y + 4, filled, 8, ended ? graphics.COLOR_NOT_USABLE : graphics.COLOR_MEMORY)
+		bar(canvas, COLUMN_WINDOW, y + 4, filled, 8, ended ? graphics.colors.not_usable : graphics.colors.memory)
 	}
 }
 
 status_color :: proc "contextless" (status: int) -> graphics.Color {
 	switch {
 	case status < 300:
-		return graphics.COLOR_PROGRAM
+		return graphics.colors.program
 	case status < 500:
-		return graphics.COLOR_BOOT_PROGRAM
+		return graphics.colors.boot_program
 	}
-	return graphics.COLOR_FAILED
+	return graphics.colors.failed
 }
 
 // access_target gives the target of a request as the record keeps it.
@@ -193,29 +194,29 @@ access_row_height :: proc "contextless" (record: ^Access_Record) -> int {
 // the window draws with src/library/support/graphics).
 access_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, record: ^Access_Record, band: bool) {
 	if band {
-		graphics.fill(canvas, -8, y - 4, canvas.width + 16, access_row_height(record), graphics.COLOR_TRACK)
+		graphics.fill(canvas, -8, y - 4, canvas.width + 16, access_row_height(record), graphics.colors.track)
 	}
 	buffer: [32]u8
 	method := web.request_method_name(record.method)
-	graphics.text(canvas, 0, y, method == "" ? "-" : method, graphics.COLOR_DIM)
+	graphics.text(canvas, 0, y, method == "" ? "-" : method, graphics.colors.dim)
 	rest := access_target(record)
 	for line_y := y; len(rest) > 0; line_y += graphics.LINE_HEIGHT {
 		line: string
 		line, rest = interface.text_wrap_line(nil, {}, rest, ACCESS_TARGET_ROOM)
-		graphics.text(canvas, ACCESS_TARGET, line_y, line, graphics.COLOR_TEXT)
+		graphics.text(canvas, ACCESS_TARGET, line_y, line, graphics.colors.text)
 	}
 	graphics.text(canvas, ACCESS_STATUS, y, system.format(buffer[:], u64(record.status)), status_color(record.status))
-	right(canvas, ACCESS_BYTES, y, size_text(buffer[:], record.bytes), graphics.COLOR_TEXT)
-	right(canvas, ACCESS_TIME, y, time_text(buffer[:], max(record.time, 1)), graphics.COLOR_MACHINE)
+	right(canvas, ACCESS_BYTES, y, size_text(buffer[:], record.bytes), graphics.colors.text)
+	right(canvas, ACCESS_TIME, y, time_text(buffer[:], max(record.time, 1)), graphics.colors.machine)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
 	started := system.nanoseconds()
 	canvas := window.canvas
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.colors.background)
 	for y := 12; y < HEIGHT; y += graphics.POINT_STEP {
 		for x := 12; x < WIDTH; x += graphics.POINT_STEP {
-			graphics.fill(canvas, x, y, graphics.POINT_SIZE, graphics.POINT_SIZE, graphics.COLOR_POINT)
+			graphics.fill(canvas, x, y, graphics.POINT_SIZE, graphics.POINT_SIZE, graphics.colors.point)
 		}
 	}
 	buffer: [64]u8
@@ -223,50 +224,50 @@ draw :: proc "contextless" (window: ^display.Window) {
 	open := tcp_open_count()
 
 	// The listen grant and the table.
-	inside := card(canvas, 8, 8, 256, TOP_HEIGHT, "LISTEN", "tcp.Table", graphics.COLOR_PROGRAM)
-	after := write_large(inside, 0, 0, system.format(buffer[:], u64(open)), 3, graphics.COLOR_PROGRAM)
-	graphics.text(inside, after + 8, 24, open == 1 ? "connection" : "connections", graphics.COLOR_DIM)
+	inside := card(canvas, 8, 8, 256, TOP_HEIGHT, "LISTEN", "tcp.Table", graphics.colors.program)
+	after := write_large(inside, 0, 0, system.format(buffer[:], u64(open)), 3, graphics.colors.program)
+	graphics.text(inside, after + 8, 24, open == 1 ? "connection" : "connections", graphics.colors.dim)
 	fact(inside, 56, "port", system.format(buffer[:], u64(listen_port), ", any host"))
 	fact(inside, 76, "most at once", system.format(buffer[:], u64(most_open), " of ", u64(CAPACITY)))
 	fact(inside, 96, "accepted", system.format(buffer[:], accepted, ", ", aborted_count, " ended"))
 
 	// The answers by class of status.
-	inside = card(canvas, 272, 8, 232, TOP_HEIGHT, "ANSWERS", "web.Request", graphics.COLOR_MEMORY)
-	after = write_large(inside, 0, 0, system.format(buffer[:], requests_answered), 3, graphics.COLOR_MEMORY)
-	graphics.text(inside, after + 8, 24, "requests", graphics.COLOR_DIM)
+	inside = card(canvas, 272, 8, 232, TOP_HEIGHT, "ANSWERS", "web.Request", graphics.colors.memory)
+	after = write_large(inside, 0, 0, system.format(buffer[:], requests_answered), 3, graphics.colors.memory)
+	graphics.text(inside, after + 8, 24, "requests", graphics.colors.dim)
 	total := max(requests_answered, 1)
 	classes := [3]int{2, 4, 5}
 	names := [3]string{"2xx", "4xx", "5xx"}
-	colors := [3]graphics.Color{graphics.COLOR_PROGRAM, graphics.COLOR_BOOT_PROGRAM, graphics.COLOR_FAILED}
+	colors := [3]graphics.Color{graphics.colors.program, graphics.colors.boot_program, graphics.colors.failed}
 	for class, row in classes {
 		y := 56 + row * 20
-		graphics.text(inside, 0, y, names[row], graphics.COLOR_DIM)
-		graphics.fill(inside, 40, y + 4, 96, 8, graphics.COLOR_TRACK)
+		graphics.text(inside, 0, y, names[row], graphics.colors.dim)
+		graphics.fill(inside, 40, y + 4, 96, 8, graphics.colors.track)
 		filled := int(status_classes[class] * 96 / total)
 		if filled > 0 {
 			bar(inside, 40, y + 4, filled, 8, colors[row])
 		}
-		graphics.text(inside, 144, y, system.format(buffer[:], status_classes[class]), graphics.COLOR_TEXT)
+		graphics.text(inside, 144, y, system.format(buffer[:], status_classes[class]), graphics.colors.text)
 	}
 
 	// The measures, with the cycle counter.
-	inside = card(canvas, 512, 8, 456, TOP_HEIGHT, "MEASURES", "system.nanoseconds", graphics.COLOR_MACHINE)
-	fact(inside, 0, "handshake", handshake_last == 0 ? "" : system.format(buffer[:], time_text(other[:], handshake_last), ", least ", handshake_least, " us"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
-	fact(inside, 20, "one connection", best_keep_alive_rate == 0 ? "" : system.format(buffer[:], best_keep_alive_rate, " requests in 1 s, the best"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
-	fact(inside, 40, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in 1 s, the best"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
-	fact(inside, 60, "one second", best_second_requests == 0 ? "" : system.format(buffer[:], best_second_requests, " requests at most"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
-	fact(inside, 80, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.COLOR_TEXT, MEASURES_VALUE_COLUMN)
-	fact(inside, 100, "ISN secret", system.format(buffer[:], "modus:support/random, ", program_generator.served, " B"), graphics.COLOR_TEXT, MEASURES_VALUE_COLUMN)
+	inside = card(canvas, 512, 8, 456, TOP_HEIGHT, "MEASURES", "system.nanoseconds", graphics.colors.machine)
+	fact(inside, 0, "handshake", handshake_last == 0 ? "" : system.format(buffer[:], time_text(other[:], handshake_last), ", least ", handshake_least, " us"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
+	fact(inside, 20, "one connection", best_keep_alive_rate == 0 ? "" : system.format(buffer[:], best_keep_alive_rate, " requests in 1 s, the best"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
+	fact(inside, 40, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in 1 s, the best"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
+	fact(inside, 60, "one second", best_second_requests == 0 ? "" : system.format(buffer[:], best_second_requests, " requests at most"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
+	fact(inside, 80, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.colors.text, MEASURES_VALUE_COLUMN)
+	fact(inside, 100, "ISN secret", system.format(buffer[:], "modus:support/random, ", program_generator.served, " B"), graphics.colors.text, MEASURES_VALUE_COLUMN)
 
 	// The connection table, live, then the connections that ended.
-	inside = card(canvas, 8, TABLES_Y, 536, TABLES_HEIGHT, "CONNECTIONS", "tcp.Connection", graphics.COLOR_PROGRAM)
-	graphics.text(inside, 0, 0, "remote", graphics.COLOR_DIM)
-	graphics.text(inside, COLUMN_STATE, 0, "state", graphics.COLOR_DIM)
-	right(inside, COLUMN_IN, 0, "in", graphics.COLOR_DIM)
-	right(inside, COLUMN_OUT, 0, "out", graphics.COLOR_DIM)
-	right(inside, COLUMN_RTT, 0, "srtt", graphics.COLOR_DIM)
-	graphics.text(inside, COLUMN_WINDOW, 0, "cwnd", graphics.COLOR_DIM)
-	graphics.fill(inside, 0, 20, inside.width, 1, graphics.COLOR_TRACK)
+	inside = card(canvas, 8, TABLES_Y, 536, TABLES_HEIGHT, "CONNECTIONS", "tcp.Connection", graphics.colors.program)
+	graphics.text(inside, 0, 0, "remote", graphics.colors.dim)
+	graphics.text(inside, COLUMN_STATE, 0, "state", graphics.colors.dim)
+	right(inside, COLUMN_IN, 0, "in", graphics.colors.dim)
+	right(inside, COLUMN_OUT, 0, "out", graphics.colors.dim)
+	right(inside, COLUMN_RTT, 0, "srtt", graphics.colors.dim)
+	graphics.text(inside, COLUMN_WINDOW, 0, "cwnd", graphics.colors.dim)
+	graphics.fill(inside, 0, 20, inside.width, 1, graphics.colors.track)
 	y := 28
 	rows := 0
 	ROWS :: 17
@@ -279,7 +280,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		rows += 1
 	}
 	if rows == 0 {
-		graphics.text(inside, 0, y, "no connection: the table waits for a SYN", graphics.COLOR_DIM)
+		graphics.text(inside, 0, y, "no connection: the table waits for a SYN", graphics.colors.dim)
 		y += LINE
 		rows += 1
 	}
@@ -318,13 +319,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 
 	// The last requests, the newest first.
-	inside = card(canvas, 552, TABLES_Y, 416, TABLES_HEIGHT, "REQUESTS", "Access_Record", graphics.COLOR_MEMORY)
-	graphics.text(inside, 0, 0, "method", graphics.COLOR_DIM)
-	graphics.text(inside, ACCESS_TARGET, 0, "target", graphics.COLOR_DIM)
-	graphics.text(inside, ACCESS_STATUS - 8, 0, "status", graphics.COLOR_DIM)
-	right(inside, ACCESS_BYTES, 0, "bytes", graphics.COLOR_DIM)
-	right(inside, ACCESS_TIME, 0, "time", graphics.COLOR_DIM)
-	graphics.fill(inside, 0, 20, inside.width, 1, graphics.COLOR_TRACK)
+	inside = card(canvas, 552, TABLES_Y, 416, TABLES_HEIGHT, "REQUESTS", "Access_Record", graphics.colors.memory)
+	graphics.text(inside, 0, 0, "method", graphics.colors.dim)
+	graphics.text(inside, ACCESS_TARGET, 0, "target", graphics.colors.dim)
+	graphics.text(inside, ACCESS_STATUS - 8, 0, "status", graphics.colors.dim)
+	right(inside, ACCESS_BYTES, 0, "bytes", graphics.colors.dim)
+	right(inside, ACCESS_TIME, 0, "time", graphics.colors.dim)
+	graphics.fill(inside, 0, 20, inside.width, 1, graphics.colors.track)
 	y = 28
 	shown := 0
 	// The table is a view of the newest requests: it shows the rows that
@@ -339,7 +340,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		shown += 1
 	}
 	if shown == 0 {
-		graphics.text(inside, 0, y, "no request yet", graphics.COLOR_DIM)
+		graphics.text(inside, 0, y, "no request yet", graphics.colors.dim)
 	}
 	display.present(window)
 	microseconds_taken := (system.nanoseconds() - started) / 1000

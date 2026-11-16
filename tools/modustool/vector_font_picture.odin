@@ -48,25 +48,25 @@ candidates_picture_write :: proc() -> bool {
 	height := 8 + rows * BLOCK_HEIGHT + crop_rows * crop_height + 8
 	pixels := make([]graphics.Color, PICTURE_WIDTH * height, context.temp_allocator)
 	canvas := graphics.Canvas{pixels = raw_data(pixels), width = PICTURE_WIDTH, height = height, stride = PICTURE_WIDTH}
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.DARK_BACKGROUND)
 	saved := graphics.text_state
 	defer graphics.text_state = saved
 	for font, index in fonts {
 		picture_font_use(font)
 		x := 8 + (index % 2) * (BLOCK_WIDTH + 8)
 		y := 8 + (index / 2) * BLOCK_HEIGHT
-		graphics.block(canvas, x, y, BLOCK_WIDTH, BLOCK_HEIGHT - 8, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
-		graphics.fill(canvas, x + 16, y + 12, 4, 16, graphics.COLOR_MACHINE)
-		graphics.text(canvas, x + 28, y + 12, font.label, graphics.COLOR_MACHINE)
+		graphics.block(canvas, x, y, BLOCK_WIDTH, BLOCK_HEIGHT - 8, graphics.DARK_CARD_TOP, graphics.DARK_CARD_BOTTOM)
+		graphics.fill(canvas, x + 16, y + 12, 4, 16, graphics.DARK_MACHINE)
+		graphics.text(canvas, x + 28, y + 12, font.label, graphics.DARK_MACHINE)
 		line_y := y + 40
 		for line, line_index in CANDIDATE_LINES {
-			color := graphics.Color(line_index == 2 ? graphics.COLOR_KERNEL : graphics.COLOR_TEXT)
+			color := graphics.Color(line_index == 2 ? graphics.DARK_KERNEL : graphics.DARK_TEXT)
 			graphics.text(canvas, x + 16, line_y, line, color)
 			line_y += 16
 		}
-		graphics.text_scaled(canvas, x + 16, line_y + 8, "EEVDF fair 1.5x", graphics.COLOR_PROGRAM, 2)
-		graphics.text_scaled(canvas, x + 16, line_y + 48, "12 345", graphics.COLOR_TEXT, 3)
-		graphics.text(canvas, x + 176, line_y + 72, "wakes in one second", graphics.COLOR_DIM)
+		graphics.text_scaled(canvas, x + 16, line_y + 8, "EEVDF fair 1.5x", graphics.DARK_PROGRAM, 2)
+		graphics.text_scaled(canvas, x + 16, line_y + 48, "12 345", graphics.DARK_TEXT, 3)
+		graphics.text(canvas, x + 176, line_y + 72, "wakes in one second", graphics.DARK_DIM)
 	}
 	// The crops: one word at scale 1, each pixel as a square of CROP_SCALE.
 	crop_top := 8 + rows * BLOCK_HEIGHT
@@ -74,11 +74,11 @@ candidates_picture_write :: proc() -> bool {
 		picture_font_use(font)
 		small: [8 * len(CROP_TEXT) * 16]graphics.Color
 		small_canvas := graphics.Canvas{pixels = raw_data(small[:]), width = 8 * len(CROP_TEXT), height = 16, stride = 8 * len(CROP_TEXT)}
-		graphics.clear(small_canvas, graphics.COLOR_CARD_BOTTOM)
-		graphics.text(small_canvas, 0, 0, CROP_TEXT, graphics.COLOR_TEXT)
+		graphics.clear(small_canvas, graphics.DARK_CARD_BOTTOM)
+		graphics.text(small_canvas, 0, 0, CROP_TEXT, graphics.DARK_TEXT)
 		x := 8 + (index % 4) * 320
 		y := crop_top + (index / 4) * crop_height
-		graphics.text(canvas, x, y, font.label[:min(len(font.label), 38)], graphics.COLOR_DIM)
+		graphics.text(canvas, x, y, font.label[:min(len(font.label), 38)], graphics.DARK_DIM)
 		for row in 0 ..< 16 {
 			for column in 0 ..< small_canvas.width {
 				graphics.fill(canvas, x + column * CROP_SCALE, y + 20 + row * CROP_SCALE, CROP_SCALE, CROP_SCALE, small[row * small_canvas.width + column])

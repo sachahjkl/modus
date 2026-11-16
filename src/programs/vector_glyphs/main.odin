@@ -107,8 +107,8 @@ with_font :: proc "contextless" (index: int) -> (saved: graphics.Text_State, ok:
 enlarged :: proc "contextless" (canvas: graphics.Canvas, x, y: int) {
 	small: [8 * len(ENLARGED_WORD) * 16]graphics.Color
 	view := graphics.Canvas{pixels = raw_data(small[:]), width = 8 * len(ENLARGED_WORD), height = 16, stride = 8 * len(ENLARGED_WORD)}
-	graphics.clear(view, graphics.COLOR_CARD_BOTTOM)
-	graphics.text(view, 0, 0, ENLARGED_WORD, graphics.COLOR_TEXT)
+	graphics.clear(view, graphics.colors.card_bottom)
+	graphics.text(view, 0, 0, ENLARGED_WORD, graphics.colors.text)
 	for row in 0 ..< 16 {
 		for column in 0 ..< view.width {
 			graphics.fill(canvas, x + column * ENLARGED, y + row * ENLARGED, ENLARGED, ENLARGED, small[row * view.width + column])
@@ -125,12 +125,12 @@ ENLARGED_TOP :: LIST_TOP + (len(candidates) + 1) * ROW_HEIGHT + 16
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FONT OF THE SYSTEM", "resources/fonts: seven candidates, ASCII subsets, glyf outlines", graphics.COLOR_MACHINE)
-	interface.draw_text(frame.table, content.x, content.y, "the same line in each font, at scale 1 (8 x 16 pixels), then a word enlarged 4 times", graphics.COLOR_DIM)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FONT OF THE SYSTEM", "resources/fonts: seven candidates, ASCII subsets, glyf outlines", graphics.colors.machine)
+	interface.draw_text(frame.table, content.x, content.y, "the same line in each font, at scale 1 (8 x 16 pixels), then a word enlarged 4 times", graphics.colors.dim)
 	for index in 0 ..= len(candidates) {
 		y := content.y + LIST_TOP - 24 + index * ROW_HEIGHT
 		name := index == 0 ? "Spleen 8x16 (bitmap)" : candidates[index - 1].name
-		interface.draw_text(frame.table, content.x, y, name, graphics.COLOR_DIM)
+		interface.draw_text(frame.table, content.x, y, name, graphics.colors.dim)
 		if index > 0 {
 			builder: interface.Text_Builder
 			interface.text_put(&builder, "cache built in ")
@@ -138,7 +138,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 			interface.text_put(&builder, " us, ")
 			interface.text_put_number(&builder, u64(cache_sizes[index - 1]))
 			interface.text_put(&builder, " bytes")
-			interface.draw_text_right(frame.table, content.x + content.width, y, interface.text_of(&builder), graphics.COLOR_DIM)
+			interface.draw_text_right(frame.table, content.x + content.width, y, interface.text_of(&builder), graphics.colors.dim)
 		}
 	}
 	// The lines below are drawn by hand over the frame, in the same
@@ -157,8 +157,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 		} else if _, built := with_font(index - 1); !built {
 			continue
 		}
-		graphics.text(canvas, x, y, SAMPLE, graphics.COLOR_TEXT)
-		graphics.text_scaled(canvas, x + 560, y - 16, "12 345", graphics.COLOR_PROGRAM, 2)
+		graphics.text(canvas, x, y, SAMPLE, graphics.colors.text)
+		graphics.text_scaled(canvas, x + 560, y - 16, "12 345", graphics.colors.program, 2)
 		enlarged(canvas, content.x + (index % 4) * 240, content.y + ENLARGED_TOP + (index / 4) * (16 * ENLARGED + 16))
 		graphics.text_state = system_state
 	}
@@ -215,7 +215,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for _ in 0 ..< BATCHES {
 			start := system.nanoseconds()
 			for index in 0 ..< BATCH {
-				graphics.character(canvas, 0, 0, rune(sample[index % len(sample)]), graphics.COLOR_TEXT)
+				graphics.character(canvas, 0, 0, rune(sample[index % len(sample)]), graphics.colors.text)
 			}
 			least = min(least, (system.nanoseconds() - start) / BATCH)
 		}

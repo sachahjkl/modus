@@ -410,31 +410,31 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		frame := interface.window_frame_begin(&drawing, &window)
 		table := frame.table
-		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 		y := 12
-		interface.draw_text(table, 12, y, "agenda imports calendar. calendar has a fault; calendar_fixed corrects it.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "agenda imports calendar. calendar has a fault; calendar_fixed corrects it.", graphics.colors.dim)
 		y += LINE
-		interface.draw_text(table, 12, y, "the loader gives a replacement only if each export that agenda uses is the same.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "the loader gives a replacement only if each export that agenda uses is the same.", graphics.colors.dim)
 		y += LINE + LINE / 2
-		interface.draw_text(table, LEFT, y, "the program asks the loader", graphics.COLOR_DIM)
-		interface.draw_text(table, LEFT + ANSWER_X, y, "the answer", graphics.COLOR_DIM)
+		interface.draw_text(table, LEFT, y, "the program asks the loader", graphics.colors.dim)
+		interface.draw_text(table, LEFT + ANSWER_X, y, "the answer", graphics.colors.dim)
 		// The cases: each answer whole, on the lines that it needs. Then
 		// one line for the count of the cases with no room.
 		column := interface.column_of({LEFT, CASES_Y - 3, WIDTH - 2 * LEFT, CASES_HEIGHT})
 		not_shown := 0
 		for item, index in cases[:case_count] {
-			if _, drawn := interface.case_lines(&frame, &column, index, item.text, item.answer, ANSWER_X, graphics.COLOR_TEXT, item.right ? graphics.COLOR_PROGRAM : COLOR_WRONG, LINE); !drawn {
+			if _, drawn := interface.case_lines(&frame, &column, index, item.text, item.answer, ANSWER_X, graphics.colors.text, item.right ? graphics.colors.program : COLOR_WRONG, LINE); !drawn {
 				not_shown += 1
 			}
 		}
 		interface.cases_rest_line(&frame, {LEFT, CASES_Y - 3 + CASES_HEIGHT, WIDTH - 2 * LEFT, LINE}, not_shown, "the log has a line \"imports: \" for each")
 		y = MEASURES_Y
 		line: [112]u8
-		interface.draw_text(table, 12, y, system.format(line[:], "a call through the slot: ", call_whole, ".", call_tenth, " ns to calendar, ", replaced_whole, ".", replaced_tenth, " ns to calendar_fixed"), graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, system.format(line[:], "a call through the slot: ", call_whole, ".", call_tenth, " ns to calendar, ", replaced_whole, ".", replaced_tenth, " ns to calendar_fixed"), graphics.colors.dim)
 		y += LINE
-		interface.draw_text(table, 12, y, system.format(line[:], "the bind of agenda: ", bind_whole, ".", bind_tenth, " ns; with the check of the replacement: ", checked_whole, ".", checked_tenth, " ns"), graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, system.format(line[:], "the bind of agenda: ", bind_whole, ".", bind_tenth, " ns; with the check of the replacement: ", checked_whole, ".", checked_tenth, " ns"), graphics.colors.dim)
 		y += LINE
-		interface.draw_text(table, 12, y, system.format(line[:], "the load of agenda and calendar: ", load_whole / 1000, " us; with the replacement: ", load_replaced_whole / 1000, " us"), graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, system.format(line[:], "the load of agenda and calendar: ", load_whole / 1000, " us; with the replacement: ", load_replaced_whole / 1000, " us"), graphics.colors.dim)
 		interface.window_frame_end(&drawing, &frame, &window)
 		display.wait(&window)
 		for _ in display.next_event(&window) {

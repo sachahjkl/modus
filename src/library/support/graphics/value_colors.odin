@@ -26,37 +26,43 @@ Value_Kind_Color :: struct {
 @(rodata)
 value_kind_colors := [value_kinds.Value_Kind]Value_Kind_Color {
 	.None      = {},
-	.Number    = {accent = COLOR_MEMORY, dark_percent = 100, light_percent = 65},
-	.Size      = {accent = COLOR_MEMORY, dark_percent = 100, light_percent = 65},
-	.Time      = {accent = COLOR_BOOT_PROGRAM, dark_percent = 100, light_percent = 65},
-	.Handle    = {accent = COLOR_KERNEL, dark_percent = 100, light_percent = 73},
-	.Value     = {accent = COLOR_MEMORY, dark_percent = 100, light_percent = 65},
-	.Grant     = {accent = COLOR_MACHINE, dark_percent = 100, light_percent = 78},
-	.Status    = {accent = COLOR_FAILED, dark_percent = 100, light_percent = 78},
+	.Number    = {accent = DARK_MEMORY, dark_percent = 100, light_percent = 65},
+	.Size      = {accent = DARK_MEMORY, dark_percent = 100, light_percent = 65},
+	.Time      = {accent = DARK_BOOT_PROGRAM, dark_percent = 100, light_percent = 65},
+	.Handle    = {accent = DARK_KERNEL, dark_percent = 100, light_percent = 73},
+	.Value     = {accent = DARK_MEMORY, dark_percent = 100, light_percent = 65},
+	.Grant     = {accent = DARK_MACHINE, dark_percent = 100, light_percent = 78},
+	.Status    = {accent = DARK_FAILED, dark_percent = 100, light_percent = 78},
 	// The firmware violet at 100 % is at the bound on the band of a row.
-	.Type      = {accent = COLOR_FIRMWARE, dark_percent = 115, light_percent = 83},
-	.Operation = {accent = COLOR_KERNEL, dark_percent = 100, light_percent = 73},
-	.Command   = {accent = COLOR_PROGRAM, dark_percent = 100, light_percent = 58},
-	.Module    = {accent = COLOR_PROGRAM, dark_percent = 100, light_percent = 58},
-	.File      = {accent = COLOR_DIM, dark_percent = 100, light_percent = 82},
+	.Type      = {accent = DARK_FIRMWARE, dark_percent = 115, light_percent = 83},
+	.Operation = {accent = DARK_KERNEL, dark_percent = 100, light_percent = 73},
+	.Command   = {accent = DARK_PROGRAM, dark_percent = 100, light_percent = 58},
+	.Module    = {accent = DARK_PROGRAM, dark_percent = 100, light_percent = 58},
+	.File      = {accent = DARK_DIM, dark_percent = 100, light_percent = 82},
 	// A document is text to read: the color of the text.
-	.Guide     = {accent = COLOR_TEXT, dark_percent = 100, light_percent = 20},
-	.Term      = {accent = COLOR_MEMORY, dark_percent = 100, light_percent = 65},
-	.Version   = {accent = COLOR_BOOT_PROGRAM, dark_percent = 100, light_percent = 65},
-	.Yes       = {accent = COLOR_PROGRAM, dark_percent = 100, light_percent = 58},
-	.No        = {accent = COLOR_DIM, dark_percent = 100, light_percent = 82},
-	.Procedure = {accent = COLOR_KERNEL, dark_percent = 100, light_percent = 73},
-	.Constant  = {accent = COLOR_MEMORY, dark_percent = 100, light_percent = 65},
-	.Variable  = {accent = COLOR_BOOT_PROGRAM, dark_percent = 100, light_percent = 65},
+	.Guide     = {accent = DARK_TEXT, dark_percent = 100, light_percent = 20},
+	.Term      = {accent = DARK_MEMORY, dark_percent = 100, light_percent = 65},
+	.Version   = {accent = DARK_BOOT_PROGRAM, dark_percent = 100, light_percent = 65},
+	.Yes       = {accent = DARK_PROGRAM, dark_percent = 100, light_percent = 58},
+	.No        = {accent = DARK_DIM, dark_percent = 100, light_percent = 82},
+	.Procedure = {accent = DARK_KERNEL, dark_percent = 100, light_percent = 73},
+	.Constant  = {accent = DARK_MEMORY, dark_percent = 100, light_percent = 65},
+	.Variable  = {accent = DARK_BOOT_PROGRAM, dark_percent = 100, light_percent = 65},
 }
 
-// value_kind_color gives the color of a kind on a dark surface, or on the
-// light page when light. The kind None has no color: plain, the color of
-// the text around it.
-value_kind_color :: proc "contextless" (kind: value_kinds.Value_Kind, light: bool, plain: Color = COLOR_TEXT) -> Color {
+// value_kind_color gives the color of a kind in one appearance: on the
+// surfaces of the dark appearance and of the dark page of the site, or of
+// the light appearance and the light page. A program passes
+// `graphics.appearance`, the appearance in force. The kind None has no
+// color: plain, the color of the text around it, or with no plain the text
+// color of that appearance.
+value_kind_color :: proc "contextless" (kind: value_kinds.Value_Kind, of: Appearance, plain: Maybe(Color) = nil) -> Color {
 	if kind == .None || u8(kind) > u8(max(value_kinds.Value_Kind)) {
-		return plain
+		if color, given := plain.?; given {
+			return color
+		}
+		return color_tokens_of(of).text
 	}
 	description := value_kind_colors[kind]
-	return shade(description.accent, light ? description.light_percent : description.dark_percent)
+	return shade(description.accent, of == .Light ? description.light_percent : description.dark_percent)
 }

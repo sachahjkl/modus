@@ -257,7 +257,7 @@ when DRAWING_THROUGH_MODULE {
 			picture_memory = now.picture_memories[0]
 		}
 		drawing.module_calls += 1
-		if !draw_part_through_module(now, 0, now.record_count, picture_memory, canvas, rectangles, true, graphics.COLOR_BACKGROUND, &drawing.module_error) {
+		if !draw_part_through_module(now, 0, now.record_count, picture_memory, canvas, rectangles, true, graphics.colors.background, &drawing.module_error) {
 			module_refusal_log(drawing, "execute_draw_table_in_rectangles_10")
 			return false
 		}
@@ -351,6 +351,13 @@ draw_whole_window_next :: proc "contextless" (drawing: ^Window_Drawing) {
 // window_frame_begin starts a frame of the window.
 window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window = nil) -> Frame {
 	drawing.build_start = system.nanoseconds()
+	// The appearance in force, read at each frame: a change holds from this
+	// frame, also before the event Settings_Changed comes. Each picture
+	// then draws whole, so that no picture keeps a part of the other
+	// appearance (src/md/features/appearance.md).
+	if display.appearance_apply() {
+		draw_whole_window_next(drawing)
+	}
 	if window != nil {
 		display.picture_begin(window)
 	}

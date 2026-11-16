@@ -53,7 +53,7 @@ Scroll_Bar_Colors :: struct {
 	grip_lit:         Color,
 }
 
-// The dark form: each scroll bar of the system, and the dark form of the site.
+// The dark form: each scroll bar of the dark appearance, and the dark form of the site.
 @(rodata)
 scroll_bar_colors_dark := Scroll_Bar_Colors {
 	track            = {0x26303A, 0x2C3743, 0x26303A},
@@ -74,7 +74,7 @@ scroll_bar_colors_dark := Scroll_Bar_Colors {
 	grip_lit         = 0x9CC8EE,
 }
 
-// The light form: the light form of the site. No surface of the system is light.
+// The light form: each scroll bar of the light appearance, and the light form of the site.
 @(rodata)
 scroll_bar_colors_light := Scroll_Bar_Colors {
 	track            = {0xE3E3E3, 0xF1F1F1, 0xE3E3E3},
@@ -105,6 +105,11 @@ scroll_bar_stop_place :: proc "contextless" (percent, size: int) -> int {
 // scroll_bar_thumb_line_color gives the color of the inner line of the
 // thumb over one color of its fill. The line is opaque: no draw of the
 // system blends (docs/DESIGN.md, section 2).
-scroll_bar_thumb_line_color :: proc "contextless" (colors: ^Scroll_Bar_Colors, fill_color: Color) -> Color {
-	return mix(fill_color, COLOR_WHITE, colors.thumb_line_level)
+scroll_bar_thumb_line_color :: proc "contextless" (bar_colors: ^Scroll_Bar_Colors, fill_color: Color) -> Color {
+	return mix(fill_color, COLOR_WHITE, bar_colors.thumb_line_level)
+}
+
+// scroll_bar_colors_of gives the colors of a scroll bar in one appearance.
+scroll_bar_colors_of :: proc "contextless" (of: Appearance) -> Scroll_Bar_Colors {
+	return of == .Light ? scroll_bar_colors_light : scroll_bar_colors_dark
 }

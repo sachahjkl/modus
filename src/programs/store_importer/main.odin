@@ -63,9 +63,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	for {
 		frame := interface.window_frame_begin(&drawing, &window)
-		interface.draw_rectangle(frame.table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
-		x := interface.draw_text(frame.table, 16, 16, "triple(14) = ", graphics.COLOR_DIM)
-		interface.draw_unsigned(frame.table, x, 16, u64(result), graphics.COLOR_TEXT)
+		interface.draw_rectangle(frame.table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
+		x := interface.draw_text(frame.table, 16, 16, "triple(14) = ", graphics.colors.dim)
+		interface.draw_unsigned(frame.table, x, 16, u64(result), graphics.colors.text)
 		interface.window_frame_end(&drawing, &frame, &window)
 		// The window is drawn again after each event, as a change of the
 		// settings changes the font; another event gives the same picture.

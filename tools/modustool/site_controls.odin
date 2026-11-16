@@ -73,9 +73,9 @@ Site_Control_Colors :: struct {
 // the dark page it keeps the text color, as on the desktop.
 site_control_colors :: proc(light: bool) -> Site_Control_Colors {
 	return Site_Control_Colors {
-		hover = graphics.shade(graphics.COLOR_TITLE, 60),
+		hover = graphics.shade(graphics.DARK_TITLE, 60),
 		hover_text = light ? graphics.COLOR_WHITE : site_dark_colors().text,
-		active = graphics.COLOR_CHOSEN,
+		active = graphics.DARK_CHOSEN,
 		active_text = graphics.COLOR_WHITE,
 	}
 }

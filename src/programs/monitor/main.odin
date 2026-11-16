@@ -123,9 +123,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		frame := interface.window_frame_begin(&drawing, &window)
 		table := frame.table
-		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 		if status != .Ok {
-			interface.draw_text(table, 10, 10, "no grant to inspect the machine", graphics.COLOR_TEXT)
+			interface.draw_text(table, 10, 10, "no grant to inspect the machine", graphics.colors.text)
 			if !lost {
 				system.log("monitor: no grant to inspect the machine")
 				lost = true
@@ -136,22 +136,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			used := report.page_count - report.free_pages
 
 			y := 10
-			x := interface.draw_text(table, 10, y, "memory ", graphics.COLOR_DIM)
-			x = interface.draw_unsigned(table, x, y, used * system.PAGE_SIZE >> 20, graphics.COLOR_TEXT)
-			x = interface.draw_text(table, x, y, " / ", graphics.COLOR_TEXT)
-			x = interface.draw_unsigned(table, x, y, report.page_count * system.PAGE_SIZE >> 20, graphics.COLOR_TEXT)
-			x = interface.draw_text(table, x, y, " MiB, reserved ", graphics.COLOR_TEXT)
-			x = interface.draw_unsigned(table, x, y, report.reserved_pages * system.PAGE_SIZE >> 20, graphics.COLOR_TEXT)
-			interface.draw_text(table, x, y, " MiB", graphics.COLOR_TEXT)
+			x := interface.draw_text(table, 10, y, "memory ", graphics.colors.dim)
+			x = interface.draw_unsigned(table, x, y, used * system.PAGE_SIZE >> 20, graphics.colors.text)
+			x = interface.draw_text(table, x, y, " / ", graphics.colors.text)
+			x = interface.draw_unsigned(table, x, y, report.page_count * system.PAGE_SIZE >> 20, graphics.colors.text)
+			x = interface.draw_text(table, x, y, " MiB, reserved ", graphics.colors.text)
+			x = interface.draw_unsigned(table, x, y, report.reserved_pages * system.PAGE_SIZE >> 20, graphics.colors.text)
+			interface.draw_text(table, x, y, " MiB", graphics.colors.text)
 			y += LINE
-			interface.draw_rectangle(table, 10, y, WIDTH - 20, 10, graphics.COLOR_TRACK)
+			interface.draw_rectangle(table, 10, y, WIDTH - 20, 10, graphics.colors.track)
 			interface.draw_rectangle(table, 10, y, int(u64(WIDTH - 20) * used / max(report.page_count, 1)), 10, COLOR_BAR)
 			y += LINE
-			x = interface.draw_text(table, 10, y, "kernel entries ", graphics.COLOR_DIM)
-			interface.draw_unsigned(table, x, y, report.entries, graphics.COLOR_TEXT)
+			x = interface.draw_text(table, 10, y, "kernel entries ", graphics.colors.dim)
+			interface.draw_unsigned(table, x, y, report.entries, graphics.colors.text)
 			y += LINE
-			x = interface.draw_text(table, 10, y, "interrupts ", graphics.COLOR_DIM)
-			interface.draw_unsigned(table, x, y, report.interrupts, graphics.COLOR_TEXT)
+			x = interface.draw_text(table, 10, y, "interrupts ", graphics.colors.dim)
+			interface.draw_unsigned(table, x, y, report.interrupts, graphics.colors.text)
 			y += LINE
 			// The locks of the kernel: the waits of all kinds, and the kind
 			// that waited most.
@@ -165,18 +165,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					most, most_kind = count.waits, kind
 				}
 			}
-			x = interface.draw_text(table, 10, y, "kernel locks ", graphics.COLOR_DIM)
-			x = interface.draw_unsigned(table, x, y, waits, graphics.COLOR_TEXT)
-			x = interface.draw_text(table, x, y, " waits of ", graphics.COLOR_DIM)
-			x = interface.draw_unsigned(table, x, y, takes, graphics.COLOR_TEXT)
+			x = interface.draw_text(table, 10, y, "kernel locks ", graphics.colors.dim)
+			x = interface.draw_unsigned(table, x, y, waits, graphics.colors.text)
+			x = interface.draw_text(table, x, y, " waits of ", graphics.colors.dim)
+			x = interface.draw_unsigned(table, x, y, takes, graphics.colors.text)
 			if most != 0 {
-				x = interface.draw_text(table, x, y, ", most: ", graphics.COLOR_DIM)
-				interface.draw_text(table, x, y, op.LOCK_KIND_NAMES[most_kind], graphics.COLOR_TEXT)
+				x = interface.draw_text(table, x, y, ", most: ", graphics.colors.dim)
+				interface.draw_text(table, x, y, op.LOCK_KIND_NAMES[most_kind], graphics.colors.text)
 			}
 			y += LINE + 6
-			interface.draw_text(table, 10, y, "program", graphics.COLOR_DIM)
-			interface.draw_text(table, PAGES_X, y, "pages", graphics.COLOR_DIM)
-			interface.draw_text(table, BAR_X, y, "processor", graphics.COLOR_DIM)
+			interface.draw_text(table, 10, y, "program", graphics.colors.dim)
+			interface.draw_text(table, PAGES_X, y, "pages", graphics.colors.dim)
+			interface.draw_text(table, BAR_X, y, "processor", graphics.colors.dim)
 			y += LINE
 
 			text_line := interface.line_height({})
@@ -210,23 +210,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					hidden += 1
 					continue
 				}
-				name_lines := interface.draw_text_wrapped(table, 10, y, NAME_ROOM, name, graphics.COLOR_TEXT)
+				name_lines := interface.draw_text_wrapped(table, 10, y, NAME_ROOM, name, graphics.colors.text)
 				if from_disk {
 					prefix: [program_page.HASH_PREFIX_DIGITS]u8
 					program_page.hash_prefix_write(&prefix, row.hash[0])
-					interface.draw_text(table, 10, y + name_lines * text_line, string(prefix[:]), graphics.COLOR_DIM)
+					interface.draw_text(table, 10, y + name_lines * text_line, string(prefix[:]), graphics.colors.dim)
 					disk_program_log(slot, program.program_serial, name, row)
 				}
-				interface.draw_unsigned(table, PAGES_X, y, program.present_pages, graphics.COLOR_TEXT)
-				interface.draw_rectangle(table, BAR_X, y + 2, BAR_WIDTH, 10, graphics.COLOR_TRACK)
+				interface.draw_unsigned(table, PAGES_X, y, program.present_pages, graphics.colors.text)
+				interface.draw_rectangle(table, BAR_X, y + 2, BAR_WIDTH, 10, graphics.colors.track)
 				interface.draw_rectangle(table, BAR_X, y + 2, int(share) * BAR_WIDTH / 100, 10, COLOR_BAR)
-				x = interface.draw_unsigned(table, BAR_X + BAR_WIDTH + 8, y, share, graphics.COLOR_TEXT)
-				interface.draw_text(table, x, y, "%", graphics.COLOR_TEXT)
+				x = interface.draw_unsigned(table, BAR_X + BAR_WIDTH + 8, y, share, graphics.colors.text)
+				interface.draw_text(table, x, y, "%", graphics.colors.text)
 				y += row_height
 			}
 			if hidden > 0 {
-				x = interface.draw_unsigned(table, 10, y, hidden, graphics.COLOR_TEXT)
-				interface.draw_text(table, x, y, " more programs: monitor.programs() gives them", graphics.COLOR_DIM)
+				x = interface.draw_unsigned(table, 10, y, hidden, graphics.colors.text)
+				interface.draw_text(table, x, y, " more programs: monitor.programs() gives them", graphics.colors.dim)
 			}
 		}
 		interface.window_frame_end(&drawing, &frame, &window)

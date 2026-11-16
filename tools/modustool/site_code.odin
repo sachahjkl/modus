@@ -73,7 +73,7 @@ SITE_CODE_BUILT_IN_TYPES :: [?]string {
 
 // site_code_color gives the color of a class in one form.
 site_code_color :: proc(class: Site_Code_Class, light: bool) -> graphics.Color {
-	return graphics.code_class_color(site_code_classes[class].class, light)
+	return graphics.code_class_color(site_code_classes[class].class, light ? graphics.Appearance.Light : graphics.Appearance.Dark)
 }
 
 // site_code_rules gives the rules of the style sheet for the classes of the

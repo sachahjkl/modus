@@ -1536,7 +1536,7 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FAULT RING", "a fault of a thread becomes a record for a handler thread of the program, in place of a stop", graphics.COLOR_KERNEL)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FAULT RING", "a fault of a thread becomes a record for a handler thread of the program, in place of a stop", graphics.colors.kernel)
 	// Two columns of rows: the cases do not fit in one window height.
 	half := (content.width - COLUMN_GAP) / 2
 	columns := [2]interface.Column {
@@ -1546,10 +1546,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 	for &item, index in cases {
 		column := &columns[index < ROWS_IN_THE_FIRST_COLUMN ? 0 : 1]
 		value := "not run yet"
-		color: graphics.Color = graphics.COLOR_DIM
+		color: graphics.Color = graphics.colors.dim
 		if item.ran {
 			value = item.right ? "as it must" : "WRONG: see the log"
-			color = item.right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED
+			color = item.right ? graphics.colors.program : graphics.colors.failed
 			if item.value_length > 0 {
 				value = string(item.value[:item.value_length])
 			}

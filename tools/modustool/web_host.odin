@@ -216,7 +216,7 @@ listener_serve :: proc(listener: ^Listener, client: net.TCP_Socket) {
 // forward_fetch fetches a page of `server` through hostfwd, with the TCP of
 // the host. "/sink" sends a body of LARGE_SIZE bytes. It prints one line
 // with the result, and says if the result is the expected one.
-forward_fetch :: proc(forward: Forward, path: string) -> bool {
+forward_fetch :: proc(forward: Forward, path: string, clock_offset_seconds: i64) -> bool {
 	socket, err := net.dial_tcp(net.Endpoint{net.IP4_Loopback, forward.host_port})
 	if err != nil {
 		fmt.eprintfln("modustool: test failed: the host cannot connect to the port %d (hostfwd to the port 80 of the machine): %v", forward.host_port, err)
@@ -278,7 +278,7 @@ forward_fetch :: proc(forward: Forward, path: string) -> bool {
 		fmt.eprintfln("modustool: test failed: the field Date of server is \"%s\": not the form of RFC 9110 5.6.7", date_line)
 		return false
 	}
-	date_check(-1, date_seconds, fmt.tprintf("the field Date \"%s\" of the answer to %s", date_line, path), request_unix) or_return
+	date_check(-1, date_seconds, fmt.tprintf("the field Date \"%s\" of the answer to %s", date_line, path), request_unix, clock_offset_seconds) or_return
 	speed := f64(max(len(content), body ? web.LARGE_SIZE : 0)) / max(time.duration_seconds(took), 1e-9) / 1e6
 	switch path {
 	case "/large":

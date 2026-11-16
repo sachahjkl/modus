@@ -195,10 +195,10 @@ coverage_forms_meet_each_channel_value :: proc(t: ^testing.T) {
 	table: [4096]u8
 	square_root_table_fill(&table)
 	forms := VECTOR_FORMS
-	colors := [?]Color{0x000000, 0xFFFFFF, 0x01FE80, 0xFE017F, COLOR_TEXT, COLOR_DIM, 0xFF123456}
+	text_colors := [?]Color{0x000000, 0xFFFFFF, 0x01FE80, 0xFE017F, DARK_TEXT, DARK_DIM, 0xFF123456}
 	wrong := 0
 	for order in Subpixel_Order {
-		for color in colors {
+		for color in text_colors {
 			for coverage in u32(0) ..= 255 {
 				words: [256]u32
 				reference: [256]Color
@@ -374,7 +374,7 @@ glyph_draw_cost_of_each_form :: proc(t: ^testing.T) {
 	draw_all :: proc(form: Blend_Form, cache: ^glyph_cache.Cache, table: ^[4096]u8, pixels: []Color) {
 		canvas := Canvas{pixels = raw_data(pixels), width = WIDTH, height = HEIGHT, stride = WIDTH}
 		for &pixel, index in pixels {
-			pixel = index % 7 == 0 ? COLOR_CARD_TOP : COLOR_CARD_BOTTOM
+			pixel = index % 7 == 0 ? DARK_CARD_TOP : DARK_CARD_BOTTOM
 		}
 		for order in Subpixel_Order {
 			for scale in 1 ..= 3 {
@@ -382,7 +382,7 @@ glyph_draw_cost_of_each_form :: proc(t: ^testing.T) {
 					// Places that cut the glyph at each edge, and places inside.
 					x := int(character) % 13 * 19 - 8
 					y := int(character) % 5 * 11 - 6
-					glyph_in_form(form, cache, table, order, canvas, x, y, character, COLOR_TEXT, scale)
+					glyph_in_form(form, cache, table, order, canvas, x, y, character, DARK_TEXT, scale)
 				}
 			}
 		}
@@ -404,7 +404,7 @@ glyph_draw_cost_of_each_form :: proc(t: ^testing.T) {
 	for form in all_forms {
 		start := time.tick_now()
 		for index in 0 ..< REPEAT {
-			glyph_in_form(form, &cache, &table, .Red_Green_Blue, canvas, 8, 8, rune(sample[index % len(sample)]), COLOR_TEXT, 1)
+			glyph_in_form(form, &cache, &table, .Red_Green_Blue, canvas, 8, 8, rune(sample[index % len(sample)]), DARK_TEXT, 1)
 		}
 		fmt.printfln("graphics: one glyph from the glyph cache on the host, the %v form: %v ns", form, time.duration_nanoseconds(time.tick_since(start)) / REPEAT)
 	}
@@ -490,7 +490,7 @@ three_blends_give_the_same_bytes_for_each_cache :: proc(t: ^testing.T) {
 	for pixels, index in drawn {
 		canvases[index] = {pixels = raw_data(pixels), width = WIDTH, height = HEIGHT, stride = WIDTH}
 	}
-	colors := [?]Color{COLOR_TEXT, COLOR_PROGRAM, COLOR_WHITE}
+	text_colors := [?]Color{DARK_TEXT, DARK_PROGRAM, COLOR_WHITE}
 	differences: [2]int // The table blend, then the SSE2 form, against the scalar form.
 	for &item in caches {
 		for scale in 1 ..= len(item.cache.sizes) {
@@ -498,7 +498,7 @@ three_blends_give_the_same_bytes_for_each_cache :: proc(t: ^testing.T) {
 			for position in 0 ..< position_count {
 				for background in Speed_Background {
 					for order in Subpixel_Order {
-						for color in colors {
+						for color in text_colors {
 							for canvas in canvases {
 								background_fill(canvas, background)
 							}
@@ -566,9 +566,9 @@ text_speed_of_each_blend :: proc(t: ^testing.T) {
 			start := time.tick_now()
 			for index in 0 ..< SPEED_GLYPHS {
 				if tables {
-					character_vector_with(data.cache, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * index, 8, rune(text[index]), COLOR_TEXT, 1)
+					character_vector_with(data.cache, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * index, 8, rune(text[index]), DARK_TEXT, 1)
 				} else {
-					glyph_in_form(data.form, data.cache, &data.table, .Red_Green_Blue, canvas, 8 * index, 8, rune(text[index]), COLOR_TEXT, 1)
+					glyph_in_form(data.form, data.cache, &data.table, .Red_Green_Blue, canvas, 8 * index, 8, rune(text[index]), DARK_TEXT, 1)
 				}
 			}
 			least = min(least, time.duration_nanoseconds(time.tick_since(start)))
@@ -635,10 +635,10 @@ proportional_text_gives_the_same_bytes_in_each_blend :: proc(t: ^testing.T) {
 					for glyph in placed[:count] {
 						pixel, position := glyph_cache.position_of(place + i64(glyph.x), int(cache.sizes[0].position_count))
 						value, _ := glyph_cache.character_of_index(int(glyph.glyph))
-						glyph_in_form(.Scalar, cache, &table, order, canvases[0], int(pixel), 8, value, COLOR_TEXT, 1, position)
-						glyph_in_form(.Sse2, cache, &table, order, canvases[1], int(pixel), 8, value, COLOR_TEXT, 1, position)
+						glyph_in_form(.Scalar, cache, &table, order, canvases[0], int(pixel), 8, value, DARK_TEXT, 1, position)
+						glyph_in_form(.Sse2, cache, &table, order, canvases[1], int(pixel), 8, value, DARK_TEXT, 1, position)
 					}
-					text_proportional_with(cache, &table, tables, order, canvases[2], place, 8, placed[:count], 1, COLOR_TEXT)
+					text_proportional_with(cache, &table, tables, order, canvases[2], place, 8, placed[:count], 1, DARK_TEXT)
 					for pixel, index in drawn[0] {
 						if drawn[2][index] != pixel {
 							differences[0] += 1

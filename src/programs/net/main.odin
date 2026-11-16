@@ -536,10 +536,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
-	interface.draw_text_wrapped(table, LEFT, 16 + 4, WIDTH - 2 * LEFT, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", graphics.COLOR_DIM)
-	interface.draw_text(table, LEFT, 16 + LINE + 4, "the program asks", graphics.COLOR_DIM)
-	interface.draw_text(table, LEFT + ANSWER_X, 16 + LINE + 4, "the network answers", graphics.COLOR_DIM)
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
+	interface.draw_text_wrapped(table, LEFT, 16 + 4, WIDTH - 2 * LEFT, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", graphics.colors.dim)
+	interface.draw_text(table, LEFT, 16 + LINE + 4, "the program asks", graphics.colors.dim)
+	interface.draw_text(table, LEFT + ANSWER_X, 16 + LINE + 4, "the network answers", graphics.colors.dim)
 	// The cases: each answer whole, on the lines that it needs. Then one
 	// line for the count of the cases with no room.
 	column := interface.column_of({LEFT, 16 + 2 * LINE, WIDTH - 2 * LEFT, CASES_HEIGHT})
@@ -550,7 +550,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		if !item.right {
 			answer = system.format(answer_buffer[:], answer, "  not expected")
 		}
-		if _, drawn := interface.case_lines(&frame, &column, index, item.text, answer, ANSWER_X, graphics.COLOR_DIM, item.right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED, LINE); !drawn {
+		if _, drawn := interface.case_lines(&frame, &column, index, item.text, answer, ANSWER_X, graphics.colors.dim, item.right ? graphics.colors.program : graphics.colors.failed, LINE); !drawn {
 			not_shown += 1
 		}
 	}
@@ -578,7 +578,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		if item.name == "" {
 			continue
 		}
-		interface.case_lines(&frame, &measures_column, 1, item.name, item.value, ANSWER_X, graphics.COLOR_DIM, measured ? graphics.COLOR_TEXT : graphics.COLOR_DIM, LINE)
+		interface.case_lines(&frame, &measures_column, 1, item.name, item.value, ANSWER_X, graphics.colors.dim, measured ? graphics.colors.text : graphics.colors.dim, LINE)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }
