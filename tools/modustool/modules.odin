@@ -248,6 +248,7 @@ build_modules :: proc() -> bool {
 	// A module whose inputs are the same is kept (incremental_build.odin).
 	build_modules_in_parallel() or_return
 	library_modules_measure_print()
+	kernel_stack_measure_print()
 	// The steps below run at each build: each one reads outputs of the
 	// modules or files of the repository, and its time is in the measure of
 	// the build.
@@ -433,6 +434,10 @@ module_object_command :: proc(build: Module_Build) -> []string {
 		// of threads saves them (docs/ARCHITECTURE.md, "The extended state
 		// of the processor").
 		append(&llc, KERNEL_TARGET_FEATURES)
+		// The frame of each procedure, in a section that no segment holds:
+		// the measure of the kernel stack reads it from the linked file
+		// (kernel_stack.odin), and the module file does not change.
+		append(&llc, "-stack-size-section")
 	}
 	append(&llc, "-o", join(folder, "/objects/", build.name, ".o"), join(folder, "/", build.name, ".ll"))
 	return llc[:]
@@ -573,8 +578,10 @@ module_compile :: proc(build: Module_Build) -> bool {
 	)
 	append(&link, ..(files_with_suffix(objects, ".o") or_return))
 	run(link[:]) or_return
-	if build.kernel && !kernel_has_no_vector_instruction(linked) {
-		return false
+	if build.kernel {
+		listing := kernel_listing(linked) or_return
+		kernel_has_no_vector_instruction(listing) or_return
+		kernel_stack_check(build, linked, listing) or_return
 	}
 	return true
 }
