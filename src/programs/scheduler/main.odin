@@ -971,7 +971,7 @@ stress :: proc "contextless" () {
 	system.thread_wait(thread)
 	system.thread_wait(writing)
 	// The schedule written last is the schedule of each spinner.
-	last_schedule := op.Thread_Schedule{weight = 512, request = 2000, weight_limit = op.WEIGHT_FULL}
+	last_schedule := op.Thread_Schedule{weight = 512, request = 2000, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
 	schedules_right := schedule_writer.writes != 0 && schedule_writer.refused == 0
 	for spinner in 0 ..< EQUAL_COUNT {
 		write_status := system.thread_schedule_write(machine, schedule_writer.numbers[spinner], last_schedule)
@@ -1062,12 +1062,12 @@ own_schedules :: proc "contextless" () -> bool {
 	}
 	system.thread_wait(thread)
 	first, first_status := system.thread_schedule_read(0, system.thread_record().number)
-	lowered := op.Thread_Schedule{weight = OWN_WEIGHT / 2, request = OWN_REQUEST / 2, weight_limit = op.WEIGHT_FULL}
+	lowered := op.Thread_Schedule{weight = OWN_WEIGHT / 2, request = OWN_REQUEST / 2, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
 	as_it_must := own_schedule.statuses_right && first_status == .Ok
-	as_it_must &&= own_schedule.created == op.Thread_Schedule{weight = OWN_WEIGHT, request = OWN_REQUEST, weight_limit = op.WEIGHT_FULL}
+	as_it_must &&= own_schedule.created == op.Thread_Schedule{weight = OWN_WEIGHT, request = OWN_REQUEST, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
 	as_it_must &&= own_schedule.written == lowered && own_schedule.last == lowered
 	as_it_must &&= own_schedule.weight_raise == .Bad_Operation && own_schedule.request_raise == .Bad_Operation
-	as_it_must &&= first == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL}
+	as_it_must &&= first == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
 	system.log("scheduler: a thread created with the weight ", u64(OWN_WEIGHT), " and the request ", u64(OWN_REQUEST), " us read its own schedule: weight ", u64(own_schedule.created.weight), ", request ", u64(own_schedule.created.request), " us; after it lowered them to ", u64(OWN_WEIGHT / 2), " and ", u64(OWN_REQUEST / 2), " us: weight ", u64(own_schedule.written.weight), ", request ", u64(own_schedule.written.request), " us; its own writes of the weight ", u64(OWN_WEIGHT), " and of the request ", u64(OWN_REQUEST), " us: ", op.STATUS_NAMES[own_schedule.weight_raise], " and ", op.STATUS_NAMES[own_schedule.request_raise], ", and the schedule stayed: ", u64(own_schedule.last == lowered), "; the first thread: weight ", u64(first.weight), ", request ", u64(first.request), as_it_must ? string(" us: as it must") : string(" us: WRONG"))
 	return as_it_must
 }
@@ -1088,7 +1088,7 @@ schedule_refusals :: proc "contextless" () -> bool {
 	too_long := system.thread_schedule_write(spinner, 0, {request = op.REQUEST_LIMIT + 1})
 	// A refused write changed nothing.
 	kept, kept_status := system.thread_schedule_read(spinner, 0)
-	unchanged := kept_status == .Ok && kept == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL}
+	unchanged := kept_status == .Ok && kept == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
 	// The machine with no right Schedule; the machine with Schedule and no
 	// Inspect, which names no thread; a thread handle with Inspect and no
 	// Control, which reads and does not write.
@@ -1194,15 +1194,16 @@ limited_child_run :: proc "c" (parameter: rawptr) -> ! {
 weight_limits :: proc "contextless" () -> bool {
 	LIMIT :: WEIGHT_LIMIT_OF_THE_CASE
 	number := system.thread_record().number
-	limited := op.Thread_Schedule{weight = LIMIT, request = op.REQUEST_DEFAULT, weight_limit = LIMIT}
+	// The new-thread weight limit 0 of the write is the weight limit.
+	limited := op.Thread_Schedule{weight = LIMIT, request = op.REQUEST_DEFAULT, weight_limit = LIMIT, new_thread_weight_limit = LIMIT}
 	lowered := system.thread_schedule_write(machine, self_machine_number, {weight_limit = LIMIT})
 	now, now_status := system.thread_schedule_read(0, number)
 	error: errors.Error_Record
 	raise := system.thread_schedule_write(0, number, {weight = op.WEIGHT_FULL}, &error)
 	record_right := error.kind == i64(errors.Kind.Bad_Value) && error.value == op.WEIGHT_FULL && error.limit == LIMIT && error.found == i64(op.Thread_Write_Refusal.Weight)
-	// The limit of the record of an own write is not read: the thread
-	// keeps its limit, and the weight 0 is the limit.
-	ignored := system.thread_schedule_write(0, number, {weight_limit = op.WEIGHT_FULL})
+	// The two limits of the record of an own write are not read: the
+	// thread keeps its limits, and the weight 0 is the limit.
+	ignored := system.thread_schedule_write(0, number, {weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL})
 	kept, kept_status := system.thread_schedule_read(0, number)
 	first_right := lowered == .Ok && now_status == .Ok && now == limited && raise == .Bad_Operation && record_right && ignored == .Ok && kept_status == .Ok && kept == limited
 	// The same weight again and a lower one are accepted. The full weight
@@ -1235,7 +1236,7 @@ weight_limits :: proc "contextless" () -> bool {
 	}
 	child_right := too_heavy == .Bad_Operation && child_status == .Ok && limited_child.read == .Ok && limited_child.schedule == limited && limited_child.raise == .Bad_Operation
 	// The machine handle gives the full limit back, on each path.
-	full := op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL}
+	full := op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
 	raised := system.thread_schedule_write(machine, self_machine_number, {})
 	restored, restored_status := system.thread_schedule_read(0, number)
 	restored_right := raised == .Ok && restored_status == .Ok && restored == full
@@ -1972,6 +1973,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if threads := share_role_threads(ctx.values[SHARE_VALUE_ROLE]); threads != 0 {
 		share_program_run(threads)
 	}
+	if ctx.values[SHARE_VALUE_ROLE] == SHORT_THREADS_ROLE {
+		short_threads_run()
+	}
 	service, _ := system.service_open(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "scheduler")
 	if !ok {
@@ -2041,6 +2045,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.strategy_set(machine, original)
 	if !share_case() {
 		fail("the share policy did not give each program its part, or did not keep a lowered weight")
+	}
+	if !short_threads_case() {
+		fail("a thread that no round of the share policy saw had more than the new-thread weight limit of its program")
 	}
 	done = true
 	if right && system.measure_run() {

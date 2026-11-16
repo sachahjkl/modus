@@ -1166,10 +1166,10 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			return true
 		}
 	case .Thread_Create:
-		// The most of a weight is the weight limit of the calling thread,
-		// which is the full weight unless the holder of the machine
+		// The most of a weight is the limit of a new thread of the calling
+		// thread, which is the full weight unless the holder of the machine
 		// lowered it.
-		weight_limit := u64(intrinsics.atomic_load(&threads[processor_self().current].weight_limit))
+		weight_limit := u64(creation_weight_limit(processor_self().current))
 		switch {
 		case v[4] > weight_limit:
 			record_set(record, .Bad_Value, .None, 5, v[4], weight_limit, 0)

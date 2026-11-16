@@ -1818,12 +1818,20 @@ scenario := [?]Step {
 	// The share policy: four programs with 1, 2, 4 and 8 spinning threads.
 	// Each condition is a value that the kernel gives back, or an order of
 	// two counts of ticks; the shares are a measure.
-	{kind = .Wait, text = "scheduler: the share policy, three rounds: each thread of the programs with 1, 2, 4 and 8 spinning threads has the weight and the weight limit 1024, 512, 256 and 128; the weights of each program sum to 1024, 1024, 1024 and 1024; the third round wrote none of their threads: 1: as it must"},
-	{kind = .Wait, text = "scheduler: under the share policy, a thread of this program created with the weight 100 has the weight 100, and the weight 50 after it lowered itself to 50; after this program started 7 threads more, its 9 threads have the weights 50 to 113, which sum to 954 of 1024: as it must"},
-	{kind = .Wait, text = "scheduler: the share policy off: each thread of the 4 programs and the first thread of this program have the weight 1024 and the full weight limit again, the thread that lowered itself has the weight 50 and the full weight limit, and no write of the policy was refused: 1: as it must"},
+	{kind = .Wait, text = "scheduler: the share policy, three rounds: each thread of the programs with 1, 2, 4 and 8 spinning threads has the weight and the weight limit 1024, 512, 256 and 128, and the new-thread weight limit 32; the weights of each program sum to 1024, 1024, 1024 and 1024; the third round wrote none of their threads: 1: as it must"},
+	{kind = .Wait, text = "scheduler: under the share policy, a thread of this program created with the weight 30 has the weight 30, and the weight 15 after it lowered itself to 15; after this program started 7 threads more, its 9 threads have the weights 15 to 113, which sum to 919 of 1024: as it must"},
+	{kind = .Wait, text = "scheduler: the share policy off: each thread of the 4 programs and the first thread of this program have the weight 1024 and the two full weight limits again, the thread that lowered itself has the weight 15 and the two full weight limits, and no write of the policy was refused: 1: as it must"},
 	{kind = .Wait, text = "scheduler: the program with 8 spinning threads against the program with 1, by the ticks of the kernel over one interval: its part is smaller under the share policy than without it: as it must"},
 	{kind = .Wait, text = "scheduler: shares of the programs with 1, 2, 4 and 8 spinning threads under EEVDF, by the ticks of the kernel: without the share policy "},
 	{kind = .Wait, text = "scheduler: one round of the share policy, over "},
+	// A program that keeps short threads alive: the threads that no round
+	// saw have the new-thread weight limit of their program, a state; and
+	// an order of two counts of ticks.
+	{kind = .Wait, text = "scheduler: the share policy and a program that keeps 6 short threads alive, after one round: 24 of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit 32: 1, and those of one read summed to under 1024: 1: as it must"},
+	{kind = .Wait, text = "scheduler: under the share policy this program has the new-thread weight limit 32, and the weight limit of its first thread is above 33: 1; a new thread with the weight 33 Bad_Operation, and the error record names 32: as it must"},
+	{kind = .Wait, text = "scheduler: the first thread of a program started under the share policy has the weight, the weight limit and the new-thread weight limit 32, 32 and 32: as it must"},
+	{kind = .Wait, text = "scheduler: the program of short threads against the program of one long thread, by the ticks of the kernel over one interval: its part is smaller under the share policy than without it: as it must"},
+	{kind = .Wait, text = "scheduler: the program of short threads got "},
 	{kind = .Wait, text = "scheduler: ok, no spinner starved under 3 strategies, a wake ended "},
 	{kind = .Wait, text = "scheduler: the window took "},
 	{kind = .Shot, text = "scheduler"},

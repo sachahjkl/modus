@@ -5,9 +5,11 @@
 // and the weight limit of each thread through the machine handle: the
 // program weight divided by the count of the threads of the program that
 // count. So a program with many threads has the weight of a program with
-// one. This file holds the round, the two exports that the principal
-// calls, the programs with 1, 2, 4 and 8 spinning threads of the case, and
-// the case with its measure.
+// one. It also writes the new-thread weight limit of each thread: the
+// program weight divided by the most threads of a program, so the threads
+// that a program creates between two rounds sum to under one program
+// weight. This file holds the round, the two exports that the principal
+// calls, the programs of the cases, and the cases with their measure.
 package scheduler
 
 import "base:intrinsics"
@@ -32,6 +34,12 @@ POLICY_PERIOD :: 100
 // is 1 or more, and the weights of the threads that count never sum to more
 // than the program weight.
 PROGRAM_WEIGHT_LEAST :: op.THREAD_REPORT_CAPACITY
+// The program weight is divided by this count for the new-thread weight
+// limit: a program has at most this many threads, so the threads that no
+// round saw never sum to a whole program weight, whatever the moments of
+// their creation.
+PROGRAM_THREADS_MOST :: op.THREAD_CAPACITY
+#assert(PROGRAM_THREADS_MOST <= PROGRAM_WEIGHT_LEAST)
 PROGRAM_NAME_LIMIT :: 31 // The bytes of a program name: the name of a program report has 32, with a zero byte.
 SETTING_CAPACITY :: 16
 
@@ -43,7 +51,15 @@ Tracked_Thread :: struct {
 	run_time:       u64, // Its run time at the last round.
 	written:        u32, // The weight that the policy wrote last. 0: the policy never wrote this thread.
 	limit:          u32, // The weight limit that the policy wrote last.
+	new_thread_limit: u32, // The new-thread weight limit that the policy wrote last.
 	asked:          u32, // The most that the policy gives the thread: the weight that its program asked.
+}
+
+// new_thread_part gives the new-thread weight limit of each thread of a
+// program with this program weight: 1 or more, because the least program
+// weight is the most threads of a program.
+new_thread_part :: proc "contextless" (program_weight: u32) -> u32 {
+	return max(program_weight / PROGRAM_THREADS_MOST, 1)
 }
 
 // One program of a round: a row of the window.
@@ -156,11 +172,12 @@ setting_weight :: proc "contextless" (table: ^[SETTING_CAPACITY]Program_Setting,
 }
 
 // thread_weight_write gives a thread the weight and the weight limit of
-// its part, never above what its program asked. It reads the schedule
-// first: a write through the machine handle gives the three values, and
-// the request must stay. It writes only a value that changes: a write that
-// raises starts the thread again as a new thread.
-thread_weight_write :: proc "contextless" (thread: ^Tracked_Thread, part: u32) -> (weight: u32) {
+// its part, never above what its program asked, and the new-thread weight
+// limit of its program. It reads the schedule first: a write through the
+// machine handle gives the four values, and the request must stay. It
+// writes only a value that changes: a write that raises starts the thread
+// again as a new thread.
+thread_weight_write :: proc "contextless" (thread: ^Tracked_Thread, part, new_thread_limit: u32) -> (weight: u32) {
 	schedule, read_status := system.thread_schedule_read(machine, thread.machine_number)
 	if read_status != .Ok {
 		// The thread ended since the report.
@@ -173,8 +190,11 @@ thread_weight_write :: proc "contextless" (thread: ^Tracked_Thread, part: u32) -
 		thread.asked = schedule.weight
 	}
 	wanted := min(part, thread.asked)
-	if schedule.weight != wanted || schedule.weight_limit != part {
-		status := system.thread_schedule_write(machine, thread.machine_number, {weight = wanted, request = schedule.request, weight_limit = part})
+	// The kernel keeps the new-thread weight limit at or under the weight
+	// limit, so the record that the round compares holds the same value.
+	new_limit := min(new_thread_limit, part)
+	if schedule.weight != wanted || schedule.weight_limit != part || schedule.new_thread_weight_limit != new_limit {
+		status := system.thread_schedule_write(machine, thread.machine_number, {weight = wanted, request = schedule.request, weight_limit = part, new_thread_weight_limit = new_limit})
 		switch {
 		case status == .Ok:
 			round_now.writes += 1
@@ -187,7 +207,7 @@ thread_weight_write :: proc "contextless" (thread: ^Tracked_Thread, part: u32) -
 			return schedule.weight
 		}
 	}
-	thread.written, thread.limit = wanted, part
+	thread.written, thread.limit, thread.new_thread_limit = wanted, part, new_limit
 	return wanted
 }
 
@@ -202,7 +222,12 @@ thread_weight_write :: proc "contextless" (thread: ^Tracked_Thread, part: u32) -
 // count; another thread gets the program weight divided by all the threads
 // of the program. A thread that wakes after a long wait so adds less than
 // one program weight, for one period at most, and the period after it the
-// program has less than its weight by the same amount.
+// program has less than its weight by the same amount. Each program, and
+// each of its threads, gets the new-thread weight limit of the program,
+// the value of the program before the report is read: a thread that the
+// program creates before the next round has that weight, which the kernel
+// fixes at the creation, so the moments of the creations give the program
+// nothing.
 policy_round :: proc "contextless" (on: bool) {
 	start := system.nanoseconds()
 	now := system.time()
@@ -218,10 +243,19 @@ policy_round :: proc "contextless" (on: bool) {
 			slots_before[slot] = {}
 			continue
 		}
+		program_weight := setting_weight(&settings_of_round, system.name_of(report.name[:]))
+		// The value of the program first, then the report: a thread that
+		// the program creates after this write has the small value, and a
+		// thread that it created before is in the report. So no thread of
+		// the program escapes the round, also one that a thread creates
+		// just before the policy writes that thread.
+		if on {
+			program_limit_write(slot, report.program_serial, new_thread_part(program_weight))
+		}
 		count := policy_threads_of(slot, report.program_serial)
 		counted_now: [op.THREAD_REPORT_CAPACITY]bool
 		records: [op.THREAD_REPORT_CAPACITY]^Tracked_Thread
-		row := Program_Row{name = report.name, weight = setting_weight(&settings_of_round, system.name_of(report.name[:]))}
+		row := Program_Row{name = report.name, weight = program_weight}
 		for index in 0 ..< count {
 			item := &policy_table.threads[index]
 			if !program_lives(item.state) {
@@ -248,6 +282,7 @@ policy_round :: proc "contextless" (on: bool) {
 		}
 		part_counted := max(row.weight / max(row.counted, 1), 1)
 		part_other := max(row.weight / row.threads, 1)
+		part_new := new_thread_part(row.weight)
 		row.thread_weight_least = op.WEIGHT_FULL
 		writes_before := round_now.writes
 		for index in 0 ..< count {
@@ -260,8 +295,8 @@ policy_round :: proc "contextless" (on: bool) {
 				part := counted_now[index] ? part_counted : part_other
 				// The report gives the weight; only the policy writes a
 				// limit, so its own record gives the limit.
-				if thread.written == 0 || weight != min(part, thread.asked) || thread.limit != part {
-					if written := thread_weight_write(thread, part); written != 0 {
+				if thread.written == 0 || weight != min(part, thread.asked) || thread.limit != part || thread.new_thread_limit != min(part_new, part) {
+					if written := thread_weight_write(thread, part, part_new); written != 0 {
 						weight = written
 					}
 				}
@@ -292,14 +327,45 @@ policy_round :: proc "contextless" (on: bool) {
 	system.unlock(&policy_lock)
 }
 
-// policy_weights_give_back gives each thread of the machine that is under a
-// weight limit the weight that its program asked, and the full weight
-// limit. Only the policy writes a limit, so a limit under the full weight
-// is a limit of the policy: of this program, or of a program `scheduler`
-// that ran before it and was stopped with the policy on. A thread that a
-// program creates during the pass gets the limit of its creator, so the
-// passes go on until one writes nothing. false: a write was refused, or a
-// thread was still under a limit after the last pass.
+// The new-thread weight limit that the policy wrote last for the program
+// of each slot, with the serial of that program.
+Program_Limit_Written :: struct {
+	serial: u64,
+	limit:  u32, // 0: the policy never wrote this program.
+}
+program_limits_written: [PROGRAM_SLOT_LIMIT]Program_Limit_Written
+
+// program_limit_write gives a program its new-thread weight limit, through
+// the machine handle. It writes only a value that changes: the kernel keeps
+// the value of a program until the next write.
+program_limit_write :: proc "contextless" (slot, serial: u64, limit: u32) {
+	written := &program_limits_written[slot]
+	if written.serial == serial && written.limit == limit {
+		return
+	}
+	status := system.program_schedule_write(machine, slot, serial, {new_thread_weight_limit = limit})
+	switch {
+	case status == .Ok:
+		written^ = {serial = serial, limit = limit}
+		round_now.writes += 1
+		policy_writes += 1
+	case status == .Bad_State:
+	// The program ended since its report.
+	case:
+		policy_refused += 1
+	}
+}
+
+// policy_weights_give_back gives each program the full new-thread weight
+// limit, and each thread of the machine that is under a weight limit or a
+// new-thread weight limit the weight that its program asked, and the two
+// full limits. Only the policy writes a limit, so a
+// limit under the full weight is a limit of the policy: of this program,
+// or of a program `scheduler` that ran before it and was stopped with the
+// policy on. A thread that a program creates during the pass gets the
+// new-thread weight limit of its creator, so the passes go on until one
+// writes nothing. false: a write was refused, or a thread was still under
+// a limit after the last pass.
 POLICY_GIVE_BACK_PASSES :: 4
 
 policy_weights_give_back :: proc "contextless" () -> bool {
@@ -310,6 +376,18 @@ policy_weights_give_back :: proc "contextless" () -> bool {
 			if status != .Ok || !program_lives(report.state) {
 				continue
 			}
+			// The value of the program first: a thread that the program
+			// creates after it has the full value of its program.
+			if program_schedule, program_status := system.program_schedule_read(machine, slot, report.program_serial); program_status == .Ok && program_schedule.new_thread_weight_limit != op.WEIGHT_FULL {
+				#partial switch system.program_schedule_write(machine, slot, report.program_serial, {}) {
+				case .Ok:
+					written += 1
+				case .Bad_State:
+				// The program ended.
+				case:
+					refused += 1
+				}
+			}
 			count := policy_threads_of(slot, report.program_serial)
 			for index in 0 ..< count {
 				item := &policy_table.threads[index]
@@ -317,14 +395,14 @@ policy_weights_give_back :: proc "contextless" () -> bool {
 					continue
 				}
 				schedule, read_status := system.thread_schedule_read(machine, item.machine_number)
-				if read_status != .Ok || schedule.weight_limit == op.WEIGHT_FULL {
+				if read_status != .Ok || (schedule.weight_limit == op.WEIGHT_FULL && schedule.new_thread_weight_limit == op.WEIGHT_FULL) {
 					continue
 				}
 				asked := asked_of(schedule)
 				if thread, first_sight := tracked_of(item.machine_number); thread != nil && !first_sight && thread.written != 0 {
 					asked = schedule.weight < thread.written ? schedule.weight : thread.asked
 				}
-				#partial switch system.thread_schedule_write(machine, item.machine_number, {weight = asked, request = schedule.request, weight_limit = op.WEIGHT_FULL}) {
+				#partial switch system.thread_schedule_write(machine, item.machine_number, {weight = asked, request = schedule.request, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}) {
 				case .Ok:
 					written += 1
 				case .Bad_State:
@@ -339,10 +417,12 @@ policy_weights_give_back :: proc "contextless" () -> bool {
 		}
 		if written == 0 {
 			tracked = {}
+			program_limits_written = {}
 			return true
 		}
 	}
 	tracked = {}
+	program_limits_written = {}
 	return false
 }
 
@@ -543,6 +623,46 @@ share_program_run :: proc "contextless" (threads: u64) -> ! {
 	share_spin(&share_spin_count[0])
 }
 
+// The program of short threads of the second case: its role is one value
+// with its own tag, so that no count of threads of the first case is it.
+SHORT_THREADS_ROLE :: u64(0x5348_4F52_0000_0001) // "SHOR"
+// The short threads that the program keeps alive, and the iterations of
+// the loop of each one before it ends. The count of iterations makes a
+// thread short against the period of the rounds on a fast host and on a
+// slow one; the checks do not depend on it: a thread that a round sees is
+// not one that the case checks.
+SHORT_THREADS_ALIVE :: 6
+SHORT_THREAD_ITERATIONS :: 200_000
+
+short_thread_run :: proc "c" (parameter: rawptr) -> ! {
+	spinner := (^Spinner)(parameter)
+	for _ in 0 ..< SHORT_THREAD_ITERATIONS {
+		intrinsics.volatile_store(&spinner.count, intrinsics.volatile_load(&spinner.count) + 1)
+	}
+	system.thread_stop()
+}
+
+// short_threads_run is the whole of the program of short threads: its
+// first thread waits for the end of each short thread in turn and creates
+// the next one in its place, until the program that started it stops it.
+// A creation that fails, for a slot of a thread that its budget has not
+// got back yet, is tried again at the next turn of the loop.
+short_threads_run :: proc "contextless" () -> ! {
+	threads: [SHORT_THREADS_ALIVE]system.Thread
+	for {
+		for &thread, index in threads {
+			if thread.handle != 0 {
+				system.thread_wait(thread)
+			}
+			status: system.Status
+			thread, status = system.thread_start(short_thread_run, &share_spin_count[index])
+			if status != .Ok {
+				thread = {}
+			}
+		}
+	}
+}
+
 // What a program of the case asks of the budget of this program. pages:
 // its copy of the data of the module and of the module that it imports,
 // its stack, its context and its page tables, with room; then a stack of
@@ -567,36 +687,46 @@ Share_Program :: struct {
 
 share_programs: [SHARE_PROGRAM_COUNT]Share_Program
 
-// share_programs_start starts the four programs and finds the slot of
+// One program of a case, as the case starts it: its name, the value of its
+// role, what it asks of the budget of this program, and the count of its
+// ready threads that says that it runs.
+Case_Program :: struct {
+	name:        string,
+	role:        u64,
+	amounts:     system.Budget_Amounts,
+	ready_least: u64,
+}
+
+// case_programs_start starts the programs of a case and finds the slot of
 // each one by its name. It then waits until the thread report of each one
-// shows each of its threads ready: a state of the kernel, and the time
-// only ends a hang. false: a program did not start, or its threads did not
-// all become ready.
-share_programs_start :: proc "contextless" () -> bool {
+// shows at least its count of ready threads: a state of the kernel, and the
+// time only ends a hang. false: a program did not start, or its threads did
+// not become ready.
+case_programs_start :: proc "contextless" (programs: []Share_Program, described: []Case_Program) -> bool {
 	file := system.image_find(image, "scheduler")
-	for &started, index in share_programs {
+	for &started, index in programs {
 		grants: [op.CONTEXT_HANDLES]system.Grant
 		values: [op.CONTEXT_VALUES]u64
-		values[SHARE_VALUE_ROLE] = SHARE_ROLE_TAG | share_thread_counts[index]
-		amounts := share_program_amounts(share_thread_counts[index])
+		values[SHARE_VALUE_ROLE] = described[index].role
+		amounts := described[index].amounts
 		error: module.Load_Error
 		status: system.Status
-		started.program, status = system.program_start(file, share_program_names[index], grants, random.values_with_seed(&program_generator, values), amounts, nil, nil, {image = image}, &error)
+		started.program, status = system.program_start(file, described[index].name, grants, random.values_with_seed(&program_generator, values), amounts, nil, nil, {image = image}, &error)
 		if status != .Ok {
 			buffer: [384]u8
 			lines := system.Writer{buffer = buffer[:]}
 			system.load_error_text(&lines, &error)
 			own, _ := system.budget_read()
-			system.log("scheduler: the program ", share_program_names[index], " did not start: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this program can give pages ", own.pages, ", programs ", own.programs, ", threads ", own.threads, "; the program asks pages ", amounts.pages, ", threads ", amounts.threads)
+			system.log("scheduler: the program ", described[index].name, " did not start: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this program can give pages ", own.pages, ", programs ", own.programs, ", threads ", own.threads, "; the program asks pages ", amounts.pages, ", threads ", amounts.threads)
 			return false
 		}
 	}
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
-	for &started, index in share_programs {
+	for &started, index in programs {
 		for started.slot == 0 && system.time() < deadline {
 			for slot in u64(1) ..< PROGRAM_SLOT_LIMIT {
 				report, status := program_report(slot)
-				if status == .Ok && program_lives(report.state) && system.name_of(report.name[:]) == share_program_names[index] {
+				if status == .Ok && program_lives(report.state) && system.name_of(report.name[:]) == described[index].name {
 					started.slot, started.serial = slot, report.program_serial
 				}
 			}
@@ -611,7 +741,7 @@ share_programs_start :: proc "contextless" () -> bool {
 			for &item in policy_table.threads[:count] {
 				ready_count += u64(item.state == .Ready)
 			}
-			ready = ready_count == share_thread_counts[index]
+			ready = ready_count >= described[index].ready_least
 			if !ready {
 				system.sleep(system.time() + 1)
 			}
@@ -623,8 +753,19 @@ share_programs_start :: proc "contextless" () -> bool {
 	return true
 }
 
-share_programs_stop :: proc "contextless" () {
-	for &started in share_programs {
+// share_programs_start starts the four programs of spinning threads. Each
+// one runs when each of its threads is ready.
+share_programs_start :: proc "contextless" () -> bool {
+	described: [SHARE_PROGRAM_COUNT]Case_Program
+	for &program, index in described {
+		threads := share_thread_counts[index]
+		program = {name = share_program_names[index], role = SHARE_ROLE_TAG | threads, amounts = share_program_amounts(threads), ready_least = threads}
+	}
+	return case_programs_start(share_programs[:], described[:])
+}
+
+case_programs_stop :: proc "contextless" (programs: []Share_Program) {
+	for &started in programs {
 		if started.program != 0 {
 			system.call(.Program_Stop, u64(started.program), 0)
 			system.close(started.program)
@@ -642,10 +783,12 @@ Program_Weights :: struct {
 	most:       u32,
 	limit_least: u32, // The least and the most of their weight limits.
 	limit_most:  u32,
+	new_thread_limit_least: u32, // The least and the most of their new-thread weight limits.
+	new_thread_limit_most:  u32,
 }
 
 program_weights :: proc "contextless" (slot, serial: u64) -> (weights: Program_Weights) {
-	weights.least, weights.limit_least = op.WEIGHT_FULL, op.WEIGHT_FULL
+	weights.least, weights.limit_least, weights.new_thread_limit_least = op.WEIGHT_FULL, op.WEIGHT_FULL, op.WEIGHT_FULL
 	count := policy_threads_of(slot, serial)
 	for index in 0 ..< count {
 		item := &policy_table.threads[index]
@@ -660,6 +803,8 @@ program_weights :: proc "contextless" (slot, serial: u64) -> (weights: Program_W
 		weights.sum += u64(schedule.weight)
 		weights.least, weights.most = min(weights.least, schedule.weight), max(weights.most, schedule.weight)
 		weights.limit_least, weights.limit_most = min(weights.limit_least, schedule.weight_limit), max(weights.limit_most, schedule.weight_limit)
+		weights.new_thread_limit_least = min(weights.new_thread_limit_least, schedule.new_thread_weight_limit)
+		weights.new_thread_limit_most = max(weights.new_thread_limit_most, schedule.new_thread_weight_limit)
 	}
 	return weights
 }
@@ -668,16 +813,16 @@ program_weights :: proc "contextless" (slot, serial: u64) -> (weights: Program_W
 // bound of a thread, which is two requests of 3 ms.
 SHARE_PROGRAMS_TIME :: 1000
 
-// share_programs_interval gives the ticks of processor time of each of the
-// four programs over one interval, from the program reports. In the check
-// the interval ends when each program ran SHARE_TICKS_CHECKED ticks: a
-// count of the kernel, so a slow host makes the interval longer and leaves
-// the counts. A measure run has an interval of SHARE_PROGRAMS_TIME. The
-// rounds of the policy go on during the interval, one each period. false:
-// the hang bound ended the interval, or a report was not of the program.
-share_programs_interval :: proc "contextless" (on: bool) -> (parts: [SHARE_PROGRAM_COUNT]u64, each_ran: bool) {
+// case_programs_interval gives the ticks of processor time of each program
+// of a case over one interval, from the program reports. In the check the
+// interval ends when each program ran SHARE_TICKS_CHECKED ticks: a count of
+// the kernel, so a slow host makes the interval longer and leaves the
+// counts. A measure run has an interval of SHARE_PROGRAMS_TIME. The rounds
+// of the policy go on during the interval, one each period. false: the
+// hang bound ended the interval, or a report was not of the program.
+case_programs_interval :: proc "contextless" (programs: []Share_Program, on: bool) -> (parts: [SHARE_PROGRAM_COUNT]u64, each_ran: bool) {
 	base: [SHARE_PROGRAM_COUNT]u64
-	for &started, index in share_programs {
+	for &started, index in programs {
 		report, status := program_report(started.slot)
 		if status != .Ok || report.program_serial != started.serial {
 			return parts, false
@@ -694,7 +839,7 @@ share_programs_interval :: proc "contextless" (on: bool) -> (parts: [SHARE_PROGR
 			next_round = system.time() + POLICY_PERIOD
 		}
 		each_ran = true
-		for &started, index in share_programs {
+		for &started, index in programs {
 			report, status := program_report(started.slot)
 			if status != .Ok || report.program_serial != started.serial {
 				return parts, false
@@ -717,9 +862,11 @@ weight_of_lowered :: proc "contextless" (index: int) -> u64 {
 }
 
 // The weight that a thread of this program asks at its creation, and the
-// weight that it lowers itself to, in the case.
-SHARE_WEIGHT_ASKED :: 100
-SHARE_WEIGHT_LOWERED :: 50
+// weight that it lowers itself to, in the case. Under the policy the first
+// thread has the new-thread weight limit of a program of the full weight,
+// and the kernel refuses a weight above it at a creation.
+SHARE_WEIGHT_ASKED :: op.WEIGHT_FULL / PROGRAM_THREADS_MOST - 2
+SHARE_WEIGHT_LOWERED :: SHARE_WEIGHT_ASKED / 2
 // The threads that this program then starts: with its first thread and the
 // thread that lowered itself, it has 9 threads that count.
 SHARE_THREADS_MORE :: 7
@@ -739,10 +886,11 @@ shares_part :: proc "contextless" (writer: ^system.Writer, parts: [SHARE_PROGRAM
 // spinning threads, under EEVDF, and prints the shares.
 //
 // The conditions are values that the kernel gives back, with no time: the
-// weight and the weight limit of each thread after a round; their sum for
-// each program; the weight of a thread of this program that asked 100 and
-// then lowered itself to 50; the weights of this program after it started
-// 7 threads more; the weights after the policy went off. One condition is
+// weight, the weight limit and the new-thread weight limit of each thread
+// after a round; their sum for each program; the weight of a thread of
+// this program that asked 30 and then lowered itself to 15; the weights of
+// this program after it started 7 threads more; the weights and the limits
+// after the policy went off. One condition is
 // an order of counts of ticks: the part of the program with 8 threads
 // against the program with 1 is smaller with the policy than without it.
 // The shares themselves are measures: the balance between the queues
@@ -758,7 +906,7 @@ share_case :: proc "contextless" () -> bool {
 		return false
 	}
 	defer system.strategy_set(machine, before)
-	defer share_programs_stop()
+	defer case_programs_stop(share_programs[:])
 	if !share_programs_start() {
 		system.log("scheduler: the share policy is not checked: a program with spinning threads did not start, or its threads did not become ready")
 		return false
@@ -766,7 +914,7 @@ share_case :: proc "contextless" () -> bool {
 
 	// Without the policy: the rounds only read.
 	policy_round(false)
-	without, without_ran := share_programs_interval(false)
+	without, without_ran := case_programs_interval(share_programs[:], false)
 
 	// With the policy. Two rounds: the second one finds each weight as the
 	// first one left it.
@@ -786,14 +934,16 @@ share_case :: proc "contextless" () -> bool {
 	}
 	weights: [SHARE_PROGRAM_COUNT]Program_Weights
 	weights_right := true
+	new_part := new_thread_part(op.WEIGHT_FULL)
 	for &started, index in share_programs {
 		weights[index] = program_weights(started.slot, started.serial)
 		part := u32(op.WEIGHT_FULL / share_thread_counts[index])
 		weights_right &&= weights[index].threads == share_thread_counts[index] && weights[index].least == part && weights[index].most == part
 		weights_right &&= weights[index].limit_least == part && weights[index].limit_most == part && weights[index].sum <= op.WEIGHT_FULL
+		weights_right &&= weights[index].new_thread_limit_least == new_part && weights[index].new_thread_limit_most == new_part
 	}
-	system.log("scheduler: the share policy, three rounds: each thread of the programs with 1, 2, 4 and 8 spinning threads has the weight and the weight limit ", u64(weights[0].most), ", ", u64(weights[1].most), ", ", u64(weights[2].most), " and ", u64(weights[3].most), "; the weights of each program sum to ", weights[0].sum, ", ", weights[1].sum, ", ", weights[2].sum, " and ", weights[3].sum, "; the third round wrote none of their threads: ", u64(steady), weights_right && steady ? string(": as it must") : string(": WRONG"))
-	with, with_ran := share_programs_interval(true)
+	system.log("scheduler: the share policy, three rounds: each thread of the programs with 1, 2, 4 and 8 spinning threads has the weight and the weight limit ", u64(weights[0].most), ", ", u64(weights[1].most), ", ", u64(weights[2].most), " and ", u64(weights[3].most), ", and the new-thread weight limit ", u64(weights[3].new_thread_limit_most), "; the weights of each program sum to ", weights[0].sum, ", ", weights[1].sum, ", ", weights[2].sum, " and ", weights[3].sum, "; the third round wrote none of their threads: ", u64(steady), weights_right && steady ? string(": as it must") : string(": WRONG"))
+	with, with_ran := case_programs_interval(share_programs[:], true)
 
 	// A program that asks less keeps it, and a program that starts threads
 	// gets no more: this program is the example.
@@ -823,14 +973,14 @@ share_case :: proc "contextless" () -> bool {
 	lowered_after, _ := system.thread_schedule_read(machine, numbers[0])
 	first_after, _ := system.thread_schedule_read(machine, self_machine_number)
 	back_right := given_back && policy_refused == 0
-	back_right &&= lowered_after.weight == SHARE_WEIGHT_LOWERED && lowered_after.weight_limit == op.WEIGHT_FULL
-	back_right &&= first_after.weight == op.WEIGHT_FULL && first_after.weight_limit == op.WEIGHT_FULL
+	back_right &&= lowered_after.weight == SHARE_WEIGHT_LOWERED && lowered_after.weight_limit == op.WEIGHT_FULL && lowered_after.new_thread_weight_limit == op.WEIGHT_FULL
+	back_right &&= first_after.weight == op.WEIGHT_FULL && first_after.weight_limit == op.WEIGHT_FULL && first_after.new_thread_weight_limit == op.WEIGHT_FULL
 	for &started, index in share_programs {
 		after := program_weights(started.slot, started.serial)
-		back_right &&= after.threads == share_thread_counts[index] && after.least == op.WEIGHT_FULL && after.limit_least == op.WEIGHT_FULL
+		back_right &&= after.threads == share_thread_counts[index] && after.least == op.WEIGHT_FULL && after.limit_least == op.WEIGHT_FULL && after.new_thread_limit_least == op.WEIGHT_FULL
 	}
 	spinners_stop(0, SHARE_THREADS_MORE + 1)
-	system.log("scheduler: the share policy off: each thread of the 4 programs and the first thread of this program have the weight 1024 and the full weight limit again, the thread that lowered itself has the weight ", u64(lowered_after.weight), " and the full weight limit, and no write of the policy was refused: ", u64(policy_refused == 0), back_right ? string(": as it must") : string(": WRONG"))
+	system.log("scheduler: the share policy off: each thread of the 4 programs and the first thread of this program have the weight 1024 and the two full weight limits again, the thread that lowered itself has the weight ", u64(lowered_after.weight), " and the two full weight limits, and no write of the policy was refused: ", u64(policy_refused == 0), back_right ? string(": as it must") : string(": WRONG"))
 
 	// The order: the part of the program with 8 threads against the program
 	// with 1, with the policy and without it. Each part is a count of
@@ -861,4 +1011,171 @@ share_case :: proc "contextless" () -> bool {
 	}
 	system.log("scheduler: one round of the share policy, over ", u64(round_now.count), " programs and ", round_now.threads, " threads: ", sorted[rounds / 2], " ns in the middle of ", u64(rounds), " rounds; ", policy_writes, " writes of a schedule in all, ", policy_raises, " of them raised a weight; the period of the rounds is ", u64(POLICY_PERIOD), " ms (measures)")
 	return weights_right && steady && kept_right && back_right && order_right
+}
+
+// The programs of the case of the short threads: the program of short
+// threads first, then a program with one thread that computes with no end.
+SHORT_CASE_PROGRAM_COUNT :: 2
+short_case_programs: [SHORT_CASE_PROGRAM_COUNT]Share_Program
+// A program that the case starts under the policy, to read its first thread.
+started_under_policy: [1]Share_Program
+// The distinct threads that no round saw which the case reads: enough that
+// the program created them at many moments between two rounds.
+SHORT_THREADS_CHECKED :: 24
+
+// What the case read of the threads that no round saw.
+Unseen_Threads :: struct {
+	checked:   u64, // The distinct threads read.
+	wrong:     u64, // The reads of a schedule that was not the new-thread weight limit of the program in each value.
+	sum_most:  u64, // The most that the weights of the threads of one read summed to.
+}
+
+// unseen_threads_check reads, through the machine handle, the schedules of
+// the threads of a program that no round saw, until it has read
+// SHORT_THREADS_CHECKED distinct threads; the time only ends a hang. Only
+// this thread runs rounds during the case, so the records of the policy
+// say exactly which threads a round saw: a thread whose place holds
+// another machine number was created after the last round read the
+// report.
+unseen_threads_check :: proc "contextless" (program: Share_Program, new_part: u32) -> (unseen: Unseen_Threads) {
+	// The machine number last read in each place: a place that a new thread
+	// takes has a new serial, so it counts again.
+	read_before: [THREAD_PLACE_LIMIT]u64
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for unseen.checked < SHORT_THREADS_CHECKED && system.time() < deadline {
+		count := policy_threads_of(program.slot, program.serial)
+		sum: u64
+		for index in 0 ..< count {
+			item := &policy_table.threads[index]
+			place := item.machine_number & 0xFFFF_FFFF
+			if !program_lives(item.state) || place >= THREAD_PLACE_LIMIT || tracked[place].machine_number == item.machine_number {
+				continue
+			}
+			schedule, status := system.thread_schedule_read(machine, item.machine_number)
+			if status != .Ok {
+				// It ended since the report.
+				continue
+			}
+			if read_before[place] != item.machine_number {
+				read_before[place] = item.machine_number
+				unseen.checked += 1
+			}
+			sum += u64(schedule.weight)
+			if schedule.weight != new_part || schedule.weight_limit != new_part || schedule.new_thread_weight_limit != new_part {
+				unseen.wrong += 1
+			}
+		}
+		unseen.sum_most = max(unseen.sum_most, sum)
+		if unseen.checked < SHORT_THREADS_CHECKED {
+			system.sleep(system.time() + SHARE_POLL_TIME)
+		}
+	}
+	return unseen
+}
+
+// short_threads_case checks the share policy against a program that keeps
+// short threads alive, under EEVDF: each of its threads ends after a count
+// of iterations and the program creates the next one, so most of its
+// threads start and end between two rounds.
+//
+// The condition that the old form fails is a state, with no time: each
+// thread that no round saw has the new-thread weight limit of its program
+// as its weight, its weight limit and its new-thread weight limit, and the
+// weights of those threads of one read sum to under the program weight.
+// When a new thread got the weight limit of its creator, these threads
+// had the part of the creator, which is above that value; the per-thread
+// value is the condition that breaks that form, the sum is evidence only.
+// The case runs one round only before it reads: the round writes the
+// value of the program before it reads the report, so a thread that the
+// round did not see was created after that write. Two more conditions are
+// states of the kernel after that round: this program cannot create a
+// thread with a weight above the value, although its first thread has a
+// higher weight limit; and the first thread of a program that it starts
+// has the value. One more condition is an order of counts of ticks, as in
+// the case of the four programs: the part of the program of short threads
+// against the program of one thread is smaller with the policy than
+// without it.
+short_threads_case :: proc "contextless" () -> bool {
+	if image == nil || self_slot == 0 {
+		system.log("scheduler: the share policy is not checked against short threads: no boot image, or the program did not find its own threads")
+		return false
+	}
+	described := [SHORT_CASE_PROGRAM_COUNT]Case_Program {
+		// The slot of each short thread comes back to the budget a little
+		// after its end: the budget has room for a second set.
+		{name = "short_threads", role = SHORT_THREADS_ROLE, amounts = share_program_amounts(1 + 2 * SHORT_THREADS_ALIVE), ready_least = 1},
+		{name = "long_thread", role = SHARE_ROLE_TAG | 1, amounts = share_program_amounts(1), ready_least = 1},
+	}
+	// The programs of the case before it gave their budgets back: the wait
+	// is for that state, and the time only ends a hang.
+	started_described := [1]Case_Program{{name = "started_under_policy", role = SHARE_ROLE_TAG | 1, amounts = share_program_amounts(1), ready_least = 1}}
+	needed := started_described[0].amounts
+	for &program in described {
+		needed.pages += program.amounts.pages
+		needed.threads += program.amounts.threads
+		needed.processor += program.amounts.processor
+	}
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+		own, _ := system.budget_read()
+		if own.pages >= needed.pages && own.threads >= needed.threads && own.processor >= needed.processor {
+			break
+		}
+		system.sleep(system.time() + 1)
+	}
+	before, set_status := system.strategy_set(machine, .Eevdf)
+	if set_status != .Ok {
+		return false
+	}
+	defer system.strategy_set(machine, before)
+	defer case_programs_stop(short_case_programs[:])
+	defer case_programs_stop(started_under_policy[:])
+	if !case_programs_start(short_case_programs[:], described[:]) {
+		system.log("scheduler: the share policy is not checked against short threads: a program did not start, or its threads did not become ready")
+		return false
+	}
+
+	// Without the policy: the rounds only read.
+	policy_round(false)
+	without, without_ran := case_programs_interval(short_case_programs[:], false)
+
+	// One round: the gap of the first round is closed by the write of the
+	// value of the program before the report.
+	policy_round(true)
+	new_part := new_thread_part(op.WEIGHT_FULL)
+	unseen := unseen_threads_check(short_case_programs[0], new_part)
+	unseen_right := unseen.checked >= SHORT_THREADS_CHECKED && unseen.wrong == 0 && unseen.sum_most < op.WEIGHT_FULL
+	system.log("scheduler: the share policy and a program that keeps ", u64(SHORT_THREADS_ALIVE), " short threads alive, after one round: ", min(unseen.checked, SHORT_THREADS_CHECKED), " of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit ", u64(new_part), ": ", u64(unseen.wrong == 0), ", and those of one read summed to under 1024: ", u64(unseen.sum_most < op.WEIGHT_FULL), unseen_right ? string(": as it must") : string(": WRONG"))
+
+	// This program under the policy: its value and the value of its first
+	// thread are the small value, while the weight limit of its first
+	// thread is its part, which is higher. A weight between the two is
+	// refused, and the error record names the small value.
+	own_program, own_program_status := system.program_schedule_read(machine, self_slot, self_serial)
+	first, first_status := system.thread_schedule_read(machine, self_machine_number)
+	error: errors.Error_Record
+	_, between_status := system.thread_start(brief, nil, weight = u64(new_part) + 1, error = &error)
+	refused_right := own_program_status == .Ok && own_program.new_thread_weight_limit == new_part && first_status == .Ok && first.weight_limit > new_part + 1
+	refused_right &&= between_status == .Bad_Operation && error.limit == i64(new_part)
+	system.log("scheduler: under the share policy this program has the new-thread weight limit ", u64(own_program.new_thread_weight_limit), ", and the weight limit of its first thread is above ", u64(new_part) + 1, ": ", u64(first.weight_limit > new_part + 1), "; a new thread with the weight ", u64(new_part) + 1, " ", op.STATUS_NAMES[between_status], ", and the error record names ", u64(error.limit), refused_right ? string(": as it must") : string(": WRONG"))
+
+	// A program that this program starts under the policy: its first
+	// thread has the small value, before any round wrote it.
+	started_right := case_programs_start(started_under_policy[:], started_described[:])
+	started_weights: Program_Weights
+	if started_right {
+		started_weights = program_weights(started_under_policy[0].slot, started_under_policy[0].serial)
+		started_right = started_weights.threads == 1 && started_weights.most == new_part && started_weights.limit_most == new_part && started_weights.new_thread_limit_most == new_part
+	}
+	case_programs_stop(started_under_policy[:])
+	system.log("scheduler: the first thread of a program started under the share policy has the weight, the weight limit and the new-thread weight limit ", u64(started_weights.most), ", ", u64(started_weights.limit_most), " and ", u64(started_weights.new_thread_limit_most), started_right ? string(": as it must") : string(": WRONG"))
+	with, with_ran := case_programs_interval(short_case_programs[:], true)
+	if !policy_weights_give_back() {
+		system.log("scheduler: after the case of the short threads, a write that gives the full weight limits back was refused")
+		return false
+	}
+
+	order_right := without_ran && with_ran && with[0] * without[1] < without[0] * with[1]
+	system.log("scheduler: the program of short threads against the program of one long thread, by the ticks of the kernel over one interval: its part is smaller under the share policy than without it", order_right ? string(": as it must") : string(": WRONG"))
+	system.log("scheduler: the program of short threads got ", without[0] * 100 / max(without[1], 1), " % of the program of one long thread without the share policy, and ", with[0] * 100 / max(with[1], 1), " % with it (measures)")
+	return unseen_right && refused_right && started_right && order_right
 }

@@ -12,8 +12,8 @@
 //   the memory (`memory_create`, `memory_map`, `memory_commit`,
 //   `memory_protect`), the handles (`give`, `handle_state`, `close`), the
 //   rings (`ring_create`, `ring_open`), the threads (`thread_start`,
-//   `thread_wait`, `thread_schedule_read`, `thread_schedule_write`), the
-//   fault ring and the kernel events.
+//   `thread_wait`, `thread_schedule_read`, `thread_schedule_write`,
+//   `program_schedule_read`, `program_schedule_write`), the fault ring and the kernel events.
 // - `wait.odin`: the waits on words and the queues with waits (`send`,
 //   `receive`, `wait_begin`, `wait_end`).
 // - `text.odin`, `log.odin`: the log of a program (`log`, `log_in`,
@@ -758,7 +758,7 @@ THREAD_STACK_PAGES :: op.THREAD_STACK_PAGES
 //
 // The entry never returns: it calls thread_stop. The budget (0: the budget
 // of this program) pays for the thread and gives its processor time. The
-// weight (1 to the weight limit of the calling thread, which is
+// weight (1 to the new-thread weight limit of the calling thread, which is
 // op.WEIGHT_FULL unless the holder of the machine lowered it; 0: that
 // limit) and the request in
 // microseconds (0: op.REQUEST_DEFAULT) are for the scheduling strategies
@@ -811,10 +811,11 @@ thread_schedule_read :: proc "contextless" (thread: Handle, number: u64, error: 
 // Through 0 or a thread handle the write only lowers: a weight above the
 // weight of the thread, or a request above its request, gives
 // Bad_Operation; 0 keeps a value. Only a write through the machine handle
-// raises a weight or a request, and reads `weight_limit`: it gives the
-// three values (0: op.WEIGHT_FULL for the limit, the limit for the
-// weight, op.REQUEST_DEFAULT), so read the schedule first to change one
-// of them. A raised weight starts the thread again as a new thread for
+// raises a weight or a request, and reads `weight_limit` and
+// `new_thread_weight_limit`: it gives the four values (0: op.WEIGHT_FULL
+// for the limit, the limit for the weight and for the new-thread weight
+// limit, op.REQUEST_DEFAULT), so read the schedule first to change one of
+// them. A raised weight starts the thread again as a new thread for
 // its scheduling strategy.
 //
 // ```odin
@@ -823,6 +824,34 @@ thread_schedule_read :: proc "contextless" (thread: Handle, number: u64, error: 
 thread_schedule_write :: proc "contextless" (thread: Handle, number: u64, schedule: op.Thread_Schedule, error: ^errors.Error_Record = nil) -> (status: Status) {
 	written := schedule
 	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Write_Schedule), u64(uintptr(&written)), size_of(written))
+	return status
+}
+
+// program_schedule_read gives the schedule of a program: the new-thread
+// weight limit of all its threads (docs/SCHEDULING.md, "The new-thread
+// weight limit"). Only the machine handle with the rights Schedule and
+// Inspect; the program is named by its slot and its serial
+// (`op.Program_Report.program_serial`).
+//
+// ```odin
+// schedule, status := system.program_schedule_read(machine, slot, report.program_serial)
+// ```
+program_schedule_read :: proc "contextless" (machine: Handle, slot, serial: u64, error: ^errors.Error_Record = nil) -> (schedule: op.Program_Schedule, status: Status) {
+	_, status = call_with_error(error, .Thread_Control, u64(machine), op.program_slot_and_serial(slot, serial), u64(op.Thread_Control_Command.Read_Program_Schedule), u64(uintptr(&schedule)), size_of(schedule))
+	return schedule, status
+}
+
+// program_schedule_write gives a program a schedule: from the write on,
+// no thread of the program creates a thread with a weight limit above its
+// new-thread weight limit (0: op.WEIGHT_FULL). Named as for
+// program_schedule_read, with the same rights.
+//
+// ```odin
+// status := system.program_schedule_write(machine, slot, report.program_serial, {new_thread_weight_limit = 32})
+// ```
+program_schedule_write :: proc "contextless" (machine: Handle, slot, serial: u64, schedule: op.Program_Schedule, error: ^errors.Error_Record = nil) -> (status: Status) {
+	written := schedule
+	_, status = call_with_error(error, .Thread_Control, u64(machine), op.program_slot_and_serial(slot, serial), u64(op.Thread_Control_Command.Write_Program_Schedule), u64(uintptr(&written)), size_of(written))
 	return status
 }
 

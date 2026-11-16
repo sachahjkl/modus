@@ -93,9 +93,9 @@ The run queue, the run lock, the balance between processors and the budgets stay
 
 ### Weights and requests: a field at thread creation
 
-`Thread_Create` has two more values: the weight (1 to the weight limit of the calling thread, which is 1024, the full weight, unless it was lowered; 0 is that limit) and the request in microseconds (1 to 100 000; 0 is 3000). Zero is the default, so a program that gives neither value gets the most weight that it can have and the default request (property 13).
+`Thread_Create` has two more values: the weight (1 to the smaller of the new-thread weight limit of the calling thread and the one of its program, each 1024, the full weight, unless it was lowered; 0 is that limit) and the request in microseconds (1 to 100 000; 0 is 3000). Zero is the default, so a program that gives neither value gets the most weight that it can have and the default request (property 13).
 
-Property 20, as an exact rule: a program only lowers the weight of its threads. A new thread gets a weight from 1 to the weight limit of the thread that creates it; after that, a write of the program gives the thread a weight at or under the weight that it has, never above. Only the holder of the right **Schedule** on the machine raises a weight ("The schedule of a live thread", below). So a program can give one thread less than another, and cannot take more than a thread with no weight, or more than its limit. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives. The request does not change the share: it moves the deadline. A short request can cost more switches; the cost is in the time of the thread itself, which its budget pays.
+Property 20, as an exact rule: a program only lowers the weight of its threads. A new thread gets a weight from 1 to the new-thread weight limit of the thread that creates it; after that, a write of the program gives the thread a weight at or under the weight that it has, never above. Only the holder of the right **Schedule** on the machine raises a weight ("The schedule of a live thread", below). So a program can give one thread less than another, and cannot take more than a thread with no weight, or more than its limit. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives. The request does not change the share: it moves the deadline. A short request can cost more switches; the cost is in the time of the thread itself, which its budget pays.
 
 A weight is for a thread, not for a program or a budget: a program with many threads still has more share than a program with one thread, as with round robin. The share policy of the program `scheduler` gives each program one program weight ("A share for each program"). A share for each budget (the groups of Linux) is not built in the kernel: see section 5.
 
@@ -103,7 +103,7 @@ A weight is for a thread, not for a program or a budget: a program with many thr
 
 The policy of scheduling is outside the kernel, and the mechanism is inside. A program chooses the weight and the request of threads, at a slow rate. The kernel applies them at each tick with its own strategy. No code of a program runs when the kernel picks a thread, charges a turn or wakes a thread.
 
-The values of one thread are its thread schedule (`op.Thread_Schedule`: `weight`, `request`, `weight_limit`). `Thread_Create` gives the first one. `Thread_Control` has two commands for a thread that lives:
+The values of one thread are its thread schedule (`op.Thread_Schedule`: `weight`, `request`, `weight_limit`, `new_thread_weight_limit`). `Thread_Create` gives the first one. `Thread_Control` has two commands for a thread that lives:
 
 | Command | What it does |
 |---|---|
@@ -114,14 +114,14 @@ The thread is not held: its schedule changes while it runs, while it is in a run
 
 **The rule.** Who writes decides what a write can do.
 
-| Who writes | The weight | The request | The weight limit | What happens to the place of the thread |
+| Who writes | The weight | The request | The two weight limits | What happens to the place of the thread |
 |---|---|---|---|---|
 | The program, for its own thread (`thread` 0), or the holder of a thread handle | Only lower, or the same. 0: the same | Only lower, or the same. 0: the same | Not read | Nothing: the strategy fields stay |
-| The holder of the machine handle | Any weight up to the limit. 0: the limit | Any request. 0: the default | Written. 0: the full weight. A weight above the new limit becomes the limit | A raised weight: the thread starts again as a new thread. Else nothing |
+| The holder of the machine handle | Any weight up to the limit. 0: the limit | Any request. 0: the default | Written. 0: the full weight for the weight limit, the weight limit for the new-thread weight limit. A value above the full weight is refused. A weight or a new-thread weight limit above the new limit becomes the limit | A raised weight: the thread starts again as a new thread. Else nothing |
 
 - A write of a program with a weight above the weight of the thread, or a request above its request, gives `Bad_Operation`, and nothing changes. The error record names the refused value and the value that the thread has.
 - A value above the most of the contract (`op.thread_schedule_accepted`: the full weight, 100 000 us) gives `Bad_Operation` for each writer.
-- A write through the machine handle always gives the three values: a holder that changes one value reads the schedule first.
+- A write through the machine handle always gives the four values: a holder that changes one value reads the schedule first.
 
 **Why a program only lowers.** A program chooses the moment of each write: while the thread runs, while it is in the list, while it waits, while a stop holds it. A program also has helpers that write for it. Each form of a rule that let a program raise a weight had a sequence of writes, down at one moment and up at another, that left the program better than a thread that never writes: a thread that owed less time, or a thread whose place moved the average of its queue. With one direction, no sequence gets back what a write gave up.
 
@@ -150,21 +150,29 @@ Each is less than what the end of the thread and a new thread give, which is a p
 
 - **Control** is the right to end the thread. A holder that can end a thread can also give it a smaller share, which is less. **Write**, the right to write the registers, is not needed: a weight chooses no code.
 - **Schedule** on the machine is the right of `Strategy_Set`. Its holder already changes the order of every thread of the machine, so the same right lets it set the weight and the request of any thread. The root service gives it to the program `scheduler` only.
-- The machine handle needs **Inspect** too, for both commands (`op.thread_control_machine_rights`). Each report of the machine needs **Inspect**, and a read by machine number is one: it gives values of any thread, and its status says which machine numbers name a thread. A write gives the three values of the record, so its holder must read the schedule first to keep the values that it does not change; and the machine numbers come from a report. So **Schedule** with no **Inspect** names no thread.
+- The machine handle needs **Inspect** too, for both commands (`op.thread_control_machine_rights`). Each report of the machine needs **Inspect**, and a read by machine number is one: it gives values of any thread, and its status says which machine numbers name a thread. A write gives the four values of the record, so its holder must read the schedule first to keep the values that it does not change; and the machine numbers come from a report. So **Schedule** with no **Inspect** names no thread.
 - The machine handle names a thread for these two commands only. Each other command of `Thread_Control` with the machine handle gives `Bad_Handle`: **Schedule** holds no thread and reads no register.
 - A weight is at most the weight limit of the thread, and a limit is at most the full weight. So no holder, also the holder of **Schedule**, gives a thread more than a thread that asked for nothing.
 
 **The weight limit.** Each thread has a weight limit, from 1 to the full weight: the most that its weight can be. The third field of the thread schedule is the limit (`Thread_Schedule.weight_limit`), and `Read_Schedule` gives it.
 
-- Only a write through the machine handle sets the limit; 0 is the full weight. A weight above the new limit becomes the limit in the same write, so one write lowers both. A write through the machine handle always writes the three values: a holder that changes one value reads the schedule first.
-- A write of a program for its own thread, and a write through a thread handle, do not read the limit of the record. They only lower the weight, so they never pass the limit.
-- A new thread gets the weight limit of the thread that creates it, and `Thread_Create` refuses a weight above it. The first thread of a new program gets the limit of the thread that starts the program. The first thread of the root service has the full weight.
+- Only a write through the machine handle sets the limit; 0 is the full weight. A weight above the new limit becomes the limit in the same write, so one write lowers both. A write through the machine handle always writes the four values: a holder that changes one value reads the schedule first.
+- A write of a program for its own thread, and a write through a thread handle, do not read the limits of the record. They only lower the weight, so they never pass the limit.
+- The first thread of the root service has the full weight and the two full limits.
 
-Why. A write of a program never raises the weight of a thread that lives. The limit carries the same rule across the creation of threads: with the full weight for each new thread, a program leaves a limit by a new thread that does the same work. The limit follows the creation of threads, so a program under a limit stays under it, also through a program that it starts. The limit is one word of the thread record, outside its first 64 bytes: only a write of a schedule and a creation read it.
+**The new-thread weight limit.** The fourth field of the thread schedule (`Thread_Schedule.new_thread_weight_limit`) is the weight limit that the thread gives to the threads that it creates. `Read_Schedule` gives it.
+
+- A program has a new-thread weight limit too, in the schedule of a program (`op.Program_Schedule`). A new program has the full value.
+- A new thread gets the smaller of the new-thread weight limit of the thread that creates it and the one of its program (`op.new_thread_weight_limit_of_creation`), as its weight limit and as its own new-thread weight limit (`op.thread_schedule_of_new_thread`). `Thread_Create` refuses a weight above it, and the weight 0 gives it. The first thread of a new program gets the same value of the thread that starts the program.
+- Only a write through the machine handle sets the value of a thread. 0 is the weight limit of the same write. A value above the full weight is refused (`Thread_Write_Refusal.New_Thread_Weight_Limit`), as a weight limit above it is. A value up to the full weight and above the weight limit becomes the weight limit (`op.thread_schedule_after_machine_write`). So a thread under a limit never gives a higher limit to a new thread.
+- A thread that the holder never wrote, or wrote with 0 in this field, has a new-thread weight limit equal to its weight limit: a new thread then gets the limit of its creator.
+- Two commands of `Thread_Control` read and write the schedule of a program: `Read_Program_Schedule` and `Write_Program_Schedule`. They take the machine handle with **Schedule** and **Inspect** only, and `number` is the slot of the program in the low 32 bits and its serial in the high 32 bits (`op.program_slot_and_serial`). 0 in a write is the full weight; a value above the full weight is refused. A write and a creation both hold the control lock, so a creation comes wholly before a write or wholly after it.
+
+Why. A write of a program never raises the weight of a thread that lives. The limit carries the same rule across the creation of threads: with the full weight for each new thread, a program leaves a limit by a new thread that does the same work. The limit follows the creation of threads, so a program under a limit stays under it, also through a program that it starts. The second limit is a separate value because a thread can need more than its new threads: the share policy gives a thread that counts its part of the program weight, and the threads that the program creates before the next round a smaller value that does not depend on when they are created ("A share for each program"). Each limit is one word of the thread record, outside its first 64 bytes: only a write of a schedule and a creation read them.
 
 Two limits of the weight limit, which a limit for each budget closes:
 
-- The limit is a value of each thread. A thread that a program created just before the write of the limit of its creator keeps the limit that the creator had then, and it gives that limit to the threads that it creates. So "a program under a limit stays under it" holds when each thread of the program has the limit. The holder of **Schedule** writes the limit of each thread of the program, reads the thread report again, and repeats until no thread has the old limit.
+- The limit is a value of each thread. A thread that a program created just before the write of the limit of its creator keeps the limit that the creator had then, and it gives its new-thread weight limit to the threads that it creates; the two values are equal unless a holder writes them apart. So "a program under a limit stays under it" holds when each thread of the program has the limit. The holder of **Schedule** writes the limit of each thread of the program, reads the thread report again, and repeats until no thread has the old limit.
 - The limit follows the thread that starts a program. A program that starts programs on request, and that has a higher limit, gives that higher limit to the programs that it starts, also when a program under a lower limit asked for them.
 
 What the limit is not: a share for a program. A program under a limit that creates more threads has more threads of that weight, as a program with the full weight has. A share for each program is a policy of the program `scheduler`, with these weights ("A share for each program").
@@ -179,7 +187,7 @@ A kept lag is exact only while the other threads of the queue stay the same. A t
 
 The interleavings with a pick, a move, a wake, the end of a thread and a change of strategy are in `ARCHITECTURE.md`, "Locks of the kernel", "The schedule of a live thread".
 
-**The tests.** The program `scheduler` checks: a thread reads its own schedule and lowers it, and its writes of the values of its creation are refused; the weights 1, 2 and 4 written through the machine handle to 12 spinners that run order their shares under the fair strategy and EEVDF; each refusal has its status; the schedule of a thread of another program is read and written through the machine handle; under a weight limit, 1000 rounds of writes of the thread raise no weight, and a new thread has the limit; writes through the machine handle, which raise and lower, during 100 changes of strategy lose no thread.
+**The tests.** The program `scheduler` checks: a thread reads its own schedule and lowers it, and its writes of the values of its creation are refused; the weights 1, 2 and 4 written through the machine handle to 12 spinners that run order their shares under the fair strategy and EEVDF; each refusal has its status; the schedule of a thread of another program is read and written through the machine handle; under a weight limit, 1000 rounds of writes of the thread raise no weight, and a new thread has the limit as its weight, its weight limit and its new-thread weight limit; writes through the machine handle, which raise and lower, during 100 changes of strategy lose no thread. The host tests of `src/library/contract/operation` check the defaults of a write through the machine handle and the schedule of a new thread (`thread_schedule_after_machine_write`, `thread_schedule_of_new_thread`).
 
 One test reads the place of a held thread. The thread report gives the kept lag of a held thread (`Thread_Report.lag`). In at least 100 rounds a spinner lowers to the weight 1, runs one tick (a count of the kernel), and a `Stop` holds it. In the hold its write of the full weight must be refused, its write of the request 1 us accepted, and the lag must be the same number after each; then the machine handle writes the full weight, and the lag must be 0. The rounds go on until one round had a lag below 0, so the test cannot pass with nothing to compare; if that state never comes, the test fails and says so. The conditions are numbers of the kernel, with no time in them. The test does not measure processor time, and no machine test asserts a share or a longest wait after writes: such a condition depends on the load of the host.
 
@@ -206,7 +214,7 @@ The thread is not held: its placement changes while it runs, while it is in a ru
 | The holder of the machine handle with **Schedule** and **Inspect** | Any set. 0: the limit. The part outside the new limit is dropped | Written. 0: every processor | The same |
 
 - The bits of processors that the machine does not have are dropped, so a writer can give all ones.
-- A write through the machine handle always gives the two sets, as its write of a schedule always gives the three values: 0 is a default, never "the value that the thread has". The set 0 is the whole limit, as the weight 0 is the weight limit. So a write of the holder with the set 0 undoes a narrowing that the program made, also one that the program made between the read and the write of the holder. A holder that changes the limit and keeps the set reads the placement first and writes the set that it read; a narrowing of the program between the two is then lost, and the program can narrow again. Only for a program is 0 "the set that the thread has", because a program cannot name a wider set.
+- A write through the machine handle always gives the two sets, as its write of a schedule always gives the four values: 0 is a default, never "the value that the thread has". The set 0 is the whole limit, as the weight 0 is the weight limit. So a write of the holder with the set 0 undoes a narrowing that the program made, also one that the program made between the read and the write of the holder. A holder that changes the limit and keeps the set reads the placement first and writes the set that it read; a narrowing of the program between the two is then lost, and the program can narrow again. Only for a program is 0 "the set that the thread has", because a program cannot name a wider set.
 - A write of a program with a processor that the set of the thread does not have gives `Bad_Operation`, and nothing changes. The error record names the refused set and the set that the thread has (`Thread_Write_Refusal.Processors`).
 - A set with no processor of the machine, and a set with no processor inside its limit, give `Bad_Operation` for each writer. A thread with no processor never runs: that is `Stop`, which has its own right. The kernel does not change a set that it cannot take into another one: that hides a mistake of the writer.
 - A limit with no processor of the machine gives `Bad_Operation` (`Thread_Write_Refusal.Processors_Limit`).
@@ -311,10 +319,11 @@ A weight is for a thread. Without a policy, a program with 8 threads that comput
 - A thread counts when the round sees it for the first time, when it is ready, or when its run time or its virtual time changed since the last round. A thread that waited during the whole period does not count.
 - A thread that counts gets the program weight divided by the count of the threads of its program that count. Another thread gets the program weight divided by the count of all the threads of its program.
 - The division drops the rest. A program has at most 32 threads, and the least program weight is 32, so each thread has a weight of 1 or more, and the weights of the threads that count never sum to more than the program weight. They sum to less by under one unit for each thread: under 3 % of the full weight.
-- The weight limit of the thread gets the same quotient. A thread that the program creates before the next round gets that limit as its weight.
-- A round writes a thread only when its weight or its limit changes. A machine where no thread starts, ends or blocks gets no write.
+- The weight limit of the thread gets the same quotient.
+- The new-thread weight limit of each program, and of each of its threads, is the program weight divided by 32, the most threads of a program. The round writes the value of the program before it reads the thread report of the program. A thread that the program creates before the next round gets the value as its weight and as its two limits.
+- A round writes a thread only when its weight or one of its limits changes. A machine where no thread starts, ends or blocks gets no write.
 
-Example: on a machine with four programs of 1, 2, 4 and 8 threads that compute, the threads have the weights 1024, 512, 256 and 128, and each program has 1024 in all.
+Example: on a machine with four programs of 1, 2, 4 and 8 threads that compute, the threads have the weights 1024, 512, 256 and 128, and each program has 1024 in all. Each thread has the new-thread weight limit 32.
 
 **A program keeps what it asked.** The policy never gives a thread more than its program asked.
 
@@ -322,21 +331,23 @@ Example: on a machine with four programs of 1, 2, 4 and 8 threads that compute, 
 - A thread that lowers its weight under the weight that the policy wrote keeps the lower weight.
 - A thread whose weight is equal to its limit asked for the most that it can have, which is what the weight 0 gives at its creation.
 
-**When the policy goes off.** Each thread gets the weight that its program asked and the full weight limit. A raised thread starts again as a new thread for its strategy. A program `scheduler` that is stopped with the policy on leaves the weights and the limits as they are; the next start of `scheduler` gives the full limit back to each thread.
+**When the policy goes off.** Each program gets the full new-thread weight limit, and each thread the weight that its program asked and the two full weight limits. A raised thread starts again as a new thread for its strategy. A program `scheduler` that is stopped with the policy on leaves the weights and the limits as they are; the next start of `scheduler` gives the full limit back to each thread.
 
 **What a program can gain.** A program chooses when its threads wake and when it creates threads.
 
 - **Threads that wake together.** A thread that waited a whole period has the program weight divided by all the threads of its program. When such threads wake, the program has under two program weights, until the next round: one period at most. That round gives each thread the smaller quotient. The threads that ran all the time then have that smaller quotient for one period, so the program has less than its weight by the same amount. Over the two periods the program has its weight.
-- **Threads that are created and end between two rounds.** This is not closed. A new thread has the weight limit of its creator as its weight, and a limit is never under the weight of its thread. A program that keeps one thread that counts, and that creates threads just after a round which end before the next one, has the whole program weight for each of them. A thread reads its own schedule, so it sees the moment of each round. The kernel has no count of the threads that a program created, and no weight for a new thread that is separate from the limit of its creator; one of the two closes this.
-- **Programs that a program starts.** Each program has its own program weight. The count of the programs of a budget is the limit, and the starter of the program chose it.
+- **Threads that are created and end between two rounds.** No round sees them. Each one has the new-thread weight limit of its program, the program weight divided by 32, which the kernel gives it at its creation. The round writes the value of the program before it reads the thread report, and a creation and that write both hold the control lock: a thread created before the write is in the report, and a thread created after it has the small value. So a chain of short threads, each of which creates the next one, is cut by the first round. A program has at most 32 threads, so the threads that no round saw sum to under one program weight, and the threads that the last round counted sum to one program weight at most. So after the first round of a program, the program has under two program weights, plus the part of the wake above (under one more) for one period, also when it knows the moments of the rounds: a thread reads its own schedule, so it can.
+- **Programs that a program starts.** Each program has its own program weight from its first round. Until that round, the first thread of a started program has the value of a new thread of its starter, so the bound of the started program is the program weight of its starter, not its own. The count of the programs of a budget is the limit, and the starter of the program chose it.
 
 **What an honest program can lose.**
 
 - A thread that wakes after a wait of a whole period has the smaller quotient until the next round. With an idle processor it loses nothing. With each processor busy, its program gets less than its weight for one period at most.
 - A thread whose weight is raised starts again as a new thread: what it was owed is gone, and what it owed too.
 - The policy reads the schedule of a thread just before it writes it. A program that lowers its weight or its request between the read and the write loses that change, and can make it again.
+- A new thread has the program weight divided by 32 until the next round, which then raises it to its part. With an idle processor it loses nothing. A raise starts a thread again as a new thread, and a new thread has no history to lose.
+- With the policy on, `Thread_Create` refuses a weight above the program weight divided by 32. A program reads its own schedule to know that value, or gives the weight 0.
 
-**The cost.** A round is one kernel entry for each program slot, one for the thread report of each program, and two for each thread whose weight changes. The program runs the rounds on a thread of its own. The measure run prints the time of one round.
+**The cost.** A round is one kernel entry for each program slot, one for the thread report of each program, one for each program whose new-thread weight limit changes, and two for each thread whose weight changes. The program runs the rounds on a thread of its own. The measure run prints the time of one round.
 
 **The window.** The key S, or the button after the tiles of the strategies, opens the view of the shares. It has one row for each program, the programs with the most processor time first: the threads that count of all its threads, its program weight, the weight of each thread (the least and the most when they differ), and its share of the processors in the last period, with a bar. A share is the run time of the program in the period, from its program report, against the time of all the processors.
 
@@ -344,16 +355,18 @@ Example: on a machine with four programs of 1, 2, 4 and 8 threads that compute, 
 
 **The tests.** The program `scheduler` starts four programs with 1, 2, 4 and 8 threads that compute, under EEVDF, and checks values that the kernel gives back, with no time:
 
-- after three rounds, each thread of the four programs has the weight and the weight limit 1024, 512, 256 and 128, the weights of each program sum to 1024, and the third round wrote none of their threads;
-- a thread of `scheduler` created with the weight 100 has the weight 100 after a round, and the weight 50 after it lowered itself to 50;
-- after `scheduler` started 7 threads more, its 9 threads have the weights 50 to 113, which sum to 954 of 1024;
-- after the policy went off, each of these threads has its weight and the full weight limit again, the thread that lowered itself has the weight 50, and no write of the policy was refused.
+- after three rounds, each thread of the four programs has the weight and the weight limit 1024, 512, 256 and 128 and the new-thread weight limit 32, the weights of each program sum to 1024, and the third round wrote none of their threads;
+- a thread of `scheduler` created with the weight 30 has the weight 30 after a round, and the weight 15 after it lowered itself to 15;
+- after `scheduler` started 7 threads more, its 9 threads have the weights 15 to 113, which sum to 919 of 1024;
+- after the policy went off, each of these threads has its weight and the two full weight limits again, the thread that lowered itself has the weight 15, and no write of the policy was refused.
 
 One condition is an order of two counts, as for the weights 1, 2 and 4: the part of the program with 8 threads against the program with 1 thread is smaller with the policy than without it. Each part is a count of ticks of the kernel over one interval. An interval ends when each program ran 30 ticks, not after a time: a slow host makes the interval longer and leaves the counts.
 
+A second case starts a program that keeps 6 short threads alive, each of which ends after a count of iterations, and a program with one thread that computes with no end. The case runs the rounds itself, so it knows which threads no round saw. After one round it reads the schedules of 24 such threads through the machine handle: each one has the weight, the weight limit and the new-thread weight limit 32, and those of one read sum to under 1024. After the same round, `scheduler` reads its own program value 32, and its own creation of a thread with the weight 33 is refused with the limit 32 in the error record, while its first thread has a higher weight limit; and the first thread of a program that it starts has the weight and the two limits 32. The case also checks the order of the two programs as above: the part of the program of short threads against the program of one thread is smaller with the policy than without it.
+
 The share of each program is a measure, and no test asserts it. The balance between the queues counts threads and not weights. A thread of the weight 1024 in a queue of four threads has between 44 % and 100 % of its processor, by which threads share its queue. So no bound of a share follows from the weights.
 
-What the machine tests do not cover: a program weight other than 1024 has no test of its effect on the weights (the scenario sets one, and reads the answer of the command); the threads that wake together; a program `scheduler` that is stopped with the policy on.
+What the machine tests do not cover: a program weight other than 1024 has no test of its effect on the weights (the scenario sets one, and reads the answer of the command); the threads that wake together; a program `scheduler` that is stopped with the policy on; a program that creates its threads just after each round, or a chain of threads that each create the next one, which the state of the second case bounds but no case runs.
 
 ### The change of strategy is a kernel operation with a right
 

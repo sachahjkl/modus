@@ -124,6 +124,13 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 			// A write that only lowers a share, or only narrows a set of
 			// processors: less than the end of the thread.
 			testing.expect_value(t, rights, Rights{.Control})
+		case .Read_Program_Schedule, .Write_Program_Schedule:
+			// No thread handle takes them: they name a program, through
+			// the machine handle only.
+			testing.expect(t, thread_control_names_a_program(command))
+		}
+		if command != .Read_Program_Schedule && command != .Write_Program_Schedule {
+			testing.expect(t, !thread_control_names_a_program(command))
 		}
 		// The machine handle: the schedule and the placement only, with
 		// Schedule and Inspect for each: a read is a report of the machine,
@@ -134,7 +141,7 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 		case .Read_Schedule, .Read_Placement:
 			testing.expect(t, by_machine_number)
 			testing.expect_value(t, machine_rights, Rights{.Schedule, .Inspect})
-		case .Write_Schedule, .Write_Placement:
+		case .Write_Schedule, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule:
 			testing.expect(t, by_machine_number)
 			testing.expect_value(t, machine_rights, Rights{.Schedule, .Inspect})
 		case:
@@ -151,7 +158,7 @@ the_commands_of_a_debug_handle :: proc(t: ^testing.T) {
 	for command in Thread_Control_Command {
 		taken := thread_control_takes_debug_handle(command)
 		#partial switch command {
-		case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement:
+		case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Program_Schedule, .Write_Program_Schedule:
 			testing.expect(t, !taken)
 		case:
 			testing.expect(t, taken)
@@ -391,4 +398,67 @@ the_values_of_a_schedule :: proc(t: ^testing.T) {
 	testing.expect(t, thread_schedule_accepted(WEIGHT_FULL, REQUEST_LIMIT))
 	testing.expect(t, !thread_schedule_accepted(WEIGHT_FULL + 1, 0))
 	testing.expect(t, !thread_schedule_accepted(0, REQUEST_LIMIT + 1))
+}
+
+// A write through the machine handle: 0 is the default of each value, and
+// no weight and no new-thread weight limit is above the weight limit.
+@(test)
+the_machine_handle_writes_a_schedule :: proc(t: ^testing.T) {
+	LIMIT :: u32(WEIGHT_FULL / 4)
+	testing.expect_value(t, thread_schedule_after_machine_write({}), Thread_Schedule{weight = WEIGHT_FULL, request = REQUEST_DEFAULT, weight_limit = WEIGHT_FULL, new_thread_weight_limit = WEIGHT_FULL})
+	// The new-thread weight limit 0 is the weight limit of the write.
+	testing.expect_value(t, thread_schedule_after_machine_write({weight_limit = LIMIT}), Thread_Schedule{weight = LIMIT, request = REQUEST_DEFAULT, weight_limit = LIMIT, new_thread_weight_limit = LIMIT})
+	// A weight and a new-thread weight limit above the weight limit become it.
+	testing.expect_value(t, thread_schedule_after_machine_write({weight = LIMIT + 1, weight_limit = LIMIT, new_thread_weight_limit = LIMIT + 1}), Thread_Schedule{weight = LIMIT, request = REQUEST_DEFAULT, weight_limit = LIMIT, new_thread_weight_limit = LIMIT})
+	// A lower new-thread weight limit stays, with the full weight.
+	testing.expect_value(t, thread_schedule_after_machine_write({new_thread_weight_limit = LIMIT, request = 1}), Thread_Schedule{weight = WEIGHT_FULL, request = 1, weight_limit = WEIGHT_FULL, new_thread_weight_limit = LIMIT})
+}
+
+// A new thread gets the new-thread weight limit of its creator as its
+// weight limit and as its own new-thread weight limit, whatever the weight
+// limit of the creator; a weight above it is refused.
+@(test)
+a_new_thread_gets_the_new_thread_weight_limit :: proc(t: ^testing.T) {
+	LIMIT :: u32(WEIGHT_FULL / THREAD_CAPACITY)
+	schedule, ok := thread_schedule_of_new_thread(LIMIT, 0, 0)
+	testing.expect(t, ok)
+	testing.expect_value(t, schedule, Thread_Schedule{weight = LIMIT, request = REQUEST_DEFAULT, weight_limit = LIMIT, new_thread_weight_limit = LIMIT})
+	schedule, ok = thread_schedule_of_new_thread(LIMIT, u64(LIMIT - 1), 1)
+	testing.expect(t, ok)
+	testing.expect_value(t, schedule, Thread_Schedule{weight = LIMIT - 1, request = 1, weight_limit = LIMIT, new_thread_weight_limit = LIMIT})
+	// The weight that the creator could have itself, and a request above
+	// the most of the contract, are refused.
+	_, ok = thread_schedule_of_new_thread(LIMIT, u64(LIMIT + 1), 0)
+	testing.expect(t, !ok)
+	_, ok = thread_schedule_of_new_thread(WEIGHT_FULL, 0, REQUEST_LIMIT + 1)
+	testing.expect(t, !ok)
+	_, ok = thread_schedule_of_new_thread(WEIGHT_FULL, WEIGHT_FULL + 1, 0)
+	testing.expect(t, !ok)
+	// Each generation gets the same limit: a thread that a new thread
+	// creates has no more than its creator.
+	child, _ := thread_schedule_of_new_thread(LIMIT, 0, 0)
+	grandchild, grandchild_ok := thread_schedule_of_new_thread(child.new_thread_weight_limit, 0, 0)
+	testing.expect(t, grandchild_ok)
+	testing.expect_value(t, grandchild.weight_limit, LIMIT)
+}
+
+// The schedule of a program: 0 is the full value, a value above the full
+// weight is refused as a weight limit above it is, and a creation takes the
+// smaller of the value of the thread and the value of its program.
+@(test)
+the_schedule_of_a_program :: proc(t: ^testing.T) {
+	LIMIT :: u32(WEIGHT_FULL / THREAD_CAPACITY)
+	after, refusal := program_schedule_after_write({})
+	testing.expect_value(t, refusal, Thread_Write_Refusal.None)
+	testing.expect_value(t, after.new_thread_weight_limit, u32(WEIGHT_FULL))
+	after, refusal = program_schedule_after_write({new_thread_weight_limit = LIMIT})
+	testing.expect_value(t, refusal, Thread_Write_Refusal.None)
+	testing.expect_value(t, after.new_thread_weight_limit, LIMIT)
+	_, refusal = program_schedule_after_write({new_thread_weight_limit = WEIGHT_FULL + 1})
+	testing.expect_value(t, refusal, Thread_Write_Refusal.New_Thread_Weight_Limit)
+	// A thread with the full value in a program of the small value: a
+	// thread that the policy never wrote is closed by its program.
+	testing.expect_value(t, new_thread_weight_limit_of_creation(WEIGHT_FULL, LIMIT), LIMIT)
+	testing.expect_value(t, new_thread_weight_limit_of_creation(LIMIT, WEIGHT_FULL), LIMIT)
+	testing.expect_value(t, program_slot_and_serial(5, 7), u64(5) | u64(7) << 32)
 }
