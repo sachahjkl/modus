@@ -22,16 +22,22 @@ import "modus:support/system"
 
 FONT_SERVICE_NAME :: "glyphs"
 
+// This service keeps two handles for the font service: the demand cache,
+// which it maps in each program that it starts, and the program of the
+// service. It keeps no handle of a ring: its handle table also holds the
+// program of each program that runs, its rings, and the parts of the
+// prepared modules (up to 64), and a full table refuses the load of the
+// next program (memory_create of a writable segment gives No_Slot). The
+// control ring stays mapped in this service after its handle is closed,
+// and a request ring lives by the mapping of its program and the handle
+// of the font service.
 demand_cache_memory: system.Handle
 font_service: ^Started // nil: no font service runs.
 font_control: ring.Ring
-font_control_memory: system.Handle
 
-// The request ring of one program, as this service and the font service
-// hold it.
+// The request ring of one program, as the font service holds it.
 Font_Client :: struct {
 	item:       ^Started, // nil: a free place.
-	memory:     system.Handle, // The ring, as this service holds it until the program stops.
 	in_service: system.Handle, // The ring in the handle table of the font service.
 	removal_lost: bool, // Its Client_Remove did not fit the control ring: the place stays taken in the font service.
 }
@@ -58,6 +64,7 @@ font_service_start :: proc "contextless" () {
 		return
 	}
 	status: system.Status
+	font_control_memory: system.Handle
 	demand_cache_memory, status = system.memory_create(demand_cache.PAGE_COUNT)
 	if status == .Ok {
 		font_control_memory, font_control, status = system.ring_create()
@@ -65,6 +72,10 @@ font_service_start :: proc "contextless" () {
 			system.close(demand_cache_memory)
 			demand_cache_memory = 0
 		}
+	}
+	// The ring stays mapped here: its handle is needed for the start only.
+	defer if font_control_memory != 0 {
+		system.close(font_control_memory)
 	}
 	if status != .Ok {
 		system.log_in("programs", .Warning, "root: cannot create the demand cache of the font service: status ", status, ": the characters past the glyph cache draw the replacement glyph")
@@ -80,9 +91,8 @@ font_service_start :: proc "contextless" () {
 		system.log_in("programs", .Warning, "root: cannot start the font service: status ", status, ": the characters past the glyph cache draw the replacement glyph")
 		slot^ = {}
 		system.ring_close(&font_control)
-		system.close(font_control_memory)
 		system.close(demand_cache_memory)
-		font_control_memory, demand_cache_memory = 0, 0
+		demand_cache_memory = 0
 		return
 	}
 	for &item in system.image_entries(image) {
@@ -102,14 +112,16 @@ font_service_start :: proc "contextless" () {
 // from a disk, the compositor and the input service get none. It gives
 // the ring to the font service, and adds the demand cache, read-only, and
 // the ring, with Write, to the mappings of the program, with the bits of
-// their ranges. The demand cache has no flag: the right Read only.
-font_requests_give :: proc "contextless" (item: ^Started, name: string, mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
+// their ranges. The demand cache has no flag: the right Read only. It
+// gives the handle of the ring in this service: the caller closes it after
+// the start of the program, which maps the ring (0: no ring).
+font_requests_give :: proc "contextless" (item: ^Started, name: string, mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) -> (ring_memory: system.Handle) {
 	if font_service == nil || font_service.program == 0 {
-		return
+		return 0
 	}
 	if count^ + 2 > len(mappings) {
 		mapping_dropped_log("the demand cache and the request ring", len(mappings))
-		return
+		return 0
 	}
 	place: ^Font_Client
 	held := 0
@@ -122,24 +134,24 @@ font_requests_give :: proc "contextless" (item: ^Started, name: string, mappings
 	}
 	if place == nil || held >= demand_cache.CLIENT_CAPACITY {
 		system.log_in("programs", .Warning, "root: the font service serves ", u64(demand_cache.CLIENT_CAPACITY), " programs: ", system.Module_Name{name}, " draws the replacement glyph past the glyph cache that the demand cache does not hold")
-		return
+		return 0
 	}
 	// Room in the control ring before the give: a handle given to the font
 	// service that no Client_Add names would stay in its table for ever.
 	// This service is the one writer of the ring, so the room stays.
 	if ring.count(&font_control.commands) >= ring.capacity(&font_control.commands) {
 		system.log_in("programs", .Warning, "root: the control ring of the font service is full: ", system.Module_Name{name}, " gets no request ring and no demand cache")
-		return
+		return 0
 	}
 	memory, status := system.memory_create(demand_cache.REQUEST_RING_PAGES)
 	if status != .Ok {
-		return
+		return 0
 	}
 	in_service: system.Handle
 	in_service, status = system.give(font_service.program, memory, {.Read, .Write})
 	if status != .Ok {
 		system.close(memory)
-		return
+		return 0
 	}
 	packed := system.name_pack(name)
 	if !system.send(&font_control.commands, ring.Record{kind = u32(demand_cache.Control_Kind.Client_Add), values = {0 = u64(in_service), 1 = packed[0], 2 = packed[1], 3 = packed[2], 4 = packed[3]}}) {
@@ -147,14 +159,15 @@ font_requests_give :: proc "contextless" (item: ^Started, name: string, mappings
 		// checked above. The handle in the font service stays there.
 		system.log_in("programs", .Warning, "root: the control ring of the font service is full after its check: ", system.Module_Name{name}, " gets no request ring, and one handle stays in the table of the font service")
 		system.close(memory)
-		return
+		return 0
 	}
-	place^ = {item = item, memory = memory, in_service = in_service}
+	place^ = {item = item, in_service = in_service}
 	mappings[count^] = {memory = demand_cache_memory, address = demand_cache.ADDRESS, first = 0, page_count = demand_cache.PAGE_COUNT, flags = {}}
 	mappings[count^ + 1] = {memory = memory, address = demand_cache.REQUESTS_ADDRESS, first = 0, page_count = demand_cache.REQUEST_RING_PAGES, flags = {.Write}}
 	count^ += 2
 	fixed_addresses.range_mapped_add(values, .Demand_Cache)
 	fixed_addresses.range_mapped_add(values, .Glyph_Requests)
+	return memory
 }
 
 // font_service_end removes the request ring of a program that stopped, or
@@ -172,7 +185,6 @@ font_service_end :: proc "contextless" (item: ^Started) {
 				lost = true
 				system.log_in("programs", .Warning, "root: the control ring of the font service is full: the removal of the ring of ", system.Module_Name{system.name_of(item.name[:])}, " is lost, and its place in the font service stays taken")
 			}
-			system.close(client.memory)
 			client = {removal_lost = lost}
 		}
 	}
@@ -181,13 +193,8 @@ font_service_end :: proc "contextless" (item: ^Started) {
 	}
 	system.log_in("programs", .Warning, "root: the font service stopped: the characters past the glyph cache that a program does not have draw the replacement glyph")
 	for &client in font_clients {
-		if client.item != nil {
-			system.close(client.memory)
-		}
 		client = {}
 	}
 	system.ring_close(&font_control)
-	system.close(font_control_memory)
-	font_control_memory = 0
 	font_service = nil
 }

@@ -1345,6 +1345,13 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 		system.close(store_ring)
 		system.close(store_region)
 	}
+	// The request ring to the font service: the program maps it and the
+	// font service holds it, so this service keeps no handle of it after
+	// the start (font_service.odin).
+	font_ring: system.Handle
+	defer if font_ring != 0 {
+		system.close(font_ring)
+	}
 	if .Store in role && .Acts_For_Principal not_in role {
 		storage_service: ^Started
 		store_status: system.Status
@@ -1485,7 +1492,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	// the demand cache, read-only, and its request ring to the font service.
 	if .Terminal not_in role {
 		text_settings_give(mappings[:], &mapping_count, &values)
-		font_requests_give(slot, name, mappings[:], &mapping_count, &values)
+		font_ring = font_requests_give(slot, name, mappings[:], &mapping_count, &values)
 	}
 	// A service: the service ring, and its own file, to read the
 	// descriptions of its exports.
