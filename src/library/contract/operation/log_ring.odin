@@ -80,5 +80,53 @@ own_log_place :: proc "contextless" (number: u64) -> (page: u64, offset: u64) {
 	return place / RECORDS_OF_A_PAGE, place % RECORDS_OF_A_PAGE * size_of(Log_Record)
 }
 
+// The bytes of the head of a line of the serial port: "[", the name, ":",
+// the channel, "] ".
+LOG_LINE_HEAD_CAPACITY :: 1 + LOG_NAME_BYTES + 1 + LOG_CHANNEL_CAPACITY + 2
+// The bytes of the name of a program in a record (`Log_Record.name`).
+LOG_NAME_BYTES :: 32
+#assert(offset_of(Log_Record, channel) - offset_of(Log_Record, name) == LOG_NAME_BYTES)
+// The most bytes that one record puts on the serial port: the head, its
+// text and the end of the line.
+LOG_SERIAL_LINE_BYTES_MOST :: LOG_LINE_HEAD_CAPACITY + LOG_TEXT_CAPACITY + 2
+
+// log_line_head writes into `head` the head of the line of a record on the
+// serial port, and gives its bytes: `[name:channel] ` for a record of a
+// program that starts a line, `[name] ` when the program gave no channel,
+// and nothing for a record of the kernel or a record that continues the
+// line of the record before it (`line_open`). The kernel writes the serial
+// port from the whole log with it, so the line of a long text that the log
+// splits into records is one line again
+// (src/md/features/log_side_channels.md).
+log_line_head :: proc "contextless" (record: ^Log_Record, line_open: bool, head: ^[LOG_LINE_HEAD_CAPACITY]u8) -> int {
+	if line_open || record.program == 0 {
+		return 0
+	}
+	count := 0
+	head[count] = '['
+	count += 1
+	for byte_value in record.name {
+		if byte_value == 0 {
+			break
+		}
+		head[count] = byte_value
+		count += 1
+	}
+	if record.channel[0] != 0 {
+		head[count] = ':'
+		count += 1
+		for byte_value in record.channel {
+			if byte_value == 0 {
+				break
+			}
+			head[count] = byte_value
+			count += 1
+		}
+	}
+	head[count] = ']'
+	head[count + 1] = ' '
+	return count + 2
+}
+
 #assert(4096 % size_of(Log_Record) == 0)
 #assert(OWN_LOG_RECORD_CAPACITY == OWN_LOG_PAGES * (4096 / size_of(Log_Record)))

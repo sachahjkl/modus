@@ -55,6 +55,12 @@
 //   program and of its two children, more than the <capacity> that the
 //   whole log keeps, and the own log ring of each one kept its records: as
 //   it must`;
+// - `log_reader: the storm child took 900 of the 1000 log records of each
+//   second of this program, which kept 100, and each child gave its
+//   records back at its stop: as it must`: a budget holds its log records
+//   as it holds its pages, and counts only its own, so the storm never
+//   makes the kernel refuse a line of this program
+//   (src/md/features/log_side_channels.md);
 // - `log_reader: a memory object in place of a program handle: the log
 //   service refused it with Handle_Kind: as it must`;
 // - `log_reader: the program handle of the log service from connect, with
@@ -116,10 +122,16 @@ STORM_RECORDS :: op.LOG_RECORD_CAPACITY + 64
 STORM_LINE :: "log_reader storm: a record"
 STORM_LAST_LINE :: "log_reader storm: the last record, after more records than the whole log keeps"
 // The storm child pays its own copy of the module, its stack, its page
-// tables and its own log ring. It may write the log limit of this program
-// in each second: its records count in the limit of each budget above it.
+// tables and its own log ring. Its log records of each second come from the
+// budget of this program, which keeps the rest for its own lines: a budget
+// counts only its own records, so the storm never makes the kernel refuse a
+// line of this program.
 STORM_PAGES :: 512
-STORM_AMOUNTS :: system.Budget_Amounts{pages = STORM_PAGES, programs = 1, threads = 1, processor = 1_000_000, log_records = 1000}
+// The root service gives this program 1000 records of each second
+// (op.LOG_RECORDS_OF_A_PROGRAM): the storm takes 900, and this program
+// keeps 100 for its lines.
+STORM_LOG_RECORDS :: 900
+STORM_AMOUNTS :: system.Budget_Amounts{pages = STORM_PAGES, programs = 1, threads = 1, processor = 1_000_000, log_records = STORM_LOG_RECORDS}
 // The log limit of a budget counts the records of each second.
 MILLISECONDS_OF_A_SECOND :: 1000
 
@@ -129,6 +141,11 @@ LENT_PROGRAM_ARGUMENT :: 1
 
 program_generator: random.Generator
 children: [CHILD_COUNT]system.Handle
+// The log records of each second of the budget of this program before any
+// child, and while the storm child runs: the line of the storm says them
+// after the checks of the own records, which must find one line only.
+whole_log_records: u64
+storm_log_records_kept: u64
 
 // One row of log.records(): the form of `Record` in
 // src/programs/log/exports.odin. The program compares its size with the
@@ -218,6 +235,11 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	if !row_size_holds(file, records_export, size_of(Record)) || !row_size_holds(file, value_runs_export, size_of(Value_Run)) || !row_size_holds(file, program_records_export, size_of(Record)) || !row_size_holds(file, program_value_runs_export, size_of(Value_Run)) {
 		return "a row of the log service has another size than in this program"
 	}
+	own, read_status := system.budget_read()
+	if read_status != .Ok {
+		return "the budget of this program does not read"
+	}
+	whole_log_records = own.log_records
 	if problem := children_start(ctx, image); problem != "" {
 		return problem
 	}
@@ -340,6 +362,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 		}
 	}
 	system.log("log_reader: a child wrote ", u64(STORM_RECORDS), " records after the records of this program and of its two children, more than the ", u64(op.LOG_RECORD_CAPACITY), " that the whole log keeps, and the own log ring of each one kept its records: as it must")
+	system.log("log_reader: the storm child took ", u64(STORM_LOG_RECORDS), " of the ", whole_log_records, " log records of each second of this program, which kept ", storm_log_records_kept, ", and each child gave its records back at its stop: as it must")
 	if problem := lent_memory_refused(&connection, file, program_records_export); problem != "" {
 		return problem
 	}
@@ -464,13 +487,36 @@ storm :: proc "contextless" (ctx: ^system.Context) -> ! {
 	system.stop(0)
 }
 
+// log_records_wait waits until the budget of this program holds `amount`
+// log records of each second: a child gives its records back when its
+// program is cleaned, after its stop. It gives what the budget holds. The
+// bound only ends a hang.
+log_records_wait :: proc "contextless" (amount: u64) -> (held: u64, reached: bool) {
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for {
+		own, _ := system.budget_read()
+		if own.log_records == amount {
+			return own.log_records, true
+		}
+		if system.time() >= deadline {
+			return own.log_records, false
+		}
+		system.sleep(system.time() + 10)
+	}
+}
+
 // storm_run starts the storm child after the two children stopped, and
-// waits for its stop. It gives the reason of the first check that fails,
-// or "".
+// waits for its stop. The log records of each second of the storm child
+// leave the budget of this program while it runs, and come back after its
+// stop. It gives the reason of the first check that fails, or "".
 storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 	file := system.image_find(image, PROGRAM_NAME)
 	if file == nil {
 		return "the boot image has no module log_reader"
+	}
+	if held, reached := log_records_wait(whole_log_records); !reached {
+		system.log("log_reader: WRONG: after the stop of the two children, this program holds ", held, " log records of each second, and not ", whole_log_records)
+		return "the two children did not give their log records back"
 	}
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	grants[op.CONTEXT_LOG] = {ctx.handles[op.CONTEXT_LOG], {.Write}}
@@ -482,6 +528,14 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 		return "the storm child did not start"
 	}
 	defer system.close(child)
+	// The child holds its records until its stop: the budget of this
+	// program keeps the rest.
+	during, _ := system.budget_read()
+	storm_log_records_kept = during.log_records
+	if whole_log_records < STORM_LOG_RECORDS || storm_log_records_kept != whole_log_records - STORM_LOG_RECORDS {
+		system.log("log_reader: WRONG: while the storm child runs, this program holds ", storm_log_records_kept, " log records of each second of its ", whole_log_records)
+		return "the storm child did not take its log records from the budget of this program"
+	}
 	code, stopped := child_wait(child)
 	if !stopped {
 		return "the storm child did not stop within the hang bound"
@@ -489,9 +543,10 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 	if code != 0 {
 		return "the storm child stopped with a code other than 0"
 	}
-	// The records of the storm child count in the log limit of this
-	// program: the next second has room for the lines of this program.
-	next_second()
+	if held, reached := log_records_wait(whole_log_records); !reached {
+		system.log("log_reader: WRONG: after the stop of the storm child, this program holds ", held, " log records of each second, and not ", whole_log_records)
+		return "the storm child did not give its log records back"
+	}
 	return ""
 }
 

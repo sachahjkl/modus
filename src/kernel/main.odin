@@ -202,11 +202,12 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	if !time_page_create() {
 		fail("no memory for the time page")
 	}
-	// The one budget that comes from nothing: all the free memory, all the slots.
+	// The one budget that comes from nothing: all the free memory, all the
+	// slots, and the log records of each second of the whole machine.
 	ROOT_BUDGET :: 1
 	budgets[ROOT_BUDGET] = {
 		live = true,
-		amounts = {pages = free_frames, programs = PROGRAM_CAPACITY - 1, threads = THREAD_TABLE_CAPACITY - 1, processor = u64(processor_count) * 1_000_000, log_records = op.LOG_RECORD_CAPACITY},
+		amounts = {pages = free_frames, programs = PROGRAM_CAPACITY - 1, threads = THREAD_TABLE_CAPACITY - 1, processor = u64(processor_count) * 1_000_000, log_records = op.LOG_RECORDS_OF_THE_MACHINE},
 	}
 	index, _ := program_create(ROOT_BUDGET, transmute([]u8)name)
 	// The kernel writes the module and the context through the direct map:

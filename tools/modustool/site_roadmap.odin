@@ -12,11 +12,13 @@ SITE_ROADMAP_FOLDER :: "roadmap"
 // The class of the accent of a section: the mark of each of its cards.
 // What is in work has the color of a program, the color of what runs;
 // what comes next has the color of the kernel, the color of a decision;
-// what comes later has no accent: the dim color (SITE_ROADMAP_RULES).
+// what comes later has no accent: the dim color (SITE_ROADMAP_RULES); what
+// may be done one day is not decided either, and has the same dim color.
 site_roadmap_section_classes := [Roadmap_Section]string {
 	.Now   = "accent-program",
 	.Next  = "accent-kernel",
 	.Later = "roadmap-later",
+	.Maybe = "roadmap-later",
 }
 
 // What a section holds, in a few words under its heading.
@@ -24,18 +26,23 @@ site_roadmap_section_words := [Roadmap_Section]string {
 	.Now   = "In work.",
 	.Next  = "Decided. It comes after the work of now.",
 	.Later = "Wanted. It has no order.",
+	.Maybe = "Each entry says the ways open, and what each one waits for.",
 }
 
 // The rules of the page. Three columns on a wide screen: the three
 // sections are one line of time, read from the left to the right, and a
 // reader sees the count of each one at once. One column under 960 pixels,
 // in the same order: a column of a third of a narrower window holds too
-// few words a line. A card is the card of the site; a card of the section
-// "Later" takes the dim color in the place of an accent.
+// few words a line. The section Maybe is not on that line of time, so it
+// comes under the columns, with its cards in the same grid. A card is the
+// card of the site; a card of the section "Later" or "Maybe" takes the dim
+// color in the place of an accent.
 SITE_ROADMAP_RULES :: `
 .roadmap-columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 16px; align-items: start; }
+.roadmap-maybe-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 16px; align-items: start; }
 @media (min-width: 960px) {
   .roadmap-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .roadmap-maybe-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 .roadmap-column { min-width: 0; }
 .roadmap-column h2 { margin: 24px 0 8px; }
@@ -77,13 +84,51 @@ site_roadmap_read :: proc(site: ^Site) -> bool {
 	return true
 }
 
-// site_roadmap_add writes the page of the roadmap: the three sections,
-// each a column of cards.
+// site_roadmap_section_write writes one section: its heading with its
+// count, the line of what it holds, and its cards. The cards of the section
+// Maybe go in a grid of their own, because that section is not a column.
+site_roadmap_section_write :: proc(site: ^Site, b: ^strings.Builder, renderer: ^Site_Renderer, section: Roadmap_Section) {
+	roadmap := site.roadmap
+	section_id := site_roadmap_section_id(section)
+	count := roadmap_section_count(roadmap, section)
+	fmt.sbprintf(b, "<section class=\"roadmap-column\" aria-labelledby=\"%s\">\n<h2 id=\"%s\">%s <span class=\"date\">%s</span></h2>\n<p class=\"source\">%s</p>\n", section_id, section_id, roadmap_section_names[section], site_roadmap_entry_words(count), site_roadmap_section_words[section])
+	if count == 0 {
+		strings.write_string(b, "<p class=\"missing\">No entry.</p>\n")
+	}
+	if section == .Maybe && count > 0 {
+		strings.write_string(b, "<div class=\"roadmap-maybe-cards\">\n")
+	}
+	for entry in roadmap.entries {
+		if entry.section != section {
+			continue
+		}
+		strings.builder_reset(&renderer.builder)
+		site_render_markdown(renderer, entry.text, entry.line)
+		fmt.sbprintf(b, "<article class=\"card roadmap-entry %s\" id=\"%s\">\n<h3>", site_roadmap_section_classes[section], site_roadmap_entry_id(entry))
+		site_inline(b, entry.summary)
+		strings.write_string(b, "</h3>\n")
+		strings.write_string(b, strings.to_string(renderer.builder))
+		if entry.design != "" {
+			strings.write_string(b, "<p class=\"source\"><a href=\"")
+			site_escape(b, site_repository_file(site, entry.design))
+			strings.write_string(b, "\">Design</a></p>\n")
+		}
+		strings.write_string(b, "</article>\n")
+	}
+	if section == .Maybe && count > 0 {
+		strings.write_string(b, "</div>\n")
+	}
+	strings.write_string(b, "</section>\n")
+}
+
+// site_roadmap_add writes the page of the roadmap: the three sections of
+// the planned work, each a column of cards, then the section Maybe under
+// them.
 site_roadmap_add :: proc(site: ^Site) {
 	path := site_section_page(.Roadmap)
 	roadmap := site.roadmap
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&b, "<h1>Roadmap</h1>\n<p>The planned work of %s: %s. <strong>Now</strong> is the work that is in progress, <strong>Next</strong> the work that is decided and comes after, <strong>Later</strong> the work that is wanted and has no order. An entry says what the work gives a user of the system, or a developer who builds on it. It gives no date.</p>\n", SITE_SYSTEM_NAME, site_roadmap_entry_words(len(roadmap.entries)))
+	fmt.sbprintf(&b, "<h1>Roadmap</h1>\n<p>The planned work of %s: %s. <strong>Now</strong> is the work that is in progress, <strong>Next</strong> the work that is decided and comes after, <strong>Later</strong> the work that is wanted and has no order. <strong>Maybe</strong> is what may be done one day and is not decided. An entry says what the work gives a user of the system, or a developer who builds on it. It gives no date.</p>\n", SITE_SYSTEM_NAME, site_roadmap_entry_words(len(roadmap.entries)))
 	fmt.sbprintf(&b, "<p>An entry leaves this page when its work is done: the work is then a change of a release, on the page <a href=\"%s\">Releases</a>. The state of each property of the system, and the gaps of what is built, are on the page <a href=\"%s\">Status</a>.</p>\n", site_page_link(site, path, site_section_page(.Releases)), site_page_link(site, path, site_section_page(.Status)))
 	site_source_line(site, &b, ROADMAP_FILE)
 	// One renderer for the page: the ids of the page stay unique, and each
@@ -99,33 +144,13 @@ site_roadmap_add :: proc(site: ^Site) {
 	}
 	strings.write_string(&b, "<div class=\"roadmap-columns\">\n")
 	for section in Roadmap_Section {
-		section_id := site_roadmap_section_id(section)
-		count := roadmap_section_count(roadmap, section)
-		fmt.sbprintf(&b, "<section class=\"roadmap-column\" aria-labelledby=\"%s\">\n<h2 id=\"%s\">%s <span class=\"date\">%s</span></h2>\n<p class=\"source\">%s</p>\n", section_id, section_id, roadmap_section_names[section], site_roadmap_entry_words(count), site_roadmap_section_words[section])
-		if count == 0 {
-			strings.write_string(&b, "<p class=\"missing\">No entry.</p>\n")
+		if section != .Maybe {
+			site_roadmap_section_write(site, &b, &renderer, section)
 		}
-		for entry in roadmap.entries {
-			if entry.section != section {
-				continue
-			}
-			strings.builder_reset(&renderer.builder)
-			site_render_markdown(&renderer, entry.text, entry.line)
-			fmt.sbprintf(&b, "<article class=\"card roadmap-entry %s\" id=\"%s\">\n<h3>", site_roadmap_section_classes[section], site_roadmap_entry_id(entry))
-			site_inline(&b, entry.summary)
-			strings.write_string(&b, "</h3>\n")
-			strings.write_string(&b, strings.to_string(renderer.builder))
-			if entry.design != "" {
-				strings.write_string(&b, "<p class=\"source\"><a href=\"")
-				site_escape(&b, site_repository_file(site, entry.design))
-				strings.write_string(&b, "\">Design</a></p>\n")
-			}
-			strings.write_string(&b, "</article>\n")
-		}
-		strings.write_string(&b, "</section>\n")
 	}
 	strings.write_string(&b, "</div>\n")
-	description := fmt.tprintf("The planned work of %s: %d entries in work now, %d that come next and %d that come later, each with what it gives a user.", SITE_SYSTEM_NAME, roadmap_section_count(roadmap, .Now), roadmap_section_count(roadmap, .Next), roadmap_section_count(roadmap, .Later))
+	site_roadmap_section_write(site, &b, &renderer, .Maybe)
+	description := fmt.tprintf("The planned work of %s: %d entries in work now, %d that come next, %d that come later and %d that may come, each with what it gives a user.", SITE_SYSTEM_NAME, roadmap_section_count(roadmap, .Now), roadmap_section_count(roadmap, .Next), roadmap_section_count(roadmap, .Later), roadmap_section_count(roadmap, .Maybe))
 	site_page_add(site, Site_Page{path = path, title = "Roadmap", description = site_description_cut(description), section = .Roadmap, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(ROADMAP_FILE)})
 }
 

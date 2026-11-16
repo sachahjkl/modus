@@ -22,9 +22,6 @@ PROGRAMS_BUDGET :: module.Budget_Request{pages = 16384, programs = 4, threads = 
 // then leaves the other processors to the programs of the system.
 PROGRAMS_PROCESSOR :: 2_000_000
 
-// The log records of all disk programs together, in each second.
-PROGRAMS_LOG_RECORDS :: 1000
-
 // The most that one disk program gets. A disk program holds no grant that
 // starts a program, so it needs its own program slot only, and with one
 // slot it creates no child; 4 threads; and 8192 pages, half of the budget

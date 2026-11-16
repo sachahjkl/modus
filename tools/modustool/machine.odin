@@ -2475,7 +2475,9 @@ scenario := [?]Step {
 	// of log_reader and of its two children out of the whole log. Each
 	// check above runs after that storm, and still finds each record: the
 	// own log ring of each program keeps it, the ring of a stopped child
-	// too, while log_reader holds its handle.
+	// too, while log_reader holds its handle. The storm child takes its log
+	// records of each second from the budget of log_reader, which counts
+	// only its own, and each child gives them back at its stop.
 	{kind = .Type, text = "start(\"log_reader\")"},
 	{kind = .Wait, text = "[log_reader child 1] log_reader child: the record that the starter reads back, with the value 1", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader child 2] log_reader child: the record that the starter reads back, with the value 2", fails_on = "log_reader: WRONG"},
@@ -2490,6 +2492,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: the value runs of log_reader child 2: 1 rows, the run of its value 2: as it must"},
 	{kind = .Wait, text = " records after the records of this program and of its two children, more than the "},
 	{kind = .Wait, text = " that the whole log keeps, and the own log ring of each one kept its records: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the storm child took 900 of the 1000 log records of each second of this program, which kept 100, and each child gave its records back at its stop: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: a memory object in place of a program handle: the log service refused it with Handle_Kind: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: the program handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
@@ -2514,6 +2517,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: the records of log_reader child 2: 1 rows from the own number 0, its one record, lost 0: no row of this program, of the other child or of an earlier run: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: the value runs of log_reader child 2: 1 rows, the run of its value 2: as it must"},
 	{kind = .Wait, text = " that the whole log keeps, and the own log ring of each one kept its records: as it must"},
+	{kind = .Wait, text = "[log_reader] log_reader: the storm child took 900 of the 1000 log records of each second of this program, which kept 100, and each child gave its records back at its stop: as it must", fails_on = "log_reader: WRONG"},
 	{kind = .Wait, text = "[log_reader] log_reader: a memory object in place of a program handle: the log service refused it with Handle_Kind: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: the program handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must"},
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
@@ -3486,6 +3490,7 @@ Machine :: struct {
 	process:   os.Process,
 	monitor:   ^os.File,
 	seen:      int, // The bytes of the log that the Wait steps used.
+	failure_scanned: int, // The bytes of the log that common_failure_line read.
 	output:    string, // The file of the log of the kernel.
 	x, y:      int, // The pointer.
 	pointer_known: bool, // The tool knows where the pointer is.
@@ -3761,12 +3766,70 @@ windows_line :: proc(machine: ^Machine, title: string, from: int) -> (line: int,
 	return 0, false
 }
 
+// The texts that fail every scenario at once, whatever step waits: in
+// normal use the machine never prints them, and a step that waited for a
+// line would only fail at the hang bound, with no cause. The kernel prints
+// the first when the drain of the serial port lost records
+// (src/md/features/log_side_channels.md).
+@(rodata)
+common_failure_texts := [?]string{"records of the log did not reach the serial port"}
+
+// The start of a line that the kernel writes for itself: a line of a
+// program starts with its name in brackets, so a program that quotes a
+// text of common_failure_texts does not fail a scenario.
+COMMON_FAILURE_LINE_START :: "kernel: "
+
+// common_failure_line gives the first line of log that starts with
+// COMMON_FAILURE_LINE_START and ends with a text of common_failure_texts,
+// or "". It reads from `from`; a line can start up to a whole line before
+// it, so a line that two reads of the log cut is found.
+common_failure_line :: proc(log: string, from: int) -> string {
+	start := clamp(from, 0, len(log))
+	start = strings.last_index_byte(log[:start], '\n') + 1
+	for text in common_failure_texts {
+		place := start
+		for {
+			at := strings.index(log[place:], text)
+			if at < 0 {
+				break
+			}
+			at += place
+			place = at + len(text)
+			line_start := strings.last_index_byte(log[:at], '\n') + 1
+			line := log[line_start:]
+			if end := strings.index_byte(line, '\n'); end >= 0 {
+				line = line[:end]
+			}
+			line = strings.trim_right(line, "\r")
+			if strings.has_prefix(line, COMMON_FAILURE_LINE_START) && strings.has_suffix(line, text) {
+				return line
+			}
+		}
+	}
+	return ""
+}
+
+// common_failure_check says if the machine printed a line of
+// common_failure_texts since the last check, and prints the failure.
+common_failure_check :: proc(machine: ^Machine, log: string) -> bool {
+	line := common_failure_line(log, machine.failure_scanned)
+	machine.failure_scanned = len(log)
+	if line == "" {
+		return false
+	}
+	fmt.eprintfln("modustool: test failed: the machine printed \"%s\", which fails every scenario", line)
+	return true
+}
+
 log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := HANG_BOUND) -> bool {
 	wait_started := time.tick_now()
 	defer test_times_wait_note(machine, wait_started)
 	start := time.now()
 	for time.since(start) < limit {
 		log := log_read(machine)
+		if common_failure_check(machine, log) {
+			return false
+		}
 		if len(log) > machine.seen {
 			if index := strings.index(log[machine.seen:], text); index >= 0 {
 				if !any_order {
@@ -3790,6 +3853,10 @@ log_wait_or_failure :: proc(machine: ^Machine, text, failure: string, limit: tim
 	start := time.now()
 	for time.since(start) < limit {
 		log := log_read(machine)
+		if common_failure_check(machine, log) {
+			line := common_failure_line(log, 0)
+			return line, false
+		}
 		if len(log) > machine.seen {
 			rest := log[machine.seen:]
 			text_at := strings.index(rest, text)
@@ -3929,6 +3996,13 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	if !state.exited {
 		_ = os.process_kill(process)
 		_, _ = os.process_wait(process)
+	}
+	// The whole log once more after the end: a line lost after the last
+	// wait, or during a step that waits for no line, fails the machine too.
+	// The flush of machine_stop writes that line before the end.
+	if line := common_failure_line(log_read(&machine), 0); line != "" {
+		fmt.eprintfln("modustool: test failed: the machine printed \"%s\", which fails every scenario", line)
+		passed = false
 	}
 	os.close(monitor_write)
 	os.close(monitor_read)

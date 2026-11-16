@@ -102,9 +102,17 @@ cells_text :: proc(pixels: []u8, width, height: int, x, y: int, count: int) -> (
 	return strings.to_string(builder), true
 }
 
+// text_fills_its_box says if a text that cells_text read has no blank cell
+// at its start and at its end: the text of an element whose box is as wide
+// as its text, and not what the window showed there before the element.
+text_fills_its_box :: proc(text: string) -> bool {
+	return len(text) > 0 && text[0] != ' ' && text[len(text) - 1] != ' '
+}
+
 // screen_text_read reads the text of the element of a window: it waits for
-// the element line that places the element, takes a settled picture of the
-// screen, and reads the cells of the element. The window must be in front.
+// the element line that places the element, then takes settled pictures of
+// the screen until the cells of the element read as a text that fills its
+// box. The window must be in front.
 screen_text_read :: proc(machine: ^Machine, owner, element: string, index: int) -> (text: string, ok: bool) {
 	element_x, element_y, element_width, element_height: int
 	found := Element_Line.Absent
@@ -124,15 +132,28 @@ screen_text_read :: proc(machine: ^Machine, owner, element: string, index: int) 
 		fmt.eprintfln("modustool: test failed: step %d: the log does not have the place of the window %s", index + 1, owner)
 		return "", false
 	}
-	dump := screen_dump_settled(machine, element) or_return
-	defer delete(dump.file)
 	x := window_x + WINDOW_BORDER + element_x
 	y := window_y + WINDOW_TITLE_HEIGHT + element_y
-	read: bool
-	text, read = cells_text(dump.pixels, dump.width, dump.height, x, y, element_width / graphics.CELL_WIDTH)
-	if !read {
-		fmt.eprintfln("modustool: test failed: step %d: the element %s of %s at %d,%d of the screen is not a text of Spleen 8x16 (set the font to spleen first)", index + 1, element, owner, x, y)
-		return "", false
+	// The element line comes from the layout of a frame, before its
+	// picture reaches the screen. With no remote service, a settled screen
+	// means only that two pictures in a row were the same, so a program that
+	// is late to present gives a settled picture of its window before the
+	// change. The read itself is the condition: the cells of the element
+	// show a text of the font that fills its box, as a text element is as
+	// wide as its text. The guide: docs/TOOLS.md, "How a step reads a text off the screen".
+	read_start := time.now()
+	for {
+		dump := screen_dump_settled(machine, element) or_return
+		read: bool
+		text, read = cells_text(dump.pixels, dump.width, dump.height, x, y, element_width / graphics.CELL_WIDTH)
+		delete(dump.file)
+		if read && text_fills_its_box(text) {
+			break
+		}
+		if time.since(read_start) >= HANG_BOUND {
+			fmt.eprintfln("modustool: test failed: step %d: the element %s of %s at %d,%d of the screen is not a text of Spleen 8x16 that fills its box within %v (set the font to spleen first)", index + 1, element, owner, x, y, HANG_BOUND)
+			return "", false
+		}
 	}
 	test_passed_print("the tool read the element %s of %s off the screen: %d characters", element, owner, len(text))
 	return text, true

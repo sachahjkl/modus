@@ -48,7 +48,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it, and the measure history `docs/measures/releases/` (see "The measure history") |
 | `docs/reference/licenses/` | See "The licenses" |
 | `releases/` | All of `CHANGELOG.md`, newest first; each release shows its release time, `2026-11-15 18:48 UTC`, or its day alone for an old release whose time no record holds; each release has the anchor `release-<number>`, each of its changes the anchor `release-<number>-change-<its place in the release, from 1>`, and a line with a link to each news entry that names it; the subscribe menu under the heading (see "The subscribe menu") |
-| `roadmap/` | All of `ROADMAP.md`: the planned work, in the sections Now, Next and Later; see "The roadmap" |
+| `roadmap/` | All of `ROADMAP.md`: the planned work, in the sections Now, Next and Later, then the section Maybe; see "The roadmap" |
 | `news/`, `news.xml` | The files of `news/`; see "The news" |
 | `search.json`, `search.js` | The index of the search and its script; see "The search" |
 | `version.json` | The commit and the time of the build; see "A page of an older build" |
@@ -262,11 +262,12 @@ The owner asked for it on 2026-11-14: "j'aimerais [...] qu'on [la] rende visible
 `roadmap/` shows `ROADMAP.md`, the planned work of the system (`GLOSSARY.md`, "Roadmap"). It is the other half of `releases/`: the releases list the work that is done, the roadmap the work that is planned. The form of the file and its check are in `TOOLS.md`, "The roadmap"; the code of the page is `tools/modustool/site_roadmap.odin`.
 
 - `modustool site` reads the file with the reader of `modustool roadmap check` (`roadmap_read`), before it writes a page. A fault of form stops the command with the line of the fault, and no page is written. The site does not apply the rule of the changelog summaries: that rule is for a commit, not for a page.
-- The page adds no sentence to an entry. Its first paragraphs say what the three sections are and where the work that is done is; a line names the file.
+- The page adds no sentence to an entry. Its first paragraphs say what the four sections are and where the work that is done is; a line names the file.
 - The three sections are three columns from 960 pixels, and one column under 960 pixels, in the same order. Why columns: Now, Next and Later are one line of time, read from the left to the right, and a reader sees at once how much is in each. Why 960 and not 720: three columns of a window of 720 pixels are about 220 pixels each, about 28 characters a line. Why not three groups one under the other at every width: a wide window has the room for the three side by side, and under the two others the section Later, the longest, starts far below the first screen. The columns start at the same height and end where their cards end (`align-items: start`): no card is stretched to fill a column.
-- A section has a heading (`now`, `next`, `later` as its id), the count of its entries in the dim color, and one line that says what it holds. A section with no entry says "No entry.".
+- The section Maybe, what may be done one day and is not decided, comes under the three columns, at the full width, with its cards in the same grid: three columns from 960 pixels, one under. Why not a fourth column: Maybe is not a step of the line of time, and four columns of a window of 960 pixels are too narrow. The page shows the section even when the file has none; it then says "No entry.".
+- A section has a heading (`now`, `next`, `later`, `maybe` as its id), the count of its entries in the dim color, and one line that says what it holds. A section with no entry says "No entry.".
 - An entry is a card of the site (`.card`): the border of 1 pixel and the bar of 4 by 16 pixels before its title. The title is the summary; the text is the sentences, rendered by the renderer of the guides, so a term of the glossary links once on the page. An entry with a design link has a last line "Design", a link to the intent file in the repository at the commit of the build.
-- The state of an entry is the accent of its card, a color that the site already has: **Now** has the color of a program, the color of what runs (the color of the kind Shown of a news entry); **Next** has the color of the kernel (the color of the kind Decided); **Later** has no accent: its bar and its border take the dim color and the track (`.roadmap-later`). The page has no new color, no new form and no mark of its own. The heading of the column says the state in a word, so the color is never the only sign.
+- The state of an entry is the accent of its card, a color that the site already has: **Now** has the color of a program, the color of what runs (the color of the kind Shown of a news entry); **Next** has the color of the kernel (the color of the kind Decided); **Later** and **Maybe** have no accent: their bar and their border take the dim color and the track (`.roadmap-later`). The page has no new color, no new form and no mark of its own. The heading of the column says the state in a word, so the color is never the only sign.
 - No text is cut: a card takes the height of its text, a summary and a sentence break inside a long word (`overflow-wrap: anywhere`), and a column is never narrower than its grid cell allows (`minmax(0, 1fr)`).
 - The id of an entry is `roadmap-<the summary, as a slug>`. The check refuses two entries whose summaries give one slug, so no two entries share an id.
 
@@ -275,7 +276,7 @@ Where a reader finds it:
 | Place | What it shows |
 |---|---|
 | The bar | The line "Roadmap" of the project menu, after "Releases": two clicks from each page, and one line of the site menu under 720 pixels (see "The buttons and the menu of the bar") |
-| `releases/` | One line after the first paragraphs: "What is planned: the roadmap", with the count of each section |
+| `releases/` | One line after the first paragraphs: "What is planned: the roadmap", with the count of each of the sections Now, Next and Later: the section Maybe is not planned work |
 | The home | A door "Roadmap" in its head, with the doors of the other sections, and the same line, under the newest release. The home has no section for the roadmap: it shows what runs |
 | `status/` | The same line, under the heading "What is planned", in the place of the table of the next steps |
 | The search | Each entry, by its summary (the kind "roadmap entry", with the look of a status) |

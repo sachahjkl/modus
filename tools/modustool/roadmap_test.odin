@@ -128,6 +128,66 @@ roadmap_of_a_damaged_file :: proc(t: ^testing.T) {
 	}
 }
 
+// The section Maybe is optional and comes last: a file without it, with it
+// and its entries, and with it and no entry is well formed; a file with it
+// out of its place, or two times, is not.
+@(test)
+roadmap_of_the_section_maybe :: proc(t: ^testing.T) {
+	maybe_entry :: "- **A driver for a real disk.** Two ways are open: a real machine with that disk, or an emulated model of it in QEMU. Each waits for its hardware or its model."
+	// Absent: the good file has no section Maybe.
+	{
+		roadmap, problems := roadmap_parse(GOOD_ROADMAP)
+		testing.expectf(t, len(problems) == 0, "absent: problems: %v", problems)
+		testing.expect_value(t, roadmap_section_count(roadmap, .Maybe), 0)
+	}
+	// Present, after Later, with one entry.
+	{
+		present := strings.concatenate({GOOD_ROADMAP, "\n## Maybe\n\n", maybe_entry, "\n"}, context.temp_allocator)
+		roadmap, problems := roadmap_parse(present)
+		testing.expectf(t, len(problems) == 0, "present: problems: %v", problems)
+		testing.expect_value(t, roadmap_section_count(roadmap, .Maybe), 1)
+		testing.expect_value(t, roadmap_section_count(roadmap, .Later), 0)
+		if len(roadmap.entries) > 0 {
+			last := roadmap.entries[len(roadmap.entries) - 1]
+			testing.expect_value(t, last.section, Roadmap_Section.Maybe)
+			testing.expect_value(t, last.summary, "A driver for a real disk")
+		}
+	}
+	// Empty: the heading with no entry, as the other sections can be.
+	{
+		empty := strings.concatenate({GOOD_ROADMAP, "\n## Maybe\n"}, context.temp_allocator)
+		roadmap, problems := roadmap_parse(empty)
+		testing.expectf(t, len(problems) == 0, "empty: problems: %v", problems)
+		testing.expect_value(t, roadmap_section_count(roadmap, .Maybe), 0)
+	}
+	// Out of order: Maybe before Later.
+	{
+		out_of_order, _ := strings.replace(GOOD_ROADMAP, "## Later\n", strings.concatenate({"## Maybe\n\n", maybe_entry, "\n\n## Later\n"}, context.temp_allocator), 1, context.temp_allocator)
+		_, problems := roadmap_parse(out_of_order)
+		found := false
+		for problem in problems {
+			found ||= strings.contains(problem, "the heading \"## Maybe\" is not expected here")
+		}
+		testing.expectf(t, found, "out of order: no problem names the heading; the problems: %v", problems)
+	}
+	// Two times.
+	{
+		twice := strings.concatenate({GOOD_ROADMAP, "\n## Maybe\n\n## Maybe\n"}, context.temp_allocator)
+		_, problems := roadmap_parse(twice)
+		found := false
+		for problem in problems {
+			found ||= strings.contains(problem, "the heading \"## Maybe\" is not expected here")
+		}
+		testing.expectf(t, found, "twice: no problem names the heading; the problems: %v", problems)
+	}
+	// Maybe in the place of Later: Later is still required.
+	{
+		in_place_of_later, _ := strings.replace(GOOD_ROADMAP, "## Later\n", "## Maybe\n", 1, context.temp_allocator)
+		_, problems := roadmap_parse(in_place_of_later)
+		testing.expectf(t, len(problems) > 0, "Maybe in the place of Later: no problem")
+	}
+}
+
 // Each problem names the file and the line of its fault.
 @(test)
 roadmap_problem_names_its_line :: proc(t: ^testing.T) {
