@@ -8,7 +8,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 - **A terminal that always draws the end of an output.** On two runs of the main test, the terminal stayed on the state of a running call after the console had written the whole result: the row, the count of rows and the next line were in the log, not on the screen, with every program in a wait. The terminal now logs a lost wake of its reader or of its drawer, so the next run that shows it names the side that lost it, and a principal never sees a stale screen until the next key.
 - **The first signed release image.** The keys of the publisher of the system go into the secrets of the repository, and their public key and certificate into `resources/keys`. The next tag then publishes a disk image that a principal verifies and starts. [Design](src/md/infrastructure/release_image.md)
-- **A machine test of zeros that the disk does not keep.** The test disk drops a write of zeros of an erase of versions, and the machine test of `principals` checks the line of the storage service and the count of the row, so the report of the old bytes that stay on the disk is proved on a machine and not only read in the code. [Design](src/md/features/version_erase.md)
 - **A guest on a machine with an Intel processor.** A program runs a guest on a machine with an Intel processor too, with the same operation and the same exit records as on AMD. [Design](src/md/features/guest.md)
 
 ## Later

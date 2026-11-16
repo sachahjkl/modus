@@ -56,6 +56,8 @@ A refused commit has no other limit: with the read back of the blocks before the
 - **The end.** The durable image at the end of the first machine shows the limit: the commits after the hidden write name its block too, so the open takes the newest root, with the object damaged: its current version names the lost block.
 - **The measure.** `storage.stores()` gives the blocks read back and their time.
 
+The same test device drops one write of zeros of an erase of versions in `modustool test principals`: a write of a block of zero bytes over a block that holds a marker, the salt of the old file of a principal ([version_erase.md](version_erase.md), "The machine test of a dropped write of zeros").
+
 ## Refused forms
 
 - **A read back of the root only.** A root that reached the disk says nothing of the blocks that it names: the dropped write in the test is a block of data under a whole root.
@@ -68,6 +70,6 @@ A refused commit has no other limit: with the read back of the blocks before the
 
 ## State
 
-Built: the commit read back of the blocks before the root and of the root after it, with their refusals and their lines, the commits for the next open to decide, the stop after three roots in a row, the unit `Dropped_Writes`, the counts in `stores()`, the read back of the erase of versions through it, the host test of the model with the same bytes case and the dropped second root, the test device that drops one block, drops one root and hides one block, and the machine test `modustool test power` (the case `dropped_write_run`).
+Built: the commit read back of the blocks before the root and of the root after it, with their refusals and their lines, the commits for the next open to decide, the stop after three roots in a row, the unit `Dropped_Writes`, the counts in `stores()`, the read back of the erase of versions through it, the host test of the model with the same bytes case and the dropped second root, the test device that drops one block, drops one root, hides one block and drops one write of zeros, the machine test `modustool test power` (the case `dropped_write_run`), and the dropped write of zeros in `modustool test principals`.
 
-Left: a drop that the device hides behind its cache is found only at the next open, and a later commit can carry it. A read past the cache of a real device needs a command that the block service does not have. No machine test drops a write of zeros of an erase: it is an entry of `ROADMAP.md`.
+Left: a drop that the device hides behind its cache is found only at the next open, and a later commit can carry it. A read past the cache of a real device needs a command that the block service does not have.
