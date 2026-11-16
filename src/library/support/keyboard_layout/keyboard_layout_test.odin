@@ -181,7 +181,9 @@ the_dead_keys_of_the_layout_of_france :: proc(t: ^testing.T) {
 		// Rule 5: a control character drops the accent.
 		{{{KEY_DEAD_ACCENTS, {}}, {SCAN_ENTER, {}}}, "\n", 0},
 		// A key with no character on the third level drops the accent.
-		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_E, {.Alt_Graph}}}, "", 0},
+		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_Q, {.Alt_Graph}}}, "", 0},
+		// The euro sign takes no accent: the accent, then the sign.
+		{{{KEY_DEAD_TILDE, {.Alt_Graph}}, {SCAN_E, {.Alt_Graph}}}, "~€", 0},
 		// A dead key alone: nothing yet, the accent waits.
 		{{{KEY_DEAD_ACCENTS, {}}}, "", ACCENT_CIRCUMFLEX},
 		{{{KEY_DEAD_TILDE, {.Alt_Graph}}}, "", ACCENT_TILDE},
