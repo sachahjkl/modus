@@ -109,7 +109,7 @@ Step_Kind :: enum {
 	Quit, // End QEMU: the machine does not stop by itself.
 	Monitor, // Send the line text to the QEMU monitor, as it is (for example "nmi": a non-maskable interrupt to each processor).
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool takes the name that the system wrote in a frame, or names a frame "module + offset" from the debug object of its module, and the names start with `names`.
-	Record, // A log record with the program `program`, the channel `channel`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place.
+	Record, // A log record with the program `program`, the channel `channel`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place. A later step names the number of the record that it found with {record} (RECORD_MARK) in its text.
 	Agree, // The program `text`: the mapped pages and the threads that inspect.mappings() and inspect.threads() give are the ones that monitor.programs() gives (two tools, two reports of the kernel).
 	Power_Loss, // The disk that the tool serves loses its power at the first write of a root after a seeded count of writes (1 to 40 after this step): it answers nothing more, and the tool ends QEMU with no warning (power_loss.odin).
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
@@ -197,6 +197,12 @@ date_check :: proc(index: int, machine_seconds: i64, what: string, earliest: i64
 	test_passed_print("the date of the machine (%s) is %d s since 1970, %d on the clock of the host, between %d and %d", what, machine_seconds, on_the_host, earliest, host)
 	return true
 }
+
+// The mark of a step text that the tool replaces with the number of the log
+// record that the last Record step found. A scenario cannot know the number
+// of a record before it runs: the count of the records before it depends on
+// what each program wrote since the boot.
+RECORD_MARK :: "{record}"
 
 // generation_expand writes the base of the generations in a text: each
 // {generation} is the base, and each {generation+N} the base and N. A mark
@@ -956,6 +962,19 @@ self_tests_run :: proc() -> bool {
 scenario := [?]Step {
 	{kind = .Wait, text = "boot program: ok"},
 	{kind = .Wait, text = "kernel: ok"},
+	// The kernel writes the time of each stage of the boot, on the channel
+	// boot. The serial port keeps each line, so this check reads them here:
+	// the ring of the log keeps only the newest records, and the window of
+	// the log starts long after the boot. The root service runs on another
+	// processor while the kernel writes them, so its lines can come
+	// between them.
+	{kind = .Wait, text = "kernel: boot: firmware: ", any_order = true},
+	{kind = .Wait, text = "kernel: boot: boot program: load the kernel, the boot image: ", any_order = true},
+	{kind = .Wait, text = "kernel: boot: boot program: page tables, memory map, jump: ", any_order = true},
+	{kind = .Wait, text = "kernel: boot: kernel: page frames, kernel page table: ", any_order = true},
+	{kind = .Wait, text = "kernel: boot: kernel: first processor, timer: ", any_order = true},
+	{kind = .Wait, text = "kernel: boot: kernel: other processors: ", any_order = true},
+	{kind = .Wait, text = "kernel: boot: kernel: root service: ", any_order = true},
 	{kind = .Wait, text = "root: ok"},
 	// The virtual mouse of QEMU answers the IntelliMouse sequence: its
 	// packets have the wheel.
@@ -2385,9 +2404,11 @@ scenario := [?]Step {
 	// The log: records in channels. The kernel sets the program of each
 	// record; a program with the grant reads the records.
 	{kind = .Launch, text = "log"},
-	{kind = .Wait, text = "[log:log] log: the kernel wrote 7 records in the channel boot"},
+	// The window loses no record once it reads the log: the records gone
+	// before its start depend on the length of the boot, and are only a
+	// measure (src/md/features/log_window_losses.md).
 	{kind = .Wait, text = "[log:log] log: ok, ", any_order = true},
-	{kind = .Wait, text = " 0 lost, "},
+	{kind = .Wait, text = " gone before its start, 0 lost since, "},
 	{kind = .Shot, text = "log"},
 	// The window covers the console: move it down.
 	{kind = .Move, text = "log", to_x = 96, to_y = 744},
@@ -2395,11 +2416,21 @@ scenario := [?]Step {
 	// service: from here on some checks read the program, the channel and
 	// the level of a record (step Record), not only a line of text.
 	{kind = .Call, text = "log.records(0)", expected = " rows of Record"},
-	// Each record keeps the kind of each value of its text: the kernel
-	// writes its free memory as a size ("kernel: free memory 2013 MiB"), so
-	// the first records have a run of the kind size.
-	{kind = .Call, text = "log.value_runs(0)", expected = "  size"},
+	// Each record keeps the kind of each value of its text: the program log
+	// writes the size of the memory of the log as a size. The value runs
+	// are read from the number of that record: the records of the boot can
+	// be gone from the ring by now.
+	{kind = .Record, program = "log", channel = "log", level = "info", text = "log: the memory of the log: "},
+	{kind = .Call, text = "log.value_runs({record})", expected = "  size"},
 	{kind = .Front, text = "console"},
+	// The kernel writes a record of its own on a channel, and the log
+	// keeps it: a program that fails gives a record of the kernel on the
+	// channel fault. A record of now, not of the boot, so that no count of
+	// the records before it matters.
+	{kind = .Type, text = "start(\"fault\")"},
+	{kind = .Wait, text = "stopped: page fault"},
+	{kind = .Wait, text = "root: fault stopped"},
+	{kind = .Record, program = "kernel", channel = "fault", level = "warning", text = "kernel: program fault stopped: page fault"},
 	// The log scope: log_reader has a connection to the log service that
 	// does not act for the principal. It reads the log from the own number
 	// 0 and receives its own records only: the records of its program slot
@@ -2425,9 +2456,6 @@ scenario := [?]Step {
 	{kind = .Wait, text = "root: log_reader stopped with code 0"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: started log_reader", any_order = true},
 	{kind = .Record, program = "log_reader", level = "info", text = "log_reader: the record that this program reads back, with the value 42"},
-	// The refusals of the console come after the check of the log, which
-	// needs each record since the boot (" 0 lost"): the lines before it stay
-	// few.
 	// The refusals of the root service give an error record: the console
 	// writes its sentence.
 	// No window drew in a picture on the screen: each surface has two
@@ -3385,6 +3413,8 @@ Machine :: struct {
 	confirmations: [dynamic]time.Duration, // The time of each confirmation of a place.
 	corrected:   int, // The places that needed a correction.
 	record_next: i64, // The number of the log record where the next Record step searches.
+	record_found: i64, // The number of the first log record of the text that the last Record step found: a later step names it {record}.
+	record_found_any: bool, // A Record step found a record: record_found holds its number.
 	powered_off: bool, // A step Power_Loss ended QEMU: the machine has no exit status.
 	disk_server: ^Network_Block_Device, // The data disk, when the tool serves it.
 	client:      Call_Client,
@@ -3913,6 +3943,13 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			step.text = generation_expand(step.text, generation_base)
 			step.expected = generation_expand(step.expected, generation_base)
 		}
+		if strings.contains(step.text, RECORD_MARK) {
+			if !machine.record_found_any {
+				fmt.eprintfln("modustool: test failed: step %d names %s before a step Record found a record", index + 1, RECORD_MARK)
+				return false
+			}
+			step.text, _ = strings.replace_all(step.text, RECORD_MARK, fmt.tprintf("%d", machine.record_found), context.temp_allocator)
+		}
 		has_kept_mark := strings.contains(step.text, SCREEN_TEXT_MARK)
 		has_before_mark := strings.contains(step.text, SCREEN_TEXT_BEFORE_MARK)
 		if has_kept_mark && screen_text_kept == "" {
@@ -4264,6 +4301,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					last_number, _ := strconv.parse_i64(table_value(&table, last, "number"))
 					if table_value(&table, row, "program") == step.program && table_value(&table, row, "channel") == step.channel && table_value(&table, row, "level") == step.level && strings.contains(strings.to_string(joined), step.text) {
 						found = true
+						machine.record_found, machine.record_found_any = number, true
 						if !step.any_order {
 							machine.record_next = last_number + 1
 						}
