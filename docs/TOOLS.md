@@ -42,7 +42,7 @@ A tool with no grant to inspect the machine reads nothing. It says so in its win
 | `locks` | machine, Inspect | `System_Report.locks` |
 | `scheduler` | machine, Inspect and Schedule | `Processor_Report`, `System_Report.strategy`, `Thread_Table_Report` (the machine number of its own threads; for the share policy, the threads of each program), `Program_Report` (the run time of each program) |
 | `manual` | machine, Inspect; boot image; replacement table | the flat tables of the modules, `Module_Report` of each slot |
-| `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)` |
+| `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)`, to each caller in its log scope ("Who reads which records") |
 | `debugger` | machine, Inspect; boot image; debug image; the commands `Debug` and `Debug_Store` of the root ring | `Program_Report`, `Module_Report` and `Thread_Table_Report` of the program that it debugs; the registers and the memory of that program through its handle with `Debug` ("The debugger"). It serves the exports of the debugger |
 | `inspect` | machine, Inspect; boot image; debug image | `Program_Report`, `Module_Report`, and the four reports below, of the program that the principal chooses. It serves `mappings()`, `threads()` and `modules()` |
 
@@ -91,6 +91,24 @@ The program `log` shows the newest records, in 30 lines: the time, the mark of t
 ### The tables of the log service
 
 `log.records(after)` gives one row for each record: its fields, the count of its value runs (`runs`), and its text. `log.value_runs(after)` gives the value runs: the number of the record, the start and the length in bytes of its text, and the name of the kind (`size`, `time`...). Join them on `number`. The first row of `records` also says in `lost` how many records after `after` the kernel wrote over before the call read them: a reader that is slow knows what it missed.
+
+### Who reads which records
+
+The log has the records of every program, and a program sees no other program. So the log service gives each caller the records of its log scope (`GLOSSARY.md`), and the caller never maps the memory of the log:
+
+| Caller | Its log scope |
+|---|---|
+| A caller that acts for the principal: the console, `remote` | The whole log |
+| Each other caller with a connection to the log service: `log_reader` | Its own records: the records with its program slot and its program serial |
+| A program with no connection to the log service | No record through the service. Its records are on the serial port and in the whole log |
+
+The kernel writes the program slot, the program serial and the own number in each record. The root service writes the two numbers of the caller in the grant of its connection, and the caller cannot change them (`modus:contract/log_scope`). A new program in the same slot has another serial, so it does not read the records of the program before it. A record that another program wrote about a program, such as "root: started log_reader", is not one of its own records.
+
+A reader of its own records sees no number of the whole log. The number of each of its rows is the own number of the record (`GLOSSARY.md`): 0 for the first record of its program. It gives `after` in own numbers, and `lost` counts its own records that the kernel wrote over. So it receives no number or count of the records of other programs. All programs share one ring, so the records of the others still push its own records out: the count of its own records that are gone says how many records the others wrote. The log budget of each second bounds that rate. A reader whose own records are all gone receives no row, and so no `lost`. The result of the two exports counts the rows of the scope. A reader chooses the rows of a channel with `where`: a log scope never names a channel, because a channel is a name that the writer chooses. `revoke("console", "acts_for_principal")` changes the scope of the console to its own records. If a service ring has no room for the new grants, the root service refuses the revocation with `No_Slot`, changes nothing, and writes "root: refused the revocation of acts_for_principal of <program>: the service <name> has no room for the new grants; nothing changed".
+
+Each reader of the ring keeps a copy of a record only when the kernel did not start to write over it during the copy (`op.log_copy_kept`): the record under the writer of the next one counts as lost, so a copy never holds the head of one record and the text of another. A reader then copies the last 2046 records at most, one fewer than the 2047 that the ring holds.
+
+The program `log_reader` is the test: it writes one record, connects, reads the log from the own number 0, and writes "log_reader: its own records: 1 rows from the own number 0, its first record, in the slot <slot>, lost 0: no row of another program or of an earlier run: as it must". The machine test starts it two times: the second run receives none of the records of the first one. It then reads the whole log through `remote`, and finds there the record of `log_reader` and the record "root: started log_reader". The design: `src/md/features/log_reader_scope.md`.
 
 ### The console and the terminal
 
@@ -174,7 +192,7 @@ What follows from the rule:
 | A service (`storage`, `monitor`, `inspect`, `log`, `settings`, `date`, `manual`, `server`, `debugger`, the compositor) | Refused: the grant Serve |
 | A program with a terminal (`flood`, a second console) | Refused: the grant Terminal |
 | A program with an endpoint of the network (`net`, `fetch`, `quic_echo`, `remote`) | Refused: the grant Network, or Connect |
-| A program that connects to services (`tables`) | Refused: the grant Connect |
+| A program that connects to services (`tables`, `log_reader`) | Refused: the grant Connect |
 | A program with a device (`disk`, `network`) | Refused: the grant Scratch_Disk or Network_Device |
 | A device service, a terminal | Refused: the grant System_Part, which the root service gives to the parts of the system that it starts by itself, and which no caller holds |
 | A program with a grant that the console does not hold (`scheduler`: Schedule; `kernel_events`: Events) | Refused: that grant |

@@ -1,7 +1,6 @@
 package log
 
-import "modus:contract/errors"
-import "modus:contract/isolated"
+import "modus:contract/log_scope"
 import "modus:contract/value_kinds"
 import op "modus:contract/operation"
 import "modus:support/system"
@@ -14,8 +13,12 @@ import "base:intrinsics"
 // runs, and when the network does not.
 //
 // The records of the log are facts of all the programs, and a program sees
-// no other program: the export gives them only to a caller that acts for
-// the principal.
+// no other program: the exports give the whole log only to a caller that
+// acts for the principal, and to each other caller its own records, by the
+// program slot and the program serial that the root service wrote in the
+// grant of its connection (modus:contract/log_scope). This program holds
+// the memory of the log, so it makes the choice: a reader never maps that
+// memory (src/md/features/log_reader_scope.md).
 
 // One row of the log: records(). A row has 256 bytes, the most that a
 // record of a description has, and holds one log record: its text has the
@@ -47,8 +50,6 @@ Value_Run :: struct {
 	kind:   [16]u8, // The name of the value kind, as the site names it.
 }
 
-ERROR_ACTS_FOR_PRINCIPAL :: -1
-
 @(rodata)
 level_names := [system.Log_Level]string {
 	.Info    = "info",
@@ -61,43 +62,85 @@ service: system.Service
 reader_head: ^op.Log_Head
 reader_records: [^]op.Log_Record
 
-// first_kept gives the first record from `after` on that the kernel did not
-// write over, and the count of the records before it that it wrote over.
-first_kept :: proc "contextless" (after: i64, written: u64) -> (next, lost: u64) {
-	next = min(u64(max(after, 0)), written)
-	if written - next > op.LOG_RECORD_CAPACITY {
-		lost = written - next - op.LOG_RECORD_CAPACITY
-		next += lost
-	}
-	return next, lost
+// first_asked gives the number in the whole log of the first record that a
+// call reads: `after` for the whole log. A reader of its own records counts
+// `after` in its own numbers, which are no place in the ring: the call reads
+// each record that the ring keeps.
+first_asked :: proc "contextless" (scope: log_scope.Scope, after: i64) -> u64 {
+	return scope.whole_log ? u64(max(after, 0)) : 0
 }
 
-// records gives the log records from the number `after` on, one row each: the number, the time in microseconds, the program and its slot, the level, the channel, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows from `after` to the last record, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+// record_copy copies the record `number` of the whole log, and says if the
+// copy is whole: the kernel did not start to write over it during the copy
+// (op.log_copy_kept). The fence keeps each load of the copy before the
+// second load of `written`.
+record_copy :: proc "contextless" (number: u64) -> (record: op.Log_Record, whole: bool) {
+	record = reader_records[number % op.LOG_RECORD_CAPACITY]
+	intrinsics.atomic_thread_fence(.Acquire)
+	return record, op.log_copy_kept(number, intrinsics.atomic_load(&reader_head.written))
+}
+
+// record_given says if a caller with a scope receives a whole record when it
+// asks from `after` on, and gives the number of its row: the number in the
+// whole log, or the own number for a reader of its own records.
+record_given :: proc "contextless" (scope: log_scope.Scope, record: ^op.Log_Record, after: i64) -> (number: i64, given: bool) {
+	if scope.whole_log {
+		return i64(record.sequence), true
+	}
+	if !log_scope.record_in_scope(scope, record) || !log_scope.own_number_at_or_after(record.own_number, after) {
+		return 0, false
+	}
+	return i64(record.own_number), true
+}
+
+// caller_scope gives the log scope of the caller of the export that runs.
+// With no connection (a call of this program itself), the whole log.
+caller_scope :: proc "contextless" () -> log_scope.Scope {
+	caller := system.service_caller()
+	if caller == nil {
+		return {whole_log = true}
+	}
+	return log_scope.scope_of(caller.grant)
+}
+
+// records gives the log records of the log scope of the caller from the number `after` on, one row each: the number, the time in microseconds, the program and its slot, the level, the channel, the count of its value runs, and the text. A row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows of the scope from `after` to the last record.
 //
 // **What it is for.** A reader of the log checks the program, the channel
 // and the level of a record as fields, not by a search in a line of text.
-// The machine test reads the log this way, through the remote service.
+// The machine test reads the log this way, through the remote service. A
+// program reads its own records back, with their times, levels and value
+// runs.
 //
 // **Parameter**: `after`, the number of the first record to give, from 0.
 // A negative number is 0. A number past the last record gives no row.
 //
-// **A row** (`Record`): `number`; `time`, microseconds since the start of
-// the machine; `program`, its name or `kernel`; `slot`, 0 for the kernel;
-// `level`, `info`, `debug`, `warning` or `error`; `channel`, empty when the
-// program gave none; `lost`, in the first row only; `continues`, 1 when the
-// text goes on in the next row; `runs`, the count of its value runs; `text`,
-// at most 152 bytes.
+// **A row** (`Record`): `number`, the number of the record in the whole
+// log, or for a reader of its own records its own number: the count of the
+// records of its program before it; `time`, microseconds since the start of the machine; `program`, its
+// name or `kernel`; `slot`, its program slot, 0 for the kernel; `level`,
+// `info`, `debug`, `warning` or `error`; `channel`, empty when the program
+// gave none; `lost`, in the first row only; `continues`, 1 when the text
+// goes on in the next row; `runs`, the count of its value runs; `text`, at
+// most 152 bytes.
 //
-// **The result** counts the rows from `after` to the last record, also the
-// ones that do not fit in the table of the caller: a caller that gets a
-// result larger than its table calls again with `after` set past its last
-// row. The kernel keeps the last 2047 records only: `lost` in the first row
-// counts the records after `after` that the kernel wrote over before the
-// read, and the rows start after them.
+// **The result** counts the rows of the scope from `after` to the last
+// record, also the ones that do not fit in the table of the caller: a
+// caller that gets a result larger than its table calls again with `after`
+// set past its last row. A reader can copy the last 2046 records only:
+// `lost` in the first row counts the records after `after` that the kernel
+// wrote over before the read, and the rows start after them. For a reader
+// of its own records, `after`, `number` and `lost` count its own records
+// only: no number or count of the records of other programs. The one ring
+// still lets the records of others push its own records out
+// (src/md/features/log_reader_scope.md). A reader whose records are all
+// gone receives no row, so no `lost` either.
 //
-// **Grant**: the caller must **act for the principal**: the records are
-// facts of all the programs. A caller without it gets the error kind
-// `No_Grant`, with the result -1.
+// **Grant**: the [log scope](term:log-scope) of the connection. A caller
+// that **acts for the principal** receives the whole log: the records are
+// facts of all the programs. Each other caller receives its
+// [own records](term:own-records) only: the records that the kernel wrote
+// for its program, which the root service names in the grant of the
+// connection by its program slot and its program serial.
 //
 // ```
 // connect("log")
@@ -105,27 +148,46 @@ first_kept :: proc "contextless" (after: i64, written: u64) -> (next, lost: u64)
 // where(log.records(0), "program", "console")
 // ```
 @(export, link_name = "records")
-records :: proc "c" (after: i64, result: ^[]Record, error: ^errors.Error_Record) -> i64 {
-	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
-	}
+records :: proc "c" (after: i64, result: ^[]Record) -> i64 {
+	scope := caller_scope()
 	written := intrinsics.atomic_load(&reader_head.written)
-	next, lost := first_kept(after, written)
-	total := written - next
+	next, ring_lost := op.log_first_kept(first_asked(scope, after), written)
+	// A reader of its own records learns no count of the records of other
+	// programs: its `lost` comes from its own numbers only.
+	lost: u64 = scope.whole_log ? ring_lost : 0
 	count := 0
-	for next < written && count < len(result^) {
-		record := reader_records[next % op.LOG_RECORD_CAPACITY]
-		// The kernel can write over the record during the copy.
-		if intrinsics.atomic_load(&reader_head.written) - next > op.LOG_RECORD_CAPACITY {
-			lost += 1
-			next += 1
+	total: u64
+	for ; next < written; next += 1 {
+		if scope.whole_log && count == len(result^) {
+			// The rest of the whole log does not fit: each record is a row.
+			total += written - next
+			break
+		}
+		record, whole := record_copy(next)
+		if !whole {
+			if scope.whole_log {
+				lost += 1
+			}
+			continue
+		}
+		// The choice is made on the whole copy, which the kernel no longer
+		// changes.
+		number, given := record_given(scope, &record, after)
+		if !given {
+			continue
+		}
+		if !scope.whole_log && total == 0 {
+			lost = log_scope.own_records_lost(record.own_number, after)
+		}
+		total += 1
+		if count == len(result^) {
 			continue
 		}
 		// Each place of the result has a row (a Table result: the caller
 		// reads min(count, capacity) rows).
 		text_count := min(int(record.text_count), len(record.text))
 		row := &result[count]
-		row^ = {number = i64(record.sequence), time = i64(record.time), slot = i64(record.program)}
+		row^ = {number = number, time = i64(record.time), slot = i64(record.program)}
 		copy(row.program[:len(row.program) - 1], system.name_of(record.name[:]))
 		if record.level <= max(system.Log_Level) {
 			copy(row.level[:], level_names[record.level])
@@ -135,7 +197,6 @@ records :: proc "c" (after: i64, result: ^[]Record, error: ^errors.Error_Record)
 		row.continues = record.more != 0 ? 1 : 0
 		row.runs = i64(min(int(record.run_count), len(record.runs)))
 		count += 1
-		next += 1
 	}
 	if count > 0 {
 		result[0].lost = i64(lost)
@@ -143,7 +204,7 @@ records :: proc "c" (after: i64, result: ^[]Record, error: ^errors.Error_Record)
 	return i64(total)
 }
 
-// value_runs gives the value runs of the log records from the number `after` on: for each one, the number of its record, its start and its length in bytes of the text of the record, and the name of its kind (number, size, time, module, version, status...). The rows of one record are in the order of its text. The result is the count of the runs from `after` to the last record, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+// value_runs gives the value runs of the log records of the log scope of the caller from the number `after` on: for each one, the number of its record, its start and its length in bytes of the text of the record, and the name of its kind (number, size, time, module, version, status...). The rows of one record are in the order of its text. The result is the count of the runs of the scope from `after` to the last record.
 //
 // **What it is for.** A value run says that a part of the text of a record
 // is a value of a known kind. A reader joins these rows to the rows of
@@ -160,26 +221,28 @@ records :: proc "c" (after: i64, result: ^[]Record, error: ^errors.Error_Record)
 // **The result** counts all the runs from `after` on, also the ones that do
 // not fit in the table of the caller.
 //
-// **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// **Grant**: the [log scope](term:log-scope) of the connection, as for
+// `records`: the whole log for a caller that **acts for the principal**,
+// else the runs of its [own records](term:own-records) only.
 //
 // ```
 // connect("log")
 // join(log.records(0), log.value_runs(0), "number")
 // ```
 @(export, link_name = "value_runs")
-value_runs :: proc "c" (after: i64, result: ^[]Value_Run, error: ^errors.Error_Record) -> i64 {
-	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
-	}
+value_runs :: proc "c" (after: i64, result: ^[]Value_Run) -> i64 {
+	scope := caller_scope()
 	written := intrinsics.atomic_load(&reader_head.written)
-	next, _ := first_kept(after, written)
+	next, _ := op.log_first_kept(first_asked(scope, after), written)
 	total := 0
 	count := 0
 	for ; next < written; next += 1 {
-		record := reader_records[next % op.LOG_RECORD_CAPACITY]
-		// The kernel can write over the record during the copy.
-		if intrinsics.atomic_load(&reader_head.written) - next > op.LOG_RECORD_CAPACITY {
+		record, whole := record_copy(next)
+		if !whole {
+			continue
+		}
+		number, given := record_given(scope, &record, after)
+		if !given {
 			continue
 		}
 		text_count := min(int(record.text_count), len(record.text))
@@ -192,7 +255,7 @@ value_runs :: proc "c" (after: i64, result: ^[]Value_Run, error: ^errors.Error_R
 			total += 1
 			if count < len(result^) {
 				row := &result[count]
-				row^ = {number = i64(record.sequence), start = i64(start), length = i64(end - start)}
+				row^ = {number = number, start = i64(start), length = i64(end - start)}
 				copy(row.kind[:], value_kinds.VALUE_KIND_NAMES[run.kind])
 				count += 1
 			}

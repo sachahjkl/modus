@@ -148,6 +148,7 @@ module_builds := [?]Module_Build {
 	{name = "address_space", source = PROGRAM_SOURCES + "address_space", image = true},
 	{name = "locker", source = PROGRAM_SOURCES + "locker", image = true},
 	{name = "log", source = PROGRAM_SOURCES + "log", image = true},
+	{name = "log_reader", source = PROGRAM_SOURCES + "log_reader", image = true},
 	{name = "block", source = PROGRAM_SOURCES + "block", image = true},
 	{name = "frame", source = PROGRAM_SOURCES + "frame", image = true},
 	{name = "iommu_device", source = PROGRAM_SOURCES + "iommu_device", image = true},
