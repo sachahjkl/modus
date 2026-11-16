@@ -74,11 +74,33 @@ A module is one file that holds its code and everything needed to use it: what i
 
 The code is `src/library/contract/module/format.odin`; all numbers are little-endian.
 
-- **Header** (`module.Header`): the magic number (the bytes "MODULE"), the format version (1), the size of the header, the feature bits that a reader must understand (`must_understand`), the target machine (x86-64), the count of entries of the table directory, the size of the address range of the loaded module, and the index of its entry export (0: no entry).
+- **Header** (`module.Header`): the magic number (the bytes "MODULE"), the format version (`module.VERSION`), the size of the header, the feature bits that a reader must understand (`must_understand`), the target machine (x86-64), the count of entries of the table directory, the size of the address range of the loaded module, and the index of its entry export (0: no entry).
 - **Feature bits**: A loader that does not know a set bit refuses the module with a clear error. ELF has no such field, and old loaders crash on new files. [Load §1]
 - **Table directory**: Each entry gives the record size of its table. A table can gain fields at the end of its record. A reader that knows a shorter record ignores the rest. A reader that knows a longer record reads the missing fields as zero. [Types §4, §5]
 - **Index 0** of each table is the empty entry (ZII).
 - **Hash**: The identity of a module is the hash of the whole file. The file contains no reference to its own hash. Imports are hashes, so an import cycle cannot exist in the files. [Load §4] A replacement can make one (section "Replacement of an import"): the loader refuses it.
+
+The byte layout of the header, of an entry of the table directory and of one record of each table follows: its offset, its size, its name and its type for each field. On the site each one is a diagram in rows of 8 bytes, with the type and the comment of a field under the pointer. The offsets and the sizes come from the compiler, and the types from `src/library/contract/module/format.odin`: the tool writes these lists, and checks them (`SITE.md`, "The byte layouts"). The table Strings has no record: it is bytes.
+
+```byte-layout module.Header module.Table_Entry
+module.Header, 48 bytes: the start of the file
+offset  size  field            type
+     0     8  magic            u64
+     8     4  version          u32
+    12     4  header_size      u32
+    16     8  must_understand  u64
+    24     4  machine          Machine
+    28     4  table_count      u32
+    32     8  memory_size      u64
+    40     4  entry_export     u32
+    44     4  reserved         u32
+
+module.Table_Entry, 16 bytes: one entry of the table directory
+offset  size  field        type
+     0     8  offset       u64
+     8     4  count        u32
+    12     4  record_size  u32
+```
 
 ### Loader tables
 
@@ -89,6 +111,37 @@ The code is `src/library/contract/module/format.odin`; all numbers are little-en
 | Slots | One import slot: 8 bytes of memory that receive the address of an export, named by the import index and the export index in that module |
 | Exports | One exported function: the offset of its code and the index of its function description |
 | Rebases | The locations in data that hold an address inside the module, as 64-bit words in the RELR form (section 2) |
+
+```byte-layout module.Segment module.Import module.Slot module.Export module.Rebases
+module.Segment, 40 bytes: one record of the table Segments
+offset  size  field          type
+     0     8  file_offset    u64
+     8     8  file_size      u64
+    16     8  memory_offset  u64
+    24     8  memory_size    u64
+    32     4  flags          Segment_Flags
+    36     4  reserved       u32
+
+module.Import, 32 bytes: one record of the table Imports
+offset  size  field  type
+     0    32  hash   [HASH_SIZE]u8
+
+module.Slot, 16 bytes: one record of the table Slots
+offset  size  field          type
+     0     8  memory_offset  u64
+     8     4  import_index   u32
+    12     4  export_index   u32
+
+module.Export, 16 bytes: one record of the table Exports
+offset  size  field        type
+     0     8  code_offset  u64
+     8     4  function     u32
+    12     4  reserved     u32
+
+module.Rebases, 8 bytes: one word of the table Rebases
+offset  size  field  type
+     0     8  word   u64
+```
 
 ### Description tables
 
@@ -101,6 +154,54 @@ The loader reads none of these tables: they are for a caller that must know the 
 | Fields | One field of a record: its name, its offset, its type (Integer, Handle or Text), signed or unsigned, the integer unit of an Integer (section 5, "The unit of an Integer field"), and its detail (the size of an integer or a text, the rights of a handle) |
 | Strings | The bytes of all names, help lines and documentation texts |
 | Documentation | Record 1: the documentation of the module, one line and a text |
+
+```byte-layout module.Function module.Record module.Field module.Documentation
+module.Function, 168 bytes: one record of the table Functions
+offset  size  field                  type
+     0     4  name_offset            u32
+     4     4  name_count             u32
+     8     4  about_offset           u32
+    12     4  about_count            u32
+    16    48  parameter_names        [PARAMETER_CAPACITY]u32
+    64     1  parameter_count        u8
+    65     1  result                 Type
+    66    12  parameters             [PARAMETER_CAPACITY]Type
+    78    12  parameter_name_counts  [PARAMETER_CAPACITY]u8
+    90    12  parameter_directions   [PARAMETER_CAPACITY]Direction
+   102     2  reserved               [2]u8
+   104     4  text_offset            u32
+   108     4  text_count             u32
+   112    48  parameter_details      [PARAMETER_CAPACITY]u32
+   160     4  result_detail          u32
+   164     4  error_record           u32
+
+module.Record, 24 bytes: one record of the table Records
+offset  size  field        type
+     0     4  name_offset  u32
+     4     4  name_count   u32
+     8     4  size         u32
+    12     4  first_field  u32
+    16     4  field_count  u32
+    20     4  reserved     u32
+
+module.Field, 24 bytes: one record of the table Fields
+offset  size  field         type
+     0     4  name_offset   u32
+     4     4  name_count    u32
+     8     4  offset        u32
+    12     1  type          Type
+    13     1  unsigned      bool
+    14     2  integer_unit  value_kinds.Integer_Unit
+    16     4  detail        u32
+    20     4  reserved      u32
+
+module.Documentation, 16 bytes: one record of the table Documentation
+offset  size  field         type
+     0     4  about_offset  u32
+     4     4  about_count   u32
+     8     4  text_offset   u32
+    12     4  text_count    u32
+```
 
 A type is one byte (`module.Type`): Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The detail of a parameter says what its type needs: the index of a record description, the rights of a handle, or the unit of an Integer (section 5, "The unit of an Integer parameter"). Section 5 gives the types.
 
@@ -147,6 +248,14 @@ The table `Budget` holds one record at index 1, `module.Budget_Request` (24 byte
 | `pages` | The pages of memory: the modules, the stacks, the pictures and the working memory of the program |
 | `programs` | The program itself, and each child that runs at one time |
 | `threads` | Each thread that runs at one time, the first one included, and the threads of the children |
+
+```byte-layout module.Budget_Request
+module.Budget_Request, 24 bytes: the record 1 of the table Budget
+offset  size  field     type
+     0     8  pages     u64
+     8     8  programs  u64
+    16     8  threads   u64
+```
 
 - **No table.** A module with no table `Budget` asks for the least budget of its starter.
 - **A part that is 0** asks for the least budget of that part. So a record of an older, shorter size reads its missing parts as the least, by the rule of the table directory.
