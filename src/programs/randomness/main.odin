@@ -23,8 +23,9 @@
 //
 // **What a reader sees**: the sources of the seed (rdseed, rdrand, the
 // jitter of the cycle counter, the entropy device) with their counts, the
-// strength, a live draw of the stream every 500 ms, the 16 bars of 1 MiB
-// counted by the high 4 bits of each byte, and the speed. The log has:
+// strength, a live draw of the stream every 500 ms, the mixes of the fresh
+// bytes page, the 16 bars of 1 MiB counted by the high 4 bits of each
+// byte, and the speed. The log has:
 //
 // - "randomness: the seed of the system: strength ...; the first bytes of
 //   the stream of this program: ...";
@@ -32,7 +33,10 @@
 //   refused reads: N", or "randomness: the entropy device: absent";
 // - "randomness: 1 MiB by the high 4 bits of each byte: from A to B in each
 //   of 16 (the mean is 65536)";
-// - "randomness: the generator: 4 MiB in T us, R MB/s".
+// - "randomness: the generator: 4 MiB in T us, R MB/s";
+// - "randomness: the fresh bytes of the root service are mixed into the
+//   generator of this program, at the change C of its page", once, at the
+//   first mix (src/md/features/fresh_bytes.md).
 //
 // **What it does not prove**: even bars are no test of quality; a weak
 // generator gives them too. The quality of the seed rests on the sources of
@@ -47,7 +51,7 @@ import "modus:support/system"
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 896
-HEIGHT :: 560
+HEIGHT :: 584 // One more line for the fresh bytes than the cards had: the bars keep their height.
 MEASURE_SIZE :: 4 << 20 // The bytes of the measure of the speed.
 HISTOGRAM_SIZE :: 1 << 20 // The bytes whose values the window counts.
 
@@ -119,6 +123,29 @@ device_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.C
 	interface.label_value_line(frame, interface.column_take(column, LINE), "entropy device", interface.text_of(&builder), report.device_reads_refused == 0 ? graphics.colors.text : graphics.colors.failed, 168)
 }
 
+// fresh_bytes_line shows the fresh bytes page of this program: the changes
+// that the generator mixed, or why there are none.
+fresh_bytes_line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.Column) {
+	area := interface.column_take(column, LINE)
+	mixes, change_count := random.fresh_bytes_mixes(&program_generator)
+	switch {
+	case program_generator.fresh_page == nil:
+		interface.label_value_line(frame, area, "fresh bytes", "none: the root service gave this program no page", graphics.colors.dim, 168)
+	case !report.device_present:
+		interface.label_value_line(frame, area, "fresh bytes", "none: the machine has no entropy device", graphics.colors.dim, 168)
+	case mixes == 0:
+		interface.label_value_line(frame, area, "fresh bytes", "none yet: the root service writes the page every 30 s", graphics.colors.dim, 168)
+	case:
+		builder: interface.Text_Builder
+		interface.text_put(&builder, "mixed ")
+		interface.text_put_number(&builder, mixes)
+		interface.text_put(&builder, mixes == 1 ? " time, the last at the change " : " times, the last at the change ")
+		interface.text_put_number(&builder, u64(change_count))
+		interface.text_put(&builder, " of the page")
+		interface.label_value_line(frame, area, "fresh bytes", interface.text_of(&builder), graphics.colors.program, 168)
+	}
+}
+
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
@@ -151,6 +178,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.text_put_number(&builder, program_generator.refills)
 	interface.text_put(&builder, " refills of 832 bytes")
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "drawn", interface.text_of(&builder), graphics.colors.text, 168)
+	fresh_bytes_line(&frame, &column)
 	if measured {
 		builder.count = 0
 		interface.text_put_number(&builder, megabytes_per_second_tenths / 10)
@@ -232,9 +260,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	measured = true
 	system.log("randomness: the generator: 4 MiB in ", measure_microseconds, " us, ", megabytes_per_second_tenths / 10, ".", megabytes_per_second_tenths % 10, " MB/s")
 	deadline := system.time()
+	// The line of the first mix comes after the picture that shows it, so a
+	// test that waits for the line finds the row in the window.
+	fresh_bytes_logged := false
 	for {
 		random.fill(&program_generator, live_bytes[:])
 		draw(&window)
+		if mixes, change_count := random.fresh_bytes_mixes(&program_generator); mixes > 0 && !fresh_bytes_logged {
+			fresh_bytes_logged = true
+			system.log("randomness: the fresh bytes of the root service are mixed into the generator of this program, at the change ", u64(change_count), " of its page")
+		}
 		deadline += 500
 		display.wait(&window, deadline)
 		interface.window_events(&drawing, &window)

@@ -1588,9 +1588,9 @@ Do not use: boot loader, bootloader.
 
 ### Fixed range
 
-A fixed range is an address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the disk program page, the files of a module.
+A fixed range is an address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the disk program page, the fresh bytes page, the files of a module.
 
-Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. A mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
+Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. The band has 16 slots (`SLOT_COUNT`), and 16 members take them all: a new range needs a larger band first. A mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
 
 Do not use: well-known address, fixed mapping.
 
@@ -5701,6 +5701,8 @@ A program uses it in three ways:
 - `random.fill_for_a_key(generator, output, least_strength, error)` draws bytes for a secret only if the seed strength is at least `least_strength`, else gives `Seed_Too_Weak` and writes no byte;
 - `random.seed_for_a_child` gives the seed of a child program or of a second thread.
 
+When the root service mapped a fresh bytes page in the program, the generator mixes each new change of it into its key, at a refill and before a key or a child seed, and never at a draw from its buffer.
+
 One generator belongs to one thread: two draws that overlap would give the same bytes, so the second one stops the program with "random: two threads drew from one generator at once ...". A zero generator is not seeded, and a draw from it stops the program. 4 MiB take 12 to 39 ms in the program `randomness`.
 
 It is not a kernel device and not a service: a kernel entry or a call for each draw is a cost on a hot path (QUIC draws for each handshake), and a shared pool is one shared state for all programs.
@@ -5719,7 +5721,7 @@ The entropy report is the record of what the root service found when it gathered
 root: the random seed of the system, strength entropy (rdseed): rdseed present, N good values, N refused; rdrand present, N good, N refused; the cycle counter, N samples, N distinct low bytes
 ```
 
-It also gives the facts to the program `randomness` in its context values 0 to 7, which shows them in its window. With them go the facts of the entropy device: whether the machine has one, the bytes that the root service mixed in after the gathering, and the reads that it refused.
+It also gives the facts to the program `randomness` in its context values 0 to 7, which shows them in its window. With them go the facts of the entropy device: whether the machine has one, the bytes that the root service mixed in after the gathering, and the reads that it refused, for the two reads of the start only: the reads of the fresh bytes refresh do not change what a program shows of the seed of the system.
 
 The report says what the sources gave. It does not estimate the entropy of the bytes: the system does not test the output of `rdseed` or `rdrand` for quality.
 
@@ -5753,9 +5755,9 @@ Do not use: security level.
 
 The entropy device is the random device of virtio that the machine can have (`virtio-rng-pci` in QEMU): one more source of the seed of the system, never the only one.
 
-The root service looks for it at the place 19 of bus 0. When it is there, the root service starts the entropy service and mixes two reads of 32 bytes into its random generator with `random.device_bytes_mix`: the bytes go into the key with the bytes of the processor, and never replace them. A read with no byte, a read whose bytes all have one value, and a read equal to the read before add nothing: the key stays as it was, and the read counts as refused, as does a read that the entropy service answered with an error. These checks find a broken device; they do not protect against a hostile one. The mix does: the old key is always an input of the new one. The seed strength does not change. A machine with no entropy device starts with the sources of the processor, and the log says so.
+The root service looks for it at the place 19 of bus 0. When it is there, the root service starts the entropy service and mixes two reads of 32 bytes into its random generator with `random.device_bytes_mix`: the bytes go into the key with the bytes of the processor, and never replace them. A read with no byte, a read whose bytes all have one value, and a read equal to the read before add nothing: the key stays as it was, and the read counts as refused, as does a read that the entropy service answered with an error. These checks find a broken device; they do not protect against a hostile one. The mix does: the old key is always an input of the new one. The seed strength does not change. A machine with no entropy device starts with the sources of the processor, and the log says so. After the reads of the start, the root service reads the device again every 30 seconds for the fresh bytes refresh.
 
-The design: `src/md/features/entropy_device.md`, and `docs/RANDOMNESS.md`, "3. The seed of the system, and what is claimed".
+The design: `src/md/features/entropy_device.md`, `src/md/features/fresh_bytes.md`, and `docs/RANDOMNESS.md`, "3. The seed of the system, and what is claimed".
 
 Do not use: RNG device, hardware RNG, /dev/random.
 
@@ -5780,6 +5782,30 @@ An entropy ring is not a queue of the device: the device has its own queue, whic
 The design: `src/md/features/entropy_device.md`.
 
 Do not use: random ring.
+
+### Fresh bytes page
+
+The fresh bytes page is the page of one program, read-only at its fixed range, where the root service writes 32 bytes of its stream for that program alone after each fresh bytes refresh.
+
+The root service has one memory object with one page for each place of its table of the programs. It maps the page of the place into the program that it starts there by its name, into the compositor and into each disk program, sets the bit of the range `Fresh_Bytes_Page` in the context value 20, and writes the page to zero before the start. The page holds a change count, odd during a write, and the 32 bytes (`modus:contract/fresh_bytes`). The random generator of the program reads the change count at each refill and before a key or a child seed, and mixes a new change into its key once: the next key is BLAKE3 of a domain text, the old key and the bytes. A draw from the buffer reads no page.
+
+The page is not shared: the bytes of one program are not the bytes of another, so a program that a reader took does not give the fresh bytes of the others. It is not a seed: the bytes only add to the key. A machine with no entropy device writes no page, and each one keeps the change count 0.
+
+The design: `src/md/features/fresh_bytes.md`.
+
+Do not use: entropy page, reseed page.
+
+### Fresh bytes refresh
+
+A fresh bytes refresh is one read of the entropy device that the root service mixes into its generator, then the write of the fresh bytes page of each program that has one.
+
+The root service asks for one read of 32 bytes every 30 seconds, the first one 30 seconds after the reads of the start, with one read in flight at most. A read that adds nothing (no byte, one value, the read before again) writes no page and one warning; after 3 in a row the root service asks for no more. The first refresh writes one line of the log, `root: the first fresh bytes: ...`, and the later ones none. A refresh costs one read of the device, two BLAKE3 hashes and at most 1024 bytes of the stream in the root service, and one write of a page for each program; it wakes no program.
+
+A refresh is not a reseed of each program at each draw: a program mixes the page at its next refill or key.
+
+The design: `src/md/features/fresh_bytes.md`.
+
+Do not use: reseed of a program, entropy refresh.
 
 ### Cryptography module
 
