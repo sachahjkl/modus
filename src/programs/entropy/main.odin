@@ -43,8 +43,12 @@ import "modus:support/system"
 import "modus:support/virtio"
 
 // The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module and its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 16, programs = 1, threads = 1}
+// by its name, once the tool counts its module and its thread. With the
+// IOMMU on, the tables of the domain of the device are paid from it at the
+// first Memory_Physical (src/md/infrastructure/iommu.md, "Device
+// addresses"), as for the block service: the same amount as the block
+// service.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 179, programs = 1, threads = 1}
 
 // The memory of the queue (pci.QUEUE_PAGES): pages 0 to 2 the virtqueue,
 // page 3 the buffer that the device writes. The device reaches no other
@@ -82,6 +86,7 @@ start :: proc "contextless" (queues: system.Handle) {
 	address, map_status := system.memory_map(queues, {.Write})
 	physical, physical_status := system.memory_physical(machine, queues)
 	if map_status != .Ok || physical_status != .Ok {
+		system.log_in("entropy", .Error, "entropy: the map of the queue gave the status ", map_status, ", its device address the status ", physical_status)
 		fail("no physical address for the queue")
 	}
 	base := uintptr(address)
