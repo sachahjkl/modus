@@ -181,7 +181,7 @@ measure_history_chart_golden :: proc(t: ^testing.T) {
 	for part in ([]string {
 		"<h2 id=\"history\">Each measure over the releases</h2>",
 		"holds the measure record of 4 releases, from 0.92.0 to 0.95.0",
-		"two runs of the same build differ",
+		"Two runs of the same build differ",
 		"id=\"history-kernel-entries-in-one-second",
 		"<p class=\"measure-unit\">From 0 to <code class=\"value value-number\">200</code> kernel entries in one second. A higher number is faster.</p>",
 		"<p class=\"measure-history-releases\"><span>0.92.0</span><span>0.95.0</span></p>",
