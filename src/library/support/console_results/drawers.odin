@@ -430,6 +430,7 @@ ERROR_KIND_NAMES := [errors.Kind]string {
 	.Not_Authentic     = "Not_Authentic",
 	.Seed_Too_Weak     = "Seed_Too_Weak",
 	.Exists            = "Exists",
+	.Starter_Module    = "Starter_Module",
 }
 
 // What a line that failed gives: the sentence of the failure, and the error

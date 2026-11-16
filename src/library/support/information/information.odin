@@ -475,9 +475,13 @@ segments :: proc "contextless" (catalog: Catalog, name: string, rows: []Segment)
 	return count, {}
 }
 
+// The field writer of a row holds each word of op.module_writer_name.
+#assert(size_of(Running) - offset_of(Running, writer) == op.MODULE_WRITER_NAME_CAPACITY)
+
 // running fills one row for each module that runs in a program: the
 // module records that each loader gave to the kernel (operation
-// Program_Module), with the hash that a replacement changed. The kernel
+// Program_Module), with the hash that a replacement changed and the module
+// writer of each record (the starter or the program itself). The kernel
 // gives them to a holder of the machine with the right Inspect: a program
 // sees what runs only with that grant, because a program sees no other
 // program. The kernel has the
@@ -510,6 +514,7 @@ running :: proc "contextless" (machine: system.Handle, catalog: Catalog, rows: [
 				if record.replaces != {} {
 					hash_text(record.replaces, &row.replaces)
 				}
+				text_put(row.writer[:], op.module_writer_name(record.writer))
 			}
 			count += 1
 		}

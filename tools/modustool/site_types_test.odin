@@ -143,7 +143,7 @@ site_types_sizes_agree_with_the_asserts :: proc(t: ^testing.T) {
 	testing.expect_value(t, sizes["operation.Fault_Record"], 64)
 	testing.expect_value(t, sizes["operation.Event_Rule"], 64)
 	testing.expect_value(t, sizes["operation.Event_Record"], 64)
-	testing.expect_value(t, sizes["operation.Module_Record"], 80)
+	testing.expect_value(t, sizes["operation.Module_Record"], 88)
 	testing.expect_value(t, sizes["errors.Error_Record"], 56)
 	testing.expect_value(t, sizes["module.Table_Place"], 24)
 	testing.expect_value(t, sizes["module.Function"], 168)

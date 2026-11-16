@@ -298,7 +298,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `debug_memory(place, count)` | Table of `Memory_Row` | `address`, `bytes`, `text` |
 | `events()`, `wait_stop(milliseconds)` | Table of `Event_Row` | `thread`, `kind`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
 | `stop_report(program)` | Table of `Stop_Frame_Row` | The frames of a disk program that stopped on a fault, with no attach: `frame`, `module`, `procedure`, `offset`, `file`, `line`, `stop` |
-| `program_modules()` | Table of `Program_Module` | One row for each module of each program: `slot`, `program`, `module`, `replaces`, `hash_head` |
+| `program_modules()` | Table of `Program_Module` | One row for each module of each program: `slot`, `program`, `module`, `replaces`, `hash_head`, `writer` (`starter` or `program`: the module writer of the record) |
 | `memory()` | Record `Memory` | The memory of the machine and the counters of the kernel: `memory` and `free` in MiB, `used`, `reserved`, `budgets` and `free_no_budget_holds` in pages, then counts. `free_no_budget_holds` is 0 pages when each page is free or paid |
 | `locks()` | Table of `Lock` | One row for each kind of kernel lock: `lock`, `waits`, `takes` |
 | `modules()` | Table of `Module` | One row for each module of the boot image: `name`, `size` in bytes, `hash_head` |
@@ -315,7 +315,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `remote_clients()` | Table of `Remote_Client` | The client keys that the principal of this console allowed: `key`, `principal`, `state` (`holds`, `locked`, or `contested` when another principal allowed the key too: it acts for neither until one of them revokes it) |
 | `grants(name)` | Table of `Grant` | One row for each grant that the program has or lost: `program`, `grant`, `state` (`held` or `lost`), `principal`, `principal_name` |
 | `revoke(name, grant)` | Integer | The holdings that ended |
-| `principal_create(name)` | none | The window of unlock opens; with a TPM and Secure Boot on, the TPM seals the keys with the passphrase, and the window shows the recovery key one time (`PRINCIPALS.md`, "The keys sealed by the TPM") |
+| `principal_create(name)` | none | The window of unlock opens; with a TPM and Secure Boot on, the TPM seals the keys with the passphrase, and the window shows the recovery key one time; the principal is created after Enter (`PRINCIPALS.md`, "The keys sealed by the TPM") |
 | `machine_passphrase()` | none | The window of unlock opens and asks for the machine passphrase two times (`PRINCIPALS.md`, "Principal 0 and its machine passphrase") |
 | `machine_seal()` | none | The TPM seals a new machine key to the measure of the system; the window of unlock shows its recovery key one time (`PRINCIPALS.md`, "The machine key sealed by the TPM") |
 | `passphrase_change()` | Text | In a console of the session of a named principal: the window of unlock asks for the current passphrase, then for a new one two times; the line gives the end of the change (`PRINCIPALS.md`, "A change of the passphrase") |

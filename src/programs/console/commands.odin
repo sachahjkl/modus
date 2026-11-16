@@ -265,12 +265,14 @@ commands_start :: proc "contextless" () {
 	// and those of the export.
 	command("programs", {}, .Table, "the programs that run: monitor.programs()", programs_of_monitor)
 	// Gives one row for each module of each program that runs: the slot and
-	// the name of the program, the module, the module that it replaces, and
-	// the head of its hash.
+	// the name of the program, the module, the module that it replaces, the
+	// head of its hash, and the writer of the record.
 	//
 	// The rows are the module records of the kernel: what the loader of
 	// each program recorded. `replaces` is empty when the module is in no
-	// place but its own.
+	// place but its own. `writer` is `starter` when the starter of the
+	// program wrote the record, which the program cannot change, and
+	// `program` when the program wrote it for itself.
 	//
 	// It needs the grant **machine**: the console asks the kernel with
 	// `Inspect` on the machine handle. Without it: "error: the console has
@@ -918,7 +920,7 @@ program_modules :: proc "contextless" (arguments: []Value) -> Value {
 	if !ok {
 		return {}
 	}
-	columns := [5]Column{integer_column("slot"), text_column("program", 32), text_column("module", 32), text_column("replaces", 32), text_column("hash_head", 16)}
+	columns := [6]Column{integer_column("slot"), text_column("program", 32), text_column("module", 32), text_column("replaces", 32), text_column("hash_head", 16), text_column("writer", 8)}
 	table, made := made_table("Program_Module", columns[:])
 	if !made {
 		return fail("program_modules: the line has no room for the description")
@@ -942,6 +944,7 @@ program_modules :: proc "contextless" (arguments: []Value) -> Value {
 				made_text(&table, row, 3, module_name_of(item.replaces))
 			}
 			made_text(&table, row, 4, hash_head_text(&head, item.hash))
+			made_text(&table, row, 5, op.module_writer_name(item.writer))
 		}
 	}
 	return made_value(&table, "program_modules")
