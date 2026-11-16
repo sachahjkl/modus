@@ -5819,7 +5819,7 @@ The strength is what the system claims about its seed, and no more:
 | `processor` (2) | `rdrand` | the generator of the processor, which the processor reseeds |
 | `weak` (1) | the cycle counter | 0 bits: the system does not measure the jitter |
 
-Each program knows the strength of its seed: the starter writes it in the context value 16, and `random.seed_strength(generator)` gives it. A child has the strength of its starter, because its seed comes from that stream. A program states the least strength that it accepts with `random.fill_for_a_key`: QUIC and TLS ask for `processor`, so on a machine with no `rdrand` and no `rdseed` a handshake does not start, and the caller gets the error `Seed_Too_Weak`. The system never refuses for the program: each program still starts and draws.
+Each program knows the strength of its seed: the starter writes it in the context value `CONTEXT_VALUE_SEED_STRENGTH` as a member of `Seed_Strength`, and `random.seed_strength(generator)` gives it. A value that names no member refuses the seed. A child has the strength of its starter, because its seed comes from that stream. A program states the least strength that it accepts with `random.fill_for_a_key`: QUIC and TLS ask for `processor`, so on a machine with no `rdrand` and no `rdseed` a handshake does not start, and the caller gets the error `Seed_Too_Weak`. The system never refuses for the program: each program still starts and draws.
 
 `modustool test random` runs a machine with no `rdrand` and no `rdseed`: its log and its window say "weak (the cycle counter only)" in the color of a failure.
 

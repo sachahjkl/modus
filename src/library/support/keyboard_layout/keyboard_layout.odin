@@ -73,12 +73,26 @@ characters_french_alt_graph := [TABLE_KEY_COUNT]rune {
 	0x39 = ' ',
 }
 
-// The accents of the dead keys, as the character that the accent alone
-// gives: the circumflex, the diaeresis, the tilde and the grave accent.
-ACCENT_CIRCUMFLEX :: '^'
-ACCENT_DIAERESIS :: '¨'
-ACCENT_TILDE :: '~'
-ACCENT_GRAVE :: '`'
+// The accent of a dead key. It never leaves this package as a word: a
+// program reads the character of a key record.
+Accent :: enum u8 {
+	None,
+	Circumflex,
+	Diaeresis,
+	Tilde,
+	Grave,
+}
+
+// The character that each accent alone gives: the accent typed with a
+// space, or before a key that it cannot combine with.
+@(rodata)
+accent_characters := [Accent]rune {
+	.None       = 0,
+	.Circumflex = '^',
+	.Diaeresis  = '¨',
+	.Tilde      = '~',
+	.Grave      = '`',
+}
 
 // One letter with an accent: the letter, then the letter that the accent
 // makes of it.
@@ -141,39 +155,41 @@ key_character :: proc "contextless" (layout: settings.Keyboard_Layout, held: Lev
 	return 0
 }
 
-// dead_accent_of gives the accent of a dead key, or 0 for a key that is not
-// a dead key in this layout with the keys of the level that are down.
-dead_accent_of :: proc "contextless" (layout: settings.Keyboard_Layout, held: Level_Keys, code: u32) -> rune {
+// dead_accent_of gives the accent of a dead key, or .None for a key that is
+// not a dead key in this layout with the keys of the level that are down.
+dead_accent_of :: proc "contextless" (layout: settings.Keyboard_Layout, held: Level_Keys, code: u32) -> Accent {
 	if layout != .French {
-		return 0
+		return .None
 	}
 	if .Alt_Graph in held {
 		switch code {
 		case KEY_DEAD_TILDE:
-			return ACCENT_TILDE
+			return .Tilde
 		case KEY_DEAD_GRAVE:
-			return ACCENT_GRAVE
+			return .Grave
 		}
-		return 0
+		return .None
 	}
 	if code == KEY_DEAD_ACCENTS {
-		return (.Shift in held) ? ACCENT_DIAERESIS : ACCENT_CIRCUMFLEX
+		return (.Shift in held) ? .Diaeresis : .Circumflex
 	}
-	return 0
+	return .None
 }
 
 // accented_letter gives the letter that an accent makes of a letter. found
 // is false when the accent has no such letter.
-accented_letter :: proc "contextless" (accent, letter: rune) -> (accented: rune, found: bool) {
+accented_letter :: proc "contextless" (accent: Accent, letter: rune) -> (accented: rune, found: bool) {
 	letters: []Accented_Letter
 	switch accent {
-	case ACCENT_CIRCUMFLEX:
+	case .None:
+		return 0, false
+	case .Circumflex:
 		letters = circumflex_letters[:]
-	case ACCENT_DIAERESIS:
+	case .Diaeresis:
 		letters = diaeresis_letters[:]
-	case ACCENT_TILDE:
+	case .Tilde:
 		letters = tilde_letters[:]
-	case ACCENT_GRAVE:
+	case .Grave:
 		letters = grave_letters[:]
 	}
 	for item in letters {
@@ -187,7 +203,7 @@ accented_letter :: proc "contextless" (accent, letter: rune) -> (accented: rune,
 // The accent of a dead key that waits for the next key. The zero state
 // has no accent that waits.
 Dead_Key_State :: struct {
-	accent: rune, // The accent alone, or 0.
+	accent: Accent, // The accent that waits, or .None.
 }
 
 // key_press gives the characters of the press of a key, and changes the
@@ -199,17 +215,17 @@ Dead_Key_State :: struct {
 // chosen form".
 key_press :: proc "contextless" (state: ^Dead_Key_State, layout: settings.Keyboard_Layout, held: Level_Keys, code: u32, modifier_key: bool) -> (accent_alone: rune, character: rune) {
 	waiting := state.accent
-	if accent := dead_accent_of(layout, held, code); accent != 0 {
-		if waiting != 0 {
+	if accent := dead_accent_of(layout, held, code); accent != .None {
+		if waiting != .None {
 			// A dead key while an accent waits: the waiting accent alone.
-			state.accent = 0
-			return 0, waiting
+			state.accent = .None
+			return 0, accent_characters[waiting]
 		}
 		state.accent = accent
 		return 0, 0
 	}
 	typed := key_character(layout, held, code)
-	if waiting == 0 {
+	if waiting == .None {
 		return 0, typed
 	}
 	switch {
@@ -219,22 +235,22 @@ key_press :: proc "contextless" (state: ^Dead_Key_State, layout: settings.Keyboa
 		return 0, 0
 	case typed < ' ':
 		// A key with no character or a control character drops the accent.
-		state.accent = 0
+		state.accent = .None
 		return 0, typed
 	case typed == ' ':
-		state.accent = 0
-		return 0, waiting
+		state.accent = .None
+		return 0, accent_characters[waiting]
 	}
-	state.accent = 0
+	state.accent = .None
 	if accented, found := accented_letter(waiting, typed); found {
 		return 0, accented
 	}
-	return waiting, typed
+	return accent_characters[waiting], typed
 }
 
 // key_records_needed gives the records of the input ring that the next
 // press can need: two while an accent waits (the accent alone and the
 // character), else one.
 key_records_needed :: proc "contextless" (state: ^Dead_Key_State) -> int {
-	return state.accent != 0 ? 2 : 1
+	return state.accent != .None ? 2 : 1
 }

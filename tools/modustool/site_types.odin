@@ -220,11 +220,13 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Boot_Report", type_info_of(op.Boot_Report)},
 		{"operation", "Program_Report", type_info_of(op.Program_Report)},
 		{"operation", "Context", type_info_of(op.Context)},
+		{"operation", "Seed_Strength", type_info_of(op.Seed_Strength)},
 		// src/library/contract/errors
 		{"errors", "Error_Record", type_info_of(errors.Error_Record)},
 		{"errors", "Kind", type_info_of(errors.Kind)},
 		{"errors", "Unit", type_info_of(errors.Unit)},
 		{"errors", "End", type_info_of(errors.End)},
+		{"errors", "Unanswered", type_info_of(errors.Unanswered)},
 		// src/library/contract/fixed_addresses
 		{"fixed_addresses", "Fixed_Range", type_info_of(fixed_addresses.Fixed_Range)},
 		{"fixed_addresses", "Fixed_Ranges", type_info_of(fixed_addresses.Fixed_Ranges)},

@@ -59,7 +59,7 @@ PASSPHRASE_LIMIT :: 128 // The most bytes of a passphrase.
 
 // The context values of the program `unlock`. 0 to 4 are the roles that the
 // root service gives (the store: 3).
-VALUE_MODE :: 5 // What this start of `unlock` does: a MODE_ value.
+VALUE_MODE :: 5 // What this start of `unlock` does: the word of an Unlock_Mode.
 VALUE_NAME :: 6 // 6, 7 and 8: the name, 24 bytes with zero bytes after it.
 // 1: the firmware verified the boot program (Secure Boot was on), so
 // `unlock` may seal the machine key by the TPM and seal it again after a
@@ -67,52 +67,73 @@ VALUE_NAME :: 6 // 6, 7 and 8: the name, 24 bytes with zero bytes after it.
 // a boot program that nothing verified.
 VALUE_SEAL_ALLOWED :: 13
 
-// What a start of `unlock` does, in VALUE_MODE.
-MODE_UNLOCK :: 0 // Ask for the machine passphrase if one is set, then unlock the principal of the file.
-MODE_CREATE_PRINCIPAL :: 1 // Create the principal named at VALUE_NAME.
-MODE_SET_MACHINE_PASSPHRASE :: 2 // Set the machine passphrase.
-// Unlock the principal of the file: the root service holds the key of the
-// tag of the disk grant table of principal 0 already (after a lock), so
-// the machine passphrase is not asked again.
-MODE_UNLOCK_MACHINE_KEY_HELD :: 3
-// Make a machine key that the TPM service seals to the measure of the
-// system, and show its recovery key one time.
-MODE_SEAL_MACHINE_KEY :: 4
-// Change the passphrase of the named principal whose session runs: the
-// current passphrase first, then the new one two times.
-MODE_CHANGE_PASSPHRASE :: 5
-// Make a new recovery key for the named principal whose session runs,
-// after its current passphrase, and show it one time.
-MODE_NEW_RECOVERY_KEY :: 6
+// What a start of `unlock` does. The root service writes its word in
+// VALUE_MODE, so the values are those of the context and do not move.
+Unlock_Mode :: enum u64 {
+	// Ask for the machine passphrase if one is set, then unlock the
+	// principal of the file.
+	Unlock                  = 0,
+	Create_Principal        = 1, // Create the principal named at VALUE_NAME.
+	Set_Machine_Passphrase  = 2, // Set the machine passphrase.
+	// Unlock the principal of the file: the root service holds the key of
+	// the tag of the disk grant table of principal 0 already (after a
+	// lock), so the machine passphrase is not asked again.
+	Unlock_Machine_Key_Held = 3,
+	// Make a machine key that the TPM service seals to the measure of the
+	// system, and show its recovery key one time.
+	Seal_Machine_Key        = 4,
+	// Change the passphrase of the named principal whose session runs: the
+	// current passphrase first, then the new one two times.
+	Change_Passphrase       = 5,
+	// Make a new recovery key for the named principal whose session runs,
+	// after its current passphrase, and show it one time.
+	New_Recovery_Key        = 6,
+}
 
-// mode_words names what a start of `unlock` with a MODE_ value runs for:
-// the root service writes it on the line of a lock, which stops `unlock`
-// whatever its mode (src/md/features/tpm_sealed_principal_keys.md).
-mode_words :: proc "contextless" (mode: u64) -> string {
+// unlock_mode_of_word reads the word of VALUE_MODE. A word that names no
+// mode is refused: `unlock` does not guess what its starter asked for.
+unlock_mode_of_word :: proc "contextless" (word: u64) -> (mode: Unlock_Mode, ok: bool) {
+	for member in Unlock_Mode {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
+// mode_words names what a start of `unlock` runs for: the root service
+// writes it on the line of a lock, which stops `unlock` whatever its mode
+// (src/md/features/tpm_sealed_principal_keys.md).
+mode_words :: proc "contextless" (mode: Unlock_Mode) -> string {
 	switch mode {
-	case MODE_CREATE_PRINCIPAL:
+	case .Unlock, .Unlock_Machine_Key_Held:
+		return "an unlock"
+	case .Create_Principal:
 		return "the creation of a principal"
-	case MODE_SET_MACHINE_PASSPHRASE:
+	case .Set_Machine_Passphrase:
 		return "the machine passphrase that is set"
-	case MODE_SEAL_MACHINE_KEY:
+	case .Seal_Machine_Key:
 		return "the machine key that the TPM seals"
-	case MODE_CHANGE_PASSPHRASE:
+	case .Change_Passphrase:
 		return "a change of the passphrase"
-	case MODE_NEW_RECOVERY_KEY:
+	case .New_Recovery_Key:
 		return "a new recovery key"
 	}
-	return "an unlock"
+	// Only a conversion that skips unlock_mode_of_word reaches this line:
+	// it is said, not taken for an unlock.
+	return "a mode that names no member"
 }
 
 // Change_Problem says why a file cannot take a change that a principal
-// asks for, before the window asks for any passphrase.
+// asks for, before the window asks for any passphrase. Its word crosses
+// the root ring (Principal_Change_End), so each value is explicit.
 Change_Problem :: enum u8 {
-	None, // The change can be made.
-	No_Recovery_Copy, // A new recovery key for the form PRINCIPL: that form has no copy under a recovery key.
-	No_Tpm_Service, // The form PRINCIPT with no TPM service: the current passphrase opens nothing without the TPM.
-	Seal_Not_Allowed, // A new passphrase for the form PRINCIPT with Secure Boot off: a new seal would trust a boot program that nothing verified.
-	Unknown_Form, // The file has neither form.
-	Unknown_Change, // A mode that is not a change.
+	None             = 0, // The change can be made.
+	No_Recovery_Copy = 1, // A new recovery key for the form PRINCIPL: that form has no copy under a recovery key.
+	No_Tpm_Service   = 2, // The form PRINCIPT with no TPM service: the current passphrase opens nothing without the TPM.
+	Seal_Not_Allowed = 3, // A new passphrase for the form PRINCIPT with Secure Boot off: a new seal would trust a boot program that nothing verified.
+	Unknown_Form     = 4, // The file has neither form.
+	Unknown_Change   = 5, // A mode that is not a change.
 }
 
 @(rodata)
@@ -127,17 +148,18 @@ change_problem_sentences := [Change_Problem]string {
 
 // How a change ended: `unlock` gives it to the root service
 // (Principal_Change_End), which gives it to the console that asked. Each
-// sentence fits on one line of the window of `unlock`: 63 cells.
+// sentence fits on one line of the window of `unlock`: 63 cells. Its word
+// crosses the root ring, so each value is explicit.
 Change_End :: enum u8 {
-	None, // `unlock` stopped before the end of the change: a lock, a close, a fault.
-	Passphrase_Changed, // The file has the new passphrase.
-	Recovery_Key_Changed, // The file has the copy under the new recovery key.
-	Cancelled, // Enter with nothing: nothing changed.
-	Refused, // The file cannot take this change: a Change_Problem says why.
-	Seed_Too_Weak, // No key from the generator: nothing changed.
-	Seal_Failed, // The TPM or the seal failed: nothing changed.
-	Store_Failed, // The store did not keep the new file: nothing changed.
-	Store_Unknown, // The store did not answer, and the file could not be read back: the old or the new secret opens it.
+	None                 = 0, // `unlock` stopped before the end of the change: a lock, a close, a fault.
+	Passphrase_Changed   = 1, // The file has the new passphrase.
+	Recovery_Key_Changed = 2, // The file has the copy under the new recovery key.
+	Cancelled            = 3, // Enter with nothing: nothing changed.
+	Refused              = 4, // The file cannot take this change: a Change_Problem says why.
+	Seed_Too_Weak        = 5, // No key from the generator: nothing changed.
+	Seal_Failed          = 6, // The TPM or the seal failed: nothing changed.
+	Store_Failed         = 7, // The store did not keep the new file: nothing changed.
+	Store_Unknown        = 8, // The store did not answer, and the file could not be read back: the old or the new secret opens it.
 }
 
 @(rodata)
@@ -154,25 +176,27 @@ change_end_sentences := [Change_End]string {
 }
 
 // change_problem says if a file of the form `form` takes the change of the
-// mode `mode` (MODE_CHANGE_PASSPHRASE or MODE_NEW_RECOVERY_KEY), on a
-// machine with or without the TPM service and the right to seal. A new
-// recovery key seals no object by the TPM, so it needs no right to seal.
-change_problem :: proc "contextless" (form: Principal_Record_Form, mode: u64, has_tpm: bool, seal_allowed: bool) -> Change_Problem {
-	if mode != MODE_CHANGE_PASSPHRASE && mode != MODE_NEW_RECOVERY_KEY {
+// mode `mode` (.Change_Passphrase or .New_Recovery_Key), on a machine
+// with or without the TPM service and the right to seal. A new recovery
+// key seals no object by the TPM, so it needs no right to seal.
+change_problem :: proc "contextless" (form: Principal_Record_Form, mode: Unlock_Mode, has_tpm: bool, seal_allowed: bool) -> Change_Problem {
+	switch mode {
+	case .Change_Passphrase, .New_Recovery_Key:
+	case .Unlock, .Create_Principal, .Set_Machine_Passphrase, .Unlock_Machine_Key_Held, .Seal_Machine_Key:
 		return .Unknown_Change
 	}
 	switch form {
 	case .Unknown:
 		return .Unknown_Form
 	case .Passphrase:
-		if mode == MODE_NEW_RECOVERY_KEY {
+		if mode == .New_Recovery_Key {
 			return .No_Recovery_Copy
 		}
 	case .Sealed_By_The_Tpm:
 		if !has_tpm {
 			return .No_Tpm_Service
 		}
-		if mode == MODE_CHANGE_PASSPHRASE && !seal_allowed {
+		if mode == .Change_Passphrase && !seal_allowed {
 			return .Seal_Not_Allowed
 		}
 	}

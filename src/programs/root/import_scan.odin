@@ -176,11 +176,16 @@ disk_import_list_answer :: proc "contextless" (value: i64, wait: ^system.Wait) {
 			disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service listed an entry whose name is out of its page")
 			return
 		}
+		entry_kind, entry_kind_ok := storage.entry_kind_of_word(item.kind)
+		if !entry_kind_ok {
+			disk_import_refused(.Bad_State, errors.Kind.Refused, "the storage service listed an entry whose kind names no kind")
+			return
+		}
 		entry_name := string(imports.names[item.name_offset:][:item.name_count])
 		imports.after_length = copy(imports.after[:], entry_name)
 		// The entry of the program holds the file that this load checked:
 		// a module never imports itself.
-		if item.kind == storage.ENTRY_OBJECT && entry_name != string(load.name[:load.name_length]) {
+		if entry_kind == .Object && entry_name != string(load.name[:load.name_length]) {
 			disk_program.scan_entry_add(&imports.scan, entry_name, item.size)
 		}
 	}

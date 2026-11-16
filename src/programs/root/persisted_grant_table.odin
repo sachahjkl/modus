@@ -165,7 +165,7 @@ machine_passphrase_ask :: proc "contextless" () -> system.Status {
 		return .No_Slot
 	}
 	system.log_in("programs", .Info, "root: the machine passphrase is set in the window of unlock")
-	return unlock_start(principals.MODE_SET_MACHINE_PASSPHRASE, "")
+	return unlock_start(.Set_Machine_Passphrase, "")
 }
 
 // machine_seal_ask runs the command Machine_Seal: it starts `unlock` to
@@ -193,7 +193,7 @@ machine_seal_ask :: proc "contextless" () -> system.Status {
 		return .No_Slot
 	}
 	system.log_in("programs", .Info, "root: the machine key is sealed by the TPM in the window of unlock")
-	return unlock_start(principals.MODE_SEAL_MACHINE_KEY, "")
+	return unlock_start(.Seal_Machine_Key, "")
 }
 
 // machine_key_take runs the command Machine_Key, which only `unlock`
@@ -205,27 +205,34 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 	table := &persisted_tables[principals.MACHINE]
 	state := table.state
 	waiting := state == .No_Passphrase || state == .Awaited || state == .Record_Unreadable
-	switch values[4] {
-	case system.MACHINE_KEY_AWAITED:
+	// A word that names no state or no form is refused, and changes nothing.
+	report, report_status := system.machine_key_report_of_values(values)
+	if report_status != .Ok {
+		return report_status
+	}
+	reported := report.state
+	switch reported {
+	case .Awaited:
 		if !waiting {
 			return .Bad_State
 		}
 		table.state = .Awaited
-		if values[5] == system.MACHINE_KEY_SEALED_BY_THE_TPM {
+		switch report.form {
+		case .Sealed_By_The_Tpm:
 			system.log_in("programs", .Info, "root: the machine key is sealed by the TPM: the disk grants of principal 0 wait for the unseal, and the machine runs")
-		} else {
+		case .Passphrase:
 			system.log_in("programs", .Info, "root: the machine has a passphrase: the disk grants of principal 0 wait for it, and the machine runs")
 		}
 		return .Ok
-	case system.MACHINE_KEY_UNREADABLE:
+	case .Unreadable:
 		if !waiting {
 			return .Bad_State
 		}
 		table.state = .Record_Unreadable
 		system.log_in("programs", .Warning, "root: the record of the machine passphrase cannot be read: the disk grants of principal 0 stay absent, and no change and no new passphrase is taken")
 		return .Ok
-	case system.MACHINE_KEY_OPENED, system.MACHINE_KEY_NEW:
-		key_new := values[4] == system.MACHINE_KEY_NEW
+	case .Opened, .New:
+		key_new := reported == .New
 		// A new passphrase is set only on a machine with no record; an
 		// opened key comes after the report that a record exists.
 		if key_new && state != .No_Passphrase || !key_new && state != .Awaited {
@@ -251,7 +258,7 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 // table starts. A later unlock, after a lock, gives the key of the same
 // file: a key that differs is refused, as this service keeps one key for
 // each table. A read that failed starts again at such an unlock. The origin
-// PRINCIPAL_KEY_NEW, which lets the read write over a table that does not
+// Principal_Key_Origin.New, which lets the read write over a table that does not
 // verify, is taken only for a principal that this service saw created in
 // this run: the rule then holds in this service, not in the code of
 // `unlock` alone. The local copy is erased here, and the main loop erases
@@ -263,11 +270,11 @@ principal_key_take :: proc "contextless" (number: u64, values: [7]u64) -> system
 	table := &persisted_tables[number]
 	key := transmute([disk_program.KEY_SIZE]u8)[4]u64{values[0], values[1], values[2], values[3]}
 	defer key_erase(key[:])
-	origin := values[5]
-	if key == {} || origin != system.PRINCIPAL_KEY_OPENED && origin != system.PRINCIPAL_KEY_NEW {
+	origin, origin_status, _ := system.ring_member_of_word(system.Principal_Key_Origin, values[5], .Principal_Unlock, 0)
+	if key == {} || origin_status != .Ok {
 		return .Bad_Operation
 	}
-	if origin == system.PRINCIPAL_KEY_NEW && !principal_created_in_this_run[number] {
+	if origin == .New && !principal_created_in_this_run[number] {
 		system.log_in("programs", .Warning, "root: refused the unlock of principal ", number, ": its key comes as the key of a new principal, and its record was not created since the machine started")
 		return .Bad_State
 	}
@@ -285,7 +292,7 @@ principal_key_take :: proc "contextless" (number: u64, values: [7]u64) -> system
 		return .Ok
 	}
 	table.key = key
-	table.key_new = origin == system.PRINCIPAL_KEY_NEW
+	table.key_new = origin == .New
 	table.state = .Reading
 	persisted_table_read_begin(number)
 	return .Ok
