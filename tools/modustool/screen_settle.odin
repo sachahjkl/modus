@@ -72,6 +72,7 @@ Settle_Window :: struct {
 	title:    string,
 	presents: i64,
 	waits:    bool, // A Present that no frame drew yet.
+	due:      bool, // The program said that a change waits for its next picture, which it draws on its own clock (display.Command.Picture_Due).
 }
 
 // screen_settle_problem says why the screen is not settled, or "". The
@@ -93,6 +94,12 @@ screen_settle_problem :: proc(before: []Settle_Program, windows: []Settle_Window
 		}
 		if window.waits {
 			return fmt.tprintf("the window %s has a picture that no frame drew yet", window.title)
+		}
+		// A program that paces its pictures waits on its clock with a change
+		// that it did not draw: the wait looks the same as a wait with
+		// nothing to draw, so the program says it.
+		if window.due {
+			return fmt.tprintf("the program of the window %s has a change that waits for its next picture", window.title)
 		}
 		alive := false
 		for program in after {
@@ -181,6 +188,8 @@ settle_windows_read :: proc(machine: ^Machine) -> (windows: []Settle_Window, ok:
 		window.presents = strconv.parse_i64(table_value(&table, row, "presents")) or_return
 		waits := strconv.parse_i64(table_value(&table, row, "waits")) or_return
 		window.waits = waits != 0
+		due := strconv.parse_i64(table_value(&table, row, "due")) or_return
+		window.due = due != 0
 	}
 	return windows, true
 }

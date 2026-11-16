@@ -6,6 +6,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
+- **A terminal that always draws the end of an output.** On two runs of the main test, the terminal stayed on the state of a running call after the console had written the whole result: the row, the count of rows and the next line were in the log, not on the screen, with every program in a wait. The terminal now logs a lost wake of its reader or of its drawer, so the next run that shows it names the side that lost it, and a principal never sees a stale screen until the next key.
 - **The first signed release image.** The keys of the publisher of the system go into the secrets of the repository, and their public key and certificate into `resources/keys`. The next tag then publishes a disk image that a principal verifies and starts. [Design](src/md/infrastructure/release_image.md)
 - **A guest on a machine with an Intel processor.** A program runs a guest on a machine with an Intel processor too, with the same operation and the same exit records as on AMD. [Design](src/md/features/guest.md)
 
@@ -33,7 +34,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A pager for another program.** A program answers the page faults of another program and supplies its pages.
 - **Every window uses the interface package.** The windows of the programs that still draw by themselves are built from the elements of the interface package. Each window then has the same look, the same keys and the same damage rules.
 - **The program `manual` shows a declaration that no module describes.** A link to a procedure or a type of a support package opens its comment in the program `manual`. Today a link to a record that a module describes opens, and a link to another declaration does not. [Design](src/md/features/manual_links.md)
-- **The console colors each field by its value kind.** The description of a field of a record states its value kind, so the console draws a size, a time or a handle in a field in its color. Today a field has the color of its type only.
 - **The history of a store.** A version is a state of a whole store, and the versions of each object are found in it. A principal then steps a store back as one thing, not object by object.
 - **A faster switch between threads.** A processor that takes again the thread whose extended state its registers hold skips the restore of that state. A measure gives the gain.
 - **The history of each measure, release by release.** The measure record keeps the numbers of each release, and the site draws a chart of each measure over the releases. A reader then sees whether a change made the system faster or slower.

@@ -435,6 +435,10 @@ part_color :: proc "contextless" (part: palette_table.Run_Part) -> graphics.Colo
 		return graphics.COLOR_FAILED
 	case .Number:
 		return graphics.value_kind_color(value_kinds.Value_Kind.Number, false)
+	case .Size:
+		return graphics.value_kind_color(value_kinds.Value_Kind.Size, false)
+	case .Time:
+		return graphics.value_kind_color(value_kinds.Value_Kind.Time, false)
 	case .Handle:
 		return graphics.value_kind_color(value_kinds.Value_Kind.Handle, false)
 	case .Type:
@@ -1116,7 +1120,7 @@ result_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y:
 			run_x = x + TEXT_MARGIN
 			continue
 		}
-		if part > u8(palette_table.Run_Part.Operation) || length > len(runs) - place {
+		if part > u8(palette_table.RUN_PART_LAST) || length > len(runs) - place {
 			return
 		}
 		text := string(runs[place:][:length])

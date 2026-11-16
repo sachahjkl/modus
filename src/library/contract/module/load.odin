@@ -1,6 +1,7 @@
 package module
 
 import "base:intrinsics"
+import "modus:contract/value_kinds"
 
 // What is not valid in a module file: the result of `header`, `validate` and
 // `rebase`, and `Load_Error.file_error` at the stage `Read`. A loader maps no
@@ -348,6 +349,9 @@ record_type :: proc "contextless" (file: []u8, index: u32) -> (value: Record, ok
 		if item.type == .Integer && item.offset % size != 0 {
 			return {}, false
 		}
+		if !field_integer_unit_valid(item) {
+			return {}, false
+		}
 	}
 	// The size is a multiple of the alignment: a record that follows
 	// another in a table keeps the alignment of its fields.
@@ -393,7 +397,7 @@ records_equal :: proc "contextless" (file: []u8, index: u32, other_file: []u8, o
 	for number in 0 ..< first.field_count {
 		a := field(file, first, number) or_return
 		b := field(other_file, second, number) or_return
-		if a.offset != b.offset || a.type != b.type || a.detail != b.detail || string_at(file, a.name_offset, a.name_count) != string_at(other_file, b.name_offset, b.name_count) {
+		if a.offset != b.offset || a.type != b.type || a.detail != b.detail || a.integer_unit != b.integer_unit || string_at(file, a.name_offset, a.name_count) != string_at(other_file, b.name_offset, b.name_count) {
 			return false
 		}
 	}
@@ -406,6 +410,17 @@ field :: proc "contextless" (file: []u8, of: Record, number: u32) -> (value: Fie
 		return {}, false
 	}
 	return record(file, .Fields, of.first_field + number, Field)
+}
+
+// field_integer_unit_valid says if the integer unit of a field that another
+// party wrote is one of the contract: a unit of the contract on an Integer,
+// and no unit on a Handle or a Text. A reader shows the unit, so a unit out
+// of the contract is a fault of the description.
+field_integer_unit_valid :: proc "contextless" (item: Field) -> bool {
+	if item.type != .Integer {
+		return item.integer_unit == {}
+	}
+	return value_kinds.integer_unit_valid(item.integer_unit)
 }
 
 // field_size gives the bytes of a field of a record, from its type and its

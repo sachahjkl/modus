@@ -56,6 +56,7 @@ Window :: struct {
 	frames:   i64, // The frames of the screen that read a picture of this window.
 	pictures_drawn_again: i64, // The Present records that named the picture that the compositor already read: the program drew in a picture on the screen. 0 for a program that shows whole frames.
 	presents_refused: i64, // The Present records that the compositor refused: their picture number names no picture of the surface. 0 for a program of the system.
+	due:      i64, // 1: the program said that a change of the window waits for its next picture, which it draws at a time of its own clock. The window does not show the last state of the program yet. The program says this of itself.
 }
 
 // What the screen shows against what the compositor received: screen().
@@ -228,6 +229,7 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 			frames   = i64(client.frames),
 			pictures_drawn_again = i64(client.pictures_drawn_again),
 			presents_refused = i64(client.presents_refused),
+			due      = client.picture_due ? 1 : 0,
 		}
 		copy(result[row].title[:len(result[row].title) - 1], system.name_of(client.title[:]))
 	}

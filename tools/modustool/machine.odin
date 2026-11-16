@@ -666,7 +666,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is closed by the key super"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "memory()"},
-	{kind = .Wait, text = "free_pages_no_budget_holds  0"},
+	{kind = .Wait, text = "free_no_budget_holds  0 pages"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
@@ -1518,6 +1518,19 @@ scenario := [?]Step {
 	{kind = .Type, text = "b"},
 	{kind = .Wait, text = ": Memory (Give, Read, Write, Execute)"},
 	{kind = .Shot, text = "records"},
+
+	// Each field in the color of its value kind: a handle in a record, then
+	// a table with a text, two numbers, a size in pages and two times, each
+	// unit once in the head of its column. The row of the table is the last
+	// line but one: the picture waits for it, then for the count of rows.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "Span(b, 96, 10)"},
+	{kind = .Wait, text = "[console]   count   10"},
+	{kind = .Type, text = "columns(where(programs(), \"name\", \"console\"), \"name slot threads resident time started\")"},
+	{kind = .Wait, text = "[console] name     slot  threads  resident (pages)  time (ms)  started (us)"},
+	{kind = .Wait, text = "[console] console  "},
+	{kind = .Wait, text = "[console] 1 row of Program"},
+	{kind = .Shot, text = "console_value_kinds"},
 
 	// Revocation. The console revokes what it lent at the end of each
 	// call: the mapping that the module kept is gone, and the next read
@@ -3005,7 +3018,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " over 512 names (512 names of 128 bytes, the least of 20 batches of 10)"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
-	{kind = .Wait, text = "free_pages_no_budget_holds  0"},
+	{kind = .Wait, text = "free_no_budget_holds  0 pages"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

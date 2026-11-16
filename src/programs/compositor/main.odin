@@ -157,6 +157,7 @@ Client :: struct {
 	pointer_over: bool, // The last pointer event of the program was over its surface, or with a button down: the program gets one event more when the pointer leaves.
 	presents:    u64, // The Present records that the program sent since it created its surface.
 	present_waits: bool, // A Present changed a part of the screen, and no frame drew it yet.
+	picture_due:   bool, // The program said that a change waits for its next picture (display.Command.Picture_Due), and no Present came after.
 	// The act names of the window, as the last checked record Act_Names
 	// gave them: the palette offers to go there (palette.odin). They go with
 	// the window: client_remove clears the slot.
@@ -600,6 +601,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case .Surface_Create:
 					surface_create(index, record)
 				case .Present:
+					// The picture that was due comes with this Present.
+					client.picture_due = false
 					if client.surface.pixels != nil {
 						// The program names the picture that is complete.
 						// From here on the compositor reads only that one,
@@ -637,6 +640,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 							client.present_waits = true
 						}
 					}
+				case .Picture_Due:
+					client.picture_due = record.values[0] != 0
 				case .Pointer_Shape:
 					pointer_shape_request(&client, record) // pointer_picture.odin
 				case .Act_Names:

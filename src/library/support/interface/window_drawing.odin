@@ -470,6 +470,7 @@ window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^disp
 			sent = display.present_rectangle(window, bounds.left, bounds.top, max(bounds.right - bounds.left, 0), max(bounds.bottom - bounds.top, 0))
 		} else {
 			display.picture_end(window)
+			display.picture_due_set(window, false)
 		}
 		picture_debts_after(&drawing.debts, changes.picture, &changes.changed, sent)
 	} else {
@@ -479,6 +480,9 @@ window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^disp
 		// measure too.
 		drawing.damage = {}
 		display.picture_end(window)
+		// The frame is drawn: no picture is due, also when the frame
+		// changed nothing on the screen.
+		display.picture_due_set(window, false)
 	}
 	drawing.drawn = sent && draw_table_copy(&drawing.before, &drawing.now)
 	return drawing.damage.count

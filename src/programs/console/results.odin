@@ -24,6 +24,8 @@ RESULT_BYTE_LIMIT :: 256 // The most bytes of a Bytes value that the console dra
 Column :: console_results.Column
 text_column :: console_results.text_column
 integer_column :: console_results.integer_column
+size_column :: console_results.size_column
+time_column :: console_results.time_column
 
 // ---- The failure of a line.
 
@@ -190,7 +192,7 @@ part_style :: proc "contextless" (part: console_results.Part) -> terminal.Style 
 		return {tone = .Dim}
 	case .Failure:
 		return {tone = .Bad}
-	case .Number, .Handle, .Type, .Status, .Operation:
+	case .Number, .Size, .Time, .Handle, .Type, .Status, .Operation:
 	}
 	return value_kind_style(console_results.part_value_kind(part))
 }
@@ -336,6 +338,8 @@ record_fields_text :: proc "contextless" (writer: ^system.Writer, value: Value) 
 		system.write_part(writer, number > 0 ? ", " : "")
 		system.write_part(writer, module.string_at(value.file, item.name_offset, item.name_count))
 		system.write_part(writer, " = ")
-		system.write_part(writer, console_results.cell_of(value.record, item, buffer[:]).text)
+		cell := console_results.cell_of(value.record, item, buffer[:])
+		system.write_part(writer, cell.text)
+		system.write_part(writer, cell.unit)
 	}
 }

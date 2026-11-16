@@ -321,7 +321,7 @@ columns_of :: proc "contextless" (table: Table, side: int, list: ^[COLUMN_CAPACI
 		if count^ == COLUMN_CAPACITY {
 			return false
 		}
-		list[count^] = {name = name, type = item.type, detail = item.detail, unsigned = item.unsigned, side = side, from = item.offset}
+		list[count^] = {name = name, type = item.type, detail = item.detail, unsigned = item.unsigned, integer_unit = item.integer_unit, side = side, from = item.offset}
 		count^ += 1
 	}
 	return true
@@ -413,7 +413,7 @@ table_columns :: proc "contextless" (arguments: []Value) -> Value {
 		if count == COLUMN_CAPACITY {
 			return fail("columns: more than ", i64(COLUMN_CAPACITY), " fields")
 		}
-		columns[count] = {name = name, type = item.type, detail = item.detail, unsigned = item.unsigned, from = item.offset}
+		columns[count] = {name = name, type = item.type, detail = item.detail, unsigned = item.unsigned, integer_unit = item.integer_unit, from = item.offset}
 		count += 1
 	}
 	if count == 0 {

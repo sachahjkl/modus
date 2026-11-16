@@ -61,6 +61,13 @@ Command :: enum u32 {
 	// act_name_hash of each act name. The set replaces the set before. The
 	// window layer sends it when the set of a frame changes (act_names_send).
 	Act_Names      = 4,
+	// A change of the window waits for its next picture: the program draws
+	// it at a time of its own clock, or when the compositor took the last
+	// picture. values[0]: 1 when a picture is due, 0 when it is no longer
+	// due. A Present ends it too. The compositor gives it in windows(), so
+	// a reader of the screen knows that the window is not its last picture
+	// while the program waits (picture_due_set).
+	Picture_Due    = 5,
 }
 
 ACT_NAME_SET_CAPACITY :: 6 // The act names of one window: the values of one record after its count.
@@ -193,6 +200,7 @@ Window :: struct {
 	presented:   u32, // The count of commands after the last Present.
 	wake_when_free: bool, // canvas_free said no: wait_events also ends when the compositor has read the ring.
 	compositor_late: bool, // The compositor did not take a picture within the bound: canvas_wait waits no more until it does.
+	picture_due_sent: bool, // The compositor has a Picture_Due of 1 and no Present or Picture_Due of 0 after it.
 	// The measure of the time of a picture (docs/DESIGN.md, section 7):
 	// picture_begin marks the start, present the end; in a measure run the
 	// log has their mean after 1, 3 and 10 pictures.
@@ -329,7 +337,26 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 	window.presented = window.ring.commands.counters.write
 	window.picture = 1 - window.picture
 	window.canvas = window.pictures[window.picture]
+	// The compositor ends the due picture at the Present.
+	window.picture_due_sent = false
 	return true
+}
+
+// picture_due_set tells the compositor that a change of the window waits
+// for its next picture (due), or that no picture is due any more. A program
+// that draws on its own clock, or that waits for the compositor to take its
+// last picture, calls it before it waits with a change that it did not
+// draw: the wait then does not look like a window with nothing to draw. A
+// frame with no change to present calls it with false. A record goes only
+// when the state changes. When the command ring is full, nothing goes, and
+// the next call tries again.
+picture_due_set :: proc "contextless" (window: ^Window, due: bool) {
+	if window.picture_due_sent == due {
+		return
+	}
+	if system.send(&window.ring.commands, ring.Record{kind = u32(Command.Picture_Due), values = {0 = due ? u64(1) : u64(0)}}) {
+		window.picture_due_sent = due
+	}
 }
 
 // pointer_shape_set asks the compositor for a pointer shape over the

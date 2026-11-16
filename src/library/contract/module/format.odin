@@ -31,6 +31,8 @@
 // See [module](term:module) and [export](term:export).
 package module
 
+import "modus:contract/value_kinds"
+
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
 VERSION :: 2 // The version of the format that this code reads and writes. A file of another version is refused. 2: a Function record of 168 bytes, with 12 parameters.
 PAGE_SIZE :: 4096 // The alignment of each segment in the file and in memory: one page of the processor.
@@ -298,15 +300,23 @@ Record :: struct {
 // at the first zero byte or at the end of the field. It holds no address,
 // so a record still means the same in each program. The fields are in the
 // order of their offsets, and no two fields share a byte.
+//
+// An Integer field can state what it counts, as an Integer parameter does:
+// a size or a time, in one unit (docs/MODULE_CONTRACT.md, "The unit of an
+// Integer field"). A reader shows the value in the color of that kind, with
+// its unit.
+//
+// Example: the field `time` of the record `Program` of the monitor is an
+// Integer of 8 bytes with the integer unit `{.Time, Milliseconds}`.
 Field :: struct {
-	name_offset: u32, // In the string table.
-	name_count:  u32, // The bytes of the name.
-	offset:      u32, // From the start of the record, in bytes.
-	type:        Type, // Integer, Handle or Text.
-	unsigned:    bool, // An Integer: true for an unsigned integer, false for a signed one.
-	reserved:    [2]u8, // 0.
-	detail:      u32, // An Integer: its size in bytes, 0 for 8. A Handle: the rights that the callee needs. A Text: its size in bytes.
-	reserved2:   u32, // 0.
+	name_offset:  u32, // In the string table.
+	name_count:   u32, // The bytes of the name.
+	offset:       u32, // From the start of the record, in bytes.
+	type:         Type, // Integer, Handle or Text.
+	unsigned:     bool, // An Integer: true for an unsigned integer, false for a signed one.
+	integer_unit: value_kinds.Integer_Unit, // An Integer: what it counts, {} for a plain number. {} for a Handle and a Text.
+	detail:       u32, // An Integer: its size in bytes, 0 for 8. A Handle: the rights that the callee needs. A Text: its size in bytes.
+	reserved:     u32, // 0.
 }
 #assert(size_of(Field) == 24)
 
