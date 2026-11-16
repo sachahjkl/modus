@@ -311,9 +311,16 @@ tpm_principal_recovery_and_new_passphrase := [?]Step {
 	{kind = .Type, text = NEW_PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
 	{kind = .Wait, text = "unlock: the keys of principal 1 \"alice\" are sealed again to PCR 7 and PCR 11 of the system that runs and to the new passphrase: its next unlock needs no recovery key", any_order = true},
+	// The file of before the new seal is a version: unlock erases it.
+	{kind = .Wait, text = PRINCIPAL_FILE_ERASED_LINE, any_order = true},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped with code 0", any_order = true},
 }
+
+// The line of unlock after the erase of the one version of the file of
+// alice that a write made (src/md/features/version_erase.md).
+@(private = "file")
+PRINCIPAL_FILE_ERASED_LINE :: "unlock: the versions of the object \"principal\" are erased: 1 ended, "
 
 @(private = "file")
 scenario_tpm_principal_other_system := [?]Step {
@@ -354,6 +361,7 @@ scenario_tpm_principal_change := [?]Step {
 	{kind = .Type, text = CHANGED_PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = "tpm: sealed 32 bytes to PCR 7 and PCR 11 and an authorization value, whose wrong tries the TPM counts: a public area of ", any_order = true},
 	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" is changed: the TPM seals its keys to PCR 7 and PCR 11 and to the new passphrase", any_order = true},
+	{kind = .Wait, text = PRINCIPAL_FILE_ERASED_LINE, any_order = true},
 	// The end goes to the console that asked, and the window shows it
 	// until Enter.
 	{kind = .Wait, text = "root: the change in the window of unlock ends: the passphrase is changed"},
@@ -373,6 +381,7 @@ scenario_tpm_principal_change := [?]Step {
 	// Enter after the key is written down: the file is written only now.
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "unlock: the new recovery key of principal 1 \"alice\" is kept: a file written from now opens with it only"},
+	{kind = .Wait, text = PRINCIPAL_FILE_ERASED_LINE, any_order = true},
 	{kind = .Wait, text = "root: the change in the window of unlock ends: the new recovery key is kept; the old one opens no new file", any_order = true},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "root: unlock stopped with code 0"},
@@ -505,6 +514,90 @@ tpm_key_changed_ticket_disk_write :: proc() -> bool {
 		return false
 	}
 	fmt.printfln("modustool: %s: the record of the machine key with one byte of its creation ticket changed", TEST_TPM_KEY_CHANGED_TICKET_DISK)
+	return true
+}
+
+// The secret parts of a file of a named principal in the form PRINCIPT:
+// the salt of its passphrase, its keys under the seal key, and its keys
+// under its recovery key. Each one is random bytes, so a copy of it on the
+// disk is a copy of that file.
+@(private = "file")
+Principal_File_Parts :: struct {
+	salt:            [principals.SALT_SIZE]u8,
+	sealed:          [principals.SEALED_SIZE]u8,
+	recovery_sealed: [principals.SEALED_SIZE]u8,
+}
+
+// principal_file_parts_read reads the file of alice from the disk of the
+// keys of a named principal, as the storage service opens it, and gives
+// its secret parts.
+@(private = "file")
+principal_file_parts_read :: proc() -> (parts: Principal_File_Parts, ok: bool) {
+	image, read_error := os.read_entire_file(TEST_TPM_PRINCIPAL_DISK, context.allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: test failed: cannot read %s: %v", TEST_TPM_PRINCIPAL_DISK, read_error)
+		return {}, false
+	}
+	defer delete(image)
+	state := new(storage_mount.State)
+	defer free(state)
+	contents := disk_contents(image, state)
+	file: []u8
+	for &item in contents.objects {
+		if item.store == UNLOCK_STORE && item.name == principals.FILE_OBJECT && !item.tree && !item.damaged {
+			file = item.bytes
+		}
+	}
+	if len(file) != principals.PRINCIPAL_TPM_FILE_SIZE || string(file[:len(principals.PRINCIPAL_TPM_MAGIC)]) != principals.PRINCIPAL_TPM_MAGIC {
+		fmt.eprintfln("modustool: test failed: %s holds no file of a named principal sealed by the TPM in the store %s (%d bytes)", TEST_TPM_PRINCIPAL_DISK, UNLOCK_STORE, len(file))
+		return {}, false
+	}
+	copy(parts.salt[:], file[principals.OFFSET_SALT:][:principals.SALT_SIZE])
+	copy(parts.sealed[:], file[principals.PRINCIPAL_TPM_OFFSET_SEALED:][:principals.SEALED_SIZE])
+	copy(parts.recovery_sealed[:], file[principals.PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED:][:principals.SEALED_SIZE])
+	return parts, true
+}
+
+// principal_file_parts_absent searches each byte of the disk of the keys
+// of a named principal, named blocks and free blocks alike, for the secret
+// parts of a file from before a change. The erase of the versions must
+// leave none of them (src/md/features/version_erase.md).
+@(private = "file")
+principal_file_parts_absent :: proc(parts: ^Principal_File_Parts) -> bool {
+	image, read_error := os.read_entire_file(TEST_TPM_PRINCIPAL_DISK, context.allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: test failed: cannot read %s: %v", TEST_TPM_PRINCIPAL_DISK, read_error)
+		return false
+	}
+	defer delete(image)
+	Searched :: struct {
+		what:  string,
+		bytes: []u8,
+	}
+	searched := [3]Searched{{"its salt", parts.salt[:]}, {"its keys under the seal key", parts.sealed[:]}, {"its keys under the recovery key", parts.recovery_sealed[:]}}
+	for item in searched {
+		if at := strings.index(string(image), string(item.bytes)); at >= 0 {
+			fmt.eprintfln("modustool: test failed: the disk holds %s from the file of alice before the change, at the byte %d (the block %d)", item.what, at, at / format.BLOCK_SIZE)
+			return false
+		}
+	}
+	test_passed_print("the disk of %d bytes holds none of the salt, the keys under the seal key and the keys under the recovery key of the file of alice before the change: the store erased its versions and wrote zeros over their blocks", len(image))
+	// The disk that the engine left opens as the storage service opens it:
+	// no root names a block of zeros, and the file has no version.
+	state := new(storage_mount.State)
+	defer free(state)
+	contents := disk_contents(image, state)
+	mounted := contents.mount
+	if mounted.failed || mounted.wrong != 0 || mounted.damaged_objects != 0 || mounted.damaged_versions != 0 || storage_mount.hash_index_check(state) != 0 {
+		fmt.eprintfln("modustool: test failed: the disk after the erase opens with %d wrong blocks, %d damaged objects, %d damaged versions, %d faults of the hash index (failed: %v)", mounted.wrong, mounted.damaged_objects, mounted.damaged_versions, storage_mount.hash_index_check(state), mounted.failed)
+		return false
+	}
+	file := stored_object_of(&contents, UNLOCK_STORE, principals.FILE_OBJECT)
+	if file == nil || file.damaged || file.versions_damaged || len(file.versions) != 0 {
+		fmt.eprintfln("modustool: test failed: after the erase, the file of alice in the store %s is absent, damaged, or has versions (%d)", UNLOCK_STORE, file == nil ? 0 : len(file.versions))
+		return false
+	}
+	test_passed_print("the disk after the erase opens at the generation %d with no wrong block, and the file of alice has no version", mounted.generation)
 	return true
 }
 
@@ -674,8 +767,12 @@ principals_tpm_principal_tests_run :: proc() -> bool {
 	test_passed_print("%s", "the same system: the TPM counted a wrong passphrase, and released the keys to the right one")
 	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_other_system[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 9, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "another system: the TPM refused the passphrase, the recovery key opened the keys, and a new passphrase sealed them again")
+	// The file of alice before the change, as the store holds it: its secret
+	// parts must leave the disk with the change.
+	old_parts := principal_file_parts_read() or_return
 	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_change[:]}, BOOT_VOLUME_OTHER_SYSTEM, .With_Secure_Boot, 10, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "a console of the session changed the passphrase and the recovery key; the old passphrase was refused and counted, and the new one opened the keys")
+	principal_file_parts_absent(&old_parts) or_return
 	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_other_system[:], scenario_tpm_principal_old_recovery_key[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 11, TEST_TPM_PRINCIPAL_DISK) or_return
 	test_passed_print("%s", "another system: the recovery key before the change opened nothing, and the new one opened the keys")
 	tpm_key_machine_run([][]Step{tpm_principal_locked[:], scenario_tpm_principal_lockout[:], tpm_principal_recovery_and_new_passphrase[:]}, BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 12, TEST_TPM_PRINCIPAL_DISK) or_return

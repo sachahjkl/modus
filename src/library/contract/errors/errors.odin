@@ -232,6 +232,7 @@ Unit :: enum i64 {
 	Stack_Frames = 48, // Absent: the frames of the stack of a held thread; the number of the argument is past the last frame.
 	Source_Places = 49, // Absent: the procedures and the source lines of the debug objects; the place of the argument names none.
 	Stop_Reports = 50, // Absent: the stop reports of disk programs that the root service keeps; no disk program of the principal of the caller with this nickname stopped on a fault, or newer reports took its place (src/md/features/debug_object_of_a_disk_program.md).
+	Versions_Erase = 51, // No_Grant: the erase of the versions of an object (the start grant Versions_Erase, docs/STORAGE.md, "4.8 The erase of versions").
 }
 
 // How a handle ended (Handle_Ended).
@@ -343,6 +344,7 @@ UNIT_NAMES := [Unit]string {
 	.Stack_Frames = "frames of the stack of the thread",
 	.Source_Places = "procedures and source lines of the debug objects",
 	.Stop_Reports = "stop reports of disk programs that the root service keeps",
+	.Versions_Erase = "the erase of the versions of an object",
 }
 
 // A ring completion (src/library/contract/ring) has the status of the contract of its
