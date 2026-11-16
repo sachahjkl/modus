@@ -1000,6 +1000,9 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// The sections of the home: the line of time of the start, the charts
 	// of the measures, the band of the newest release.
 	strings.write_string(&builder, site_home_rules())
+	// The charts of the measure history, on the page of the measured
+	// numbers, which take the cards of the charts of the home.
+	strings.write_string(&builder, SITE_MEASURE_HISTORY_RULES)
 	// The colors of the states of a control, in the dark form.
 	site_control_variables(&builder, false)
 	// The colors and the widths of the tiles of the boot image: they come

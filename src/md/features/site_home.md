@@ -79,7 +79,7 @@ Refused forms:
 
 - **Bars of several measures on one axis.** Kernel entries, nanoseconds and megabytes a second have no common scale.
 - **One bar for a number alone.** A bar with nothing beside it compares nothing.
-- **A chart of a measure over the releases, today.** The measure record holds one run and each run replaces it. A history drawn now would be invented.
+- **A chart of a measure over the releases on the home.** The home shows bars of one run. The history of each measure is a record: its charts are on the page of the measured numbers ([measure_history.md](measure_history.md)).
 
 ### The newest release: one large value
 
@@ -111,4 +111,4 @@ For a reader who asks for reduced motion the heron is not a control: a control t
 
 Built: the rule of a card, the line of time with its cards, two charts, the band of the release, the press on the heron, the host tests.
 
-Not yet seen in a browser. Left: a history of each measure over the releases, which needs a measure record that keeps the numbers of each release.
+Not yet seen in a browser.

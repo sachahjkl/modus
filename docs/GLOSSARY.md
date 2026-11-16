@@ -2229,7 +2229,7 @@ Do not use: password, PIN.
 
 A change of the passphrase is the act by which a named principal, in its session, proves its current passphrase in the window of `unlock` and has its keys sealed again under a new passphrase, or under a new recovery key.
 
-A console of the session asks with `passphrase_change()` or `recovery_key_change()`; the console of the machine cannot. The current passphrase opens the keys as an unlock does, and the TPM counts a wrong one. The change ends on a screen of the window, and the line of the console gives the same end. The keys themselves do not change, and the store keeps the file from before as a version on the same disk, so that version still opens with the old passphrase or the old recovery key until the old versions can be erased. A lost passphrase is not changed this way: the recovery key replaces it.
+A console of the session asks with `passphrase_change()` or `recovery_key_change()`; the console of the machine cannot. The current passphrase opens the keys as an unlock does, and the TPM counts a wrong one. The change ends on a screen of the window, and the line of the console gives the same end. The keys themselves do not change. The write makes the file from before a version, and `unlock` then erases the versions of the file (the term Version erase): the old passphrase and the old recovery key open nothing that the storage service reads on the disk. A copy of the disk made before the change, or a sector that the device kept, still opens with them. A lost passphrase is not changed this way: the recovery key replaces it.
 
 The design: `src/md/features/tpm_sealed_principal_keys.md`; `docs/PRINCIPALS.md`, "A change of the passphrase".
 
@@ -3818,7 +3818,7 @@ A program reads versions with exports of the storage service:
 - `compare(place, name, first, second)`: the ranges of bytes that differ between two states.
 - `restore(place, name, generation)` and `clone(place, name, new_name)`.
 
-An object has at most 21590 versions; the retention rule and the thinning at the limit remove versions. A remove ends the object and its versions. A rename keeps them. A damaged state is not kept as a version: the change replaces it.
+An object has at most 21590 versions; the retention rule and the thinning at the limit remove versions, and a version erase ends them all and writes zeros over their blocks. A remove ends the object and its versions. A rename keeps them. A damaged state is not kept as a version: the change replaces it.
 
 A version is not a backup on another disk, and not a revision that a program makes on purpose. It is kept for each object, not for the store: the history of a store is a later step.
 
@@ -3891,11 +3891,35 @@ Thinning keeps the versions from filling the disk with no action of a program. I
 
 A change that does not fit even with each earlier version thinned is refused before any thinning, with `Over_Limit` and the sentence "with no earlier version kept": a refused change destroys no history. A thinning and its change are one commit, so a loss of power never keeps one without the other. The service writes a line for each thinning.
 
-Thinning is not a collection of garbage: it removes versions by a rule, and the reference count frees the blocks at once, with no walk.
+Thinning is not a collection of garbage: it removes versions by a rule, and the reference count frees the blocks at once, with no walk. A block that a thinning frees keeps its bytes until a commit takes it: a version erase, below, writes zeros over them.
 
 The design: `docs/ARCHITECTURE.md`, "U5. Storage service".
 
 Do not use: garbage collection, pruning, cleanup, compaction.
+
+### Version erase
+
+A version erase ends each version of one object in one commit, then writes zero bytes over each block that this commit freed.
+
+It removes an old state that is a hazard: after a change of the passphrase or of the recovery key of a principal, `unlock` erases the versions of its file, so the old secret opens nothing that the storage service reads on the disk. `storage.erase_versions(place, name)` makes the commit, writes its root again with the next generation in the other place of the root, then writes the zeros: no root on the disk names a block of zeros, and a loss of power leaves the versions or none. The current version stays. A block that another state names keeps its bytes, and the erase counts it. Only a program with the grant to erase versions may call it, on its own store. Example: "storage: the versions of principal in the store unlock are erased: 1 version ended, 5 blocks written with zeros, 0 blocks kept that another state names, generation 412".
+
+A version erase is not a thinning (a rule that frees blocks with their bytes in them), not a remove (which ends the object), and not an erase of the medium: a flash disk or a snapshot of the host can keep the old sectors.
+
+The design: `docs/STORAGE.md`, "4.8 The erase of versions", and `src/md/features/version_erase.md`.
+
+Do not use: wipe, shred, secure delete, purge.
+
+### Grant to erase versions
+
+The grant to erase versions is the start grant `Versions_Erase`: the storage service lets its holder end the versions of the objects of its own private store, with a version erase.
+
+Versions protect the principal against a fault of the program that writes an object, so no program ends them by itself. The root service gives this grant only to a program that keeps a secret that an earlier version must not keep: today `unlock`, for the file of a principal and the record of the machine key. It reaches the storage service as the bit `CALLER_ERASES_VERSIONS` of the grant of the connection (`src/library/contract/isolated`). A call of `erase_versions` with no such grant is refused with `No_Grant`, unit `Versions_Erase`. A share never has it, and no command gives it to a disk program.
+
+The grant is not a right over another store, and not a right to remove an object: a remove needs no grant beyond the store.
+
+The design: `docs/STORAGE.md`, "4.8 The erase of versions", and `docs/PROPERTIES.md`, "Persistence: no save action, and versions for all programs".
+
+Do not use: delete right, history right.
 
 ### Retention rule
 
@@ -4025,7 +4049,7 @@ The storage service is the service that keeps the stores, their trees, their obj
 
 The storage service is the one program that writes the data disk. Each other program reaches its own store through a connection that the root service gives, with a limit of blocks; each change is one commit, on the disk when the call returns. The service writes the format `STORAGE4` of `src/library/contract/store`, with copy on write and two places for the root block, so a stop of the machine never shows a part of a commit.
 
-At its start, it opens the disk: it reads both root blocks, takes the valid one with the highest generation, walks each node and each block tree once, checks each block, and counts the names of each block. Its line says what it found: "storage: ok, generation 1027: 3 stores, 4 objects, ...", or "storage: ok, a new disk: generation 1, 16384 blocks" on an empty disk. Its exports include `open`, `close`, `add`, `write`, `read`, `read_range`, `write_range`, `set_size`, `commit`, `list`, `rename`, `remove`, `share`, `unshare`, `usage`, `stores`, `open_store`, `versions`, `version`, `restore`, `clone` and `compare`.
+At its start, it opens the disk: it reads both root blocks, takes the valid one with the highest generation, walks each node and each block tree once, checks each block, and counts the names of each block. Its line says what it found: "storage: ok, generation 1027: 3 stores, 4 objects, ...", or "storage: ok, a new disk: generation 1, 16384 blocks" on an empty disk. Its exports include `open`, `close`, `add`, `write`, `read`, `read_range`, `write_range`, `set_size`, `commit`, `list`, `rename`, `remove`, `share`, `unshare`, `usage`, `stores`, `open_store`, `versions`, `version`, `restore`, `clone`, `compare` and `erase_versions`.
 
 The storage service is not a file system: it has no paths, no mount, and no global tree of names that a program can walk.
 
@@ -7224,6 +7248,16 @@ The site workflow runs no machine test, so the pass that commits the pictures al
 The design: `docs/SITE.md`, "The measure record".
 
 Do not use: benchmark results, metrics file, numbers cache.
+
+### Measure history
+
+The measure history is the folder `docs/measures/releases/`: one copy of the measure record for each release that a full check measured, named by its release number.
+
+It lets a reader see whether a change made the system faster or slower. `modustool changelog release` writes the copy of each new release, and `modustool measure-history` gave the old release tags their copies. A release whose record holds the same run as the release before gets no copy. The page of the measured numbers draws, from the copies, one chart for each measure over the releases: one number of its line, at equal steps, from zero. It is not a record of each full check: a full check between two releases replaces the measure record only.
+
+The design: `src/md/features/measure_history.md`; `docs/SITE.md`, "The measure history".
+
+Do not use: benchmark history, performance log, trend file.
 
 ### Measure run
 

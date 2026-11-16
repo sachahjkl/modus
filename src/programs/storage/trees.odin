@@ -847,6 +847,81 @@ entry_remove :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: K
 	return plan_commit(error)
 }
 
+// versions_erase ends each version of an object in one commit, writes the
+// root of that commit again in the other place, then writes zero bytes over
+// each block that the commit freed (src/md/features/version_erase.md). The
+// order keeps each root on the disk away from a block of zeros: the root
+// before the commit names the freed blocks until the second root replaces
+// it. The current state of the object, its hash and its generation stay.
+// An object with no version makes no commit.
+versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, error: ^errors.Error_Record) -> (Erase_Measure, i64) {
+	store_index, refused := store_prepare(store, false, error)
+	if store_index < 0 {
+		return {}, refused
+	}
+	tree_index, open_refusal := plan_tree_open(path)
+	if tree_index < 0 {
+		return {}, path_refusal(open_refusal, error)
+	}
+	index, found := plan_entry_load(tree_index, name.key)
+	if plan_refused() {
+		return {}, plan_refusal(error)
+	}
+	if !found || plan.entries[index].before.kind != .Object {
+		plan_drop()
+		return {}, errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 2)
+	}
+	if plan.entries[index].before.versions.block == 0 {
+		plan_drop()
+		return {}, 0
+	}
+	versions_release(index)
+	ended := -plan.versions_change
+	plan_finish()
+	// The parts of the versions with a wrong block: the plan drops them, or
+	// releases them with no walk under the wrong block, so their bytes get
+	// no zeros. plan_commit keeps the plan, so the counts stay readable.
+	damaged := plan.dropped_versions + plan.release_damaged
+	generation := plan_commit(error)
+	if generation < 0 {
+		return {}, generation
+	}
+	kept := released_blocks_kept()
+	// A parameter has no address: the text of the name comes from a copy.
+	kept_name := name
+	object_name := kept_text(&kept_name)
+	store_name := system.name_of(root.stores[store_index].name[:])
+	// The root before the commit is the one root that the open can fall
+	// back to if the disk did not keep a write of the commit; the second
+	// root replaces it. So the blocks of the commit are read back first.
+	differ, read_back := commit_read_back()
+	if read_back != .Good {
+		// The service makes no change until its next start: a commit now
+		// would replace that root too.
+		broken = true
+		if read_back == .Device {
+			system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the read back of its blocks failed: no second root and no zeros; the service makes no change until its next start")
+		} else {
+			system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and ", differ, " blocks of that commit read back with other bytes: the disk did not keep them; no second root and no zeros, and the service makes no change until its next start, whose open falls back to the root before")
+		}
+		return {}, errors.fail(error, ERROR_DISK, .Device, .None, 0, 0, 0, i64(differ))
+	}
+	if !root_again() {
+		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", u64(generation), ", and the second root failed: no block is written with zeros, and the old bytes stay in free blocks until a commit takes them")
+		return {}, errors.fail(error, ERROR_DISK, .Device)
+	}
+	zeroed, zeros_written := freed_blocks_zero()
+	if !zeros_written {
+		system.log_in("storage", .Error, "storage: the versions of ", object_name, " in the store ", store_name, " are ended at the generation ", root.generation, ", and a write of zeros failed: ", zeroed, " blocks hold zeros, the others keep their old bytes until a commit takes them")
+		return {}, errors.fail(error, ERROR_DISK, .Device)
+	}
+	system.log("storage: the versions of ", object_name, " in the store ", store_name, " are erased: ", u64(ended), u64(ended) == 1 ? string(" version") : string(" versions"), " ended, ", zeroed, " blocks written with zeros, ", kept, " blocks kept that another state names, generation ", root.generation)
+	if damaged != 0 {
+		system.log_in("storage", .Warning, "storage: the erase of the versions of ", object_name, " in the store ", store_name, " ended ", damaged, " damaged version indexes, leaves or states with no zeros over them: their blocks keep their bytes, in use until the next start of the service and free after it")
+	}
+	return {generation = i64(root.generation), versions = ended, zeroed = i64(zeroed), kept = i64(kept), damaged = i64(damaged)}, 0
+}
+
 // entry_free takes a plan entry out of its tree, and frees what it names:
 // an object and its versions, or an empty tree; a tree with entries goes
 // into the removal queue.

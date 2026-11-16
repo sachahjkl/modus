@@ -1,0 +1,97 @@
+# The erase of the versions of an object
+
+A version erase ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Version erase") ends each version of one object in one commit, then writes zero bytes over each block that this commit freed. The guide is [`docs/STORAGE.md`](../../../docs/STORAGE.md), "4.8 The erase of versions".
+
+## Purpose
+
+Each commit keeps the state before it as a version ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "Versions, thinning and the limit"). For most objects that is the point: no save action, and an undo with no code. For a few objects an old state is a hazard. The file of a named principal holds its keys sealed under its passphrase and under its recovery key. After a change of the passphrase or of the recovery key, the version from before still opens with the old secret ([tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md), "A change of the passphrase, and a new recovery key"). A thief of the machine who knows the old recovery key opens the keys from that version.
+
+A thinning or a remove does not help: they free the blocks, and a free block keeps its bytes until a later commit takes it. A reader of the disk reads free blocks as well as named ones.
+
+## Constraints
+
+- **A loss of power at any write.** The open gives the versions or none of them, never a part. No root that the open can take names a block of zeros: a block of zeros that a root names is damage, and the open would then refuse the commit or report a damaged object.
+- **Two roots on the disk.** The disk has two places for the root. After a commit, the root before it is still on the disk, whole and valid, and it names each block that the commit freed. The open takes it when the newest root has a wrong check (a write of the root that a stop cut).
+- **Shared blocks.** Copy on write, a clone, a restore and the hash index make two states name one block ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "4.7 The same object one time"). Such a block holds bytes that a state that stays holds too.
+- **No new kernel operation, no new grant.** The service writes zeros with the command `Write` of the block service, which it holds already.
+- **The device is not the medium.** The storage service writes logical blocks of a virtio disk. The device and the host decide where the bytes of a block go.
+
+## The chosen form
+
+**One export, `erase_versions(place, name, result, error)`.** It takes the object `name` under a place, and gives one row: the generation, the versions ended, the blocks written with zeros, the blocks kept because another state names them, and the damaged parts of the versions that it ended with no zeros. The steps, in this order:
+
+1. **The commit of the end** (generation N). Each version of the object leaves, with its version index and its leaves. The root of each version loses one name; a block whose count goes to 0 is freed, as for a thinning. The current state of the object, its hash and its generation stay: a pending change of a connection on the object stays valid. The tree nodes on the path of the entry and the store block are written again by copy on write, as at each commit.
+2. **The read back.** The service reads each block that step 1 wrote, and the root of N, from the device, past its own cache, and compares the bytes. A block that differs is a write that the disk did not keep ([dropped_write.md](dropped_write.md)). A root of N that the disk did not keep would leave the root before N the newest on the disk, naming the blocks that step 4 writes over. Then the root before N is the one root that the open can fall back to, and step 3 would replace it: the service writes no second root and no zeros, writes one line, and makes no change until its next start, whose open falls back to the root before N with the versions.
+3. **The root again** (generation N + 1). The service writes the root of N again, with the next generation, in the other place, then a `Flush`. After it, the two roots on the disk are N and N + 1, and neither names a block that step 1 freed.
+4. **The zeros.** The service writes a block of zero bytes over each block whose count step 1 took to 0, 64 blocks for each request, then a `Flush`. These blocks are the data and the object nodes of the versions that no other state names, the version index and its leaves, and the tree nodes and the store block that step 1 replaced.
+
+An object with no version needs no commit: the row gives 0 versions and 0 blocks, and the disk does not change. So a caller can ask for the erase at each unlock.
+
+The service runs one call at a time, so no commit takes a freed block between step 1 and step 4. The blocks are free in its memory from step 1, and step 4 writes over blocks that nothing names.
+
+**Who may call it: the grant to erase versions.** Versions protect the principal against a fault of the program that writes an object: a program with a fault, or with a hostile part, would write over a document and then end each version before it. So a program does not end its versions by itself. The root service gives the start grant `Versions_Erase` to a program that keeps a secret that an earlier version must not keep; today that is `unlock` only ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Persistence: no save action, and versions for all programs"). The grant goes with the grant of the private store, as the bit `CALLER_ERASES_VERSIONS` of the connection; no command gives it to a disk program. The service refuses a caller with no such bit (`No_Grant`, unit `Versions_Erase`), a share, a place of another store (`open_store`), and a connection that reads only.
+
+**Where `unlock` calls it.** Each erase needs a way back to the keys that is not a version:
+
+- **After a write that the store kept, with no open of the new file**, where the new file keeps a copy that the old secret did not seal: a new passphrase or a new seal after a recovery in the form `PRINCIPT` (the copy under the recovery key stays), and a new recovery key (the seal under the passphrase stays). After the new seal of the machine key after a recovery, on the object `machine` (the copy under its recovery key stays).
+- **After a new passphrase in the form `PRINCIPL`, only when the new file opened.** That form has no copy under a recovery key, so a fault of the new seal would leave the version before as the one way back. `unlock` opens the new file with the new passphrase, still typed, and compares the keys; this costs one more derivation. A new file that does not open keeps its versions, and the log says it.
+- **Each time the current file opened the keys of the principal** (the start of a session with keys opened from the file), **or the current record gave the machine key.** So a stop between a write and its erase is repaired at the next unlock. The creation of a principal or of a machine key opened nothing, so it erases nothing: a creation can write over a file that never decoded, whose version is then the one way back to its keys.
+
+After a write whose answer is unknown, `unlock` does not erase: the store did not answer. The erase never touches the current state.
+
+## What a loss of power leaves
+
+- **Before the root of N is on the disk.** The open takes the root before N: the versions are there, and no block was written with zeros.
+- **After the root of N, before the root of N + 1.** The open takes N: no version is named. The root before N still names the freed blocks, and none of them holds zeros yet.
+- **A cut write of the root of N + 1.** Its check is wrong, and the open takes N.
+- **After the root of N + 1.** Each block of step 4 holds its old bytes or zeros, and no root names it. The open counts it free.
+
+The host test of the open checks each of these images (`src/library/support/storage_mount`). It checks a model of the writes, built by hand in the order of the service, not the service itself. The machine test of `principals` opens the disk that the service left after an erase, on the host, and finds no wrong block and no version of the file.
+
+## What a shared block means for secrecy
+
+A block that another state still names keeps its bytes: the erase ends names, and the bytes of a state that stays are not an old secret. For the file of a principal, the cases are:
+
+- **The hash index.** It shares the root of a current object with another entry of the same store with the same bytes, and only inside one store. So the old file can share its block only with another entry of the store `unlock` that holds the same bytes. That entry holds the old secret itself.
+- **Copy on write.** A large object shares each block that a change did not touch with its version. Those bytes are in the current state too. The file of a principal is one block: a new file is a new block.
+- **A restore and a clone.** A restore names the root of a version from the entry. The erase then keeps that block, as the current state names it. The row counts each kept block, and `unlock` writes the count.
+
+## Limits
+
+- **A cut during the zeros.** A loss of power after the root of N + 1 and before the `Flush` of the zeros leaves old bytes in free blocks. Nothing records them, and a later erase does not find them. A later commit writes over a block when it takes it.
+- **A failed second root, or a failed write of zeros.** The versions are ended at the commit of the end. When the second root fails, the service stops serving changes and writes no zero; when a write of zeros fails, some blocks keep their bytes. In both cases the old bytes stay in free blocks, the log says it, and a later erase finds no version to end.
+- **Damaged versions.** A version index or a leaf with a wrong check is dropped, and a state with a wrong block is released with no walk under the wrong block: the open never counted what is under it. So their blocks get no zeros: they stay in use until the next start of the service, then free with their bytes. The row counts them, and the service writes a warning line.
+- **A clone or a restore before the erase.** A program that acts for principal 0 opens the store `unlock` (`open_store`), and can clone or restore the version of the file before the erase runs: right after a write, or between a stop and the next unlock. The erase then keeps that block, as another state names it, and counts it in the row. The same program can read the current file at any time; that exposure is older than the erase.
+- **A version thinned before the erase.** The retention rule and the limit of the store free the blocks of a version with no zeros. For `unlock` this does not happen: the erase follows each write at once, so the file has at most one version at a write; the retention rule always keeps the one version of an object; and the store holds a few blocks of its limit of 64.
+- **The nodes that a write freed.** The commit of a write replaces the tree nodes on the path of its entry, and their bytes stay in free blocks. They hold the hash of the old state, not its bytes. A hash tells nothing of a file whose bytes include a random salt and random keys.
+- **The device keeps old sectors.** A write of zeros to a logical block does not reach each copy that the device or the host keeps. A flash disk writes a sector to a new place and keeps the old one until its own erase. A host can keep a snapshot of the disk image, a layer of copy on write under it, or a journal of its file system. The erase removes the bytes from each block that the storage service reads; it does not promise that the medium holds no copy. Only the encryption of the data of a principal closes this ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "5. Not built: the next steps"): an old file under a key that no longer exists opens with nothing.
+- **The dropped-write fallback of N.** The open falls back to the root before the newest one when the newest names a block with a wrong check ([dropped_write.md](dropped_write.md)). After step 3, the root before N + 1 is N itself, so a write of step 1 that the disk dropped would damage both roots, and the zeros would destroy the root before N. Step 2 reads the blocks and the root of N back first. A dropped root N + 1 alone leaves N on the disk, valid, and naming no zeroed block. A device that answers the read from the cache that lost the write still passes it: the read back proves only what the device gives, as the refused read back of the dropped write says.
+
+## Refused forms
+
+- **The zeros before the commit.** A cut between them leaves the newest root naming blocks of zeros: the versions read `Damaged`, and the open counts wrong blocks.
+- **The zeros after the root of N, with no root N + 1.** The root before N is still on the disk and names the blocks. A root of N that the medium loses later makes the open take that root, which then names zeros. The rule "no root on the disk names a block of zeros" needs a second root; it costs one block and one `Flush`.
+- **Zeros at each block that any commit frees.** Each commit frees the tree nodes and the store block that it replaces: the writes of each commit would double, with a second root each. The erase is asked where an old state is a hazard.
+- **The zeros at the next commit of the store.** The second root comes then with no cost, but the old bytes stay on the disk for an unknown time, and a store that never commits again keeps them.
+- **A list of the blocks to zero in the root, done again by the open after a cut.** It changes the format of the root, and the open would write before it serves. The window that it closes (the few writes of step 4) is small beside the limit of the device, which it does not close.
+- **The discard command of the device.** The block service has no discard, a discard does not promise zeros at the next read, and a device can ignore it.
+- **The erase of one version by its generation.** The need is the end of every state before the current one. An erase of one version is a later need, and the same steps serve it.
+- **The erase by the program of any store.** Each program has a store, so each program could end the history that protects the principal against its own faults. The grant to erase versions keeps the property for each other program.
+- **The erase through a share, or by a program that acts for the principal.** A share is lent for the bytes of one tree; a program that acts for the principal reads and restores versions of a store that is not its own. Neither ends its history.
+- **The erase in the export `write`, as a flag.** `unlock` reads the file back when the answer of a write fails, and erases only when the new file is the current one. One export with one concept serves any object.
+- **The erase at each start of `unlock`, before the file opens, or at the start of a session of a new principal.** If the current file reads and does not open (a fault of the seal), or never decoded and a creation wrote over it, the version before it is the only way back to keys that open. The erase waits until the current file opened the keys.
+- **The erase after each kept write of a file under the passphrase alone, with no open.** That form has no other way back than the version.
+- **No second root after a read back that differs, with the service still serving changes.** A later commit would replace the root before N too, and its fallback with it.
+
+## Subtle points
+
+- **The current state is not touched.** Its root, its hash and its generation stay, so the hash index keeps its record, and a pending change of another connection still commits.
+- **The commit of the end can free tree nodes that the store needs no more.** They are zeroed with the rest: they hold names and hashes, not the bytes of an object, and a zero over a free block costs one write.
+- **The block cache of the service.** The service drops each zeroed block from its cache. A cache entry is found by its number and its check, so a later block with the same number never matched it; the drop keeps no copy of an old node in the memory of the service.
+- **A device error during the zeros.** The commit of the end and the second root are on the disk: the versions are gone. The service gives `Device`, and the blocks stay free. A later erase of the same object finds no version and writes nothing.
+
+## State
+
+Built: the start grant `Versions_Erase` for `unlock`, the export, the commit of the end, the read back, the second root, the zeros, the row with the kept and the damaged parts, the lines of the log, the host test of a model of the images that a loss of power leaves, the calls in `unlock`, the machine test in `modustool test principals` that searches the data disk for the bytes of the file of before a change and opens the disk on the host.
+
+Left: an erase of one version by its generation; the encryption of the data of a principal, which closes the limit of the device.
