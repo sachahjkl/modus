@@ -185,14 +185,14 @@ The step that describes the exports reads the constant from the tree of the pars
 | The least budget | 2048 | 1 | 1 |
 | The largest budget of a program | 16384 | 8 | 32 |
 
-Each program gets one processor of time for each of its threads, and 7 log records in each second, which leave the budget of the root service while it runs: the machine has 959 (`op.LOG_RECORDS_OF_THE_MACHINE`), and 9 programs have a row for theirs (`src/md/features/log_side_channels.md`). The root service keeps a table of budget exceptions (`budget_exceptions` in `src/programs/root/budgets.odin`): a row names one program of the boot image, gives it another largest budget or other limits in time, and holds its reason. A disk program and a module of another project have no row.
+Each program gets one processor of time for each of its threads, and 1000 log records in each second (`op.LOG_RECORDS_OF_A_PROGRAM`), which leave the budget of the root service while it runs: the machine has 64 000 (`op.LOG_RECORDS_OF_THE_MACHINE`), 1000 for each program slot (`src/md/features/log_side_channels.md`). The root service keeps a table of budget exceptions (`budget_exceptions` in `src/programs/root/budgets.odin`): a row names one program of the boot image, gives it another largest budget or other limits in time, and holds its reason. A disk program and a module of another project have no row.
 
 **A disk program** is paid by one budget that the root service makes from its own at the first disk program, and keeps (`src/library/support/disk_program/budget.odin`):
 
 | Amount | Pages | Programs | Threads | Processor | Log records |
 |---|---|---|---|---|---|
-| The budget of all disk programs | 16384 | 4 | 16 | two processors | 28 in each second |
-| The largest budget of one disk program | 8192 | 1 | 4 | one processor for each thread | 7 in each second |
+| The budget of all disk programs | 16384 | 4 | 16 | two processors | 4000 in each second |
+| The largest budget of one disk program | 8192 | 1 | 4 | one processor for each thread | 1000 in each second |
 
 A file chooses its own request, so the sum of all disk programs has one bound: the programs of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk program holds no grant that starts a program, so one program slot loses nothing. The log has one line when the budget of the disk programs is made:
 

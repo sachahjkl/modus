@@ -11,4 +11,4 @@ Two facts of the log still told it how much the other programs wrote. The kernel
 
 Now the log records of each second are an amount of a budget, as its pages: a starter gives each child a part of its own, and each budget counts only its own records. A refusal says only that the program wrote its own amount. `Log` writes the records in memory only; the tick of the first processor writes their lines on the serial port after it, in their order.
 
-The program `log_reader` checks it: its storm child takes 100 of its 112 log records of each second, and gives them back at its stop.
+The program `log_reader` checks it: its storm child takes 900 of its 1000 log records of each second, and gives them back at its stop.

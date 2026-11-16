@@ -55,8 +55,8 @@
 //   program and of its two children, more than the <capacity> that the
 //   whole log keeps, and the own log ring of each one kept its records: as
 //   it must`;
-// - `log_reader: the storm child took 100 of the 112 log records of each
-//   second of this program, which kept 12, and each child gave its
+// - `log_reader: the storm child took 900 of the 1000 log records of each
+//   second of this program, which kept 100, and each child gave its
 //   records back at its stop: as it must`: a budget holds its log records
 //   as it holds its pages, and counts only its own, so the storm never
 //   makes the kernel refuse a line of this program
@@ -102,7 +102,7 @@ CHILD_TAG :: u64(0x4C4F_4752_0000_0000) // "LOGR" in the high half, the number o
 CHILD_TAG_MASK :: u64(0xFFFF_FFFF_0000_0000)
 CHILD_COUNT :: 2
 CHILD_PAGES :: 256
-CHILD_AMOUNTS :: system.Budget_Amounts{pages = CHILD_PAGES, programs = 1, threads = 1, processor = 200_000, log_records = system.LOG_RECORDS_OF_A_LINE}
+CHILD_AMOUNTS :: system.Budget_Amounts{pages = CHILD_PAGES, programs = 1, threads = 1, processor = 200_000, log_records = 10}
 CHILD_TEXT :: "log_reader child: the record that the starter reads back, with the value "
 
 // The name and the whole text of the record of each child: its value is
@@ -127,11 +127,10 @@ STORM_LAST_LINE :: "log_reader storm: the last record, after more records than t
 // counts only its own records, so the storm never makes the kernel refuse a
 // line of this program.
 STORM_PAGES :: 512
-// The root service gives this program 112 records of each second
-// (LOG_RECORDS_OF_LOG_READER): the storm takes 100, and this program keeps
-// 12 for its lines. At 100 records in each second, the storm writes its
-// records in about 21 seconds, within the hang bound.
-STORM_LOG_RECORDS :: 100
+// The root service gives this program 1000 records of each second
+// (op.LOG_RECORDS_OF_A_PROGRAM): the storm takes 900, and this program
+// keeps 100 for its lines.
+STORM_LOG_RECORDS :: 900
 STORM_AMOUNTS :: system.Budget_Amounts{pages = STORM_PAGES, programs = 1, threads = 1, processor = 1_000_000, log_records = STORM_LOG_RECORDS}
 // The log limit of a budget counts the records of each second.
 MILLISECONDS_OF_A_SECOND :: 1000

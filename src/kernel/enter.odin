@@ -191,8 +191,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// as log_record cuts it: the amount bounds the lines of the serial
 		// port, and a text of 4096 bytes is 27 records.
 		if !budget_log(program.budget, log_records_of_text(log_text[:v[2]])) {
+			program.log_lines_refused += 1
 			return .No_Budget
 		}
+		program.log_lines_refused = 0
 		// The value runs: checked once, in the copy of this processor. Runs
 		// that do not fit the text leave the record plain; the text is whole.
 		log_runs := processor_self().log_runs[:v[6]]

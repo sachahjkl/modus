@@ -115,10 +115,9 @@ serial_tick_drains: bool
 // by the cycle counter, whatever bytes it wrote: interrupts are off for no
 // longer than that, a tenth of a tick, so a device interrupt and the thread
 // that the tick interrupts wait at most that. A bound in bytes bounds no
-// time: a port write that exits to QEMU costs 2 to 10 us. The drain keeps
-// op.LOG_SERIAL_BYTES_OF_A_SECOND, 210 738 bytes, while a byte costs less
-// than about 0.47 us on one processor; the line of the measure says what
-// the device of the machine keeps.
+// time: a port write that exits to QEMU costs 2 to 10 us. The line of the
+// measure says what the device of the machine keeps; a flood of more lines
+// loses some, and the serial port says how many (serial_lost_line).
 SERIAL_MICROSECONDS_OF_A_TICK :: 100
 // The queue of the device: the bytes that the drain writes when the line
 // status says that the transmit register is empty.
@@ -592,7 +591,7 @@ serial_tick :: proc "contextless" (cpu: ^Processor) {
 		rate := bytes * frequency / cycles
 		// What one processor keeps when it writes SERIAL_MICROSECONDS_OF_A_TICK at each tick.
 		at_the_ticks := rate * SERIAL_MICROSECONDS_OF_A_TICK * TICKS_PER_SECOND / 1_000_000
-		log("kernel: the drain of the serial port wrote ", Size{bytes, .Bytes}, " in ", Duration{cycles * 1_000_000 / frequency, .Microseconds}, " of writing: ", rate, " bytes each second while it writes, ", at_the_ticks, " at 100 us of each tick of one processor; the log of the machine needs at most ", u64(op.LOG_SERIAL_BYTES_OF_A_SECOND))
+		log("kernel: the drain of the serial port wrote ", Size{bytes, .Bytes}, " in ", Duration{cycles * 1_000_000 / frequency, .Microseconds}, " of writing: ", rate, " bytes each second while it writes, ", at_the_ticks, " at 100 us of each tick of one processor")
 	}
 }
 

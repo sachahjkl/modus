@@ -128,11 +128,10 @@ Sandbox :: struct {
 }
 
 SANDBOX_CAPACITY :: 12
-// The log records of each second of the call host of a sandbox: one line
-// of system.log. The console gives them from its own 72 (the root service,
-// LOG_RECORDS_OF_CONSOLE): the twelve call hosts take 48, and the console
-// keeps 24 for its own lines.
-SANDBOX_LOG_RECORDS :: system.LOG_RECORDS_OF_A_LINE
+// The log records of each second of the call host of a sandbox. The
+// console gives them from its own 1000 (op.LOG_RECORDS_OF_A_PROGRAM): the
+// twelve call hosts take 600, and the console keeps 400 for its own lines.
+SANDBOX_LOG_RECORDS :: 50
 FILE_CAPACITY :: system.MODULE_SPACE_CAPACITY + system.IMPORT_CAPACITY
 
 // A sandbox with no name is free.

@@ -251,6 +251,9 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 	}
 }
 
+// The log records of each second that a call host gets by default.
+CALL_HOST_LOG_RECORDS :: 100
+
 // call_host_start starts a call host (the program "host" of the boot
 // image) for one module, and maps the file of the module and of its
 // imports in it, read-only: the call host has the call ring and the call
@@ -260,10 +263,9 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 // values): a program does not start with no seed. On a failure of the load,
 // load_error has the record that the call host wrote. log_records are the
 // log records of each second that the call host takes from the budget of
-// the caller: by default one line of system.log, so a caller with 10
-// records starts two hosts and keeps 2; a caller that starts more gives
-// fewer, or 0, and the call host then writes no line.
-call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = LOG_RECORDS_OF_A_LINE) -> (connection: Call_Connection, status: Status) {
+// the caller: 100 by default, so a caller with 1000 records starts nine
+// hosts and keeps 100; a caller that starts more gives each fewer.
+call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS) -> (connection: Call_Connection, status: Status) {
 	files: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry
 	source := Load_Source {
 		image = image,

@@ -63,7 +63,7 @@ HEIGHT :: 409
 LARGE_PAGES :: 8192
 SMALL_BUDGET :: 100 // The pages of a budget that this program makes for one case.
 TWIN_COUNT :: 4
-TWIN_AMOUNTS :: system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = system.LOG_RECORDS_OF_A_LINE}
+TWIN_AMOUNTS :: system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 10}
 
 
 // One case: what the program did, and what the kernel answered.

@@ -3116,14 +3116,16 @@ LOG_RECORD_CAPACITY :: LOG_PAGES * 4096 / size_of(Log_Record) - 1
 // full fault rings, that a program can cause as fast as it faults. A line
 // past the bound is counted, and one record says the count.
 LOG_RECORDS_OF_THE_KERNEL :: 64
+// The log records of each second of a program of normal use: what the root
+// service gives each program that it starts.
+LOG_RECORDS_OF_A_PROGRAM :: 1000
+// The program slots of the kernel.
+PROGRAM_SLOTS_OF_THE_MACHINE :: 64
 // The log records of each second of the whole machine: the amount of the
-// root budget, which divides it among every budget. With the records of the
-// kernel, half of the whole log, because the counts of two seconds can come
-// back to back at the edge of a second: the drain of the serial port then
-// never has more than the whole log to write, and the serial port loses no
-// line (src/md/features/log_side_channels.md).
-LOG_RECORDS_OF_THE_MACHINE :: LOG_RECORD_CAPACITY / 2 - LOG_RECORDS_OF_THE_KERNEL
-#assert(2 * (LOG_RECORDS_OF_THE_MACHINE + LOG_RECORDS_OF_THE_KERNEL) < LOG_RECORD_CAPACITY)
+// root budget, which divides it among every budget, a program of normal use
+// in each program slot. The serial port can lose the lines of a flood of
+// these records, and says how many (src/md/features/log_side_channels.md).
+LOG_RECORDS_OF_THE_MACHINE :: PROGRAM_SLOTS_OF_THE_MACHINE * LOG_RECORDS_OF_A_PROGRAM
 
 // The pages of the own log ring of a program: the kernel keeps a copy of
 // each record of the program there, which only the records of that program

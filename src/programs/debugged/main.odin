@@ -415,7 +415,7 @@ child_start :: proc "contextless" (role: Role, mode: u64, shared_memory: system.
 	}
 	error: module.Load_Error
 	status: system.Status
-	program, status = system.program_start(system.image_find(image, "debugged"), "debugged child", grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 2, processor = 200_000, log_records = system.LOG_RECORDS_OF_A_LINE}, nil, nil, {image = image}, &error)
+	program, status = system.program_start(system.image_find(image, "debugged"), "debugged child", grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 2, processor = 200_000, log_records = 10}, nil, nil, {image = image}, &error)
 	return program, status == .Ok
 }
 

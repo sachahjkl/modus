@@ -29,35 +29,22 @@ LARGEST_BUDGET :: system.Budget_Request{pages = 16384, programs = 8, threads = 3
 PROCESSOR_OF_A_THREAD :: 1_000_000
 
 // The log records of each second. The kernel gives this service
-// op.LOG_RECORDS_OF_THE_MACHINE, the records that the drain of the serial
-// port always keeps, and each budget holds its part: a program that starts
-// takes its records from this service, and gives them back at its stop
-// (src/md/features/log_side_channels.md). The sum of every part fits:
-//   - this service keeps LOG_RECORDS_OF_THIS_SERVICE for its own lines;
-//   - the programs of the table of exceptions take their rows;
-//   - each other program of the boot image, and each disk program, takes
-//     LOG_RECORDS_OF_A_PROGRAM: what is left, for each slot that is left.
-LOG_RECORDS_OF_THIS_SERVICE :: 120 // Its lines of the starts, the stops and the calls, many in the first seconds.
-// The program slots of the budget of this service: the 64 of the kernel
+// op.LOG_RECORDS_OF_THE_MACHINE, and each budget holds its part: a program
+// that starts takes its records from this service, and gives them back at
+// its stop (src/md/features/log_side_channels.md). The sum of every part
+// fits: each program of the boot image and each disk program takes at most
+// LOG_RECORDS_OF_A_PROGRAM, in at most PROGRAM_SLOTS slots, and this
+// service keeps LOG_RECORDS_OF_THIS_SERVICE for its own lines.
+LOG_RECORDS_OF_A_PROGRAM :: op.LOG_RECORDS_OF_A_PROGRAM
+LOG_RECORDS_OF_THIS_SERVICE :: op.LOG_RECORDS_OF_A_PROGRAM
+// The program slots of the budget of this service: the slots of the kernel
 // less its own.
-PROGRAM_SLOTS :: 63
-// The log records of the rows of log_records_exceptions. A row is a
-// constant, so that the compiler checks the sum.
+PROGRAM_SLOTS :: op.PROGRAM_SLOTS_OF_THE_MACHINE - 1
+#assert(PROGRAM_SLOTS * LOG_RECORDS_OF_A_PROGRAM + LOG_RECORDS_OF_THIS_SERVICE <= op.LOG_RECORDS_OF_THE_MACHINE)
+// The log records of the rows of log_records_exceptions: none above
+// LOG_RECORDS_OF_A_PROGRAM, so the sum above holds.
 LOG_RECORDS_OF_LIMITS :: 40 // Its burst of 100 reaches the limit.
-LOG_RECORDS_OF_LOG_READER :: 112 // Its storm child takes 100 (log_reader.STORM_LOG_RECORDS), and it keeps 12.
-LOG_RECORDS_OF_CONSOLE :: 72 // Its 12 call hosts take 4 each, and it keeps 24 for its echo and its results.
-LOG_RECORDS_OF_COMPOSITOR :: 48 // The line of each element of each window that moves.
-LOG_RECORDS_OF_INSPECT :: 36 // The rows of its tables.
-LOG_RECORDS_OF_RINGS :: 36 // Its 6 nodes take 4 each, and it keeps 12.
-LOG_RECORDS_OF_LOCKS :: 32 // Its 4 lockers and its churn child take 4 each, and it keeps 12.
-LOG_RECORDS_OF_FRAMES :: 28 // Its 4 twins take 4 each, and it keeps 12.
-LOG_RECORDS_OF_IMPORTS :: 16 // Its 2 children take 4 each, and it keeps 8.
-LOG_RECORDS_OF_THE_EXCEPTIONS :: LOG_RECORDS_OF_LIMITS + LOG_RECORDS_OF_LOG_READER + LOG_RECORDS_OF_CONSOLE + LOG_RECORDS_OF_COMPOSITOR + LOG_RECORDS_OF_INSPECT + LOG_RECORDS_OF_RINGS + LOG_RECORDS_OF_LOCKS + LOG_RECORDS_OF_FRAMES + LOG_RECORDS_OF_IMPORTS
-LOG_RECORD_EXCEPTIONS :: 9
-LOG_RECORDS_OF_A_PROGRAM :: (op.LOG_RECORDS_OF_THE_MACHINE - LOG_RECORDS_OF_THIS_SERVICE - LOG_RECORDS_OF_THE_EXCEPTIONS) / (PROGRAM_SLOTS - LOG_RECORD_EXCEPTIONS)
-// A program that writes needs the records of the longest line of system.log.
-#assert(LOG_RECORDS_OF_A_PROGRAM >= system.LOG_RECORDS_OF_A_LINE)
-#assert(LOG_RECORDS_OF_THIS_SERVICE + LOG_RECORDS_OF_THE_EXCEPTIONS + (PROGRAM_SLOTS - LOG_RECORD_EXCEPTIONS) * LOG_RECORDS_OF_A_PROGRAM <= op.LOG_RECORDS_OF_THE_MACHINE)
+#assert(LOG_RECORDS_OF_LIMITS <= LOG_RECORDS_OF_A_PROGRAM)
 
 // An exception of this table: one program of the boot image that gets
 // another largest budget, or another limit of processor time. A part that
@@ -79,29 +66,19 @@ budget_exceptions := [?]Budget_Exception {
 	{name = "limits", processor = 1_500_000},
 }
 
-// One program of the boot image that gets other log records of each second
-// than LOG_RECORDS_OF_A_PROGRAM: its children, and the lines that it writes
-// fast.
+// One program of the boot image that gets fewer log records of each second
+// than LOG_RECORDS_OF_A_PROGRAM.
 Log_Records_Exception :: struct {
 	name:        string,
 	log_records: u64,
 }
 
-// Each row is in LOG_RECORDS_OF_THE_EXCEPTIONS, and the compiler checks
-// their count: the sum of every part fits op.LOG_RECORDS_OF_THE_MACHINE.
+// Each row is a named constant at most LOG_RECORDS_OF_A_PROGRAM, checked by
+// the compiler above.
 @(rodata)
 log_records_exceptions := [?]Log_Records_Exception {
 	{"limits", LOG_RECORDS_OF_LIMITS},
-	{"log_reader", LOG_RECORDS_OF_LOG_READER},
-	{"console", LOG_RECORDS_OF_CONSOLE},
-	{"compositor", LOG_RECORDS_OF_COMPOSITOR},
-	{"inspect", LOG_RECORDS_OF_INSPECT},
-	{"rings", LOG_RECORDS_OF_RINGS},
-	{"locks", LOG_RECORDS_OF_LOCKS},
-	{"frames", LOG_RECORDS_OF_FRAMES},
-	{"imports", LOG_RECORDS_OF_IMPORTS},
 }
-#assert(len(log_records_exceptions) == LOG_RECORD_EXCEPTIONS)
 
 // budget_exception_of gives the exception of a program of the boot image,
 // by its name. A disk program never asks: its name gives nothing.

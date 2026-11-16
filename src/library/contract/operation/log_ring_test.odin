@@ -128,16 +128,6 @@ the_places_of_an_own_log_ring :: proc(t: ^testing.T) {
 	testing.expect_value(t, wrap_offset, 0)
 }
 
-// The rate that the drain of the serial port needs: each record of the
-// machine and of the kernel with its longest line, and two seconds back to
-// back fit the whole log.
-@(test)
-the_records_of_a_second_fit_the_whole_log :: proc(t: ^testing.T) {
-	testing.expect_value(t, LOG_SERIAL_BYTES_OF_A_SECOND, (LOG_RECORDS_OF_THE_MACHINE + LOG_RECORDS_OF_THE_KERNEL) * LOG_SERIAL_LINE_BYTES_MOST)
-	// Two seconds back to back fit the whole log, with the records of the kernel.
-	testing.expect(t, 2 * (LOG_RECORDS_OF_THE_MACHINE + LOG_RECORDS_OF_THE_KERNEL) < LOG_RECORD_CAPACITY)
-}
-
 // The head of a line of the serial port: the name and the channel of a
 // program in brackets, the name alone with no channel, nothing for the
 // kernel and for a record that continues a line. A name and a channel that

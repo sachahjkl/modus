@@ -372,6 +372,11 @@ Program :: struct {
 	// before it in the slot. 64 bits: the window of the own log ring
 	// (op.own_log_window) needs the count, not its low bits.
 	log_records_written:  u64,
+	// The Log operations of this program that its log limit refused since
+	// its last accepted one. Program lock (Log runs under it); the cleanup
+	// reads it after the threads ended, and writes it on the log when it is
+	// not 0, so a refusal that no later line said is not silent.
+	log_lines_refused: u64,
 	// The frames of the own log ring of this program (op.OWN_LOG_PAGES),
 	// which its budget paid: a copy of each record of the program, which
 	// only its own records push out (src/md/features/own_log_ring.md).
@@ -1832,6 +1837,13 @@ program_cleanup :: proc "contextless" (index: u32) {
 		if thread.program == index && thread.state == .Stopped && !thread.finished {
 			thread_finish(u32(slot + 1), thread.serial)
 		}
+	}
+	// The lines that its log limit refused and that no later line of the
+	// program said: no thread of it runs a Log now. The control lock comes
+	// before the log lock.
+	if refused := program.log_lines_refused; refused != 0 {
+		program.log_lines_refused = 0
+		log("kernel: ", Module_Name{program_name(program)}, ": ", refused, " lines were refused by its log limit, the last ones before its stop")
 	}
 	taken := program_lock(index)
 	program.thread_count = 0

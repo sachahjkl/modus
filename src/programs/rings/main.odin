@@ -112,7 +112,7 @@ node_start :: proc "contextless" (index: int) -> bool {
 	values[relay.VALUE_WORK_TIME] = work_times[index]
 	name := [?]u8{'n', 'o', 'd', 'e', ' ', u8('1' + index)}
 	status: system.Status
-	node.program, status = system.program_start(system.image_find(image, "node"), string(name[:]), grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 1, processor = 200_000, log_records = system.LOG_RECORDS_OF_A_LINE}, nil, &prepared)
+	node.program, status = system.program_start(system.image_find(image, "node"), string(name[:]), grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 1, processor = 200_000, log_records = 100}, nil, &prepared)
 	node.waiting_logged = false
 	return status == .Ok
 }

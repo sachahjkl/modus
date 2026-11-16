@@ -75,8 +75,8 @@ LOAD_ENTRIES_CHECKED :: 65_536 // Kernel entries of each locker that loads the k
 // wake that is only late on a loaded host comes long before it: the bound of
 // a hang.
 LOST_WAIT :: system.TEST_HANG_BOUND_MILLISECONDS
-LOCKER_AMOUNTS :: system.Budget_Amounts{pages = 1024, programs = 1, threads = 1, processor = 1_000_000, log_records = system.LOG_RECORDS_OF_A_LINE}
-CHURN_AMOUNTS :: system.Budget_Amounts{pages = 512, programs = 1, threads = lockers.CHURN_THREADS, processor = 1_000_000, log_records = system.LOG_RECORDS_OF_A_LINE}
+LOCKER_AMOUNTS :: system.Budget_Amounts{pages = 1024, programs = 1, threads = 1, processor = 1_000_000, log_records = 10}
+CHURN_AMOUNTS :: system.Budget_Amounts{pages = 512, programs = 1, threads = lockers.CHURN_THREADS, processor = 1_000_000, log_records = 10}
 CHURN_ROUNDS :: 40
 CHURN_COUNT :: 3 // The programs of one round.
 

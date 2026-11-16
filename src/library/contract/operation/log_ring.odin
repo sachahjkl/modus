@@ -89,16 +89,6 @@ LOG_NAME_BYTES :: 32
 // The most bytes that one record puts on the serial port: the head, its
 // text and the end of the line.
 LOG_SERIAL_LINE_BYTES_MOST :: LOG_LINE_HEAD_CAPACITY + LOG_TEXT_CAPACITY + 2
-// The bytes in each second that the drain of the serial port must keep, so
-// that the serial port loses no line: each record of the machine and of the
-// kernel with its longest line.
-LOG_SERIAL_BYTES_OF_A_SECOND :: (LOG_RECORDS_OF_THE_MACHINE + LOG_RECORDS_OF_THE_KERNEL) * LOG_SERIAL_LINE_BYTES_MOST
-
-// The bytes of a character of UTF-8 at most, less one: the most bytes that
-// the cut of a record after a whole character leaves for the next record.
-// So each record of a text but the last holds at least LOG_TEXT_CAPACITY
-// less these bytes.
-LOG_CHARACTER_TAIL_MOST :: 3
 
 // log_line_head writes into `head` the head of the line of a record on the
 // serial port, and gives its bytes: `[name:channel] ` for a record of a

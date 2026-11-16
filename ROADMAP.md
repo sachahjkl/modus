@@ -12,6 +12,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **A serial port that keeps every line of a flood.** A principal who debugs a flood of log lines sees every line on the serial port, and not a count of the lines that it lost. [Design](src/md/features/log_side_channels.md)
 - **The release image started on a real machine.** The image starts from a USB key on the UEFI firmware of a real machine, with the certificate of the publisher enrolled and Secure Boot on, and the machine key sealed by its TPM. Today the image starts in the machine test only, on the firmware of QEMU. [Design](src/md/infrastructure/release_image.md)
 - **The screen shows each frame of the compositor whole.** The compositor puts a frame on the screen in one step, by a page flip or at the vertical blank, so a window that changes many times a second never shows a cut between two of its pictures. [Design](src/md/infrastructure/whole_frame.md)
 - **An outside module imports another outside module.** The import of a module of another project names a module of the same project, and not only a module of the system. A developer then writes a library module and the programs that import it outside the repository. [Design](src/md/infrastructure/third_party_module.md)

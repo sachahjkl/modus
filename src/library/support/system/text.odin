@@ -148,12 +148,6 @@ log_send :: proc "contextless" (handle: Handle, text: []u8, runs: []value_kinds.
 	log_call(handle, &area[0], count, level, packed, run_count)
 }
 
-// The records of the longest line that log_in gives the kernel in one call.
-// A program that writes needs at least this many log records of each
-// second; a starter gives a child no fewer.
-LOG_RECORDS_OF_A_LINE :: (LOG_PART_SIZE + op.LOG_TEXT_CAPACITY - op.LOG_CHARACTER_TAIL_MOST - 1) / (op.LOG_TEXT_CAPACITY - op.LOG_CHARACTER_TAIL_MOST)
-#assert(LOG_RECORDS_OF_A_LINE == 4)
-
 // The lines of this program that the kernel refused for its log limit, and
 // that no note has said yet: one count for each thread of the program.
 log_lines_refused: u64
