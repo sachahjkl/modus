@@ -9,7 +9,7 @@ The form of the file and each rule of its check are in [`docs/TOOLS.md`](../../.
 ## Constraints
 
 - Plain Markdown: no front matter, no metadata field, no HTML. The file must read well in a terminal and on a forge.
-- A fixed shape: `# Roadmap`, then `## Now`, `## Next`, `## Later`. Each section is a list.
+- A fixed shape: `# Roadmap`, then `## Now`, `## Next`, `## Later`, then an optional `## Maybe`. Each section is a list.
 - An entry says what the work gives the user, in one or two sentences after a short bold summary. It does not say how the code changes.
 - No date. A planned date that passed is a false sentence that nothing corrects.
 - No name of a person. Git keeps who decided what.
@@ -24,6 +24,7 @@ The form of the file and each rule of its check are in [`docs/TOOLS.md`](../../.
 - **The summary is the identity of an entry.** Its slug is the id of the card on the page and the key of the comparison with the changelog. Two entries with one slug are refused.
 - **A sentence ends at `.`, `?` or `!` outside a code span, before a space or the end.** The rule is short, and it is exact for the controlled language of the project. It counts `0.5` and a code span with a period correctly.
 - **One reader for the tool and the site.** The parser is pure and has host tests. The reader of the file adds the test that each design file exists. The site calls the same reader and stops on any problem.
+- **The section Maybe is optional and last.** It holds what may be done one day and is not decided. Its entries have the form of the others, and each says the ways open and what each waits for: a host, a machine, an option of QEMU, a release of a dependency, a decision. It is optional because a project can have no such work; it is last because it is not a step of the line of time. On the page it comes under the three columns, at the full width, with the dim color of Later.
 - **The page is three columns from 960 pixels, one column under.** The sections are one line of time, read from the left to the right. The cards are the cards of the site. The accent of a section is a color that the site already gives a meaning: the color of a program for what is in work, the color of the kernel for what is decided, the dim color for what has no order.
 
 ## The rule "remove the entry with the fragment"
@@ -41,6 +42,8 @@ The check reads the fragments and the releases, because a fragment becomes an en
 - **Dates or quarters.** See the constraint on dates.
 - **The plans in the working record of the steps, or on the status page.** That record holds the past, and the status page reports what is built. One place for the plans means that no other file lists work to come.
 - **Three groups one under the other at every width.** A wide window has room for the three side by side, and the longest section would start far below the first screen.
+- **The work that waits on something outside the project, in Later.** Later is work that is wanted and that the project can do now. An entry that waits for a host, a machine or a release of another project is not that, and a reader of Later would take it for work that can start.
+- **Maybe as a fourth column.** It is not a step of the line of time, and four columns of a window of 960 pixels are too narrow.
 - **A feed.** An entry is not an event with a date, and it leaves the file when its work is done.
 - **The site applies the changelog rule.** That rule belongs to a commit, not to a page. A site that is built between two commits must not fail for it.
 
@@ -56,6 +59,6 @@ The check reads the fragments and the releases, because a fragment becomes an en
 
 ## State
 
-Built: the file, the command `modustool roadmap check` with its host tests, the page, its line in the menu of the bar ([site_bar.md](site_bar.md)), the line on the page of the releases, on the home and on the status page, and the search entries.
+Built: the file, with the optional section Maybe, the command `modustool roadmap check` with its host tests, the page, its line in the menu of the bar ([site_bar.md](site_bar.md)), the line on the page of the releases, on the home and on the status page, and the search entries.
 
 Left: no command writes or moves an entry.
