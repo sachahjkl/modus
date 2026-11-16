@@ -1,0 +1,3 @@
+type: Added
+
+**A dropped write found before the next commit.** Each commit of the storage service now reads back the blocks that it wrote before it writes its root, then reads back its root. When the disk answered Ok to a write and did not keep it, the service refuses the commit with `Device`, unit `Dropped_Writes`, writes one line, and goes on at once from the commit before it, with no restart: the program loses that one commit, never the state of an object, and no root of a refused commit reaches the disk. The erase of versions reads back its second root and its zeros too, and counts as zeroed only the blocks that read back as zeros. `storage.stores()` gives the commits refused, the blocks read back and the time of those reads as a measure.

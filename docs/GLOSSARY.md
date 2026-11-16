@@ -4145,6 +4145,18 @@ The design: `docs/STORAGE.md`, "3.3 The commit and the open".
 
 Do not use: transaction (for this), save, sync.
 
+### Commit read back
+
+The commit read back is the step of each commit in which the storage service reads back from the device each block that the commit wrote, before its root, and then its root, and compares the bytes with the bytes that it wrote.
+
+It finds a dropped write while the root before the commit is still whole, before the next commit can write over the blocks that this root names. If the bytes differ, the service refuses the commit (`Device`, unit `Dropped_Writes`), keeps the state of the root before, and writes one line; the objects read as they were before the commit, with no restart. Because the blocks are read before the root, a commit with a dropped block never has a root on the disk. It costs one read for each block that the commit wrote and one for its root; `stores()` gives the commits refused, the blocks read back and their time as a measure. The erase of versions uses the read back of its commit, and reads back its second root and its zeros too.
+
+It is not a check of the medium: a device that answers the read from the cache that lost the write passes it, and the check of the open at the next start is the guard for that. It is not the check of a block at a read either: it compares all the bytes with the bytes that the commit wrote.
+
+The design: `src/md/features/dropped_write.md`.
+
+Do not use: write check, readback.
+
 ### Generation
 
 A generation is the number of a commit: each commit has the generation of the commit before it plus 1, on the whole disk.
@@ -4199,7 +4211,7 @@ Do not use: corrupt file, bad sector.
 
 A dropped write is a write that the disk answers with Ok and does not keep.
 
-The device reports no error, so the storage service learns of a dropped write only at the next read of the block: its bytes do not have their check. At the start, the open then refuses the newest commit and uses the root before it, when that root names no wrong block: the objects read as they were at the commit before, and the log has the line "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used". A commit after the dropped one names the same wrong block, so both roots are then damaged and the object reads `Damaged`. The test device of the modus tool drops the write of a block that starts with a marker text (`modustool test power`).
+The device reports no error, so the storage service learns of a dropped write only at a read of the block. The commit read back of the commit reads it first: the service then refuses the commit, keeps the state of the root before, and the objects read as they were at the commit before, with no restart. After a loss of power before the read back, the open refuses the newest commit and uses the root before it, when that root names no wrong block, with the line "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used". A device that answers the read back from the cache that lost the write hides the drop: a commit after it names the same wrong block, so both roots are then damaged and the object reads `Damaged`. The test device of the modus tool drops the write of a block that starts with a marker text (`modustool test power`).
 
 A dropped write is not a loss of power: the machine runs on, and the write before and after it reach the disk. It is not a torn write either: no part of the block reaches the disk.
 
