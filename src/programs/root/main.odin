@@ -101,6 +101,7 @@ import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
 import "modus:contract/frame"
+import "modus:contract/log_scope"
 import "modus:support/pci"
 import "modus:support/principals"
 import "modus:support/disk_program"
@@ -173,7 +174,13 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "pointers":
 		return {.Image} // It reads the pointer themes in the resource table of the boot image.
 	case "log":
-		return {.Log_Records, .Serve} // It serves records() to a caller that acts for the principal.
+		return {.Log_Records, .Serve} // It serves records(): the whole log to a caller that acts for the principal, its own records to each other caller.
+	case "log_reader":
+		// The test of the own records: a connection to the log service and
+		// to no other service (callable_of), with no grant to act for the
+		// principal, and the boot image for the description of the exports
+		// of that service (src/md/features/log_reader_scope.md).
+		return {.Connect, .Image}
 	case "boot":
 		return {.Inspect, .Image} // It shows the modules of the boot image.
 	case "rings":
@@ -299,6 +306,8 @@ callable_of :: proc "contextless" (name: string) -> []string {
 		return tables_callable[:]
 	case "debugger_window":
 		return debugger_window_callable[:]
+	case "log_reader":
+		return log_reader_callable[:]
 	}
 	return nil
 }
@@ -309,6 +318,8 @@ remote_callable := [?]string{"compositor", "date", "debugger", "inspect", "log",
 tables_callable := [?]string{"sample"}
 @(rodata)
 debugger_window_callable := [?]string{"debugger"}
+@(rodata)
+log_reader_callable := [?]string{"log"}
 
 // The values of the context of the compositor that name its own file: 0 to
 // 3 are the screen.
@@ -393,6 +404,14 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	if caller == &debug_store_reader {
 		return isolated.caller_grant_make(disk_program.STORE_BLOCKS_LIMIT, caller.principal, false) | isolated.CALLER_READS_ONLY
 	}
+	// The log service: the own records of the caller, named by its program
+	// slot and its program serial; with the grant to act for the principal,
+	// the whole log (src/md/features/log_reader_scope.md). A disk program
+	// never acts for a principal.
+	if system.name_of(service.name[:]) == "log" {
+		whole_log := !caller.from_disk && .Acts_For_Principal in grants_of(system.name_of(caller.name[:])) && .Acts_For_Principal not_in caller.revoked
+		return isolated.caller_grant_make(own_records_amount_of(caller), caller.principal, whole_log)
+	}
 	// A disk program: the grants of its start, never the grants of a name,
 	// and never the grant to act for a principal.
 	if caller.from_disk {
@@ -412,6 +431,24 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 		grant |= isolated.CALLER_ERASES_VERSIONS
 	}
 	return grant
+}
+
+// own_records_amount_of gives the amount of the grant of a connection to
+// the log service: the program slot and the program serial of the caller,
+// which the kernel gives for its program handle. A slot that the kernel does
+// not give, or that does not fit, gives 0: the caller then reads no record,
+// never the records of another program.
+own_records_amount_of :: proc "contextless" (caller: ^Started) -> u64 {
+	results, status := system.call(.Program_State, u64(caller.program))
+	if status != .Ok {
+		return 0
+	}
+	amount, ok := log_scope.own_records_amount(results[3], results[4])
+	if !ok {
+		system.log_in("calls", .Warning, "root: the program slot ", results[3], " or the program serial ", results[4], " of ", system.Module_Name{system.name_of(caller.name[:])}, " does not fit the grant of the log service: it reads no record")
+		return 0
+	}
+	return amount
 }
 
 // log_grant gives the grant of the log: each program that this service
@@ -1791,6 +1828,17 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		// to: the root service tells each one that the grant of the
 		// connection changed. A new connection has no grant to act for the
 		// principal either (grant_for).
+		// A connection whose new grant does not reach its service would keep
+		// the grant to act for the principal, and with it the whole log,
+		// while the record of this service says that the grant is revoked.
+		// So each service ring must hold each Grant record before anything
+		// changes; else the revocation is refused and nothing changes. This
+		// service is the one writer of a service ring, so the room cannot
+		// shrink between the check and the sends.
+		if service := grant_room_short(item); service != nil {
+			system.log_in("programs", .Warning, "root: refused the revocation of acts_for_principal of ", system.Module_Name{name}, ": the service ", system.Module_Name{system.name_of(service.name[:])}, " has no room for the new grants; nothing changed")
+			return .No_Slot
+		}
 		item.granted -= {which}
 		item.revoked += {which}
 		count: u64
@@ -2122,7 +2170,9 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		system.close(region_memory)
 		return nil, nil, 0, 0, .No_Slot
 	}
-	if grant & isolated.CALLER_AMOUNT_MASK != 0 {
+	// An amount is a store for the storage service only: for the log
+	// service, it names the program of the caller.
+	if grant & isolated.CALLER_AMOUNT_MASK != 0 && system.name_of(service.name[:]) == "storage" {
 		caller.granted += {history ? system.Root_Grant.History : system.Root_Grant.Store}
 	}
 	free^ = {
@@ -2133,6 +2183,35 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		history = history,
 	}
 	return free, service, ring_memory, region_memory, .Ok
+}
+
+// grant_room_short gives the first service whose service ring cannot hold
+// one Grant record for each connection of a program to it, with the room
+// for one Disconnect of each connection of that service still kept
+// (connection_open keeps it, so that an end of a connection always reaches
+// the service). nil: each ring holds them.
+grant_room_short :: proc "contextless" (item: ^Started) -> ^Started {
+	for &asked in connections {
+		if asked.caller != item {
+			continue
+		}
+		grants: u32
+		connected: u32
+		for &other in connections {
+			if other.caller == nil || other.service != asked.service {
+				continue
+			}
+			connected += 1
+			if other.caller == item {
+				grants += 1
+			}
+		}
+		names := &asked.service.service.commands
+		if ring.capacity(names) - ring.count(names) < grants + connected {
+			return asked.service
+		}
+	}
+	return nil
 }
 
 // disconnect ends a connection: the service unmaps the call ring and the
