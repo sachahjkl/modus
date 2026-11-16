@@ -998,6 +998,9 @@ scenario := [?]Step {
 	// which QEMU takes from the clock of the host. The date must be within a
 	// few seconds of the host.
 	{kind = .Date, text = " UTC, seconds since 1970 ", any_order = true},
+	// The standard VGA of the machine holds two screen pages, and the
+	// compositor flips between them (src/md/infrastructure/whole_frame.md).
+	{kind = .Wait, text = "compositor: two screen pages: each frame reaches the screen whole, by a page flip", any_order = true, fails_on = "compositor: one screen page"},
 	// The measure of the copy and the fill of src/runtime/memory.asm, at the start
 	// of the compositor, before its first frame.
 	{kind = .Wait, text = "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned: ", any_order = true},
@@ -2542,6 +2545,11 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   module     compositor"},
 	{kind = .Type, text = "rows(compositor.windows()) - rows(where(compositor.windows(), \"pictures_drawn_again\", 0))"},
 	{kind = .Wait, text = "[console] 0"},
+	// The screen showed each frame of the compositor whole: the compositor
+	// wrote no frame into the screen page that the display showed. The
+	// line gives the count of the rows of screen() whose count is not 0.
+	{kind = .Type, text = "rows(compositor.screen()) - rows(where(compositor.screen(), \"frames_on_the_shown_page\", 0))"},
+	{kind = .Wait, text = "[console] 0"},
 	{kind = .Type, text = "start(\"nothing\")"},
 	{kind = .Wait, text = "[console] error: root.Start: the argument name names none of the modules"},
 	{kind = .Type, text = "stop(\"compositor\")"},
@@ -3025,9 +3033,18 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface_font: one line of "},
 	{kind = .Wait, text = "interface_font: ok, ", any_order = true},
 	{kind = .Wait, text = "interface_font: each Greek letter of the subset is drawn from the demand cache: ", fails_on = "interface_font: not each Greek letter of the subset"},
+	// Then it asks for letters of the subset with no end: the font service
+	// holds its requests past its budget until the end of the window, says
+	// it once, and answers each request after it (docs/FONTS.md, "13.
+	// Glyphs drawn on demand").
+	{kind = .Wait, text = "glyphs: interface_font passed its budget of ", fails_on = "interface_font: the requests past the budget of this program are not held as they must be: "},
+	{kind = .Wait, text = "interface_font: the requests past the budget of this program wait until the end of its window, and each one is answered: as it must", fails_on = "interface_font: the requests past the budget of this program are not held as they must be: "},
 	{kind = .Shot, text = "interface_font"},
 	{kind = .Close, text = "interface_font"},
-	{kind = .Wait, text = "root: interface_font stopped"},
+	// The stop of a program that passed its budget writes its totals: no
+	// character outside the subset, and no answer lost.
+	{kind = .Wait, text = "root: interface_font stopped", any_order = true},
+	{kind = .Wait, text = "glyphs: interface_font stopped: it asked for 0 characters outside the subset, 0 refused; 0 answers did not fit its ring; it passed its budget in "},
 	// The pointer pictures (docs/POINTERS.md): the shape that the compositor
 	// chooses for what is under the pointer, and the shape that a program
 	// asks for over its own surface. The window of pointers shows each
