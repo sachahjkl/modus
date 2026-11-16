@@ -225,12 +225,12 @@ The engine is the storage service in Odin: about 4 200 lines in `src/programs/st
 Status: Decided.
 
 - **Rule**: A program sends each change of a document to the storage service when the change occurs. The document in storage is always current. The system has no "save" action.
-- **Rule**: The storage service keeps the earlier versions of each object. A program, or the principal through a program, can read an object as it was at an earlier time.
+- **Rule**: The storage service keeps the earlier versions of each object until its retention rule, the limit of the store or the remove of the object ends them; a version whose index or leaf has a wrong check is dropped at the next commit of its object. A program, or the principal through a program, can read an object as it was at an earlier time. One more end exists: the root service gives the grant to erase versions only to a program that keeps a secret that an earlier version must not keep (today `unlock`), and that program ends the versions of the objects of its own store and has their blocks written with zeros.
 - **Guarantee**: A document is never lost and never half written. A power loss or a program failure loses at most the change that was in progress.
 - **Interface that this requires from storage**: "apply this change atomically" and "give me this object at time T". Not "replace the whole object".
-- **Why it is cheap**: A copy-on-write store writes new blocks and keeps the old ones. The earlier versions exist already. The system exposes them and does not discard them.
+- **Why it is cheap**: A copy-on-write store writes new blocks and keeps the old ones. The earlier versions exist already. The system exposes them, and discards them only by the ends that the rule above names.
 - **Result**: Protection against lost work and a history are supplied one time, by the system, to all programs. A program writes no code for them.
-- **Cost**: Disk space. A retention rule deletes old versions, for example: keep all versions for one day, then one per hour, then one per day.
+- **Cost**: Disk space. A retention rule deletes old versions, for example: keep all versions for one day, then one per hour, then one per day; the limit of a store thins the oldest. A program with the grant to erase versions ends the versions of a secret, and the history of that object is then gone (`src/md/features/version_erase.md`).
 - **Open**: who sets the retention rule (the service applies one fixed rule: each version for 10 minutes, then one an hour for a day, then one a day). How a program groups small changes into one step that the principal can undo. A later option above this model is a program whose full state returns after a restart.
 
 ## 10. One code module

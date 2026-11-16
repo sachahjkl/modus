@@ -81,6 +81,9 @@
 //   key of a disk grant table.
 // - **Tpm**: the ring and the region of the TPM service, when the system is
 //   measured into a TPM: Seal and Unseal only (modus:contract/tpm_service).
+// - **Versions_Erase**: the storage service lets it end the versions of
+//   the objects of its own store, with zeros over their blocks
+//   ([erase_versions](storage.erase_versions)). No other program has it.
 //
 // **What a reader sees**: a window with the name of the principal and the
 // passphrase as dots; Enter tries it, Backspace removes one byte, Escape
@@ -248,6 +251,30 @@ erase :: proc "contextless" (bytes: []u8) {
 
 the_name :: proc "contextless" () -> string {
 	return string(name[:name_length])
+}
+
+// object_versions_erase ends the versions of an object of the store of
+// unlock, and the store writes zeros over their blocks. A version of the
+// file of a principal opens with the passphrase or the recovery key from
+// before a change, and a version of the record of the machine key with the
+// seal from before a recovery (src/md/features/version_erase.md). Only
+// unlock holds the grant Versions_Erase for it. An object with no version
+// changes nothing, so each unlock asks again once the current file or
+// record opened: a stop between a write and its erase is repaired then.
+object_versions_erase :: proc "contextless" (object: string) {
+	error: errors.Error_Record
+	measure, status := storage.erase_versions(&client, storage.ROOT, object, &error)
+	switch {
+	case status != .Ok:
+		text: [240]u8
+		writer := system.Writer{buffer = text[:]}
+		if status == .Failed {
+			storage.error_text(&writer, &client, &error)
+		}
+		system.log("unlock: the store did not erase the versions of the object \"", object, "\": status ", u64(status), " ", system.written(&writer), "; the next unlock tries again")
+	case measure.versions != 0 || measure.damaged != 0:
+		system.log("unlock: the versions of the object \"", object, "\" are erased: ", u64(measure.versions), " ended, ", u64(measure.zeroed), " blocks written with zeros, ", u64(measure.kept), " blocks kept that another state names, ", u64(measure.damaged), " damaged parts with no zeros")
+	}
 }
 
 // root_command sends a command of the principals to the root service and
@@ -507,6 +534,12 @@ passphrase_try :: proc "contextless" () {
 // MACHINE_KEY_OPENED or MACHINE_KEY_NEW: the root service writes over a
 // table that does not verify only under a key of a new passphrase.
 machine_key_give :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8, origin: u64) -> bool {
+	// The current record gave the machine key: an erase that a stop missed
+	// is done now, as for the file of a principal. A new key opened no
+	// record.
+	if origin == system.MACHINE_KEY_OPENED {
+		object_versions_erase(principals.MACHINE_OBJECT)
+	}
 	table_key := disk_program.table_key_of_machine_key(machine_key)
 	values := transmute([4]u64)table_key
 	defer erase(table_key[:])
@@ -939,6 +972,9 @@ machine_reseal :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE
 		return
 	}
 	system.log("unlock: the machine key is sealed again to PCR 7 and PCR 11 of the system that runs: its next start needs no recovery key")
+	// The record of before holds a seal to the system that the TPM refused:
+	// with it, a start of that older system would open the machine key.
+	object_versions_erase(principals.MACHINE_OBJECT)
 }
 
 // recovery_try opens the copy of the machine key with the recovery key
@@ -1229,7 +1265,8 @@ recovery_key_commit :: proc "contextless" () {
 	switch principal_file_write(renewed_recovery_bytes[:]) {
 	case .Kept:
 		principal_tpm_file, principal_tpm_file_bytes = renewed_recovery_file, renewed_recovery_bytes
-		system.log("unlock: the new recovery key of principal ", number, " \"", the_name(), "\" is kept: a file written from now opens with it only; the store keeps the file from before as a version on this disk, and the old recovery key still opens that version")
+		system.log("unlock: the new recovery key of principal ", number, " \"", the_name(), "\" is kept: a file written from now opens with it only")
+		object_versions_erase(principals.FILE_OBJECT)
 		change_end(.Recovery_Key_Changed)
 	case .Not_Kept:
 		system.log("unlock: the store did not keep the new recovery key of principal ", number, ": the recovery key before it stays the key of the file")
@@ -1260,7 +1297,9 @@ passphrase_change_seal :: proc "contextless" () {
 		if outcome == .Kept {
 			principal_tpm_file, principal_tpm_file_bytes = renewed, renewed_bytes
 		}
-		passphrase_change_report(outcome, "the TPM seals its keys to PCR 7 and PCR 11 and to the new passphrase")
+		// The new file keeps the copy under the recovery key: a fault of the
+		// new seal leaves that way back, so the versions can go.
+		passphrase_change_report(outcome, "the TPM seals its keys to PCR 7 and PCR 11 and to the new passphrase", true)
 	case .Passphrase:
 		renewed := file
 		renewed_bytes: [principals.FILE_SIZE]u8
@@ -1277,10 +1316,21 @@ passphrase_change_seal :: proc "contextless" () {
 			return
 		}
 		outcome := principal_file_write(renewed_bytes[:])
+		opens := false
 		if outcome == .Kept {
 			file, file_bytes = renewed, renewed_bytes
+			// This form has no copy under a recovery key: the version before
+			// is the one way back to the keys if the new file does not open.
+			// So the new file is opened with the new passphrase, still typed,
+			// before its versions go: one more derivation.
+			reopened: [principals.SECRET_KEYS_SIZE]u8
+			opens = principal_keys_open(&reopened) == .Opened && reopened == opened_secrets
+			erase(reopened[:])
+			if !opens {
+				system.log("unlock: the new file of principal ", number, " does not open with the new passphrase: its versions are kept, and the old passphrase opens the version before it")
+			}
 		}
-		passphrase_change_report(outcome, "its keys are sealed under the new passphrase alone")
+		passphrase_change_report(outcome, "its keys are sealed under the new passphrase alone", opens)
 	case .Unknown:
 		change_end(.Seal_Failed)
 	}
@@ -1288,10 +1338,15 @@ passphrase_change_seal :: proc "contextless" () {
 
 // passphrase_change_report writes the end of a change of the passphrase on
 // the log, and shows it in the window. how says how the keys are sealed.
-passphrase_change_report :: proc "contextless" (outcome: Write_Outcome, how: string) {
+// erases: the new file has a way back to the keys besides its versions, or
+// it opened with the new passphrase, so its versions can go.
+passphrase_change_report :: proc "contextless" (outcome: Write_Outcome, how: string, erases: bool) {
 	switch outcome {
 	case .Kept:
-		system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" is changed: ", how, "; the store keeps the file from before as a version on this disk, and the old passphrase still opens that version")
+		system.log("unlock: the passphrase of principal ", number, " \"", the_name(), "\" is changed: ", how)
+		if erases {
+			object_versions_erase(principals.FILE_OBJECT)
+		}
 		change_end(.Passphrase_Changed)
 	case .Not_Kept:
 		system.log("unlock: the passphrase of principal ", number, " does not change: the store did not keep the new file")
@@ -1405,6 +1460,7 @@ principal_reseal :: proc "contextless" () {
 		} else {
 			principal_tpm_file, principal_tpm_file_bytes = renewed, renewed_bytes
 			system.log("unlock: the keys of principal ", number, " \"", the_name(), "\" are sealed again to PCR 7 and PCR 11 of the system that runs and to the new passphrase: its next unlock needs no recovery key")
+			object_versions_erase(principals.FILE_OBJECT)
 		}
 	}
 	session_start(&opened_secrets, system.PRINCIPAL_KEY_OPENED)
@@ -1466,6 +1522,14 @@ machine_record_read :: proc "contextless" () -> Record_State {
 // PRINCIPAL_KEY_OPENED or PRINCIPAL_KEY_NEW: the root service writes over a
 // table that does not verify only under the key of a new principal.
 session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, origin: u64) {
+	// The current file opened the keys: a version of it is no longer the
+	// only way back to keys that open, so an erase that a stop missed is
+	// done now (src/md/features/version_erase.md). A new principal opened
+	// nothing: its write can replace a file that never decoded, whose
+	// version is then the one way back to its keys.
+	if origin == system.PRINCIPAL_KEY_OPENED {
+		object_versions_erase(principals.FILE_OBJECT)
+	}
 	unlock_key: [disk_program.KEY_SIZE]u8
 	copy(unlock_key[:], secrets^[principals.SECRET_KEYS_SIZE - disk_program.KEY_SIZE:])
 	table_key := disk_program.table_key_of_principal_key(&unlock_key)
@@ -1809,7 +1873,10 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 //   a machine passphrase it asks for the machine passphrase first. With a
 //   record sealed by the TPM it asks the TPM service for the key, and asks
 //   for the recovery key only when the TPM refuses; after a recovery it
-//   seals the key again to the system that runs. Enter with nothing skips
+//   seals the key again to the system that runs. When the file or the
+//   record opened, and after each write of a new secret, it asks the
+//   store to erase their versions, so an old secret opens no version of
+//   them (src/md/features/version_erase.md). Enter with nothing skips
 //   either. With no record to ask for and no file it writes "unlock: no
 //   named principal: the machine runs as principal 0, with no unlock" and
 //   stops with the code 0.
