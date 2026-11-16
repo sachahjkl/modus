@@ -796,7 +796,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `ranges` | The machines of the ranges of storage |
 | `disk_programs` | The six machines of the disk programs: a program that the boot image does not hold starts from the store `programs`, gets the store of its nickname, and finds its data after a restart; the module file service stores the same file from the network and lists the hash of the bytes of each file; a program calls a library module that the root service found in the store by the hash of its bytes, and is refused when the file of the library has other bytes; with the machine passphrase, its grant survives the restart, and a table that another key signed gives no grant and is not written over; a grant that a console of the session of the named principal alice gives survives the restart and her unlock ("The disk of the disk programs") |
 | `power` | The loss of power: of the storage, of the settings, of the ranges |
-| `trusted_boot` | The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot; then the release image: the volume of Secure Boot packaged as the files of a release, verified, decompressed and started from its GPT disk |
+| `trusted_boot` | The volumes of the trusted boot: the five refusals of the boot program, the two machines of the measure with a software TPM, and the three machines of Secure Boot; then the release image: the volume of Secure Boot packaged as the files of a release, verified, decompressed and started from its GPT disk; then the six machines of the TPM floors, with one software TPM: a newer system raises the floors, swtpm alone plants an index with an authorization value and a foreign index, which the next start removes, the older system and the older key are then refused, and with Secure Boot off each floor is foreign |
 
 A part builds only the boot volumes that its machines boot ("The incremental build", "The volumes of a command"). Each part boots the main boot volume, `build/boot_volume.img`, with these differences:
 
@@ -804,7 +804,7 @@ A part builds only the boot volumes that its machines boot ("The incremental bui
 |---|---|
 | `shortage` | The volume of the shortage of frames only |
 | `return_fault` | The main volume, and the volume of the kernel with one check skipped |
-| `trusted_boot` | The main volume, the five volumes that the boot program must refuse, the volume of the other system, and the two volumes of Secure Boot with the variable store |
+| `trusted_boot` | The main volume, the five volumes that the boot program must refuse, the volume of the other system, the two volumes of Secure Boot with the variable store, and the two volumes of the TPM floors (the newer system and the newer key) |
 | Each other part | The main volume only |
 
 The persistence and the self tests of the kernel have no part of their own: only the whole run starts them. An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.

@@ -1,6 +1,7 @@
 package root
 
 import "modus:contract/blake3"
+import info "modus:contract/boot_info"
 import op "modus:contract/operation"
 import "modus:contract/system_description"
 import "modus:support/system"
@@ -76,5 +77,16 @@ trust_check :: proc "contextless" () {
 		system.log_in("programs", .Warning, "root: the system description is measured, but the read of PCR ", trust.measure_register, " failed: status ", system.Hex(trust.measure_status))
 	case .None:
 		system.log_in("programs", .Warning, "root: the boot program did not try the measure")
+	}
+	// The TPM floors that the boot program compared
+	// (src/md/features/rollback_floors.md).
+	system.log("root: the TPM floors before this start: the key floor ", trust.key_floor, " for the key number ", trust.key_number, ", the version floor of that key number ", trust.version_floor, " for the security version ", trust.security_version)
+	for state in ([2]info.Floor_State{trust.key_floor_state, trust.version_floor_state}) {
+		#partial switch state {
+		case .Foreign, .Never_Written, .Read_Refused:
+			system.log_in("programs", .Warning, "root: an index of a TPM floor was not a floor that the boot program could read: another system defined or planted it, or PCR 7 changed; the boot program took it as 0, and replaced it with Secure Boot on")
+		case .Not_Read:
+			system.log_in("programs", .Warning, "root: the boot program could not read a TPM floor: status ", system.Hex(trust.floor_status), "; it took it as 0")
+		}
 	}
 }
