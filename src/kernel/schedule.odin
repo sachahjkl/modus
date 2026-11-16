@@ -502,6 +502,12 @@ schedule :: proc "contextless" () -> ! {
 		if cpu.breakpoints_loaded {
 			breakpoints_unload(cpu)
 		}
+		// The counters of the thread leave the processor with it, before
+		// the release of the run lock below orders its totals before a take
+		// on another processor (thread_counters.odin).
+		if thread.counting {
+			thread_counters_unload(thread)
+		}
 		program := thread.program
 		home := run_lock(thread)
 		// A thread whose placement lost this processor moves to a
@@ -598,6 +604,11 @@ schedule :: proc "contextless" () -> ! {
 			// this test and no write of a debug register.
 			if thread.has_breakpoints {
 				breakpoints_load(cpu, thread)
+			}
+			// One more flag of the hot line: a thread that does not count
+			// pays this test and no write of a counter register.
+			if thread.counting {
+				thread_counters_load()
 			}
 			// The event point of a switch of threads (events.odin). The
 			// thread is the current thread of this processor now.

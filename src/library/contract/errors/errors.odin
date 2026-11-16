@@ -118,7 +118,8 @@ Kind :: enum i64 {
 	// The storage service gives it when a block of an object or of a tree does not match its hash. With the unit
 	// `Counts`: the counts of the blocks are not trusted after a fault of the service.
 	Device            = 19, // A device reported an error. found: the status of the device.
-	// The storage service gives it when the block service failed a read or a write.
+	// The storage service gives it when the block service failed a read or a write. With the unit
+	// `Dropped_Writes`, the device answered Ok and did not keep a write: the read back of the commit found it.
 	No_Grant          = 20, // The caller has no grant for this call: the unit says which grant.
 	// Given by a service: the storage service (`Store`, `Changes`), the root service (`Root_Commands`,
 	// `Acts_For_Principal`), the compositor (`Display`), the terminal (`Terminal`), the network service
@@ -233,6 +234,7 @@ Unit :: enum i64 {
 	Source_Places = 49, // Absent: the procedures and the source lines of the debug objects; the place of the argument names none.
 	Stop_Reports = 50, // Absent: the stop reports of disk programs that the root service keeps; no disk program of the principal of the caller with this nickname stopped on a fault, or newer reports took its place (src/md/features/debug_object_of_a_disk_program.md).
 	Versions_Erase = 51, // No_Grant: the erase of the versions of an object (the start grant Versions_Erase, docs/STORAGE.md, "4.8 The erase of versions").
+	Dropped_Writes = 52, // Device: the blocks of a commit that the disk answered with Ok and did not keep; found: their count. The storage service refused the commit (docs/STORAGE.md, "3.3 The commit and the open").
 }
 
 // How a handle ended (Handle_Ended).
@@ -345,6 +347,7 @@ UNIT_NAMES := [Unit]string {
 	.Source_Places = "procedures and source lines of the debug objects",
 	.Stop_Reports = "stop reports of disk programs that the root service keeps",
 	.Versions_Erase = "the erase of the versions of an object",
+	.Dropped_Writes = "blocks that the disk did not keep",
 }
 
 // A ring completion (src/library/contract/ring) has the status of the contract of its

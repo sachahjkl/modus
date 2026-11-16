@@ -49,14 +49,14 @@ log_next :: proc "contextless" (reader: ^Log_Reader) -> (record: Log_Record, los
 		if reader.next == written {
 			return record, lost, false
 		}
-		if written - reader.next > op.LOG_RECORD_CAPACITY {
-			late := written - reader.next - op.LOG_RECORD_CAPACITY
-			lost += late
-			reader.next += late
-		}
+		next, late := op.log_first_kept(reader.next, written)
+		lost += late
+		reader.next = next
 		record = reader.records[reader.next % op.LOG_RECORD_CAPACITY]
-		// The kernel can write over the record during the copy.
-		if intrinsics.atomic_load(&reader.head.written) - reader.next > op.LOG_RECORD_CAPACITY {
+		// The kernel can write over the record during the copy: the fence
+		// keeps each load of the copy before the second load of `written`.
+		intrinsics.atomic_thread_fence(.Acquire)
+		if !op.log_copy_kept(reader.next, intrinsics.atomic_load(&reader.head.written)) {
 			continue
 		}
 		reader.next += 1
