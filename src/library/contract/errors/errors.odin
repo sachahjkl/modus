@@ -173,6 +173,9 @@ Kind :: enum i64 {
 	// asks. A plain draw (`random.fill`) never gives it.
 	Exists            = 39, // The name of the argument names something that exists already, and the call makes a new one. found: 0, or the number from 1 of the row of a table argument that names it.
 	// The storage service gives it for a new tree or object at a name in use.
+	Starter_Module    = 40, // value: the address that the call names; limit: the base of a module record that the starter of the program wrote (op.Module_Writer.Starter); found: its size in bytes.
+	// The kernel gives it with `No_Right` for `Program_Module`, `Memory_Map` and `Memory_Unmap` of a program in
+	// itself over that record: only a holder of its program handle changes it.
 }
 
 // What value, limit and found count.

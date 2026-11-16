@@ -42,11 +42,13 @@ Thread :: struct {
 
 // One module of a program: modules().
 Module :: struct {
-	name: [32]u8, // The name in the boot image, or empty.
-	hash: [64]u8,
-	base: i64,
-	size: i64,
+	name:   [32]u8, // The name in the boot image, or empty.
+	hash:   [64]u8,
+	base:   i64,
+	size:   i64,
+	writer: [8]u8, // starter: the starter wrote the record, and the program cannot change it; program: the program wrote it.
 }
+#assert(size_of(Module) - offset_of(Module, writer) == op.MODULE_WRITER_NAME_CAPACITY)
 
 ERROR_ACTS_FOR_PRINCIPAL :: -1
 ERROR_ABSENT :: -2
@@ -211,12 +213,14 @@ threads :: proc "c" (program: ^string, result: ^[]Thread, error: ^errors.Error_R
 	return i64(count)
 }
 
-// modules gives one row for each module record of the program with this name: the name in the boot image, the hash, the base and the size. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no program has this name).
+// modules gives one row for each module record of the program with this name: the name in the boot image, the hash, the base, the size and the writer. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no program has this name).
 //
 // A program holds one module, its own, until a loader puts more in it: the
 // console after `load`, a program with imports. Each row is one
 // [module record](term:module-record) of the kernel: the identity of the
-// code that the program runs.
+// code that the program runs. A row with the writer `starter` is true: the
+// program cannot change it, nor map other code at its addresses. A row with
+// the writer `program` is what the program says of itself.
 //
 // **Parameter**: `program`, the name of a program that runs, as
 // `programs()` lists it (at most 31 bytes). If two programs have that name,
@@ -227,7 +231,8 @@ threads :: proc "c" (program: ^string, result: ^[]Thread, error: ^errors.Error_R
 //
 // **A row** (`Module`): `name`, the name in the boot image, or empty when
 // no module of the boot image has the hash; `hash`, the BLAKE3 hash in hex;
-// `base` and `size`, its place in the address space.
+// `base` and `size`, its place in the address space; `writer`, `starter`
+// or `program`.
 //
 // **Errors**: `No_Grant` (-1), the caller does not act for the principal;
 // `Absent` (-2), no program has this name.
@@ -258,6 +263,7 @@ modules :: proc "c" (program: ^string, result: ^[]Module, error: ^errors.Error_R
 		for byte in item.hash {
 			system.write_bytes(&writer, {digits[byte >> 4], digits[byte & 15]})
 		}
+		copy(row.writer[:], op.module_writer_name(item.writer))
 	}
 	return i64(count)
 }

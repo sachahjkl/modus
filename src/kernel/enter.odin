@@ -312,7 +312,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if to != program && regions[slot.object].requester != 0 {
 			return .Bad_Operation
 		}
-		address, status := map_region(to, slot.object, v[2], flags, v[4], v[5], holding_of_handle(program, slot))
+		address, status := map_region(to, slot.object, v[2], flags, v[4], v[5], holding_of_handle(program, slot), by_the_program = to == program)
 		results[0] = address
 		return status
 
@@ -327,6 +327,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		for &mapping in to.mappings {
 			if mapping.page_count != 0 && mapping.address == v[1] && mapping.address < op.THREAD_AREA_BASE {
+				// The code of a module of the starter stays: else the
+				// program maps its own code there, under the name of
+				// that module. The refusal changes nothing, so it comes
+				// before the request of the control lock.
+				if to == program && starter_module_meeting(to, mapping.address, mapping.page_count * PAGE_SIZE) != nil {
+					return .No_Right
+				}
 				// The registers of a function behind a conventional bridge can
 				// end the domain of its group: the control lock, as for a close.
 				if regions[mapping.region].bridge_function != 0 && need_control() {
@@ -539,6 +546,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		copy := given^
 		copy.rights &= transmute(op.Rights)u32(v[2])
+		// A program handle that reaches the program that it names loses
+		// Control and Give: else the program gives it to a child, and the
+		// child changes the module records of its starter in its place
+		// (src/md/features/module_record_writer.md).
+		if given.kind == .Program && given.object == index_of_program(to) {
+			copy.rights -= {.Control, .Give}
+		}
 		copy.through = through
 		handle := handle_insert(to, copy)
 		if handle == 0 {
@@ -578,7 +592,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		record: op.Module_Record
 		user_copy(&record, rawptr(uintptr(v[1])), size_of(record))
-		return program_module(to, record)
+		// The writer is the party: a program that holds a handle to itself
+		// is still the program.
+		return program_module(to, record, by_the_program = to == program)
 
 	case .Handle_Close:
 		slot := handle_find(program, v[0], .None) or_return
