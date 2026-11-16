@@ -103,6 +103,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/network",
 	SOURCE_FOLDER_SUPPORT + "/tcp",
 	SOURCE_FOLDER_SUPPORT + "/virtio",
+	SOURCE_FOLDER_SUPPORT + "/bochs_display",
 	SOURCE_FOLDER_SUPPORT + "/web",
 	SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
 	SOURCE_FOLDER_SUPPORT + "/random",
@@ -510,6 +511,24 @@ COMMANDS :: [?]Command {
 	// export that fails.
 	{name = "rule-checks", about = "check that " + OPERATION_SOURCE + " declares the count of kernel operations that " + OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, and that no export of a program or a module gives a negative number with no error record", run = run_rule_checks},
 	{name = "library-imports", about = "check that each import of each source file of " + SOURCE_FOLDER_KERNEL + " and of " + SOURCE_FOLDER_CONTRACT + " names a package of base:, of core: or under " + CONTRACT_IMPORT_START, run = run_library_imports},
+	// Measures how similar the code pieces of the Odin sources are, and
+	// proposes where to factor them. It reads `src/` and `tools/`, gives a
+	// similarity score from 0 to 1 to each pair that it compares, groups
+	// the similar pieces in families with their factoring template, and
+	// ranks the families by the nodes that a factoring saves
+	// (docs/TOOLS.md, "The similarity finder").
+	//
+	// - no argument: the report on the terminal, and the whole report with
+	//   two tables in `build/similarity/`.
+	// - `near <file>:<line>`: the procedures most similar to the one that
+	//   holds the line.
+	// - `pair <file>:<line> <file>:<line>`: the score of two procedures and
+	//   their template.
+	//
+	// It never edits a source and never fails on a similarity: a human or
+	// an agent decides what to factor. A family that is kept on purpose is
+	// a line of `tools/modustool/similarity_kept.txt`.
+	{name = "similarity", about = "the similarity of the code pieces of src/ and tools/: families with their factoring template, ranked by the nodes that a factoring saves, in " + SIMILARITY_OUTPUT_FOLDER + "; `similarity near <file>:<line>`: the procedures most similar to one; `similarity pair <file>:<line> <file>:<line>`: the score of two procedures", run = run_similarity},
 	// Works on the changelog: the fragments of `changelog.d/`, and the releases
 	// of `CHANGELOG.md`.
 	//
@@ -561,6 +580,16 @@ COMMANDS :: [?]Command {
 	// and removed in the commit that ends the work
 	// (docs/TOOLS.md, "The roadmap").
 	{name = "roadmap", about = "check: the planned work of `" + ROADMAP_FILE + "`, in the sections Now, Next, Later and Maybe, for the page of the roadmap of the site", run = run_roadmap},
+	// Works on the fences `byte-layout` of the guides, whose body is the
+	// text form of the byte layout of a record of a format.
+	//
+	// - `write`: writes the body of each fence again from the code: the
+	//   offsets and the sizes from the compiler, the types from the source.
+	// - `check`: checks that each body is that text. `modustool check` runs
+	//   it, and `modustool site` stops on such a fault too.
+	//
+	// The design: (docs/SITE.md, "The byte layouts").
+	{name = "byte-layouts", about = "write | check: the text of each fence `" + BYTE_LAYOUT_FENCE_LANGUAGE + "` of the guides, the byte layout of a record of a format from the code", run = run_byte_layouts},
 	// Writes the site in `build/site/`: the home, the guides, the reference
 	// tables read from the code, the status, the news, the releases, the
 	// roadmap, the index of the search and its script.
@@ -1153,6 +1182,9 @@ run_check :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	if !roadmap_check() {
+		return EXIT_FAILURE
+	}
+	if !byte_layouts_check() {
 		return EXIT_FAILURE
 	}
 	if !reuse_list_check() {

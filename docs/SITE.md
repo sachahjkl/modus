@@ -116,7 +116,7 @@ The renderer (`tools/modustool/site_render.odin`) knows the Markdown that the do
 - ordered items with their own label, as the documents write them (`12.`, `34b.`): a top-level item has the id `<id of the heading of level 2 above it>-<label>`, so that a page can link to a numbered item of a guide;
 - tables with a line of dashes, `\|` for a `|` in a cell;
 - block quotes `>`;
-- fenced code, with or without a language;
+- fenced code, with or without a language; a fence with the language `byte-layout` is the place of byte layouts (see "The byte layouts");
 - code spans, bold, italics (`*words*`: a star with a space after it, or between two letters, is a star), links and pictures.
 
 Links:
@@ -1569,6 +1569,60 @@ Why this form:
 The check of each page (`site_type_cards_problem`): each `popovertarget`, each `data-declaration-card` and each `aria-describedby` names an id of the page, and no two cards of a type or of a declaration have one id.
 
 A code span of a guide, of a news entry or of a source comment that names a type of the contract is a reference to its card, through the declaration index (see "The declarations of the sources").
+
+## The byte layouts
+
+A byte layout (`GLOSSARY.md`) draws one record of a format as the header diagrams of the RFCs do: where each byte is. The code is `tools/modustool/byte_layout.odin`; its host tests are `byte_layout_test.odin`. The design and the refused forms are in `src/md/features/byte_layout.md`.
+
+### The table of sources
+
+`byte_layout_sources` names each layout that a guide can show, by a key: `module.Header`, `module.Table_Entry`, then the record of each table kind of the module format (`byte_layout_table_sources`: `module.Segment`, `module.Import`, `module.Slot`, `module.Export`, `module.Rebases`, `module.Function`, `module.Documentation`, `module.Record`, `module.Field`, `module.Budget_Request`). A table kind with no record of a fixed size states why: the table Strings is bytes. The rebase table is words: its layout is one word of `REBASE_WORD_SIZE` bytes, with the comment of that constant.
+
+The facts of a layout:
+
+- The offset and the size of each field come from the compiler: `type_info_of` of the struct, as the tool imports it from `modus:contract/module`. They are the layout of the struct that the system uses, not a sum of sizes.
+- The type of each field as the source writes it (`[PARAMETER_CAPACITY]u32`), and its comment, come from the parser of Odin, which reads the struct in `src/library/contract/module/format.odin`. The comment is the lines before the field and the comment at the end of its line.
+- The parser and the type information must name the same fields in the same order. The command stops when they do not.
+- A run of bytes that no field uses is a row "padding".
+
+### The fence of a guide
+
+A guide marks the place of layouts with a fenced block. Its opening line is three backticks, the language `byte-layout`, then the keys of the layouts: `byte-layout module.Segment module.Import`. The body of a fence with the key `module.Slot`:
+
+```
+module.Slot, 16 bytes: one record of the table Slots
+offset  size  field          type
+     0     8  memory_offset  u64
+     8     4  import_index   u32
+    12     4  export_index   u32
+```
+
+- The body is the text form of each layout, an empty line between two: a line that names the layout, its size and what it is, then one line for each field with its offset, its size, its name and its type. A reader of the raw Markdown gets the facts with no site.
+- The body must be the text that the code gives. `modustool site` stops on another body, on a key that is not a layout and on a fence with no key. `modustool check` runs `modustool byte-layouts check`, which reads each Markdown file of `docs/`. `modustool byte-layouts write` writes each body again.
+- A fence of layouts starts at the start of its line, not inside a list item.
+- The site writes a diagram for each key in the place of the block.
+
+### The diagram
+
+- A `figure` with the class `byte-layout`. Its caption names the struct as a type reference that opens its type card (see "The types"), then its size and what it is.
+- A grid of 9 columns in a box that scrolls sideways, as the box of a table: the offsets, then the 8 bytes of a row. Each column of a byte is at least 6 em wide. Two rulers on top: the byte of the row (0 to 7), then its bits (0–7 to 56–63).
+- Rows of 8 bytes: each record of the module format is a multiple of 8 bytes, and a 64-bit field is one rectangle.
+- Each field is a rectangle with its name and its size. A field that starts at a row and covers two rows or more is one rectangle of whole rows. Another field has one rectangle for each row that it crosses: the first holds its size, the others say "continued". Padding is a rectangle on the background, in the dim color.
+- The `title` of a rectangle gives the name of the field, its type as the source writes it, its offset, its size and its comment as plain text: a pointer that rests on it shows them.
+- A name breaks after each `_` (`<wbr>`), and inside a word only when one part is wider than its rectangle; the row grows. No text is cut.
+- A rectangle is placed by classes: `byte-column-<n>`, `byte-span-<n>`, `byte-row-<n>` and `byte-rows-<n>`. A page has no style attribute (`site_inline_code_problem`). The style sheet holds the classes of the rows up to the most rows of a layout of the table of sources (21, for `module.Function`).
+- The lines are the outline of each rectangle in the dim color, 1 pixel in a gap of 1 pixel of the grid: two neighbours share one line at every zoom. The rectangles are on the card color. The colors are the tokens of the style sheet, so the diagram follows the light and the dark form.
+
+The id of a diagram is `byte-layout-<key>`, as the rule of the ids gives it (`byte-layout-module-header`).
+
+### The host tests
+
+- `byte_layout_offsets_agree_with_offset_of`: each field of each layout has the offset that `offset_of` gives and the size that `size_of` gives, and each layout has every field of its struct.
+- `byte_layout_rectangles_cover_each_byte_once`: the rectangles of each layout cover each byte of its record once; a struct of the test with padding inside and at its end, and a field that crosses three rows, gives its rows of padding and its pieces.
+- `byte_layout_every_table_kind_has_a_layout`: each table kind has a layout or states why it has none.
+- `byte_layout_text_of_the_header`: the text form of `module.Header`.
+- `byte_layout_guides_hold_the_text_of_the_code`: the fences of the guides hold the text that the code gives.
+- `byte_layout_fence_on_a_page`: a fence becomes a diagram with no style attribute, and a wrong body is a fault.
 
 ## The colors of the code
 

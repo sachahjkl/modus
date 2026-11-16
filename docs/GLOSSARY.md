@@ -2957,6 +2957,8 @@ A device service drives its device by reads and writes of its registers. Device 
 
 The root service makes it with `Device_Create`, the kind `Memory`, a physical address (a multiple of 4096) and a count of pages. This needs the machine handle with the right **Devices**, which only the root service holds. The kernel refuses a range that meets memory that the firmware gave as free or as loaded, so device memory never reaches the memory of a program or of the kernel. The result is a memory handle with **Give**, **Read** and **Write**. The root service reads the base address registers of the device on the bus, makes one device memory object for each of them, and gives each to the device service in its context (the roles `GRANT_BAR + n` of `src/library/support/pci`). A mapping of it uses no cache, because a read of a register has an effect and must reach the device each time.
 
+The kind `Display_Memory` makes the same object over the video memory of a display, which holds its screen pages. Its mapping has the page attribute of the framebuffer of the firmware, not "no cache": a read of a pixel has no effect, and a write of each pixel to the device would make each frame slow. The kernel accepts it only for a range that holds the address of the framebuffer of the firmware, and gives it no requester for the IOMMU.
+
 Device memory is not the memory that a device reads and writes for data: that is ordinary memory made `Contiguous`, such as the data region or the memory of the queues. It pays nothing from a budget, because it is not memory.
 
 The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
@@ -4467,15 +4469,41 @@ It is a rule of the system for every window, and a program writes no code for it
 
 The compositor counts, for each window, the `Present` records that named the picture that it already read: `pictures_drawn_again` in a row of `compositor.windows()`. It is 0 for a program that keeps the rule. The rule does not stop a hostile program, which holds the right to write both pictures: such a program spoils its own window, and no other.
 
+The rule holds for the frames of the compositor too: on a display with two screen pages, the compositor writes the page that the display does not show, then a page flip shows the frame whole (`frames_on_the_shown_page` is 0 in the row of `compositor.screen()`).
+
 The design: `src/md/infrastructure/whole_frame.md`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: tear-free, double buffering, vertical synchronization.
+
+### Screen page
+
+A screen page is one whole screen in the video memory of the display: the display shows one screen page at a time.
+
+The standard VGA of the test machine has 16 MiB of video memory, and a screen of 1024 by 768 pixels takes 3 MiB, so it holds two screen pages. The page 0 is the framebuffer of the firmware. The compositor writes each frame into the page that the display does not show, then a page flip shows it. A screen page holds the frame of two frames before: the compositor keeps, for each page, the rectangles where it differs from its frame in memory, as the window layer does for the two pictures of a surface. On a display with no page flip, the compositor has one screen page, and writes the page that the display shows.
+
+A screen page is not a picture: a picture is in the memory of a surface of a program, and the compositor reads it.
+
+The design: `src/md/infrastructure/whole_frame.md`.
+
+Do not use: back buffer, front buffer, framebuffer (for the page 1).
+
+### Page flip
+
+A page flip is the one write of a display register that makes the display show another screen page.
+
+The compositor writes the first line of the page in the register `Offset_Y` of the display registers of Bochs, then reads it back: a value that differs says that the display refused the page, and the compositor goes back to one screen page with one line on the log. On the standard VGA of QEMU, the flip takes effect when the write returns, so the page that the display showed before is free at once. A real display takes the new page at its next vertical blank, which this form does not wait for. `compositor.screen()` counts the flips in `page_flips`.
+
+A page flip is not a `Present`: a `Present` names the picture of a surface that the compositor reads next; a page flip names the screen page that the display shows.
+
+The design: `src/md/infrastructure/whole_frame.md`.
+
+Do not use: buffer swap, vsync.
 
 ### Compositor
 
 The compositor is the service that owns the display: it combines the surfaces of the programs into the framebuffer and routes the input to the program that has the focus.
 
-The compositor is the one program that writes the screen. The root service gives it the framebuffer, a ring to the input service, and a ring to each program with a surface (`Client_Add`). It draws the background, the bar, each window (a title bar over the surface of its program, with a border), the two menus of the bar, the palette and the pointer. It draws again only the damage rectangles of a frame. It sends each key to the program in front, and each pointer event over a surface to the program of that surface, in the coordinates of the surface.
+The compositor is the one program that writes the screen. The root service gives it the framebuffer, or the two screen pages of the display with its display registers, a ring to the input service, and a ring to each program with a surface (`Client_Add`). It draws the background, the bar, each window (a title bar over the surface of its program, with a border), the two menus of the bar, the palette and the pointer. It draws again only the damage rectangles of a frame, and puts each frame on the screen by a page flip. It sends each key to the program in front, and each pointer event over a surface to the program of that surface, in the coordinates of the surface.
 
 In the first version, it is also the desktop shell: it starts a program from its menus or the palette by the command `Start` to the root service, and it stops a program when its window closes. It serves exports, such as `compositor.pointer()`, which the machine tests read through the remote service.
 
@@ -5339,7 +5367,7 @@ Do not use: proportional font cache.
 
 The font service is the program `glyphs`: it draws the glyphs of the characters past the glyph cache into the demand cache.
 
-It is the only program that reads outlines at run time: the subsets of the interface font and of the two weights of the font of the cells that its module holds. At its start, before it reads a request, it draws each character of the subset of each demand face, so the demand cache holds the same entries whatever the programs draw; a character outside the subset is absent. Then it sets the word `subset_drawn` of the demand cache and wakes the programs that wait on it. It draws a glyph with the renderer of the build, at each scale and each position of the glyph cache of the same font file, so a glyph on demand has the pixels that the build would give it. The root service starts it after the compositor as a part of the system, and gives it the demand cache with Write and a control ring that names the request ring of each program. It answers each request with the generation of the demand cache and the counts of drawn, absent and refused characters. It is not a font file and not a renderer in each program, and a program never waits for it: a character that is not ready draws the replacement glyph.
+It is the only program that reads outlines at run time: the subsets of the interface font and of the two weights of the font of the cells that its module holds. At its start, before it reads a request, it draws each character of the subset of each demand face, so the demand cache holds the same entries whatever the programs draw; a character outside the subset is absent. Then it sets the word `subset_drawn` of the demand cache and wakes the programs that wait on it. It draws a glyph with the renderer of the build, at each scale and each position of the glyph cache of the same font file, so a glyph on demand has the pixels that the build would give it. The root service starts it after the compositor as a part of the system, and gives it the demand cache with Write and a control ring that names the request ring of each program. It answers each request with the generation of the demand cache and the counts of drawn, absent and refused characters, and reads the requests of each program within its budget of requests. It is not a font file and not a renderer in each program, and a program never waits for it: a character that is not ready draws the replacement glyph.
 
 The design: `src/md/features/glyphs_on_demand.md`.
 
@@ -5364,6 +5392,16 @@ The demand cache keeps the glyphs of each face apart, because a glyph on demand 
 The design: `src/md/features/glyphs_on_demand.md`.
 
 Do not use: font slot, font index.
+
+### Budget of requests
+
+A budget of requests is the most requests of one program that the font service reads in one window of time: 32 in each window of 1000 ms.
+
+It bounds the time that one program costs the font service, which the bound of a turn does not: a program that writes its request ring with no end gets its budget, then its requests wait in its ring until the window ends. They are read then, not dropped. The answer of the request that spends the last of a window names the end of the window, each answer gives the count of the windows in which the program passed, and the log has one line for each program at its first pass. Each program has its own budget and its own count, so a hold tells it nothing of the requests of another. A program that asks only for what it draws never meets it. It is not a budget of the kernel, which pays for kernel objects, and not a budget of work of QUIC, which is a token bucket.
+
+The design: `src/md/features/glyphs_on_demand.md`; the guide: `docs/FONTS.md`, "13.2.4 The budget of requests of a program".
+
+Do not use: request quota, rate limit (for this), request budget.
 
 ### Setting
 
@@ -6745,6 +6783,66 @@ The design: `src/md/README.md`, "The rules of this folder"; `docs/TOOLS.md`, "Th
 
 Do not use: design document, specification, RFC, architecture decision record.
 
+### Similarity finder
+
+The similarity finder is the command `modustool similarity`: it measures how similar the code pieces of the Odin sources of the repository are, groups them in similarity families, and proposes where to factor each family.
+
+It reads `src/` and `tools/` with the parser of the standard library of Odin, gives a similarity score for each pair that it compares, and writes a report with its measures and two tables under `build/similarity/`. It ranks the families by the syntax nodes that a factoring saves, and proposes a home that obeys the import rules. A human or an agent decides what to factor: a similarity can be deliberate, and a family that is kept is a line of the kept list. It is not a check: it never fails a build, and it never edits a source.
+
+The design: `src/md/infrastructure/similarity_finder.md`.
+
+Do not use: duplicate finder, clone detector, linter (for this).
+
+### Code piece
+
+A code piece is a procedure, a run of two or more statements of one block, or an expression, that the similarity finder compares with other code pieces.
+
+A code piece is a part of the code that one call can replace, so a factoring of it is a procedure. It has a minimum size in syntax nodes, so that the call costs less than what it replaces. It is not a fragment: a fragment is a file of `changelog.d/`.
+
+The design: `src/md/infrastructure/similarity_finder.md`, "2. The code pieces".
+
+Do not use: fragment, clone (for one piece), snippet.
+
+### Similarity score
+
+The similarity score of two code pieces is a number from 0 to 1: two times the syntax nodes that their factoring template keeps, divided by the sum of their sizes.
+
+It is 1 when the two are equal after the normal form of the similarity finder, and 0 when they share no node. A score of 0.9 says that a tenth of the two code pieces is in the blanks and the statements that only one side has. A score of 1 is not a proof of the same behaviour: the normal form applies only the rules that the syntax proves. `modustool similarity pair` gives the score of any two procedures.
+
+The design: `src/md/infrastructure/similarity_finder.md`, "6. The anti-unification and the similarity score".
+
+Do not use: distance (for this), match percentage.
+
+### Similarity family
+
+A similarity family is a set of two or more code pieces that one factoring template covers, each for at least 70% of its nodes when the members are not equal.
+
+A family has a category: a utility to centralise, a local repetition, a parametric family, similar behaviour, a repeated expression, kept apart by the rules, or a platform variant. Its members are the code pieces, with their file and lines and the arguments of each blank. A family of similar behaviour has a statement in some members only, or a blank that Odin cannot pass as a parameter: no one call replaces it.
+
+The design: `src/md/infrastructure/similarity_finder.md`, "7. The families".
+
+Do not use: clone class, clone group, cluster.
+
+### Factoring template
+
+A factoring template is the code that all the members of a similarity family share, with a blank at each place where they differ: the body of the procedure that a factoring makes to replace them.
+
+The similarity finder computes it by anti-unification, the least general generalization of the members: each node that all the members have stays, and each place where they differ becomes a blank. The report prints it from the source of its first member, with `?1`, `?2` at the blanks. Its template hash names the family in the kept list. It is not an instruction template: an instruction template is an `asm` procedure.
+
+The design: `src/md/infrastructure/similarity_finder.md`, "6. The anti-unification and the similarity score".
+
+Do not use: abstraction, generalization (for the result), macro.
+
+### Blank
+
+A blank is one place of a factoring template where the members of a similarity family differ, with the argument of each member at that place.
+
+A blank has a kind: a value, a type, a place, a procedure, or not a parameter. The kind says how the factored procedure takes it: a parameter, a polymorphic parameter, a pointer parameter, a procedure parameter, or not at all. The same arguments at two places give one blank. It is not a hole: a hole is a part of a stored object whose bytes are zero.
+
+The design: `src/md/infrastructure/similarity_finder.md`, "6. The anti-unification and the similarity score".
+
+Do not use: hole (for this), metavariable, pattern variable.
+
 ### Changelog
 
 The changelog is the file `CHANGELOG.md`: the releases of the system, newest first, each with the changes that a reader of the system notices.
@@ -7433,6 +7531,16 @@ The size, the alignment, the offsets and the values come from the compiler that 
 The design: `docs/SITE.md`, "The types".
 
 Do not use: tooltip, type info, hover card (for this).
+
+### Byte layout
+
+A byte layout is the diagram of the bytes of one record of a format: rows of 8 bytes, the offset of each row, and each field as a rectangle over its bytes with its name and its size.
+
+It answers "where is each byte?" in the manner of the header diagrams of the RFCs. The offsets and the sizes come from the compiler that builds the tool (`type_info_of`), and the type and the comment of each field from the source, so the diagram cannot differ from the code. A guide marks its place with a fence `byte-layout`, whose body is the same layout as a list of text for a reader of the raw Markdown; the tool writes that list and checks it. The guide of the module contract shows the header, the table directory and the record of each table of a module file. A byte layout is not a type card: the card lists the fields of a type; the layout draws them in place.
+
+The design: `docs/SITE.md`, "The byte layouts".
+
+Do not use: packet diagram, struct diagram, byte map.
 
 ### Identity card
 
