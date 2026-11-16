@@ -6254,6 +6254,16 @@ The design: `docs/PROPERTIES.md`.
 
 Do not use: principle (for this), requirement, axiom.
 
+### Reuse list
+
+The reuse list is the table of `docs/PROPERTIES.md` that names each reused work: a work of others that the system ships in a module or in the boot image, or that the repository holds as a copy.
+
+Each row gives the work, its place (a path of the repository, or an import path such as `base:runtime`), its license as an SPDX identifier, and the file with the text or the notice of that license. A font subset, the fallback font, a pointer theme, the copied cryptography, the libraries of the compiler and each portrait of the hall of fame are reused works. A tool of the host that builds or tests the system (QEMU, OVMF, the compiler) is not, and neither is a design or a standard that the system follows. `modustool check` compares the list with the records of the repository and refuses a missing row, a row for a work that the system does not hold, a license that is not the recorded one, and a missing license file.
+
+The design: `src/md/infrastructure/reuse_list.md`; the check: `docs/TOOLS.md`, "The reuse list".
+
+Do not use: third-party list, dependency list, bill of materials.
+
 ### Step
 
 A step is one tested commit on `master` that adds one capability to a system that works.

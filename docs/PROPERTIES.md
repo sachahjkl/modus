@@ -531,21 +531,33 @@ The "user" of current systems does six jobs. This system splits them:
 
 ## Reuse list
 
-| Need | Candidate | Licence |
-|---|---|---|
-| Boot | UEFI firmware services; OVMF under QEMU | Standard, no code imported |
-| Trust | Secure Boot, TPM 2.0; software TPM under QEMU | Standard, no code imported |
-| First machine | QEMU with virtio devices | Standard, no code imported |
-| Graphics interface | WebGPU and WGSL specifications; conformance test suite | Standard |
-| WGSL front end | Naga or Tint | MIT or Apache-2.0 / BSD-3-Clause |
-| Ring layout | io_uring design | Design only |
-| TCP library | lwIP or smoltcp | BSD-3-Clause / 0BSD |
-| Hash | BLAKE3 | CC0 or Apache-2.0 |
-| Store and system description model | Nix concepts | Design only |
-| Storage ideas | bcachefs node search and buckets, Fxfs object model | Design only |
-| Software rendering and UI | `gui_toolkit`, a separate library, if its back end can target a framebuffer | Same copyright holder as this system |
+Each work of others that the system ships in a module or in the boot image, or that the repository holds as a copy. The license is the SPDX identifier of what was read at the source of the work; the repository records that reading in the license file or beside the work. `NONE` is a work with no license. `modustool check` compares this table with the repository (`TOOLS.md`, "The reuse list"): a reused work with no row, a row that names nothing that the repository holds or uses, a license that is not the recorded one, and a license file that is missing are faults.
 
-Licences in this table come from memory. Verify each one before the code is imported.
+The table does not name the tools of the host that build and test the system (the compiler, LLVM, QEMU, OVMF, swtpm, OpenSSL): the page of the licenses of the site lists them (`SITE.md`, "The licenses"). It does not name a design or a standard (io_uring, Nix, UEFI, the TPM, WebGPU, the BLAKE3 specification): the field **Reuse** of each property names them, and no code of them is in the system.
+
+| Work | Place | License | License file |
+|---|---|---|---|
+| Paper Mono, as the subset "Paper Mono ASCII" | `resources/fonts/paper_mono.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
+| Paper Mono SemiBold, as the subset "Paper Mono ASCII SemiBold" | `resources/fonts/paper_mono_semibold.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
+| DejaVu Sans Mono, as the subset "DejaVu Sans Mono ASCII" | `resources/fonts/dejavu_sans_mono.ttf` | Bitstream-Vera | `resources/fonts/BITSTREAM_VERA_LICENSE.txt` |
+| JetBrains Mono, as the subset "JetBrains Mono ASCII" | `resources/fonts/jetbrains_mono.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
+| IBM Plex Mono, as the subset "IBM Mono ASCII" | `resources/fonts/ibm_mono.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
+| Fira Mono, as the subset "Fira Mono ASCII" | `resources/fonts/fira_mono.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
+| Commit Mono, as the subset "CommitMono ASCII" | `resources/fonts/commit_mono.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
+| Iosevka, as the subset "Iosevka ASCII" | `resources/fonts/iosevka.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
+| B612, as the subset "B612 ASCII" | `resources/fonts/b612.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
+| B612 Bold, as the subset "B612 ASCII Bold" | `resources/fonts/b612_bold.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |
+| Spleen 8x16, the fallback font | `src/library/support/graphics/font.odin` | BSD-2-Clause | `src/library/support/graphics/FONT_LICENSE` |
+| The pointer theme "Posy's Cursor", in the boot image when the build has it | `resources/pointers/posy.manifest` | CC-BY-NC-4.0 | `resources/pointers/posy.manifest` |
+| The cryptography of Odin's `core:crypto`, the files of `origin.manifest` | `src/library/support/cryptography` | Zlib | `src/library/support/cryptography/LICENSE.odin.txt` |
+| The field arithmetic of fiat-crypto, in Odin's port | `src/library/support/cryptography/_fiat` | BSD-1-Clause | `src/library/support/cryptography/LICENSE.fiat-crypto.txt` |
+| The runtime of the Odin compiler, in each module and in the boot program | `base:runtime` | Zlib | `src/library/support/cryptography/LICENSE.odin.txt` |
+| The package `reflect` of the core library of Odin, in the module `cryptography` | `core:reflect` | Zlib | `src/library/support/cryptography/LICENSE.odin.txt` |
+| The portrait of Jonathan Blow: a credited frame of a video | `resources/hall_of_fame/jonathan_blow.png` | NONE | `resources/hall_of_fame/CREDITS.md` |
+| The portrait of Andreas Kling | `resources/hall_of_fame/andreas_kling.png` | CC-BY-3.0 | `resources/hall_of_fame/CREDITS.md` |
+| The portrait of Michael Paulson | `resources/hall_of_fame/theprimeagen.png` | CC-BY-4.0 | `resources/hall_of_fame/CREDITS.md` |
+| The portrait of Linus Torvalds | `resources/hall_of_fame/linus_torvalds.png` | CC-BY-SA-4.0 | `resources/hall_of_fame/CREDITS.md` |
+| The portrait of John Carmack | `resources/hall_of_fame/john_carmack.png` | CC0-1.0 | `resources/hall_of_fame/CREDITS.md` |
 
 ## Open decisions
 

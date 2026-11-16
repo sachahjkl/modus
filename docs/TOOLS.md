@@ -565,6 +565,47 @@ Two rules of the system are checked when the tool builds, not only read.
 
 **When they run.** `modustool check` runs both after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same two conditions on the sources of the repository.
 
+## The reuse list
+
+The section "Reuse list" of `PROPERTIES.md` names each work of others that the system ships in a module or in the boot image, or that the repository holds as a copy. `modustool check` runs `reuse_list_check` (`tools/modustool/reuse_list.odin`), which compares the table with the records of the repository. The design: `src/md/infrastructure/reuse_list.md`.
+
+**The form of the table.** The header is `| Work | Place | License | License file |`. Each row has four cells:
+
+| Cell | What it holds |
+|---|---|
+| Work | The name of the work, in words |
+| Place | One code span: the path of the work in the repository, or the import path of a library of the compiler (`base:runtime`). The check matches a row and a work by this cell |
+| License | An SPDX identifier, or identifiers joined by `OR` and `AND`. `NONE` is a work with no license |
+| License file | One code span: the file of the repository with the text of the license, or the notice that the license asks for |
+
+**Where the tool finds the reused works.**
+
+| Works | Record |
+|---|---|
+| The fonts | The three lists of `tools/modustool/vector_fonts.odin`; for each, `resources/fonts/<name>.license`, its line `License of the source: <words>.`, and the license file of the list |
+| Spleen 8x16 | `src/library/support/graphics/FONT_LICENSE`, its line `SPDX-License-Identifier: <identifier>` |
+| The pointer themes | Each theme that the build makes (`pointer_theme_builds`) whose manifest has a line `license` that is not the license of `LICENSE` |
+| The cryptography of Odin | `src/library/support/cryptography/origin.manifest`: one line or more gives the work of `LICENSE.odin.txt`; a line under `_fiat/` gives the work of `LICENSE.fiat-crypto.txt` |
+| The libraries of the compiler | `base:runtime`, always: the compiler puts it in each module. Each package of `core:` that a source of the system imports, in a file that is not a test and whose first line is not a build tag with `!freestanding`. Their license file is `LICENSE.odin.txt` |
+| The portraits | Each row of `resources/hall_of_fame/CREDITS.md` |
+
+The words of a record become an identifier through the table `site_spdx_names` of the page of the licenses (`SITE.md`, "The licenses"). The words "All rights reserved" give `NONE`. Words with no translation give no identifier, and the check then does not compare the license of that row.
+
+**The faults.** Each one gives the line of the document and the place:
+
+- a reused work with no row;
+- a row whose place is no reused work: the system does not ship it and the repository does not hold it;
+- two rows with one place;
+- a license that is not the identifier of the record;
+- a license file that is not the file of the record, or that does not exist;
+- a row out of its form, and a document with no section "Reuse list".
+
+```
+modustool: docs/PROPERTIES.md: the package core:reflect of the Odin compiler (`core:reflect`) is shipped or copied by the system, and the reuse list has no row for it
+```
+
+**What it does not prove.** It does not read a license at the source of a work: it compares the list with what the repository recorded when the work was taken. A new source of a work is a new record, in the same commit. A package that an imported package of `core:` imports in its turn is not named: it has the same license and the same license file.
+
 ## A module from a source outside the repository
 
 `modustool module-build` builds an outside module (`GLOSSARY.md`, "Outside module"): a module whose source is in a folder of another project. It writes the module file and the debug object. The build is the build of a module of the system: the same two steps, in the same procedures (`MODULE_CONTRACT.md`, "The steps of one module, as implemented"). The code is `tools/modustool/outside_module.odin`.

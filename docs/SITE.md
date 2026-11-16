@@ -751,7 +751,7 @@ Two tables: what the system holds, and what builds and tests it and is not a par
 |---|---|
 | The system | `LICENSE`: line 1 names the license, a line `Copyright ...` |
 | The vector fonts | The lists `vector_font_candidates`, `vector_font_emphasis` and `vector_font_interface` of `tools/modustool/vector_fonts.odin`; for each, `resources/fonts/<name>.license`: line 1 the copyright, with the address of the source in parentheses at its end; a line `... carries the name "<family>".`; a line `License of the source: <words>.` In the boot image: the default font and its emphasis, as glyph caches |
-| Spleen | `src/library/support/graphics/FONT_LICENSE`: line 1 `... comes from Spleen 8x16 <version>`, line 2 `(<address>).`, a line `Copyright ...`. The file holds the text of the license, not its name: "not recorded" |
+| Spleen | `src/library/support/graphics/FONT_LICENSE`: line 1 `... comes from Spleen 8x16 <version>`, line 2 `(<address>).`, a line `SPDX-License-Identifier: <identifier>`, a line `Copyright ...` |
 | The pointer themes | `resources/pointers/system.manifest` and `posy.manifest`: the lines `theme <name>`, `license <SPDX identifier>`, `attribution <text>` |
 | The cryptography | `src/library/support/cryptography/LICENSE.odin.txt` (`(zlib)`, `tag <release>`, `(https://...)`), `LICENSE.fiat-crypto.txt` (`(BSD-1-Clause)`), the count of the lines of `origin.manifest` |
 | The portraits of `hall_of_fame` | `resources/hall_of_fame/CREDITS.md`: one row of a table for each picture, with five cells: the PNG file in backquotes, the person, the source with its address `https://...`, the author and the license. One row of the page for each picture; its place is the file of pixels in `src/programs/hall_of_fame/portraits/`. The license words `CC BY 3.0`, `CC BY 4.0`, `CC BY-SA 4.0` and `CC0` show as their SPDX identifiers |
@@ -760,7 +760,7 @@ Two tables: what the system holds, and what builds and tests it and is not a par
 
 The license column gives the SPDX identifier when the words of the file name one of the table `site_spdx_names` (a translation of recorded words: `SIL OFL 1.1` is `OFL-1.1`); else the words of the file.
 
-The cells that no file records are listed by the command. They are the licenses of Spleen and of the tools of the build and of the firmware. The README section "Licences" is prose; the site does not read facts from it. Proposed: one table file, `LICENSES.md` at the root, with the columns above, that the README links to and the site reads, for the facts that only prose holds now.
+The cells that no file records are listed by the command. They are the licenses of the tools of the build and of the firmware. The README section "Licences" is prose; the site does not read facts from it. The list of the works of others that the system ships or copies, each with its SPDX identifier and its license file, is the reuse list of `PROPERTIES.md`, which `modustool check` compares with the same records (`TOOLS.md`, "The reuse list"). This page adds the authors, the versions and the tools of the host.
 
 ## The look
 

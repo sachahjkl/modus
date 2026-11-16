@@ -1,5 +1,6 @@
 The font data in graphics/font.odin comes from Spleen 8x16 2.1.0
 (https://github.com/fcambus/spleen).
+SPDX-License-Identifier: BSD-2-Clause
 
 Copyright (c) 2018-2024, Frederic Cambus
 All rights reserved.

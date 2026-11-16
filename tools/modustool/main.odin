@@ -1115,6 +1115,9 @@ run_check :: proc(args: []string) -> int {
 	if !roadmap_check() {
 		return EXIT_FAILURE
 	}
+	if !reuse_list_check() {
+		return EXIT_FAILURE
+	}
 	if run_test(nil) != 0 {
 		return EXIT_FAILURE
 	}
