@@ -119,17 +119,18 @@ budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 	testing.expect_value(t, counted.working_memory_pages, 2536)
 	testing.expect_value(t, counted.module_pages, 99 + 19 + 72)
 	// The first thread: 64 pages of stack, the context, 3 pages of thread
-	// area; each other one: 16 pages of stack and 3 of thread area.
-	testing.expect_value(t, counted.thread_pages, 68 + 2 * 19)
+	// area, 4 pages of the own log ring; each other one: 16 pages of stack
+	// and 3 of thread area.
+	testing.expect_value(t, counted.thread_pages, 72 + 2 * 19)
 	// 1000 x 704 pixels of 4 bytes, two pictures: 5632000 bytes, 1375 pages.
 	testing.expect_value(t, counted.window_pages, 1375)
-	testing.expect_value(t, counted.request, module.Budget_Request{pages = 2536 + 190 + 106 + 1375, programs = 2, threads = 3})
+	testing.expect_value(t, counted.request, module.Budget_Request{pages = 2536 + 190 + 110 + 1375, programs = 2, threads = 3})
 
 	// No part of threads: the tool counts the first thread, and the table
 	// leaves the part to the starter. No window: no pictures.
 	alone, alone_ok := budget_count({working_memory_pages = 10}, 4096, nil)
 	testing.expect(t, alone_ok)
-	testing.expect_value(t, alone.request, module.Budget_Request{pages = 10 + 1 + 68})
+	testing.expect_value(t, alone.request, module.Budget_Request{pages = 10 + 1 + 72})
 	testing.expect_value(t, alone.window_pages, 0)
 
 	// A count of threads that passes the end of 64 bits is refused.
