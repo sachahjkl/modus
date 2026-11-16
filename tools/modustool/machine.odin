@@ -73,8 +73,15 @@ Step_Kind :: enum {
 	// auto gives (text: its start, "settings: the appearance in force is "):
 	// date_check checks the date of the line, then the tool computes the
 	// rule of the day over that date and its zone, and the line must name
-	// the same appearance (machine_clock.odin).
+	// the same appearance (machine_clock.odin). With `expected`, the zone of
+	// the line in seconds must be that number.
 	Appearance_Auto,
+	// As Wait, for the line of the bar of the compositor (text: its start,
+	// "compositor: the bar shows the local time "): date_check checks its
+	// date of UTC, the text of the local time must be that date in the zone
+	// of the line, and the zone must be `expected`, "+08:00"
+	// (machine_clock.odin).
+	Bar_Local_Time,
 	Type, // Press the keys of text, then Enter. When the console is in front, the tool then waits for the echo of the line on the log (console_echo.odin).
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
@@ -3183,6 +3190,28 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.get(\"appearance\")", expected = "auto"},
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "settings"},
+	// The time zone (src/md/features/time_zone.md). The clock of the
+	// machine is at 01:00 UTC: +08:00 moves its local time into the day.
+	// The program date copies the zone into the date page; the root service
+	// then gives the light appearance of auto in that zone, and the bar
+	// shows the local time. The compositor can tell the windows of the zone
+	// and of the appearance in one line or in two: the step waits for the
+	// last state only.
+	{kind = .Call, text = "settings.set(\"time_zone\", \"+08:00\")", expected = "1"},
+	{kind = .Wait, text = "settings: time zone +08:00; kept in the store"},
+	{kind = .Bar_Local_Time, text = "compositor: the bar shows the local time ", expected = "+08:00", any_order = true},
+	{kind = .Wait, text = "date: the time zone of the date page is +08:00, from the setting time_zone"},
+	{kind = .Appearance_Auto, text = "root: the appearance in force is ", expected = "28800"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; the appearance in force light; the time zone +08:00; "},
+	{kind = .Call, text = "settings.get(\"time_zone\")", expected = "+08:00"},
+	{kind = .Call, text = "settings.set(\"time_zone\", \"+8:00\")", outcome = .Failed, expected = "(-3)"},
+	// Back to UTC: the night again, before the next pictures.
+	{kind = .Call, text = "settings.set(\"time_zone\", \"+00:00\")", expected = "1"},
+	{kind = .Wait, text = "settings: time zone +00:00; kept in the store"},
+	{kind = .Bar_Local_Time, text = "compositor: the bar shows the local time ", expected = "+00:00", any_order = true},
+	{kind = .Wait, text = "date: the time zone of the date page is +00:00, from the setting time_zone"},
+	{kind = .Appearance_Auto, text = "root: the appearance in force is ", expected = "0"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto; the appearance in force dark; the time zone +00:00; "},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
 	// Tables and bytes as parameters: one description, three ways to call
@@ -4043,6 +4072,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			date_check(index, value, step.text, machine.started_unix, machine.clock_offset_seconds) or_return
 		case .Appearance_Auto:
 			appearance_auto_check(machine, index, step) or_return // machine_clock.odin
+		case .Bar_Local_Time:
+			bar_local_time_check(machine, index, step) or_return // machine_clock.odin
 		case .Generation:
 			seen_before := machine.seen
 			if !log_wait(machine, step.text, step.any_order) {

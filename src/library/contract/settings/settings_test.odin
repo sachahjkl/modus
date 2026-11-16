@@ -11,16 +11,98 @@ import "core:testing"
 @(test)
 a_page_left_in_a_change :: proc(t: ^testing.T) {
 	page: Page
-	write(&page, {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 1, .Grid_Fit = 1, .Keyboard_Layout = 1, .Appearance = u32(Appearance.Light)}, .Light)
+	write(&page, {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 1, .Grid_Fit = 1, .Keyboard_Layout = 1, .Appearance = u32(Appearance.Light)}, 330, .Light)
 	choice := read(&page)
 	testing.expect_value(t, choice.values[.Font], 1)
 	testing.expect_value(t, appearance_of(choice), Appearance.Light)
 	testing.expect_value(t, choice.appearance_in_force, Appearance_In_Force.Light)
+	testing.expect_value(t, choice.zone_offset_minutes, 330)
 	testing.expect_value(t, choice.change_count, 2)
 	page.change_count = 3
 	stopped := read(&page)
 	testing.expect_value(t, stopped.values, [Setting]u32{})
+	testing.expect_value(t, stopped.zone_offset_minutes, 0)
 	testing.expect_value(t, stopped.change_count, 3)
+}
+
+// The text of a zone and back: each quarter of an hour from -12:00 to
+// +14:00 gives its text and reads back as itself.
+@(test)
+the_text_of_a_zone :: proc(t: ^testing.T) {
+	buffer: [ZONE_TEXT_SIZE]u8
+	testing.expect_value(t, zone_text(buffer[:], 0), "+00:00")
+	testing.expect_value(t, zone_text(buffer[:], 480), "+08:00")
+	testing.expect_value(t, zone_text(buffer[:], -210), "-03:30")
+	testing.expect_value(t, zone_text(buffer[:], 345), "+05:45")
+	testing.expect_value(t, zone_text(buffer[:], ZONE_OFFSET_MINUTES_LEAST), "-12:00")
+	testing.expect_value(t, zone_text(buffer[:], ZONE_OFFSET_MINUTES_MOST), "+14:00")
+	// A zone that is not valid is written as UTC, and a short buffer gives
+	// no text.
+	testing.expect_value(t, zone_text(buffer[:], ZONE_OFFSET_MINUTES_MOST + ZONE_OFFSET_MINUTES_STEP), "+00:00")
+	testing.expect_value(t, zone_text(buffer[:], 7), "+00:00")
+	testing.expect_value(t, zone_text(buffer[:ZONE_TEXT_SIZE - 1], 60), "")
+	count := 0
+	for minutes := ZONE_OFFSET_MINUTES_LEAST; minutes <= ZONE_OFFSET_MINUTES_MOST; minutes += ZONE_OFFSET_MINUTES_STEP {
+		read_back, ok := zone_parse(zone_text(buffer[:], minutes))
+		testing.expectf(t, ok && read_back == minutes, "the zone %d minutes reads back as %d", minutes, read_back)
+		count += 1
+	}
+	testing.expect_value(t, count, 105)
+}
+
+// A text that is not a zone is refused: the form, the range and the
+// quarters of an hour.
+@(test)
+a_text_that_is_not_a_zone :: proc(t: ^testing.T) {
+	refused := [?]string{"", "+8:00", "+08", "08:00", "UTC", "+08:10", "+15:00", "-12:15", "+08:60", "+0a:00", "+08-00", "+08:000", " +08:00"}
+	for text in refused {
+		_, ok := zone_parse(text)
+		testing.expectf(t, !ok, "the text %q is refused", text)
+	}
+	minutes, ok := zone_parse("-00:00")
+	testing.expect(t, ok && minutes == 0)
+}
+
+// A zone on the page that is not valid reads as UTC, and a change of the
+// zone alone makes two choices differ.
+@(test)
+the_zone_on_the_page :: proc(t: ^testing.T) {
+	page: Page
+	page.zone_offset_minutes = ZONE_OFFSET_MINUTES_MOST + 60
+	testing.expect_value(t, read(&page).zone_offset_minutes, 0)
+	page.zone_offset_minutes = 100
+	testing.expect_value(t, read(&page).zone_offset_minutes, 0)
+	page.zone_offset_minutes = -720
+	testing.expect_value(t, read(&page).zone_offset_minutes, -720)
+	first := read(&page)
+	changed := first
+	changed.zone_offset_minutes = 60
+	testing.expect(t, values_differ(first, changed))
+}
+
+// The kept record holds the zone, a record of the version before reads as
+// the defaults, and a zone that is not valid reads as UTC.
+@(test)
+the_kept_record :: proc(t: ^testing.T) {
+	values: [Setting]u32
+	values[.Font] = 1
+	values[.Appearance] = u32(Appearance.Light)
+	kept := kept_of(values, -210)
+	testing.expect_value(t, kept.zero, 0)
+	bytes := ([^]u8)(&kept)[:size_of(kept)]
+	read_values, zone, ok := kept_read(bytes)
+	testing.expect(t, ok)
+	testing.expect_value(t, read_values, values)
+	testing.expect_value(t, zone, -210)
+	kept.zone_offset_minutes = 7
+	_, zone, ok = kept_read(bytes)
+	testing.expect(t, ok)
+	testing.expect_value(t, zone, 0)
+	kept.version = KEPT_VERSION - 1
+	_, _, ok = kept_read(bytes)
+	testing.expect(t, !ok)
+	_, _, ok = kept_read(bytes[:size_of(kept) - 8])
+	testing.expect(t, !ok)
 }
 
 // A value that a setting does not have reads as its default.
@@ -83,7 +165,7 @@ the_appearance_in_force_alone :: proc(t: ^testing.T) {
 	page: Page
 	values: [Setting]u32
 	values[.Appearance] = u32(Appearance.Auto)
-	write(&page, values, .Dark)
+	write(&page, values, 0, .Dark)
 	before := read(&page)
 	appearance_in_force_write(&page, .Light)
 	after := read(&page)

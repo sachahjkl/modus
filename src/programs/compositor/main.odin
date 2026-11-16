@@ -392,14 +392,22 @@ windows_log :: proc "contextless" () {
 	}
 }
 
-// The bar shows the date and the time of day in UTC (src/library/contract/date), or
-// the time since boot when the system has no date. second_of_bar gives the
+// The bar shows the local date and time of day (src/library/contract/date):
+// the date of UTC and the time zone of the date page. A zone is whole
+// minutes, so the second changes at the same moments as in UTC. With no
+// date the bar shows the time since boot. second_of_bar gives the
 // second that it shows at the time `now` of the system, and
 // next_second_of_bar the time of the system when it changes after `now`:
 // always later than `now`, and at most one second later, also when the date
 // first appears between two frames (the second shown then jumps from the
 // time since boot to the date, and the next frame shows it).
 date_page: ^date.Page
+// The zone of the last line "the bar shows the local time", which the
+// machine test checks: a line at each change of the zone, and none for the
+// default, UTC, at the first date. The log has a fixed room, and a line at
+// each boot that says nothing new takes it from the records that a reader
+// needs.
+bar_zone_logged: i64
 
 second_of_bar :: proc "contextless" (now: u64) -> u64 {
 	if milliseconds, known := date.milliseconds_now(date_page, now); known {
@@ -715,6 +723,9 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	}
 	system.write_part(&writer, "; the appearance in force ")
 	system.write_part(&writer, settings.appearance_in_force_names[choice.appearance_in_force])
+	zone_buffer: [settings.ZONE_TEXT_SIZE]u8
+	system.write_part(&writer, "; the time zone ")
+	system.write_part(&writer, settings.zone_text(zone_buffer[:], choice.zone_offset_minutes))
 	system.log("compositor: the settings changed: ", system.written(&writer), "; ", u64(told), " windows draw again")
 }
 
@@ -1435,8 +1446,17 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	seconds := now / 1000
 	x := width - CLOCK_WIDTH - 16
 	if milliseconds, known := date.milliseconds_now(date_page, now); known {
+		// The local time: the date of UTC and the time zone of the date
+		// page (src/md/features/time_zone.md).
+		zone := date.zone_offset_seconds_read(date_page)
 		date_text: [24]u8
-		interface.draw_text(table, x, 8, calendar.iso_text(date_text[:], milliseconds / 1000), graphics.colors.text)
+		shown := calendar.iso_text(date_text[:], milliseconds / 1000 + zone)
+		interface.draw_text(table, x, 8, shown, graphics.colors.text)
+		if zone != bar_zone_logged {
+			bar_zone_logged = zone
+			zone_buffer: [settings.ZONE_TEXT_SIZE]u8
+			system.log("compositor: the bar shows the local time ", shown, " with the time zone ", settings.zone_text(zone_buffer[:], i32(zone / 60)), ", at ", milliseconds / 1000, " s since 1970")
+		}
 	} else {
 		x += CLOCK_WIDTH - 8 * 8
 		x = interface.draw_unsigned(table, x, 8, seconds / 3600, graphics.colors.text, 2)

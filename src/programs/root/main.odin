@@ -1097,8 +1097,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		// The appearance in force at an edge of the rule of the day
-		// (appearance_edge.odin): one more deadline, and the change counts
-		// of the settings page and of the date page.
+		// (appearance_edge.odin): one more deadline, and the change count
+		// of the date page.
 		appearance_step(&wait)
 		// A load from the disk and a call for the disk grant table have a
 		// deadline: the wait ends there, with or without an answer of the
