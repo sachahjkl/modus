@@ -24,7 +24,9 @@
 //                shows. Then it draws the view. The reader makes the view
 //                between two groups of records: some microseconds.
 //                The surface has two pictures: the compositor never reads
-//                a picture that the drawer changes.
+//                a picture that the drawer changes. Before each wait it
+//                tells the compositor whether a change waits for its
+//                next picture (src/md/features/terminal_due_picture.md).
 //
 // The reader does not wait for a picture, so the program that writes does
 // not wait for a picture. A line that the window does not show costs one
@@ -1195,9 +1197,10 @@ fail :: proc "contextless" (text: string) -> ! {
 // 5. starts the reader thread, and writes "terminal: ok, ...".
 //
 // The first thread is then the drawer. It sleeps while nothing changes,
-// and wakes for a record, a key, or every 250 ms to look at the state of
-// the program. Page Up and Page Down move the view; each other key goes to
-// the program, and a key is lost when the queue is full. When the program
+// and wakes for a record, a key, the stop of the program, or every 250 ms
+// to look at the state of the program. Page Up and Page Down move the
+// view; each other key goes to the program, and a key is lost when the
+// queue is full. When the program
 // stops, the terminal shows its code and keeps its lines: it does not stop
 // with it.
 @(export, link_name = "entry")
@@ -1269,15 +1272,28 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	dirty := true // The view changed with no record: a key, the first picture.
 	STATE_TIME :: 250 // Milliseconds between two looks at the state of the program.
 	picture_waits := false // A picture waits until the compositor took the picture before it.
+	// The event word of this thread at the last look at the state of the
+	// program: the kernel adds 1 to it when the program stops.
+	events_seen := intrinsics.volatile_load(system.events())
 	for {
-		if !measure && !dirty && intrinsics.atomic_load(&activity) == drawn {
-			// Nothing to draw: wait for a record, a key, or the next look at
-			// the program. A due picture that a full command ring kept from
-			// the compositor ends here.
-			display.picture_due_set(&window, false)
+		// One read of the count of the groups of records decides the wait,
+		// and the compositor learns the due state before it: in each wait the
+		// terminal looks the same as a terminal with nothing to draw. A record
+		// that came while the last picture was drawn is due too, and the
+		// Present of that picture ended the due state that came before it
+		// (src/md/features/terminal_due_picture.md).
+		seen := intrinsics.atomic_load(&activity)
+		turn_wait, due := terminal.picture_wait_choose(measure, dirty, seen, drawn, picture_waits)
+		display.picture_due_set(&window, due)
+		switch turn_wait {
+		case .Nothing_To_Draw:
+			// Wait for a record, a key, the stop of the program, or the next
+			// look at the program. A record after the read of seen, or a stop
+			// after the last look at the state, ends the wait at once.
 			wait: system.Wait
 			display.wait_events(&wait, &window)
-			system.wait_word(&wait, &activity, drawn, &drawer_idle)
+			system.wait_word(&wait, &activity, seen, &drawer_idle)
+			system.wait_word(&wait, system.events(), events_seen)
 			// A held arrow button of the scroll bar takes its next step at
 			// a time of the clock: the wait ends there at the latest.
 			deadline := program != 0 ? system.time() + STATE_TIME : system.WAIT_FOREVER
@@ -1286,7 +1302,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				deadline = min(deadline, step_time)
 			}
 			wakes_before := intrinsics.atomic_load(&drawer_wakes)
-			activity_at_wait = drawn
+			activity_at_wait = seen
 			system.wait_end(&wait, deadline)
 			now = system.time()
 			next_frame = now
@@ -1294,11 +1310,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				dirty = true
 			}
 			lost_wake_check(now >= deadline, wakes_before)
-		} else if picture_waits {
+		case .Compositor:
 			// The wait ends when the compositor has read the ring of the
 			// window, or at the next look at the program.
 			now = display.wait(&window, system.time() + STATE_TIME)
-		} else {
+		case .Next_Frame:
+			// A record during this wait needs no wake: the picture is due
+			// already, and the next picture takes it.
 			now = display.wait(&window, next_frame)
 		}
 		for event in display.next_event(&window) {
@@ -1365,24 +1383,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			view_move(move)
 		}
-		// A change that this loop did not draw waits for the next picture:
-		// on the clock of the frames, or for the compositor. The compositor
-		// says so in windows(), so that a reader of the screen does not take
-		// this wait for a window with nothing to draw.
-		if dirty || intrinsics.atomic_load(&activity) != drawn {
-			display.picture_due_set(&window, true)
-		}
+		// A change that this turn does not draw waits for the next picture:
+		// the start of the next turn says it, before its wait.
 		if now < next_frame {
 			continue
 		}
-		// The compositor did not take the last picture yet: it can still
-		// read the picture that this one would be drawn in. The keys are
-		// taken; the picture waits for the compositor.
-		picture_waits = !display.canvas_free(&window)
-		if picture_waits {
-			continue
-		}
-		next_frame = max(next_frame + FRAME_TIME, now + 1)
+		// The stop of the program is a change too: it is known before the
+		// look at the canvas, so a stop that waits for the compositor is a
+		// due picture. The event word is read before the state: a stop
+		// after this read ends the next wait with nothing to draw at once.
+		events_seen = intrinsics.volatile_load(system.events())
 		if program != 0 {
 			if state, code := system.program_state(program); state == .Stopped {
 				request.stopped, request.code = true, code
@@ -1396,6 +1406,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				dirty = true
 			}
 		}
+		// The compositor did not take the last picture yet: it can still
+		// read the picture that this one would be drawn in. The keys are
+		// taken; the picture waits for the compositor.
+		picture_waits = !display.canvas_free(&window)
+		if picture_waits {
+			continue
+		}
+		next_frame = max(next_frame + FRAME_TIME, now + 1)
 		current := intrinsics.atomic_load(&activity)
 		if !measure && !dirty && current == drawn {
 			continue
@@ -1442,6 +1460,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		draw(&window, request.follow)
+		// A frame that did not reach the compositor (a Present that the full
+		// command ring refused, a frame left out, a draw that the module
+		// refused) is still owed: the next turn draws it again, and says
+		// before its wait that it is due.
+		if drawing.late || !drawing.drawn {
+			dirty = true
+		}
 		// A press on an item of the action bar runs its key, as the key
 		// does: the next picture shows the moved view.
 		if bar_result.ran {
