@@ -49,6 +49,22 @@ Action_Bar_Item :: struct {
 	priority: int, // An item of a lower priority leaves the row first.
 }
 
+// action_bar_item makes an item from the name of its action, its priority
+// and the faces of its keycaps, in their order. Odin takes no literal of a
+// fixed array with fewer values than the array, and a slice of faces
+// would point into the memory of the caller: so the faces are copied into
+// the array of the item. A face past ACTION_BAR_KEY_CAPACITY is dropped:
+// the item then names a shorter combination, and its key is not that of
+// the faces given (action_bar_key_of), so a host test sees it.
+action_bar_item :: proc "contextless" (name: string, priority: int, faces: ..string) -> (item: Action_Bar_Item) {
+	item.name = name
+	item.priority = priority
+	for index in 0 ..< min(len(faces), ACTION_BAR_KEY_CAPACITY) {
+		item.faces[index] = faces[index]
+	}
+	return
+}
+
 // What a bar does with the items that do not fit in one row.
 Action_Bar_Overflow :: enum u8 {
 	More, // One row; the items that do not fit go into the list of the button "more".

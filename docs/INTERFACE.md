@@ -236,23 +236,25 @@ An element can have an element name (`GLOSSARY.md`), a text of at most 32 bytes 
 The action bar (`GLOSSARY.md`) is the band at the bottom of a window that names its keys: `action_bar` (`src/library/support/interface/action_bar.odin`). Each window that lists its keys uses it. Its look is in `DESIGN.md`, "The action bar"; the design and the refused forms are in `src/md/features/action_bar.md`.
 
 ```odin
-bar_items := [?]interface.Action_Bar_Item {
-	{faces = {"Backspace"}, name = "back", priority = 4},
-	{faces = {"Shift", "Tab"}, name = "link before", priority = 2},
+// A procedure: an item is made by a call, and a freestanding program runs
+// no call before its entry.
+bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
+	return {interface.action_bar_item("back", 4, "Backspace"), interface.action_bar_item("link before", 2, "Shift", "Tab")}
 }
 bar: interface.Action_Bar_State
 
 frame := interface.window_frame_begin(&drawing, window)
 interface.action_bar_input_take(&frame, &bar) // First: the keys of the list, and a press on the bar.
 // ... the elements of the window ...
-result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, bar_items[:], &bar) // Last: the list opens over them.
+items := bar_items()
+result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar) // Last: the list opens over them.
 interface.window_frame_end(&drawing, &frame, window)
 if result.ran {
 	interface.input_key_add(&drawing.input, result.run) // The key goes the way of a typed key.
 }
 ```
 
-- **An item** (`Action_Bar_Item`): the faces of the keycaps of one combination (at most 3), the name of the action, and a priority. A face is a key name (`Enter`, `Tab`, `Esc`, `Backspace`, `Delete`, `Space`, `Home`, `End`, `Up`, `Down`, `Left`, `Right`, `Page Up`, `Page Down`), a modifier before it (`Shift`, `Ctrl`), or one printable ASCII character. The name of the action is the element name of the item (section 4.3).
+- **An item** (`Action_Bar_Item`): the faces of the keycaps of one combination (at most 3), the name of the action, and a priority. `action_bar_item(name, priority, faces..)` makes one: it copies the faces into the fixed array of the item, and drops a face past the third. A program writes its items in a procedure that returns them, and calls it where it draws the bar: a global array of items would need a call before the entry. A face is a key name (`Enter`, `Tab`, `Esc`, `Backspace`, `Delete`, `Space`, `Home`, `End`, `Up`, `Down`, `Left`, `Right`, `Page Up`, `Page Down`), a modifier before it (`Shift`, `Ctrl`), or one printable ASCII character. The name of the action is the element name of the item (section 4.3).
 - **A press gives the key.** `action_bar_key_of` derives the key of an item from its faces: the code, the character that the keyboard layout gives (`'\n'` for Enter, `'\t'` for Tab, 8 for Backspace), and the modifiers. A face of one character gives the character with the code 0: compare the character. A face that names no key (`1-6`) gives an item that takes no press. `Action_Bar_Result.run` holds the key that a press, or Enter in the list, ran. A program with `window_events` adds it to the input of its next frame (`input_key_add`) and builds that frame; a program that reads its keys runs it through its own procedure for a key.
 - **The overflow** (`Action_Bar_Options.overflow`). `More`, the default: one row; when the items do not fit, a button `more` ends the row and items leave it, the lowest priority first and, of two with one priority, the later one first. `Wrap`: two rows in the order of the items, then the list for the rest; the caller gives the bar two rows (`ACTION_BAR_WRAP_ROWS`) always. `notes` wraps.
 - **The alignment** (`Action_Bar_Options.alignment`). `Right` puts the items against the right edge: a bar at the right of a text that changes keeps its items in place, so their element lines do not change at each frame (the terminal, `tally`, `rings`, `unlock`, `paint`).

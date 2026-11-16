@@ -70,6 +70,8 @@ The action bar is one element of the interface package for that line. Each item 
 
 ## Subtle points
 
+- **An item is made by a call.** Odin takes no literal of a fixed array with fewer values than the array, so `action_bar_item(name, priority, faces..)` copies the faces into the fixed array of the item, and drops a face past the capacity. A slice of faces was refused: it pointed into the stack of a procedure that had returned. A freestanding program runs no call before its entry, so a program writes its items in a procedure that returns the array, and calls it where it draws the bar.
+
 - **The key of a press is synthetic.** A face of one character gives the character with the code 0. A program that compares a key code with a letter does not see it: compare the character.
 - **The list must fit above the bar.** The bar gives the list the room from its top to the top of the window (`Action_Bar_Options.top`). Rows that do not fit are not shown, and `Action_Bar_Result.list_rows_not_shown` counts them; a host test checks the count.
 - **An element line for each change of a rectangle.** An item whose place changes at each frame writes a line at each frame. A bar has a fixed area. The terminal puts its bar at the right of a line whose text changes: its items stand from the right edge (`Action_Bar_Options.alignment = .Right`), so they do not move while the text at the left changes.

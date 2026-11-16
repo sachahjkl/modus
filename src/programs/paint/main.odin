@@ -55,8 +55,10 @@ text_now, text_before: [256]u8
 window_drawing: interface.Window_Drawing
 
 // The key of the window, in its action bar.
-bar_items := [?]interface.Action_Bar_Item {
-	{faces = {"c"}, name = "clear", priority = 1},
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [1]interface.Action_Bar_Item {
+	return {interface.action_bar_item("clear", 1, "c")}
 }
 bar: interface.Action_Bar_State
 
@@ -200,7 +202,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		interface.draw_picture(table, 0, PALETTE_HEIGHT, paper_picture, paper_generation)
 		bar_left := x + 16
-		bar_result := interface.action_bar(&frame, {bar_left, 0, WIDTH - bar_left, PALETTE_HEIGHT}, bar_items[:], &bar, {alignment = .Right})
+		items := bar_items()
+		bar_result := interface.action_bar(&frame, {bar_left, 0, WIDTH - bar_left, PALETTE_HEIGHT}, items[:], &bar, {alignment = .Right})
 		interface.window_frame_end(&window_drawing, &frame, &window)
 		if bar_result.ran {
 			key_run(bar_result.run)

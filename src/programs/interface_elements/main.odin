@@ -46,12 +46,16 @@ TICK :: 100 // Milliseconds between two frames.
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"). Each one is a key of the interface package: the focus,
 // the press of a button, the choice of the list.
-bar_items := [?]interface.Action_Bar_Item {
-	{faces = {"Tab"}, name = "next element", priority = 6},
-	{faces = {"Shift", "Tab"}, name = "element before", priority = 3},
-	{faces = {"Enter"}, name = "press", priority = 5},
-	{faces = {"Up"}, name = "line before", priority = 4},
-	{faces = {"Down"}, name = "line after", priority = 4},
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [5]interface.Action_Bar_Item {
+	return {
+		interface.action_bar_item("next element", 6, "Tab"),
+		interface.action_bar_item("element before", 3, "Shift", "Tab"),
+		interface.action_bar_item("press", 5, "Enter"),
+		interface.action_bar_item("line before", 4, "Up"),
+		interface.action_bar_item("line after", 4, "Down"),
+	}
 }
 bar: interface.Action_Bar_State
 
@@ -175,7 +179,8 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 		}
 	}
 	// The action bar, last: its list opens over the cards.
-	return interface.action_bar(frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, bar_items[:], &bar)
+	items := bar_items()
+	return interface.action_bar(frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar)
 }
 
 // frame_draw builds and draws one frame. The key of an item that a press

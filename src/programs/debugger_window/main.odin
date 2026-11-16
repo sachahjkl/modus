@@ -305,25 +305,28 @@ Frame_Acts :: struct {
 // with an argument is no item, and a press on a row of the breakpoints
 // does the same. Detach has the lowest priority: it is the first item to
 // go into the list, and the rarest act.
-attached_items := [?]interface.Action_Bar_Item {
-	{faces = {"Up"}, name = "thread before", priority = 6},
-	{faces = {"Down"}, name = "thread after", priority = 6},
-	{faces = {"Page Up"}, name = "frame before", priority = 5},
-	{faces = {"Page Down"}, name = "frame after", priority = 5},
-	{faces = {"h"}, name = "hold", priority = 8},
-	{faces = {"r"}, name = "let run", priority = 8},
-	{faces = {"c"}, name = "let each run", priority = 4},
-	{faces = {"s"}, name = "one instruction", priority = 7},
-	{faces = {"l"}, name = "one line", priority = 7},
-	{faces = {"o"}, name = "one line, over each call", priority = 5},
-	{faces = {"b"}, name = "breakpoint at the line", priority = 3},
-	{faces = {"g"}, name = "registers or variables", priority = 2},
-	{faces = {"Esc"}, name = "keys leave the field", priority = 1},
-	{faces = {"d"}, name = "detach", priority = 0},
+// Procedures, not global arrays: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+attached_items :: proc "contextless" () -> [14]interface.Action_Bar_Item {
+	return {
+		interface.action_bar_item("thread before", 6, "Up"),
+		interface.action_bar_item("thread after", 6, "Down"),
+		interface.action_bar_item("frame before", 5, "Page Up"),
+		interface.action_bar_item("frame after", 5, "Page Down"),
+		interface.action_bar_item("hold", 8, "h"),
+		interface.action_bar_item("let run", 8, "r"),
+		interface.action_bar_item("let each run", 4, "c"),
+		interface.action_bar_item("one instruction", 7, "s"),
+		interface.action_bar_item("one line", 7, "l"),
+		interface.action_bar_item("one line, over each call", 5, "o"),
+		interface.action_bar_item("breakpoint at the line", 3, "b"),
+		interface.action_bar_item("registers or variables", 2, "g"),
+		interface.action_bar_item("keys leave the field", 1, "Esc"),
+		interface.action_bar_item("detach", 0, "d"),
+	}
 }
-detached_items := [?]interface.Action_Bar_Item {
-	{faces = {"Enter"}, name = "attach", priority = 2},
-	{faces = {"Backspace"}, name = "remove a character", priority = 1},
+detached_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
+	return {interface.action_bar_item("attach", 2, "Enter"), interface.action_bar_item("remove a character", 1, "Backspace")}
 }
 bar: interface.Action_Bar_State
 
@@ -1142,7 +1145,8 @@ draw :: proc "contextless" (window: ^display.Window) -> Frame_Acts {
 	draw_variables(&frame)
 	// The bar comes last: its list opens over the cards.
 	bar_area := interface.Area{0, HEIGHT - KEYS_HEIGHT, WIDTH, KEYS_HEIGHT}
-	bar_result := interface.action_bar(&frame, bar_area, attached ? attached_items[:] : detached_items[:], &bar)
+	when_attached, when_detached := attached_items(), detached_items()
+	bar_result := interface.action_bar(&frame, bar_area, attached ? when_attached[:] : when_detached[:], &bar)
 	// The input is cleared at the end of the frame: the keys that no
 	// element took are kept first.
 	for press in frame.input.keys[:frame.input.key_count] {

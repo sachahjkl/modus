@@ -429,7 +429,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// Up and Page Down do, and the wheel over the text moves it too.
 	moved := interface.scroll_bar(&frame, scroll_area(), scroll_identity(), .Vertical, {total = rows(), visible = ROWS, first = first_line}, {page = ROWS - 2}, "", text_view_area())
 	// The action bar, last: its list opens over the text.
-	bar_result := interface.action_bar(&frame, bar_area(), bar_items[:], &bar)
+	items := bar_items()
+	bar_result := interface.action_bar(&frame, bar_area(), items[:], &bar)
 	interface.window_frame_end(&drawing, &frame, window)
 	if moved.changed {
 		first_line = moved.first
@@ -445,17 +446,21 @@ draw :: proc "contextless" (window: ^display.Window) {
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"). The keys that move the text have the lowest priority: the
 // scroll bar moves it too.
-bar_items := [?]interface.Action_Bar_Item {
-	{faces = {"Up"}, name = "module before", priority = 6},
-	{faces = {"Down"}, name = "module after", priority = 6},
-	{faces = {"Tab"}, name = "next link", priority = 5},
-	{faces = {"Enter"}, name = "open the link", priority = 5},
-	{faces = {"Backspace"}, name = "back", priority = 4},
-	{faces = {"o"}, name = "all the modules", priority = 3},
-	{faces = {"Shift", "Tab"}, name = "link before", priority = 2},
-	{faces = {"Page Up"}, name = "rows before", priority = 1},
-	{faces = {"Page Down"}, name = "rows after", priority = 1},
-	{faces = {"Home"}, name = "start of the text", priority = 0},
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [10]interface.Action_Bar_Item {
+	return {
+		interface.action_bar_item("module before", 6, "Up"),
+		interface.action_bar_item("module after", 6, "Down"),
+		interface.action_bar_item("next link", 5, "Tab"),
+		interface.action_bar_item("open the link", 5, "Enter"),
+		interface.action_bar_item("back", 4, "Backspace"),
+		interface.action_bar_item("all the modules", 3, "o"),
+		interface.action_bar_item("link before", 2, "Shift", "Tab"),
+		interface.action_bar_item("rows before", 1, "Page Up"),
+		interface.action_bar_item("rows after", 1, "Page Down"),
+		interface.action_bar_item("start of the text", 0, "Home"),
+	}
 }
 bar: interface.Action_Bar_State
 bar_acted: bool // A press on an item of the action bar ran its key in the last frame: the next frame shows it.

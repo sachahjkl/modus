@@ -63,12 +63,16 @@ HEIGHT :: KEYS_Y + interface.ACTION_BAR_WRAP_ROWS * interface.ACTION_BAR_ROW_HEI
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"). A printable character writes the note: the caret after
 // the note says it.
-bar_items := [?]interface.Action_Bar_Item {
-	{faces = {"Up"}, name = "older version", priority = 4},
-	{faces = {"Down"}, name = "newer version", priority = 3},
-	{faces = {"Enter"}, name = "restore the version shown", priority = 4},
-	{faces = {"Esc"}, name = "the current note", priority = 2},
-	{faces = {"Tab"}, name = "count 1000", priority = 1},
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [5]interface.Action_Bar_Item {
+	return {
+		interface.action_bar_item("older version", 4, "Up"),
+		interface.action_bar_item("newer version", 3, "Down"),
+		interface.action_bar_item("restore the version shown", 4, "Enter"),
+		interface.action_bar_item("the current note", 2, "Esc"),
+		interface.action_bar_item("count 1000", 1, "Tab"),
+	}
 }
 bar: interface.Action_Bar_State
 HISTORY_CAPACITY :: 512 // The versions of the note that the window shows.
@@ -260,7 +264,8 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		x = interface.draw_text(table, MARGIN, 254, VERSION_LABEL, graphics.colors.dim)
 		interface.draw_text(table, x, 254, string(shown_text[:shown_count]), graphics.colors.text)
 	}
-	bar_result := interface.action_bar(&frame, {0, KEYS_Y, WIDTH, HEIGHT - KEYS_Y}, bar_items[:], &bar, {overflow = .Wrap})
+	items := bar_items()
+	bar_result := interface.action_bar(&frame, {0, KEYS_Y, WIDTH, HEIGHT - KEYS_Y}, items[:], &bar, {overflow = .Wrap})
 	interface.window_frame_end(&drawing, &frame, window)
 	return bar_result
 }

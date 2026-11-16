@@ -66,10 +66,14 @@ HEIGHT :: 528
 
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"): the keys of the focus of the interface package.
-bar_items := [?]interface.Action_Bar_Item {
-	{faces = {"Tab"}, name = "next button", priority = 3},
-	{faces = {"Shift", "Tab"}, name = "button before", priority = 2},
-	{faces = {"Enter"}, name = "choose the value", priority = 3},
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [3]interface.Action_Bar_Item {
+	return {
+		interface.action_bar_item("next button", 3, "Tab"),
+		interface.action_bar_item("button before", 2, "Shift", "Tab"),
+		interface.action_bar_item("choose the value", 3, "Enter"),
+	}
 }
 bar: interface.Action_Bar_State
 
@@ -420,7 +424,8 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		}
 	}
 	interface.draw_text(frame.table, sample.x, sample.y + sample.height - 16, interface.text_of(&facts), graphics.colors.dim)
-	bar_result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, bar_items[:], &bar)
+	items := bar_items()
+	bar_result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar)
 	interface.window_frame_end(&drawing, &frame, window)
 	if choice.change_count != drawn_change && drawn_change != 1 {
 		buffer: [256]u8

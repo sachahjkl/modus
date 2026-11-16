@@ -1673,10 +1673,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	if note != "" {
 		bar_left = interface.draw_text(table, 12, bar_y + (interface.ACTION_BAR_ROW_HEIGHT - graphics.CELL_HEIGHT) / 2, note, graphics.colors.dim) + 16
 	}
-	items := [2]interface.Action_Bar_Item {
-		{faces = {"Enter"}, name = enter_name, priority = 2},
-		{faces = {"Esc"}, name = "clear", priority = 1},
-	}
+	items := [2]interface.Action_Bar_Item{interface.action_bar_item(enter_name, 2, "Enter"), interface.action_bar_item("clear", 1, "Esc")}
 	// The items stand from the right edge: the fact at the left changes
 	// with the mode, and the items keep their places.
 	bar_result := interface.action_bar(&frame, {bar_left, bar_y, WIDTH - bar_left, interface.ACTION_BAR_ROW_HEIGHT}, items[:clears ? 2 : 1], &bar, {alignment = .Right})

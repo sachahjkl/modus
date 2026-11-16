@@ -262,7 +262,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		bar_y := HEIGHT - interface.ACTION_BAR_ROW_HEIGHT
 		pointer_end := interface.draw_text(frame.table, 12, bar_y + (interface.ACTION_BAR_ROW_HEIGHT - graphics.CELL_HEIGHT) / 2, POINTER_NOTE, graphics.colors.dim)
 		bar_left := pointer_end + 16
-		bar_result := interface.action_bar(&frame, {bar_left, bar_y, WIDTH - bar_left, interface.ACTION_BAR_ROW_HEIGHT}, bar_items[:], &bar, {alignment = .Right})
+		items := bar_items()
+		bar_result := interface.action_bar(&frame, {bar_left, bar_y, WIDTH - bar_left, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar, {alignment = .Right})
 		interface.window_frame_end(&drawing, &frame, &window)
 		if bar_result.ran {
 			key_run(bar_result.run)
@@ -277,9 +278,10 @@ POINTER_NOTE :: "click a square: left adds, right stops or starts"
 // The keys of the window. The keys 1 to 6 stop or start the program with
 // that number: a key with an argument takes no press, and a click on its
 // square does the same.
-bar_items := [?]interface.Action_Bar_Item {
-	{faces = {"a"}, name = "add a record", priority = 2},
-	{faces = {"1-6"}, name = "stop or start", priority = 1},
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
+	return {interface.action_bar_item("add a record", 2, "a"), interface.action_bar_item("stop or start", 1, "1-6")}
 }
 #assert(relay.NODE_COUNT == 6) // The face "1-6" names the keys of the programs.
 bar: interface.Action_Bar_State

@@ -1110,7 +1110,8 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	scroll_result = interface.scroll_bar(&frame, scroll_area, scroll_identity, .Vertical, {total = int(max(kept, 1)), visible = int(max(shown_lines, 1)), first = int(first_line)}, {page = rows - 1}, "scroll bar", text_view_area)
 	// The action bar, after each other element: its list opens over the
 	// lines and the scroll bar.
-	bar_result = interface.action_bar(&frame, bar_area, bar_items[:], &bar, {alignment = .Right})
+	items := bar_items()
+	bar_result = interface.action_bar(&frame, bar_area, items[:], &bar, {alignment = .Right})
 	interface.window_frame_end(&drawing, &frame, window)
 	if table.full {
 		system.log("terminal: the draw table is full: records are missing")
@@ -1120,9 +1121,10 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 // The keys of the terminal, in its action bar (docs/INTERFACE.md, "4.4
 // The action bar"). Each other key goes to the program, which names its
 // own keys.
-bar_items := [?]interface.Action_Bar_Item {
-	{faces = {"Page Up"}, name = "lines before", priority = 1},
-	{faces = {"Page Down"}, name = "lines after", priority = 1},
+// A procedure, not a global array: an item is made by a call, and a
+// freestanding program runs no call before its entry.
+bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
+	return {interface.action_bar_item("lines before", 1, "Page Up"), interface.action_bar_item("lines after", 1, "Page Down")}
 }
 bar: interface.Action_Bar_State
 bar_result: interface.Action_Bar_Result // What the action bar of the last frame ran.

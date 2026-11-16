@@ -25,11 +25,11 @@ bar_table_of :: proc(memory: ^Bar_Memory) -> Draw_Table {
 @(private = "file")
 test_items :: proc() -> [5]Action_Bar_Item {
 	return {
-		{faces = {"Up"}, name = "module before", priority = 5},
-		{faces = {"Tab"}, name = "next link", priority = 1},
-		{faces = {"Enter"}, name = "open", priority = 3},
-		{faces = {"Backspace"}, name = "back", priority = 1},
-		{faces = {"Shift", "Tab"}, name = "link before", priority = 4},
+		action_bar_item("module before", 5, "Up"),
+		action_bar_item("next link", 1, "Tab"),
+		action_bar_item("open", 3, "Enter"),
+		action_bar_item("back", 1, "Backspace"),
+		action_bar_item("link before", 4, "Shift", "Tab"),
 	}
 }
 
@@ -74,7 +74,7 @@ action_bar_measures_each_item :: proc(t: ^testing.T) {
 	for &item in items {
 		testing.expect_value(t, action_bar_item_width(&table, &item), expected_width(item))
 	}
-	page := Action_Bar_Item{faces = {"Page Up"}, name = "up"}
+	page := action_bar_item("up", 0, "Page Up")
 	testing.expect_value(t, action_bar_item_width(&table, &page), expected_width(page))
 	testing.expect_value(t, action_bar_more_width(&table, 3), expected_more_width("3"))
 }
@@ -251,14 +251,17 @@ action_bar_key_of_reads_the_faces :: proc(t: ^testing.T) {
 		press: Key_Press,
 		ok:    bool,
 	} {
-		{{faces = {"Enter"}}, {code = display.KEY_ENTER, character = '\n'}, true},
-		{{faces = {"Backspace"}}, {code = display.KEY_BACKSPACE, character = 8}, true},
-		{{faces = {"Shift", "Tab"}}, {code = KEY_TAB, character = '\t', modifiers = display.MODIFIER_SHIFT}, true},
-		{{faces = {"Ctrl", "k"}}, {character = 'k', modifiers = display.MODIFIER_CONTROL}, true},
-		{{faces = {"Page Down"}}, {code = display.KEY_PAGE_DOWN}, true},
-		{{faces = {"h"}}, {character = 'h'}, true},
-		{{faces = {"0-3"}}, {}, false},
-		{{faces = {"Tab", "Enter"}}, {}, false},
+		{action_bar_item("enter", 0, "Enter"), {code = display.KEY_ENTER, character = '\n'}, true},
+		{action_bar_item("backspace", 0, "Backspace"), {code = display.KEY_BACKSPACE, character = 8}, true},
+		{action_bar_item("shift tab", 0, "Shift", "Tab"), {code = KEY_TAB, character = '\t', modifiers = display.MODIFIER_SHIFT}, true},
+		{action_bar_item("ctrl k", 0, "Ctrl", "k"), {character = 'k', modifiers = display.MODIFIER_CONTROL}, true},
+		{action_bar_item("page down", 0, "Page Down"), {code = display.KEY_PAGE_DOWN}, true},
+		{action_bar_item("h", 0, "h"), {character = 'h'}, true},
+		{action_bar_item("range", 0, "0-3"), {}, false},
+		{action_bar_item("two keys", 0, "Tab", "Enter"), {}, false},
+		// A face past the capacity is dropped: Shift, Ctrl and Tab stay,
+		// and the Enter after them is not the key.
+		{action_bar_item("four faces", 0, "Shift", "Ctrl", "Tab", "Enter"), {code = KEY_TAB, character = '\t', modifiers = display.MODIFIER_SHIFT | display.MODIFIER_CONTROL}, true},
 		{{}, {}, false},
 	}
 	for &each in cases {

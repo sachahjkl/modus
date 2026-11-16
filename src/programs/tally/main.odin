@@ -154,7 +154,8 @@ draw :: proc "contextless" (window: ^display.Window, service: ^system.Service) {
 	// place.
 	bar_y := HEIGHT - interface.ACTION_BAR_ROW_HEIGHT
 	bar_left := facts_end + 16
-	bar_result := interface.action_bar(&frame, {bar_left, bar_y, WIDTH - bar_left, interface.ACTION_BAR_ROW_HEIGHT}, bar_items[:], &bar, {alignment = .Right})
+	items := bar_items()
+	bar_result := interface.action_bar(&frame, {bar_left, bar_y, WIDTH - bar_left, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar, {alignment = .Right})
 	interface.window_frame_end(&drawing, &frame, window)
 	if bar_result.ran {
 		key_run(bar_result.run)
@@ -162,8 +163,11 @@ draw :: proc "contextless" (window: ^display.Window, service: ^system.Service) {
 	}
 }
 
-bar_items := [?]interface.Action_Bar_Item {
-	{faces = {"Space"}, name = "add 1", priority = 1},
+// bar_items gives the item of the action bar. A procedure, not a global
+// array: an item is made by a call, and a freestanding program runs no
+// call before its entry.
+bar_items :: proc "contextless" () -> [1]interface.Action_Bar_Item {
+	return {interface.action_bar_item("add 1", 1, "Space")}
 }
 bar: interface.Action_Bar_State
 bar_acted: bool // A press on the item ran its key: the next turn draws the new count.
