@@ -213,6 +213,84 @@ kernel_stack_measure_golden :: proc(t: ^testing.T) {
 	testing.expect_value(t, measure.lines[1], "the kernel stack of kernel: each entry: an entry from a program 752 bytes, the first run 104 bytes; an interrupt at the idle wait 992 bytes; a fault of the kernel over the deepest chain 1752 bytes (not checked)")
 }
 
+// A listing with a register trial: another processor starts, calls the
+// trial, and a refusal runs kernel_interrupt, which calls the refusal
+// callee, over it.
+KERNEL_STACK_TEST_TRIAL_LISTING :: `
+build/modules/kernel/linked.elf:	file format elf64-x86-64
+
+Disassembly of section .text:
+
+0000000000001000 <kernel_interrupt>:
+    1000:      	pushq	%rbp
+    1001:      	callq	0x1100 <kernel::register_trial_refusal_address>
+    1006:      	callq	0x1400 <idle_wait>
+    100b:      	retq
+
+0000000000001100 <kernel::register_trial_refusal_address>:
+    1100:      	retq
+
+0000000000001200 <kernel::processor_entry>:
+    1200:      	callq	0x1300 <kernel::thread_counters_trial>
+
+0000000000001300 <kernel::thread_counters_trial>:
+    1300:      	callq	0x1500 <model_specific_register_trial_read>
+    1305:      	retq
+
+0000000000001400 <idle_wait>:
+    1400:      	sti
+    1401:      	hlt
+    1402:      	cli
+    1403:      	retq
+
+0000000000001500 <model_specific_register_trial_read>:
+    1500:      	movl	%edi, %ecx
+
+0000000000001502 <model_specific_register_trial_read_instruction>:
+    1502:      	rdmsr
+    1504:      	retq
+`
+
+// The golden measure of the refusal of a register trial:
+//   the trial: processor_entry 16 + 8 + thread_counters_trial 424 + 8 +
+//   the trial 0 = 456, and 8 above it: 464;
+//   then 8 + 176 + 8 + the frame of kernel_interrupt 40 + 8 + the refusal
+//   callee 0: 704, the deepest (the interrupt at the idle wait: 472).
+@(test)
+kernel_stack_measure_of_a_register_trial :: proc(t: ^testing.T) {
+	frames_written := [?]Kernel_Stack_Test_Frame{{0x1000, 40}, {0x1100, 0}, {0x1200, 16}, {0x1300, 424}}
+	frames, problem := kernel_stack_frames_read(kernel_stack_test_elf(frames_written[:]))
+	testing.expect_value(t, problem, "")
+	entries := make([]Kernel_Stack_Entry, 2, context.temp_allocator)
+	entries[0] = {"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a program"}
+	entries[1] = {"kernel::processor_entry", RETURN_ADDRESS_BYTES, "the start of another processor"}
+	assembly_frames := make([]Kernel_Stack_Assembly_Frame, 2, context.temp_allocator)
+	assembly_frames[0] = {"idle_wait", 0}
+	assembly_frames[1] = {"model_specific_register_trial_read", 0}
+	trials := make([]string, 1, context.temp_allocator)
+	trials[0] = "model_specific_register_trial_read"
+	rules := Kernel_Stack_Rules {
+		entries          = entries,
+		assembly_frames  = assembly_frames,
+		interrupt_entry  = "kernel_interrupt",
+		idle_wait        = "idle_wait",
+		stack_bytes      = 4096,
+		least_free_bytes = 1024,
+		register_trials  = trials,
+		refusal_callee   = "kernel::register_trial_refusal_address",
+	}
+	measure := kernel_stack_measure("kernel", KERNEL_STACK_TEST_TRIAL_LISTING, frames, rules)
+	for item in measure.problems {
+		testing.expect_value(t, item, "")
+	}
+	testing.expect_value(t, measure.deepest, 704)
+	if !testing.expect_value(t, len(measure.lines), 3) {
+		return
+	}
+	testing.expect_value(t, measure.lines[0], "the kernel stack of kernel: the deepest chain uses 704 of 4096 bytes, 3392 bytes free, and the build fails under 1024 bytes free: the refusal of a register trial over kernel::processor_entry -> kernel::thread_counters_trial -> model_specific_register_trial_read (464 bytes), then kernel_interrupt -> kernel::register_trial_refusal_address")
+	testing.expect_value(t, measure.lines[2], "the kernel stack of kernel: the refusal of a register trial uses 704 of 4096 bytes, 3392 bytes free, and the build fails under 1024 bytes free: the refusal of a register trial over kernel::processor_entry -> kernel::thread_counters_trial -> model_specific_register_trial_read (464 bytes), then kernel_interrupt -> kernel::register_trial_refusal_address")
+}
+
 // A stack with less room than the margin after the deepest chain fails
 // the build, and the problem names the chain.
 @(test)

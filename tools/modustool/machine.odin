@@ -925,23 +925,30 @@ persistence_run :: proc() -> bool {
 }
 
 // A test of the kernel on itself (boot_info.Self_Test): the kernel does one
-// thing that its page tables must refuse. The processor refuses, and the
-// kernel reports the fault and stops the machine with code 2.
+// thing that the processor must refuse. For a test of the page tables, the
+// processor refuses, and the kernel reports the fault and stops the machine
+// with code 2. For the register trial, the kernel goes on after the
+// refusal, says so, and stops the machine with code 0.
 Self_Test :: struct {
 	number:  int, // boot_info.Self_Test.
 	does:    string,
-	reports: []string, // Parts of the report of the fault.
+	reports: []string, // Parts of the report of the fault, or the line of the kernel after the refusal.
+	stop:    int, // The status of QEMU at the stop of the machine.
 }
 
 MACHINE_STOP_FAULT :: 2 << 1 | 1 // The status of QEMU for the code 2.
 
 self_tests := [?]Self_Test {
-	{1, "use more than the kernel stack", {" vector 8 ", ": the kernel stack of the processor is full"}},
-	{2, "write to the code of the kernel", {" vector 14 ", ": write to a read-only page"}},
-	{3, "write to the code of the kernel through the direct map", {" vector 14 ", ": write to a read-only page"}},
-	{4, "execute the data of the kernel", {" vector 14 ", ": execute of a page that is not code"}},
-	{5, "read the memory of a program outside a copy", {" vector 14 ", ": the kernel used memory of a program outside a copy"}},
-	{6, "execute the code of a program", {" vector 14 ", ": the kernel executed memory of a program"}},
+	{1, "use more than the kernel stack", {" vector 8 ", ": the kernel stack of the processor is full"}, MACHINE_STOP_FAULT},
+	{2, "write to the code of the kernel", {" vector 14 ", ": write to a read-only page"}, MACHINE_STOP_FAULT},
+	{3, "write to the code of the kernel through the direct map", {" vector 14 ", ": write to a read-only page"}, MACHINE_STOP_FAULT},
+	{4, "execute the data of the kernel", {" vector 14 ", ": execute of a page that is not code"}, MACHINE_STOP_FAULT},
+	{5, "read the memory of a program outside a copy", {" vector 14 ", ": the kernel used memory of a program outside a copy"}, MACHINE_STOP_FAULT},
+	{6, "execute the code of a program", {" vector 14 ", ": the kernel executed memory of a program"}, MACHINE_STOP_FAULT},
+	// The way back from a register that the processor refuses
+	// (src/kernel/register_trial.odin): the kernel writes an address that is
+	// not canonical to the gs base of a program, IA32_KERNEL_GS_BASE.
+	{7, "write an address that is not canonical to a register in a register trial", {"kernel: self test: the processor refused the write to the register 00000000c0000102 in a register trial, and the kernel went on after it: as it must"}, MACHINE_STOP_OK},
 }
 
 self_test_file :: proc(pattern: string, number: int) -> string {
@@ -957,7 +964,7 @@ self_tests_run :: proc() -> bool {
 		for report in test.reports {
 			append(&steps, Step{kind = .Wait, text = report, any_order = true})
 		}
-		if !machine_test(steps[:], self_test_file(BOOT_VOLUME_SELF_TEST, test.number), self_test_file(TEST_OUTPUT_SELF_TEST, test.number), MACHINE_STOP_FAULT, TEST_DATA_DISK) {
+		if !machine_test(steps[:], self_test_file(BOOT_VOLUME_SELF_TEST, test.number), self_test_file(TEST_OUTPUT_SELF_TEST, test.number), test.stop, TEST_DATA_DISK) {
 			return false
 		}
 	}

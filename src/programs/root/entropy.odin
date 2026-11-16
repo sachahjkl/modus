@@ -3,6 +3,7 @@ package root
 import "base:intrinsics"
 import "modus:contract/entropy_service"
 import "modus:contract/errors"
+import "modus:contract/fresh_bytes"
 import "modus:contract/ring"
 import "modus:support/pci"
 import "modus:support/random"
@@ -10,22 +11,44 @@ import "modus:support/system"
 
 // The entropy service (src/md/features/entropy_device.md): the device
 // service of the entropy device, with this service as its one client. This
-// service asks it for bytes once, at its start, and mixes them into the
+// service asks it for two reads at its start, and mixes them into the
 // generator that gives each program its seed. It never waits for them: a
 // device that does not answer leaves the seed of the processor, and the
 // start goes on.
+//
+// After the reads of the start, it asks for one read every
+// FRESH_BYTES_PERIOD_MILLISECONDS, mixes it into its generator the same
+// way, and writes 32 bytes of its stream in the fresh bytes page of each
+// program (src/md/features/fresh_bytes.md; the code is in fresh_bytes.odin). The period
+// bounds the time that a reader of one copy of the state of a program
+// keeps its stream; the device and this service pay one read and one pass
+// over the pages for each period, whatever the programs draw.
 
 ENTROPY_READS_AT_START :: 2 // Two reads of 32 bytes: 512 bits, as many as the values of rdseed in a seed.
 ENTROPY_READ_BYTES :: 32
 #assert(ENTROPY_READ_BYTES <= entropy_service.READ_BYTES_LIMIT)
 #assert(ENTROPY_READS_AT_START <= entropy_service.RING_CAPACITY)
 
+FRESH_BYTES_PERIOD_MILLISECONDS :: 30_000 // The time from one read of the fresh bytes to the next, and from the reads of the start to the first.
+FRESH_BYTES_REFUSALS_LIMIT :: 3 // Refused reads in a row after which this service asks for no more: a broken device gives no fresh bytes.
+
 entropy_ring: ring.Ring
 entropy_ring_memory: system.Handle
 entropy_program: ^Started
+entropy_reads_asked: u32 // The reads that this service asked for: the tag of a read is its number.
 entropy_reads_answered: u32
-entropy_bytes_given: u64 // The bytes that the completions carried, mixed or refused.
+entropy_bytes_given: u64 // The bytes that the completions of the reads of the start carried, mixed or refused.
+// The hash of the last read, which finds a read that comes again. It is a
+// hash, not the bytes, and it stays for the reads of the fresh bytes.
 entropy_mixing: random.Device_Mixing
+// The device counts of the reads of the fresh bytes. The entropy report
+// keeps the reads of the start only, so that what a program shows of the
+// seed of the system does not depend on the time of its start.
+fresh_bytes_counts: random.Entropy_Report
+fresh_bytes_deadline: u64 = system.WAIT_FOREVER // The time of the next read of the fresh bytes. WAIT_FOREVER: none, or a read in flight.
+fresh_bytes_refreshes: u64 // The reads of the fresh bytes that this service mixed.
+fresh_bytes_refusals_in_a_row: u32
+fresh_bytes_stopped: bool // No more reads of the fresh bytes: the service stopped, or the device refused too many.
 
 // entropy_service_start starts the entropy service when the machine has an
 // entropy device at its place, and asks it for the reads of the start.
@@ -57,51 +80,112 @@ entropy_service_start :: proc "contextless" () {
 	entropy_ring, entropy_ring_memory, entropy_program = opened, ring_memory, driver
 	entropy_report.device_present = true
 	// The ring is new and empty: each command has a place.
-	for index in 0 ..< ENTROPY_READS_AT_START {
-		ring.push(&entropy_ring.commands, ring.Record{kind = u32(entropy_service.Command.Read), tag = u32(index), values = {0 = ENTROPY_READ_BYTES}})
+	for _ in 0 ..< ENTROPY_READS_AT_START {
+		ring.push(&entropy_ring.commands, ring.Record{kind = u32(entropy_service.Command.Read), tag = entropy_reads_asked, values = {0 = ENTROPY_READ_BYTES}})
+		entropy_reads_asked += 1
 	}
 	system.wake_reader(&entropy_ring.commands)
 }
 
-// entropy_answers reads the completions of the reads of the start, and
-// mixes the bytes of each one into the generator of the programs
-// (random.device_bytes_mix refuses a read that adds nothing). After the
-// last one it writes the line of the device, and reads the ring no more: a
-// completion that this service did not ask for is never read. wait is nil
-// when the service stopped.
+// entropy_answers reads the completion of each read that this service
+// asked for, and no other one, and mixes the bytes of each one into the
+// generator of the programs (random.device_bytes_mix refuses a read that
+// adds nothing). After the last read of the start it writes the line of the
+// device. After a read of the fresh bytes it writes the pages
+// (fresh_bytes_refresh_end). Then it asks for the next read of the fresh
+// bytes when its time came. wait is nil when the service stopped: nothing
+// is asked then.
 entropy_answers :: proc "contextless" (wait: ^system.Wait) {
-	if entropy_ring.head == nil || entropy_reads_answered >= ENTROPY_READS_AT_START {
+	if entropy_ring.head == nil {
 		return
 	}
-	for entropy_reads_answered < ENTROPY_READS_AT_START {
+	for entropy_reads_answered < entropy_reads_asked {
 		record := system.receive(&entropy_ring.completions) or_break
+		number := entropy_reads_answered
 		entropy_reads_answered += 1
-		if entropy_service.Status(record.kind) == .Ok {
+		at_start := number < ENTROPY_READS_AT_START
+		counts := at_start ? &entropy_report : &fresh_bytes_counts
+		mixed := false
+		if record.tag != number {
+			// A completion of a read that was not asked for, or out of its
+			// order: its bytes add nothing.
+			counts.device_reads_refused += 1
+			system.log_in("devices", .Warning, "root: the entropy service answered the read ", u64(number), " with the tag of the read ", u64(record.tag), ": the answer adds nothing")
+		} else if entropy_service.Status(record.kind) == .Ok {
 			bytes: [entropy_service.READ_BYTES_LIMIT]u8
 			count := entropy_service.bytes_unpack(record.values, &bytes)
-			entropy_bytes_given += u64(count)
-			random.device_bytes_mix(&program_generator, &entropy_mixing, bytes[:count], &entropy_report)
+			if at_start {
+				entropy_bytes_given += u64(count)
+			}
+			mixed = random.device_bytes_mix(&program_generator, &entropy_mixing, bytes[:count], counts) == .Mixed
 			intrinsics.mem_zero_volatile(&bytes, size_of(bytes))
-			intrinsics.mem_zero_volatile(&record, size_of(record))
-			continue
+		} else {
+			counts.device_reads_refused += 1
+			error := errors.completion_record(record.values)
+			text: [240]u8
+			writer := system.Writer{buffer = text[:]}
+			system.ring_error_text(&writer, &error, "entropy", entropy_service.command_name(error.operation), entropy_service.argument_name(error.operation, error.argument))
+			system.log_in("devices", .Warning, "root: the entropy service refused a read: ", system.written(&writer))
 		}
-		entropy_report.device_reads_refused += 1
-		error := errors.completion_record(record.values)
-		text: [240]u8
-		writer := system.Writer{buffer = text[:]}
-		system.ring_error_text(&writer, &error, "entropy", entropy_service.command_name(error.operation), entropy_service.argument_name(error.operation, error.argument))
-		system.log_in("devices", .Warning, "root: the entropy service refused a read: ", system.written(&writer))
+		intrinsics.mem_zero_volatile(&record, size_of(record))
+		if !at_start {
+			fresh_bytes_refresh_end(mixed)
+		} else if entropy_reads_answered == ENTROPY_READS_AT_START {
+			system.log_in("devices", .Info, "root: the entropy device gave ", entropy_bytes_given, " bytes in ", u64(ENTROPY_READS_AT_START), " reads: ", u64(entropy_report.device_bytes), " bytes mixed into the random generator of the system; refused reads: ", u64(entropy_report.device_reads_refused))
+			fresh_bytes_deadline = system.time() + FRESH_BYTES_PERIOD_MILLISECONDS
+		}
 	}
-	if entropy_reads_answered == ENTROPY_READS_AT_START {
-		// The hash of the last read finds a read that comes again; no read
-		// comes after this one, and no copy of the bytes is kept.
-		intrinsics.mem_zero_volatile(&entropy_mixing, size_of(entropy_mixing))
-		system.log_in("devices", .Info, "root: the entropy device gave ", entropy_bytes_given, " bytes in ", u64(ENTROPY_READS_AT_START), " reads: ", u64(entropy_report.device_bytes), " bytes mixed into the random generator of the system; refused reads: ", u64(entropy_report.device_reads_refused))
+	if wait == nil {
 		return
 	}
-	if wait != nil {
+	fresh_bytes_read_ask()
+	if entropy_reads_answered < entropy_reads_asked {
 		system.wait_records(wait, &entropy_ring.completions)
 	}
+}
+
+// fresh_bytes_read_ask asks the entropy service for the next read of the
+// fresh bytes, when its time came and no read is in flight: one read at a
+// time, so a device that does not answer is asked nothing more.
+fresh_bytes_read_ask :: proc "contextless" () {
+	if fresh_bytes_stopped || fresh_bytes_deadline == system.WAIT_FOREVER || entropy_reads_answered < entropy_reads_asked || system.time() < fresh_bytes_deadline {
+		return
+	}
+	if !system.send(&entropy_ring.commands, ring.Record{kind = u32(entropy_service.Command.Read), tag = entropy_reads_asked, values = {0 = ENTROPY_READ_BYTES}}) {
+		// Not reached while one read at most is in flight: the ring has a
+		// place. The next period tries again, and the loop does not spin.
+		fresh_bytes_deadline = system.time() + FRESH_BYTES_PERIOD_MILLISECONDS
+		return
+	}
+	entropy_reads_asked += 1
+	fresh_bytes_deadline = system.WAIT_FOREVER
+}
+
+// fresh_bytes_refresh_end ends one read of the fresh bytes: after a mixed
+// read it writes the page of each program, and the first time one line;
+// after a refused read it writes one warning, and after
+// FRESH_BYTES_REFUSALS_LIMIT in a row it asks for no more reads. A line for
+// each refresh would fill the log.
+fresh_bytes_refresh_end :: proc "contextless" (mixed: bool) {
+	if !mixed {
+		fresh_bytes_refusals_in_a_row += 1
+		if fresh_bytes_refusals_in_a_row >= FRESH_BYTES_REFUSALS_LIMIT {
+			system.log_in("devices", .Warning, "root: the entropy device gave ", u64(fresh_bytes_refusals_in_a_row), " refused reads in a row: no more fresh bytes for the running programs")
+			fresh_bytes_stopped = true
+			fresh_bytes_deadline = system.WAIT_FOREVER
+			intrinsics.mem_zero_volatile(&entropy_mixing, size_of(entropy_mixing)) // No read comes after this one.
+			return
+		}
+		system.log_in("devices", .Warning, "root: a read of the entropy device for the fresh bytes added nothing: the pages keep their bytes; refused reads in a row: ", u64(fresh_bytes_refusals_in_a_row))
+	} else {
+		fresh_bytes_refusals_in_a_row = 0
+		programs := fresh_bytes_write_all()
+		fresh_bytes_refreshes += 1
+		if fresh_bytes_refreshes == 1 {
+			system.log_in("devices", .Info, "root: the first fresh bytes: ", u64(ENTROPY_READ_BYTES), " bytes of the entropy device mixed into the random generator of the system, then ", u64(fresh_bytes.BYTES), " bytes of its stream in the fresh bytes page of each of ", programs, " programs; a read every ", u64(FRESH_BYTES_PERIOD_MILLISECONDS / 1000), " seconds after this one, with no line")
+		}
+	}
+	fresh_bytes_deadline = system.time() + FRESH_BYTES_PERIOD_MILLISECONDS
 }
 
 // entropy_service_end forgets the ring of an entropy service that stopped,
@@ -113,7 +197,12 @@ entropy_service_end :: proc "contextless" (item: ^Started) {
 	entropy_answers(nil)
 	if entropy_reads_answered < ENTROPY_READS_AT_START {
 		system.log_in("devices", .Warning, "root: the entropy service stopped after ", u64(entropy_reads_answered), " of ", u64(ENTROPY_READS_AT_START), " reads: the random seed of the system has the bytes of those reads only")
+	} else if !fresh_bytes_stopped {
+		system.log_in("devices", .Warning, "root: the entropy service stopped: no more fresh bytes for the running programs")
 	}
+	fresh_bytes_stopped = true
+	fresh_bytes_deadline = system.WAIT_FOREVER
+	intrinsics.mem_zero_volatile(&entropy_mixing, size_of(entropy_mixing))
 	system.ring_close(&entropy_ring)
 	system.close(entropy_ring_memory)
 	entropy_ring_memory, entropy_program = 0, nil

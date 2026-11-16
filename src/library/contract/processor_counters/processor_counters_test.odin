@@ -172,3 +172,76 @@ another_vendor_has_no_plan :: proc(t: ^testing.T) {
 		testing.expectf(t, (which == .None) == (text == ""), "the absence %v has the text %q", which, text)
 	}
 }
+
+// The trial of the plan of the test machine: each select is read before any
+// write, each counter is written, read back and written 0 before the select
+// of its event, and each select ends at 0.
+@(test)
+the_trial_of_the_test_machine :: proc(t: ^testing.T) {
+	plan, _ := plan_of_identification(zen_3())
+	steps, count := trial_steps_of_plan(plan)
+	testing.expect_value(t, count, 6 * EVENT_COUNT) // No global control on the test machine.
+	for event in Event {
+		testing.expect_value(t, steps[u32(event)], Trial_Step{.Read_Select_Off, plan.select_registers[event], 0})
+		first := EVENT_COUNT + 5 * u32(event)
+		testing.expect_value(t, steps[first + 0], Trial_Step{.Write, plan.counter_registers[event], TRIAL_COUNTER_VALUE})
+		testing.expect_value(t, steps[first + 1], Trial_Step{.Read_Back, plan.counter_registers[event], TRIAL_COUNTER_VALUE})
+		testing.expect_value(t, steps[first + 2], Trial_Step{.Write, plan.counter_registers[event], 0})
+		testing.expect_value(t, steps[first + 3], Trial_Step{.Write, plan.select_registers[event], plan.select_values[event]})
+		testing.expect_value(t, steps[first + 4], Trial_Step{.Write, plan.select_registers[event], 0})
+	}
+	// No write before the last read of a select.
+	for step, index in steps[:count] {
+		if step.kind != .Read_Select_Off {
+			testing.expectf(t, u32(index) >= EVENT_COUNT, "the step %d writes before each select was read", index)
+		}
+	}
+	// On Intel with no full-width writes, a counter keeps 32 bits and extends bit 31.
+	testing.expect(t, TRIAL_COUNTER_VALUE & (u64(1) << 31) == 0)
+	testing.expect(t, TRIAL_COUNTER_VALUE != 0)
+}
+
+// A plan with a global control ends its trial with it; no plan has no
+// trial.
+@(test)
+the_trial_of_a_global_control :: proc(t: ^testing.T) {
+	plan, _ := plan_of_identification(intel_version_4())
+	steps, count := trial_steps_of_plan(plan)
+	testing.expect_value(t, count, TRIAL_STEP_CAPACITY)
+	testing.expect_value(t, steps[count - 1], Trial_Step{.Add_Bits, INTEL_GLOBAL_CONTROL, GLOBAL_CONTROL_FOUR_COUNTERS})
+	_, none_count := trial_steps_of_plan({})
+	testing.expect_value(t, none_count, u32(0))
+}
+
+// Each outcome of a step: a refusal of the processor at any step, a select
+// that is on, a counter that keeps another value; else the step passes.
+@(test)
+the_outcome_of_a_trial_step :: proc(t: ^testing.T) {
+	plan, _ := plan_of_identification(zen_3())
+	steps, count := trial_steps_of_plan(plan)
+	for step in steps[:count] {
+		testing.expect_value(t, trial_step_outcome(step, false, 0), Absence.Register_Refused)
+	}
+	select_read := steps[0]
+	testing.expect_value(t, trial_step_outcome(select_read, true, 0), Absence.None)
+	// A select with event bits and Enable clear is off.
+	testing.expect_value(t, trial_step_outcome(select_read, true, plan.select_values[.Instructions_Retired] &~ SELECT_ENABLE), Absence.None)
+	testing.expect_value(t, trial_step_outcome(select_read, true, SELECT_ENABLE), Absence.Counter_In_Use)
+	read_back := steps[EVENT_COUNT + 1]
+	testing.expect_value(t, read_back.kind, Trial_Step_Kind.Read_Back)
+	testing.expect_value(t, trial_step_outcome(read_back, true, TRIAL_COUNTER_VALUE), Absence.None)
+	testing.expect_value(t, trial_step_outcome(read_back, true, 0), Absence.Counter_Not_Kept)
+	testing.expect_value(t, trial_step_outcome(read_back, true, TRIAL_COUNTER_VALUE + 1), Absence.Counter_Not_Kept)
+	// A write that the processor took passes, whatever it wrote.
+	testing.expect_value(t, trial_step_outcome(steps[EVENT_COUNT], true, 0), Absence.None)
+}
+
+// The line of an outcome of the trial names its register; the line of an
+// absence in CPUID does not.
+@(test)
+the_absences_that_name_a_register :: proc(t: ^testing.T) {
+	for which in Absence {
+		names := absence_names_a_register(which)
+		testing.expectf(t, names == (which >= .Register_Refused), "the absence %v names a register: %v", which, names)
+	}
+}

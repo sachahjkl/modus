@@ -50,7 +50,7 @@ Entropy_Report :: struct {
 	jitter_samples:   u32, // The deltas of the cycle counter that the gathering hashed.
 	jitter_distinct:  u32, // Distinct low bytes of the deltas: a sign of life of the counter, not a measure of entropy.
 	device_present:   bool, // The machine has an entropy device, and its service started.
-	device_bytes:     u32, // Bytes of the entropy device that device_bytes_mix mixed in, after the gathering.
+	device_bytes:     u32, // Bytes of the entropy device that device_bytes_mix mixed in, after the gathering. The root service counts the reads of its start here, and those of the fresh bytes in a report of its own.
 	device_reads_refused: u32, // Reads of the entropy device that added nothing: no byte, one value only, the read before again, or a read that the entropy service refused.
 	strength:         Seed_Strength, // The strength of the seed: the entropy device does not change it.
 }
