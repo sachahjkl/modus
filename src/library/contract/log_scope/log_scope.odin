@@ -14,6 +14,13 @@
 //   which the kernel writes in each log record (operation.Log_Record). Its
 //   rows are numbered by their own number, and `lost` counts its own
 //   records only: no number or count of the records of other programs.
+// - **A lent program**: the exports `program_records` and
+//   `program_value_runs` give, to each caller, the records of the program
+//   whose program handle the caller lends for the call, with the right
+//   Read. A starter holds the handle of each child, so it reads what its
+//   children wrote. The log service reads the program slot and the program
+//   serial of that program from the kernel (`Program_State`); the rows are
+//   numbered by the own numbers of that program, as for own records.
 //
 // The amount of the grant (isolated.CALLER_AMOUNT_MASK): bits 0 to 31 are
 // the program serial, bits 32 to 45 the program slot. The slot 0 is the
@@ -54,6 +61,20 @@ own_records_amount :: proc "contextless" (program: u64, program_serial: u64) -> 
 		return 0, false
 	}
 	return program << OWN_SLOT_SHIFT | program_serial, true
+}
+
+// lent_program_scope gives the scope of a call that names a program by the
+// handle that its caller lent: the records of that program only, never the
+// whole log, also for a caller that acts for the principal. `program` and
+// `program_serial` are what `Program_State` gives for the lent handle. The
+// slot 0 is the kernel, which no program handle names: it gives a scope
+// with no record.
+//
+// Example: a child in the program slot 9 with the program serial 4 gives
+// the scope of the records whose `program` is 9 and whose
+// `program_serial` is 4.
+lent_program_scope :: proc "contextless" (program: u64, program_serial: u64) -> Scope {
+	return {whole_log = false, program = program, program_serial = program_serial}
 }
 
 // scope_of gives the scope of a caller from the grant of its connection.

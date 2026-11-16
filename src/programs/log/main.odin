@@ -53,6 +53,8 @@
 // **Its exports** (`exports.odin`): `records` and `value_runs`: the whole
 // log to a caller that [acts for the principal](term:acts-for-the-principal),
 // and its [own records](term:own-records) to each other caller.
+// `program_records` and `program_value_runs`: the records of one program
+// whose program handle the caller lends, such as a child of the caller.
 //
 // ```
 // connect("log")
