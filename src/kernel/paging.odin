@@ -328,6 +328,9 @@ self_test :: proc "contextless" (test: info.Self_Test, boot: ^info.Boot_Info) {
 		log("kernel: self test: execute the code of a program")
 		control_register_3_write(programs[1].table)
 		(cast(proc "c" ())rawptr(uintptr(threads[1].frame.rip)))()
+	case .Register_Refused:
+		// On a refusal it stops the machine with the code 0.
+		register_trial_self_test()
 	}
 	log("kernel: self test: the processor did not refuse")
 	machine_stop(1)

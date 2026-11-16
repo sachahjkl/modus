@@ -22,6 +22,9 @@
 // - `seed_for_a_child`, `values_with_seed`: the seed of a program that this
 //   one starts, or of another thread.
 // - `reseed`: mix fresh bytes into the key.
+// - `fresh_bytes_attach`: the fresh bytes page of the program, whose new
+//   bytes the generator mixes into its key at a refill and before a key,
+//   never at each draw (src/md/features/fresh_bytes.md).
 // - `Seed_Strength`, `Entropy_Report`, `entropy_gather`: the gathering of
 //   the root service.
 //
@@ -38,6 +41,7 @@ package random
 
 import "base:intrinsics"
 import "modus:contract/errors"
+import "modus:contract/fresh_bytes"
 import op "modus:contract/operation"
 import "modus:support/system"
 import "modus:support/cryptography/chacha20"
@@ -65,6 +69,9 @@ Generator :: struct {
 	in_use:    bool, // A draw runs: a second draw at the same time is refused.
 	refills:   u64, // The refills since the seed.
 	served:    u64, // Bytes served since the seed.
+	fresh_page:         ^fresh_bytes.Page, // The fresh bytes page of the program; nil: none.
+	fresh_change_count: u32, // The change count of the page that the key has: a change is mixed once.
+	fresh_mixes:        u64, // The changes of the page mixed into the key since the seed.
 }
 
 // generator_seed keys a generator with a seed of 32 bytes, and erases the
@@ -114,12 +121,25 @@ refill :: #force_no_inline proc "contextless" (generator: ^Generator) {
 // fill writes random bytes in output. A generator that is not seeded stops
 // the program.
 fill :: proc "contextless" (generator: ^Generator, output: []u8) {
+	fill_bytes(generator, output, false)
+}
+
+// fill_bytes is the one draw. It mixes the new bytes of the fresh bytes page
+// at each refill, and before a key or a seed when for_a_key is true, and at
+// no other draw: the page changes once in a period, and a mix costs a hash
+// and the buffer (src/md/features/fresh_bytes.md).
+@(private)
+fill_bytes :: proc "contextless" (generator: ^Generator, output: []u8, for_a_key: bool) {
 	ensure_contextless(generator.seeded, "random: a draw from a generator with no seed")
 	in_use_before := intrinsics.atomic_exchange(&generator.in_use, true)
 	ensure_contextless(!in_use_before, "random: two threads drew from one generator at once: each thread needs its own generator, seeded with seed_for_a_child")
+	if for_a_key {
+		fresh_bytes_take(generator)
+	}
 	done := 0
 	for done < len(output) {
 		if generator.available == 0 {
+			fresh_bytes_take(generator)
 			refill(generator)
 			crypto.erase_stack_below_the_caller()
 		}
@@ -144,8 +164,51 @@ fill_for_a_key :: proc "contextless" (generator: ^Generator, output: []u8, least
 		errors.fail(error, -1, .Seed_Too_Weak, .None, 3, i64(generator.strength), i64(least_strength))
 		return false
 	}
-	fill(generator, output)
+	fill_bytes(generator, output, true)
 	return true
+}
+
+// The context of the key derivation of a mix of the fresh bytes page: a
+// hash of other bytes never gives this key.
+DOMAIN_FRESH_BYTES :: "kernel random: the fresh bytes of a program, version 1"
+
+// fresh_bytes_take mixes the bytes of the fresh bytes page into the key when
+// the page has a change that the key does not have: the next key is BLAKE3
+// of the domain text, the old key and the bytes, so the bytes only add. It
+// drops the buffer, so the next byte comes from the new key. The caller
+// holds the generator (in_use).
+@(private)
+fresh_bytes_take :: proc "contextless" (generator: ^Generator) {
+	if generator.fresh_page == nil {
+		return
+	}
+	bytes, change_count, fresh := fresh_bytes.read(generator.fresh_page, generator.fresh_change_count)
+	if !fresh {
+		return
+	}
+	generator.key = key_derive(DOMAIN_FRESH_BYTES, generator.key[:], bytes[:])
+	crypto.erase_stack_below_the_caller()
+	crypto.zero_explicit(&bytes, size_of(bytes))
+	crypto.zero_explicit(&generator.buffer, size_of(generator.buffer))
+	generator.available = 0
+	generator.fresh_change_count = change_count
+	generator.fresh_mixes += 1
+}
+
+// fresh_bytes_attach gives a generator the fresh bytes page of the program
+// (fresh_bytes.page_of); nil gives none. generator_from_context attaches the
+// page of the context. A program that gives another thread its own
+// generator attaches the page to it too: each generator mixes the bytes
+// into its own key.
+fresh_bytes_attach :: proc "contextless" (generator: ^Generator, page: ^fresh_bytes.Page) {
+	generator.fresh_page = page
+}
+
+// fresh_bytes_mixes gives the changes of the fresh bytes page that the
+// generator mixed into its key, and the change count of the last one (0:
+// none yet). The program `randomness` shows them.
+fresh_bytes_mixes :: proc "contextless" (generator: ^Generator) -> (mixes: u64, change_count: u32) {
+	return generator.fresh_mixes, generator.fresh_change_count
 }
 
 // next_u64 gives a random number of 64 bits.
@@ -160,7 +223,7 @@ next_u64 :: proc "contextless" (generator: ^Generator) -> u64 {
 // knows the seed of its child: a child has no secret from the program that
 // starts it, which already chooses its code and its grants.
 seed_for_a_child :: proc "contextless" (generator: ^Generator) -> (seed: [SEED_SIZE]u8) {
-	fill(generator, seed[:])
+	fill_bytes(generator, seed[:], true)
 	return
 }
 
@@ -180,7 +243,9 @@ reseed :: proc "contextless" (generator: ^Generator, fresh: []u8) {
 
 // generator_from_context seeds the generator of a program with the seed of
 // its context (the values 9 to 12) and its strength (the value 16), and
-// erases the seed there. false: the context has no seed (the root service).
+// erases the seed there. It attaches the fresh bytes page of the context,
+// when the starter mapped one. false: the context has no seed (the root
+// service).
 generator_from_context :: proc "contextless" (generator: ^Generator, ctx: ^system.Context) -> bool {
 	seed: [SEED_SIZE]u8
 	for index in 0 ..< op.CONTEXT_VALUE_SEED_COUNT {
@@ -191,7 +256,11 @@ generator_from_context :: proc "contextless" (generator: ^Generator, ctx: ^syste
 	}
 	crypto.zero_explicit(&ctx.values[op.CONTEXT_VALUE_SEED], op.CONTEXT_VALUE_SEED_COUNT * 8)
 	strength := Seed_Strength(min(ctx.values[op.CONTEXT_VALUE_SEED_STRENGTH], u64(max(Seed_Strength))))
-	return generator_seed(generator, &seed, strength)
+	if !generator_seed(generator, &seed, strength) {
+		return false
+	}
+	fresh_bytes_attach(generator, fresh_bytes.page_of(ctx))
+	return true
 }
 
 // values_with_seed gives the values of a program to start with a seed for

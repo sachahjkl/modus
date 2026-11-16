@@ -57,7 +57,7 @@ The record has no key check. The machine key of `MACHINET` comes from the TPM wi
 
 **At each start.** `unlock` reads the record, tells the root service that the key is awaited, and asks for the machine passphrase, as for `MACHINEK`. Enter with nothing skips it. With no TPM service it asks for the recovery key at once.
 
-**A lost passphrase.** The prompt of the machine passphrase has an item of its action bar, Ctrl+R "recovery key", that asks for the recovery key at once. An owner who lost the passphrase then types no wrong try: each one would count in the TPM, against a named principal too, and nothing in the system resets the count.
+**A lost passphrase.** The prompt of the machine passphrase has an item of its action bar, Ctrl+R "recovery key", that asks for the recovery key at once. An owner who lost the passphrase then types no wrong try: each one would count in the TPM, against a named principal too, and nothing in the system resets the count. The prompt of a named principal has the same item ([tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md), "The life of the file").
 
 **A passphrase.** The passphrase gives the value; the TPM gives the secret; the two give the seal key, which opens the machine key. Then `unlock` gives the root service the key of the table with the origin "opened". A wrong passphrase: the TPM answers `TPM_RC_AUTH_FAIL`, counts it, and the window says so.
 
@@ -100,7 +100,6 @@ Built: the form `MACHINEP` with host tests (its offsets, its two additional data
 Left:
 
 - **A change and a removal of the machine passphrase, and a change of the recovery key**, as for a named principal.
-- **The recovery key of a named principal with no wrong try.** Its prompt has no Ctrl+R yet: a principal who lost the passphrase types wrong tries until the TPM refuses.
 - **Machine tests of the lockout of the machine passphrase, of its record with no TPM service, and of a failed new seal.**
 - **The state of the lockout hierarchy in the window**, as for the creation of a named principal.
 - **A pin of the form of the record in the TPM** ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md), "The form of the record is not pinned").

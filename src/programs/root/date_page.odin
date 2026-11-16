@@ -27,6 +27,14 @@ mapping_dropped_log :: proc "contextless" (what: string, capacity: int) {
 	system.log_in("programs", .Warning, "root: no room for ", what, " in the mappings of a start, which holds ", u64(capacity), ": the program starts without it")
 }
 
+// mapping_needed_log writes the one line of a mapping that a program cannot
+// start without (the file of a service, the file of the storage service)
+// when the list of the mappings of its start is full: the start fails with
+// this line, and the list never takes an index past its end.
+mapping_needed_log :: proc "contextless" (what: string, name: string, capacity: int) {
+	system.log_in("programs", .Warning, "root: no room for ", what, " in the mappings of a start, which holds ", u64(capacity), ": the start of ", system.Module_Name{name}, " fails")
+}
+
 // date_page_give adds the date page, read-only, to the mappings of a
 // program, and sets its bit in the values.
 date_page_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {

@@ -126,6 +126,12 @@ Kernel_Stack_Rules :: struct {
 	// Procedures that no chain runs under the report of a fault: from
 	// fault_report_begin the log takes no lock and wakes no reader.
 	report_never_reaches:     []string,
+	// The procedures of a register trial: a protection fault of their one
+	// instruction pushes its frame on the stack of the trial, and
+	// interrupt_entry returns from it at once through refusal_callee (a
+	// call, or code inlined into its frame). None: no such chain.
+	register_trials:          []string,
+	refusal_callee:           string,
 }
 
 kernel_stack_rules := Kernel_Stack_Rules {
@@ -155,6 +161,11 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		// Six saved registers, the address of the general registers of the
 		// guest and the host area.
 		{"guest_enter", 64},
+		// One rdmsr or wrmsr each, and no push. A refusal pushes the frame of
+		// a protection fault and runs kernel_interrupt over it: the row
+		// register_trials below measures that chain.
+		{"model_specific_register_trial_read", 0},
+		{"model_specific_register_trial_write", 0},
 		// src/runtime/memory.asm, the kernel form: rbx is saved for a copy of
 		// 17 to 64 bytes.
 		{"copy_bytes_without_overlap", 8},
@@ -244,6 +255,10 @@ kernel_stack_rules := Kernel_Stack_Rules {
 	// machine.
 	nested_report_callees = {"kernel::fault_report_begin"},
 	report_never_reaches = {"kernel::lock_take", "kernel::word_wake"},
+	// The trials of the counter registers at the start of a processor and
+	// in the self test (src/kernel/register_trial.odin).
+	register_trials = {"model_specific_register_trial_read", "model_specific_register_trial_write"},
+	refusal_callee = "kernel::register_trial_refusal_address",
 }
 
 // One procedure of the listing. names[0] is the first name at its address.
@@ -682,9 +697,36 @@ stack_procedures_that_return :: proc(procedures: []Stack_Procedure, starts: map[
 					break
 				}
 			}
+			// A procedure of assembly can run on into the next symbol of the
+			// listing: model_specific_register_trial_read ends at the global
+			// label model_specific_register_trial_read_instruction, which holds
+			// its ret. It returns when the next procedure returns. Padding
+			// after a last instruction that ends its path does not run on.
+			if !returns[index] && index + 1 < len(procedures) && stack_runs_on_into_the_next(procedure, starts, returns) && returns[index + 1] {
+				returns[index] = true
+				changed = true
+			}
 		}
 	}
 	return returns
+}
+
+// stack_runs_on_into_the_next says if the last instruction of a procedure
+// that is not padding goes on to the next instruction of the listing.
+@(private = "file")
+stack_runs_on_into_the_next :: proc(procedure: Stack_Procedure, starts: map[u64]int, returns: []bool) -> bool {
+	for position := len(procedure.instructions) - 1; position >= 0; position -= 1 {
+		instruction := procedure.instructions[position]
+		if stack_is_padding(instruction.mnemonic) {
+			// int3 ends a path; a nop goes on.
+			if instruction.mnemonic == "int3" {
+				return false
+			}
+			continue
+		}
+		return stack_falls_through(instruction, starts, returns)
+	}
+	return false
 }
 
 // stack_falls_through says if a path goes on after an instruction to the
@@ -1279,6 +1321,49 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 			deepest_text = fmt.tprintf("an interrupt at the idle wait over %s (%d bytes), then %s", idle_text, over, chain_text(&deepest, interrupt_entry))
 		}
 	}
+	// The refusal of a register trial: the deepest chain from an entry to
+	// a trial, the frame of the protection fault, then the frame of
+	// interrupt_entry, which returns at once through refusal_callee. The
+	// frame of interrupt_entry alone is the bound: the refusal runs none of
+	// its other paths.
+	refusal_bytes := -1
+	refusal_text := ""
+	if len(rules.register_trials) > 0 {
+		trial_bytes := -1
+		trial_text := ""
+		for name in rules.register_trials {
+			trial := stack_procedure_named(procedures, name)
+			if trial < 0 {
+				append(&measure.problems, fmt.tprintf("the listing has no procedure %s, a register trial", name))
+				continue
+			}
+			to_trial := depth_search_make(procedures, frame_of, levels, trial, cut, -1)
+			for entry, position in rules.entries {
+				below := depth_of(&to_trial, entry_indexes[position])
+				if below == DEPTH_NO_CHAIN || entry.bytes_above + below <= trial_bytes {
+					continue
+				}
+				trial_bytes = entry.bytes_above + below
+				trial_text = chain_text(&to_trial, entry_indexes[position])
+			}
+		}
+		if trial_bytes >= 0 {
+			callee_bytes := 0
+			handler_text := procedures[interrupt_entry].names[0]
+			for edge in procedures[interrupt_entry].edges {
+				if stack_procedure_matches(procedures[edge.target], rules.refusal_callee) {
+					callee_bytes = (edge.tail ? 0 : edge.pushed_bytes) + RETURN_ADDRESS_BYTES + max(depth_of(&deepest, edge.target), 0)
+					handler_text = fmt.tprintf("%s -> %s", handler_text, chain_text(&deepest, edge.target))
+				}
+			}
+			refusal_bytes = trial_bytes + INTERRUPT_ALIGNMENT_BYTES + KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES + max(frame_of[interrupt_entry], 0) + callee_bytes
+			refusal_text = fmt.tprintf("the refusal of a register trial over %s (%d bytes), then %s", trial_text, trial_bytes, handler_text)
+			if refusal_bytes > measure.deepest {
+				measure.deepest = refusal_bytes
+				deepest_text = refusal_text
+			}
+		}
+	}
 	free_bytes := rules.stack_bytes - measure.deepest
 	if free_bytes < rules.least_free_bytes {
 		append(&measure.problems, fmt.tprintf("the deepest chain leaves %d of the %d bytes of the kernel stack free, under the margin of %d bytes: %s", free_bytes, rules.stack_bytes, rules.least_free_bytes, deepest_text))
@@ -1286,6 +1371,15 @@ kernel_stack_measure :: proc(module_name: string, listing: string, frames: map[u
 	fault := measure.deepest + INTERRUPT_ALIGNMENT_BYTES + KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES + handler
 	append(&measure.lines, fmt.tprintf("the kernel stack of %s: the deepest chain uses %d of %d bytes, %d bytes free, and the build fails under %d bytes free: %s", module_name, measure.deepest, rules.stack_bytes, free_bytes, rules.least_free_bytes, deepest_text))
 	append(&measure.lines, fmt.tprintf("the kernel stack of %s: each entry: %s; %s; a fault of the kernel over the deepest chain %d bytes (not checked)", module_name, strings.to_string(entries_text), idle_line, fault))
+	if len(rules.register_trials) > 0 {
+		if refusal_bytes >= 0 {
+			// The deepest chain holds it, so the check of the margin above
+			// checks it too.
+			append(&measure.lines, fmt.tprintf("the kernel stack of %s: the refusal of a register trial uses %d of %d bytes, %d bytes free, and the build fails under %d bytes free: %s", module_name, refusal_bytes, rules.stack_bytes, rules.stack_bytes - refusal_bytes, rules.least_free_bytes, refusal_text))
+		} else {
+			append(&measure.lines, fmt.tprintf("the kernel stack of %s: no chain of the kernel stack reaches a register trial", module_name))
+		}
+	}
 
 	// The interrupt stacks: only the report of a stop runs there, and under
 	// that report the log takes no lock and wakes no reader.

@@ -28,7 +28,7 @@ The guide is [`docs/RANDOMNESS.md`](../../../docs/RANDOMNESS.md), "3. The seed o
 
 `root: the entropy device gave 64 bytes in 2 reads: 64 bytes mixed into the random generator of the system; refused reads: 0`
 
-Each program that the root service starts after that line has a seed from the stream of the new key. The programs before it (input, the compositor, and the programs that start while the device answers) have a seed from the processor only. The service stays and waits for the next command; no other command is sent yet.
+Each program that the root service starts after that line has a seed from the stream of the new key. The programs before it (input, the compositor, and the programs that start while the device answers) have a seed from the processor only. The service stays and waits for the next command: after the reads of the start, the root service asks for one read every 30 seconds, and gives each running program 32 bytes of its stream after each one ([fresh_bytes.md](fresh_bytes.md)).
 
 **A read that adds nothing.** `random.device_bytes_mix` refuses a read and leaves the key as it was when:
 
@@ -55,15 +55,15 @@ These checks find a broken device: a model that gives zeros, or a buffer that it
 ## Subtle points
 
 - **The bytes in the ring are not a secret alone.** They stay in the shared ring after the root service read them. The key also depends on the seed of the processor, so a reader of those bytes does not learn the key. The service erases its own buffer and copy after each completion.
-- **The root service reads two completions, no more.** A service that writes more completions fills its ring; the root service does not read them and does not wait on the ring after the second one.
+- **The root service reads one completion for each read that it asked, no more.** Each command carries the number of its read in its tag, and a completion with another tag counts as a refused read: a service that writes a completion that was not asked for adds no bytes. The root service waits on the ring only while a read is in flight.
 - **The device can say that it wrote more than it was asked.** The service takes the smaller of the two lengths. The root service takes the smaller of the count of the completion and `READ_BYTES_LIMIT`.
 - **The used ring is read at each wake.** A device that moves its used index with no read in flight would else keep the loop of the service awake for ever. Such an entry stops the service with the line `entropy: the device used a read that was not given`, as a device that needs a reset does.
-- **A device that never answers.** The service waits for its interrupt for ever. The root service never writes its line, and the system runs with the seed of the processor. A stop of the service before both answers writes a line at the level warning.
+- **A device that never answers.** The service waits for its interrupt for ever. The root service never writes its line, asks for no read of a refresh while a read is in flight, and the system runs with the seed of the processor. A stop of the service before both answers writes a line at the level warning; a stop after them writes the line of the end of the fresh bytes.
 - **The budget pays for the domain.** With the IOMMU on, the first `Memory_Physical` of the service makes the domain of its device, and the tables of that domain are paid from the working memory of the service ([iommu.md](../infrastructure/iommu.md), "Device addresses"). The service states the working memory of the block service. A first amount of 16 pages, as for the TPM service, which has no device of the bus, made that call fail on the machine with the IOMMU; the service then stopped, and the kernel cleared the entry of its interrupt, which the device then named.
 - **The message interrupt.** The root service gives each device service the entry 0 of the table of MSI-X. The tool gives the device two vectors (`vectors=2`), so the device has a table.
 
 ## State
 
-Built: the entropy service, the contract, the place of the device, the two reads at the start, the mix with its refusals, the report in the window of `randomness`, a machine of `modustool test random` with the device and two without it, and the device on the machine of the part `iommu`, whose two reads arrive through the remapping unit of Intel.
+Built: the entropy service, the contract, the place of the device, the two reads at the start, the mix with its refusals, the report in the window of `randomness`, a machine of `modustool test random` with the device and two without it, the device on the machine of the part `iommu`, whose two reads arrive through the remapping unit of Intel, and the reads of the fresh bytes ([fresh_bytes.md](fresh_bytes.md)).
 
-Left: fresh bytes for a program that runs (ROADMAP.md, "Fresh bytes for a running program"), and a strength that the device can claim.
+Left: a strength that the device can claim.

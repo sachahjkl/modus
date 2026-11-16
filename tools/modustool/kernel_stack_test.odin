@@ -215,6 +215,85 @@ kernel_stack_measure_golden :: proc(t: ^testing.T) {
 	testing.expect_value(t, measure.lines[1], "the kernel stack of kernel: each entry: an entry from a program 752 bytes, the first run 104 bytes; an interrupt at the idle wait 992 bytes; a fault of the kernel over the deepest chain 1752 bytes (not checked)")
 }
 
+// A listing with a register trial: another processor starts, calls the
+// trial, and a refusal runs kernel_interrupt, which calls the refusal
+// callee, over it.
+KERNEL_STACK_TEST_TRIAL_LISTING :: `
+build/modules/kernel/linked.elf:	file format elf64-x86-64
+
+Disassembly of section .text:
+
+0000000000001000 <kernel_interrupt>:
+    1000:      	pushq	%rbp
+    1001:      	callq	0x1100 <kernel::register_trial_refusal_address>
+    1006:      	callq	0x1400 <idle_wait>
+    100b:      	popq	%rbp
+    100c:      	retq
+
+0000000000001100 <kernel::register_trial_refusal_address>:
+    1100:      	retq
+
+0000000000001200 <kernel::processor_entry>:
+    1200:      	callq	0x1300 <kernel::thread_counters_trial>
+
+0000000000001300 <kernel::thread_counters_trial>:
+    1300:      	callq	0x1500 <model_specific_register_trial_read>
+    1305:      	retq
+
+0000000000001400 <idle_wait>:
+    1400:      	sti
+    1401:      	hlt
+    1402:      	cli
+    1403:      	retq
+
+0000000000001500 <model_specific_register_trial_read>:
+    1500:      	movl	%edi, %ecx
+
+0000000000001502 <model_specific_register_trial_read_instruction>:
+    1502:      	rdmsr
+    1504:      	retq
+`
+
+// The golden measure of the refusal of a register trial:
+//   the trial: processor_entry 16 + 8 + thread_counters_trial 424 + 8 +
+//   the trial 0 = 456, and 8 above it: 464;
+//   then 8 + 176 + 8 + the frame of kernel_interrupt 40 + 8 + the refusal
+//   callee 0: 704, the deepest (the interrupt at the idle wait: 472).
+@(test)
+kernel_stack_measure_of_a_register_trial :: proc(t: ^testing.T) {
+	frames_written := [?]Kernel_Stack_Test_Frame{{0x1000, 40}, {0x1100, 0}, {0x1200, 16}, {0x1300, 424}}
+	frames, problem := kernel_stack_frames_read(kernel_stack_test_elf(frames_written[:]))
+	testing.expect_value(t, problem, "")
+	entries := make([]Kernel_Stack_Entry, 2, context.temp_allocator)
+	entries[0] = {"kernel_interrupt", KERNEL_ENTRY_FRAME_BYTES + RETURN_ADDRESS_BYTES, "an entry from a program"}
+	entries[1] = {"kernel::processor_entry", RETURN_ADDRESS_BYTES, "the start of another processor"}
+	assembly_frames := make([]Kernel_Stack_Assembly_Frame, 2, context.temp_allocator)
+	assembly_frames[0] = {"idle_wait", 0}
+	assembly_frames[1] = {"model_specific_register_trial_read", 0}
+	trials := make([]string, 1, context.temp_allocator)
+	trials[0] = "model_specific_register_trial_read"
+	rules := Kernel_Stack_Rules {
+		entries          = entries,
+		assembly_frames  = assembly_frames,
+		interrupt_entry  = "kernel_interrupt",
+		idle_wait        = "idle_wait",
+		stack_bytes      = 4096,
+		least_free_bytes = 1024,
+		register_trials  = trials,
+		refusal_callee   = "kernel::register_trial_refusal_address",
+	}
+	measure := kernel_stack_measure("kernel", KERNEL_STACK_TEST_TRIAL_LISTING, frames, rules)
+	for item in measure.problems {
+		testing.expect_value(t, item, "")
+	}
+	testing.expect_value(t, measure.deepest, 704)
+	if !testing.expect_value(t, len(measure.lines), 3) {
+		return
+	}
+	testing.expect_value(t, measure.lines[0], "the kernel stack of kernel: the deepest chain uses 704 of 4096 bytes, 3392 bytes free, and the build fails under 1024 bytes free: the refusal of a register trial over kernel::processor_entry -> kernel::thread_counters_trial -> model_specific_register_trial_read (464 bytes), then kernel_interrupt -> kernel::register_trial_refusal_address")
+	testing.expect_value(t, measure.lines[2], "the kernel stack of kernel: the refusal of a register trial uses 704 of 4096 bytes, 3392 bytes free, and the build fails under 1024 bytes free: the refusal of a register trial over kernel::processor_entry -> kernel::thread_counters_trial -> model_specific_register_trial_read (464 bytes), then kernel_interrupt -> kernel::register_trial_refusal_address")
+}
+
 // A stack with less room than the margin after the deepest chain fails
 // the build, and the problem names the chain.
 @(test)
@@ -717,5 +796,78 @@ kernel_stack_scan_reads_a_prefix_line_and_a_far_return :: proc(t: ^testing.T) {
 	testing.expect_value(t, measure.deepest, 1392)
 	if testing.expect_value(t, len(measure.lines), 2) {
 		testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a program 1176 bytes;"), measure.lines[1])
+	}
+}
+
+// Lines of the listing of the kernel: a register trial of assembly whose
+// body runs on into its global label "_instruction", which holds its ret,
+// and the self test that calls it, then logs and stops the machine. The
+// call of the trial must return, or the scan reaches no call after it.
+KERNEL_STACK_TEST_TRIAL_RUNS_ON_LISTING :: "0000000000001000 <kernel_interrupt>:\n" +
+	"    1000:      \tcallq\t0x92d0 <kernel::register_trial_self_test>\n" +
+	"    1005:      \tcallq\t0x1400 <idle_wait>\n" +
+	"    100a:      \tretq\n" +
+	"00000000000092d0 <kernel::register_trial_self_test>:\n" +
+	"    92d0:      \tpushq\t%rbp\n" +
+	"    92d1:      \tmovq\t%rsp, %rbp\n" +
+	"    92d4:      \tpushq\t%r15\n" +
+	"    92d6:      \tpushq\t%r14\n" +
+	"    92d8:      \tpushq\t%rbx\n" +
+	"    92d9:      \tsubq\t$0x48, %rsp\n" +
+	"    935c:      \tcallq\t0xa6d8a <model_specific_register_trial_write>\n" +
+	"    9361:      \ttestb\t%al, %al\n" +
+	"    9363:      \tje\t0x937d <kernel::register_trial_self_test+0xad>\n" +
+	"    9372:      \taddq\t$0x48, %rsp\n" +
+	"    9376:      \tpopq\t%rbx\n" +
+	"    9377:      \tpopq\t%r14\n" +
+	"    9379:      \tpopq\t%r15\n" +
+	"    937b:      \tpopq\t%rbp\n" +
+	"    937c:      \tretq\n" +
+	"    937d:      \tleaq\t-0x4cae(%rip), %rax     # 0x46d6 <VECTOR_DEBUG_FRAME_LOST+0x45d7>\n" +
+	"    93d4:      \tcallq\t0x1aea0 <kernel::log>\n" +
+	"    93d9:      \txorl\t%edi, %edi\n" +
+	"    93db:      \tcallq\t0x251c0 <kernel::machine_stop>\n" +
+	"000000000001aea0 <kernel::log>:\n" +
+	"   1aea0:      \tretq\n" +
+	"00000000000251c0 <kernel::machine_stop>:\n" +
+	"   251c0:      \thlt\n" +
+	"   251c1:      \tjmp\t0x251c0 <kernel::machine_stop>\n" +
+	"00000000000a6d8a <model_specific_register_trial_write>:\n" +
+	"   a6d8a:      \tmovl\t%edi, %ecx\n" +
+	"   a6d8c:      \tmovl\t%esi, %eax\n" +
+	"   a6d8e:      \tmovq\t%rsi, %rdx\n" +
+	"   a6d91:      \tshrq\t$0x20, %rdx\n" +
+	"\n" +
+	"00000000000a6d95 <model_specific_register_trial_write_instruction>:\n" +
+	"   a6d95:      \twrmsr\n" +
+	"   a6d97:      \tmovl\t$0x1, %eax\n" +
+	"   a6d9c:      \tretq\n" +
+	"\n" +
+	"00000000000a6d9d <model_specific_register_trial_refused>:\n" +
+	"   a6d9d:      \txorl\t%eax, %eax\n" +
+	"   a6d9f:      \tretq\n" +
+	"0000000000001400 <idle_wait>:\n" +
+	"    1400:      \tretq\n"
+
+// The depths, with the frames of the kernel:
+//   register_trial_self_test 104: its call of machine_stop 104 + 8 + 16 =
+//   128 (log: 104 + 8 + 8 = 120; the trial: 104 + 8 + 0 = 112);
+//   kernel_interrupt 16 + 8 + 128 = 152, and 184 above it: 336;
+//   the interrupt at the idle wait: 184 + 16 + 8 + 0 = 208, then
+//   8 + 176 + 8 + 152: 552, the deepest.
+@(test)
+kernel_stack_scan_takes_a_procedure_that_runs_on_into_a_label :: proc(t: ^testing.T) {
+	trial_frames := [?]Kernel_Stack_Test_Frame{{0x1000, 16}, {0x92d0, 104}, {0x1aea0, 8}, {0x251c0, 16}}
+	frames, _ := kernel_stack_frames_read(kernel_stack_test_elf(trial_frames[:]))
+	rules := kernel_stack_test_push_rules(false)
+	assembly_frames := make([]Kernel_Stack_Assembly_Frame, 2, context.temp_allocator)
+	assembly_frames[0] = {"idle_wait", 0}
+	assembly_frames[1] = {"model_specific_register_trial_write", 0}
+	rules.assembly_frames = assembly_frames
+	measure := kernel_stack_measure("kernel", KERNEL_STACK_TEST_TRIAL_RUNS_ON_LISTING, frames, rules)
+	testing.expectf(t, len(measure.problems) == 0, "%v", measure.problems[:])
+	testing.expect_value(t, measure.deepest, 552)
+	if testing.expect_value(t, len(measure.lines), 2) {
+		testing.expect(t, strings.contains(measure.lines[1], "each entry: an entry from a program 336 bytes;"), measure.lines[1])
 	}
 }

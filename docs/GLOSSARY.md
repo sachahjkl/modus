@@ -960,9 +960,9 @@ Do not use: extent, VMA.
 
 ### Self test
 
-A self test is a boot of the machine in which the kernel does one thing that its page tables must refuse, to prove that the processor refuses it.
+A self test is a boot of the machine in which the kernel does one thing that the processor must refuse, to prove that the processor refuses it.
 
-The tests are a stack overflow, a write to the code of the kernel and to its view in the direct map, a run of data, and a read and a run of memory of a program from the kernel. The expected fault stops the machine with its report, and the machine test checks that report.
+Six tests are of the page tables: a stack overflow, a write to the code of the kernel and to its view in the direct map, a run of data, and a read and a run of memory of a program from the kernel. The expected fault stops the machine with its report, and the machine test checks that report. The seventh is a register trial that writes an address that is not canonical to `IA32_KERNEL_GS_BASE`: the kernel goes on after the refusal, says so, and stops the machine with the code 0. It needs KVM: QEMU with TCG takes that write.
 
 Do not use: negative test, lkdtm.
 
@@ -1492,11 +1492,23 @@ Do not use: dropped events, overrun count.
 
 A performance counter is a register of the processor that counts one event of the processor, such as the cycles, the retired instructions or the cache misses.
 
-The kernel programs four of them (the general counters 0 to 3) for a thread that asks, as the thread counters, and counts in user mode only. The plan of each vendor comes from `CPUID` at boot, and the line of the boot names it. An event record carries the cycle counter only, not a performance counter.
+The kernel programs four of them (the general counters 0 to 3) for a thread that asks, as the thread counters, and counts in user mode only. The plan of each vendor comes from `CPUID` at boot, each processor takes the trial of their registers at its start, and the line of the boot names the plan and the trial. An event record carries the cycle counter only, not a performance counter.
 
 The design: `docs/ARCHITECTURE.md`, "The counters of a thread".
 
 Do not use: PMC, PMU counter.
+
+### Register trial
+
+A register trial is one access of the kernel to a model-specific register that the processor can refuse with a protection fault, after which the kernel goes on and knows of the refusal.
+
+A hypervisor can list a register in `CPUID` and refuse each access to it, and any other protection fault of the kernel stops the machine. So at the start of each processor, before any thread runs, the kernel takes each access of the counter plan once as a register trial (`model_specific_register_trial_read` and `model_specific_register_trial_write` in `src/kernel/processor.asm`). `kernel_interrupt` knows the address of the one `rdmsr` or `wrmsr` of each: a protection fault there goes on at a refusal label, which gives false. A refused register is an outcome: the machine then has no thread counters. It is not a way to read any register: only the kernel makes a register trial, and no program asks for one.
+
+Example: on a hypervisor that refuses the counters that it lists, the line of the boot ends with "the processor refused a trial access with a protection fault, to the register 00000000c0010200; a command of the thread counters gives Unsupported".
+
+The design: `docs/ARCHITECTURE.md`, "The counters of a thread".
+
+Do not use: safe MSR access, rdmsr_safe, exception fixup.
 
 ### Thread counters
 
@@ -1598,9 +1610,9 @@ Do not use: boot loader, bootloader.
 
 ### Fixed range
 
-A fixed range is an address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the disk program page, the files of a module.
+A fixed range is an address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the disk program page, the fresh bytes page, the files of a module.
 
-Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. A mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
+Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. The band has 16 slots (`SLOT_COUNT`), and 16 members take them all: a new range needs a larger band first. A mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
 
 Do not use: well-known address, fixed mapping.
 
@@ -5711,6 +5723,8 @@ A program uses it in three ways:
 - `random.fill_for_a_key(generator, output, least_strength, error)` draws bytes for a secret only if the seed strength is at least `least_strength`, else gives `Seed_Too_Weak` and writes no byte;
 - `random.seed_for_a_child` gives the seed of a child program or of a second thread.
 
+When the root service mapped a fresh bytes page in the program, the generator mixes each new change of it into its key, at a refill and before a key or a child seed, and never at a draw from its buffer.
+
 One generator belongs to one thread: two draws that overlap would give the same bytes, so the second one stops the program with "random: two threads drew from one generator at once ...". A zero generator is not seeded, and a draw from it stops the program. 4 MiB take 12 to 39 ms in the program `randomness`.
 
 It is not a kernel device and not a service: a kernel entry or a call for each draw is a cost on a hot path (QUIC draws for each handshake), and a shared pool is one shared state for all programs.
@@ -5729,7 +5743,7 @@ The entropy report is the record of what the root service found when it gathered
 root: the random seed of the system, strength entropy (rdseed): rdseed present, N good values, N refused; rdrand present, N good, N refused; the cycle counter, N samples, N distinct low bytes
 ```
 
-It also gives the facts to the program `randomness` in its context values 0 to 7, which shows them in its window. With them go the facts of the entropy device: whether the machine has one, the bytes that the root service mixed in after the gathering, and the reads that it refused.
+It also gives the facts to the program `randomness` in its context values 0 to 7, which shows them in its window. With them go the facts of the entropy device: whether the machine has one, the bytes that the root service mixed in after the gathering, and the reads that it refused, for the two reads of the start only: the reads of the fresh bytes refresh do not change what a program shows of the seed of the system.
 
 The report says what the sources gave. It does not estimate the entropy of the bytes: the system does not test the output of `rdseed` or `rdrand` for quality.
 
@@ -5763,9 +5777,9 @@ Do not use: security level.
 
 The entropy device is the random device of virtio that the machine can have (`virtio-rng-pci` in QEMU): one more source of the seed of the system, never the only one.
 
-The root service looks for it at the place 19 of bus 0. When it is there, the root service starts the entropy service and mixes two reads of 32 bytes into its random generator with `random.device_bytes_mix`: the bytes go into the key with the bytes of the processor, and never replace them. A read with no byte, a read whose bytes all have one value, and a read equal to the read before add nothing: the key stays as it was, and the read counts as refused, as does a read that the entropy service answered with an error. These checks find a broken device; they do not protect against a hostile one. The mix does: the old key is always an input of the new one. The seed strength does not change. A machine with no entropy device starts with the sources of the processor, and the log says so.
+The root service looks for it at the place 19 of bus 0. When it is there, the root service starts the entropy service and mixes two reads of 32 bytes into its random generator with `random.device_bytes_mix`: the bytes go into the key with the bytes of the processor, and never replace them. A read with no byte, a read whose bytes all have one value, and a read equal to the read before add nothing: the key stays as it was, and the read counts as refused, as does a read that the entropy service answered with an error. These checks find a broken device; they do not protect against a hostile one. The mix does: the old key is always an input of the new one. The seed strength does not change. A machine with no entropy device starts with the sources of the processor, and the log says so. After the reads of the start, the root service reads the device again every 30 seconds for the fresh bytes refresh.
 
-The design: `src/md/features/entropy_device.md`, and `docs/RANDOMNESS.md`, "3. The seed of the system, and what is claimed".
+The design: `src/md/features/entropy_device.md`, `src/md/features/fresh_bytes.md`, and `docs/RANDOMNESS.md`, "3. The seed of the system, and what is claimed".
 
 Do not use: RNG device, hardware RNG, /dev/random.
 
@@ -5790,6 +5804,30 @@ An entropy ring is not a queue of the device: the device has its own queue, whic
 The design: `src/md/features/entropy_device.md`.
 
 Do not use: random ring.
+
+### Fresh bytes page
+
+The fresh bytes page is the page of one program, read-only at its fixed range, where the root service writes 32 bytes of its stream for that program alone after each fresh bytes refresh.
+
+The root service has one memory object with one page for each place of its table of the programs. It maps the page of the place into the program that it starts there by its name, into the compositor and into each disk program, sets the bit of the range `Fresh_Bytes_Page` in the context value 20, and writes the page to zero before the start. The page holds a change count, odd during a write, and the 32 bytes (`modus:contract/fresh_bytes`). The random generator of the program reads the change count at each refill and before a key or a child seed, and mixes a new change into its key once: the next key is BLAKE3 of a domain text, the old key and the bytes. A draw from the buffer reads no page.
+
+The page is not shared: the bytes of one program are not the bytes of another, so a program that a reader took does not give the fresh bytes of the others. It is not a seed: the bytes only add to the key. A machine with no entropy device writes no page, and each one keeps the change count 0.
+
+The design: `src/md/features/fresh_bytes.md`.
+
+Do not use: entropy page, reseed page.
+
+### Fresh bytes refresh
+
+A fresh bytes refresh is one read of the entropy device that the root service mixes into its generator, then the write of the fresh bytes page of each program that has one.
+
+The root service asks for one read of 32 bytes every 30 seconds, the first one 30 seconds after the reads of the start, with one read in flight at most. A read that adds nothing (no byte, one value, the read before again) writes no page and one warning; after 3 in a row the root service asks for no more. The first refresh writes one line of the log, `root: the first fresh bytes: ...`, and the later ones none. A refresh costs one read of the device, two BLAKE3 hashes and at most 1024 bytes of the stream in the root service, and one write of a page for each program; it wakes no program.
+
+A refresh is not a reseed of each program at each draw: a program mixes the page at its next refill or key.
+
+The design: `src/md/features/fresh_bytes.md`.
+
+Do not use: reseed of a program, entropy refresh.
 
 ### Cryptography module
 
@@ -6429,7 +6467,7 @@ Do not use: bound to the TPM, TPM-encrypted, locked (for this).
 
 A recovery key is a key of 20 random bytes, shown one time as 32 characters of base32 in 8 groups of 4, that opens a copy of the machine key, or of the keys of a named principal, when the TPM does not release them.
 
-The window of `unlock` shows it after `machine_seal()`, after `machine_passphrase()` on a machine where the TPM seals the machine key with the passphrase, after the creation of a named principal whose keys the TPM seals, or after `recovery_key_change()` in a session of that principal, and never again: it is not kept on the disk and never written on the log. The record holds the key, or the keys, sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key, with a text for each use. When the TPM refuses (an update of the system, another machine, no TPM, a lockout), the window asks for it; it accepts upper or lower case, with or without the `-`. After a recovery, `unlock` seals the key again to the system that runs, so the next start needs no recovery key; for a named principal and for the machine passphrase it first asks for a new passphrase, so the recovery key also replaces a lost passphrase. A new recovery key of a named principal opens the files written after it; the one before still opens the version from before that the store keeps on the same disk. Its 160 random bits need no slow derivation.
+The window of `unlock` shows it after `machine_seal()`, after `machine_passphrase()` on a machine where the TPM seals the machine key with the passphrase, after the creation of a named principal whose keys the TPM seals, or after `recovery_key_change()` in a session of that principal, and never again: it is not kept on the disk and never written on the log. The record holds the key, or the keys, sealed with ChaCha20-Poly1305 under keyed BLAKE2b of the recovery key, with a text for each use. When the TPM refuses (an update of the system, another machine, no TPM, a lockout), the window asks for it; it accepts upper or lower case, with or without the `-`. At the prompt of the machine passphrase, or of the passphrase of a named principal, Ctrl+R asks for it at once, so a lost passphrase costs no try that the TPM counts. After a recovery, `unlock` seals the key again to the system that runs, so the next start needs no recovery key; for a named principal and for the machine passphrase it first asks for a new passphrase, so the recovery key also replaces a lost passphrase. A new recovery key of a named principal opens the files written after it; the one before still opens the version from before that the store keeps on the same disk. Its 160 random bits need no slow derivation.
 
 Example: `MZXW-6YTB-MZXW-6YTB-MZXW-6YTB-MZXW-6YTB`.
 
@@ -7575,6 +7613,16 @@ It is not a fixed time before a picture: the hang bound ends a wait for a screen
 The design: `docs/TOOLS.md`, "When the tool takes a picture".
 
 Do not use: idle screen, stable frame, quiescent.
+
+### Due picture
+
+A due picture is a picture that a program owes its window: a change waits for it while the program waits on its clock or for the compositor.
+
+A program that paces its pictures, such as a terminal, says it before such a wait with the record `Picture_Due` (`display.picture_due_set`), and its next `Present` ends it. The compositor gives it as `due` in `compositor.windows()`, and the screen is not a settled screen while a window has one. The terminal decides it at the start of each turn of its loop, so a record that came while it drew its last picture is a due picture too. It is not a picture that the compositor has and did not draw yet: that is `waits`.
+
+The design: `src/md/features/terminal_due_picture.md`.
+
+Do not use: pending frame, redraw flag, frame request.
 
 ### Hang bound
 

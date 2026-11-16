@@ -1944,6 +1944,16 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	if !from_program && frame.rip == u64(uintptr(&resume_return)) && frame.vector >= 11 && frame.vector <= 13 {
 		return_refused_by_the_processor(frame)
 	}
+	// A protection fault of the one instruction of a register trial: the
+	// processor refused the register, and the trial goes on at its refusal
+	// label, which gives false (register_trial.odin). It returns through the
+	// iretq of interrupt_common, on the stack of the trial.
+	if !from_program && frame.vector == VECTOR_PROTECTION_FAULT {
+		if refusal := register_trial_refusal_address(frame.rip); refusal != 0 {
+			frame.rip = refusal
+			return
+		}
+	}
 	// A non-maskable interrupt, a double fault and a machine check are not
 	// faults of an instruction of the program that ran: a double fault is a
 	// mistake of the kernel, a machine check an error of the machine, and

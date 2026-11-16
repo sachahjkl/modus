@@ -10,8 +10,11 @@ import "modus:contract/processor_counters"
 // mode only, and keeps their counts when the thread leaves a processor.
 //
 // The counter plan comes from CPUID once, on the first processor
-// (processor_counters.plan_of_identification). A machine with no plan gives
-// Unsupported for each command.
+// (processor_counters.plan_of_identification). Each processor then takes the
+// trial of its registers (thread_counters_trial): a hypervisor can list the
+// counters and refuse their registers, and a firmware can leave a counter
+// on. A machine with no plan, or whose trial failed, gives Unsupported for
+// each command.
 //
 // The registers of a processor count for one thread at most: the processor
 // that takes a thread that counts writes 0 in the counters, then turns the
@@ -22,9 +25,15 @@ import "modus:contract/processor_counters"
 // tests one byte of its hot line (Thread.counting) and writes no register.
 
 // The counter plan of the machine. Written by the first processor in
-// processor_setup, before any other processor starts; read after.
+// processor_setup, before any other processor starts, and by a processor
+// whose trial failed, at its start: the first processor waits for each
+// start in turn, and the root service starts after the last one, so no
+// thread reads the plan before its last write.
 counter_plan: processor_counters.Plan
 counter_absence: processor_counters.Absence
+// The register of the step of the trial that failed, for the line of the
+// boot.
+counter_trial_register: u32
 
 // processor_identification reads the CPUID values that the counter plan
 // needs: each leaf only when the highest leaf of its range reaches it.
@@ -50,10 +59,12 @@ processor_identification :: proc "contextless" () -> (identification: processor_
 }
 
 // thread_counters_processor_setup prepares the counters of a processor at
-// its start. The first processor finds the plan of the machine. Each
-// processor turns its four selects off, because a firmware can leave a
-// counter on and its count would reach the first thread, and turns on the
-// counters 0 to 3 in its global control: a firmware can leave them off.
+// its start, before any thread runs. The first processor finds the plan of
+// the machine. Each processor takes the trial of the registers of the plan,
+// which leaves its counters and its selects at 0 and turns on the counters
+// 0 to 3 in its global control: a firmware can leave them off. A processor
+// whose trial fails turns the plan off for the machine: a thread can run on
+// any processor.
 thread_counters_processor_setup :: proc "contextless" (cpu: ^Processor) {
 	if cpu.index == 0 {
 		counter_plan, counter_absence = processor_counters.plan_of_identification(processor_identification())
@@ -61,28 +72,76 @@ thread_counters_processor_setup :: proc "contextless" (cpu: ^Processor) {
 	if counter_plan.vendor == .None {
 		return
 	}
-	for event in processor_counters.Event {
-		model_specific_register_write(counter_plan.select_registers[event], 0)
+	absence, register := thread_counters_trial()
+	if absence == .None {
+		return
 	}
-	if counter_plan.global_control != 0 {
-		control := model_specific_register_read(counter_plan.global_control)
-		model_specific_register_write(counter_plan.global_control, control | counter_plan.global_control_value)
+	// The trial can fail after it turned a select on and before its write of
+	// 0: with no plan, no later code turns that select off. So each select
+	// that the trial wrote gets a write of 0 again, and a refusal of it
+	// changes nothing more. A select that was on before the trial belongs to
+	// another user: the trial wrote none, so none is written.
+	if absence != .Counter_In_Use {
+		for event in processor_counters.Event {
+			_ = model_specific_register_trial_write(counter_plan.select_registers[event], 0)
+		}
+	}
+	// The vendor first, in its own store: each reader tests it first, so a
+	// plan whose clear a reset of this processor cut in the middle reads as
+	// no plan.
+	intrinsics.atomic_store(&counter_plan.vendor, processor_counters.Vendor.None)
+	counter_plan = {}
+	counter_absence = absence
+	counter_trial_register = register
+	// The first processor writes the line of the boot after its setup
+	// (thread_counters_log); another one writes its own line.
+	if cpu.index != 0 {
+		log("kernel: performance counters: none that the kernel uses: on the processor ", u64(cpu.index), ", ", processor_counters.ABSENCE_TEXTS[absence], " ", Hex(register), "; a command of the thread counters gives Unsupported")
 	}
 }
 
-// thread_counters_log writes one line at boot: the counter plan, or why the
-// machine has none.
+// thread_counters_trial takes each step of the trial of the plan on this
+// processor (processor_counters.trial_steps_of_plan), with register trials:
+// a refusal of the processor is an outcome, not a stop of the machine. It
+// gives the outcome of the first step that fails, and its register.
+thread_counters_trial :: proc "contextless" () -> (absence: processor_counters.Absence, register: u32) {
+	steps, count := processor_counters.trial_steps_of_plan(counter_plan)
+	for step in steps[:count] {
+		value_read: u64
+		accepted: bool
+		switch step.kind {
+		case .Read_Select_Off, .Read_Back:
+			accepted = model_specific_register_trial_read(step.register, &value_read)
+		case .Write:
+			accepted = model_specific_register_trial_write(step.register, step.value)
+		case .Add_Bits:
+			accepted = model_specific_register_trial_read(step.register, &value_read) && model_specific_register_trial_write(step.register, value_read | step.value)
+		}
+		absence = processor_counters.trial_step_outcome(step, accepted, value_read)
+		if absence != .None {
+			return absence, step.register
+		}
+	}
+	return .None, 0
+}
+
+// thread_counters_log writes one line at boot: the counter plan and the
+// trial of the first processor, or why the machine has none.
 thread_counters_log :: proc "contextless" () {
 	_, _, features, _ := intrinsics.x86_cpuid(1, 0)
 	guest := features & (1 << 31) != 0 // A hypervisor runs this machine.
 	where_text := guest ? string(" (a guest of a hypervisor)") : string("")
 	switch counter_plan.vendor {
 	case .Intel:
-		log("kernel: performance counters", where_text, ": Intel architectural monitoring, the general counters 0 to 3: instructions retired, cycles, cache misses of the last level, branch misses; the thread counters count in user mode only")
+		log("kernel: performance counters", where_text, ": Intel architectural monitoring, the general counters 0 to 3: instructions retired, cycles, cache misses of the last level, branch misses; the thread counters count in user mode only; the first processor passed the trial of the registers")
 	case .Amd:
-		log("kernel: performance counters", where_text, ": AMD core counters, the counters 0 to 3: instructions retired, cycles, cache misses of the L2, branch misses; the thread counters count in user mode only")
+		log("kernel: performance counters", where_text, ": AMD core counters, the counters 0 to 3: instructions retired, cycles, cache misses of the L2, branch misses; the thread counters count in user mode only; the first processor passed the trial of the registers")
 	case .None:
-		log("kernel: performance counters", where_text, ": none that the kernel uses: ", processor_counters.ABSENCE_TEXTS[counter_absence], "; a command of the thread counters gives Unsupported")
+		if processor_counters.absence_names_a_register(counter_absence) {
+			log("kernel: performance counters", where_text, ": none that the kernel uses: ", processor_counters.ABSENCE_TEXTS[counter_absence], " ", Hex(counter_trial_register), "; a command of the thread counters gives Unsupported")
+		} else {
+			log("kernel: performance counters", where_text, ": none that the kernel uses: ", processor_counters.ABSENCE_TEXTS[counter_absence], "; a command of the thread counters gives Unsupported")
+		}
 	}
 }
 
