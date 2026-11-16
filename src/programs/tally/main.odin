@@ -146,11 +146,44 @@ draw :: proc "contextless" (window: ^display.Window, service: ^system.Service) {
 		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	}
 	frame := interface.window_frame_begin(&drawing, window)
-	draw_records(frame.table, service)
+	interface.action_bar_input_take(&frame, &bar)
+	facts_end := draw_records(frame.table, service)
+	// The key of the window, in its action bar (docs/INTERFACE.md, "4.4
+	// The action bar"), at the right of the counts of the service. Its item
+	// stands from the right edge: the counts change, the item keeps its
+	// place.
+	bar_y := HEIGHT - interface.ACTION_BAR_ROW_HEIGHT
+	bar_left := facts_end + 16
+	items := bar_items()
+	bar_result := interface.action_bar(&frame, {bar_left, bar_y, WIDTH - bar_left, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar, {alignment = .Right})
 	interface.window_frame_end(&drawing, &frame, window)
+	if bar_result.ran {
+		key_run(bar_result.run)
+		bar_acted = true
+	}
 }
 
-draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^system.Service) {
+// bar_items gives the item of the action bar. A procedure, not a global
+// array: an item is made by a call, and a freestanding program runs no
+// call before its entry.
+bar_items :: proc "contextless" () -> [1]interface.Action_Bar_Item {
+	return {interface.action_bar_item("add 1", 1, "Space")}
+}
+bar: interface.Action_Bar_State
+bar_acted: bool // A press on the item ran its key: the next turn draws the new count.
+
+// key_run runs one key: a typed key, or the key of the item of the action
+// bar that a press ran. Space is one add of 1.
+key_run :: proc "contextless" (press: interface.Key_Press) {
+	if press.character == ' ' {
+		note := "a key of the program"
+		add(1, &note, nil)
+	}
+}
+
+// draw_records draws the window under its action bar, and gives the x
+// after the counts of the service, on the line of the bar.
+draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^system.Service) -> (facts_end: int) {
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	buffer: [24]u8
 	x := interface.draw_text(table, 12, 10, "count ", graphics.colors.dim)
@@ -169,12 +202,16 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^syst
 		interface.draw_text(table, item.amount >= 0 ? 20 : 12, y, amount, item.amount >= 0 ? COLOR_PLUS : COLOR_MINUS)
 		interface.draw_text(table, 92, y, string(item.text[:item.count]), row == 0 ? graphics.colors.text : graphics.colors.dim)
 	}
-	interface.draw_rectangle(table, 12, HEIGHT - 30, WIDTH - 24, 1, 0x30363C)
-	x = interface.draw_text(table, 12, HEIGHT - 22, "space: add 1", graphics.colors.dim)
-	x = interface.draw_text(table, x + 24, HEIGHT - 22, "callers ", graphics.colors.dim)
-	x = interface.draw_text(table, x, HEIGHT - 22, system.format(buffer[:], u64(service.connected)), graphics.colors.text)
-	x = interface.draw_text(table, x + 16, HEIGHT - 22, "calls ", graphics.colors.dim)
-	interface.draw_text(table, x, HEIGHT - 22, system.format(buffer[:], service.calls), graphics.colors.text)
+	// The band of the action bar, from edge to edge, with the counts of the
+	// service at its left.
+	bar_y := HEIGHT - interface.ACTION_BAR_ROW_HEIGHT
+	text_y := bar_y + (interface.ACTION_BAR_ROW_HEIGHT - graphics.CELL_HEIGHT) / 2
+	interface.draw_rectangle(table, 0, bar_y, WIDTH, interface.ACTION_BAR_ROW_HEIGHT, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, 0, bar_y, WIDTH, 1, graphics.colors.track)
+	x = interface.draw_text(table, 12, text_y, "callers ", graphics.colors.dim)
+	x = interface.draw_text(table, x, text_y, system.format(buffer[:], u64(service.connected)), graphics.colors.text)
+	x = interface.draw_text(table, x + 16, text_y, "calls ", graphics.colors.dim)
+	return interface.draw_text(table, x, text_y, system.format(buffer[:], service.calls), graphics.colors.text)
 }
 
 // The entry of tally: it runs only when tally is a program (`start` or
@@ -195,6 +232,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("tally: ok")
 	for {
 		draw(&window, &service)
+		// A press on the item of the action bar added: the next turn
+		// draws the new count, with no wait.
+		if bar_acted {
+			bar_acted = false
+			continue
+		}
 
 		wait: system.Wait
 		display.wait_events(&wait, &window)
@@ -202,9 +245,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_end(&wait)
 		system.service_run(&service)
 		for event in display.next_event(&window) {
-			if event.kind == .Key && event.pressed && event.character == ' ' {
-				note := "a key of the program"
-				add(1, &note, nil)
+			#partial switch event.kind {
+			case .Pointer:
+				// The pointer reaches the action bar only.
+				interface.input_add(&drawing.input, event)
+			case .Key:
+				if !event.pressed {
+					continue
+				}
+				// The open list of the action bar takes its keys first.
+				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
+				outcome := interface.action_bar_key(&bar, press)
+				if outcome.ran {
+					key_run(outcome.run)
+				}
+				if !outcome.taken {
+					key_run(press)
+				}
 			}
 		}
 	}
