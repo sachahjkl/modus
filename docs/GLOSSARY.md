@@ -6745,6 +6745,66 @@ The design: `src/md/README.md`, "The rules of this folder"; `docs/TOOLS.md`, "Th
 
 Do not use: design document, specification, RFC, architecture decision record.
 
+### Similarity finder
+
+The similarity finder is the command `modustool similarity`: it measures how similar the code pieces of the Odin sources of the repository are, groups them in similarity families, and proposes where to factor each family.
+
+It reads `src/` and `tools/` with the parser of the standard library of Odin, gives a similarity score for each pair that it compares, and writes a report with its measures and two tables under `build/similarity/`. It ranks the families by the syntax nodes that a factoring saves, and proposes a home that obeys the import rules. A human or an agent decides what to factor: a similarity can be deliberate, and a family that is kept is a line of the kept list. It is not a check: it never fails a build, and it never edits a source.
+
+The design: `src/md/infrastructure/similarity_finder.md`.
+
+Do not use: duplicate finder, clone detector, linter (for this).
+
+### Code piece
+
+A code piece is a procedure, a run of two or more statements of one block, or an expression, that the similarity finder compares with other code pieces.
+
+A code piece is a part of the code that one call can replace, so a factoring of it is a procedure. It has a minimum size in syntax nodes, so that the call costs less than what it replaces. It is not a fragment: a fragment is a file of `changelog.d/`.
+
+The design: `src/md/infrastructure/similarity_finder.md`, "2. The code pieces".
+
+Do not use: fragment, clone (for one piece), snippet.
+
+### Similarity score
+
+The similarity score of two code pieces is a number from 0 to 1: two times the syntax nodes that their factoring template keeps, divided by the sum of their sizes.
+
+It is 1 when the two are equal after the normal form of the similarity finder, and 0 when they share no node. A score of 0.9 says that a tenth of the two code pieces is in the blanks and the statements that only one side has. A score of 1 is not a proof of the same behaviour: the normal form applies only the rules that the syntax proves. `modustool similarity pair` gives the score of any two procedures.
+
+The design: `src/md/infrastructure/similarity_finder.md`, "6. The anti-unification and the similarity score".
+
+Do not use: distance (for this), match percentage.
+
+### Similarity family
+
+A similarity family is a set of two or more code pieces that one factoring template covers, each for at least 70% of its nodes when the members are not equal.
+
+A family has a category: a utility to centralise, a local repetition, a parametric family, similar behaviour, a repeated expression, kept apart by the rules, or a platform variant. Its members are the code pieces, with their file and lines and the arguments of each blank. A family of similar behaviour has a statement in some members only, or a blank that Odin cannot pass as a parameter: no one call replaces it.
+
+The design: `src/md/infrastructure/similarity_finder.md`, "7. The families".
+
+Do not use: clone class, clone group, cluster.
+
+### Factoring template
+
+A factoring template is the code that all the members of a similarity family share, with a blank at each place where they differ: the body of the procedure that a factoring makes to replace them.
+
+The similarity finder computes it by anti-unification, the least general generalization of the members: each node that all the members have stays, and each place where they differ becomes a blank. The report prints it from the source of its first member, with `?1`, `?2` at the blanks. Its template hash names the family in the kept list. It is not an instruction template: an instruction template is an `asm` procedure.
+
+The design: `src/md/infrastructure/similarity_finder.md`, "6. The anti-unification and the similarity score".
+
+Do not use: abstraction, generalization (for the result), macro.
+
+### Blank
+
+A blank is one place of a factoring template where the members of a similarity family differ, with the argument of each member at that place.
+
+A blank has a kind: a value, a type, a place, a procedure, or not a parameter. The kind says how the factored procedure takes it: a parameter, a polymorphic parameter, a pointer parameter, a procedure parameter, or not at all. The same arguments at two places give one blank. It is not a hole: a hole is a part of a stored object whose bytes are zero.
+
+The design: `src/md/infrastructure/similarity_finder.md`, "6. The anti-unification and the similarity score".
+
+Do not use: hole (for this), metavariable, pattern variable.
+
 ### Changelog
 
 The changelog is the file `CHANGELOG.md`: the releases of the system, newest first, each with the changes that a reader of the system notices.
