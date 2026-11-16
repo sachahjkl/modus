@@ -654,21 +654,23 @@ scenario_network := [?]Step {
 	// connected: each end frees the slot of its connection to a service,
 	// so the table of connections of remote never fills. Each allow gives
 	// the row a new serial, as an unlock does; principal 0 has no lock.
+	// remote no longer acts for the principal here (its grant was revoked
+	// above), so each round calls an export that needs no such grant.
 	{kind = .Type, text = "remote_allow(\"{client key}\")"},
 	{kind = .Wait, text = "root: principal 0 allowed the client key "},
-	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4"},
+	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	{kind = .Remote_Case, text = "close"},
 	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
 	{kind = .Wait, text = REMOTE_ONE_SLOT_FREED},
 	{kind = .Type, text = "remote_allow(\"{client key}\")"},
 	{kind = .Wait, text = "root: principal 0 allowed the client key "},
-	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4"},
+	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	{kind = .Remote_Case, text = "close"},
 	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
 	{kind = .Wait, text = REMOTE_ONE_SLOT_FREED},
 	{kind = .Type, text = "remote_allow(\"{client key}\")"},
 	{kind = .Wait, text = "root: principal 0 allowed the client key "},
-	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4"},
+	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	{kind = .Remote_Case, text = "close"},
 	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
 	{kind = .Wait, text = REMOTE_ONE_SLOT_FREED},
