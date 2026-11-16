@@ -19,7 +19,7 @@ The terms are in `GLOSSARY.md`, section Storage. The versions and the date are i
 | "1. The model" | Objects, trees and stores; installation and packages; the hard points; where the model changed |
 | "2. What exists, and how it maps on the model" | What the system had first, and where each part stands in the model |
 | "3. The format on the disk" | The blocks, an entry, the commit and the open, and the limits |
-| "4. The interface of the service" | Places, the confinement, read-only shares and revocation, the removal of a tree, budgets, large objects, the same object one time |
+| "4. The interface of the service" | Places, the confinement, read-only shares and revocation, the removal of a tree, budgets, large objects, the same object one time, the erase of versions |
 | "5. Not built: the next steps" | The order of the next capabilities |
 | "6. The tests" | What the host tests and the machine tests check |
 
@@ -87,7 +87,7 @@ What these rules forbid, so that nobody adds it later:
 
 **A large object that changes.** Built: section 4.6. An object is a tree of blocks. A commit of range writes makes new blocks for the changed blocks, and new object nodes on the paths from them to the root: copy on write, as the store does. The value of a block (its BLAKE3 chaining value at its place) is its check, and the hash of the object comes from the values: a commit hashes the changed blocks, the nodes above them and the path of the last block, never the whole object. One change of the model: a hole has the value zero, so the hash of an object with a hole is not the BLAKE3 hash of its bytes (section 4.6, "The hash of an object").
 
-**Removal.** Two trees can name one object. A remove takes a name out of a tree: it does not erase the bytes while another tree, or a version, names them. What a remove guarantees: the name is gone from the tree at the commit, and the blocks that nothing else names are free after the removal finishes (section 4.4). To erase bytes for certain needs the end of each version that names them, and then a write of zero bytes over their blocks: not built.
+**Removal.** Two trees can name one object. A remove takes a name out of a tree: it does not erase the bytes while another tree, or a version, names them. What a remove guarantees: the name is gone from the tree at the commit, and the blocks that nothing else names are free after the removal finishes (section 4.4). A free block keeps its bytes until a commit takes it. To erase the old states of an object, `erase_versions` ends each version that names them, then writes zero bytes over their blocks (section 4.8). The device under the disk can still keep a copy.
 
 **Collection.** An object that no store reaches, through any tree or any version, can go. The disk counts the names of each block, so each block becomes free at the commit that drops its last name: no walk. Two names of one object in one store (section 4.7) are two names of its root, counted the same way. A walk would be needed only for an object that several stores share by its hash, which the system refuses (the secrecy, below). The start of the service walks every block already to check it and count it (section 3.3).
 
@@ -216,6 +216,7 @@ A connection to the storage service is a handle on a store or on a part of it. A
 | `stores()` | One line for each store that the caller is allowed to name (section 4.2): its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. A caller that does not act for a principal gets the refusal "no grant to see the stores" |
 | `open_store(store)` | A place on the root of another store, for a caller that may name that store (section 4.2). Such a place reads, restores and clones; `write`, `add`, `remove`, `rename` and `share` refuse it |
 | `versions`, `version`, `restore`, `clone`, `compare` | As before, on an object `name` under a place; no argument names a store |
+| `erase_versions(place, name)` | Ends each version of the object, and writes zero bytes over each block that no other state names (section 4.8). A program with the grant `Versions_Erase`, on its own store, only |
 
 ### 4.2 No way up
 
@@ -319,6 +320,31 @@ The count of the current objects of a store (`current_blocks`) counts a block th
 
 The open counts the roots of current objects whose store has another root with the same hash and the same size (a commit while a writable share of a tree was open, or a root that was damaged at the commit): the tool checks that each image of a loss of power has none.
 
+### 4.8 The erase of versions
+
+Built. A version keeps an old state on the disk, and a thinning or a remove frees its blocks with their bytes in them. For the file of a principal, an old state opens with an old passphrase or an old recovery key (`PRINCIPALS.md`, "A change of the passphrase"). `erase_versions(place, name)` ends each version of one object, and writes zero bytes over each block that no other state names. The design is in `src/md/features/version_erase.md`.
+
+The steps, in this order:
+
+1. One commit ends each version of the object, with its version index and its leaves. The current version stays, with its hash and its generation.
+2. The service reads back each block that the commit wrote, and its root, past its cache, and compares the bytes. If one differs, the disk did not keep a write: the service writes no second root and no zeros, and makes no change until its next start, whose open falls back to the root before the commit.
+3. The service writes the root of that commit again, with the next generation, in the other place of the root, then a `Flush`. The two roots on the disk then name none of the freed blocks.
+4. The service writes zero bytes over each block that the commit of step 1 freed, then a `Flush`.
+
+The row of the export gives the generation of the last root, the versions ended, the blocks written with zeros, the blocks kept because another state names them, and the damaged parts of the versions that were ended with no zeros. The service writes one line:
+
+```
+storage: the versions of principal in the store unlock are erased: 1 version ended, 5 blocks written with zeros, 0 blocks kept that another state names, generation 412
+```
+
+- **Who may call it.** A program with the grant to erase versions (the start grant `Versions_Erase`; today `unlock` only), through its own connection, on its own store. Another program gets `No_Grant`, unit `Versions_Erase`. A share, a place of another store (`open_store`) and a connection that reads only are refused with `No_Grant`. Versions protect the principal against a fault of the program that writes an object, so a program does not end them by itself (`PROPERTIES.md`, "Persistence: no save action, and versions for all programs").
+- **A loss of power.** Before the root of step 1, the open finds the versions, and no block holds zeros. After it, the open finds no version. No root that the open can take names a block of zeros. A loss during step 4 leaves old bytes in free blocks.
+- **A shared block keeps its bytes.** A block that the current version, another entry or a clone still names is not written: its bytes are the bytes of a state that stays, and the row counts it. The hash index shares a block only between objects of one store with the same bytes (section 4.7). A program that acts for the principal of a store can clone or restore a version before the erase; the erase then keeps that block.
+- **Damaged versions.** A version index or a leaf with a wrong check, and a state with a wrong block, are ended with no zeros: their blocks keep their bytes. The row counts them, and the service writes a warning.
+- **A failed write.** When the second root or a write of zeros fails, the versions are already ended: the old bytes stay in free blocks, and a later erase finds no version to end.
+- **An object with no version.** No commit: the row gives 0 versions, and the disk does not change.
+- **The device.** A write of zeros reaches the logical block. A flash disk can keep the old sector, and a host can keep a snapshot of the image. The erase does not reach those copies. The read back of step 2 proves only what the device gives: a cache that lost the write can answer the read.
+
 ## 5. Not built: the next steps
 
 Each step is one tested capability on a system that works.
@@ -336,6 +362,8 @@ Each step is one tested capability on a system that works.
 - Host tests of the B+ tree (`src/library/support/storage_tree`): inserts in a random order that split leaves and branches, a branch whose record 0 keeps a stale name, removes that merge and rebalance, the order of the keys, the pages of a listing, copy on write (the tree before a commit is still whole), the sizes of the format, the names that are refused.
 - Host tests of the block tree (`src/library/support/storage_object`): the official vectors of BLAKE3 through the block tree, past one and two levels of nodes; a sparse object of 8 GiB with its hash computed again from its definition, its holes and a read across a block edge; a change across a block edge and across a level edge, with the state before whole; a cut to 10 bytes that lowers the levels to 0, an extension, a block of zero bytes that becomes a hole; a whole write that keeps the blocks whose bytes did not change.
 - Host tests of the open (`src/library/support/storage_mount`): damage of a node, of an object node and of a block of data, a block tree that two states share, the recount of a store; the hash index: two names of one object give one root with two entries, a removal of one name keeps the root, two roots with one hash are counted and the second has no slot, a removal in a run of slots that goes around the end of the table keeps each other root found, a run longer than the bound of a search, a hidden root and a rekey, and a seeded run of 400 writes, removals and renames whose index is the index of a new open of the same entries.
+- Host test of the erase of versions (`src/library/support/storage_mount`): it checks a model of the writes of the erase, built by hand in the order of the service, with the code of the open; it does not run the service. An object with two versions, one of them shares its block with another entry; the images of the disk after each write of the erase, and with the second root cut, each open with the versions or with none, and with no block of zeros named. At the end the freed blocks are zero bytes, and the shared block keeps its bytes.
+- The machine test of `principals`: before a change of the passphrase and of the recovery key, the tool reads the file of the principal from the disk on the host; after the change, the image of the disk holds none of its salt, of its keys under the seal key and of its keys under the recovery key, and the open of the image on the host finds no wrong block, no damaged object or version, no fault of the hash index, and no version of the file.
 - Host tests of the work on a block tree (`src/library/support/storage_object`): the hash of the same bytes before any write, a drop that gives back each name, a change of one of two names that copies the path of its block, a removal of one name that keeps the other.
 - The machine test of `hierarchy`: 100000 entries in trees inside trees, the listing in pages, a rename, the removal of a tree, 6000 names added to one tree in a fixed scrambled order (leaves and branches split in their middle) and half of them removed in another order (merges), then a second machine that opens the same disk and checks the counts and the contents. Each refusal of the confinement (`..`, `/`, a place of another connection, a change through a read-only share, a call after `unshare`, `open_store` on its own store through a share of a tree). While a writable share of a tree is open, its write adds the blocks of its object to the count of its tree, the same bytes written by the maker outside the tree take their own blocks of the store and add nothing to that count, and the removal through the share takes its blocks back; after `unshare`, its guess stays hidden, and the same bytes written by the maker take their blocks. The time of the commits is printed as a measure.
 - The machine test of `ranges` (`modustool test ranges`): an object of 8 GiB from three range writes holds 13 blocks and reads them back, with its holes and a read across a block edge; 1000 writes at scrambled places and one commit, bounded by the blocks changed; the version before them and the blocks of its own; a version of a small object reads its old bytes after a range write, and `compare` gives the one range written; a cut of 70 blocks to 6000 bytes, then an extension to 1 GiB; a read at the end and past it; a place of another store, a place of no connection, a commit with no pending change, and a commit after another change are refused; the same object of 1 MiB under two names holds 261 blocks of the store, a change of one name writes 3 blocks of its block tree, and the removal of one name keeps the other; a loop of 200 commits of range writes. A second machine reads each of them back after the open of the disk, and writes the object of 1 MiB under a third name, which takes no block.

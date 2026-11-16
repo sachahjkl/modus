@@ -136,13 +136,27 @@ ship_restore_command :: proc() -> []string {
 	return command_words("git", "reset", "-q", "--hard", "HEAD")
 }
 
+// Removes the copy of the measure record that the release wrote: a reset
+// keeps a file that git does not track. The tree was clean when ship
+// started, so the copy of this release is the only such file there.
+ship_measure_history_clean_command :: proc() -> []string {
+	return command_words("git", "clean", "-q", "-f", "--", MEASURE_HISTORY_FOLDER)
+}
+
+ship_restore :: proc() {
+	_ = run(ship_restore_command())
+	_ = run(ship_measure_history_clean_command())
+}
+
 // The commands that publish one release, in their order. The add names the
-// fragment folder: its deleted fragments are part of the commit.
+// fragment folder, whose deleted fragments are part of the commit, and the
+// folder of the measure history, which holds the copy of the measure record
+// of the release.
 ship_publish_commands :: proc(number: Release_Number) -> [][]string {
 	tag := release_tag_name(number)
 	message := ship_commit_message(number)
 	commands := make([][]string, 4, context.temp_allocator)
-	commands[0] = command_words("git", "add", "-A", "--", CHANGELOG_FILE, RELEASE_NUMBER_SOURCE, FRAGMENT_FOLDER)
+	commands[0] = command_words("git", "add", "-A", "--", CHANGELOG_FILE, RELEASE_NUMBER_SOURCE, FRAGMENT_FOLDER, MEASURE_HISTORY_FOLDER)
 	commands[1] = command_words("git", "commit", "-q", "-m", message)
 	// Signed and annotated: the tag holds who released, when, and a
 	// signature that the git configuration of the publisher makes.
@@ -260,7 +274,7 @@ run_ship :: proc(args: []string) -> int {
 			return 0
 		}
 		if !changelog_release(number_text) {
-			_ = run(ship_restore_command())
+			ship_restore()
 			fmt.eprintln("modustool: ship: the release was not written; nothing was published")
 			return EXIT_FAILURE
 		}
@@ -269,7 +283,7 @@ run_ship :: proc(args: []string) -> int {
 		// last commit.
 		for command in publish[:2] {
 			if !run(command) {
-				_ = run(ship_restore_command())
+				ship_restore()
 				fmt.eprintln("modustool: ship: the release was not committed; nothing was published")
 				return EXIT_FAILURE
 			}
