@@ -1005,6 +1005,9 @@ scenario := [?]Step {
 	// The two come in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	// The font service draws the cell subset of Paper Mono at its start,
+	// for the terminal (docs/FONTS.md, "13. Glyphs drawn on demand").
+	{kind = .Wait, text = "glyphs: the face cells of the demand cache holds each of the ", any_order = true, fails_on = "glyphs: the face cells of the demand cache lacks"},
 	// The boot pass of settings: the storage service starts at boot, with
 	// the block service of the data disk; a new disk keeps no settings.
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
@@ -1030,6 +1033,13 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] café"},
 	{kind = .Type, text = "length(character(233))"},
 	{kind = .Wait, text = "[console] 2"},
+	// A box-drawing character and a Greek letter are past the glyph cache:
+	// the terminal draws them in its cells from the demand cache, which
+	// the font service drew at its start. The picture console below shows
+	// them.
+	{kind = .Type, text = "character(9472) + character(955)"},
+	{kind = .Wait, text = "terminal: console shows the character 9472 in its cells from the demand cache", any_order = true},
+	{kind = .Wait, text = "[console] ─λ"},
 	{kind = .Type, text = "character(55296)"},
 	{kind = .Wait, text = "error: 55296 is no character of a text"},
 	{kind = .Type, text = "length(5)"},

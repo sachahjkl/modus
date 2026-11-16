@@ -276,7 +276,7 @@ The settings are the smallest form that keeps the properties:
 - **A cache whose hash is wrong**: the root service does not map it (one line on the log), and no program has it.
 - **A damaged font file** at build time: the tool stops the build with the problem (`vector_font.Font_Problem`). The reader checks each read (host test `hostile_files`: the file cut at each 211 bytes, 48 files with 64 changed bytes, each glyph drawn at the three scales: no fault).
 - **The boot display can use the vector font**: the glyph cache is in the boot image, and the root service checks its hash and validates it before its first boot display (the picture `boot_fails` is drawn by the root service, in the vector font). A screen with red in the low byte swaps the stripes of the text (`bootscreen.stripes_of_screen`).
-- **A character that the font lacks**: the glyph caches hold ASCII 32 to 126, the Latin-1 Supplement and the euro sign only, and each candidate has all of them (the subset command refuses a font without one). Spleen 2.1.0 has them too (`modustool font`). A text is UTF-8: the drawing decodes it, gives each character one cell, and draws each other character, and each invalid sequence, as the replacement glyph, the outline of a box (`graphics.character_replacement`), in both fonts and at each scale. A text of the interface font with a demand cache draws the Greek letters too, after the font service drew them (section 13).
+- **A character that the font lacks**: the glyph caches hold ASCII 32 to 126, the Latin-1 Supplement and the euro sign only, and each candidate has all of them (the subset command refuses a font without one). Spleen 2.1.0 has them too (`modustool font`). A text is UTF-8: the drawing decodes it, gives each character one cell, and draws each other character, and each invalid sequence, as the replacement glyph, the outline of a box (`graphics.character_replacement`), in both fonts and at each scale. A text of the interface font with a demand cache draws the Greek letters too, after the font service drew them, and a cell of the vector font with a demand cache draws the box-drawing characters, the block elements and the five Greek letters of Paper Mono (section 13).
 
 ## 9. Measures
 
@@ -300,7 +300,7 @@ The console stays fast: the producer writes into the terminal ring, and the term
 - No grid fit of each stem; no stem darkening (`gui_toolkit` thickens the stripes by 0.2 pixel; not tried here).
 - The boot display and the first frames use the default settings until the boot pass of `settings` (section 7).
 - The scheduling strategy is not a setting and does not survive a stop (section 7).
-- The glyph caches hold no character past the Latin-1 Supplement but the euro sign. The font service draws the Greek letters of B612 on demand, for a program that reads the demand cache: today the program `interface_font` only (section 13). ā draws the replacement glyph: B612 does not have it. A character joins the list of the added characters when each font draws it (`src/md/data/text_encoding.md`). A monospace cache has no subpixel position; the proportional font and its pairs are in section 12.
+- The glyph caches hold no character past the Latin-1 Supplement but the euro sign. The font service draws the Greek letters of B612 on demand, for a program that reads the demand cache: today the program `interface_font` only (section 13). It draws the box-drawing characters, the block elements and the five Greek letters of Paper Mono for the cells: the terminal, and each window of a program of the boot image that draws its cells through the drawing module. ā draws the replacement glyph: B612 does not have it. A character joins the list of the added characters when each font draws it (`src/md/data/text_encoding.md`). A monospace cache has no subpixel position; the proportional font and its pairs are in section 12.
 - The order of the stripes of the screen is not detected: under QEMU it is the panel of the host, which the system cannot read.
 - The measures of section 9 were taken on a host with a load above 8.
 
@@ -452,18 +452,20 @@ Each part below is written. Part 2 also writes the two caches of B612 in `build/
 
 ## 13. Glyphs drawn on demand
 
-A glyph cache holds 192 characters of one font, drawn at each size. A character past them is drawn by the font service, once for all the programs: today each character of its subset, at its start. The boot image then carries the outline of the character, not its drawn words at each size. The intent of this design is `src/md/features/glyphs_on_demand.md`.
+A glyph cache holds 192 characters of one font, drawn at each size. A character past them is drawn by the font service, once for all the programs: today each character of its subsets, at its start. The boot image then carries the outline of the character, not its drawn words at each size. The intent of this design is `src/md/features/glyphs_on_demand.md`.
 
 ### 13.1 The parts
 
 | Part | Where | What it does |
 |---|---|---|
-| The font service | the program `glyphs` | Holds the outlines: the subset of B612 Regular, `resources/fonts/b612.ttf`, in its module. At its start, before it reads a request, draws each character of the subset with the renderer of the build (`vector_font.demand_glyph_draw`) and publishes it. Answers a request; a character outside the subset is absent. |
-| The demand cache | `src/library/contract/demand_cache` | One memory object of 1 150 976 bytes: a header, a hash table of 1024 entries by code point, 1 MiB of words. The font service writes it; each program with a request ring maps it read-only at the fixed range `Demand_Cache`. |
-| The request ring | the fixed range `Glyph_Requests` | One ring for each program that `start` of the root service gives a ring to the compositor: each program of the boot image but a program with a terminal. The compositor, the input service and a program started from a disk get none. The program writes records of 14 code points; the font service answers each record. |
-| The root service | `src/programs/root/font_service.odin` | Creates the demand cache, starts the font service after the compositor, gives each such program a request ring and the two mappings, and removes a program that stops. |
+| The font service | the program `glyphs` | Holds the outlines: the subsets of B612 Regular, Paper Mono and Paper Mono SemiBold, `resources/fonts/b612.ttf`, `paper_mono.ttf` and `paper_mono_semibold.ttf`, in its module. At its start, before it reads a request, draws each character of the subset of each face with the renderer of the build (`vector_font.demand_glyph_draw`) and publishes it, then sets the word `subset_drawn`. Answers a request; a character outside the subset is absent. |
+| The faces | `demand_cache.Face` | One for each glyph cache that a glyph on demand stands beside: `Interface` (B612 Regular), `Cells` (Paper Mono with the grid fit), `Cells_Without_Grid_Fit` (Paper Mono with no grid fit), `Cells_Bold` (Paper Mono SemiBold at scale 1). An entry is keyed by its face and its code point. |
+| The demand cache | `src/library/contract/demand_cache` | One memory object of 4 395 008 bytes: a header, a hash table of 2048 entries by face and code point, 4 MiB of words. The font service writes it; each program with a request ring, and each terminal, maps it read-only at the fixed range `Demand_Cache`. |
+| The request ring | the fixed range `Glyph_Requests` | One ring for each program that `start` of the root service gives a ring to the compositor: each program of the boot image but a program with a terminal. The compositor, the input service, a terminal and a program started from a disk get none. The program writes records of 14 code points of the face `Interface`; the font service answers each record. |
+| The root service | `src/programs/root/font_service.odin` | Creates the demand cache, starts the font service after the compositor, gives each such program a request ring and the two mappings, maps the demand cache in each terminal, and removes a program that stops. |
 | The program side | `display.demand_open`, `demand_frame_begin`, `demand_requests_send`, `demand_wait`, `demand_answers_take` | One generation for each frame, the characters that the frame wants, the requests once for each character, and the answers in the wait of the program. |
 | The shaper and the draw | `text_shaping.Spacing.demand`, `graphics.text_proportional` | A character of the demand cache is the placed glyph `DEMAND_GLYPH_FIRST` plus its code point, with its own advance and no pair. |
+| The cells | `graphics.text_scaled`, `text_bold`, `character`; `display.text_demand_frame_begin`, `cell_demand_wait`, `cell_demand_completed` | A cell past the glyph cache draws its glyph from the face of its glyph cache, with the vector font; the drawing module starts the frame of each cell face at each draw. A program that opened its faces before the end of the start of the service waits on the word `subset_drawn`, and draws its whole window once when it changes. |
 
 ### 13.2 What a program does
 
@@ -474,11 +476,17 @@ A glyph cache holds 192 characters of one font, drawn at each size. A character 
 
 The program never waits for the font service. A program whose first frame comes after the start of the service draws each Greek letter in that frame, and asks for nothing. A program whose first frame comes before the service drew its subset draws a box for each letter that it does not find, asks, and draws the letter from the frame after the answer.
 
-### 13.2.1 What the demand cache tells a program
+### 13.2.1 What a terminal does
 
-Each program reads the whole demand cache. A cache that filled at the requests of the programs would tell each program which characters the others asked for, in their order and at their time, across principals: a channel of `docs/PROPERTIES.md`, "20. No ambient access: the other holes to close", row 17. The service draws its whole subset at its start, and draws no other character, so the cache holds the same entries whatever the programs draw. A later layer that fills the cache beyond a fixed subset must close this channel first.
+A terminal gets the demand cache and no request ring: each character of a cell face is drawn at the start of the service, so it has nothing to ask. Its cells go through the drawing module, which reads the generation of each cell face at each draw. A cell of a box-drawing character, a block element or one of the Greek letters Λ, Ω, λ, μ and π then draws its glyph of Paper Mono, in the weight and the grid fit of the cells beside it. With the setting `font` at `spleen`, such a cell draws the replacement glyph: a glyph of Paper Mono does not stand beside the glyphs of Spleen 8x16.
 
-### 13.2.2 The log and the work of one program
+A terminal whose first frames come before the service drew its subsets waits on the word `subset_drawn` of the demand cache. When the word changes, it draws its whole window once. Its log has one line for the first such character of a line of its text that it shows: `terminal: console shows the character 9472 in its cells from the demand cache`, which the main machine test waits for after `character(9472) + character(955)` in the console.
+
+### 13.2.2 What the demand cache tells a program
+
+Each program reads the whole demand cache. A cache that filled at the requests of the programs would tell each program which characters the others asked for, in their order and at their time, across principals: a channel of `docs/PROPERTIES.md`, "20. No ambient access: the other holes to close", row 17. The service draws the whole subset of each face at its start, and draws no other character, so the cache holds the same entries whatever the programs draw. A later layer that fills the cache beyond a fixed subset must close this channel first.
+
+### 13.2.3 The log and the work of one program
 
 - The service writes one line for each program at its first request with a character that is absent or refused, and one line at its first answer that does not fit its ring. It counts the next ones and writes the totals at the stop of the program.
 - In one turn of its loop, the service reads at most `REQUESTS_OF_A_PROGRAM_IN_ONE_TURN` records of one ring: the capacity of the ring. Each ring gets its turn. The time that one program costs the service has no other bound.
@@ -487,30 +495,34 @@ Each program reads the whole demand cache. A cache that filled at the requests o
 
 Each glyph cache of the boot image, Spleen 8x16 and the boot display stay as they are. A text of the 192 characters never meets the font service, and the first frame of the compositor, of the terminal and of each window needs no service. The demand cache is only for the characters that no glyph cache holds.
 
-### 13.4 The first range
+### 13.4 The subsets
 
-The subset of B612 Regular holds the Greek letters that its character map has, after the characters of the glyph cache (`demand_cache.subset_ranges`, `modustool vector_fonts`): 47 characters, U+0391 to U+039F, U+03A1, U+03A3 to U+03A9, U+03B1 to U+03C0 and U+03C2 to U+03C9. B612 1.008 has no capital pi (U+03A0), no small rho (U+03C1) and no Latin Extended-A. The window `interface_font` shows each letter of the subset, and its line `interface_font: each Greek letter of the subset is drawn from the demand cache: 47 letters` is the line of the machine test. Its glyph cache does not change: the build draws the 192 characters only.
+The subset of B612 Regular holds the Greek letters that its character map has, after the characters of the glyph cache (`demand_cache.interface_subset_ranges`, `modustool vector_fonts`): 47 characters, U+0391 to U+039F, U+03A1, U+03A3 to U+03A9, U+03B1 to U+03C0 and U+03C2 to U+03C9. B612 1.008 has no capital pi (U+03A0), no small rho (U+03C1) and no Latin Extended-A. The window `interface_font` shows each letter of the subset, and its line `interface_font: each Greek letter of the subset is drawn from the demand cache: 47 letters` is the line of the machine test.
+
+The subsets of Paper Mono and of Paper Mono SemiBold hold the cell subset, after the characters of the glyph cache (`demand_cache.cell_subset_ranges`): 165 characters, the box-drawing characters U+2500 to U+257F, the block elements U+2580 to U+259F, and the five Greek letters of Paper Mono, U+039B, U+03A9, U+03BB, U+03BC and U+03C0. Paper Mono has no other Greek letter: a cell of α draws the replacement glyph. The box-drawing characters of Paper Mono pass their advance by 5 units on each side; the cell cuts them, as it cuts each glyph of the cache of cells. The service draws the cell subset three times: the faces `Cells`, `Cells_Without_Grid_Fit` and `Cells_Bold`. Its line `glyphs: the face cells of the demand cache holds each of the 165 characters of its subset of paper_mono` is a line of the main machine test.
+
+The glyphs of the glyph caches do not change: the build draws the 192 characters only. The hash of the font file in the header of each cache changes with the subset file, and a face is matched by it.
 
 ### 13.5 Who can write the demand cache
 
 - The root service creates it, and gives it with Write to the font service only. Each other program maps it with the right Read only.
-- The font service writes an entry, then its code point with release, then the generation of the header. An entry never changes after that.
-- A program copies each entry that it finds and checks it against the constants of `demand_cache` (`entry_valid`): the rows inside the line, the width and the left side inside the limits of a glyph, the words inside the words of the cache, each advance inside its limits. A wrong entry draws the replacement glyph; it is never a read outside the cache.
-- A program uses the demand cache only beside the glyph cache of the same font file: the header names the hash of the font file, and `reader_frame_begin` compares it with the hash of the glyph cache at each frame.
-- The font service publishes no entry for a character outside the subset, nor for a character that the font cannot draw. The table then holds at most the characters of the subset: no program fills it.
+- The font service writes an entry, then its key with release, then the generation of the header. An entry never changes after that.
+- A program copies each entry that it finds and checks it against the constants of `demand_cache` (`entry_valid`): the rows inside the line, the width and the left side inside the limits of a glyph, the words inside the words of the cache, each advance inside its limits. A glyph of a cell face must also start at the left of its cell, be at most as wide as the cell, and have the width of the cell as its advance. A wrong entry draws the replacement glyph; it is never a read outside the cache.
+- A program uses a face only beside the glyph cache of the same font file and the same flags: the header names the hash of the font file and the flags of each face, and `reader_frame_begin` compares them with the glyph cache at each frame.
+- The font service publishes no entry for a character outside the subset of its face, nor for a character that the font cannot draw. The table then holds at most the characters of the subsets: no program fills it.
 
 ### 13.6 The pixels
 
-A glyph drawn on demand has the bytes that the build gives to the same character from the same font file: the same style, the same renderer, the same positions. The host test `a_glyph_on_demand_is_the_glyph_of_the_build` (`src/library/support/vector_font`) compares the box, the words and the advance of characters of the glyph cache drawn both ways. The host test `a_text_on_demand_draws_the_pixels_of_the_glyph_cache` (`src/library/support/graphics`) draws a text from each cache and compares the pixels at each third of a pixel. The service draws the subset in the order of the code points, so each start gives the same places and the same generations.
+A glyph drawn on demand has the bytes that the build gives to the same character from the same font file: the same style, the same renderer, the same positions. The host test `a_glyph_on_demand_is_the_glyph_of_the_build` (`src/library/support/vector_font`) compares the box, the words and the advance of characters of the glyph cache drawn both ways; `a_cell_glyph_on_demand_is_the_glyph_of_the_build` does the same for the three cell faces against the caches of cells of Paper Mono. The host test `a_text_on_demand_draws_the_pixels_of_the_glyph_cache` (`src/library/support/graphics`) draws a text from each cache and compares the pixels at each third of a pixel; `a_cell_on_demand_draws_the_pixels_of_the_glyph_cache` draws a cell from each at each scale, and checks that the ink stays in the cell. The service draws the faces in their order and each subset in the order of the code points, so each start gives the same places and the same generations.
 
 ### 13.7 Measures
 
 | Measure | Value |
 |---|---|
-| The demand cache | 1 150 976 bytes: 281 pages that the root service pays once |
-| The words of the 47 Greek letters, at each scale and position | under 1/4 of the 1 MiB of words (host test `the_greek_letters_and_the_refusals`) |
-| The boot image, before and after | not measured yet: the image with and without the module `glyphs` and the wider subset |
+| The demand cache | 4 395 008 bytes: 1 073 pages that the root service pays once |
+| The words of the four faces | at most 997 504 of the 1 048 576 words within the limits that a reader checks (`demand_cache.WORD_BOUND`, checked by an `#assert`); at most 678 016 for the subsets of today, computed for a cell full at each scale (host test `each_face_of_the_subset_fits_the_demand_cache`, which checks that no character is refused) |
+| The boot image, before and after | not measured yet: the image with and without the module `glyphs` and the wider subsets |
 
 ### 13.8 What is left
 
-The elements of the interface package, the drawing module, the compositor, the programs started from a disk, the font of the cells, the bold weight, the eviction of an entry, more scripts, and a budget of requests for each program: `ROADMAP.md`. The font service is not started again after a stop, until the next boot.
+The elements of the interface package, the drawing module with the face `Interface`, the compositor, the programs started from a disk, every Greek letter in the cells, the eviction of an entry, more scripts, and a budget of requests for each program: `ROADMAP.md`. The font service is not started again after a stop, until the next boot.

@@ -157,8 +157,10 @@ a_character_on_demand_is_placed_from_the_next_frame :: proc(t: ^testing.T) {
 	testing.expect(t, allocation == nil)
 	defer mem.free_bytes(bytes)
 	base := uintptr(raw_data(bytes))
-	writer := demand_cache.writer_open(base, cache.header.font_hash, vector_font.RENDERER_VERSION, cache.header.flags)
-	reader, ok := demand_cache.reader_of(base, &cache)
+	faces: [demand_cache.Face]demand_cache.Face_Header
+	faces[.Interface] = {font_hash = cache.header.font_hash, flags = cache.header.flags}
+	writer := demand_cache.writer_open(base, vector_font.RENDERER_VERSION, faces)
+	reader, ok := demand_cache.reader_of(base, .Interface, &cache)
 	testing.expect(t, ok)
 	spacing.demand = &reader
 	OMEGA :: rune(0x03A9)
@@ -176,10 +178,10 @@ a_character_on_demand_is_placed_from_the_next_frame :: proc(t: ^testing.T) {
 	testing.expect_value(t, reader.wanted[1], A_MACRON)
 	// The font service publishes Ω, and ā as absent.
 	entry := demand_cache.Entry{state = .Drawn, advances = {700, 1400, 2100}}
-	place, _ := demand_cache.place_find(&writer, OMEGA)
-	demand_cache.publish(&writer, place, OMEGA, entry)
-	place, _ = demand_cache.place_find(&writer, A_MACRON)
-	demand_cache.publish(&writer, place, A_MACRON, demand_cache.Entry{state = .Absent})
+	place, _ := demand_cache.place_find(&writer, .Interface, OMEGA)
+	demand_cache.publish(&writer, place, .Interface, OMEGA, entry)
+	place, _ = demand_cache.place_find(&writer, .Interface, A_MACRON)
+	demand_cache.publish(&writer, place, .Interface, A_MACRON, demand_cache.Entry{state = .Absent})
 	// The same frame: the same placed glyphs.
 	_, again, _ := shape(&spacing, transmute([]u8)text, placed[:])
 	testing.expect_value(t, again, width)
