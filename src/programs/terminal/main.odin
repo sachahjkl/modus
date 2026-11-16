@@ -46,7 +46,9 @@
 // the handles above.
 //
 // **What a reader sees**: a window with the name of the program, its
-// lines, a status bar that the program fills, and on the log:
+// lines, a status bar that the program fills, the
+// [action bar](term:action-bar) of Page Up and Page Down at the right of
+// its last line, and on the log:
 //
 // - "terminal: ok, console writes in a ring of N records";
 // - "terminal: the first key goes to console";
@@ -910,7 +912,7 @@ number :: proc "contextless" (buffer: ^[27]u8, value: u64) -> string {
 // tables are words: the cells hold 4-byte colors, so the table starts at
 // an address that is a multiple of 4. Each holds the texts of a frame, the
 // 3 bytes at most before the cells, and the cells of the largest grid.
-records_now, records_before: [384]interface.Draw_Record
+records_now, records_before: [448]interface.Draw_Record
 TEXT_WORDS :: (1024 + 4 + ROWS_LIMIT * COLUMNS_LIMIT * size_of(Cell)) / 4
 text_words_now, text_words_before: [TEXT_WORDS]u32
 // What the pointer did to the scroll bar of the lines in the last frame.
@@ -954,6 +956,9 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	buffer: [27]u8
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
+	// While the list of the action bar is open, a press is the bar's: the
+	// scroll bars under the list do not take it.
+	interface.action_bar_input_take(&frame, &bar)
 
 	if measure {
 		// The head: the rates, and the graph of the lines in one second.
@@ -978,17 +983,25 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 
 	// The status of the program: a text, and a value of a total. With the
 	// rates it has its own line. If not, it takes the place of the line count.
+	// The line of the keys is the band of the action bar, from edge to
+	// edge, under each text of the line: with no rates the status shares
+	// it, and the line at the top of the band is the line over the status.
+	bar_y := hint_y - 4
+	interface.draw_rectangle(table, 0, bar_y, width, interface.ACTION_BAR_ROW_HEIGHT, graphics.colors.card_bottom)
 	interface.draw_rectangle(table, 0, status_y - 4, width, 1, graphics.colors.track)
+	if measure {
+		interface.draw_rectangle(table, 0, bar_y, width, 1, graphics.colors.track)
+	}
 	status := &view.status
 	has_status := status.total != 0
 	status_end := TEXT_X // Where the text of the status ends: the keys at the right must not run over it.
 	if has_status {
 		color := style_color(status.style)
 		x := interface.draw_text(table, TEXT_X, status_y, string(status.text[:status.length]), graphics.colors.text) + 12
-		bar :: 240
-		interface.draw_rectangle(table, x, status_y + 4, bar, 8, graphics.colors.track)
-		interface.draw_rectangle(table, x, status_y + 4, status_bar_length(status.value, status.total, bar), 8, color)
-		x = interface.draw_text(table, x + bar + 12, status_y, number(&buffer, status.value), graphics.colors.text)
+		STATUS_BAR_WIDTH :: 240
+		interface.draw_rectangle(table, x, status_y + 4, STATUS_BAR_WIDTH, 8, graphics.colors.track)
+		interface.draw_rectangle(table, x, status_y + 4, status_bar_length(status.value, status.total, STATUS_BAR_WIDTH), 8, color)
+		x = interface.draw_text(table, x + STATUS_BAR_WIDTH + 12, status_y, number(&buffer, status.value), graphics.colors.text)
 		x = interface.draw_text(table, x, status_y, " of ", graphics.colors.dim)
 		status_end = interface.draw_text(table, x, status_y, number(&buffer, status.total), graphics.colors.dim)
 	} else if program == 0 && measure {
@@ -1027,12 +1040,11 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		}
 		hint_left = x
 	}
-	// The keys, at the right, when the text at the left leaves room for them.
-	hint :: "page up, page down: move  other keys: to the program"
-	hint_x := width - MARGIN - len(hint) * CELL_WIDTH
-	if hint_left + 2 * CELL_WIDTH <= hint_x {
-		interface.draw_text(table, hint_x, hint_y, hint, graphics.colors.dim)
-	}
+	// The keys: the action bar, at the right of the text of the line. Its
+	// items stand from the right edge, so they keep their places while the
+	// numbers at the left change. The bar is drawn last, below.
+	bar_left := hint_left + 2 * CELL_WIDTH
+	bar_area := interface.Area{bar_left, bar_y, max(width - MARGIN - bar_left, 0), interface.ACTION_BAR_ROW_HEIGHT}
 	// The border of the completion list, one pixel outside its cells. It
 	// comes last, so that the records before keep their places in the
 	// table when the list opens or closes: the damage stays small.
@@ -1096,9 +1108,52 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		first_line = min(view.top - view.oldest, kept - shown_lines)
 	}
 	scroll_result = interface.scroll_bar(&frame, scroll_area, scroll_identity, .Vertical, {total = int(max(kept, 1)), visible = int(max(shown_lines, 1)), first = int(first_line)}, {page = rows - 1}, "scroll bar", text_view_area)
+	// The action bar, after each other element: its list opens over the
+	// lines and the scroll bar.
+	bar_result = interface.action_bar(&frame, bar_area, bar_items[:], &bar, {alignment = .Right})
 	interface.window_frame_end(&drawing, &frame, window)
 	if table.full {
 		system.log("terminal: the draw table is full: records are missing")
+	}
+}
+
+// The keys of the terminal, in its action bar (docs/INTERFACE.md, "4.4
+// The action bar"). Each other key goes to the program, which names its
+// own keys.
+bar_items := [?]interface.Action_Bar_Item {
+	{faces = {"Page Up"}, name = "lines before", priority = 1},
+	{faces = {"Page Down"}, name = "lines after", priority = 1},
+}
+bar: interface.Action_Bar_State
+bar_result: interface.Action_Bar_Result // What the action bar of the last frame ran.
+
+// page_move gives the lines that a key moves the view: a page less one
+// line for Page Up and Page Down, 0 for another key.
+page_move :: proc "contextless" (code: u32) -> i64 {
+	switch code {
+	case display.KEY_PAGE_UP:
+		return -i64(rows - 1)
+	case display.KEY_PAGE_DOWN:
+		return i64(rows - 1)
+	}
+	return 0
+}
+
+// view_move asks for the view moved by some lines: the view holds there
+// while the program writes, and follows the last lines again when it
+// reaches them.
+view_move :: proc "contextless" (move: i64) {
+	if move == 0 {
+		return
+	}
+	was_following := request.follow
+	request.follow = false
+	request.top = u64(max(i64(view.top) + move, i64(view.oldest)))
+	if request.top + u64(rows) >= view.count {
+		request.follow = true
+	}
+	if was_following && !request.follow {
+		system.log("terminal: the view stays at line ", request.top + 1, ", ", program_name, " continues")
 	}
 }
 
@@ -1252,13 +1307,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				dirty = true
 				continue
 			}
-			// The pointer goes to the scroll bars, and to no other part of
-			// the window: a frame is built only when the pointer is on a
-			// bar, holds it, leaves it lit, or turns the wheel over the
-			// view of a bar.
+			// The pointer goes to the scroll bars and to the action bar, and
+			// to no other part of the window: a frame is built only when
+			// the pointer is on one of them, holds it, leaves it lit, turns
+			// the wheel over the view of a scroll bar, or the list of the
+			// action bar is open.
 			if event.kind == .Pointer {
 				interface.input_add(&drawing.input, event)
-				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity, text_view_area) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, list_scroll_area, list_scroll_identity, list_view_area) {
+				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity, text_view_area) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, list_scroll_area, list_scroll_identity, list_view_area) || interface.action_bar_wants_frame(&bar, &drawing.input) {
 					dirty = true
 				} else {
 					// A notch over no view moves nothing: it must not wait
@@ -1272,12 +1328,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				continue
 			}
 			dirty = true
-			move: i64
+			// The open list of the action bar takes its keys first.
+			outcome := interface.action_bar_key(&bar, {code = event.code, character = event.character, modifiers = event.modifiers})
+			if outcome.ran {
+				view_move(page_move(outcome.run.code))
+			}
+			if outcome.taken {
+				continue
+			}
+			move := page_move(event.code)
 			switch event.code {
-			case display.KEY_PAGE_UP:
-				move = -i64(rows - 1)
-			case display.KEY_PAGE_DOWN:
-				move = i64(rows - 1)
+			case display.KEY_PAGE_UP, display.KEY_PAGE_DOWN:
 			case:
 				// The key goes to the program. The terminal never waits for
 				// the program: this thread also draws the window and moves
@@ -1300,17 +1361,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 				request.follow = true
 			}
-			if move != 0 {
-				was_following := request.follow
-				request.follow = false
-				request.top = u64(max(i64(view.top) + move, i64(view.oldest)))
-				if request.top + u64(rows) >= view.count {
-					request.follow = true
-				}
-				if was_following && !request.follow {
-					system.log("terminal: the view stays at line ", request.top + 1, ", ", program_name, " continues")
-				}
-			}
+			view_move(move)
 		}
 		// A change that this loop did not draw waits for the next picture:
 		// on the clock of the frames, or for the compositor. The compositor
@@ -1389,6 +1440,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		draw(&window, request.follow)
+		// A press on an item of the action bar runs its key, as the key
+		// does: the next picture shows the moved view.
+		if bar_result.ran {
+			view_move(page_move(bar_result.run.code))
+			dirty = true
+		}
 		// The scroll bar moved the view: the next picture shows the lines
 		// from its first unit. The log has one line for a press that moved
 		// the view and one for a drag, not one for each step.

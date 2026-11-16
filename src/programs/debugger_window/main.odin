@@ -21,8 +21,9 @@
 // **What a reader sees.** At the left the program, with the debug place
 // field and its threads, and under it the breakpoints. At the right the
 // source line of the chosen frame, the memory view, the stack of the chosen
-// thread and the variables of the chosen frame. The line at the bottom
-// names the keys.
+// thread and the variables of the chosen frame. The action bar at the
+// bottom names the keys; a press on an item does what its key does, and
+// the items that do not fit are behind its button "more".
 //
 // **Keys**, with a program attached and no focus in the field:
 //
@@ -60,7 +61,7 @@ MARGIN :: 8
 LEFT_WIDTH :: 328
 RIGHT_X :: MARGIN + LEFT_WIDTH + MARGIN
 RIGHT_WIDTH :: WIDTH - RIGHT_X - MARGIN
-KEYS_HEIGHT :: 4 * LINE + 8
+KEYS_HEIGHT :: interface.ACTION_BAR_ROW_HEIGHT // The action bar.
 CARDS_HEIGHT :: HEIGHT - 2 * MARGIN - KEYS_HEIGHT
 // The left column: the program above, the breakpoints below. The card of
 // the breakpoints has a fixed place, so its first row has one.
@@ -294,7 +295,37 @@ Frame_Acts :: struct {
 	index:     int, // The row of the act: the place in its table, or the number of a breakpoint.
 	keys:      [interface.KEY_CAPACITY]interface.Key_Press,
 	key_count: int,
+	// A press on an item of the action bar put its key in the input of the
+	// next frame: that frame runs it.
+	bar_key_given: bool,
 }
+
+// The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
+// action bar"). The keys 0 to 3 remove a breakpoint by its number: a key
+// with an argument is no item, and a press on a row of the breakpoints
+// does the same. Detach has the lowest priority: it is the first item to
+// go into the list, and the rarest act.
+attached_items := [?]interface.Action_Bar_Item {
+	{faces = {"Up"}, name = "thread before", priority = 6},
+	{faces = {"Down"}, name = "thread after", priority = 6},
+	{faces = {"Page Up"}, name = "frame before", priority = 5},
+	{faces = {"Page Down"}, name = "frame after", priority = 5},
+	{faces = {"h"}, name = "hold", priority = 8},
+	{faces = {"r"}, name = "let run", priority = 8},
+	{faces = {"c"}, name = "let each run", priority = 4},
+	{faces = {"s"}, name = "one instruction", priority = 7},
+	{faces = {"l"}, name = "one line", priority = 7},
+	{faces = {"o"}, name = "one line, over each call", priority = 5},
+	{faces = {"b"}, name = "breakpoint at the line", priority = 3},
+	{faces = {"g"}, name = "registers or variables", priority = 2},
+	{faces = {"Esc"}, name = "keys leave the field", priority = 1},
+	{faces = {"d"}, name = "detach", priority = 0},
+}
+detached_items := [?]interface.Action_Bar_Item {
+	{faces = {"Enter"}, name = "attach", priority = 2},
+	{faces = {"Backspace"}, name = "remove a character", priority = 1},
+}
+bar: interface.Action_Bar_State
 
 image: []u8
 service_file: []u8 // The file of the service `debugger` in the boot image: the description of its exports.
@@ -1100,14 +1131,18 @@ draw :: proc "contextless" (window: ^display.Window) -> Frame_Acts {
 	frame := interface.window_frame_begin(&drawing, window)
 	frame_table = frame.table
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
+	// The keys of the open list of the action bar, and a press on it, go
+	// to the bar before any element of the window.
+	interface.action_bar_input_take(&frame, &bar)
 	draw_program(&frame)
 	draw_breakpoints(&frame)
 	draw_source(&frame)
 	draw_memory(&frame)
 	draw_stack(&frame)
 	draw_variables(&frame)
-	keys := interface.Area{MARGIN + 8, HEIGHT - MARGIN - KEYS_HEIGHT + 8, WIDTH - 2 * MARGIN - 16, KEYS_HEIGHT}
-	lines(keys, 0, 0, keys.width, attached ? "up, down: thread   page up, page down: frame   h: hold   r: let run   c: let each run   s: one instruction   l: one line   o: one line, over each call   b: a breakpoint at the line of the frame   0 to 3: remove a breakpoint   g: the registers or the variables   d: detach   a click on a row: choose it, a breakpoint at a source line, remove a breakpoint   escape: the keys leave the field" : "type the name of a program   backspace: remove a character   enter: attach", graphics.colors.dim)
+	// The bar comes last: its list opens over the cards.
+	bar_area := interface.Area{0, HEIGHT - KEYS_HEIGHT, WIDTH, KEYS_HEIGHT}
+	bar_result := interface.action_bar(&frame, bar_area, attached ? attached_items[:] : detached_items[:], &bar)
 	// The input is cleared at the end of the frame: the keys that no
 	// element took are kept first.
 	for press in frame.input.keys[:frame.input.key_count] {
@@ -1117,15 +1152,34 @@ draw :: proc "contextless" (window: ^display.Window) -> Frame_Acts {
 		}
 	}
 	interface.window_frame_end(&drawing, &frame, window)
+	if bar_result.ran {
+		// A press on an item acts as its key. With a program attached the
+		// letters are acts, so the debug place field gives up the focus:
+		// else `h` would type in the field and not hold the thread. With
+		// none, the name field keeps it, and Enter attaches.
+		if attached {
+			drawing.state.focus = 0
+		}
+		frame_acts.bar_key_given = interface.input_key_add(&drawing.input, bar_result.run)
+	}
 	return frame_acts
 }
 
-// frame_build draws a frame, runs what it asked, and draws again when an
-// act changed the rows.
+// The frames that one event can build: the frame of the event, the frame
+// that runs the key of an item of the action bar, and the frame that shows
+// what an act changed.
+FRAME_ROUNDS :: 3
+
+// frame_build draws a frame, runs what it asked, and draws again while an
+// act changed the rows or the action bar gave a key to the next frame.
 frame_build :: proc "contextless" (window: ^display.Window) {
 	acts := draw(window)
-	if acts_run(&acts) {
-		draw(window)
+	for _ in 1 ..< FRAME_ROUNDS {
+		ran := acts_run(&acts)
+		if !ran && !acts.bar_key_given {
+			return
+		}
+		acts = draw(window)
 	}
 }
 

@@ -381,6 +381,7 @@ The interface package (`src/library/support/interface`, `docs/INTERFACE.md`) dra
 | Text input | A field of the track with a line of 2 pixels at its bottom (`colors.title` with the focus, `colors.not_usable` without); the text in the strong text color (`colors.text_strong`), at scale 1 or 2; a caret of 2 x 16 pixels in `colors.title` with the focus (4 x 32 at scale 2), at any place of the text; the placeholder in the dim color |
 | Panel with a flush input | The input is the top band of the panel, from edge to edge, with no border on its three outer sides: its fill and the line of 2 pixels under it are its edge. The rest of the panel has a border of 1 pixel at the left, the right and the bottom |
 | Large number | The font at 3 times its size, drawn from its outline at 24 x 48: the one number of a card (section 5) |
+| Action bar | A band of 24 pixels at the bottom of a window: the keycaps of each key combination, then the name of its action; a divider between two items; a button `more` and a list for the items that do not fit. See "The action bar" |
 
 ### The chosen row
 
@@ -461,6 +462,44 @@ A view that shows a part of a longer content has a scroll bar at its right (or u
 - **Contrast**: at rest the bar is quiet. The border of the thumb has 2.1 to 1 on the track (2.5 in the light form) and the grip 1.7 to 1 on the thumb (2.7). Each part that the pointer lights has at least 3 to 1: the blue border on the track, a triangle on the track and on its button, the light grip on the blue thumb (a host test of the site computes them).
 
 The source of the form, and the forms that were refused: `src/md/features/scroll_bar.md`.
+
+### The action bar
+
+A window that the keyboard drives names its keys in an action bar at its bottom (`docs/INTERFACE.md`, "4.4 The action bar"). An item is a key combination, drawn as keycaps, then the name of its action. The bar says no "keys:": the keycaps say it.
+
+![The action bar of interface_elements: each item in one row](screenshots/action_bar.png)
+
+![The debugger window: its action bar with the list of the button more open over the cards](screenshots/action_bar_more.png)
+
+**The parts:**
+
+| Part | Size | Look |
+|---|---|---|
+| Band | 24 pixels high (a line of a table); two rows for a bar that wraps | `colors.card_bottom`, a line of 1 pixel of `colors.track` at its top |
+| Box of an item | The row high; 8 pixels of room at its left and its right | No fill at rest |
+| Keycap | 20 pixels high, 2 pixels under the top of the row; 6 pixels from each side to its label; at least 20 pixels wide | A border of 1 pixel in `colors.not_usable`; inside it the gradient of a card, from `colors.card_top` to `colors.card_bottom`: the one sign of depth of section 3. Its label in the text color, in the interface font |
+| Arrow of a face | 7 by 4 pixels | A solid triangle of rows of 1, 3, 5 and 7 pixels, in the text color, as the arrow of the scroll bar. `Page Up` is the word `Page` and the triangle, 4 pixels apart |
+| Combination | 3 pixels on each side of a `+` | The `+` in the dim color, between two keycaps |
+| Name of the action | 6 pixels after the last keycap | The text color, in the interface font |
+| Divider | 1 by 12 pixels, in the middle of the row | `colors.track`, between two boxes |
+| Button `more` | As an item | A keycap with three points of 2 by 2 pixels, 2 pixels apart, then the count of the items of its list and the word `more` |
+| List | As wide as its widest row, at most as wide as the bar; its right edge on the right edge of the bar, its bottom on the top of the bar | `colors.card_top` with a border of 1 pixel of `colors.not_usable`; rows of 24 pixels as the items, with a line of 1 pixel of `colors.track` between two rows, inside their margins |
+
+**The states:**
+
+| State | When | What changes |
+|---|---|---|
+| At rest | The pointer is not over the item | Nothing |
+| Under the pointer | The pointer is over an item that takes a press, or over a row of the list | The box in `colors.track` |
+| Pressed | The button of the pointer is down on the item and the pointer is over it | The box in `colors.chosen`, the name and the `+` in white, as an open button |
+| Open | The list of the button `more` is open | The button in `colors.chosen`, its text in white |
+| Chosen | Up or Down chose a row of the list | The row in `colors.chosen`, its name in white |
+
+- **Overflow.** The items of the lowest priority go into the list first; the items in the row keep their order. A bar that wraps uses two rows first.
+- **Each corner is square.** A keycap is a rectangle, not a rounded blob (section 2).
+- **A name is whole or absent** (section 1). An item is in the row whole, or in the list; a row of a list narrower than the item, in a bar narrower than one item, shows its keycaps only.
+- **One fact once.** An item names an action that no button and no title of the window names. A fact that is no key (the counts of a service, what the pointer does on a square) sits at the left of the band, in the dim color, and the items stand from the right edge.
+- **Both appearances.** Each color is a token. White on `colors.chosen` has 4.67 to 1 in both (see "The chosen row").
 
 ## 11. The mark
 

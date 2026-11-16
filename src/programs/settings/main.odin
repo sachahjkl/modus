@@ -62,7 +62,16 @@ import "modus:support/storage"
 import "modus:support/system"
 
 WIDTH :: 560
-HEIGHT :: 520
+HEIGHT :: 528
+
+// The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
+// action bar"): the keys of the focus of the interface package.
+bar_items := [?]interface.Action_Bar_Item {
+	{faces = {"Tab"}, name = "next button", priority = 3},
+	{faces = {"Shift", "Tab"}, name = "button before", priority = 2},
+	{faces = {"Enter"}, name = "choose the value", priority = 3},
+}
+bar: interface.Action_Bar_State
 
 page: ^settings.Page
 date_page: ^date.Page // The date of the rule of the day of the setting `appearance`, or nil.
@@ -70,7 +79,7 @@ service: system.Service
 store: storage.Client
 has_store: bool
 
-records_now, records_before: [320]interface.Draw_Record
+records_now, records_before: [384]interface.Draw_Record
 text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 drawn_change: u32 = 1 // The change count of the last frame; odd: none yet.
@@ -333,10 +342,11 @@ boot_pass :: proc "contextless" () -> ! {
 
 // draw builds the window: a row of buttons for each setting, then the text
 // of the system at its three sizes, then the facts of the glyph caches.
-draw :: proc "contextless" (window: ^display.Window) {
+draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	choice := settings.read(page)
 	frame := interface.window_frame_begin(&drawing)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
+	interface.action_bar_input_take(&frame, &bar)
 	count: interface.Text_Builder
 	interface.text_put(&count, "change ")
 	interface.text_put_number(&count, u64(choice.change_count / 2))
@@ -345,7 +355,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// is under its large number: 6 rows of 32 leave it 168 in the window.
 	ROW :: 32
 	rows_height := len(settings.Setting) * ROW
-	content := interface.card(&frame, {8, 8, WIDTH - 16, 40 + rows_height + 48}, "SETTINGS", has_store ? "kept in the store of settings" : "NOT kept: no store", graphics.colors.kernel, interface.text_of(&count))
+	content := interface.card(&frame, {8, 8, WIDTH - 16, 40 + rows_height + 32}, "SETTINGS", has_store ? "kept in the store of settings" : "NOT kept: no store", graphics.colors.kernel, interface.text_of(&count))
 	for &description, setting in settings.descriptions {
 		y := content.y + int(setting) * ROW
 		interface.draw_text(frame.table, content.x, y + 4, description.title, graphics.colors.dim)
@@ -375,11 +385,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 		}
 	}
 	interface.draw_text(frame.table, content.x, content.y + rows_height + 8, "the console: settings.set(\"font\", \"spleen\")", graphics.colors.dim)
-	interface.draw_text(frame.table, content.x, content.y + rows_height + 24, "keys: tab, then enter on a button", graphics.colors.dim)
 
-	top := 8 + 40 + rows_height + 48 + 8
+	top := 8 + 40 + rows_height + 32 + 8
 	vector := settings.font_of(choice) == .Vector && graphics.text_vector_drawn()
-	sample := interface.card(&frame, {8, top, WIDTH - 16, HEIGHT - top - 8}, "THE TEXT OF THE SYSTEM", vector ? "the vector font, from the glyph cache" : "Spleen 8x16, the fallback", graphics.colors.machine)
+	sample := interface.card(&frame, {8, top, WIDTH - 16, HEIGHT - top - 8 - interface.ACTION_BAR_ROW_HEIGHT}, "THE TEXT OF THE SYSTEM", vector ? "the vector font, from the glyph cache" : "Spleen 8x16, the fallback", graphics.colors.machine)
 	lines := [?]string {
 		"> print(monitor.programs())   31 programs",
 		"compositor   12.4 ms   2 418 pages   runs",
@@ -411,6 +420,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		}
 	}
 	interface.draw_text(frame.table, sample.x, sample.y + sample.height - 16, interface.text_of(&facts), graphics.colors.dim)
+	bar_result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, bar_items[:], &bar)
 	interface.window_frame_end(&drawing, &frame, window)
 	if choice.change_count != drawn_change && drawn_change != 1 {
 		buffer: [256]u8
@@ -418,6 +428,16 @@ draw :: proc "contextless" (window: ^display.Window) {
 		system.log("settings: drawn with ", values_text(&writer, choice.values))
 	}
 	drawn_change = choice.change_count
+	return bar_result
+}
+
+// draw_with_bar draws a frame and, when a press on an item of the action
+// bar ran its key, a second frame that takes the key, as a typed key: the
+// focus moves, or the button with the focus is pressed.
+draw_with_bar :: proc "contextless" (window: ^display.Window) {
+	if result := draw(window); result.ran && interface.input_key_add(&drawing.input, result.run) {
+		draw(window)
+	}
 }
 
 // The entry of settings: the boot pass, or the window and the service.
@@ -454,7 +474,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	service, _ = system.service_open(ctx)
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	draw(&window)
+	draw_with_bar(&window)
 	buffer: [256]u8
 	writer := system.Writer{buffer = buffer[:]}
 	system.log("settings: ok, ", values_text(&writer, settings.read(page).values))
@@ -465,7 +485,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_end(&wait)
 		system.service_run(&service)
 		if interface.window_events(&drawing, &window) {
-			draw(&window)
+			draw_with_bar(&window)
 		}
 	}
 }

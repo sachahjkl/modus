@@ -219,16 +219,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if !event.pressed {
 					continue
 				}
-				switch event.character {
-				case '1' ..= '0' + relay.NODE_COUNT:
-					toggle(int(event.character - '1'))
-				case 'a':
-					add(added % relay.NODE_COUNT)
-					system.log("rings: the key a adds a record: ", u64(added), " records in all")
+				// The open list of the action bar takes its keys first.
+				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
+				outcome := interface.action_bar_key(&bar, press)
+				if outcome.ran {
+					key_run(outcome.run)
+				}
+				if !outcome.taken {
+					key_run(press)
 				}
 			case .Pointer:
 				pressed := event.buttons & ~buttons
 				buttons = event.buttons
+				// The action bar takes the pointer from the input of the
+				// next frame; a press on it, or while its list is open, is
+				// not a press on a square.
+				interface.input_add(&drawing.input, event)
+				if interface.action_bar_takes_pointer(&bar, event.x, event.y) {
+					continue
+				}
 				for center, index in centers {
 					if abs(event.x - center.x) > NODE_SIZE / 2 || abs(event.y - center.y) > NODE_SIZE / 2 {
 						continue
@@ -245,9 +254,45 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		now := system.time()
 		watch()
 		frame := interface.window_frame_begin(&drawing, &window)
+		interface.action_bar_input_take(&frame, &bar)
 		draw(frame.table, now)
+		// The keys of the window, in its action bar (docs/INTERFACE.md,
+		// "4.4 The action bar"), at the right of what the pointer does.
+		// The items stand from the right edge.
+		bar_y := HEIGHT - interface.ACTION_BAR_ROW_HEIGHT
+		pointer_end := interface.draw_text(frame.table, 12, bar_y + (interface.ACTION_BAR_ROW_HEIGHT - graphics.CELL_HEIGHT) / 2, POINTER_NOTE, graphics.colors.dim)
+		bar_left := pointer_end + 16
+		bar_result := interface.action_bar(&frame, {bar_left, bar_y, WIDTH - bar_left, interface.ACTION_BAR_ROW_HEIGHT}, bar_items[:], &bar, {alignment = .Right})
 		interface.window_frame_end(&drawing, &frame, &window)
+		if bar_result.ran {
+			key_run(bar_result.run)
+		}
 		display.wait(&window, now + FRAME_TIME)
+	}
+}
+
+// What the pointer does on a square: a fact at the left of the action bar.
+POINTER_NOTE :: "click a square: left adds, right stops or starts"
+
+// The keys of the window. The keys 1 to 6 stop or start the program with
+// that number: a key with an argument takes no press, and a click on its
+// square does the same.
+bar_items := [?]interface.Action_Bar_Item {
+	{faces = {"a"}, name = "add a record", priority = 2},
+	{faces = {"1-6"}, name = "stop or start", priority = 1},
+}
+#assert(relay.NODE_COUNT == 6) // The face "1-6" names the keys of the programs.
+bar: interface.Action_Bar_State
+
+// key_run runs one key: a typed key, or the key of an item of the action
+// bar that a press ran.
+key_run :: proc "contextless" (press: interface.Key_Press) {
+	switch press.character {
+	case '1' ..= '0' + relay.NODE_COUNT:
+		toggle(int(press.character - '1'))
+	case 'a':
+		add(added % relay.NODE_COUNT)
+		system.log("rings: the key a adds a record: ", u64(added), " records in all")
 	}
 }
 
@@ -277,7 +322,10 @@ watch :: proc "contextless" () {
 
 draw :: proc "contextless" (table: ^interface.Draw_Table, now: u64) {
 	interface.draw_text(table, 12, 8, "Each square is a program. Each line is a ring in shared memory.", graphics.colors.text)
-	interface.draw_text(table, 12, HEIGHT - 22, "left button or a: add a record    right button or 1-6: stop or start a program", graphics.colors.dim)
+	// The band of the action bar, from edge to edge.
+	bar_y := HEIGHT - interface.ACTION_BAR_ROW_HEIGHT
+	interface.draw_rectangle(table, 0, bar_y, WIDTH, interface.ACTION_BAR_ROW_HEIGHT, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, 0, bar_y, WIDTH, 1, graphics.colors.track)
 
 	// The rings, under the nodes.
 	for &node, index in nodes {

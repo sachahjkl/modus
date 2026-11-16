@@ -30,6 +30,8 @@
 // - Backspace: back to the page before;
 // - o: the table of all the modules, as `overview()` shows it.
 //
+// The [action bar](term:action-bar) at the bottom names these keys: a press on an item does what its key does.
+//
 // A click on a name of the list shows that module. A click on a link with a line under it shows the page that it
 // names.
 //
@@ -66,7 +68,8 @@ import module "modus:contract/module"
 import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
+// The page, and the action bar with its open list (about 120 records).
+records_now, records_before: [1024]interface.Draw_Record
 text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 
@@ -418,14 +421,85 @@ draw :: proc "contextless" (window: ^display.Window) {
 		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	}
 	frame := interface.window_frame_begin(&drawing, window)
+	// A press on the action bar, or while its list is open, is the bar's:
+	// the scroll bar under the list does not take it.
+	interface.action_bar_input_take(&frame, &bar)
 	draw_records(&frame)
 	// The scroll bar of the text: the pointer on it moves the text as Page
 	// Up and Page Down do, and the wheel over the text moves it too.
 	moved := interface.scroll_bar(&frame, scroll_area(), scroll_identity(), .Vertical, {total = rows(), visible = ROWS, first = first_line}, {page = ROWS - 2}, "", text_view_area())
+	// The action bar, last: its list opens over the text.
+	bar_result := interface.action_bar(&frame, bar_area(), bar_items[:], &bar)
 	interface.window_frame_end(&drawing, &frame, window)
 	if moved.changed {
 		first_line = moved.first
 		text_moved_by_scroll_bar = true
+	}
+	// A press on an item runs its key, in the procedure of the keys.
+	if bar_result.ran {
+		key_run(bar_result.run)
+		bar_acted = true
+	}
+}
+
+// The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
+// action bar"). The keys that move the text have the lowest priority: the
+// scroll bar moves it too.
+bar_items := [?]interface.Action_Bar_Item {
+	{faces = {"Up"}, name = "module before", priority = 6},
+	{faces = {"Down"}, name = "module after", priority = 6},
+	{faces = {"Tab"}, name = "next link", priority = 5},
+	{faces = {"Enter"}, name = "open the link", priority = 5},
+	{faces = {"Backspace"}, name = "back", priority = 4},
+	{faces = {"o"}, name = "all the modules", priority = 3},
+	{faces = {"Shift", "Tab"}, name = "link before", priority = 2},
+	{faces = {"Page Up"}, name = "rows before", priority = 1},
+	{faces = {"Page Down"}, name = "rows after", priority = 1},
+	{faces = {"Home"}, name = "start of the text", priority = 0},
+}
+bar: interface.Action_Bar_State
+bar_acted: bool // A press on an item of the action bar ran its key in the last frame: the next frame shows it.
+
+// The text at the right of the action bar, "rows 1 to 33 of 120", has this
+// room: the bar stops before it, so the bar keeps its place while the
+// numbers change.
+PLACE_COLUMNS :: 28
+
+// bar_area gives the place of the action bar: under the text, from the
+// list of the modules to the place of the rows.
+bar_area :: proc "contextless" () -> interface.Area {
+	return {LIST_WIDTH, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH - LIST_WIDTH - PLACE_COLUMNS * CELL_WIDTH - MARGIN, interface.ACTION_BAR_ROW_HEIGHT}
+}
+
+// key_run runs one key: a typed key, or the key of an item of the action
+// bar that a press ran.
+key_run :: proc "contextless" (press: interface.Key_Press) {
+	switch press.code {
+	case display.KEY_UP:
+		navigation_leave()
+		select(selected - 1)
+		page_log()
+	case display.KEY_DOWN:
+		navigation_leave()
+		select(selected + 1)
+		page_log()
+	case display.KEY_PAGE_UP:
+		scroll(-(ROWS - 2))
+	case display.KEY_PAGE_DOWN:
+		scroll(ROWS - 2)
+	case display.KEY_HOME:
+		scroll(-ROW_PART_CAPACITY)
+	case interface.KEY_TAB:
+		link_focus_move(press.modifiers & display.MODIFIER_SHIFT != 0)
+	case display.KEY_ENTER:
+		link_open(focused_link)
+	case display.KEY_BACKSPACE:
+		page_back()
+	case:
+		if press.character == 'o' {
+			navigation_leave()
+			overview_build()
+		}
 	}
 }
 
@@ -499,13 +573,17 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 			interface.element_name(frame, {x, y, int(part.width), CELL_HEIGHT}, page_links[part.link - 1].label)
 		}
 	}
-	bottom := HEIGHT - CELL_HEIGHT - 6
-	interface.draw_rectangle(table, LIST_WIDTH, bottom - 4, WIDTH - LIST_WIDTH, 1, 0x30363C)
-	hint := interface.draw_text(table, left, bottom, "up, down: module  Tab, Enter: link  Backspace: back", graphics.colors.dim)
+	// The band of the action bar goes on under the place of the rows, at
+	// the right of the bar (draw: the bar draws its own part last).
+	keys := bar_area()
+	place_left := keys.x + keys.width
+	interface.draw_rectangle(table, place_left, keys.y, WIDTH - place_left, keys.height, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, place_left, keys.y, WIDTH - place_left, 1, graphics.colors.track)
 	buffer: [64]u8
 	total := rows()
 	place := system.format(buffer[:], "rows ", u64(min(first_line + 1, total)), " to ", u64(min(first_line + ROWS, total)), " of ", u64(total))
-	interface.draw_text(table, max(hint + 16, WIDTH - MARGIN - len(place) * CELL_WIDTH), bottom, place, graphics.colors.dim)
+	place_room := WIDTH - MARGIN - place_left
+	interface.draw_text_right(table, WIDTH - MARGIN, keys.y + (keys.height - CELL_HEIGHT) / 2, interface.text_fit(table, {}, place, place_room), graphics.colors.dim)
 }
 
 // The list of the modules, at the left of the window. The name of a module
@@ -738,8 +816,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		if changed && display.canvas_free(&window) {
 			draw(&window)
-			changed = text_moved_by_scroll_bar
+			changed = text_moved_by_scroll_bar || bar_acted
 			text_moved_by_scroll_bar = false
+			bar_acted = false
 		}
 		// A picture that waits for the compositor: display.canvas_free said
 		// no, and the wait then ends when the compositor has read the ring
@@ -777,38 +856,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					continue
 				}
 				changed = true
-				switch event.code {
-				case display.KEY_UP:
-					navigation_leave()
-					select(selected - 1)
-					page_log()
-				case display.KEY_DOWN:
-					navigation_leave()
-					select(selected + 1)
-					page_log()
-				case display.KEY_PAGE_UP:
-					scroll(-(ROWS - 2))
-				case display.KEY_PAGE_DOWN:
-					scroll(ROWS - 2)
-				case display.KEY_HOME:
-					scroll(-ROW_PART_CAPACITY)
-				case interface.KEY_TAB:
-					link_focus_move(event.modifiers & display.MODIFIER_SHIFT != 0)
-				case display.KEY_ENTER:
-					link_open(focused_link)
-				case display.KEY_BACKSPACE:
-					page_back()
-				case:
-					if event.character == 'o' {
-						navigation_leave()
-						overview_build()
-					}
+				// The open list of the action bar takes its keys first.
+				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
+				outcome := interface.action_bar_key(&bar, press)
+				if outcome.ran {
+					key_run(outcome.run)
+				}
+				if !outcome.taken {
+					key_run(press)
 				}
 			case .Pointer:
-				// The scroll bar of the text takes the pointer from the input
-				// of the next frame.
+				// The scroll bar of the text and the action bar take the
+				// pointer from the input of the next frame.
 				interface.input_add(&drawing.input, event)
-				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area(), scroll_identity(), text_view_area()) {
+				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area(), scroll_identity(), text_view_area()) || interface.action_bar_wants_frame(&bar, &drawing.input) {
 					changed = true
 				} else {
 					// A notch over no view moves nothing, and does not wait
@@ -816,6 +877,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					drawing.input.wheel -= event.wheel
 				}
 				down := event.buttons & display.BUTTON_LEFT != 0
+				// A press on the action bar, or anywhere while its list is
+				// open, is the bar's: it does not choose a module or open
+				// a link under it.
+				if interface.action_bar_takes_pointer(&bar, event.x, event.y) {
+					pressed = down
+					continue
+				}
 				if down && !pressed && event.x >= 0 && event.x < LIST_WIDTH {
 					if index := list_index_at(event.y); index >= 0 {
 						navigation_leave()

@@ -22,7 +22,9 @@
 // **What a reader sees.** Start it from the menu of the programs, or with
 // `start("interface_elements")` in the console. The input can press the
 // button, choose a line of the list, and type in the text input; the
-// second card shows the cost of each frame. The log gets one line for each
+// second card shows the cost of each frame. The [action bar](term:action-bar)
+// at the bottom names the keys, and a press on an item runs its key. The
+// log gets one line for each
 // measured frame (`interface_elements: <frame>: <count> records, <count>
 // damage rectangles, ...`), the time of one whole frame, then
 // `interface_elements: ok, ...`.
@@ -38,7 +40,20 @@ import "modus:support/system"
 WIDTH :: 816
 HEIGHT :: 560
 ELEMENTS_CARD_WIDTH :: 472 // The card of the elements; the card of the frame takes the rest.
+CARDS_HEIGHT :: HEIGHT - 16 - interface.ACTION_BAR_ROW_HEIGHT // The cards stand over the action bar.
 TICK :: 100 // Milliseconds between two frames.
+
+// The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
+// action bar"). Each one is a key of the interface package: the focus,
+// the press of a button, the choice of the list.
+bar_items := [?]interface.Action_Bar_Item {
+	{faces = {"Tab"}, name = "next element", priority = 6},
+	{faces = {"Shift", "Tab"}, name = "element before", priority = 3},
+	{faces = {"Enter"}, name = "press", priority = 5},
+	{faces = {"Up"}, name = "line before", priority = 4},
+	{faces = {"Down"}, name = "line after", priority = 4},
+}
+bar: interface.Action_Bar_State
 
 records_now, records_before: [512]interface.Draw_Record
 text_now, text_before: [8192]u8
@@ -61,7 +76,7 @@ Part :: struct {
 }
 
 // build describes the whole window for one frame.
-build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
+build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.Action_Bar_Result {
 	builder: interface.Text_Builder
 	offset := moved ? 8 : 0
 	interface.background(frame, {0, 0, WIDTH, HEIGHT})
@@ -69,7 +84,10 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 	// The elements.
 	// The width of the card holds its three texts in the font of the cells,
 	// the widest font: the title, the caption of 23 characters and the keys.
-	content := interface.card(frame, {8 + offset, 8, ELEMENTS_CARD_WIDTH, HEIGHT - 16}, "ELEMENTS", "modus:support/interface", graphics.colors.kernel, "Tab, Enter, arrows")
+	// The keys of the window are in its action bar, not in the count of
+	// this card: one fact once on a screen.
+	interface.action_bar_input_take(frame, &bar)
+	content := interface.card(frame, {8 + offset, 8, ELEMENTS_CARD_WIDTH, CARDS_HEIGHT}, "ELEMENTS", "modus:support/interface", graphics.colors.kernel)
 	column := interface.column_of(content, 8)
 	pressed := interface.button(frame, interface.column_take(&column, 24), interface.identity("press"), "press this button")
 	if pressed.activated {
@@ -116,7 +134,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 	}
 
 	// The draw table of the last frame.
-	content = interface.card(frame, {ELEMENTS_CARD_WIDTH + 16 + offset, 8, WIDTH - ELEMENTS_CARD_WIDTH - 24, HEIGHT - 16}, "THE FRAME", "Draw_Table, Damage", graphics.colors.machine)
+	content = interface.card(frame, {ELEMENTS_CARD_WIDTH + 16 + offset, 8, WIDTH - ELEMENTS_CARD_WIDTH - 24, CARDS_HEIGHT}, "THE FRAME", "Draw_Table, Damage", graphics.colors.machine)
 	column = interface.column_of(content, 8)
 	interface.large_number(frame, content.x, interface.column_take(&column, 48).y, interface.number_text(&builder, number), graphics.colors.machine)
 	interface.cell_text(frame, interface.column_take(&column, 16), "frames", graphics.colors.dim, .Left, interface.FONT_INTERFACE)
@@ -156,13 +174,19 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 			interface.draw_rectangle(frame.table, rectangle.right - 2, rectangle.top, 2, height, graphics.colors.machine)
 		}
 	}
+	// The action bar, last: its list opens over the cards.
+	return interface.action_bar(frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, bar_items[:], &bar)
 }
 
-// frame_draw builds and draws one frame.
+// frame_draw builds and draws one frame. The key of an item that a press
+// ran goes into the input of the next frame, the way of a typed key.
 frame_draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
-	build(&frame, frames)
+	bar_result := build(&frame, frames)
 	interface.window_frame_end(&drawing, &frame, window)
+	if bar_result.ran {
+		interface.input_key_add(&drawing.input, bar_result.run)
+	}
 	last_damage = drawing.damage
 	frames += 1
 }

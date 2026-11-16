@@ -55,8 +55,22 @@ VERSION_LABEL :: "version  "
 // two lines, it is never cut at the edge.
 TEXT_ROOM :: (len(VERSION_LABEL) + NOTE_CAPACITY) * graphics.CELL_WIDTH
 WIDTH :: 2 * MARGIN + TEXT_ROOM
-KEYS_Y :: 276 // The two lines of the keys, at the bottom.
-HEIGHT :: KEYS_Y + 2 * graphics.CELL_HEIGHT + 8
+KEYS_Y :: 276 // The action bar, at the bottom.
+// The action bar wraps: the window is narrow, and its reader learns the
+// keys there, so each one shows at once on two rows.
+HEIGHT :: KEYS_Y + interface.ACTION_BAR_WRAP_ROWS * interface.ACTION_BAR_ROW_HEIGHT
+
+// The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
+// action bar"). A printable character writes the note: the caret after
+// the note says it.
+bar_items := [?]interface.Action_Bar_Item {
+	{faces = {"Up"}, name = "older version", priority = 4},
+	{faces = {"Down"}, name = "newer version", priority = 3},
+	{faces = {"Enter"}, name = "restore the version shown", priority = 4},
+	{faces = {"Esc"}, name = "the current note", priority = 2},
+	{faces = {"Tab"}, name = "count 1000", priority = 1},
+}
+bar: interface.Action_Bar_State
 HISTORY_CAPACITY :: 512 // The versions of the note that the window shows.
 COUNT_BLOCKS :: 3
 COUNT_WORDS :: COUNT_BLOCKS * 512
@@ -189,11 +203,12 @@ restore :: proc "contextless" () {
 	}
 }
 
-draw :: proc "contextless" (window: ^display.Window) {
+draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	if drawing.now.records == nil {
 		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	}
 	frame := interface.window_frame_begin(&drawing, window)
+	interface.action_bar_input_take(&frame, &bar)
 	table := frame.table
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	buffer: [32]u8
@@ -245,10 +260,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 		x = interface.draw_text(table, MARGIN, 254, VERSION_LABEL, graphics.colors.dim)
 		interface.draw_text(table, x, 254, string(shown_text[:shown_count]), graphics.colors.text)
 	}
-	keys_y := KEYS_Y
-	keys_y += graphics.CELL_HEIGHT * interface.draw_text_wrapped(table, MARGIN, keys_y, TEXT_ROOM, "keys: a note; up, down: its versions; escape: the current note", graphics.colors.dim)
-	interface.draw_text_wrapped(table, MARGIN, keys_y, TEXT_ROOM, "enter: restore the version shown; tab: count 1000", graphics.colors.dim)
+	bar_result := interface.action_bar(&frame, {0, KEYS_Y, WIDTH, HEIGHT - KEYS_Y}, bar_items[:], &bar, {overflow = .Wrap})
 	interface.window_frame_end(&drawing, &frame, window)
+	return bar_result
 }
 
 // The entry of notes: it restores the note and the count from its store, then commits each key until the
@@ -281,94 +295,121 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	first_picture := true
 	for {
-		draw(&window)
+		bar_result := draw(&window)
 		// The window is open before the store is read: a reader of the log
 		// knows from this line that the window shows the note.
 		if first_picture {
 			first_picture = false
 			system.log("notes: ok, the first picture is presented")
 		}
+		// A press on an item of the action bar runs its key, as the key
+		// does; the next turn draws what it changed.
+		if bar_result.ran {
+			key_run(&window, bar_result.run)
+			continue
+		}
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.wait_end(&wait)
 		for event in display.next_event(&window) {
-			if event.kind != .Key || !event.pressed {
-				continue
-			}
-			switch event.code {
-			case display.KEY_UP:
-				if shown < 0 {
-					history_read()
-					show(history_count() - 2)
-				} else if shown > 0 {
-					show(shown - 1)
+			#partial switch event.kind {
+			case .Pointer:
+				// The pointer reaches the action bar only: the next turn
+				// draws a frame with it.
+				interface.input_add(&drawing.input, event)
+			case .Key:
+				if !event.pressed {
+					continue
 				}
-				continue
-			case display.KEY_DOWN:
-				if shown >= 0 {
-					show(shown + 1)
+				// The open list of the action bar takes its keys first.
+				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
+				outcome := interface.action_bar_key(&bar, press)
+				if outcome.ran {
+					key_run(&window, outcome.run)
 				}
-				continue
-			case display.KEY_ESCAPE:
-				shown = -1
-				continue
-			}
-			if shown >= 0 && event.character == '\n' {
-				// Restore the version shown: one commit, and the note before it
-				// becomes a version.
-				generation_shown := history[shown].generation
-				started := system.nanoseconds()
-				commit, status := storage.restore(&client, storage.ROOT, "note", generation_shown)
-				restore_time_last = (system.nanoseconds() - started) / 1000
-				if status == .Ok && commit > 0 {
-					generation = commit
-					note_count = copy(note[:], shown_text[:shown_count])
-					system.log("notes: restored the version of generation ", generation_shown, ": \"", string(note[:note_count]), "\", in the commit of generation ", commit, " in ", restore_time_last, " us; the note before it is a version")
-				}
-				shown = -1
-				history_read()
-				continue
-			}
-			shown = -1
-			switch event.character {
-			case '\t':
-				started := system.time()
-				for step in 1 ..= RUN_STEPS {
-					count += 1
-					if !keep_count() {
-						break
-					}
-					if step == RUN_STEPS {
-						system.log("notes: count ", count, ", stopped: ", u64(RUN_STEPS), " commits in ", system.time() - started, " ms")
-						measure_started := system.nanoseconds()
-						_, total, status := storage.versions(&client, storage.ROOT, "count", count_versions[:])
-						if status == .Ok {
-							system.log("notes: the versions of the count: ", total, " rows in ", (system.nanoseconds() - measure_started) / 1000, " us")
-						}
-					} else if step % 100 == 0 {
-						system.log("notes: count ", count)
-						draw(&window)
-					}
-				}
-			case '\n':
-				history_read()
-				system.log("notes: the note is \"", string(note[:note_count]), "\", generation ", generation, ", ", u64(max(history_total - 1, 0)), " versions; one commit of the note: ", commit_time_total / max(commit_count, 1), " us in the mean of ", commit_count)
-			case 8:
-				// The note is UTF-8: Backspace removes its last whole
-				// character.
-				if note_count > 0 {
-					note_count = text_encoding.complete_characters(note[:note_count - 1])
-					keep("note", note[:note_count])
-					history_read()
-				}
-			case:
-				// A character whose bytes do not fit is not typed.
-				if length := text_encoding.character_encode(event.character, note[note_count:NOTE_CAPACITY]); length > 0 {
-					note_count += length
-					keep("note", note[:note_count])
-					history_read()
+				if !outcome.taken {
+					key_run(&window, press)
 				}
 			}
+		}
+	}
+}
+
+// key_run runs one key: a typed key, or the key of an item of the action
+// bar that a press ran.
+key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Press) {
+	switch press.code {
+	case display.KEY_UP:
+		if shown < 0 {
+			history_read()
+			show(history_count() - 2)
+		} else if shown > 0 {
+			show(shown - 1)
+		}
+		return
+	case display.KEY_DOWN:
+		if shown >= 0 {
+			show(shown + 1)
+		}
+		return
+	case display.KEY_ESCAPE:
+		shown = -1
+		return
+	}
+	if shown >= 0 && press.character == '\n' {
+		// Restore the version shown: one commit, and the note before it
+		// becomes a version.
+		generation_shown := history[shown].generation
+		started := system.nanoseconds()
+		commit, status := storage.restore(&client, storage.ROOT, "note", generation_shown)
+		restore_time_last = (system.nanoseconds() - started) / 1000
+		if status == .Ok && commit > 0 {
+			generation = commit
+			note_count = copy(note[:], shown_text[:shown_count])
+			system.log("notes: restored the version of generation ", generation_shown, ": \"", string(note[:note_count]), "\", in the commit of generation ", commit, " in ", restore_time_last, " us; the note before it is a version")
+		}
+		shown = -1
+		history_read()
+		return
+	}
+	shown = -1
+	switch press.character {
+	case '\t':
+		started := system.time()
+		for step in 1 ..= RUN_STEPS {
+			count += 1
+			if !keep_count() {
+				break
+			}
+			if step == RUN_STEPS {
+				system.log("notes: count ", count, ", stopped: ", u64(RUN_STEPS), " commits in ", system.time() - started, " ms")
+				measure_started := system.nanoseconds()
+				_, total, status := storage.versions(&client, storage.ROOT, "count", count_versions[:])
+				if status == .Ok {
+					system.log("notes: the versions of the count: ", total, " rows in ", (system.nanoseconds() - measure_started) / 1000, " us")
+				}
+			} else if step % 100 == 0 {
+				system.log("notes: count ", count)
+				draw(window)
+			}
+		}
+	case '\n':
+		history_read()
+		system.log("notes: the note is \"", string(note[:note_count]), "\", generation ", generation, ", ", u64(max(history_total - 1, 0)), " versions; one commit of the note: ", commit_time_total / max(commit_count, 1), " us in the mean of ", commit_count)
+	case 8:
+		// The note is UTF-8: Backspace removes its last whole
+		// character.
+		if note_count > 0 {
+			note_count = text_encoding.complete_characters(note[:note_count - 1])
+			keep("note", note[:note_count])
+			history_read()
+		}
+	case:
+		// A character whose bytes do not fit is not typed.
+		if length := text_encoding.character_encode(press.character, note[note_count:NOTE_CAPACITY]); length > 0 {
+			note_count += length
+			keep("note", note[:note_count])
+			history_read()
 		}
 	}
 }

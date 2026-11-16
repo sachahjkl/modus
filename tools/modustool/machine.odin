@@ -2881,6 +2881,15 @@ scenario := [?]Step {
 	{kind = .Keys, text = "hello"},
 	{kind = .Wait, text = "interface_elements: the text is \"hello\""},
 	{kind = .Shot, text = "interface_elements"},
+	// The action bar: each item of the window stands in its row, with its
+	// keycaps, since the first frame. A press on an item runs its key:
+	// Shift+Tab takes the focus back to the list, and Up on the list
+	// chooses the line before.
+	{kind = .Shot, text = "action_bar"},
+	{kind = .Click_Element, text = "interface_elements", element = "element before"},
+	{kind = .Click_Element, text = "interface_elements", element = "line before"},
+	{kind = .Wait, text = "interface_elements: the list chooses boot"},
+	{kind = .Key, text = "tab"},
 	{kind = .Key, text = "tab"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "interface_elements: the damage is shown"},

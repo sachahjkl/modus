@@ -315,7 +315,14 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "debugger_window: the frame 0 of the thread 0: "},
 	{kind = .Click_Element, text = "debugger_window", element = "breakpoint 0"},
 	{kind = .Wait, text = "debugger_window: removed the breakpoint 0"},
-	{kind = .Key, text = "d"},
+	// The action bar of the window: its items do not fit in one row, and
+	// the rest are behind its button "more". A press on the button opens
+	// the list over the cards; detach has the lowest priority, so it is
+	// in the list. A press on its row runs its key, d, as the key does.
+	{kind = .Click_Element, text = "debugger_window", element = "more"},
+	{kind = .Wait, text = "interface: debugger_window: the element detach at "},
+	{kind = .Shot, text = "action_bar_more"},
+	{kind = .Click_Element, text = "debugger_window", element = "detach"},
 	{kind = .Wait, text = "debugger_window: detached from debug_target"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 	{kind = .Close, text = "debugger_window"},

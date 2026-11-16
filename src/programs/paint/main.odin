@@ -50,9 +50,23 @@ paper_generation: u32
 // The one picture memory of the draw tables: the drawing module reads the
 // paper there.
 picture_memories: [1][]graphics.Color
-records_now, records_before: [32]interface.Draw_Record
-text_now, text_before: [128]u8
+records_now, records_before: [64]interface.Draw_Record
+text_now, text_before: [256]u8
 window_drawing: interface.Window_Drawing
+
+// The key of the window, in its action bar.
+bar_items := [?]interface.Action_Bar_Item {
+	{faces = {"c"}, name = "clear", priority = 1},
+}
+bar: interface.Action_Bar_State
+
+// key_run runs one key: a typed key, or the key of the item of the action
+// bar that a press ran.
+key_run :: proc "contextless" (press: interface.Key_Press) {
+	if press.character == 'c' {
+		clear()
+	}
+}
 
 paper :: proc "contextless" () -> graphics.Canvas {
 	paper_generation += 1
@@ -156,6 +170,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("paint: ok")
 	for {
 		frame := interface.window_frame_begin(&window_drawing, &window)
+		interface.action_bar_input_take(&frame, &bar)
 		table := frame.table
 		// The element name of the cell of each color: a machine test
 		// presses "red".
@@ -172,18 +187,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_rectangle(table, left + PALETTE_CELL - 3, 3, 3, PALETTE_HEIGHT - 6, 0xFFFFFF)
 			}
 		}
-		// The rest of the top line: the keys, and the calls that this program served.
+		// The rest of the top line: the calls that this program served, and
+		// the action bar of its key (docs/INTERFACE.md, "4.4 The action
+		// bar"), whose item stands from the right edge.
 		x := len(colors) * PALETTE_CELL
 		interface.draw_rectangle(table, x, 0, WIDTH - x, PALETTE_HEIGHT, COLOR_PAPER)
-		x = interface.draw_text(table, x + 10, 4, "c: clear", 0x606468)
 		if service.connected != 0 || service.calls != 0 {
-			x = interface.draw_text(table, x + 16, 4, "callers ", 0x606468)
+			x = interface.draw_text(table, x + 10, 4, "callers ", 0x606468)
 			x = interface.draw_unsigned(table, x, 4, u64(service.connected), 0x2F6FD0)
 			x = interface.draw_text(table, x + 8, 4, "calls ", 0x606468)
-			interface.draw_unsigned(table, x, 4, service.calls, 0x2F6FD0)
+			x = interface.draw_unsigned(table, x, 4, service.calls, 0x2F6FD0)
 		}
 		interface.draw_picture(table, 0, PALETTE_HEIGHT, paper_picture, paper_generation)
+		bar_left := x + 16
+		bar_result := interface.action_bar(&frame, {bar_left, 0, WIDTH - bar_left, PALETTE_HEIGHT}, bar_items[:], &bar, {alignment = .Right})
 		interface.window_frame_end(&window_drawing, &frame, &window)
+		if bar_result.ran {
+			key_run(bar_result.run)
+			continue
+		}
 
 		wait: system.Wait
 		display.wait_events(&wait, &window)
@@ -193,10 +215,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for event in display.next_event(&window) {
 			#partial switch event.kind {
 			case .Key:
-				if event.pressed && event.character == 'c' {
-					clear()
+				if !event.pressed {
+					continue
+				}
+				// The open list of the action bar takes its keys first.
+				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
+				outcome := interface.action_bar_key(&bar, press)
+				if outcome.ran {
+					key_run(outcome.run)
+				}
+				if !outcome.taken {
+					key_run(press)
 				}
 			case .Pointer:
+				// The action bar takes the pointer from the input of the
+				// next frame; a press on it does not paint.
+				interface.input_add(&window_drawing.input, event)
+				if !drawing && interface.action_bar_takes_pointer(&bar, event.x, event.y) {
+					continue
+				}
 				if event.buttons == 0 {
 					drawing = false
 					continue

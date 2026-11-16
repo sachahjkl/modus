@@ -2,7 +2,7 @@
 
 The interface package (`src/library/support/interface`) is the shared logic of the interface of the programs: the draw records, the damage, the layout, the input and focus, and the text. The system draws in software, and this logic is still a foundation of its own. The package takes ideas from `gui_toolkit` and none of its code (section 11).
 
-The terms of this document are in `GLOSSARY.md`, section "Desktop": interface package, draw record, draw table, element, element identity, damage by difference, interface state.
+The terms of this document are in `GLOSSARY.md`, section "Desktop": interface package, draw record, draw table, element, element identity, damage by difference, interface state, action bar, keycap.
 
 **The idea in plain words.** A program describes its window again at each frame, as a table of draw records of one size. The package compares that table with the table of the frame before, record by record, and draws only the rectangles that changed. So a program keeps no tree of widgets, and a tool can read, compare or record the table of any frame.
 
@@ -230,6 +230,48 @@ An element can have an element name (`GLOSSARY.md`), a text of at most 32 bytes 
 - **The bounds**: a frame keeps 64 element names (`ELEMENT_PLACE_CAPACITY`). An empty name, a name of more than 32 bytes (`ELEMENT_NAME_CAPACITY`) and a name past the 64 are counted in `Frame.element_places.dropped`; the window layer writes one line for the life of the window.
 - **The element lines**: after each frame that it draws, the window layer compares the names and the rectangles of the frame with the set that the log has from the window. A new name or a moved rectangle writes "interface: debugger_window: the element watch at x,y,width,height", in pixels of the surface; a name that left the frame writes "interface: debugger_window: the element watch is gone". A frame with no change writes no line. The compositor writes the lines of the palette the same way, in pixels of the screen (`element_places_publish`).
 - **What an element name is not**: it travels to no other program and gives no access. The palette does not read it; an act name stays the name that go to reads.
+
+### 4.4 The action bar
+
+The action bar (`GLOSSARY.md`) is the band at the bottom of a window that names its keys: `action_bar` (`src/library/support/interface/action_bar.odin`). Each window that lists its keys uses it. Its look is in `DESIGN.md`, "The action bar"; the design and the refused forms are in `src/md/features/action_bar.md`.
+
+```odin
+bar_items := [?]interface.Action_Bar_Item {
+	{faces = {"Backspace"}, name = "back", priority = 4},
+	{faces = {"Shift", "Tab"}, name = "link before", priority = 2},
+}
+bar: interface.Action_Bar_State
+
+frame := interface.window_frame_begin(&drawing, window)
+interface.action_bar_input_take(&frame, &bar) // First: the keys of the list, and a press on the bar.
+// ... the elements of the window ...
+result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, bar_items[:], &bar) // Last: the list opens over them.
+interface.window_frame_end(&drawing, &frame, window)
+if result.ran {
+	interface.input_key_add(&drawing.input, result.run) // The key goes the way of a typed key.
+}
+```
+
+- **An item** (`Action_Bar_Item`): the faces of the keycaps of one combination (at most 3), the name of the action, and a priority. A face is a key name (`Enter`, `Tab`, `Esc`, `Backspace`, `Delete`, `Space`, `Home`, `End`, `Up`, `Down`, `Left`, `Right`, `Page Up`, `Page Down`), a modifier before it (`Shift`, `Ctrl`), or one printable ASCII character. The name of the action is the element name of the item (section 4.3).
+- **A press gives the key.** `action_bar_key_of` derives the key of an item from its faces: the code, the character that the keyboard layout gives (`'\n'` for Enter, `'\t'` for Tab, 8 for Backspace), and the modifiers. A face of one character gives the character with the code 0: compare the character. A face that names no key (`1-6`) gives an item that takes no press. `Action_Bar_Result.run` holds the key that a press, or Enter in the list, ran. A program with `window_events` adds it to the input of its next frame (`input_key_add`) and builds that frame; a program that reads its keys runs it through its own procedure for a key.
+- **The overflow** (`Action_Bar_Options.overflow`). `More`, the default: one row; when the items do not fit, a button `more` ends the row and items leave it, the lowest priority first and, of two with one priority, the later one first. `Wrap`: two rows in the order of the items, then the list for the rest; the caller gives the bar two rows (`ACTION_BAR_WRAP_ROWS`) always. `notes` wraps.
+- **The alignment** (`Action_Bar_Options.alignment`). `Right` puts the items against the right edge: a bar at the right of a text that changes keeps its items in place, so their element lines do not change at each frame (the terminal, `tally`, `rings`, `unlock`, `paint`).
+- **The list** opens upward over the content, its right edge on the right edge of the bar, never above `Action_Bar_Options.top`. The rows that the room does not hold are not shown: `Action_Bar_Result.list_rows_not_shown` counts them. While it is open: Up and Down choose a row, Enter runs it, Escape closes the list, another key closes it and stays for the program, a press on a row runs it, and a press outside it closes it and does nothing else.
+- **The state** (`Action_Bar_State`) is memory of the program, one for each bar: the list, its chosen row, the keys of its rows, the places of the last frame, the held press. The interface state does not hold it.
+- **The order of a frame.** `action_bar_input_take` comes right after the frame begins: it takes the keys of an open list, and hides from the elements the press while the list is open or on the bar, the release of a press that the bar holds, and the pointer over the bar or the list. `action_bar` comes last, so that its list is over the content.
+- **A program that reads its keys** (`manual`, the terminal, `notes`, `unlock`, `tally`, `rings`, `paint`) gives each key to `action_bar_key` first, and acts on it when the result says that the bar did not take it. It does not act on a press for which `action_bar_takes_pointer` says yes. When it draws only after a change, `action_bar_wants_frame` says if a pointer event needs a frame.
+- **The measure** is a pure procedure, `action_bar_layout(table, area, items, options)`: the box of each item, the items of the list, the box of the button. `action_bar_list_place` gives the place of the list. Host tests run them with no frame (`action_bar_test.odin`).
+
+| Window | Items | Overflow |
+|---|---|---|
+| `interface_elements` | Tab, Shift+Tab, Enter, Up, Down | All in one row |
+| The debugger window | 14 with a program attached; 2 with none | The list: detach has the lowest priority |
+| `manual` | 10 | The list: the keys that move the text, which the scroll bar moves too, go first |
+| `notes` | 5 | Wrap |
+| The terminal | Page Up, Page Down | At the right of the line count |
+| `settings` | Tab, Shift+Tab, Enter | All in one row |
+| `unlock` | Enter, and Escape in the modes that clear | At the right of a fact of the mode |
+| `tally`, `rings`, `paint` | Space; a and 1-6; c | At the right of the counts, of what the pointer does, of the calls |
 
 ## 5. Text
 
@@ -510,7 +552,7 @@ Each layer is a commit that passed the main scenario; the last one passed the fu
   - Each of these calls draws into a picture of the program, not into the surface. The threads write the pixels of the picture directly: that is the subject of these programs.
 - A frame of these windows copies the picture only when its generation changed. A picture can be copied while a thread writes it, as before when the threads wrote into the surface. The next generation copies it again.
 - `crowd`: the window ends 12 pixels after its widest header, the same margin as at the left, and the header stays in its column.
-- `notes`: the line of the keys follows the status line, with no empty band. When the grant of the store ends, the line that says so takes the place of the keys. The window is 30 pixels shorter (208).
+- `notes`: its keys are an action bar that wraps on two rows at the bottom (section 4.4). The window is 324 pixels high.
 
 ### Not converted, and why
 

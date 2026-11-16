@@ -4801,6 +4801,30 @@ The design: `src/md/infrastructure/test_pointer.md`; `docs/TOOLS.md`, "How a ste
 
 Do not use: test id, locator.
 
+### Action bar
+
+An action bar is the band at the bottom of a window that names its keys: each item is the keycaps of one key combination, then the name of its action.
+
+A window that the keyboard drives draws it with the element `action_bar` of the interface package. A press on an item runs its action: the bar gives the program the key of the item, and the program runs that key as a typed key, so the press and the key run one piece of code. Each item has a priority that the program gives; when the items do not fit in one row, the items of lowest priority go into a list behind a button `more` at the right end, which opens upward. A window can wrap the items on two rows instead. The name of the action of an item is its element name. Example: the item `Backspace` back of `manual`.
+
+The action of an item is what its key does in its window; it is not an act name and not a palette entry, which this glossary keeps apart from the word "action". An action bar is not the bar of the desktop, not a bar (the element that shows a value against a maximum), and not the status of a terminal. It holds no fact that is no key: a window draws such a fact beside it.
+
+The design: `src/md/features/action_bar.md`; `docs/INTERFACE.md`, "4.4 The action bar"; `docs/DESIGN.md`, "The action bar".
+
+Do not use: toolbar, key hint line, shortcut bar, footer.
+
+### Keycap
+
+A keycap is the small rectangle that shows one key of a key combination in an action bar, with the name of the key on it: `Tab`, `Enter`, `Backspace`, or a triangle for an arrow key.
+
+The keycaps of one combination stand side by side with a `+` between them: `Shift` + `Tab`. A keycap has a border of 1 pixel and the gradient of a card. The fonts have no arrow character, so the keycap of an arrow key draws a triangle of rectangles; `Page Up` is the word `Page` and the triangle.
+
+A keycap is not a button: the item of the action bar around it takes the press.
+
+The design: `docs/DESIGN.md`, "The action bar".
+
+Do not use: key badge, key chip, kbd.
+
 ### Element line
 
 An element line is the line of the log that says where an element with an element name is, or that it is gone: `interface: debugger_window: the element watch at x,y,width,height`.
