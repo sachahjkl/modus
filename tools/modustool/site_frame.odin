@@ -192,6 +192,7 @@ Site :: struct {
 	changelog:    Changelog,
 	measured:     []Site_Measured,
 	measure_record: Site_Measure_Record, // The measure record of the work tree.
+	measure_history: []Measure_History_Release, // The measure record of each release, oldest first (measure_history.odin).
 	boot_stages:  []Site_Boot_Stage, // The stages of the start that the home shows.
 	boot_source:  Site_Measure_Source,
 	gallery:      []Site_Gallery_Picture, // The pictures of the table of the gallery (site_gallery.odin); the home shows a few of them.
@@ -692,6 +693,12 @@ site_build :: proc(address: string) -> bool {
 		return false
 	}
 	site.measure_record = measure_record_found
+	measure_history_problem: string
+	site.measure_history, measure_history_problem = measure_history_read(MEASURE_HISTORY_FOLDER)
+	if measure_history_problem != "" {
+		fmt.eprintfln("modustool: site: %s", measure_history_problem)
+		return false
+	}
 	measured := make([dynamic]Site_Measured, context.temp_allocator)
 	for measure in site_measures {
 		append(&measured, site_measure_resolve(site_measure_read(measure), site.measure_record))

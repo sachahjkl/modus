@@ -10,7 +10,7 @@
 //   modustool changelog new <type> <subject> -          the same, with the text from the standard input
 //   modustool changelog check                           every fragment and CHANGELOG.md well formed
 //   modustool changelog assemble                        print what the next release brings
-//   modustool changelog release <release number>        write the release with its UTC time and its link, set RELEASE_NUMBER, delete the fragments
+//   modustool changelog release <release number>        write the release with its UTC time and its link, set RELEASE_NUMBER, delete the fragments, copy the measure record to the measure history
 //   modustool changelog notes <release number>          print one release
 //   modustool changelog times                           give each old heading its time from git, add the missing release links
 //
@@ -1031,6 +1031,9 @@ changelog_release :: proc(number_text: string) -> bool {
 		fmt.eprintfln("modustool: cannot read %s: %v", RELEASE_NUMBER_SOURCE, source_err)
 		return false
 	}
+	// The copy of the measure record is decided before a file changes: a
+	// record that does not read stops the release with nothing written.
+	measure_history_copy := measure_history_copy_prepare(number) or_return
 	source_lines := strings.split(string(source), "\n", context.temp_allocator)
 	for &line in source_lines {
 		if strings.has_prefix(line, RELEASE_NUMBER_LINE_START) {
@@ -1053,6 +1056,7 @@ changelog_release :: proc(number_text: string) -> bool {
 			return false
 		}
 	}
+	measure_history_copy_write(measure_history_copy) or_return
 	fmt.printfln("modustool: wrote the release %s - %s UTC with %d entries and its release link in %s, set RELEASE_NUMBER in %s, deleted %d fragments", number_text, moment, len(fragments), CHANGELOG_FILE, RELEASE_NUMBER_SOURCE, len(fragments))
 	return true
 }
