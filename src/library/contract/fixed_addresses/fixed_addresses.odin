@@ -119,8 +119,8 @@ Fixed_Range :: enum u8 {
 	// Inspect of the machine, as the monitor.
 	Demand_Cache, // The demand cache, read-only (modus:contract/demand_cache).
 	// The glyphs past the glyph caches that the font service drew. The
-	// root service maps it in each program with a request ring; the font
-	// service is its one writer.
+	// root service maps it in each program with a request ring and in
+	// each terminal; the font service is its one writer.
 	Glyph_Requests, // The request ring of the program to the font service (modus:contract/demand_cache), with Write.
 	// The root service creates one ring for each program of the boot image
 	// that it starts with a ring to the compositor, maps it here, and gives

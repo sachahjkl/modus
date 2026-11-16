@@ -301,7 +301,7 @@ The tool writes `build/my_program.module` and `build/my_program.debug` in the fo
 
 The reuse list of `docs/PROPERTIES.md` names each work of others that the system ships or copies, with its SPDX license and its license file; `modustool check` compares it with the repository. The paragraphs below say the same for a reader.
 
-The default font is Paper Mono, with its SemiBold for the titles (SIL Open Font License 1.1), as ASCII subsets in `resources/fonts/`; the other candidates are there with their licenses (`OFL.txt`, `BITSTREAM_VERA_LICENSE.txt`, and a `.license` file for each). The fallback font is Spleen 8x16 by Frederic Cambus, BSD 2-Clause. See `src/library/support/graphics/FONT_LICENSE`.
+The default font is Paper Mono, with its SemiBold for the titles (SIL Open Font License 1.1), as subsets in `resources/fonts/`: the characters of the glyph cache, and the box-drawing characters, the block elements and the five Greek letters that the font service draws on demand; the other candidates are there with their licenses (`OFL.txt`, `BITSTREAM_VERA_LICENSE.txt`, and a `.license` file for each). The fallback font is Spleen 8x16 by Frederic Cambus, BSD 2-Clause. See `src/library/support/graphics/FONT_LICENSE`.
 
 The portraits of the `hall_of_fame` program are in `resources/hall_of_fame/`. `resources/hall_of_fame/CREDITS.md` gives the source, the author and the license of each one: four are under a free license (CC BY 3.0, CC BY 4.0, CC BY-SA 4.0, CC0), and one is a credited frame of a video, all rights reserved by its producers. The program shows the author and the license under each portrait.
 
