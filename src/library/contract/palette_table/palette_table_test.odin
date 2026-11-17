@@ -268,6 +268,12 @@ candidates_and_arguments_are_checked :: proc(t: ^testing.T) {
 	testing.expect(t, !good)
 	_, _, good = argument_unpack({0 = 0xFF << 8})
 	testing.expect(t, !good)
+	// An Integer with a length of text is refused, and the refusal gives
+	// no parameter and no value: one byte, and the largest length.
+	for length in ([2]u64{1, 0xFF}) {
+		parameter, argument, good = argument_unpack({0 = 3 | u64(Value_Kind.Integer) << 8 | length << 16, 1 = 42})
+		testing.expect(t, !good && parameter == 0 && argument == (Argument_Value{}))
+	}
 }
 
 // A word of the provider that names no kind or no outcome is refused:

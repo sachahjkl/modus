@@ -69,22 +69,62 @@ fuzz_command_tokens :: proc(line: string) -> []string {
 }
 
 // fuzz_package_is_instrumented says if an IR file of the compiler belongs
-// to one of the packages under test: its name is the name of the output,
-// "-", the name of the package, then ".ll", "-" and the name of a file of
-// the package, or "$" and a number.
-fuzz_package_is_instrumented :: proc(file_name: string, packages: []string) -> bool {
+// to one of the packages under test, by the names that their sources
+// declare: the name of the file is the name of the output, "-", the name of
+// the package, then ".ll", "-" and the name of a file of the package, or
+// "$" and a number.
+fuzz_package_is_instrumented :: proc(file_name: string, package_names: []string) -> bool {
 	prefix := FUZZ_INSTRUMENTED_NAME + "-"
 	if !strings.has_prefix(file_name, prefix) || !strings.has_suffix(file_name, ".ll") {
 		return false
 	}
 	stem := file_name[len(prefix):len(file_name) - len(".ll")]
-	for package_folder in packages {
-		name := package_folder[strings.last_index_byte(package_folder, '/') + 1:]
+	for name in package_names {
 		if stem == name || strings.has_prefix(stem, strings.concatenate({name, "-"}, context.temp_allocator)) || strings.has_prefix(stem, strings.concatenate({name, "$"}, context.temp_allocator)) {
 			return true
 		}
 	}
 	return false
+}
+
+// fuzz_package_name_of_folder gives the name that the sources of a folder
+// of the source library declare. The compiler names an IR file by it, and
+// it can differ from the name of the folder: the folder support/terminal
+// holds the package terminal_records. A folder whose sources cannot be read
+// gives the name of the folder, and the build then reports that no IR file
+// belongs to it.
+fuzz_package_name_of_folder :: proc(package_folder: string) -> string {
+	folder_name := package_folder[strings.last_index_byte(package_folder, '/') + 1:]
+	folder := strings.concatenate({SOURCE_FOLDER_LIBRARY, "/", package_folder}, context.temp_allocator)
+	entries, error := os.read_all_directory_by_path(folder, context.temp_allocator)
+	if error != nil {
+		return folder_name
+	}
+	slice.sort_by(entries, proc(a, b: os.File_Info) -> bool {return a.name < b.name})
+	for entry in entries {
+		if entry.type != .Regular || !strings.has_suffix(entry.name, ".odin") || strings.has_suffix(entry.name, "_test.odin") {
+			continue
+		}
+		bytes, read_error := os.read_entire_file(entry.fullpath, context.temp_allocator)
+		if read_error != nil {
+			continue
+		}
+		for line in strings.split_lines(string(bytes), context.temp_allocator) {
+			if strings.has_prefix(line, "package ") {
+				return strings.trim_space(line[len("package "):])
+			}
+		}
+	}
+	return folder_name
+}
+
+// fuzz_package_names gives the declared name of the package of each folder.
+fuzz_package_names :: proc(packages: []string) -> []string {
+	names := make([dynamic]string, context.temp_allocator)
+	for package_folder in packages {
+		append(&names, fuzz_package_name_of_folder(package_folder))
+	}
+	return names[:]
 }
 
 // The commands that the compiler printed: the assembly of each file of
@@ -180,13 +220,14 @@ fuzz_instrumented_build :: proc(packages: []string) -> bool {
 	objects_commands := make([dynamic][]string, context.temp_allocator)
 	objects := make([dynamic]string, context.temp_allocator)
 	instrumented_count := 0
+	package_names := fuzz_package_names(packages)
 	for entry in entries {
 		if !strings.has_suffix(entry.name, ".ll") {
 			continue
 		}
 		ir := strings.concatenate({FUZZ_INSTRUMENTED_FOLDER, "/", entry.name}, context.temp_allocator)
 		object := strings.concatenate({FUZZ_INSTRUMENTED_FOLDER, "/objects/", entry.name[:len(entry.name) - len(".ll")], ".o"}, context.temp_allocator)
-		if fuzz_package_is_instrumented(entry.name, packages) {
+		if fuzz_package_is_instrumented(entry.name, package_names) {
 			command := make([dynamic]string, context.temp_allocator)
 			append(&command, "opt")
 			options := FUZZ_COVERAGE_PASS_OPTIONS

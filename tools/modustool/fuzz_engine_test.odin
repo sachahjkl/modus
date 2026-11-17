@@ -149,11 +149,25 @@ the_printed_commands_of_the_compiler_are_split :: proc(t: ^testing.T) {
 	testing.expect_value(t, commands.assembly[0][1], "/a b/fill.asm")
 	testing.expect_value(t, commands.link[0], "clang")
 	testing.expect_value(t, commands.link[len(commands.link) - 1], "-pie")
-	testing.expect(t, fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-module.ll", {"contract/module"}))
-	testing.expect(t, fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-quic-tls_handshake.ll", {"support/quic"}))
-	testing.expect(t, fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-quic$1.ll", {"support/quic"}))
-	testing.expect(t, !fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-modustool.ll", {"contract/module"}))
-	testing.expect(t, !fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-quick.ll", {"support/quic"}))
+	testing.expect(t, fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-module.ll", {"module"}))
+	testing.expect(t, fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-quic-tls_handshake.ll", {"quic"}))
+	testing.expect(t, fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-quic$1.ll", {"quic"}))
+	testing.expect(t, !fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-modustool.ll", {"module"}))
+	testing.expect(t, !fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-quick.ll", {"quic"}))
+	testing.expect(t, !fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-terminal.ll", {"terminal_records"}))
+	testing.expect(t, fuzz_package_is_instrumented(FUZZ_INSTRUMENTED_NAME + "-terminal_records-code_runs.ll", {"terminal_records"}))
+}
+
+@(test)
+the_package_of_a_folder_is_the_name_that_its_sources_declare :: proc(t: ^testing.T) {
+	// The folder support/terminal holds the package terminal_records: a
+	// selection by the name of the folder counted none of its edges.
+	testing.expect_value(t, fuzz_package_name_of_folder("support/terminal"), "terminal_records")
+	testing.expect_value(t, fuzz_package_name_of_folder("contract/module"), "module")
+	// A folder that does not exist gives the name of the folder.
+	testing.expect_value(t, fuzz_package_name_of_folder("support/no_such_folder"), "no_such_folder")
+	names := fuzz_package_names({"support/terminal", "support/quic"})
+	testing.expect(t, slice.equal(names, []string{"terminal_records", "quic"}))
 }
 
 @(test)
