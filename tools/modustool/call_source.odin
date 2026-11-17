@@ -93,11 +93,11 @@ source_lines_of_table :: proc(lines: ^[dynamic]string, file: []u8, described: mo
 		}
 		switch module.string_at(file, item.name_offset, item.name_count) {
 		case "path":
-			path_field, has_path = item, item.type == .Text
+			path_field, has_path = item, item.type == u8(module.Type.Text)
 		case "line":
-			line_field, has_line = item, item.type == .Integer
+			line_field, has_line = item, item.type == u8(module.Type.Integer)
 		case "hash":
-			hash_field, has_hash = item, item.type == .Text
+			hash_field, has_hash = item, item.type == u8(module.Type.Text)
 		}
 	}
 	if !has_path || !has_line || !has_hash {

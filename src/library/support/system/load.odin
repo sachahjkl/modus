@@ -3,6 +3,7 @@ package system
 import "base:intrinsics"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 import module "modus:contract/module"
@@ -913,7 +914,12 @@ program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	}
 	loaded: module.Load_Error
 	if _, ok := module_space_load(&space, file, &loaded); !ok {
-		status = loaded.stage == .Map ? Status(loaded.status) : .Bad_Operation
+		// The border gives Bad_Operation for a status word that names no
+		// status: the status of the map, never a status that it did not give.
+		status = .Bad_Operation
+		if loaded.stage == .Map {
+			status, _ = status_of_word(loaded.status)
+		}
 	}
 	if error != nil {
 		error^ = loaded
@@ -986,12 +992,13 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 	}
 	described :: proc "contextless" (writer: ^Writer, value: ^module.Described) {
 		// The record can come from another program: a byte that names no
-		// type matches no case, and write_parameter_type says so.
-		if value.type > max(module.Type) {
-			write_parameter_type(writer, nil, value.type, value.detail, value.direction)
+		// type is written as "?", never as a type.
+		type, type_ok := module.type_of_word(value.type)
+		if !type_ok {
+			write_part(writer, "?")
 			return
 		}
-		switch value.type {
+		switch type {
 		case .None:
 			write_part(writer, "nothing")
 		case .Record:
@@ -1018,7 +1025,7 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 				}
 			}
 		case .Text, .Handle, .Bytes:
-			write_parameter_type(writer, nil, value.type, value.detail, value.direction)
+			write_parameter_type(writer, nil, type, value.detail, value.direction)
 		}
 	}
 	// The module that the stage concerns: the import, or the module itself.
@@ -1163,7 +1170,12 @@ program_entries :: proc "contextless" (program: Handle) -> u64 {
 // program_state gives the state of a program, and its code when it stopped.
 program_state :: proc "contextless" (program: Handle) -> (state: op.Program_State, code: u32) {
 	results, _ := call(.Program_State, u64(program))
-	return op.Program_State(results[0]), u32(results[1])
+	known: bool
+	state, known = enum_word.member_of_word(op.Program_State, results[0])
+	if !known {
+		kernel_word_refused("the state of a program", results[0])
+	}
+	return state, u32(results[1])
 }
 
 // program_stop_report gives where a program stopped on a fault, and the

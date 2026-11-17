@@ -702,14 +702,20 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 	entry := (^format.Entry)(raw_data(value))^
 	queued := walking.in_removals && walking.nesting == 0
 	if queued {
-		if entry.kind != .Tree {
+		if entry.kind != u64(format.Entry_Kind.Tree) {
 			walking.broken = true
 			one.failure = .Damaged
 			return
 		}
 		walking.counts.removing += 1
 	}
-	switch entry.kind {
+	kind, kind_ok := format.entry_kind_of_word(entry.kind)
+	if !kind_ok {
+		walking.broken = true
+		one.failure = .Damaged
+		return
+	}
+	switch kind {
 	case .Object:
 		walking.counts.objects += 1
 		outcome, held := reference_state(state, walking.reader, entry.pointer, entry.size, index, result, &walking.named)
@@ -757,10 +763,7 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 			}
 		}
 	case .None:
-		walking.broken = true
-		one.failure = .Damaged
-	case:
-		// A kind that the format does not have.
+		// A leaf holds no entry of the kind None.
 		walking.broken = true
 		one.failure = .Damaged
 	}

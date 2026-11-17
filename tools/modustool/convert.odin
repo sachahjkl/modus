@@ -251,7 +251,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		export_name := description.name
 		// The buffer of a result and the error record take arguments of the
 		// call form too.
-		if arguments := module.call_argument_count(len(description.parameters), description.result, description.error_record != 0); arguments > module.PARAMETER_CAPACITY {
+		if arguments := module.call_argument_count(len(description.parameters), u8(description.result), description.error_record != 0); arguments > module.PARAMETER_CAPACITY {
 			return fail(name, "export %s takes %d arguments in the call form; an export takes at most %d", export_name, arguments, module.PARAMETER_CAPACITY)
 		}
 		found := false
@@ -267,9 +267,11 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 				about_offset    = u32(len(string_bytes) + len(export_name)),
 				about_count     = u32(len(description.about)),
 				parameter_count = u8(len(description.parameters)),
-				result          = description.result,
+				result          = u8(description.result),
 			}
-			copy(function.parameters[:], description.parameters)
+			for type, parameter in description.parameters[:min(len(description.parameters), module.PARAMETER_CAPACITY)] {
+				function.parameters[parameter] = u8(type)
+			}
 			copy(function.parameter_details[:], description.details)
 			copy(function.parameter_directions[:], description.directions)
 			function.result_detail = description.result_detail
@@ -404,7 +406,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		append(&record_records, module.Record{name_offset = u32(len(string_bytes)), name_count = u32(len(item.name)), size = item.size, first_field = u32(len(field_records)), field_count = u32(len(item.fields))})
 		append(&string_bytes, item.name)
 		for field in item.fields {
-			append(&field_records, module.Field{name_offset = u32(len(string_bytes)), name_count = u32(len(field.name)), offset = field.offset, type = field.type, detail = field.detail, unsigned = field.unsigned, integer_unit = field.integer_unit})
+			append(&field_records, module.Field{name_offset = u32(len(string_bytes)), name_count = u32(len(field.name)), offset = field.offset, type = u8(field.type), detail = field.detail, unsigned = field.unsigned, integer_unit = field.integer_unit})
 			append(&string_bytes, field.name)
 		}
 	}

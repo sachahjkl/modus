@@ -1913,7 +1913,7 @@ Fault_Record :: struct {
 	// an execute breakpoint is the one Debug that is a fault: the
 	// instruction of the breakpoint, which did not run.
 	instruction: u64,
-	kind:        Fault_Kind, // The processor exception.
+	kind:        u64, // The processor exception: the word of a Fault_Kind, read through fault_kind_of_word.
 	// The error code that the processor gave with the exception, whole.
 	// General_Protection: 0; a selector that the program loaded or named;
 	// or (n << 3) | 2 for an `int n` whose gate a program cannot use (0x72
@@ -1945,6 +1945,19 @@ Fault_Kind :: enum u64 {
 	X87_Floating_Point  = 16, // Fault. An unmasked exception of the x87 unit, at the next x87 instruction (the kernel sets CR0.NE on each processor).
 	Alignment_Check     = 17, // Fault. An access that is not aligned, with the flag AC set (the kernel sets CR0.AM on each processor).
 	Simd_Floating_Point = 19, // Fault. An unmasked exception of an SSE or AVX instruction.
+}
+
+// fault_kind_of_word is the border of the kind of a fault record
+// (Fault_Record.kind): the member, or false for a word that names no kind.
+// The record is in memory that the handler can write, so its reader never
+// takes the word for a kind that the kernel did not give.
+fault_kind_of_word :: proc "contextless" (word: u64) -> (kind: Fault_Kind, ok: bool) {
+	for member in Fault_Kind {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
 }
 // A set of fault kinds, by their vectors: the form of the argument of
 // `Fault_Handler_Set` (`fault_kinds_of_argument`).
@@ -2637,6 +2650,19 @@ Event_Kind :: enum u32 {
 	Lock_Wait = 4, // A processor took a lock of the kernel after a wait.
 }
 
+// event_kind_of_word is the border of the kind of an event record
+// (Event_Record.kind): the member, or false for a word that names no kind.
+// The ring is memory that its reader shares with the kernel, so the reader
+// never takes the word for a kind that the kernel did not write.
+event_kind_of_word :: proc "contextless" (word: u32) -> (kind: Event_Kind, ok: bool) {
+	for member in Event_Kind {
+		if u32(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
 // What the kernel did with a fault of a program (Event_Record.value_1 of a
 // Fault).
 Event_Fault_Outcome :: enum u64 {
@@ -2720,7 +2746,7 @@ EVENT_RING_RECORDS_MOST :: 1 << 20
 // the processor was idle, and took the thread 2 of the program in slot 7.
 Event_Record :: struct {
 	time:      u64, // The cycle counter at the event point (Time_Record: cycle_start and cycle_frequency).
-	kind:      Event_Kind,
+	kind:      u32, // The word of an Event_Kind, read through event_kind_of_word.
 	processor: u32, // The index of the processor.
 	program:   u32, // The slot of the program. 0: the kernel, with no thread.
 	thread:    u32, // The number of the thread in its program (Thread_Record.number). 0 when program is 0.

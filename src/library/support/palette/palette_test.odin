@@ -954,12 +954,12 @@ table_make :: proc(given: []Given) -> []u8 {
 			entry.flags = {.Destroys}
 		}
 		entry.parameter_count = item.parameters
-		entry.result = item.result
+		entry.result = u8(item.result)
 		entry.name_length = u8(copy(entry.name[:], item.name))
 		entry.signature_length = u8(copy(entry.signature[:], item.signature))
 		entry.about_length = u8(copy(entry.about[:], item.about))
 		for kind, number in item.kinds {
-			entry.parameters[number] = kind
+			entry.parameters[number] = u8(kind)
 			entry.parameter_name_lengths[number] = u8(copy(entry.parameter_names[number][:], item.names[number]))
 			entry.parameter_units[number] = item.units[number]
 		}
@@ -1061,8 +1061,10 @@ a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
 		{.Bad_Byte, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.about[0] = 200}},
 		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.kind = u8(max(palette_table.Entry_Kind)) + 1}},
 		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.kind = max(u8)}},
-		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.result = palette_table.Value_Kind(40)}},
-		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.parameters[5] = palette_table.Value_Kind(7)}},
+		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.result = u8(max(palette_table.Value_Kind)) + 1}},
+		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.result = max(u8)}},
+		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.parameters[5] = u8(max(palette_table.Value_Kind)) + 1}},
+		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.parameters[0] = max(u8)}},
 		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.flags = transmute(palette_table.Entry_Flags)u8(0x80)}},
 		{.Bad_Signature, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.signature[0] = 'x'}},
 		{.Bad_Setting, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.setting = 1}},

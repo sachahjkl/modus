@@ -407,10 +407,10 @@ roadmap_parse :: proc(content: string) -> (roadmap: Roadmap, problems: [dynamic]
 			}
 			expected := ""
 			if sections_seen < len(Roadmap_Section) {
-				expected = strings.concatenate({"## ", roadmap_section_names[Roadmap_Section(sections_seen)]}, context.temp_allocator)
+				expected = strings.concatenate({"## ", roadmap_section_names[enum_member_at(Roadmap_Section, sections_seen)]}, context.temp_allocator)
 			}
 			if expected != "" && line == expected {
-				section = Roadmap_Section(sections_seen)
+				section = enum_member_at(Roadmap_Section, sections_seen)
 				sections_seen += 1
 			} else {
 				at(&problems, number, fmt.tprintf("the heading %q is not expected here; %s", line, sections_expected))
@@ -466,7 +466,7 @@ roadmap_parse :: proc(content: string) -> (roadmap: Roadmap, problems: [dynamic]
 		roadmap_entry_finish(&entries, &entry_lines, section, entry_line, &problems)
 	}
 	if sections_seen < ROADMAP_REQUIRED_SECTION_COUNT {
-		at(&problems, len(lines), fmt.tprintf("the section \"## %s\" is not in the file; %s", roadmap_section_names[Roadmap_Section(sections_seen)], sections_expected))
+		at(&problems, len(lines), fmt.tprintf("the section \"## %s\" is not in the file; %s", roadmap_section_names[enum_member_at(Roadmap_Section, sections_seen)], sections_expected))
 	}
 	// No entry twice: two entries with one summary are one work.
 	first_lines := make(map[string]int, context.temp_allocator)

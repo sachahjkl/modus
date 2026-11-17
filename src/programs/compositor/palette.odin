@@ -1179,9 +1179,10 @@ palette_refresh :: proc "contextless" () {
 	}
 	// The value in use of each setting: the color of the icon of a Setting entry.
 	if display.settings_page != nil {
-		in_use := settings.read(display.settings_page)
+		in_use, _ := settings.read(display.settings_page)
+		values := settings.values_of(in_use)
 		for setting in settings.Setting {
-			palette_panel.settings_in_use[int(setting)] = u8(in_use.values[setting])
+			palette_panel.settings_in_use[int(setting)] = u8(values[setting])
 		}
 	}
 	// The band offers go to when a window in front of the others names

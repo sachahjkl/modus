@@ -99,7 +99,12 @@ field_names :: proc "contextless" (table: Table) -> string {
 
 // row_value gives one field of a row as a value: an Integer, a Text or a Handle.
 row_value :: proc "contextless" (row: []u8, item: module.Field) -> Value {
-	switch item.type {
+	// A byte that names no type gives no value, as a field of no value.
+	type, type_ok := module.field_type(item)
+	if !type_ok {
+		return {}
+	}
+	switch type {
 	case .Integer:
 		return {kind = .Integer, integer = module.field_integer(row, item)}
 	case .Handle:
@@ -245,9 +250,9 @@ table_where :: proc "contextless" (arguments: []Value) -> Value {
 		return {}
 	}
 	wanted := arguments[2]
-	expected: Kind = item.type == .Text ? .Text : .Integer
+	expected: Kind = item.type == u8(module.Type.Text) ? .Text : .Integer
 	if wanted.kind != expected {
-		return fail("where: the field ", arguments[1].text, " is ", type_text(table.file, Kind(item.type), item.detail), ", the value is ", kind_names[wanted.kind])
+		return fail("where: the field ", arguments[1].text, " is ", type_text_of_word(table.file, item.type, item.detail), ", the value is ", kind_names[wanted.kind])
 	}
 	count := 0
 	for index in 0 ..< table.rows {
@@ -320,10 +325,13 @@ columns_of :: proc "contextless" (table: Table, side: int, list: ^[COLUMN_CAPACI
 				}
 			}
 		}
-		if count^ == COLUMN_CAPACITY {
+		// table_of checked each field: a byte that names no type gives no
+		// column, and the new record is refused.
+		type, type_ok := module.field_type(item)
+		if count^ == COLUMN_CAPACITY || !type_ok {
 			return false
 		}
-		list[count^] = {name = name, type = item.type, detail = item.detail, unsigned = item.unsigned, integer_unit = item.integer_unit, side = side, from = item.offset}
+		list[count^] = {name = name, type = type, detail = item.detail, unsigned = item.unsigned, integer_unit = item.integer_unit, side = side, from = item.offset}
 		count^ += 1
 	}
 	return true
@@ -343,8 +351,8 @@ table_join :: proc "contextless" (arguments: []Value) -> Value {
 	if !right_ok {
 		return {}
 	}
-	if (left_item.type == .Text) != (right_item.type == .Text) {
-		return fail("join: the field ", name, " is ", type_text(left.file, Kind(left_item.type), left_item.detail), " on the left and ", type_text(right.file, Kind(right_item.type), right_item.detail), " on the right")
+	if (left_item.type == u8(module.Type.Text)) != (right_item.type == u8(module.Type.Text)) {
+		return fail("join: the field ", name, " is ", type_text_of_word(left.file, left_item.type, left_item.detail), " on the left and ", type_text_of_word(right.file, right_item.type, right_item.detail), " on the right")
 	}
 	columns: [COLUMN_CAPACITY]Column
 	count := 0
@@ -379,7 +387,7 @@ table_join :: proc "contextless" (arguments: []Value) -> Value {
 			}
 			for column in columns[:count] {
 				source := column.side == 0 ? row_left : row_right
-				width := module.field_size(column.type, column.detail)
+				width := module.field_size(console_results.column_field(column))
 				copy(bytes[place + int(column.offset):][:width], source[column.from:][:width])
 			}
 			place += int(size)
@@ -415,7 +423,11 @@ table_columns :: proc "contextless" (arguments: []Value) -> Value {
 		if count == COLUMN_CAPACITY {
 			return fail("columns: more than ", i64(COLUMN_CAPACITY), " fields")
 		}
-		columns[count] = {name = name, type = item.type, detail = item.detail, unsigned = item.unsigned, integer_unit = item.integer_unit, from = item.offset}
+		type, type_ok := module.field_type(item)
+		if !type_ok {
+			return fail("columns: the field ", name, " has a type that names no type")
+		}
+		columns[count] = {name = name, type = type, detail = item.detail, unsigned = item.unsigned, integer_unit = item.integer_unit, from = item.offset}
 		count += 1
 	}
 	if count == 0 {
@@ -432,7 +444,7 @@ table_columns :: proc "contextless" (arguments: []Value) -> Value {
 	for index in 0 ..< table.rows {
 		row := table_row(table, arguments[0], index)
 		for column in columns[:count] {
-			width := module.field_size(column.type, column.detail)
+			width := module.field_size(console_results.column_field(column))
 			copy(bytes[index * int(size) + int(column.offset):][:width], row[column.from:][:width])
 		}
 	}

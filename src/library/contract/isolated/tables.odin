@@ -60,9 +60,10 @@ Table_Mapping :: struct {
 	writable:  bool, // Change and Append.
 }
 
-// is_table says if a parameter type is a Table or Bytes parameter.
-is_table_or_bytes :: proc "contextless" (type: module.Type) -> bool {
-	return type == .Table || type == .Bytes
+// is_table_or_bytes says if the byte of a parameter type, as a module file
+// holds it, is a Table or Bytes parameter.
+is_table_or_bytes :: proc "contextless" (word: u8) -> bool {
+	return word == u8(module.Type.Table) || word == u8(module.Type.Bytes)
 }
 
 // direction_rights gives the rights of a lent memory object for a
@@ -73,11 +74,15 @@ direction_rights :: proc "contextless" (direction: module.Direction) -> op.Right
 }
 
 // table_record gives the size and the alignment of one record of a Table
-// or Bytes parameter, from the description of the module. ok is false when
-// the record is not valid, or has a Handle field.
-table_record :: proc "contextless" (file: []u8, type: module.Type, detail: u32) -> (size, alignment: u64, ok: bool) {
-	if type == .Bytes {
+// or Bytes parameter, from the description of the module and the byte of
+// its type. ok is false when the byte is no Table and no Bytes, when the
+// record is not valid, or has a Handle field.
+table_record :: proc "contextless" (file: []u8, word: u8, detail: u32) -> (size, alignment: u64, ok: bool) {
+	if word == u8(module.Type.Bytes) {
 		return 1, 1, detail == 0
+	}
+	if word != u8(module.Type.Table) {
+		return 0, 0, false
 	}
 	described := module.record_type(file, detail) or_return
 	if described.size == 0 || module.record_has_handle(file, described) {
@@ -90,9 +95,9 @@ table_record :: proc "contextless" (file: []u8, type: module.Type, detail: u32) 
 // enumeration, and Read for each parameter that is not a Table or Bytes.
 directions_valid :: proc "contextless" (function: module.Function) -> bool {
 	function := function
-	for type, index in function.parameters[:min(int(function.parameter_count), module.PARAMETER_CAPACITY)] {
+	for word, index in function.parameters[:min(int(function.parameter_count), module.PARAMETER_CAPACITY)] {
 		direction := function.parameter_directions[index]
-		if direction > max(module.Direction) || direction != .Read && !is_table_or_bytes(type) {
+		if direction > max(module.Direction) || direction != .Read && !is_table_or_bytes(word) {
 			return false
 		}
 	}
@@ -103,8 +108,8 @@ directions_valid :: proc "contextless" (function: module.Function) -> bool {
 // records into the call region at `next` when it has no memory object.
 // It gives the offset after the copy.
 @(private)
-table_encode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, direction: module.Direction, argument: ^Table_Argument, region: []u8, field: u64, next: u64) -> (after: u64, ok: bool) {
-	size, _ := table_record(file, type, detail) or_return
+table_encode :: proc "contextless" (file: []u8, word: u8, detail: u32, direction: module.Direction, argument: ^Table_Argument, region: []u8, field: u64, next: u64) -> (after: u64, ok: bool) {
+	size, _ := table_record(file, word, detail) or_return
 	capacity := u64(len(argument.records)) / size
 	// An Append count can be over the capacity: earlier calls did not fit
 	// (docs/MODULE_CONTRACT.md, "Did not fit, across calls"). A Read or
@@ -188,9 +193,9 @@ refuse :: proc "contextless" (refusal: ^errors.Error_Record, kind: errors.Kind, 
 // memory object is listed in call.mappings: the receiver maps it, and sets
 // the address of the place. A refusal writes its error record.
 @(private)
-table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, direction: module.Direction, index: int, field: Table_Field, field_offset: u64, region: []u8, call: ^Call, ranges: ^Region_Ranges, refusal: ^errors.Error_Record) -> (ok: bool) {
+table_decode :: proc "contextless" (file: []u8, word: u8, detail: u32, direction: module.Direction, index: int, field: Table_Field, field_offset: u64, region: []u8, call: ^Call, ranges: ^Region_Ranges, refusal: ^errors.Error_Record) -> (ok: bool) {
 	argument := i64(index + 1)
-	size, alignment, described := table_record(file, type, detail)
+	size, alignment, described := table_record(file, word, detail)
 	if !described {
 		return refuse(refusal, .Bad_Value, .None, argument, u64(detail), 0)
 	}
@@ -259,8 +264,8 @@ table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 // returned.
 counts_store :: proc "contextless" (function: module.Function, call: ^Call, region: []u8) {
 	function := function
-	for type, index in function.parameters[:function.parameter_count] {
-		if is_table_or_bytes(type) && function.parameter_directions[index] == .Append {
+	for word, index in function.parameters[:function.parameter_count] {
+		if is_table_or_bytes(word) && function.parameter_directions[index] == .Append {
 			offset := call.count_offsets[index]
 			if offset <= u64(len(region)) && 8 <= u64(len(region)) - offset {
 				store(region, offset, call.places[index].count)
@@ -312,14 +317,14 @@ tables_return_of :: proc "contextless" (file: []u8, function: module.Function, a
 	count_given_by_callee: [module.PARAMETER_CAPACITY]u64
 	for pass in 0 ..< 2 {
 		field := offset
-		for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
-			defer field += field_size(type)
+		for word, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+			defer field += field_size(word)
 			direction := function.parameter_directions[index]
-			if !is_table_or_bytes(type) || direction == .Read || (only_parameter != 0 && index + 1 != only_parameter) {
+			if !is_table_or_bytes(word) || direction == .Read || (only_parameter != 0 && index + 1 != only_parameter) {
 				continue
 			}
 			argument := &arguments[index].table
-			size, _, ok := table_record(file, type, function.parameter_details[index])
+			size, _, ok := table_record(file, word, function.parameter_details[index])
 			if !ok {
 				return .Bad_Description, index + 1
 			}
@@ -371,7 +376,13 @@ Missing_Room :: struct {
 room_missing :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region_size: u64) -> (missing: Missing_Room) {
 	function := function
 	next := record_size(function) or_else 0
-	for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+	for word, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+		// A byte that names no type: encode refused it already, and no table
+		// after it is measured.
+		type, type_ok := module.type_of_word(word)
+		if !type_ok {
+			return {}
+		}
 		switch type {
 		case .None, .Integer, .Handle:
 			// The field of the argument record holds the whole value.
@@ -384,7 +395,7 @@ room_missing :: proc "contextless" (file: []u8, function: module.Function, argum
 			if argument.memory_handle != 0 {
 				continue
 			}
-			size, _, ok := table_record(file, type, function.parameter_details[index])
+			size, _, ok := table_record(file, word, function.parameter_details[index])
 			if !ok {
 				continue
 			}

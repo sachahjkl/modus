@@ -20,6 +20,7 @@
 // See [entropy service](term:entropy-service).
 package entropy_service
 
+import "modus:contract/enum_word"
 import "modus:contract/ring"
 
 // The role of the entropy ring in the context of the entropy service.
@@ -83,12 +84,13 @@ COMMAND_NAMES := [Command]string {
 // command_name gives the name of a command from an error record, or "an
 // unknown command" for a number out of `Command`.
 command_name :: proc "contextless" (command: i64) -> string {
-	return command >= 0 && command <= i64(max(Command)) ? COMMAND_NAMES[Command(command)] : "an unknown command"
+	member, known := enum_word.member_of_word(Command, u64(command))
+	return known ? COMMAND_NAMES[member] : "an unknown command"
 }
 
 // argument_name gives the name of a value of a command, from 1.
 argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
-	if Command(command) == .Read && argument == 1 {
+	if command == i64(Command.Read) && argument == 1 {
 		return "count"
 	}
 	return ""

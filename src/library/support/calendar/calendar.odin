@@ -101,8 +101,10 @@ civil :: proc "contextless" (seconds: i64) -> (result: Civil) {
 	result.hour = int(in_day / 3600)
 	result.minute = int(in_day / 60 % 60)
 	result.second = int(in_day % 60)
-	// 1970-01-01 was a Thursday.
-	result.weekday = Weekday((floor_divide(days, 1) % 7 + 7 + 3) % 7)
+	// 1970-01-01 was a Thursday. The place in the week, from 0 to 6, picks
+	// its member: a number of days is no word of a weekday.
+	weekdays_in_order := [7]Weekday{.Monday, .Tuesday, .Wednesday, .Thursday, .Friday, .Saturday, .Sunday}
+	result.weekday = weekdays_in_order[(floor_divide(days, 1) % 7 + 7 + 3) % 7]
 	return result
 }
 

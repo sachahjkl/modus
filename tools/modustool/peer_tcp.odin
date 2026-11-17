@@ -362,7 +362,7 @@ peer_case_start :: proc(state: ^Peer_Tcp, name: string) -> bool {
 	case "slow":
 		// 32 connections of one host, 7 kinds in turn, then a page.
 		for index in 0 ..< 32 {
-			add(state, {attack = Attack(1 + index % 7)})
+			add(state, {attack = enum_member_at(Attack, 1 + index % 7)})
 		}
 		client := client_page(true)
 		client.delayed = true

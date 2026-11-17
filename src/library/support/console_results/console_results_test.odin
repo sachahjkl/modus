@@ -114,7 +114,7 @@ description_is_read_by_the_contract :: proc(t: ^testing.T) {
 	testing.expect_value(t, described.field_count, 3)
 	testing.expect_value(t, module.string_at(table.file, described.name_offset, described.name_count), "Program")
 	item, found := module.field(table.file, described, 1)
-	testing.expect(t, found && item.type == .Text && item.detail == 12 && item.offset == 8)
+	testing.expect(t, found && item.type == u8(module.Type.Text) && item.detail == 12 && item.offset == 8)
 	testing.expect_value(t, module.string_at(table.file, item.name_offset, item.name_count), "name")
 	// No column, a record that is too large, and a buffer that is too small.
 	_, _, ok = description_write(table.description[:], "Empty", nil)

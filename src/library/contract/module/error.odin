@@ -41,7 +41,7 @@ Difference :: enum u32 {
 // count), the direction of a Table or Bytes parameter, and the name of a
 // Record.
 Described :: struct {
-	type:      Type, // The type of the parameter or of the result.
+	type:      u8, // The type of the parameter or of the result: the byte of a Type as the file holds it, read through type_of_word.
 	direction: Direction, // A Table or Bytes parameter: its direction.
 	_:         [2]u8,
 	detail: u32, // The detail of the type: the rights of a Handle, the index of a record, or a count of parameters.
@@ -111,9 +111,11 @@ functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u
 	if !has_a || !has_b {
 		return .Missing_Export, 0, {}, {}
 	}
-	side :: proc "contextless" (file: []u8, type: Type, detail: u32) -> (value: Described) {
+	// A side keeps the byte of the file: a byte that names no type is
+	// compared as a byte, and the reader of the error writes "?" for it.
+	side :: proc "contextless" (file: []u8, type: u8, detail: u32) -> (value: Described) {
 		value.type, value.detail = type, detail
-		if type == .Record || type == .Table {
+		if type == u8(Type.Record) || type == u8(Type.Table) {
 			if described, ok := record_type(file, detail); ok {
 				name_set(&value.record, string_at(file, described.name_offset, described.name_count))
 			}
@@ -146,7 +148,7 @@ functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u
 		return .Result_Detail, 0, expected, found
 	}
 	if (a.error_record == 0) != (b.error_record == 0) || a.error_record != 0 && !records_equal(file, a.error_record, other_file, b.error_record) {
-		return .Error_Record, 0, side(file, .Record, a.error_record), side(other_file, .Record, b.error_record)
+		return .Error_Record, 0, side(file, u8(Type.Record), a.error_record), side(other_file, u8(Type.Record), b.error_record)
 	}
 	return .None, 0, {}, {}
 }
@@ -155,7 +157,7 @@ functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u
 // or two equal details.
 @(private)
 details_equal :: proc "contextless" (file, other_file: []u8, expected, found: Described) -> bool {
-	if expected.type == .Record || expected.type == .Table {
+	if expected.type == u8(Type.Record) || expected.type == u8(Type.Table) {
 		return records_equal(file, expected.detail, other_file, found.detail)
 	}
 	return expected.detail == found.detail

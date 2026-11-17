@@ -269,7 +269,10 @@ module_exports :: proc "contextless" (found: Item, filter: Export_Filter, rows: 
 // takes: each Handle parameter, and each Handle field of a Record parameter.
 rights_of :: proc "contextless" (file: []u8, function: module.Function) -> (rights: op.Rights) {
 	function := function
-	for type, number in function.parameters[:min(int(function.parameter_count), module.PARAMETER_CAPACITY)] {
+	for word, number in function.parameters[:min(int(function.parameter_count), module.PARAMETER_CAPACITY)] {
+		// A byte that names no type asks no right: the check of the file
+		// refuses it.
+		type := module.type_of_word(word) or_continue
 		switch type {
 		case .None, .Integer, .Text, .Table, .Bytes:
 			// No handle: the parameter asks no right.
@@ -279,7 +282,7 @@ rights_of :: proc "contextless" (file: []u8, function: module.Function) -> (righ
 			described := module.record_type(file, function.parameter_details[number]) or_continue
 			for field in 0 ..< described.field_count {
 				item := module.field(file, described, field) or_continue
-				if item.type == .Handle {
+				if item.type == u8(module.Type.Handle) {
 					rights += transmute(op.Rights)item.detail
 				}
 			}
@@ -307,7 +310,9 @@ export_row :: proc "contextless" (found: Item, index: u32, function: module.Func
 	text_put(row.name[:], module.string_at(file, function.name_offset, function.name_count))
 	row.number = i64(index)
 	row.parameters = i64(function.parameter_count)
-	text_put(row.result[:], result_names[function.result])
+	// A byte that names no type has no name: "?", as the signature writes it.
+	result_type, result_ok := module.function_result_type(function)
+	text_put(row.result[:], result_ok ? result_names[result_type] : "?")
 	buffer: [256]u8
 	writer := system.Writer {
 		buffer = buffer[:],
@@ -325,16 +330,16 @@ signature_write :: proc "contextless" (writer: ^system.Writer, file: []u8, funct
 	function := function
 	system.write_part(writer, module.string_at(file, function.name_offset, function.name_count))
 	system.write_part(writer, "(")
-	for type, parameter in function.parameters[:min(int(function.parameter_count), module.PARAMETER_CAPACITY)] {
+	for word, parameter in function.parameters[:min(int(function.parameter_count), module.PARAMETER_CAPACITY)] {
 		system.write_part(writer, parameter > 0 ? ", " : "")
 		system.write_part(writer, module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter])))
 		system.write_part(writer, ": ")
-		system.write_parameter_type(writer, file, type, function.parameter_details[parameter], function.parameter_directions[parameter])
+		system.write_parameter_type_word(writer, file, word, function.parameter_details[parameter], function.parameter_directions[parameter])
 	}
 	system.write_part(writer, ")")
-	if function.result != .None {
+	if function.result != u8(module.Type.None) {
 		system.write_part(writer, " -> ")
-		system.write_type(writer, file, function.result, function.result_detail)
+		system.write_type_word(writer, file, function.result, function.result_detail)
 	}
 }
 

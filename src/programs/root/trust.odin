@@ -83,7 +83,14 @@ trust_check :: proc "contextless" () {
 	// The TPM floors that the boot program compared
 	// (src/md/features/rollback_floors.md).
 	system.log("root: the TPM floors before this start: the key floor ", trust.key_floor, " for the key number ", trust.key_number, ", the version floor of that key number ", trust.version_floor, " for the security version ", trust.security_version)
-	for state in ([2]info.Floor_State{trust.key_floor_state, trust.version_floor_state}) {
+	for word in ([2]u64{trust.key_floor_state, trust.version_floor_state}) {
+		// The trust record comes through the boot report of the kernel: a
+		// word that names no state is said, never read as a state.
+		state, state_known := info.floor_state_of_word(word)
+		if !state_known {
+			system.log_in("programs", .Warning, "root: the boot record names the floor state ", word, ", which names no state")
+			continue
+		}
 		switch state {
 		case .None, .Absent, .Held:
 			// A floor that the boot program read or wrote: the line above says it.

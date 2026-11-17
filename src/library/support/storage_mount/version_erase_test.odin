@@ -84,8 +84,8 @@ the_erase_of_versions_through_a_loss_of_power :: proc(t: ^testing.T) {
 	index.version_count = 2
 	index.leaves[0] = leaf_pointer
 	index_pointer := disk_put(&disk, &index)
-	entry_a := format.Entry{kind = .Object, size = current_size, generation = 5, pointer = current, versions = index_pointer}
-	entry_b := format.Entry{kind = .Object, size = shared_size, generation = 4, pointer = shared}
+	entry_a := format.Entry{kind = u64(format.Entry_Kind.Object), size = current_size, generation = 5, pointer = current, versions = index_pointer}
+	entry_b := format.Entry{kind = u64(format.Entry_Kind.Object), size = shared_size, generation = 4, pointer = shared}
 	tree_before := disk_leaf(&disk, []Named_Entry{{"a", entry_a}, {"b", entry_b}})
 	store_before := format.Store_Block{tree = tree_before, objects = 2, current_blocks = 2, node_blocks = 1}
 	store_before_pointer := disk_put(&disk, &store_before)

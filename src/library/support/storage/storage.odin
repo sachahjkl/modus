@@ -265,14 +265,14 @@ call_answer :: proc "contextless" (client: ^Client, sent: ^Sent_Call, arguments:
 			}
 			return i64(completion.values[0]), nil, .Failed, true
 		}
-		if sent.function.result == .Text {
+		if sent.function.result == u8(module.Type.Text) {
 			result, complete := isolated.result_text(client.region, sent.buffer, completion.values[0])
 			if !complete {
 				return i64(completion.values[0]), nil, .Refused, true
 			}
 			return i64(completion.values[0]), result, .Ok, true
 		}
-		if sent.function.result == .Table {
+		if sent.function.result == u8(module.Type.Table) {
 			// The records as bytes: the caller reads them with the record of
 			// the export. A table that did not fit gives the rows that did.
 			described, described_ok := module.record_type(client.file, sent.function.result_detail)

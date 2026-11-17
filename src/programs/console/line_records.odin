@@ -126,7 +126,7 @@ line_records_connect :: proc "contextless" () -> bool {
 		value_runs_export := module.export_find(file, "value_runs")
 		records, has_records := module.function(file, records_export)
 		value_runs, has_value_runs := module.function(file, value_runs_export)
-		if records_export == 0 || value_runs_export == 0 || !has_records || !has_value_runs || records.parameter_count != 1 || value_runs.parameter_count != 1 || records.result != .Table || value_runs.result != .Table {
+		if records_export == 0 || value_runs_export == 0 || !has_records || !has_value_runs || records.parameter_count != 1 || value_runs.parameter_count != 1 || records.result != u8(module.Type.Table) || value_runs.result != u8(module.Type.Table) {
 			return false
 		}
 		line_records.file, line_records.file_hash = file, sandbox.hash

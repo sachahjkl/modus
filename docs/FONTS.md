@@ -121,12 +121,13 @@ Each program validates its glyph caches once, then the drawing code reads the co
 
 | Field | Its worst value | What it does to another program |
 |---|---|---|
-| `values[font]` | any number | a value that the setting does not have reads as 0 (`valid`): the vector font or Spleen, a look |
-| `values[subpixel_order]` | any number | the same: one of three orders of the stripes, a look |
-| `values[pointer_theme]` | any number | one of the two theme files that the compositor validated, a look |
-| `values[grid_fit]` | any number | one of the two caches that the program validated, a look |
-| `values[keyboard_layout]` | any number | the input service gives each key the character of one of its two layouts; a value that the setting does not have reads as 0, the layout of the United States |
-| `values[appearance]` | any number | one of the three values; a value that the setting does not have reads as 0, `auto`: a look |
+| `values[font]` | any number | a value that the setting does not have refuses the whole page (`settings.choice_of_values`): each reader takes the defaults, as for a page that never stays stable, and the root service and the program `date` act on nothing. Else the vector font or Spleen, a look |
+| `values[subpixel_order]` | any number | the same refusal; else one of three orders of the stripes, a look |
+| `values[pointer_theme]` | any number | the same refusal; else one of the two theme files that the compositor validated, a look |
+| `values[grid_fit]` | any number | the same refusal; else one of the two caches that the program validated, a look |
+| `values[keyboard_layout]` | any number | the same refusal, which gives the layout of the United States; else the input service gives each key the character of one of its two layouts |
+| `values[appearance]` | any number | the same refusal; else one of the three values, a look |
+| `appearance_in_force` | any number | a word that names no appearance in force refuses the whole page, as above |
 | `values[6..7]` | any number | no reader |
 | `zone_offset_minutes` | any number | a zone that is not from -720 to +840 by 15 reads as 0, UTC (`settings.zone_offset_minutes_valid`). The program `date` copies the zone into the date page: the bar shows another local time, and `auto` takes the other appearance. A look, and the hour that the bar shows |
 | `change_count` | odd for ever, or changed with no end | a reader gives up after 64 reads and takes the defaults (`settings.read`). The compositor tells the windows only when the values differ from the values that it told last (`settings.values_differ`): a new count with the same values sends no record into the ring of a window, which also carries its keys. Values that change with no end make the windows draw again: a cost of time, which the program `settings` also pays |

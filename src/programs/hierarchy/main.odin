@@ -91,7 +91,7 @@ outcome :: proc "contextless" (good: bool, what: string, parts: ..system.Part) {
 // refused_with says if a call failed with an error kind, and writes its
 // sentence.
 refused_with :: proc "contextless" (status: storage.Status, error: ^errors.Error_Record, kind: errors.Kind) -> bool {
-	return status == .Failed && errors.Kind(error.kind) == kind
+	return status == .Failed && error.kind == i64(kind)
 }
 
 // count_entries counts the entries of the tree of a place, page by page,

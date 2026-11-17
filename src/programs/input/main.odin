@@ -83,13 +83,14 @@ settings_page: ^settings.Page
 // The accent of a dead key that waits for the next key.
 dead_key: keyboard_layout.Dead_Key_State
 
-// layout_now gives the layout that the settings name now. settings.read
-// keeps each value valid.
+// layout_now gives the layout that the settings name now. A refused page
+// gives the defaults: the layout of the United States, as with no page.
 layout_now :: proc "contextless" () -> settings.Keyboard_Layout {
 	if settings_page == nil {
 		return .United_States
 	}
-	return settings.Keyboard_Layout(settings.read(settings_page).values[.Keyboard_Layout])
+	choice, _ := settings.read(settings_page)
+	return choice.keyboard_layout
 }
 
 SCAN_LEFT_SHIFT :: 0x2A

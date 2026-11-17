@@ -269,7 +269,11 @@ table_bytes :: proc(file: []u8, detail: u32, rows: [][]Call_Argument) -> (bytes:
 		record := bytes[number * int(described.size):][:described.size]
 		for value, index in row {
 			item, _ := module.field(file, described, u32(index))
-			#partial switch item.type {
+			type, type_ok := module.field_type(item)
+			if !type_ok {
+				return nil, fmt.tprintf("row %d: the field %s has the byte %d of a type, which names no type", number + 1, module.string_at(file, item.name_offset, item.name_count), item.type)
+			}
+			switch type {
 			case .Integer:
 				if value.is_text || value.is_table {
 					return nil, fmt.tprintf("row %d: the field %s is an Integer", number + 1, module.string_at(file, item.name_offset, item.name_count))
@@ -286,7 +290,9 @@ table_bytes :: proc(file: []u8, detail: u32, rows: [][]Call_Argument) -> (bytes:
 					return nil, fmt.tprintf("row %d: the field %s is a Text of %d bytes at most", number + 1, module.string_at(file, item.name_offset, item.name_count), item.detail)
 				}
 				copy(record[item.offset:], value.text)
-			case:
+			case .None, .Record, .Handle, .Table, .Bytes:
+				// A handle of the host has no meaning in the machine, and
+				// record_type refuses the other types in a record.
 				return nil, fmt.tprintf("row %d: the field %s has no text form", number + 1, module.string_at(file, item.name_offset, item.name_count))
 			}
 		}
@@ -297,7 +303,7 @@ table_bytes :: proc(file: []u8, detail: u32, rows: [][]Call_Argument) -> (bytes:
 parameter_type_name :: proc(file: []u8, function: module.Function, number: int) -> string {
 	buffer := make([]u8, 128, context.temp_allocator)
 	writer := sentence.Writer{buffer = buffer}
-	sentence.write_parameter_type(&writer, file, function.parameters[number], function.parameter_details[number], function.parameter_directions[number])
+	sentence.write_parameter_type_word(&writer, file, function.parameters[number], function.parameter_details[number], function.parameter_directions[number])
 	return sentence.written(&writer)
 }
 
@@ -337,9 +343,12 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 		encoded[details_index].table = {records = make([]u8, CALL_ERROR_DETAILS * size_of(errors.Error_Record), context.temp_allocator), count = 0}
 	}
 	for argument, number in arguments {
-		type := function.parameters[number]
 		name := module.string_at(file, function.parameter_names[number], u32(function.parameter_name_counts[number]))
-		#partial switch type {
+		type, type_ok := module.function_parameter_type(function, number)
+		if !type_ok {
+			return {}, fmt.tprintf("the parameter %s of %s.%s has the byte %d of a type, which names no type", name, service, export, function.parameters[number])
+		}
+		switch type {
 		case .Integer:
 			if argument.is_text {
 				return {}, fmt.tprintf("the parameter %s of %s.%s is an Integer, the argument is a Text", name, service, export)
@@ -371,9 +380,10 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 				return {}, fmt.tprintf("the parameter %s of %s.%s: %s", name, service, export, table_problem)
 			}
 			encoded[number].table = {records = bytes, count = u64(len(argument.rows))}
-		case:
-			// A handle of the host has no meaning in the machine, and a
-			// Record argument has no text form yet.
+		case .None, .Record, .Handle:
+			// A handle of the host has no meaning in the machine, a Record
+			// argument has no text form yet, and isolated.record_size
+			// refuses a parameter of the type None.
 			return {}, fmt.tprintf("the parameter %s of %s.%s is a %s: a call from the host gives Integers, Texts and tables to read only", name, service, export, type_name(file, type, function.parameter_details[number]))
 		}
 		if (type == .Integer || type == .Text) && argument.is_table {
@@ -391,11 +401,19 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 	end := u64(size)
 	field := u64(0)
 	details_end := u64(0)
-	for type, number in function.parameters[:function.parameter_count] {
+	for word, number in function.parameters[:function.parameter_count] {
 		if has_details && number == details_index {
-			details_end = field + isolated.field_size(type)
+			details_end = field + isolated.field_size(word)
 		}
-		#partial switch type {
+		// encode refused each byte that names no type.
+		type, type_ok := module.type_of_word(word)
+		if !type_ok {
+			return {}, fmt.tprintf("the parameter %d of %s.%s has the byte %d of a type, which names no type", number + 1, service, export, word)
+		}
+		switch type {
+		case .None, .Integer, .Handle:
+			// The field of the argument record holds the whole value: it
+			// names no bytes of the region.
 		case .Text:
 			slice_record := (^isolated.Slice)(&client.region[field])^
 			end = max(end, slice_record.start + slice_record.count)
@@ -405,16 +423,24 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 			end = max(end, start + u64(described.size))
 		case .Table, .Bytes:
 			table := (^isolated.Table_Field)(&client.region[field])^
-			record_bytes, _, _ := isolated.table_record(file, type, function.parameter_details[number])
+			record_bytes, _, _ := isolated.table_record(file, word, function.parameter_details[number])
 			end = max(end, table.start + table.count * record_bytes)
 		}
-		field += isolated.field_size(type)
+		field += isolated.field_size(word)
 	}
 	if error.count != 0 {
 		end = max(end, error.start + error.count)
 	}
 	unit: u32
-	#partial switch function.result {
+	result_type, result_type_ok := module.function_result_type(function)
+	if !result_type_ok {
+		return {}, fmt.tprintf("the result of %s.%s has the byte %d of a type, which names no type", service, export, function.result)
+	}
+	switch result_type {
+	case .None, .Integer:
+		// No buffer: the result is in the answer.
+	case .Handle, .Bytes:
+		// isolated.record_size refuses these results, and encode before.
 	case .Record:
 		end = max(end, result.start + result.count)
 	case .Text:
@@ -438,7 +464,7 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 		error_start  = u32(error.start),
 		details_end  = u32(details_end),
 	}
-	if function.result == .Integer || function.result == .None {
+	if result_type == .Integer || result_type == .None {
 		request.result_start, request.result_count = 0, 0
 	}
 	remote.name_set(&request.service, service)
@@ -591,7 +617,15 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		append(&outcome.lines, fmt.tprintf("error: the answer has the unknown status %d", u32(answer.status)))
 		return outcome
 	}
-	switch isolated.Status(answer.call_status) {
+	// The answer comes from the network: a word that names no status is
+	// refused, never read as a status.
+	call_status, call_status_known := enum_word.member_of_word(isolated.Status, u64(answer.call_status))
+	if !call_status_known {
+		outcome.outcome = .Refused
+		append(&outcome.lines, fmt.tprintf("error: the service %s gave the unknown status %d", call.service, answer.call_status))
+		return outcome
+	}
+	switch call_status {
 	case .Ok:
 	case .Bad_Export:
 		outcome.outcome = .Refused
@@ -606,8 +640,10 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		append(&outcome.lines, fmt.tprintf("error: the service %s refused the call of %s: status %d", call.service, call.export, answer.call_status))
 		return outcome
 	case:
+		// Each other status of a call: the service refused it, with that
+		// status.
 		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the service %s gave the unknown status %d", call.service, answer.call_status))
+		append(&outcome.lines, fmt.tprintf("error: the service %s refused the call of %s: the status %v", call.service, call.export, call_status))
 		return outcome
 	}
 	if call.function.error_record != 0 && answer.value < 0 {
@@ -624,7 +660,15 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		return outcome
 	}
 	outcome.outcome = .Result
-	#partial switch call.function.result {
+	result_type, result_type_ok := module.function_result_type(call.function)
+	if !result_type_ok {
+		append(&outcome.lines, fmt.tprintf("the result has the byte %d of a type, which names no type", call.function.result))
+		return outcome
+	}
+	switch result_type {
+	case .Handle, .Bytes:
+		// call_prepare refused the call before, as isolated.record_size does.
+		append(&outcome.lines, fmt.tprintf("the result has the type %v, which no call gives", result_type))
 	case .None:
 		append(&outcome.lines, "done")
 	case .Integer:
@@ -688,7 +732,7 @@ Call_Table :: struct {
 // table_call makes a call with a Table result, and gives its rows.
 table_call :: proc(client: ^Call_Client, text: string) -> (table: Call_Table, ok: bool) {
 	call, problem := call_prepare(client, text)
-	if problem != "" || call.function.result != .Table {
+	if problem != "" || call.function.result != u8(module.Type.Table) {
 		return {}, false
 	}
 	answer, result, _, answered := call_send(client, &call)
@@ -736,11 +780,11 @@ record_field :: proc(client: ^Call_Client, text: string, name: string) -> (value
 // record_fields gives several Integer fields, from one call.
 record_fields :: proc(client: ^Call_Client, text: string, names: []string) -> (values: []i64, ok: bool) {
 	call, problem := call_prepare(client, text)
-	if problem != "" || (call.function.result != .Record && call.function.result != .Table) {
+	if problem != "" || (call.function.result != u8(module.Type.Record) && call.function.result != u8(module.Type.Table)) {
 		return nil, false
 	}
 	answer, result, _, answered := call_send(client, &call)
-	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || (call.function.result == .Table && answer.value < 1) {
+	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || (call.function.result == u8(module.Type.Table) && answer.value < 1) {
 		return nil, false
 	}
 	described := module.record_type(call.file, call.function.result_detail) or_return
@@ -749,7 +793,7 @@ record_fields :: proc(client: ^Call_Client, text: string, names: []string) -> (v
 	for name, index in names {
 		for number in 0 ..< described.field_count {
 			item := module.field(call.file, described, number) or_return
-			if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == .Integer && int(item.offset) + int(module.field_size(item.type, item.detail)) <= len(result) {
+			if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == u8(module.Type.Integer) && int(item.offset) + int(module.field_size(item)) <= len(result) {
 				values[index] = module.field_integer(result, item)
 				found += 1
 			}
@@ -763,17 +807,17 @@ record_fields :: proc(client: ^Call_Client, text: string, names: []string) -> (v
 // zero bytes.
 record_text_field :: proc(client: ^Call_Client, text: string, name: string) -> (value: string, ok: bool) {
 	call, problem := call_prepare(client, text)
-	if problem != "" || (call.function.result != .Record && call.function.result != .Table) {
+	if problem != "" || (call.function.result != u8(module.Type.Record) && call.function.result != u8(module.Type.Table)) {
 		return "", false
 	}
 	answer, result, _, answered := call_send(client, &call)
-	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || (call.function.result == .Table && answer.value < 1) {
+	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || (call.function.result == u8(module.Type.Table) && answer.value < 1) {
 		return "", false
 	}
 	described := module.record_type(call.file, call.function.result_detail) or_return
 	for number in 0 ..< described.field_count {
 		item := module.field(call.file, described, number) or_return
-		if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == .Text {
+		if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == u8(module.Type.Text) {
 			return strings.clone(module.field_text(result, item), context.temp_allocator), true
 		}
 	}
@@ -782,9 +826,16 @@ record_text_field :: proc(client: ^Call_Client, text: string, name: string) -> (
 
 // field_value gives the text of one field of a record.
 field_value :: proc(record: []u8, item: module.Field) -> string {
-	#partial switch item.type {
+	// A byte that names no type has no value: "?", as a field of no value.
+	type, type_ok := module.field_type(item)
+	if !type_ok {
+		return "?"
+	}
+	switch type {
+	case .None, .Record, .Table, .Bytes:
+		// record_type refuses a field of these types: it has no value.
 	case .Integer:
-		if u64(item.offset) + u64(module.field_size(item.type, item.detail)) <= u64(len(record)) {
+		if u64(item.offset) + u64(module.field_size(item)) <= u64(len(record)) {
 			return fmt.tprintf("%d", module.field_integer(record, item))
 		}
 	case .Handle:
@@ -810,7 +861,7 @@ record_text :: proc(file: []u8, described: module.Record, record: []u8) -> strin
 		strings.write_string(&builder, module.string_at(file, item.name_offset, item.name_count))
 		strings.write_string(&builder, " = ")
 		value := field_value(record, item)
-		if item.type == .Text {
+		if item.type == u8(module.Type.Text) {
 			strings.write_quoted_string(&builder, value)
 		} else {
 			strings.write_string(&builder, value)
@@ -837,7 +888,7 @@ table_print :: proc(lines: ^[dynamic]string, file: []u8, described: module.Recor
 			value := row == 0 ? module.string_at(file, item.name_offset, item.name_count) : field_value(bytes[(row - 1) * size:][:size], item)
 			cells[row][column] = value
 			widths[column] = max(widths[column], len(value))
-			numeric[column] = item.type != .Text
+			numeric[column] = item.type != u8(module.Type.Text)
 		}
 	}
 	for row in cells {

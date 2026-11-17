@@ -625,7 +625,20 @@ handle_state :: proc "contextless" (handle: Handle, memory: Handle = 0) -> (kind
 	if status != .Ok {
 		return .None, {}, false
 	}
-	return op.Object_Kind(results[0]), transmute(Rights)u32(results[1]), results[2] != 0
+	object_kind, known := enum_word.member_of_word(op.Object_Kind, results[0])
+	if !known {
+		kernel_word_refused("the kind of an object", results[0])
+	}
+	return object_kind, transmute(Rights)u32(results[1]), results[2] != 0
+}
+
+// kernel_word_refused writes the line of a word of a result of the kernel
+// that names no member of its enum, and stops the program with the code 1.
+// The kernel and this library come from one build: such a word is a fault
+// of the build, and no member stands in for it.
+kernel_word_refused :: proc "contextless" (what: string, word: u64) -> ! {
+	log_in("programs", .Error, "system: the kernel gave the word ", word, " for ", what, ", which names no member")
+	stop(1)
 }
 
 // handle_revoke ends each handle and each mapping that came from a handle:
@@ -847,7 +860,14 @@ thread_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !, pa
 strategy_set :: proc "contextless" (machine: Handle, strategy: op.Strategy, error: ^errors.Error_Record = nil) -> (before: op.Strategy, status: Status) {
 	results: [7]u64
 	results, status = call_with_error(error, .Strategy_Set, u64(machine), u64(strategy))
-	return op.Strategy(results[0]), status
+	if status != .Ok {
+		return {}, status
+	}
+	strategy_before, known := enum_word.member_of_word(op.Strategy, results[0])
+	if !known {
+		kernel_word_refused("the strategy before", results[0])
+	}
+	return strategy_before, status
 }
 
 // thread_schedule_read gives the schedule of a thread: its weight and its

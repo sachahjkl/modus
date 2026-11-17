@@ -79,15 +79,20 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 	if _, described := isolated.record_size(function); !described || len(arguments) != int(function.parameter_count) {
 		return not_done(error, 0, u64(len(arguments)))
 	}
-	if function.result != .Integer && function.result != .None {
+	if function.result != u8(module.Type.Integer) && function.result != u8(module.Type.None) {
 		return not_done(error, 0, u64(function.result))
 	}
 	integers: [CALL_INTEGERS]u64
 	places: [module.PARAMETER_CAPACITY]module.Table_Place
 	slices: [module.PARAMETER_CAPACITY]isolated.Slice
-	for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+	for word, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
 		argument := &arguments[index]
-		// record_size refused each byte that names no type, and the type None.
+		// record_size refused each byte that names no type, and the type
+		// None; the border reads the byte again.
+		type, type_ok := module.type_of_word(word)
+		if !type_ok {
+			return not_done(error, index + 1, u64(word))
+		}
 		switch type {
 		case .None, .Integer, .Handle:
 			integers[index] = argument.integer
@@ -97,7 +102,7 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 		case .Record:
 			integers[index] = u64(uintptr(raw_data(argument.record)))
 		case .Table, .Bytes:
-			size, _, valid := isolated.table_record(file, type, function.parameter_details[index])
+			size, _, valid := isolated.table_record(file, word, function.parameter_details[index])
 			if !valid {
 				return not_done(error, index + 1, u64(function.parameter_details[index]))
 			}
@@ -119,8 +124,8 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 	floats: [CALL_FLOATS]u64
 	out: [CALL_RESULTS]u64
 	export_call(address, &integers, &floats, &out)
-	for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
-		if isolated.is_table_or_bytes(type) && function.parameter_directions[index] == .Append {
+	for word, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+		if isolated.is_table_or_bytes(word) && function.parameter_directions[index] == .Append {
 			arguments[index].table.count = places[index].count
 		}
 	}
@@ -231,7 +236,7 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 			// count comes from the other program. The caller gets the
 			// records that fit `rows`, and the count of them as the result:
 			// never more than the region holds.
-			if rows != nil && function.result == .Table && result > 0 {
+			if rows != nil && function.result == u8(module.Type.Table) && result > 0 {
 				described, has_record := module.record_type(file, function.result_detail)
 				if !has_record || described.size == 0 {
 					return 0, .Wrong_Answer

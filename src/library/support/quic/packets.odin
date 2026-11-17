@@ -227,7 +227,10 @@ header_read :: proc "contextless" (datagram: []u8, start: int, short_destination
 	if first & FIXED_BIT == 0 {
 		return fail_at(error, .Bad_Value, 1, start, FIXED_BIT, int(first))
 	}
-	header.type = Packet_Type((first >> 4) & 0x03)
+	// The two bits of the type of a long header name each of the four
+	// types (RFC 9000, section 17.2): their place picks the member.
+	long_header_types := [4]Packet_Type{.Initial, .Zero_Rtt, .Handshake, .Retry}
+	header.type = long_header_types[(first >> 4) & 0x03]
 	if header.type == .Retry {
 		// A Retry token, then the Retry Integrity Tag: the datagram ends there.
 		if TAG_SIZE > len(datagram) - position {

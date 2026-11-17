@@ -242,13 +242,14 @@ function_check :: proc "contextless" (file: []u8, index: u32, function: module.F
 	if arguments := module.call_argument_count(int(function.parameter_count), function.result, function.error_record != 0); arguments > module.PARAMETER_CAPACITY {
 		return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_count)), value = u64(arguments), limit = module.PARAMETER_CAPACITY + 1}
 	}
-	for type, number in function.parameters[:function.parameter_count] {
+	for word, number in function.parameters[:function.parameter_count] {
 		field := at + u64(offset_of(module.Function, parameters)) + u64(number)
 		if value, limit, inside := text_inside(file, function.parameter_names[number], u32(function.parameter_name_counts[number])); !inside {
 			return {kind = .Text, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_names)) + 4 * u64(number), value = value, limit = limit + 1}
 		}
-		if type == .None || type > .Bytes {
-			return {kind = .Function, table = .Functions, index = index, offset = field, value = u64(type), limit = u64(module.Type.Bytes) + 1}
+		type, type_ok := module.type_of_word(word)
+		if !type_ok || type == .None {
+			return {kind = .Function, table = .Functions, index = index, offset = field, value = u64(word), limit = u64(max(module.Type)) + 1}
 		}
 		detail_at := at + u64(offset_of(module.Function, parameter_details)) + 4 * u64(number)
 		if type == .Record || type == .Table {
@@ -274,16 +275,17 @@ function_check :: proc "contextless" (file: []u8, index: u32, function: module.F
 			return {kind = .Direction, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_directions)) + u64(number), value = u64(direction), limit = type == .Table || type == .Bytes ? u64(max(module.Direction)) + 1 : 1}
 		}
 	}
-	if function.result > .Table { // Bytes (6) is a parameter only.
+	// Bytes is a parameter only: its value past Table is refused as a result.
+	if result_type, result_ok := module.function_result_type(function); !result_ok || result_type == .Bytes {
 		return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, result)), value = u64(function.result), limit = u64(module.Type.Table) + 1}
 	}
-	if function.result == .Record || function.result == .Table {
+	if function.result == u8(module.Type.Record) || function.result == u8(module.Type.Table) {
 		if _, valid := module.record_type(file, function.result_detail); !valid {
 			return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, result_detail)), value = u64(function.result_detail), limit = u64(max(module.count(file, .Records), 1))}
 		}
 	}
 	if function.error_record != 0 {
-		if _, valid := module.record_type(file, function.error_record); !valid || function.result == .Record {
+		if _, valid := module.record_type(file, function.error_record); !valid || function.result == u8(module.Type.Record) {
 			return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, error_record)), value = u64(function.error_record), limit = u64(max(module.count(file, .Records), 1))}
 		}
 	}
@@ -311,7 +313,7 @@ record_check :: proc "contextless" (file: []u8, index: u32) -> Problem {
 		if value, limit, inside := text_inside(file, item.name_offset, item.name_count); !inside {
 			return {kind = .Text, table = .Fields, index = field, offset = field_at, value = value, limit = limit + 1}
 		}
-		size := module.field_size(item.type, item.detail)
+		size := module.field_size(item)
 		if size == 0 {
 			return {kind = .Record, table = .Fields, index = field, offset = field_at + u64(offset_of(module.Field, type)), value = u64(item.type)}
 		}
@@ -319,7 +321,7 @@ record_check :: proc "contextless" (file: []u8, index: u32) -> Problem {
 			return {kind = .Record, table = .Fields, index = field, offset = field_at + u64(offset_of(module.Field, offset)), value = u64(item.offset) + u64(size), limit = u64(described.size) + 1}
 		}
 		// An Integer is at a multiple of its size.
-		if item.type == .Integer && item.offset % size != 0 {
+		if item.type == u8(module.Type.Integer) && item.offset % size != 0 {
 			return {kind = .Record, table = .Fields, index = field, offset = field_at + u64(offset_of(module.Field, offset)), value = u64(item.offset), limit = u64(size)}
 		}
 		// A reader shows the unit of a field, so a unit out of the contract,

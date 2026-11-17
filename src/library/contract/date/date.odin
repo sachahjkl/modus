@@ -32,6 +32,7 @@
 package date
 
 import "base:intrinsics"
+import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 
@@ -97,12 +98,15 @@ milliseconds_now :: proc "contextless" (page: ^Page, system_milliseconds: u64) -
 			intrinsics.cpu_relax()
 			continue
 		}
-		source := Source(intrinsics.atomic_load_explicit((^u32)(&page.source), .Acquire))
+		source_word := intrinsics.atomic_load_explicit((^u32)(&page.source), .Acquire)
 		at_zero := intrinsics.atomic_load_explicit(&page.milliseconds_at_time_zero, .Acquire)
 		if intrinsics.atomic_load_explicit(&page.change_count, .Acquire) != before {
 			continue
 		}
-		if source == .None || system_milliseconds > u64(DATE_MILLISECONDS_LIMIT) {
+		// The page is shared: a word that names no source gives no date,
+		// as the source None does.
+		source, source_known := enum_word.member_of_word(Source, u64(source_word))
+		if !source_known || source == .None || system_milliseconds > u64(DATE_MILLISECONDS_LIMIT) {
 			return 0, false
 		}
 		milliseconds = at_zero + i64(system_milliseconds)

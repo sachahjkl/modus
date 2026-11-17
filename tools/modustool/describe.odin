@@ -365,17 +365,17 @@ table_parameter :: proc(state: ^Describe_State, type: ^ast.Expr) -> (kind: modul
 				continue
 			}
 			if len(call.args) != 1 {
-				return .Table, 0, module.Direction(value), true, false
+				return .Table, 0, enum_member_at(module.Direction, value), true, false
 			}
 			record, is_record, record_ok := struct_record(state, call.args[0], true)
-			return .Table, record, module.Direction(value), true, is_record && record_ok
+			return .Table, record, enum_member_at(module.Direction, value), true, is_record && record_ok
 		}
 		return
 	}
 	name := name_of(pointer.elem)
 	for form, value in forms {
 		if name == strings.concatenate({"Bytes_To_", form}, context.temp_allocator) {
-			return .Bytes, 0, module.Direction(value), true, true
+			return .Bytes, 0, enum_member_at(module.Direction, value), true, true
 		}
 	}
 	return
@@ -727,7 +727,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		if description.error_record != 0 && (description.result == .Record || description.result == .None) {
 			return describe_fail(path, declaration, "%s: an export with an error record gives an i64 result: it fails when the result is negative", name)
 		}
-		if arguments := module.call_argument_count(len(parameters), description.result, description.error_record != 0); arguments > module.PARAMETER_CAPACITY {
+		if arguments := module.call_argument_count(len(parameters), u8(description.result), description.error_record != 0); arguments > module.PARAMETER_CAPACITY {
 			return describe_fail(path, declaration, "%s takes %d arguments in the call form, the buffer of a result and the error record included; an export takes at most %d", name, arguments, module.PARAMETER_CAPACITY)
 		}
 		description.parameters = parameters[:]

@@ -216,16 +216,16 @@ write_signature :: proc "contextless" (writer: ^system.Writer, file: []u8, funct
 	function := function
 	system.write_part(writer, module.string_at(file, function.name_offset, function.name_count))
 	system.write_part(writer, "(")
-	for type, parameter in function.parameters[:min(int(function.parameter_count), module.PARAMETER_CAPACITY)] {
+	for word, parameter in function.parameters[:min(int(function.parameter_count), module.PARAMETER_CAPACITY)] {
 		system.write_part(writer, parameter > 0 ? ", " : "")
 		system.write_part(writer, module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter])))
 		system.write_part(writer, ": ")
-		system.write_parameter_type(writer, file, type, function.parameter_details[parameter], function.parameter_directions[parameter])
+		system.write_parameter_type_word(writer, file, word, function.parameter_details[parameter], function.parameter_directions[parameter])
 	}
 	system.write_part(writer, ")")
-	if function.result != .None {
+	if function.result != u8(module.Type.None) {
 		system.write_part(writer, " -> ")
-		system.write_type(writer, file, function.result, function.result_detail)
+		system.write_type_word(writer, file, function.result, function.result_detail)
 	}
 }
 

@@ -80,7 +80,7 @@ fuzz_tree_key :: proc(number: int) -> (key: format.Entry_Name) {
 }
 
 fuzz_tree_entry :: proc(number: u64) -> (entry: format.Entry) {
-	entry.kind = .Object
+	entry.kind = u64(format.Entry_Kind.Object)
 	entry.size = number
 	entry.generation = number
 	return entry

@@ -214,10 +214,10 @@ hash_index_entry_change :: proc "contextless" (state: ^State, before: format.Ent
 	if !gone && after.kind == before.kind && after.pointer == before.pointer && after.hash == before.hash && after.size == before.size {
 		return
 	}
-	if before.kind == .Object {
+	if before.kind == u64(format.Entry_Kind.Object) {
 		hash_index_release(state, before.pointer)
 	}
-	if !gone && after.kind == .Object {
+	if !gone && after.kind == u64(format.Entry_Kind.Object) {
 		hash_index_name(state, after.hash, after.pointer, after.size, hidden)
 	}
 }

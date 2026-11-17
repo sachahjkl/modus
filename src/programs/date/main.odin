@@ -127,16 +127,16 @@ settings_page: ^settings.Page // The settings page, read-only; nil: the zone sta
 // zone_follow copies the time zone of the settings page into the date page
 // when the two differ, and wakes the waiters of the date page: the root
 // service then computes the rule of the day in the new local time. A read
-// that gave up gives the defaults, so it copies nothing from a page left in
-// a change (an odd count) or from a read whose count moved after it: the
+// that gave up or that refused the page copies nothing: from a page left in
+// a change (an odd count), from a read whose count moved after it (the
 // count only grows, so the wait of the loop ends at once and the next turn
-// reads the page again.
+// reads the page again), and from a page with a word that names no value.
 zone_follow :: proc "contextless" () {
 	if settings_page == nil {
 		return
 	}
-	choice := settings.read(settings_page)
-	if choice.change_count & 1 != 0 || intrinsics.atomic_load_explicit(&settings_page.change_count, .Acquire) != choice.change_count {
+	choice, ok := settings.read(settings_page)
+	if !ok || intrinsics.atomic_load_explicit(&settings_page.change_count, .Acquire) != choice.change_count {
 		return
 	}
 	zone := i64(choice.zone_offset_minutes) * 60

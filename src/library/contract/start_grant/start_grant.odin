@@ -27,6 +27,8 @@
 // See [start grant](term:start-grant).
 package start_grant
 
+import "modus:contract/enum_word"
+
 // What a program receives, by name. A program that is not here receives a
 // ring to the compositor and nothing else.
 Grant :: enum i64 {
@@ -106,8 +108,6 @@ GRANT_NAMES := [Grant]string {
 // Example: `grant_name(7)` is `"Store", true`; `grant_name(99)` is `"",
 // false`.
 grant_name :: proc "contextless" (number: i64) -> (name: string, known: bool) {
-	if number < 0 || number > i64(max(Grant)) {
-		return "", false
-	}
-	return GRANT_NAMES[Grant(number)], true
+	grant := enum_word.member_of_word(Grant, u64(number)) or_return
+	return GRANT_NAMES[grant], true
 }

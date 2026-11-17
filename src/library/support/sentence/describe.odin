@@ -88,9 +88,19 @@ write_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type
 			write_rights(writer, rights, ", ")
 			write_part(writer, ")")
 		}
-	case:
-		write_part(writer, "?")
 	}
+}
+
+// write_type_word writes the type of a byte of a module file, as
+// write_type: "?" for a byte that names no type (a description is input
+// that nobody checked), never a type that the file does not hold.
+write_type_word :: proc "contextless" (writer: ^Writer, file: []u8, word: u8, detail: u32) {
+	type, type_ok := module.type_of_word(word)
+	if !type_ok {
+		write_part(writer, "?")
+		return
+	}
+	write_type(writer, file, type, detail)
 }
 
 // The name of each direction of a table parameter.
@@ -113,12 +123,6 @@ direction_name :: proc "contextless" (direction: module.Direction) -> string {
 // errors.
 write_parameter_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type, detail: u32, direction: module.Direction) {
 	name := direction_name(direction)
-	// A description is input that nobody checked: a byte that names no
-	// type matches no case, and write_type says so.
-	if type > max(module.Type) {
-		write_type(writer, file, type, detail)
-		return
-	}
 	switch type {
 	case .Table:
 		write_part(writer, "Table(")
@@ -135,12 +139,24 @@ write_parameter_type :: proc "contextless" (writer: ^Writer, file: []u8, type: m
 	}
 }
 
+// write_parameter_type_word writes the type of a parameter from its byte in
+// a module file, as write_parameter_type: "?" for a byte that names no type.
+write_parameter_type_word :: proc "contextless" (writer: ^Writer, file: []u8, word: u8, detail: u32, direction: module.Direction) {
+	type, type_ok := module.type_of_word(word)
+	if !type_ok {
+		write_part(writer, "?")
+		return
+	}
+	write_parameter_type(writer, file, type, detail, direction)
+}
+
 // write_field_type writes the type of a field of a record: as write_type,
 // and the size of an Integer that does not have 8 bytes: "Integer(4)",
-// "Unsigned(1)", "Unsigned" for an unsigned Integer of 8 bytes.
+// "Unsigned(1)", "Unsigned" for an unsigned Integer of 8 bytes. A byte of
+// the type that names no type is "?".
 write_field_type :: proc "contextless" (writer: ^Writer, file: []u8, item: module.Field) {
-	if item.type != .Integer {
-		write_type(writer, file, item.type, item.detail)
+	if item.type != u8(module.Type.Integer) {
+		write_type_word(writer, file, item.type, item.detail)
 		return
 	}
 	write_part(writer, item.unsigned ? "Unsigned" : "Integer")

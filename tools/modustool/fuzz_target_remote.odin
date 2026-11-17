@@ -312,10 +312,10 @@ fuzz_isolated_call_start :: proc() -> bool {
 	offset := u64(size_of(module.Header) + size_of(Directory))
 	records := [3]module.Record{1 = {size = 16, first_field = 1, field_count = 2}, 2 = {size = 24, first_field = 3, field_count = 2}}
 	fields := [5]module.Field {
-		1 = {offset = 0, type = .Handle, detail = 6},
-		2 = {offset = 8, type = .Integer},
-		3 = {offset = 0, type = .Text, detail = 16},
-		4 = {offset = 16, type = .Integer},
+		1 = {offset = 0, type = u8(module.Type.Handle), detail = 6},
+		2 = {offset = 8, type = u8(module.Type.Integer)},
+		3 = {offset = 0, type = u8(module.Type.Text), detail = 16},
+		4 = {offset = 16, type = u8(module.Type.Integer)},
 	}
 	directory[module.Table_Kind.Records] = {offset = offset, count = len(records), record_size = size_of(module.Record)}
 	copy(file[offset:], mem.ptr_to_bytes(&records))
@@ -356,12 +356,12 @@ fuzz_call_function :: proc(choices: ^Fuzz_Choices) -> (function: module.Function
 	type_count := int(max(module.Type)) + 1
 	direction_count := int(max(module.Direction)) + 1
 	function.parameter_count = u8(fuzz_choice_below(choices, module.PARAMETER_CAPACITY + 2))
-	function.result = module.Type(fuzz_choice_below(choices, type_count))
-	for &type in function.parameters {
-		type = module.Type(fuzz_choice_below(choices, type_count))
+	function.result = u8(fuzz_choice_below(choices, type_count))
+	for &word in function.parameters {
+		word = u8(fuzz_choice_below(choices, type_count))
 	}
 	for &direction in function.parameter_directions {
-		direction = module.Direction(fuzz_choice_below(choices, direction_count))
+		direction = enum_member_at(module.Direction, fuzz_choice_below(choices, direction_count))
 	}
 	for &detail in function.parameter_details {
 		detail = u32(fuzz_choice_word(choices, 4))
@@ -409,13 +409,13 @@ fuzz_isolated_call_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if count > module.PARAMETER_CAPACITY {
 		return fuzz_broken(.Contract, "decode accepts %d parameters", count)
 	}
-	if function.result == .Text && count < module.PARAMETER_CAPACITY {
+	if function.result == u8(module.Type.Text) && count < module.PARAMETER_CAPACITY {
 		// The buffer of a Text result is one more slice.
-		types[count] = .Text
+		types[count] = u8(module.Type.Text)
 		count += 1
 	}
-	for type, index in types[:count] {
-		if type != .Text {
+	for word, index in types[:count] {
+		if word != u8(module.Type.Text) {
 			continue
 		}
 		item := call.slices[index]
@@ -426,7 +426,7 @@ fuzz_isolated_call_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			return fuzz_broken(.Contract, "the slice of the argument %d is outside the call region", index)
 		}
 	}
-	if function.result == .Record && (call.result.start > u64(len(region)) || call.result.count > u64(len(region)) - call.result.start) {
+	if function.result == u8(module.Type.Record) && (call.result.start > u64(len(region)) || call.result.count > u64(len(region)) - call.result.start) {
 		return fuzz_broken(.Contract, "the place of the Record result is outside the call region")
 	}
 	if call.error.count > 0 && (call.error.start > u64(len(region)) || call.error.count > u64(len(region)) - call.error.start) {
@@ -458,8 +458,10 @@ fuzz_isolated_call_seeds :: proc(seeds: ^[dynamic][]u8) {
 	for item in list {
 		function: module.Function
 		function.parameter_count = u8(len(item.types))
-		function.result = item.result
-		copy(function.parameters[:], item.types)
+		function.result = u8(item.result)
+		for type, index in item.types {
+			function.parameters[index] = u8(type)
+		}
 		for type, index in item.types {
 			if type == .Record {
 				function.parameter_details[index] = 1
@@ -493,8 +495,8 @@ fuzz_isolated_call_seeds :: proc(seeds: ^[dynamic][]u8) {
 		}
 		seed := make([dynamic]u8)
 		append(&seed, u8(len(item.types)), u8(item.result))
-		for type in function.parameters {
-			append(&seed, u8(type))
+		for word in function.parameters {
+			append(&seed, word)
 		}
 		for _ in function.parameter_directions {
 			append(&seed, 0)

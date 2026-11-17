@@ -119,7 +119,7 @@ disk_leaf :: proc(disk: ^Test_Disk, entries: []Named_Entry) -> format.Pointer {
 }
 
 object_entry :: proc(object: Object_Blocks, versions: format.Pointer) -> format.Entry {
-	return {kind = .Object, size = object.size, pointer = object.root, versions = versions}
+	return {kind = u64(format.Entry_Kind.Object), size = object.size, pointer = object.root, versions = versions}
 }
 
 // disk_store writes a leaf with the one object "a", and the store block
@@ -325,7 +325,7 @@ a_tree_inside_a_tree :: proc(t: ^testing.T) {
 		first := disk_object(&disk)
 		second := disk_object(&disk)
 		inner := disk_leaf(&disk, {{"x", object_entry(first, {})}, {"y", object_entry(second, {})}})
-		outer := disk_leaf(&disk, {{"inner", {kind = .Tree, size = given_count, pointer = inner}}})
+		outer := disk_leaf(&disk, {{"inner", {kind = u64(format.Entry_Kind.Tree), size = given_count, pointer = inner}}})
 		block: format.Store_Block
 		block.tree = outer
 		block.objects = 2
@@ -753,7 +753,7 @@ the_index_after_commits_is_the_index_of_a_new_open :: proc(t: ^testing.T) {
 		}
 		named := make([dynamic]Named_Entry, context.temp_allocator)
 		for &entry, index in model.entries {
-			if entry.kind == .Object {
+			if entry.kind == u64(format.Entry_Kind.Object) {
 				append(&named, Named_Entry{names[index], entry})
 			}
 		}
@@ -795,19 +795,19 @@ the_index_after_commits_is_the_index_of_a_new_open :: proc(t: ^testing.T) {
 			hash_index_entry_change(live, before, after, false, false)
 			model.entries[name] = after
 		case 1: // A removal.
-			if before.kind == .Object {
+			if before.kind == u64(format.Entry_Kind.Object) {
 				hash_index_entry_change(live, before, {}, true, false)
 				model.entries[name] = {}
 			}
 		case 2: // A rename to a free name: no root changes.
 			to := next_number(&seed) % NAMES
-			if before.kind == .Object && model.entries[to].kind != .Object {
+			if before.kind == u64(format.Entry_Kind.Object) && model.entries[to].kind != u64(format.Entry_Kind.Object) {
 				model.entries[to] = before
 				model.entries[name] = {}
 			}
 		}
 	}
-	if model.entries[0].kind != .Object {
+	if model.entries[0].kind != u64(format.Entry_Kind.Object) {
 		after := objects_entry(objects[0], 0)
 		hash_index_entry_change(live, model.entries[0], after, false, false)
 		model.entries[0] = after

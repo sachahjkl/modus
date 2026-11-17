@@ -156,7 +156,7 @@ fuzz_boot_image_generated_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	image := boot_image_encode(all[:], module_count)
 
 	description_in_image := description
-	change := Fuzz_Boot_Change(fuzz_choice_below(&choices, len(Fuzz_Boot_Change)))
+	change := enum_member_at(Fuzz_Boot_Change, fuzz_choice_below(&choices, len(Fuzz_Boot_Change)))
 	changed_index := -1 // The entry of the description whose file changed.
 	// The signature covers the security version; the checks do not compare
 	// it with a file, so a change there can pass them.

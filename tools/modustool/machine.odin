@@ -837,7 +837,7 @@ object_damage :: proc(path: string, store_name: string, object_name: string) -> 
 		block: store.Store_Block
 		disk_block(file, entry.store.block, &block) or_return
 		object, found := tree_entry_find(file, block.tree, object_name) or_return
-		if found && object.kind == .Object && object.pointer.block != 0 {
+		if found && object.kind == u64(store.Entry_Kind.Object) && object.pointer.block != 0 {
 			// The first block of data: down the first child of each object
 			// node, or the root of an object of one block.
 			number := object.pointer.block
