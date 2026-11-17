@@ -54,6 +54,33 @@ the_decision_from_cpuid :: proc(t: ^testing.T) {
 	}
 }
 
+// The highest leaf that the base of KVM gives: below the base plus the
+// offset of the features, the leaf of the features does not exist and the
+// machine has no steal time, whatever the features say; 0 (an old KVM) and
+// the leaf of the features itself are accepted.
+@(test)
+the_highest_leaf_of_kvm :: proc(t: ^testing.T) {
+	base := HYPERVISOR_LEAF_FIRST
+	refused := [?]u32{1, base - 1, base, base + KVM_FEATURES_LEAF_OFFSET - 1}
+	for highest_leaf in refused {
+		testing.expectf(t, !features_leaf_present(base, highest_leaf), "the highest leaf %x was taken", highest_leaf)
+		identification := Identification{hypervisor_present = true, kvm_leaves_found = true, kvm_base = base, kvm_highest_leaf = highest_leaf, kvm_features = KVM_FEATURE_STEAL_TIME_BIT}
+		testing.expect_value(t, absence_of_identification(identification), Absence.No_Kvm_Features_Leaf)
+	}
+	// A later base: a highest leaf of the first base is below it.
+	later := HYPERVISOR_LEAF_FIRST + HYPERVISOR_LEAF_STEP
+	testing.expect(t, !features_leaf_present(later, base + KVM_FEATURES_LEAF_OFFSET))
+	// A base at the largest value of the type does not wrap.
+	testing.expect(t, !features_leaf_present(max(u32), max(u32)))
+	accepted := [?]u32{0, base + KVM_FEATURES_LEAF_OFFSET, base + KVM_FEATURES_LEAF_OFFSET + 1, max(u32)}
+	for highest_leaf in accepted {
+		testing.expectf(t, features_leaf_present(base, highest_leaf), "the highest leaf %x was refused", highest_leaf)
+		identification := Identification{hypervisor_present = true, kvm_leaves_found = true, kvm_base = base, kvm_highest_leaf = highest_leaf, kvm_features = KVM_FEATURE_STEAL_TIME_BIT}
+		testing.expect_value(t, absence_of_identification(identification), Absence.None)
+	}
+	testing.expect(t, features_leaf_present(later, later + KVM_FEATURES_LEAF_OFFSET))
+}
+
 // The register takes an address aligned on the size of the record, never
 // 0, and gets the enable bit; each address that is not aligned is refused.
 @(test)
@@ -104,6 +131,99 @@ nanoseconds_become_cycles :: proc(t: ^testing.T) {
 	// The largest whole time below the largest value.
 	seconds := max(u64) / FREQUENCY
 	testing.expect_value(t, cycles_of_nanoseconds(seconds * NANOSECONDS_PER_SECOND, FREQUENCY), seconds * FREQUENCY)
+	// The third guard: the most whole seconds, then the largest rest. The
+	// seconds alone fit, the rest alone fits, and their sum is past 64 bits:
+	// max(u64) - seconds * FREQUENCY is below the cycles of the rest.
+	largest_rest := NANOSECONDS_PER_SECOND - 1
+	testing.expect(t, max(u64) - seconds * FREQUENCY < largest_rest * FREQUENCY / NANOSECONDS_PER_SECOND)
+	testing.expect_value(t, cycles_of_nanoseconds(seconds * NANOSECONDS_PER_SECOND + largest_rest, FREQUENCY), max(u64))
+	// The frequency 1 with a rest: the rest gives less than one cycle.
+	testing.expect_value(t, cycles_of_nanoseconds(NANOSECONDS_PER_SECOND + largest_rest, 1), u64(1))
+	testing.expect_value(t, cycles_of_nanoseconds(largest_rest, 1), u64(0))
+	testing.expect_value(t, cycles_of_nanoseconds(3 * NANOSECONDS_PER_SECOND + NANOSECONDS_PER_SECOND / 2, 1), u64(3))
+	// The second guard at its edge: the frequency max / rest still
+	// converts, one above it gives the largest value.
+	edge := max(u64) / largest_rest
+	testing.expect_value(t, cycles_of_nanoseconds(largest_rest, edge), largest_rest * edge / NANOSECONDS_PER_SECOND)
+	testing.expect_value(t, cycles_of_nanoseconds(largest_rest, edge + 1), max(u64))
+	small_rest := u64(7)
+	small_edge := max(u64) / small_rest
+	testing.expect_value(t, cycles_of_nanoseconds(small_rest, small_edge), small_rest * small_edge / NANOSECONDS_PER_SECOND)
+	testing.expect_value(t, cycles_of_nanoseconds(small_rest, small_edge + 1), max(u64))
+}
+
+// The records of the tests of read_steal: one series of loads, played in
+// order, the version and the counter as the record gives them.
+@(private = "file")
+Played_Loads :: struct {
+	versions:      []u64, // The versions, in the order of their loads; the last one repeats.
+	steal:         u64,
+	version_loads: int,
+	steal_loads:   int,
+}
+
+@(private = "file")
+played_load :: proc "contextless" (source: rawptr, field: Record_Field) -> u64 {
+	played := (^Played_Loads)(source)
+	switch field {
+	case .Version:
+		at := min(played.version_loads, len(played.versions) - 1)
+		played.version_loads += 1
+		return played.versions[at]
+	case .Steal:
+		played.steal_loads += 1
+		return played.steal
+	}
+	return 0
+}
+
+// A version that never becomes even, and versions that differ at each
+// attempt, give no counter after READ_ATTEMPT_LIMIT attempts and never
+// more; the loads stop there.
+@(test)
+a_read_that_never_holds :: proc(t: ^testing.T) {
+	odd := [?]u64{1}
+	played := Played_Loads{versions = odd[:], steal = 1234}
+	steal, whole := read_steal(&played, played_load)
+	testing.expect(t, !whole)
+	testing.expect_value(t, steal, u64(0))
+	testing.expect_value(t, played.version_loads, 2 * READ_ATTEMPT_LIMIT)
+	testing.expect_value(t, played.steal_loads, READ_ATTEMPT_LIMIT)
+	// Even versions that move by 2 between each two loads: never equal.
+	moving: [2 * READ_ATTEMPT_LIMIT + 1]u64
+	for &version, index in moving {
+		version = u64(2 * index)
+	}
+	played = Played_Loads{versions = moving[:], steal = 1234}
+	steal, whole = read_steal(&played, played_load)
+	testing.expect(t, !whole)
+	testing.expect_value(t, steal, u64(0))
+	// The host ends its write at the last attempt: the read holds there.
+	last: [2 * READ_ATTEMPT_LIMIT]u64
+	for &version, index in last {
+		version = index < 2 * (READ_ATTEMPT_LIMIT - 1) ? 3 : 4
+	}
+	played = Played_Loads{versions = last[:], steal = 1234}
+	steal, whole = read_steal(&played, played_load)
+	testing.expect(t, whole)
+	testing.expect_value(t, steal, u64(1234))
+	testing.expect_value(t, played.steal_loads, READ_ATTEMPT_LIMIT)
+	// One attempt past the bound is not made: the write ends one load too late.
+	late: [2 * READ_ATTEMPT_LIMIT + 1]u64
+	for &version, index in late {
+		version = index < 2 * READ_ATTEMPT_LIMIT ? 3 : 4
+	}
+	played = Played_Loads{versions = late[:], steal = 1234}
+	_, whole = read_steal(&played, played_load)
+	testing.expect(t, !whole)
+	// The successful case, last: an even version on the first attempt.
+	even := [?]u64{6}
+	played = Played_Loads{versions = even[:], steal = max(u64)}
+	steal, whole = read_steal(&played, played_load)
+	testing.expect(t, whole)
+	testing.expect_value(t, steal, max(u64))
+	testing.expect_value(t, played.version_loads, 2)
+	testing.expect_value(t, played.steal_loads, 1)
 }
 
 // A counter that goes back is refused: the whole run is charged, never
@@ -148,6 +268,88 @@ the_stolen_time_is_at_most_the_run :: proc(t: ^testing.T) {
 	// The frequency is not measured yet: nothing is subtracted.
 	charged, _, _ = charge_without_stolen(run, 0, NANOSECONDS_PER_SECOND, 0)
 	testing.expect_value(t, charged, run)
+}
+
+// A host that reports false steal time. The kernel sets no cap on it: the
+// host can stop the machine or change its memory anyway, and a cap would
+// refuse the true steal time of a loaded host. One false jump costs at most
+// one run, because the excess is not carried; a host that raises the
+// counter by at least the run at each charge makes each charge 0, with no
+// bound. This test states the chosen behaviour.
+@(test)
+a_host_that_reports_false_steal_time :: proc(t: ^testing.T) {
+	run := FREQUENCY / 1000 // 1 ms.
+	RUNS :: 100
+	// One jump of the counter by far more than any run, at the fourth charge.
+	counted, steal, total := u64(0), u64(0), u64(0)
+	for index in 0 ..< RUNS {
+		if index == 3 {
+			steal += max(u64) / 2
+		}
+		charged: u64
+		charged, counted, _ = charge_without_stolen(run, counted, steal, FREQUENCY)
+		total += charged
+	}
+	testing.expect_value(t, total, (RUNS - 1) * run)
+	// A counter raised by exactly one run at each charge: each charge is 0.
+	counted, steal, total = 0, 0, 0
+	for _ in 0 ..< RUNS {
+		steal += NANOSECONDS_PER_SECOND / 1000
+		charged: u64
+		charged, counted, _ = charge_without_stolen(run, counted, steal, FREQUENCY)
+		total += charged
+	}
+	testing.expect_value(t, total, u64(0))
+}
+
+// A fixed pseudo-random series of runs and moves of the counter, from a
+// seed written here: no charge is above its run, the sum of the charges is
+// at most the sum of the runs, and it is equal to it when the counter does
+// not move.
+@(test)
+a_series_of_charges :: proc(t: ^testing.T) {
+	SEED :: u64(0x9E37_79B9_7F4A_7C15)
+	CHARGES :: 1000
+	state := SEED
+	// xorshift64: a fixed series, the same at each run of the test.
+	next :: proc(series: ^u64) -> u64 {
+		series^ ~= series^ << 13
+		series^ ~= series^ >> 7
+		series^ ~= series^ << 17
+		return series^
+	}
+	counted, steal := u64(0), u64(0)
+	runs_sum, charged_sum, moves := u64(0), u64(0), 0
+	for _ in 0 ..< CHARGES {
+		run := next(&state) % (u64(1) << 32)
+		if next(&state) % 4 != 0 {
+			steal += next(&state) % (2 * NANOSECONDS_PER_SECOND / 1000)
+			moves += 1
+		}
+		charged: u64
+		charged, counted, _ = charge_without_stolen(run, counted, steal, FREQUENCY)
+		testing.expectf(t, charged <= run, "a charge of %d for a run of %d", charged, run)
+		runs_sum += run
+		charged_sum += charged
+	}
+	testing.expect(t, moves > 0)
+	testing.expect(t, charged_sum <= runs_sum)
+	testing.expect(t, charged_sum < runs_sum) // The series moves the counter: something was subtracted.
+	// The same runs with a counter that never moves: each run is charged.
+	state = SEED
+	counted, steal = 12345, 12345
+	runs_sum, charged_sum = 0, 0
+	for _ in 0 ..< CHARGES {
+		run := next(&state) % (u64(1) << 32)
+		if next(&state) % 4 != 0 {
+			_ = next(&state)
+		}
+		charged: u64
+		charged, counted, _ = charge_without_stolen(run, counted, steal, FREQUENCY)
+		runs_sum += run
+		charged_sum += charged
+	}
+	testing.expect_value(t, charged_sum, runs_sum)
 }
 
 // The successful cases, last: no stolen time charges the whole run, also

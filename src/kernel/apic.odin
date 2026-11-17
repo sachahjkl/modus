@@ -301,6 +301,9 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 			frames_free(physical_of(cpu), (size_of(Processor) + PAGE_SIZE - 1) / PAGE_SIZE)
 			continue
 		}
+		// The processor waits for this before it gives the host the address
+		// of a record in its processor record (stolen_time.odin).
+		intrinsics.atomic_store(&cpu.start_accepted, true)
 		processors[processor_count] = cpu
 		processor_count += 1
 	}
@@ -324,5 +327,13 @@ processor_entry :: proc "c" (cpu: ^Processor) -> ! {
 	processor_setup(cpu)
 	timer_start()
 	intrinsics.atomic_add(&started_count, 1)
+	// A processor that the first processor did not see in time is reset,
+	// and its processor record is freed: the host must never get the
+	// address of a steal-time record in it. So the registration waits for
+	// the acceptance, which a late processor never gets before its reset.
+	for !intrinsics.atomic_load(&cpu.start_accepted) {
+		intrinsics.cpu_relax()
+	}
+	stolen_time_processor_setup(cpu)
 	schedule()
 }

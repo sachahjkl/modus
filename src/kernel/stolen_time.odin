@@ -14,14 +14,16 @@ import "kernel:stolen_time"
 // Why the machine has no steal time; .None: it has. Written by the first
 // processor in its setup, before any other processor starts.
 stolen_time_absence: stolen_time.Absence
-// The processors that registered their record (atomic: each processor adds
-// itself in its setup).
+// The processors that registered their record, and the processors that
+// ended their setup of the steal time, registered or not (atomic: each
+// processor adds itself).
 stolen_time_processors: u32
+stolen_time_setups: u32
 
 // stolen_time_identification reads what the decision needs of CPUID: the
 // hypervisor bit, then the first base of the leaves of a hypervisor that
-// has the signature of KVM, as Linux searches, and the features of KVM
-// there.
+// has the signature of KVM, as Linux searches, its highest leaf, and the
+// features of KVM, only when the highest leaf holds their leaf.
 @(private = "file")
 stolen_time_identification :: proc "contextless" () -> (identification: stolen_time.Identification) {
 	_, _, features, _ := intrinsics.x86_cpuid(1, 0)
@@ -30,10 +32,14 @@ stolen_time_identification :: proc "contextless" () -> (identification: stolen_t
 		return
 	}
 	for base := stolen_time.HYPERVISOR_LEAF_FIRST; base < stolen_time.HYPERVISOR_LEAF_END; base += stolen_time.HYPERVISOR_LEAF_STEP {
-		_, b, c, d := intrinsics.x86_cpuid(base, 0)
+		highest_leaf, b, c, d := intrinsics.x86_cpuid(base, 0)
 		if stolen_time.is_kvm_signature(b, c, d) {
 			identification.kvm_leaves_found = true
-			identification.kvm_features, _, _, _ = intrinsics.x86_cpuid(base + stolen_time.KVM_FEATURES_LEAF_OFFSET, 0)
+			identification.kvm_base = base
+			identification.kvm_highest_leaf = highest_leaf
+			if stolen_time.features_leaf_present(base, highest_leaf) {
+				identification.kvm_features, _, _, _ = intrinsics.x86_cpuid(base + stolen_time.KVM_FEATURES_LEAF_OFFSET, 0)
+			}
 			return
 		}
 	}
@@ -41,11 +47,16 @@ stolen_time_identification :: proc "contextless" () -> (identification: stolen_t
 }
 
 // stolen_time_processor_setup registers the record of the processor that
-// runs it, at its start, before any thread runs. The first processor
-// decides first if the machine offers steal time. The write is a register
-// trial: a host that lists the feature and refuses the register leaves this
-// processor with no steal time, and the machine goes on.
+// runs it, before any thread runs: the first processor after its setup,
+// another processor only once the first processor accepted its start
+// (processor_entry). A processor that started too late is reset and its
+// record is freed, so it must never give the host the address of that
+// record. The first processor decides first if the machine offers steal
+// time. The write is a register trial: a host that lists the feature and
+// refuses the register leaves this processor with no steal time, and the
+// machine goes on.
 stolen_time_processor_setup :: proc "contextless" (cpu: ^Processor) {
+	defer intrinsics.atomic_add(&stolen_time_setups, 1)
 	if cpu.index == 0 {
 		stolen_time_absence = stolen_time.absence_of_identification(stolen_time_identification())
 	}
@@ -64,36 +75,30 @@ stolen_time_processor_setup :: proc "contextless" (cpu: ^Processor) {
 	intrinsics.atomic_add(&stolen_time_processors, 1)
 }
 
-// stolen_time_read gives the steal counter of the record of this
-// processor. false: no read in the bound saw the same even version before
-// and after the counter. The loads are volatile, so the compiler keeps their
+// stolen_time_record_load is the load procedure of the read of the record
+// of a processor. The loads are volatile, so the compiler keeps their
 // order, and the processor does not reorder a load before an earlier load:
 // the protocol needs no other fence on this processor.
 @(private = "file")
-stolen_time_read :: proc "contextless" (cpu: ^Processor) -> (steal: u64, whole: bool) {
-	record := &cpu.stolen_time_record
-	for _ in 0 ..< stolen_time.READ_ATTEMPT_LIMIT {
-		version_before := intrinsics.volatile_load(&record.version)
-		steal = intrinsics.volatile_load(&record.steal)
-		version_after := intrinsics.volatile_load(&record.version)
-		if stolen_time.read_is_whole(version_before, version_after) {
-			return steal, true
-		}
-		intrinsics.cpu_relax()
+stolen_time_record_load :: proc "contextless" (source: rawptr, field: stolen_time.Record_Field) -> u64 {
+	record := (^stolen_time.Record)(source)
+	if field == .Steal {
+		return intrinsics.volatile_load(&record.steal)
 	}
-	return 0, false
+	return u64(intrinsics.volatile_load(&record.version))
 }
 
 // stolen_time_charged gives the part of a run of this processor that the
 // host did not steal, and starts the count of the next run. A processor
-// with no record, or a read that saw no whole value, charges the whole run;
-// after a failed read the last counter stays, so the next charge that reads
-// one subtracts the stolen time of both runs.
+// with no record, or a read that saw no whole value, charges the whole run,
+// and the last counter stays. The next charge that reads the counter then
+// subtracts at most its own run: the stolen time of the failed run beyond
+// that is lost, so the thread pays too much, never too little.
 stolen_time_charged :: proc "contextless" (cpu: ^Processor, run_cycles: u64) -> u64 {
 	if !cpu.stolen_time_registered {
 		return run_cycles
 	}
-	steal, whole := stolen_time_read(cpu)
+	steal, whole := stolen_time.read_steal(&cpu.stolen_time_record, stolen_time_record_load)
 	if !whole {
 		return run_cycles
 	}
@@ -112,6 +117,13 @@ stolen_time_run_start :: proc "contextless" (cpu: ^Processor) {
 // stolen_time_log writes, at boot, after the start of the processors,
 // whether the kernel subtracts the stolen time and on how many processors.
 stolen_time_log :: proc "contextless" () {
+	// Each accepted processor registers after the first processor accepted
+	// it, so the last one can still be in its setup: the count waits for
+	// each. Each of them runs and does a few instructions and one register
+	// write before its count.
+	for intrinsics.atomic_load(&stolen_time_setups) < processor_count {
+		intrinsics.cpu_relax()
+	}
 	if stolen_time_absence != .None {
 		log("kernel: steal time: off: ", stolen_time.ABSENCE_TEXTS[stolen_time_absence], "; the kernel charges each cycle of a run")
 		return

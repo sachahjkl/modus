@@ -69,26 +69,31 @@ NANOSECONDS_PER_SECOND :: u64(1_000_000_000)
 
 // Why the machine has no steal time.
 Absence :: enum u8 {
-	None             = 0, // The machine offers steal time.
-	No_Hypervisor    = 1,
-	No_Kvm_Leaves    = 2,
-	No_Steal_Feature = 3,
+	None                 = 0, // The machine offers steal time.
+	No_Hypervisor        = 1,
+	No_Kvm_Leaves        = 2,
+	No_Kvm_Features_Leaf = 3,
+	No_Steal_Feature     = 4,
 }
 
 @(rodata)
 ABSENCE_TEXTS := [Absence]string {
-	.None             = "",
-	.No_Hypervisor    = "CPUID names no hypervisor: a real machine, where nothing is stolen",
-	.No_Kvm_Leaves    = "the hypervisor has no KVM leaves",
-	.No_Steal_Feature = "KVM does not offer the steal time",
+	.None                 = "",
+	.No_Hypervisor        = "CPUID names no hypervisor: a real machine, where nothing is stolen",
+	.No_Kvm_Leaves        = "the hypervisor has no KVM leaves",
+	.No_Kvm_Features_Leaf = "the highest leaf of KVM is below the leaf of its features",
+	.No_Steal_Feature     = "KVM does not offer the steal time",
 }
 
 // What the kernel read of CPUID: the hypervisor bit, whether a base of the
-// leaves of a hypervisor had the signature of KVM, and the features of
-// KVM at that base.
+// leaves of a hypervisor had the signature of KVM, that base and EAX of it
+// (the highest leaf of KVM, or 0 on an old KVM that does not say), and the
+// features of KVM, read only when the highest leaf holds them.
 Identification :: struct {
 	hypervisor_present: bool,
 	kvm_leaves_found:   bool,
+	kvm_base:           u32,
+	kvm_highest_leaf:   u32,
 	kvm_features:       u32,
 }
 
@@ -98,6 +103,18 @@ is_kvm_signature :: proc "contextless" (b, c, d: u32) -> bool {
 	return b == KVM_SIGNATURE_B && c == KVM_SIGNATURE_C && d == KVM_SIGNATURE_D
 }
 
+// features_leaf_present says if the leaf of the features of KVM exists
+// below the highest leaf that the base gives, as hypervisor_cpuid_base of
+// Linux decides: EAX of the base is 0 (an old KVM, which has the leaf), or
+// at least the base plus the offset of the features. The kernel reads the
+// features only after this answer.
+features_leaf_present :: proc "contextless" (base: u32, highest_leaf: u32) -> bool {
+	if highest_leaf == 0 {
+		return true
+	}
+	return base <= max(u32) - KVM_FEATURES_LEAF_OFFSET && highest_leaf >= base + KVM_FEATURES_LEAF_OFFSET
+}
+
 // absence_of_identification decides if the machine offers steal time.
 absence_of_identification :: proc "contextless" (identification: Identification) -> Absence {
 	if !identification.hypervisor_present {
@@ -105,6 +122,9 @@ absence_of_identification :: proc "contextless" (identification: Identification)
 	}
 	if !identification.kvm_leaves_found {
 		return .No_Kvm_Leaves
+	}
+	if !features_leaf_present(identification.kvm_base, identification.kvm_highest_leaf) {
+		return .No_Kvm_Features_Leaf
 	}
 	if identification.kvm_features & KVM_FEATURE_STEAL_TIME_BIT == 0 {
 		return .No_Steal_Feature
@@ -126,6 +146,34 @@ registration_value :: proc "contextless" (physical_address: u64) -> (value: u64,
 // the version before and after the load of `steal` are equal and even.
 read_is_whole :: proc "contextless" (version_before, version_after: u32) -> bool {
 	return version_before & 1 == 0 && version_before == version_after
+}
+
+// A field of the record that a load procedure reads.
+Record_Field :: enum u8 {
+	Version = 0,
+	Steal   = 1,
+}
+
+// A load procedure: one load of a field of the record at `source`. The
+// kernel gives one that loads the record of its processor with volatile
+// loads in this order; a host test gives one that plays a series of values.
+Record_Load :: #type proc "contextless" (source: rawptr, field: Record_Field) -> u64
+
+// read_steal reads the steal counter with the version protocol, at most
+// READ_ATTEMPT_LIMIT times: the version, then the counter, then the version
+// again. false: no attempt saw the same even version on both sides, and
+// the counter is 0. It is inlined, so the kernel, which gives a constant
+// load procedure, makes direct loads and no indirect call.
+read_steal :: #force_inline proc "contextless" (source: rawptr, load: Record_Load) -> (steal: u64, whole: bool) {
+	for _ in 0 ..< READ_ATTEMPT_LIMIT {
+		version_before := u32(load(source, .Version))
+		steal = load(source, .Steal)
+		version_after := u32(load(source, .Version))
+		if read_is_whole(version_before, version_after) {
+			return steal, true
+		}
+	}
+	return 0, false
 }
 
 // cycles_of_nanoseconds gives the cycles of a time in nanoseconds at the
@@ -165,7 +213,8 @@ Charge_Outcome :: enum u8 {
 // is `steal` now, both in nanoseconds. The charge is never below 0 and
 // never above the run. `next_counted` is the counter that the next charge
 // starts from: the counter now, also after a refusal, so that the next
-// charges are right.
+// charges are right. Stolen time above the run is not carried to the next
+// charge: one false jump of the counter costs at most one run.
 charge_without_stolen :: proc "contextless" (run_cycles: u64, counted: u64, steal: u64, cycle_frequency: u64) -> (charged: u64, next_counted: u64, outcome: Charge_Outcome) {
 	if steal < counted {
 		return run_cycles, steal, .Counter_Went_Back

@@ -159,6 +159,11 @@ Processor :: struct {
 	// Only this processor reads and writes it.
 	stolen_counted: u64,
 	stolen_time_registered: bool, // The host fills the record below: written once, in the setup of this processor.
+	// The first processor accepted the start of this processor, which then
+	// registers its steal-time record (processor_entry). The first
+	// processor writes it (atomic); a processor that started too late never
+	// sees it, and is reset before its record is freed.
+	start_accepted: bool,
 	turn_start:    u64, // The cycle counter when the processor picked its current thread.
 	// The scheduler (strategy.odin): counts of this processor only.
 	picks:         u64, // Threads that a pick gave to this processor.
@@ -485,7 +490,6 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	apic_setup(cpu)
 	guest_processor_setup(cpu)
 	thread_counters_processor_setup(cpu)
-	stolen_time_processor_setup(cpu)
 }
 
 // processor_start prepares the first processor.
@@ -536,6 +540,7 @@ processor_start :: proc "contextless" () {
 	processor_count = 1
 	extended_state_first_setup()
 	processor_setup(cpu)
+	stolen_time_processor_setup(cpu)
 	lock_ready = true
 	extended_state_prove()
 	extended_state_log()
