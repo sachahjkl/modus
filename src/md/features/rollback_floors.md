@@ -11,7 +11,7 @@ This design gives the TPM numbers that only rise, the TPM floors:
 
 A boot program raises the floors to its own numbers before it measures the system. After that start, the boot program of an older system, or of a revoked key, stops before the kernel starts.
 
-The guide is [`docs/TRUSTED_BOOT.md`](../../../docs/TRUSTED_BOOT.md), "10. The TPM floors". The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md): "Security version", "Key number", "TPM floor".
+The guide is [`docs/TRUSTED_BOOT.md`](../../../docs/TRUSTED_BOOT.md), "10. The TPM floors". The terms are in [`docs/glossary/trusted_boot.md`](../../../docs/glossary/trusted_boot.md): "Security version", "Key number", "TPM floor".
 
 ## Constraints
 

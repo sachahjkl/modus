@@ -1,6 +1,6 @@
 # A dropped write
 
-A dropped write ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Dropped write") is a write that the disk answers with Ok and does not keep. A firmware fault, a cache that loses power with no report, and a device that lies about a `Flush` all give it. No error comes back: the storage service learns of it only from the bytes that it reads later.
+A dropped write ([`docs/glossary/storage.md`](../../../docs/glossary/storage.md), "Dropped write") is a write that the disk answers with Ok and does not keep. A firmware fault, a cache that loses power with no report, and a device that lies about a `Flush` all give it. No error comes back: the storage service learns of it only from the bytes that it reads later.
 
 This file records what the storage service does with a dropped write, and how a machine test proves it.
 
@@ -17,7 +17,7 @@ The storage service promises that a commit is on the disk when the call returns,
 
 ## The chosen form
 
-**The commit read back** ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Commit read back"), in two steps of the commit itself. The commit call returns after them, so the next commit never starts before them.
+**The commit read back** ([`docs/glossary/storage.md`](../../../docs/glossary/storage.md), "Commit read back"), in two steps of the commit itself. The commit call returns after them, so the next commit never starts before them.
 
 1. **The blocks, before the root.** After the `Flush` of its blocks, the commit reads each block that it wrote back from the device and compares the bytes with the bytes that it wrote. If one differs, the disk did not keep a write: the service refuses the commit before it writes the root. The call gives `Device` with the unit `Dropped_Writes` and the count of the blocks that differ, and the log has one line: "storage: the read back of the commit of generation G found 1 block with other bytes: the disk did not keep it; the commit is refused before its root, and the service goes on from generation G - 1". No root on the disk names a block of the refused commit.
 2. **The root, after its `Flush`.** The commit reads its root back. If it differs, the disk did not keep the root, and the root before is still the newest on the disk: the service refuses the commit with `Dropped_Writes` and a count of 1, and writes the line "storage: the read back of the root of the commit of generation G found other bytes: the disk did not keep it; the commit is refused, and the service goes on from generation G - 1".

@@ -2,7 +2,7 @@
 
 A developer writes a module for the system in a folder of another project. The tool of the system builds the module file and the debug object from that folder. The developer keeps no copy of the sources of the system and changes no line of them. This file is the design of that build.
 
-The terms outside module and module build file are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Outside module". The layout that this design builds on is [repository_layout.md](repository_layout.md).
+The terms outside module and module build file are in [`docs/glossary/communication.md`](../../../docs/glossary/communication.md), "Outside module". The layout that this design builds on is [repository_layout.md](repository_layout.md).
 
 ## The constraints
 

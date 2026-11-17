@@ -159,8 +159,8 @@ NO_CHOICE :: max(u64) // A List record with no chosen row.
 LIST_ROWS :: 8 // The rows of a completion list.
 
 // What a row of a completion list is: the terminal draws the kind icon of
-// it before the name, as a row of the palette has one (docs/GLOSSARY.md,
-// "Kind icon"). The program says what the name is; the terminal
+// it before the name, as a row of the palette has one
+// (docs/glossary/desktop.md, "Kind icon"). The program says what the name is; the terminal
 // chooses the form and the color. None: the row has no icon, and a list
 // with no icon in any row keeps no room for one.
 List_Icon :: enum u8 {

@@ -1,6 +1,6 @@
 # Vector forms: SSE2
 
-This document says which procedures of the system compute with vectors, in which form, what stays scalar, and how to measure each one. The terms are in `docs/GLOSSARY.md`: scalar form, vector form, usable instruction set, extended state.
+This document says which procedures of the system compute with vectors, in which form, what stays scalar, and how to measure each one. The terms are in `docs/glossary/code.md` (scalar form, vector form) and `docs/glossary/running_code.md` (usable instruction set, extended state).
 
 **The idea in plain words.** A processor has registers that hold several numbers side by side, and instructions that compute on all of them at once. A procedure that works on many pixels or many words can use them: it does the work of four values with one instruction. That is its **vector form**. The same procedure written with one value for each instruction is its **scalar form**. In this system a procedure that has a vector form also keeps its scalar form, and the two must give the same bytes for every input: the vector form is only faster, never different. Host tests compare the two, so a fault of the vector form shows as a wrong byte, not as a wrong picture.
 

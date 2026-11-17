@@ -743,7 +743,7 @@ link_page_build :: proc "contextless" (index: int) {
 	source := ""
 	switch manual_pages.link_target_kind(target) {
 	case .Term:
-		source = "docs/GLOSSARY.md"
+		source = "docs/glossary"
 	case .Guide:
 		source = target
 		for place in 0 ..< len(target) {

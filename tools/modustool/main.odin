@@ -50,7 +50,7 @@ ROOT_MARK :: "flake.nix"
 
 BUILD_FOLDER :: "build"
 
-// The one source library of the project (docs/GLOSSARY.md, "Source
+// The one source library of the project (docs/glossary/communication.md, "Source
 // library"). An import names the library, then one of its two parts:
 // "modus:contract/ring", "modus:support/system".
 //   contract   what two parties agree on: records, numbers, and the code

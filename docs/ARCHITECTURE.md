@@ -8,7 +8,7 @@ This document names the key systems of `modus` and shows how they connect: the k
 
 **For whom.** A reader who wants to know where a mechanism lives before they read its code, and a reader who changes the kernel and must keep its rules.
 
-**Read before.** `PROPERTIES.md` gives the rules that each system obeys: a reference such as (P4) points to the property with that number. `GLOSSARY.md` defines every term of this document; on the site, the first use of a term on the page links to it.
+**Read before.** `PROPERTIES.md` gives the rules that each system obeys: a reference such as (P4) points to the property with that number. `glossary/README.md` defines every term of this document; on the site, the first use of a term on the page links to it.
 
 **The map of this document.**
 
@@ -29,7 +29,7 @@ This document names the key systems of `modus` and shows how they connect: the k
 
 ## Vocabulary
 
-`GLOSSARY.md` defines every term of this document. A few terms carry the whole map, so here they are in one line each:
+`glossary/README.md` defines every term of this document. A few terms carry the whole map, so here they are in one line each:
 
 - A **program** is the unit of isolation: its own address space, its own handles, one or more threads.
 - A **handle** is the number by which a program names one kernel object, with the rights that it holds on it. A program has no other way to reach an object.
@@ -285,7 +285,7 @@ The storage service keeps the data of every program, so that no program has a sa
 
 #### Versions (property 9, "no save action, and versions for all programs")
 
-The terms are in `GLOSSARY.md`, section Storage.
+The terms are in `glossary/storage.md`.
 
 - **What a version is.** The state of one object at one commit: its size, the root of its block tree (and through it its blocks of data), the generation, the time and the date of that commit. A version of a whole private store (a snapshot) is not kept apart: the state of a store at a generation G is, for each object, its version with the highest generation at or below G. So one structure serves both, and a program asks for the versions of the object that the principal sees.
 - **Who makes it.** Each commit that changes an object: the program makes no call for it. The state before the commit goes into the version index of the object; the new state is the current version. A damaged state (a block with a wrong check) is not kept as a version: the change replaces it. A remove ends the object and its versions (an explicit act of the program).
@@ -583,7 +583,7 @@ A lock alone does not make a path correct: a path can free a lock, wait, and fin
 
 A program drives its own virtual memory: paging and virtual memory are a design tool for the program. It can reserve a large range of addresses and pay only for the pages that it uses, give pages back, make a part of its memory read-only or unreachable, and answer its own page faults. The kernel holds no policy here: it does what the program asks, within the budget that pays and the rights of the handles.
 
-The terms are in `GLOSSARY.md`: uncommitted object, committed page, decommit, page protection, shoot-down, large page, fault ring. The test is the program `address_space` (`modustool test address_space`): it runs each case of this section with two programs and shows the answer of the kernel (`docs/screenshots/address_space.png`).
+The terms are in `glossary/access.md`: uncommitted object, committed page, decommit, page protection, shoot-down, large page, fault ring. The test is the program `address_space` (`modustool test address_space`): it runs each case of this section with two programs and shows the answer of the kernel (`docs/screenshots/address_space.png`).
 
 An example of the whole cycle, as a program writes it with the system library:
 
@@ -713,7 +713,7 @@ The program `fault_ring` shows each case: a page committed at its first touch, W
 
 ![The fault ring: a handler thread repairs the faults of the other threads of its program](screenshots/fault_ring.png)
 
-Without a fault handler, a processor exception of a program that the kernel does not serve itself (a page fault that `page_give` cannot serve, a divide error, an invalid opcode, ...) stops the program, with a stop report. The terms are in `GLOSSARY.md`: fault handler, fault ring, fault record, fault kind, fault class. The code is `src/kernel/fault_ring.odin`, the two operations in `src/kernel/enter.odin`, the case of `kernel_interrupt`, and `thread_finish`; the kinds and their classes are in `src/library/contract/operation` (`Fault_Kind`, `fault_kind_class`, `fault_kind_resumes`, `fault_kinds_of_argument`, with host tests); the test is the program `fault_ring` (`modustool test fault_ring`).
+Without a fault handler, a processor exception of a program that the kernel does not serve itself (a page fault that `page_give` cannot serve, a divide error, an invalid opcode, ...) stops the program, with a stop report. The terms are in `glossary/access.md`: fault handler, fault ring, fault record, fault kind, fault class. The code is `src/kernel/fault_ring.odin`, the two operations in `src/kernel/enter.odin`, the case of `kernel_interrupt`, and `thread_finish`; the kinds and their classes are in `src/library/contract/operation` (`Fault_Kind`, `fault_kind_class`, `fault_kind_resumes`, `fault_kinds_of_argument`, with host tests); the test is the program `fault_ring` (`modustool test fault_ring`).
 
 A program names one of its threads as its fault handler (`Fault_Handler_Set`, operation 30), with the fault kinds that the handler takes (`op.Fault_Kinds`, the third argument; 0 is page faults only). Then a fault of such a kind of another thread of the program, which would stop the program, is a fault record in the fault ring, and the thread waits. A page fault is delivered only at an address below `THREAD_AREA_BASE`. A thread of the program repairs with the operations above (`Memory_Commit`, `Memory_Protect`) and answers (`Fault_Answer`, operation 31): `Resume` lets the thread continue at the instruction of its record; `Stop` stops the program with the stop code and the stop report of the fault, as with no handler. A program uses it for guard pages, a stack that grows, memory committed at the first touch, the barriers of a collector, and a debugger that sets breakpoints; the kernel holds no policy. No signal (property 16): a fault is a record in memory of the program, and the answer is an operation.
 
@@ -774,7 +774,7 @@ A program names one of its threads as its fault handler (`Fault_Handler_Set`, op
 
 A program can hold one of its threads still, read its registers, change them, and let it go on. This is what a debugger, a collector of garbage and a profiler need, and the kernel gives it as one operation with a command. A thread of another program can be held only through a thread handle that its program gave, with the right of the command.
 
-A program stops one of its threads, reads and writes its registers, and resumes it (`Thread_Control`, operation 33). A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest use it. The code is `src/kernel/thread_control.odin`; the checks of a write are `op.thread_registers_refusal` and `op.extended_state_refusal` in `src/library/contract/operation`, with host tests; the test is the program `fault_ring` (`modustool test fault_ring`, the cases 20 to 28). The terms are in `GLOSSARY.md`: thread control, stop count, held thread, register image.
+A program stops one of its threads, reads and writes its registers, and resumes it (`Thread_Control`, operation 33). A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest use it. The code is `src/kernel/thread_control.odin`; the checks of a write are `op.thread_registers_refusal` and `op.extended_state_refusal` in `src/library/contract/operation`, with host tests; the test is the program `fault_ring` (`modustool test fault_ring`, the cases 20 to 28). The terms are in `glossary/access.md`: thread control, stop count, held thread, register image.
 
 **The operation.** One operation with a command (`op.Thread_Control_Command`): `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`, the two commands of the schedule, `Read_Schedule` and `Write_Schedule` (below), the two commands of the placement, `Read_Placement` and `Write_Placement` (below), the two commands of the schedule of a program, `Read_Program_Schedule` and `Write_Program_Schedule` (below), the three commands of a debugger, `Read_Breakpoints`, `Write_Breakpoints` and `Read_Memory` ("The debugger of a program"), and the three commands of the thread counters, `Start_Counters`, `Read_Counters` and `Stop_Counters` ("The counters of a thread"). Its reason: no operation of the kernel stops a thread without its end, or gives its registers, and a guest needs both; one operation with a command keeps the count of operations lower than four. The arguments: a thread handle with the right of the command, or 0 and the number of a thread of the calling program (`Thread_Record.number`, the `thread` of a fault record); the command; the address and the size of a register image or of an extended state area.
 
@@ -830,7 +830,7 @@ Two more commands, `Read_Placement` and `Write_Placement`, read and write the pl
 
 ### The counters of a thread
 
-A program counts what the processor does for its own code: the instructions retired, the cycles, the cache misses and the branch misses. A developer then measures the cost of a data layout, and not only its time. The program `counters` shows it: it counts a loop of known length, and the same reads of 2 MiB of memory in order and by page (`modustool test kernel_events`). The terms are in `GLOSSARY.md`: performance counter, thread counters, register trial. The design and the refused forms are in `src/md/features/processor_counters.md`; the code is `src/kernel/thread_counters.odin`, and the counter plan of each vendor is `processor_counters.plan_of_identification` in `src/kernel/processor_counters`, with host tests.
+A program counts what the processor does for its own code: the instructions retired, the cycles, the cache misses and the branch misses. A developer then measures the cost of a data layout, and not only its time. The program `counters` shows it: it counts a loop of known length, and the same reads of 2 MiB of memory in order and by page (`modustool test kernel_events`). The terms are in `glossary/running_code.md`: performance counter, thread counters, register trial. The design and the refused forms are in `src/md/features/processor_counters.md`; the code is `src/kernel/thread_counters.odin`, and the counter plan of each vendor is `processor_counters.plan_of_identification` in `src/kernel/processor_counters`, with host tests.
 
 **The commands.** Three commands of `Thread_Control`, not a new operation: they act on the state of a thread, as the other commands do.
 
@@ -863,14 +863,14 @@ Each select has the bits User and Enable, and not Operating System: the processo
 2. For each counter, it writes 0xABCD to the counter and reads it back, writes 0, then writes the select value of the plan and 0 to the select.
 3. It turns on the counters 0 to 3 in the global control, when the processor has one (Intel from version 2, AMD with the monitoring version 2).
 
-Each access is a register trial (`GLOSSARY.md`): a protection fault of that one `rdmsr` or `wrmsr` goes on at its refusal label in `processor.asm`, and the trial ends. A protection fault of the kernel anywhere else still stops the machine. The first step that fails turns the plan off for the machine, and the commands then give `Unsupported`. The line of the boot names the plan and the trial of the first processor, or why there is none:
+Each access is a register trial (`glossary/running_code.md`): a protection fault of that one `rdmsr` or `wrmsr` goes on at its refusal label in `processor.asm`, and the trial ends. A protection fault of the kernel anywhere else still stops the machine. The first step that fails turns the plan off for the machine, and the commands then give `Unsupported`. The line of the boot names the plan and the trial of the first processor, or why there is none:
 
 - "kernel: performance counters (a guest of a hypervisor): AMD core counters, the counters 0 to 3: ...; the first processor passed the trial of the registers"
 - "kernel: performance counters (a guest of a hypervisor): none that the kernel uses: CPUID lists the counters, and the processor refused a trial access with a protection fault, to the register 00000000c0010200; a command of the thread counters gives Unsupported"
 
 Another processor whose trial fails writes its own line: "kernel: performance counters: none that the kernel uses: on the processor 3, ...". The other outcomes of a trial are "a counter was on before the kernel: another user counts with it, at the select register ..." and "a counter did not give back the value that the kernel wrote, at the register ...".
 
-The self test 7 proves the way back from a refusal on a machine: the kernel writes an address that is not canonical to `IA32_KERNEL_GS_BASE` in a register trial, and goes on after the refusal ("Self test" in `GLOSSARY.md`). The host tests of `src/kernel/processor_counters` prove the order of the trial and each outcome.
+The self test 7 proves the way back from a refusal on a machine: the kernel writes an address that is not canonical to `IA32_KERNEL_GS_BASE` in a register trial, and goes on after the refusal ("Self test" in `glossary/running_code.md`). The host tests of `src/kernel/processor_counters` prove the order of the trial and each outcome.
 
 **The switch.** A thread that counts has the flag `counting` in the hot line of its record. The processor that takes it writes 0 in the four counters, then turns the selects on; the processor that leaves it turns the selects off, then adds the counters to the totals of the thread (64 bits each). `Read_Counters` gives the totals plus the counters of this processor now. So the registers of a processor count for one thread at most, and a switch to a thread that does not count tests one byte and writes no register. A counter of 48 bits starts at 0 at each take, and a turn of 10 ms cannot reach its end.
 
@@ -882,7 +882,7 @@ The self test 7 proves the way back from a refusal on a machine: the kernel writ
 
 A debugger stops another program where its author asks, reads its threads and its memory, and runs it one instruction at a time. The kernel gives it four things, each a right, an argument or a command of an operation that exists: the right `Debug` of a program handle, the delivery of the debug exceptions of that program to the debugger, the breakpoints of a thread, and the read of the memory of a program. The count of kernel operations does not change.
 
-The code is `src/kernel/fault_ring.odin` (the debug handler), `src/kernel/breakpoints.odin` (the debug registers and the read of memory), `src/kernel/thread_control.odin` and the cases of `kernel_interrupt`; the checks of a write are `op.thread_breakpoints_refusal` and `op.thread_breakpoints_control` in `src/library/contract/operation`, with host tests; the test is the program `debugged` (`modustool test debugger`). The terms are in `GLOSSARY.md`: debugger, debug handler, breakpoint, debug status. The debugger service, its exports, the commands of the console and the rule of the root service are in `TOOLS.md`, "The debugger".
+The code is `src/kernel/fault_ring.odin` (the debug handler), `src/kernel/breakpoints.odin` (the debug registers and the read of memory), `src/kernel/thread_control.odin` and the cases of `kernel_interrupt`; the checks of a write are `op.thread_breakpoints_refusal` and `op.thread_breakpoints_control` in `src/library/contract/operation`, with host tests; the test is the program `debugged` (`modustool test debugger`). The terms are in `glossary/access.md`: debugger, debug handler, breakpoint, debug status. The debugger service, its exports, the commands of the console and the rule of the root service are in `TOOLS.md`, "The debugger".
 
 **The right `Debug`, and who has it.** Debug access is a handle to one program (property 20, line 2). `Debug` is a right of a program handle, and two holders have it:
 
@@ -953,7 +953,7 @@ The kernel saves each state component that it enables, not only x87 and SSE, and
 
 The kernel saves and restores the extended state only at a switch of threads, and has no vector code (sections 3 and 3a). A save at each kernel entry makes each entry 29 to 41 % slower (section 3).
 
-The terms are in `GLOSSARY.md`: extended state, state component, extended state area, start state, switch of threads, usable instruction set. The code is `src/kernel/extended_state.odin`, the save and the restore in `src/kernel/processor.asm`, the switch in `src/kernel/schedule.odin`, the check of the build in `tools/modustool/vector_check.odin`, and `src/library/support/instruction_sets`. The test is the program `extended_state`.
+The terms are in `glossary/running_code.md`: extended state, state component, extended state area, start state, switch of threads, usable instruction set. The code is `src/kernel/extended_state.odin`, the save and the restore in `src/kernel/processor.asm`, the switch in `src/kernel/schedule.odin`, the check of the build in `tools/modustool/vector_check.odin`, and `src/library/support/instruction_sets`. The test is the program `extended_state`.
 
 ### 1. The state components that the kernel enables
 
@@ -1083,7 +1083,7 @@ With no kernel operation: the processor tells it. `CPUID` leaf 1 gives `OSXSAVE`
 
 After each kernel entry, the kernel returns to a thread with the saved state of that thread. A program can put values in that state that the processor refuses at the return, and such a refusal faults inside the kernel. This section shows how the kernel makes each such case a fault of the program: it checks the state before the return, and it catches the refusal of the processor if one still comes.
 
-A fault at the return to a program is a fault of that program, not of the kernel. Without the checks of this section, a thread whose saved state the processor refuses at `iretq` makes the processor fault in the kernel, and the kernel stops the machine: one program can stop the machine (property 2). The term is in `GLOSSARY.md`: refused return. The code is `src/kernel/return_to_program.odin`, `resume` and `interrupt_common` in `src/kernel/processor.asm`, `run` in `src/kernel/schedule.odin`; the test is the program `return_fault` (`modustool test return_fault`).
+A fault at the return to a program is a fault of that program, not of the kernel. Without the checks of this section, a thread whose saved state the processor refuses at `iretq` makes the processor fault in the kernel, and the kernel stops the machine: one program can stop the machine (property 2). The term is in `glossary/code.md`: refused return. The code is `src/kernel/return_to_program.odin`, `resume` and `interrupt_common` in `src/kernel/processor.asm`, `run` in `src/kernel/schedule.odin`; the test is the program `return_fault` (`modustool test return_fault`).
 
 ![The return to a program: five children give the kernel a thread that the processor refuses at its return, or flags that it must not keep; the kernel stops each one as its own fault, and the machine goes on](screenshots/return_fault.png)
 
@@ -1156,7 +1156,7 @@ The kernel runs a few instructions with state of the program in the processor:
 
 **A debug trap at the first instruction of a stub.** The same holds when the instruction after `mov ss` enters a gate: `int3`, whose gate has privilege 3, `int1`, or any instruction that faults. The trap comes at the first instruction of the stub of that gate, at privilege 0, with the gs base of the program. The frame of the gate is already on the kernel stack. After `int1`, the gate is the one of the debug exception itself: the two debug exceptions use one interrupt stack, and the frame of the second takes the place of the frame of the first.
 
-**The interrupt stacks.** Each processor has, besides its kernel stack, four interrupt stacks: the double fault (4 pages), the debug exception, the NMI and the machine check (2 pages each), each between guard pages (`op.KERNEL_STACK_SLOT_PAGES`). Their gates name them in the task state. The processor loads the stack of the gate on each such exception, also at privilege 0, so it never pushes a frame where a program chose. The term is in `GLOSSARY.md`: interrupt stack.
+**The interrupt stacks.** Each processor has, besides its kernel stack, four interrupt stacks: the double fault (4 pages), the debug exception, the NMI and the machine check (2 pages each), each between guard pages (`op.KERNEL_STACK_SLOT_PAGES`). Their gates name them in the task state. The processor loads the stack of the gate on each such exception, also at privilege 0, so it never pushes a frame where a program chose. The term is in `glossary/running_code.md`: interrupt stack.
 
 **How `interrupt_common` chooses the gs base**, for an interrupt from the kernel:
 
@@ -1216,7 +1216,7 @@ Every other bit is cleared, among them the global pages, the time stamp disable,
 
 A few instructions of the kernel have no form in the language: a port read, a write of a model-specific register, a load of `cr3`. The kernel writes each one as a small template that the compiler puts inline at each call, in place of a call to a procedure in assembler. What still needs to own the stack or the frame stays in the assembler file.
 
-The small instructions of the kernel (ports, MSR, `cr3`) are `asm` templates; the cycle counter and the copy and fill of memory have the forms of sections 2 and 4. No measure of this form is recorded (section 6). The term is in `GLOSSARY.md`: instruction template. The code is `src/kernel/instructions.odin`; what stays in assembler is in `src/kernel/processor.asm`.
+The small instructions of the kernel (ports, MSR, `cr3`) are `asm` templates; the cycle counter and the copy and fill of memory have the forms of sections 2 and 4. No measure of this form is recorded (section 6). The term is in `glossary/code.md`: instruction template. The code is `src/kernel/instructions.odin`; what stays in assembler is in `src/kernel/processor.asm`.
 
 ### 1. What a template is
 
@@ -1291,7 +1291,7 @@ A tool that wants to see what the kernel does (which operations take long, which
 
 The program `kernel_events` shows it: its window shows the four rates of its measure (section 11, `docs/screenshots/kernel_events.png`).
 
-The kernel has fixed event points (kernel entry, thread switch, fault, lock take). A program with a grant gives the kernel a table of rules (kind of event, program, threshold); the kernel applies them in bounded time and writes the records in a ring. The terms are in `GLOSSARY.md`: kernel event, event point, observed kinds, event rule, event table, event ring, event record, lost count. The code is `src/kernel/events.odin`, the event points in `src/kernel/enter.odin`, `src/kernel/schedule.odin`, `src/kernel/program.odin` (`kernel_interrupt`) and `src/kernel/lock.odin`, the operation `Events_Set`; the test is the program `kernel_events` (`modustool test kernel_events`).
+The kernel has fixed event points (kernel entry, thread switch, fault, lock take). A program with a grant gives the kernel a table of rules (kind of event, program, threshold); the kernel applies them in bounded time and writes the records in a ring. The terms are in `glossary/running_code.md`: kernel event, event point, observed kinds, event rule, event table, event ring, event record, lost count. The code is `src/kernel/events.odin`, the event points in `src/kernel/enter.odin`, `src/kernel/schedule.odin`, `src/kernel/program.odin` (`kernel_interrupt`) and `src/kernel/lock.odin`, the operation `Events_Set`; the test is the program `kernel_events` (`modustool test kernel_events`).
 
 ### 1. What it is, and what it is not
 
@@ -1440,7 +1440,7 @@ To test the program of a rule before its kind in the loop would save nothing: th
 
 ## A guest
 
-A program runs another system on the processor, in a guest, with the virtualization support of the processor. The program `guest_demo` shows it: a guest of seven bytes of 16-bit code writes 42 to the port 0x80, and the write arrives in the program as an exit record (`modustool test guest`). The terms are in `GLOSSARY.md`: guest, guest processor, guest exit, nested page table. The design and the refused forms are in `src/md/features/guest.md`; the code is `src/kernel/guest.odin` and `guest_enter` in `src/kernel/processor.asm`.
+A program runs another system on the processor, in a guest, with the virtualization support of the processor. The program `guest_demo` shows it: a guest of seven bytes of 16-bit code writes 42 to the port 0x80, and the write arrives in the program as an exit record (`modustool test guest`). The terms are in `glossary/access.md`: guest, guest processor, guest exit, nested page table. The design and the refused forms are in `src/md/features/guest.md`; the code is `src/kernel/guest.odin` and `guest_enter` in `src/kernel/processor.asm`.
 
 ### 1. A guest is a program
 
@@ -1516,7 +1516,7 @@ The test machine gets SVM from KVM on an AMD host whose module `kvm_amd` has nes
 
 ## The own log ring of a program
 
-The kernel writes each log record of a program in two places: the whole log, the one ring that the root service receives as `ROOT_LOG_RECORDS`, and the own log ring of the program (`GLOSSARY.md`). The own log ring keeps the last `op.OWN_LOG_RECORD_CAPACITY` (64) records of its program in `op.OWN_LOG_PAGES` (4) pages. Only the records of that program fill it, so a log storm of another program never pushes them out. A record of the kernel goes to the whole log only. The design is `src/md/features/own_log_ring.md`.
+The kernel writes each log record of a program in two places: the whole log, the one ring that the root service receives as `ROOT_LOG_RECORDS`, and the own log ring of the program (`glossary/running_code.md`). The own log ring keeps the last `op.OWN_LOG_RECORD_CAPACITY` (64) records of its program in `op.OWN_LOG_PAGES` (4) pages. Only the records of that program fill it, so a log storm of another program never pushes them out. A record of the kernel goes to the whole log only. The design is `src/md/features/own_log_ring.md`.
 
 - **Who pays.** `Program_Create` takes the 4 pages from the budget that pays the program, beside its top table. A budget with too few pages gives `No_Budget`. The free of the slot (`program_free`, after the stop, when the last handle to the program closes) gives the pages back to that budget. Until then a holder of the program handle, such as its starter, still reads the ring through the log service. A guest gives its ring back at its first `Guest_Run`.
 - **Who reads.** `Log_Read(memory, program, serial, after, records, count) -> copied, lost, total` copies the ring of the program with that slot and that serial, from the own number `after` on (`op.own_log_window`). Its authority is a handle of the memory of the log with **Read**: its holder already reads each record of the whole log. The root service gives that handle to the log service only, which reads with it the own records of a caller and the records of a child whose handle a starter lends ("Who reads which records" in `docs/TOOLS.md`).

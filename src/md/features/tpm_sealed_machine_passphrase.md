@@ -6,7 +6,7 @@ The record of a machine passphrase held the machine key under a key that Argon2i
 
 This design gives a machine with a TPM and a machine passphrase the form of the keys of a named principal ([tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md)). The TPM seals a TPM secret to the measure of the system and to an authorization value that the machine passphrase gives. So a copy of the disk allows no try away from the TPM of the machine, the TPM counts each wrong machine passphrase, and a changed system opens nothing even with the right passphrase. A recovery key, shown one time when the passphrase is set, opens a copy of the machine key when the TPM refuses or when the passphrase is lost.
 
-The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The machine passphrase with the TPM". The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md): "Machine passphrase", "TPM secret", "Authorization value", "Recovery key".
+The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The machine passphrase with the TPM". The terms are in [`docs/glossary/access.md`](../../../docs/glossary/access.md): "Machine passphrase", and in [`docs/glossary/trusted_boot.md`](../../../docs/glossary/trusted_boot.md): "TPM secret", "Authorization value", "Recovery key".
 
 ## Constraints
 

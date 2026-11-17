@@ -4,7 +4,7 @@ Everything that becomes the system is in one folder, `src`. A program of a third
 
 What changed: the private half of a single module and the kernel logic leave the shared library, the programs and the other modules become one folder of modules by group, and the tool becomes packages behind one command. The source library `modus` and its one flag stay as they are.
 
-The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md): "Source library", "Private part", "Kernel part", "Module group", "Test module". The flag of the compiler for a source library is `-collection`.
+The terms are in [`docs/glossary/communication.md`](../../../docs/glossary/communication.md): "Source library", "Private part", "Kernel part", "Module group", "Test module". The flag of the compiler for a source library is `-collection`.
 
 ## Purpose
 
@@ -41,7 +41,7 @@ src/
     tests/                     the test modules
 tools/modustool/               the tool: one command, in packages
   foundation/ build/ checks/ resources/ fuzz/ similarity/ machine/ site/
-docs/                          the guides, the research, the pictures, the films, the measures
+docs/                          the guides, the glossary, the research, the pictures, the films, the measures
 news/  changelog.d/  CHANGELOG.md  ROADMAP.md
 resources/                     the sources of the resources of the boot image, with their licenses
 secrets/                       the keys of the publisher, encrypted with sops

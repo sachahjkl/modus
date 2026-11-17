@@ -1,6 +1,6 @@
 # The counters of a thread
 
-A program counts what the processor does for its own code: the instructions retired, the cycles, the cache misses and the branch misses. A developer then measures the cost of a data layout, and not only its time. The kernel holds the mechanism: it programs the performance counters of the processor for one thread, keeps the counts of that thread when it leaves a processor, and gives them back. The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Performance counter" and "Thread counters". The guide is [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "The counters of a thread".
+A program counts what the processor does for its own code: the instructions retired, the cycles, the cache misses and the branch misses. A developer then measures the cost of a data layout, and not only its time. The kernel holds the mechanism: it programs the performance counters of the processor for one thread, keeps the counts of that thread when it leaves a processor, and gives them back. The terms are in [`docs/glossary/running_code.md`](../../../docs/glossary/running_code.md), "Performance counter" and "Thread counters". The guide is [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "The counters of a thread".
 
 ## Constraints
 
@@ -37,7 +37,7 @@ The kernel finds the set from `CPUID` at boot, once (`processor_counters.plan_of
 
 `CPUID` lists the counters; it does not prove that the processor takes an access to their registers. A hypervisor can list them and refuse each `rdmsr` and `wrmsr` with a protection fault, or take the writes and keep nothing. A protection fault of the kernel stops the machine, so such a machine stopped at its boot. And a firmware can leave a counter on: then another user counts with it.
 
-So each processor, at its start and before any thread runs, takes a trial of the registers of the plan (`processor_counters.trial_steps_of_plan`, with host tests). The trial is a list of register trials ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Register trial"), in this order:
+So each processor, at its start and before any thread runs, takes a trial of the registers of the plan (`processor_counters.trial_steps_of_plan`, with host tests). The trial is a list of register trials ([`docs/glossary/running_code.md`](../../../docs/glossary/running_code.md), "Register trial"), in this order:
 
 1. A read of each select. A select with Enable set is on: another user (the firmware, or the hypervisor) counts with it.
 2. For each counter: a write of `TRIAL_COUNTER_VALUE` (0xABCD) to the counter, a read that must give it back, a write of 0; then a write of the select value of the plan, then a write of 0 to the select. These are the writes of the switch. The select value turns the counter on in user mode only, and the kernel runs, so nothing counts.

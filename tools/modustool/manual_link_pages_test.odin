@@ -4,14 +4,23 @@ import "core:strings"
 import "core:testing"
 import "modus:contract/manual_pages"
 
-// The documents of the tests: a glossary of two terms and one guide.
+// The documents of the tests: a glossary of two terms in two groups, and
+// one guide.
 @(private = "file")
 manual_test_read :: proc(path: string) -> (text: string, ok: bool) {
 	switch path {
-	case SITE_GLOSSARY_FILE:
+	case GLOSSARY_INDEX_FILE:
 		return `# Glossary
 
-## Code
+The terms.
+
+## The groups
+
+- [Code](code.md)
+- [Communication](communication.md): the rings.
+`, true
+	case GLOSSARY_FOLDER + "/code.md":
+		return `## Code
 
 ### Handle
 
@@ -24,6 +33,9 @@ A program passes a handle to an operation.
 | rights | what it allows |
 
 Do not use: descriptor.
+`, true
+	case GLOSSARY_FOLDER + "/communication.md":
+		return `## Communication
 
 ### Ring
 

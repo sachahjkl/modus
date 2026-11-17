@@ -9,7 +9,7 @@ A program gets one seed at its start, and its random generator runs from that se
 
 This design gives each program that the root service starts new bytes, now and then, which it mixes into its own generator. A key that a program makes late in its life then has bytes newer than its start, and a reader who copied the state once loses it at the next mix.
 
-The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md): "Fresh bytes page", "Fresh bytes refresh".
+The terms are in [`docs/glossary/randomness.md`](../../../docs/glossary/randomness.md): "Fresh bytes page", "Fresh bytes refresh".
 
 ## Constraints
 

@@ -60,6 +60,9 @@ site_document_pointers_of_each_form :: proc(t: ^testing.T) {
 		{"A rule, see docs/DESIGN.md, section 3.", "docs/DESIGN.md", {"section 3"}, true, ", see docs/DESIGN.md, section 3"},
 		{"A page (a page of docs/SITE.md) stays.", "docs/SITE.md", {}, false, "docs/SITE.md"},
 		{"The kernel: the interrupts (docs/ARCHITECTURE.md, U3)", "docs/ARCHITECTURE.md", {"U3"}, true, " (docs/ARCHITECTURE.md, U3)"},
+		{"A cell has a glyph (docs/glossary/text.md, \"Glyph\").", "docs/glossary/text.md", {"\"Glyph\""}, true, " (docs/glossary/text.md, \"Glyph\")"},
+		{"The terms of docs/glossary/README.md stay.", "docs/glossary/README.md", {}, false, "docs/glossary/README.md"},
+		{"A step (docs/glossary/running_code.md, \"Thread\").", "docs/glossary/running_code.md", {"\"Thread\""}, true, " (docs/glossary/running_code.md, \"Thread\")"},
 	}
 	for item in cases {
 		pointers := site_document_pointers(item.text)
@@ -90,7 +93,9 @@ site_document_pointers_of_each_form :: proc(t: ^testing.T) {
 	}
 
 	// A path that is not a document of docs/, and a text with no pointer.
-	for text in ([]string{"tools/docs/ARCHITECTURE.md", "docs/notes.txt", "docs/lower.md", "the docs/ folder", "docs/A.mdx", "The record of a call.", ""}) {
+	// A file in lower case is a document only in the folder of the
+	// glossary, and a folder under it is not one.
+	for text in ([]string{"tools/docs/ARCHITECTURE.md", "docs/notes.txt", "docs/lower.md", "the docs/ folder", "docs/A.mdx", "The record of a call.", "", "the docs/glossary/ folder", "docs/glossary/.md", "docs/glossary/old/text.md", "docs/research/lower.md", "docs/glossary/text.mdx"}) {
 		testing.expectf(t, len(site_document_pointers(text)) == 0, "%q has a pointer", text)
 	}
 }
@@ -349,15 +354,15 @@ site_document_pointers_of_the_repository :: proc(t: ^testing.T) {
 		if site_is_working_record(name) {
 			continue
 		}
-		page := site_page_file(name == "GLOSSARY.md" ? SITE_GLOSSARY_FOLDER : strings.concatenate({SITE_GUIDE_FOLDER, "/", name[:len(name) - len(".md")]}, context.temp_allocator))
+		page := site_page_file(strings.concatenate({SITE_GUIDE_FOLDER, "/", name[:len(name) - len(".md")]}, context.temp_allocator))
 		site.documents[path] = page
 		site.documents[name] = page
 	}
-	glossary, glossary_ok := site_read_quiet(SITE_GLOSSARY_FILE)
+	glossary_terms, glossary_problems, glossary_ok := glossary_read_folder()
 	testing.expect(t, glossary_ok)
-	glossary_terms, glossary_problems := glossary_read(glossary)
 	testing.expectf(t, len(glossary_problems) == 0, "the glossary: %v", glossary_problems)
 	site.glossary = glossary_terms
+	site_glossary_documents_add(&site)
 	site.terms = site_glossary_terms(site.glossary)
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
 	// The links of the comments name rows, exports and declarations.

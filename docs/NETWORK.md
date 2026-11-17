@@ -1,6 +1,6 @@
 # The network: TCP as a library in the program
 
-The first layer of the network is the base: the frame service, the network service, endpoints of datagrams. `GLOSSARY.md` defines the terms.
+The first layer of the network is the base: the frame service, the network service, endpoints of datagrams. `glossary/network.md` defines the terms.
 
 **The idea in plain words.** No program opens a connection because it runs. The root service gives a program a grant that names what it can reach: one remote (a client grant) or one port on which it answers whoever comes (a listen grant). The network service checks each datagram and segment against that grant; the protocol itself, TCP or QUIC, is a library inside the program, so a fault in it harms only that program.
 
@@ -44,7 +44,7 @@ It keeps the hardware address of each neighbor in a table of 16 (`ARP_CAPACITY` 
 
 ## The path of a datagram and of a segment
 
-A datagram or a segment passes through several programs between the device and the program that uses it. This section names each hop, the bytes that the hop reads or writes, and the party that checks each field. Two terms sort the hops (`GLOSSARY.md`): the data path is the code that reads or writes the bytes of the data; the control path of a packet is the code that reads the headers and decides where the bytes go.
+A datagram or a segment passes through several programs between the device and the program that uses it. This section names each hop, the bytes that the hop reads or writes, and the party that checks each field. Two terms sort the hops (`glossary/network.md`): the data path is the code that reads or writes the bytes of the data; the control path of a packet is the code that reads the headers and decides where the bytes go.
 
 The payload of a frame is what follows the IPv4 header: a whole datagram with its UDP header, or a whole segment with its TCP header. UDP and TCP take the same path through the network service: the program writes and reads the whole payload, and the network service treats the two alike.
 
