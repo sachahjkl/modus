@@ -4,8 +4,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **No press of the pointer lost while test parts run at once.** Two whole tests with four parts at once lost one action of the pointer at the start of a machine, where the tool moves the pointer without the confirmation of the compositor, and each part passes alone. With the cause fixed, a whole test passes each time, whatever the load of the host. [Design](src/md/infrastructure/machine_test_parts.md)
-
 ## Next
 
 - **Fuzzing of the kernel operations.** A test machine runs operation sequences that the tool builds from the forms of the 35 kernel operations, guided by the edge counters of a test kernel, with the checks of the kernel as oracles. A fault of the kernel that a sequence finds is confirmed on the kernel that ships. [Design](src/md/infrastructure/fuzzing.md)
