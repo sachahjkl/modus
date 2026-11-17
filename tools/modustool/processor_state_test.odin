@@ -142,13 +142,19 @@ registers_and_list_of_other_processors_are_refused :: proc(t: ^testing.T) {
 // The reply of the monitor is a JSON string; another value is refused.
 @(test)
 monitor_replies_that_are_not_a_text_are_refused :: proc(t: ^testing.T) {
-	for value in ([]string{"", "{\"a\": 1}", "12", "\"RIP=0", "true"}) {
+	// A string cut before its closing quote, a closing quote that a
+	// backslash escapes, and a lone quote are refused too.
+	for value in ([]string{"", "{\"a\": 1}", "12", "\"RIP=0", "\"RIP=0\\\"", "\"", "true"}) {
 		_, decoded := monitor_text_decode(value)
 		testing.expect(t, !decoded, value)
 	}
 	text, decoded := monitor_text_decode("\"\\r\\nCPU#0\\r\\nRIP=0\\r\\n\"")
 	testing.expect(t, decoded)
 	testing.expect_value(t, text, "\r\nCPU#0\r\nRIP=0\r\n")
+	// A backslash that a backslash escapes leaves the closing quote whole.
+	backslash, backslash_decoded := monitor_text_decode("\"a\\\\\"")
+	testing.expect(t, backslash_decoded)
+	testing.expect_value(t, backslash, "a\\")
 }
 
 // An address names its code by the ranges that the tool knows, at each
@@ -214,6 +220,9 @@ the_processors_of_a_machine_are_read_and_named :: proc(t: ^testing.T) {
 
 	// An address that no known range holds.
 	testing.expect_value(t, processor_line({number = 1, instruction_address = 0x7e8c2a0}, known), "processor 1, running, at 0x7e8c2a0: no known code")
+	// A volume that the table of the volumes does not hold names no kernel
+	// module, and the line says so.
+	testing.expect_value(t, processor_line(states[0], Known_Code{}), "processor 0, halted, at 0xffffffff80012345: the kernel, at the offset 0x12345: the table of the volumes names no kernel module for this volume")
 	// An older QEMU marks a halt in the list.
 	halted, halted_fault, _ := processors_read(PROGRAM_PROCESSOR, "  CPU #3: (halted) thread_id=9\n")
 	testing.expect_value(t, halted_fault, Processor_Read_Fault.None)

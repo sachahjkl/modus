@@ -118,7 +118,9 @@ decimal_word_read :: proc(word: string, largest: u64) -> (value: u64, fault: Pro
 			return 0, .Damaged_Value
 		}
 		digit := u64(character - '0')
-		if value > (largest - digit) / 10 {
+		// A digit past the largest value would make largest - digit wrap
+		// around to a huge bound, which accepts any value.
+		if digit > largest || value > (largest - digit) / 10 {
 			return 0, .Damaged_Value
 		}
 		value = value * 10 + digit
@@ -390,7 +392,21 @@ processors_read :: proc(registers_text, list_text: string) -> (states: []Process
 // monitor_text_decode gives the text that the monitor printed, from the
 // value of the reply of human-monitor-command: a JSON string.
 monitor_text_decode :: proc(value: string) -> (text: string, ok: bool) {
-	parsed, error := json.parse_string(value, .JSON, false, context.temp_allocator)
+	// The parser of the core library takes a string that the end of the
+	// input cuts before its closing quote: the reader checks that quote
+	// itself, with no backslash that escapes it.
+	whole := strings.trim_space(value)
+	if len(whole) < 2 || whole[0] != '"' || whole[len(whole) - 1] != '"' {
+		return "", false
+	}
+	backslashes := 0
+	for index := len(whole) - 2; index > 0 && whole[index] == '\\'; index -= 1 {
+		backslashes += 1
+	}
+	if backslashes % 2 == 1 {
+		return "", false
+	}
+	parsed, error := json.parse_string(whole, .JSON, false, context.temp_allocator)
 	if error != .None {
 		return "", false
 	}
@@ -440,6 +456,10 @@ processor_line :: proc(state: Processor_State, known: Known_Code) -> string {
 	switch code_place_kind(state, known) {
 	case .Kernel:
 		offset := state.instruction_address - u64(info.KERNEL_BASE)
+		if known.kernel_module == "" {
+			fmt.sbprintf(&builder, "the kernel, at the offset 0x%x: the table of the volumes names no kernel module for this volume", offset)
+			break
+		}
 		if known.kernel_debug_object == nil {
 			fmt.sbprintf(&builder, "the kernel: %s + 0x%x, with no debug object of %s", known.kernel_module, offset, known.kernel_module)
 			break
@@ -470,9 +490,17 @@ processor_line :: proc(state: Processor_State, known: Known_Code) -> string {
 @(private = "file")
 known_code_of :: proc(output, volume: string, firmware: Machine_Firmware) -> Known_Code {
 	known: Known_Code
-	known.kernel_module = volume == BOOT_VOLUME_WITHOUT_RETURN_CHECK ? "kernel_without_return_check" : "kernel"
-	if object, error := os.read_entire_file(debug_object_path(known.kernel_module), context.temp_allocator); error == nil && debug_object.check(object) == .None {
-		known.kernel_debug_object = object
+	// The kernel module of the volume comes from the table of the volumes,
+	// the one place that says which kernel each boot program holds.
+	for row in boot_volumes() {
+		if row.path == volume {
+			known.kernel_module = row.kernel
+		}
+	}
+	if known.kernel_module != "" {
+		if object, error := os.read_entire_file(debug_object_path(known.kernel_module), context.temp_allocator); error == nil && debug_object.check(object) == .None {
+			known.kernel_debug_object = object
+		}
 	}
 	code_variable, _, _, variables_suffix := firmware_files(firmware)
 	code_size, variables_size: i64 = -1, -1
