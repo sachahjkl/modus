@@ -20,7 +20,9 @@ import tree "modus:support/storage_tree"
 // The tool serves the data disk itself (network_block_device.odin), so it
 // knows each write that a flush made durable, and each write after the
 // last flush. A machine runs `notes`, which makes one commit for each step
-// of its count; the tool ends QEMU at a seeded moment, with no warning.
+// of its count; the disk loses its power at a write of a root that it
+// counts itself, from a step before the count and a seed, and the tool
+// then ends QEMU with no warning.
 //
 // A real disk then holds the durable image plus any subset of the later
 // writes, and the last of them can be torn (some of its sectors new, the
@@ -592,9 +594,16 @@ hard_image :: proc(durable: []u8, pending: []Pending_Write) -> (image: []u8, tor
 	return image, false
 }
 
+// The writes of a root after the count of a step Power_Loss_Arm, before the
+// cut: 1 to this, from the seed.
+POWER_LOSS_SEEDED_ROOTS :: 40
+
 // The first machine of each loss: a new disk, a note, then the count. The
-// tool ends QEMU in the middle of the count: at the count 300, the store
-// keeps each version (4500 blocks of limit); at the count 1200, the store is
+// disk loses its power in the middle of the count, at a commit that it
+// counts itself from before the key Tab: the program makes no other commit
+// then, so the commit n after the arm is the count n. In the first loss the
+// cut comes after the count 300, and the store keeps each version (4500
+// blocks of limit); in the second, after the count 1200, when the store is
 // at its limit, and each commit thins the oldest versions of the store.
 scenario_power_loss_early := [?]Step {
 	{kind = .Wait, text = "compositor: surface console", any_order = true}, // The storage service can start first, for the boot pass of settings.
@@ -603,7 +612,9 @@ scenario_power_loss_early := [?]Step {
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
 	{kind = .Type, text = "kept through a loss of power"},
+	// The line of Enter comes after the commit of each character.
 	{kind = .Wait, text = "notes: the note is \"kept through a loss of power\", generation "},
+	{kind = .Power_Loss_Arm, commits = 300},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "notes: count 300"},
 	{kind = .Power_Loss},
@@ -619,6 +630,7 @@ scenario_power_loss_thinning := [?]Step {
 	{kind = .Wait, text = "notes: the note is \"kept through a loss of power\", generation "},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
+	{kind = .Power_Loss_Arm, commits = 200},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "storage: the store notes is at its limit of 4500 blocks: the commit of generation ", any_order = true},
 	{kind = .Wait, text = "notes: count 1200"},
@@ -724,6 +736,11 @@ scenario_power_loss_settings_first := [?]Step {
 	{kind = .Wait, text = "[console]   module     settings"},
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       service"},
+	// The disk counts from before the line: the console saves its line
+	// history after each line, and the save of the line before can still
+	// come. The one commit let through takes it, so the cut falls in the
+	// 1000 commits of the records, at most 41 commits after their start.
+	{kind = .Power_Loss_Arm, commits = 1},
 	{kind = .Type, text = "settings.repeat(1000)"},
 	{kind = .Power_Loss},
 }
@@ -815,15 +832,27 @@ power_loss_settings_run :: proc() -> bool {
 // never a mix, each object byte for byte or block for block. The second
 // machine starts on the hard image, and ranges reads back what its cases
 // left.
+//
+// The disk starts its count at the block of the first commit of the loop,
+// which starts with RANGES_LOOP_MARKER, and lets the root of that commit
+// through: the commit in flight is one of the commits 2 to 41 of the 200 of
+// the loop, and the durable image has the object loop.
 scenario_power_loss_ranges := [?]Step {
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Front, text = "console"},
+	{kind = .Power_Loss_Arm, text = RANGES_LOOP_MARKER, commits = 1},
 	{kind = .Type, text = "start(\"ranges\")"},
 	{kind = .Wait, text = "ranges: a new store: the first run", any_order = true},
-	{kind = .Wait, text = "ranges: loop, 100 commits of 4 range writes, in "},
+	// The last case before the loop: the cut comes after it.
+	{kind = .Wait, text = "ranges: the removal of the second name frees its own blocks only, the first name reads its 1 MiB, and the second name written again takes no block: as it must"},
 	{kind = .Power_Loss},
 }
+
+// The bytes at the start of the object loop that the program ranges writes
+// in the first commit of its loop (src/programs/ranges/main.odin,
+// LOOP_MARKER): no other block of the disk starts with them.
+RANGES_LOOP_MARKER :: "ranges: the first commit of the loop of range commits"
 
 // stored_object_of gives an object of the contents of an image, or nil.
 stored_object_of :: proc(contents: ^Disk_Contents, store: string, name: string) -> ^Stored_Object {
