@@ -612,6 +612,25 @@ modustool: src/library/support/sentence/parse_test.odin:4: the test imports "cor
 
 **What it does not prove.** It does not prove that a contract package uses no kernel operation: that rule is held by review.
 
+## The table of the roles of the root service
+
+The root service gives each program of the boot image the role of its row in the table `program_roles` (`src/programs/root/roles.odin`): its start grants and the other terms of its role. A name with no row gets the zero role, so the tool keeps the table whole (`tools/modustool/program_roles_check.odin`). It reads the rows with the parser of Odin and refuses:
+
+- a program of the boot image (a source of `src/programs` in the boot image, not a disk program) with no row, the root service apart;
+- a row that names no module of the boot image, a disk program or the root service;
+- a program with two rows;
+- a grant that is no member of `start_grant.Grant`;
+- the grant System_Part on a row that the list `system_part_names` of the same file does not name, a name of that list with no row, and a part of the system whose row is not System_Part alone, with Serve beside it for the compositor, and no term: the debug access refuses a part of the system by that grant;
+- a row in another form than `{name = "<program>", grants = {.A, .B}, terms = {...}}` with no type, or terms that hold a comment.
+
+**When it runs.** Before the first compiler of each build starts, after the check of the imports, and when `modustool site` reads the table for the page of the grants. A fault stops the build with the file and the line:
+
+```
+modustool: src/programs/root/roles.odin: the program clock of the boot image has no row in program_roles: write its role, with no grant when it needs none
+```
+
+The host test `the_table_of_the_roles_is_whole` gives each fault to the check, the test `each_role_of_program_roles_takes_each_context_slot_once` checks that the handles of each row take one context slot each, and `the_layout_of_a_device_service_takes_each_slot_once` tries the ring of a device contract in each slot of the layout of a device service.
+
 ## The rules that a check holds
 
 Four rules of the system are checked when the tool builds, not only read.
@@ -966,6 +985,7 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 | `remote_client_table` | raw | The client table reads as it is written, and each decision on a key names the right row |
 | `isolated_call` | raw | `isolated.decode` of a description and a call region gives only slices inside the call region |
 | `ring_records` | raw | Each input event, terminal input, service command and root command is the member that its word names, or a refusal with the zero value |
+| `root_ring` | raw | The dispatch of a record of the root ring, for any role of its sender, stops at the border with `Unsupported` or at the sender with `No_Grant` exactly when the table of the senders refuses it; each word of a command and each refused Replace gives its member or its record; nothing changes |
 | `disk_grant_table` | raw | A table behind its tag holds rows by its rules, and encodes and decodes to its part that persists |
 | `system_description`, `boot_image_generated` | raw, generated | A description that `entries` accepts is the one that its writer gives; a boot image as built passes the checks, and a changed byte of a file or of the description fails them |
 | `vector_font` | raw | A font that `font_open` accepts gives each glyph, outline, pair and substitution, and draws a glyph |

@@ -2,7 +2,7 @@
 // its name, and the name of each one.
 //
 // The root service decides the start grants of a program
-// (`grants_of` in `src/programs/root/main.odin`). The list is a contract because
+// (`program_roles` in `src/programs/root/roles.odin`). The list is a contract because
 // a second party reads it: the root service puts the number of a start
 // grant in an error record when that grant refuses the debug access to a
 // program (errors.Unit.Debug_Access), and the reader of the record writes
@@ -47,7 +47,7 @@ Grant :: enum i64 {
 	Replace            = 12, // Change the replacement table of the machine (Root_Command.Replace).
 	Network            = 13, // An endpoint in the network service, with the grant of endpoint_of: datagrams, or segments of TCP.
 	Network_Device     = 14, // The frame service of the network device and its frame ring, and a control ring from the root service.
-	Connect            = 15, // A ring to the root service that serves Connect and Disconnect only, to the services of its role (program_role_rows in src/programs/root/roles.odin).
+	Connect            = 15, // A ring to the root service that serves Connect and Disconnect only, to the services of its role (program_roles in src/programs/root/roles.odin).
 	Schedule           = 16, // The machine, with the right Schedule: change the scheduling strategy of the machine.
 	Settings           = 17, // The settings page with Write (modus:contract/settings): the one writer of the settings of the machine.
 	Clock              = 18, // The date page with Write and the two ports of the real-time clock (modus:contract/date): the one writer of the date.

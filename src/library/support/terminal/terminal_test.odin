@@ -1,8 +1,47 @@
 #+build !freestanding
 package terminal_records
 
+import op "modus:contract/operation"
 import "modus:contract/ring"
+import "modus:support/system"
 import "core:testing"
+
+// The context of a terminal, as the root service starts it. A slot and a
+// value that the caller wrote already are refused first, and the handles
+// of the terminal stay out of them; then the whole layout: each slot with
+// its handle and its rights, the text region with Read only, the name and
+// the size of the window, and no refusal.
+@(test)
+the_context_of_a_terminal_takes_each_place_once :: proc(t: ^testing.T) {
+	handles := Terminal_Handles{display = 11, ring = 12, text = 13, writer = 14, log = {handle = 15, rights = {.Write}}}
+	name := system.name_pack("flood")
+	taken_grants: system.Context_Grants
+	taken_values: system.Context_Values
+	system.grant_put(&taken_grants, GRANT_TEXT, {handle = 99, rights = {.Read, .Write}})
+	system.value_put(&taken_values, VALUE_ROWS, 7)
+	context_of(&taken_grants, &taken_values, handles, name, COLUMNS_LIMIT, ROWS_LIMIT, true)
+	testing.expect_value(t, taken_grants.refusal, system.Context_Refusal{refused = true, place = GRANT_TEXT})
+	testing.expect_value(t, taken_grants.grants[GRANT_TEXT].handle, system.Handle(99))
+	testing.expect_value(t, taken_values.refusal, system.Context_Refusal{refused = true, place = VALUE_ROWS})
+	testing.expect_value(t, taken_values.values[VALUE_ROWS], u64(7))
+	grants: system.Context_Grants
+	values: system.Context_Values
+	context_of(&grants, &values, handles, name, COLUMNS_LIMIT, ROWS_LIMIT, true)
+	_, _, refused := system.context_refusal_of(&grants, &values)
+	testing.expect(t, !refused)
+	testing.expect_value(t, grants.grants[system.GRANT_DISPLAY], system.Grant{handle = 11, rights = {.Read, .Write}})
+	testing.expect_value(t, grants.grants[GRANT_RING], system.Grant{handle = 12, rights = {.Read, .Write}})
+	testing.expect_value(t, grants.grants[GRANT_TEXT], system.Grant{handle = 13, rights = {.Read}})
+	testing.expect_value(t, grants.grants[GRANT_PROGRAM], system.Grant{handle = 14, rights = {.Read}})
+	testing.expect_value(t, grants.grants[op.CONTEXT_LOG], handles.log)
+	testing.expect_value(t, grants.taken, bit_set[0 ..< op.CONTEXT_HANDLES; u16]{system.GRANT_DISPLAY, GRANT_RING, GRANT_TEXT, GRANT_PROGRAM, op.CONTEXT_LOG})
+	for word, index in name {
+		testing.expect_value(t, values.values[VALUE_NAME + index], word)
+	}
+	testing.expect_value(t, values.values[VALUE_COLUMNS], u64(COLUMNS_LIMIT))
+	testing.expect_value(t, values.values[VALUE_ROWS], u64(ROWS_LIMIT))
+	testing.expect_value(t, values.values[VALUE_MEASURE], u64(1))
+}
 
 // The program of a terminal writes the kind of each record of the terminal
 // ring: None, one past the last kind and the largest word are refused, and

@@ -44,8 +44,8 @@
 //
 // **Start**: nothing starts it by name. The root service starts one
 // terminal with each program that has the grant **Terminal**, and refuses
-// `start("terminal")`. It has no grant of `grants_of`: it receives only
-// the handles above.
+// `start("terminal")`. Its row of `program_roles` has the grant
+// System_Part only: it receives only the handles above.
 //
 // **What a reader sees**: a window with the name of the program, its
 // lines, a status bar that the program fills, the

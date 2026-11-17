@@ -188,6 +188,17 @@ fuzz_target_table := [?]Fuzz_Target {
 		regions = fuzz_ring_records_regions,
 	},
 	{
+		name = "root_ring",
+		kind = .Raw,
+		about = "contract/root_ring: the dispatch of a record stops at the border or the sender with its record, as the table of the senders says, and changes nothing",
+		packages = {SOURCE_FOLDER_CONTRACT + "/root_ring", SOURCE_FOLDER_CONTRACT + "/errors"},
+		input_limit = FUZZ_ROOT_RING_INPUT_LIMIT,
+		execute = fuzz_root_ring_execute,
+		seeds = fuzz_root_ring_seeds,
+		regions = fuzz_root_ring_regions,
+		start = fuzz_root_ring_start,
+	},
+	{
 		name = "disk_grant_table",
 		kind = .Raw,
 		about = "support/disk_program: a table behind its tag holds rows by its rules, and encodes and decodes to its part that persists",

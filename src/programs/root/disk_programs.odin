@@ -571,7 +571,7 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		slot.role = {grants = {.Store}}
 	}
 	context_grants: system.Context_Grants
-	values: [op.CONTEXT_VALUES]u64
+	values: system.Context_Values
 	system.grant_put(&context_grants, op.CONTEXT_LOG, {system.context_record().handles[op.CONTEXT_LOG], {.Write}})
 	display_memory, status := system.memory_create(ring.PAGE_COUNT)
 	if status != .Ok {
@@ -598,7 +598,7 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	date_page_give(mappings[:], &mapping_count, &values)
 	fresh_bytes_page_give(slot, mappings[:], &mapping_count, &values)
 	if system.image_resource_find(image, system.MEASURE_RUN_RESOURCE) != nil {
-		values[op.CONTEXT_VALUE_MEASURE_RUN] = 1
+		system.value_put(&values, op.CONTEXT_VALUE_MEASURE_RUN, 1)
 	}
 	text_settings_give(mappings[:], &mapping_count, &values)
 	// The store of the nickname, as start() gives a private store: the call
@@ -622,7 +622,7 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		system.grant_put(&context_grants, system.GRANT_STORAGE_SERVICE, {storage_service.program, {.Read}})
 		for &item in system.image_entries(image) {
 			if system.name_of(item.name[:]) == "storage" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
-				values[system.GRANT_VALUE_STORAGE_FILE_SIZE] = item.size
+				system.value_put(&values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
 				mappings[mapping_count] = {memory = image_memory, address = storage.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
 				mapping_count += 1
 			}
@@ -634,11 +634,14 @@ disk_program_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	// the programs of the boot image need. Its name selects no exception.
 	disk_programs: system.Handle
 	disk_programs, status = disk_programs_budget_get()
+	if status == .Ok && context_refused(name, &context_grants, &values) {
+		status = .Bad_State
+	}
 	if status == .Ok {
 		program_budget := disk_budget_of(file, name, disk_programs)
 		source := load_source()
 		source.files = store_files
-		program, status = system.program_start(file, name, context_grants.grants, random.values_with_seed(&program_generator, values), program_budget, mappings[:mapping_count], nil, source, load_error, disk_programs)
+		program, status = system.program_start(file, name, context_grants.grants, random.values_with_seed(&program_generator, values.values), program_budget, mappings[:mapping_count], nil, source, load_error, disk_programs)
 		if status == .No_Budget {
 			budget_refusal_log(name, program_budget, disk_programs, "the disk programs")
 		}
