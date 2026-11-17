@@ -221,3 +221,61 @@ the_processors_of_a_machine_are_read_and_named :: proc(t: ^testing.T) {
 		testing.expect(t, halted[0].halted)
 	}
 }
+
+// The text that QEMU 10.2.4 printed for `info registers -a` and `info cpus`
+// of a machine with two processors that waits for its start: a real text,
+// with the ends of line of the monitor.
+QEMU_REAL_REGISTERS ::
+	"CPU#0\r\n" +
+	"EAX=00000000 EBX=00000000 ECX=00000000 EDX=00060fb1\r\n" +
+	"ESI=00000000 EDI=00000000 EBP=00000000 ESP=00000000\r\n" +
+	"EIP=0000fff0 EFL=00000002 [-------] CPL=0 II=0 A20=1 SMM=0 HLT=0\r\n" +
+	"ES =0000 00000000 0000ffff 00009300\r\n" +
+	"CS =f000 ffff0000 0000ffff 00009b00\r\n" +
+	"SS =0000 00000000 0000ffff 00009300\r\n" +
+	"DS =0000 00000000 0000ffff 00009300\r\n" +
+	"FS =0000 00000000 0000ffff 00009300\r\n" +
+	"GS =0000 00000000 0000ffff 00009300\r\n" +
+	"LDT=0000 00000000 0000ffff 00008200\r\n" +
+	"TR =0000 00000000 0000ffff 00008b00\r\n" +
+	"GDT=     00000000 0000ffff\r\n" +
+	"IDT=     00000000 0000ffff\r\n" +
+	"CR0=60000010 CR2=00000000 CR3=00000000 CR4=00000000\r\n" +
+	"DR0=0000000000000000 DR1=0000000000000000 DR2=0000000000000000 DR3=0000000000000000 \r\n" +
+	"DR6=00000000ffff0ff0 DR7=0000000000000400\r\n" +
+	"EFER=0000000000000000\r\n" +
+	"FCW=037f FSW=0000 [ST=0] FTW=00 MXCSR=00001f80\r\n" +
+	"FPR0=0000000000000000 0000 FPR1=0000000000000000 0000\r\n" +
+	"XMM00=0000000000000000 0000000000000000 XMM01=0000000000000000 0000000000000000\r\n" +
+	"\r\n" +
+	"CPU#1\r\n" +
+	"EAX=00000000 EBX=00000000 ECX=00000000 EDX=00060fb1\r\n" +
+	"ESI=00000000 EDI=00000000 EBP=00000000 ESP=00000000\r\n" +
+	"EIP=0000fff0 EFL=00000002 [-------] CPL=0 II=0 A20=1 SMM=0 HLT=1\r\n" +
+	"ES =0000 00000000 0000ffff 00009300\r\n" +
+	"CS =f000 ffff0000 0000ffff 00009b00\r\n" +
+	"SS =0000 00000000 0000ffff 00009300\r\n" +
+	"GDT=     00000000 0000ffff\r\n" +
+	"CR0=60000010 CR2=00000000 CR3=00000000 CR4=00000000\r\n" +
+	"EFER=0000000000000000\r\n" +
+	"XMM00=0000000000000000 0000000000000000 XMM01=0000000000000000 0000000000000000\r\n"
+QEMU_REAL_PROCESSORS :: "* CPU #0: thread_id=3430400 model=qemu64\r\n  CPU #1: thread_id=3430401 model=qemu64\r\n"
+
+@(test)
+processor_state_of_a_real_text_of_qemu :: proc(t: ^testing.T) {
+	states, fault, _ := processor_registers_read(QEMU_REAL_REGISTERS)
+	testing.expect_value(t, fault, Processor_Read_Fault.None)
+	if testing.expect_value(t, len(states), 2) {
+		// The reset vector: the base of CS and EIP.
+		testing.expect_value(t, states[0].instruction_address, 0xffff_fff0)
+		testing.expect(t, !states[0].halted)
+		testing.expect(t, states[1].halted)
+		testing.expect_value(t, states[1].privilege_level, 0)
+	}
+	entries, list_fault, _ := processor_list_read(QEMU_REAL_PROCESSORS)
+	testing.expect_value(t, list_fault, Processor_Read_Fault.None)
+	if testing.expect_value(t, len(entries), 2) {
+		testing.expect(t, entries[0].current)
+		testing.expect_value(t, entries[1].host_thread, 3430401)
+	}
+}
