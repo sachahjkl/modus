@@ -51,10 +51,12 @@ import "modus:contract/ring"
 import store_contract "modus:contract/store"
 import "modus:support/system"
 
-GRANT_RING :: 7 // Memory: the call ring.
-GRANT_REGION :: 8 // Memory: the call region.
-GRANT_SERVICE :: 9 // The storage service, with the right Read: its state.
-VALUE_FILE_SIZE :: 3 // The size of the file of the storage service.
+// The slots of the context of a program with a private store, in the one
+// table of the context slots (src/library/support/system/grants.odin).
+GRANT_RING :: system.GRANT_STORAGE_RING // Memory: the call ring.
+GRANT_REGION :: system.GRANT_STORAGE_REGION // Memory: the call region.
+GRANT_SERVICE :: system.GRANT_STORAGE_SERVICE // The storage service, with the right Read: its state.
+VALUE_FILE_SIZE :: system.GRANT_VALUE_STORAGE_FILE_SIZE // The size of the file of the storage service.
 
 // A place of the connection (docs/STORAGE.md, "Places"). It is distinct:
 // a generation, a size or a count is not a place.

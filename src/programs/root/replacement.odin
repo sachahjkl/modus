@@ -18,6 +18,7 @@ package root
 import "modus:contract/errors"
 import "modus:contract/replacement_list"
 import "modus:support/replacement_signature"
+import "modus:contract/root_ring"
 import "modus:support/system"
 
 // replace changes the replacement table of the machine, for a program with
@@ -26,7 +27,7 @@ import "modus:support/system"
 // record. It writes the error record of a refusal in values.
 replace :: proc "contextless" (asker: ^Started, name: string, by: u64, values: ^[7]u64) -> system.Status {
 	status, decision := replacement_table_change(asker, name, by)
-	replace_command := u32(system.Root_Command.Replace)
+	replace_command := u32(root_ring.Root_Command.Replace)
 	switch {
 	case status == .Ok:
 	case decision == .No_Row || decision == .No_List:
@@ -36,7 +37,7 @@ replace :: proc "contextless" (asker: ^Started, name: string, by: u64, values: ^
 	case decision == .List_Not_Valid:
 		values^ = errors.ring_fail(replace_command, .Refused, .None, 2, i64(by), 0, i64(status))
 	case:
-		values^ = refusal(.Replace, name, by, status)
+		values^ = root_command_refusal(.Replace, name, by, status)
 	}
 	return status
 }
@@ -46,7 +47,7 @@ replace :: proc "contextless" (asker: ^Started, name: string, by: u64, values: ^
 // Then it refuses a pair that no row signed by the signing key of the
 // system names. decision is Accepted for every other result.
 replacement_table_change :: proc "contextless" (asker: ^Started, name: string, by: u64) -> (status: system.Status, decision: replacement_signature.Decision) {
-	if .Replace not_in grants_of(system.name_of(asker.name[:])) {
+	if .Replace not_in asker.role.grants {
 		return .No_Right, .Accepted
 	}
 	entries := system.image_entries(image)

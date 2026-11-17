@@ -69,6 +69,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/isolated",
 	SOURCE_FOLDER_CONTRACT + "/pointer_pictures",
 	SOURCE_FOLDER_CONTRACT + "/remote",
+	SOURCE_FOLDER_CONTRACT + "/root_ring",
+	SOURCE_FOLDER_CONTRACT + "/enum_word",
 	SOURCE_FOLDER_SUPPORT + "/sentence",
 	SOURCE_FOLDER_SUPPORT + "/cryptography/vectors",
 	SOURCE_FOLDER_MODULES + "/cryptography",

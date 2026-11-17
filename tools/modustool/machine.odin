@@ -50,7 +50,7 @@ KEYS_HELD_LINE :: "1000 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 
 
 // The places of the scroll bar of the window of the console, inside its
 // surface (src/programs/terminal/main.odin, layout; src/programs/root/main.odin,
-// terminal_of: 96 columns and 26 rows). The surface is 8 + 96 * 8 + 7 + 17
+// role_terminal: 96 columns and 26 rows). The surface is 8 + 96 * 8 + 7 + 17
 // = 800 pixels wide; the bar is its last 17 pixels, from y = 0 to the line
 // over the status at 8 + 26 * 16 + 8 - 4 = 428, with an arrow button of 17
 // pixels at each end. A press on a button of the bar names it
@@ -2985,7 +2985,7 @@ scenario := [?]Step {
 	// A table from the host: rows of field values go into the call region
 	// of the monitor. A Change table is refused by the tool: its rows would
 	// not come back. The service sample is not reachable from the network
-	// (callable_of("remote")).
+	// (the row of remote in program_role_rows).
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"processors\")])", expected = "2 rows of Count"},
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"nothing\")])", outcome = .Failed, expected = "names nothing that exists"},
 	// The table of error details: each row that names nothing, not only the first.

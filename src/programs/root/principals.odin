@@ -1,9 +1,11 @@
 package root
 
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/system_description"
 import "modus:support/principals"
+import "modus:contract/root_ring"
 import "modus:support/system"
 
 // The principals in the root service (docs/PRINCIPALS.md).
@@ -33,7 +35,7 @@ import "modus:support/system"
 // of the named principal (persisted_grant_table.odin).
 
 Principal_Record :: struct {
-	state:       system.Principal_State,
+	state:       root_ring.Principal_State,
 	name:        [principals.NAME_LIMIT]u8,
 	name_length: int,
 	public_key:  [32]u8, // Ed25519: the key that signs the grants of the principal. Principal 0: none in this system yet.
@@ -43,18 +45,21 @@ Principal_Record :: struct {
 
 principal_records: [principals.PRINCIPAL_CAPACITY]Principal_Record
 
-// What start() gives to the next start of `unlock` (principals.VALUE_MODE):
-// to unlock, to create the principal with this name, or to set the machine
-// passphrase.
-unlock_mode: principals.Unlock_Mode
-unlock_name: [principals.NAME_LIMIT]u8
-unlock_name_length: int
-// True only while unlock_start starts `unlock`: a start by name from a
-// ring or from the desktop is refused (start).
-unlock_start_asked: bool
-// The mode of the last `unlock` that started: the line of a lock that
-// stops it names what it ran for (principal_lock).
-unlock_running_mode: principals.Unlock_Mode
+// What the one `unlock` of this service does now. One `unlock` runs at a
+// time: two runs would share the ring of the principals and the ring and
+// the region of the TPM service.
+Unlock_Stage :: enum u8 {
+	Stopped, // No `unlock` runs.
+	// unlock_start runs start("unlock"): the one moment at which start
+	// takes the name. A start by name from a ring or from the desktop is
+	// refused.
+	Starting,
+	Running, // It runs for its mode.
+	// It runs, and this service asked its stop (a close of its window, a
+	// lock): its stop does not count toward the bound of its restarts.
+	Stop_Asked,
+}
+
 // The stops of `unlock` that the root service did not ask, while a
 // principal is locked, whatever their code, and its starts that failed for
 // another cause than a full table, since the last lock or the last start
@@ -64,10 +69,21 @@ unlock_running_mode: principals.Unlock_Mode
 // window and a stop at a lock are asked by the root service, so they never
 // count: closes by mistake never reach the bound.
 UNLOCK_RESTART_LIMIT :: 3
-unlock_failed_stops: int
-// The root service asked the stop of the `unlock` that runs (a close of
-// its window, a lock): its stop does not count.
-unlock_stop_asked: bool
+
+// The one `unlock` of this service: its stage, and what each stage reads.
+Unlock_Run :: struct {
+	stage:        Unlock_Stage,
+	// Starting: what start() gives to `unlock` (VALUE_MODE): to unlock, to
+	// create the principal with the name below, to set the machine
+	// passphrase. Running and Stop_Asked: what it runs for, which the line
+	// of a lock that stops it names (principal_lock).
+	mode:         principals.Unlock_Mode,
+	name:         [principals.NAME_LIMIT]u8, // Starting: the name of the principal to create.
+	name_length:  int,
+	failed_stops: int, // Below UNLOCK_RESTART_LIMIT: see above.
+}
+
+unlock_run: Unlock_Run
 
 // The change in progress: the caller of Principal_Change waits for its
 // completion until `unlock` gives the end, or stops (principal_change_end,
@@ -118,21 +134,50 @@ principals_start :: proc "contextless" () {
 // stops at once, and the machine runs as principal 0 only), after a lock,
 // to create a principal, or to set the machine passphrase.
 unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string) -> system.Status {
-	unlock_mode = mode
-	unlock_name_length = copy(unlock_name[:], name)
-	unlock_start_asked = true
-	status := start("unlock")
-	unlock_start_asked = false
-	if status == .Ok {
-		unlock_running_mode = mode
+	status := system.Status.Bad_State
+	// An `unlock` that runs keeps its stage: it is reaped first.
+	if unlock_run.stage == .Stopped {
+		unlock_run.stage = .Starting
+		unlock_run.mode = mode
+		unlock_run.name_length = copy(unlock_run.name[:], name)
+		status = start("unlock")
+		unlock_run.name = {}
+		unlock_run.name_length = 0
+		unlock_run.stage = status == .Ok ? .Running : .Stopped
 	}
-	unlock_mode = .Unlock
-	unlock_name_length = 0
-	unlock_name = {}
 	if status != .Ok {
 		system.log_in("programs", .Warning, "root: unlock did not start (status ", status, "): no named principal can be created or unlocked")
 	}
 	return status
+}
+
+// unlock_values_write writes the values of the context of the `unlock`
+// that starts: its mode and the name of the principal to create. After a
+// lock this service holds the key of the table of principal 0: unlock
+// does not ask for the machine passphrase again.
+unlock_values_write :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) {
+	start_mode := unlock_run.mode
+	if start_mode == .Unlock && machine_key_held() {
+		start_mode = .Unlock_Machine_Key_Held
+	}
+	values[system.GRANT_VALUE_UNLOCK_MODE] = u64(start_mode)
+	packed := principals.name_pack(string(unlock_run.name[:unlock_run.name_length]))
+	copy(values^[system.GRANT_VALUE_UNLOCK_NAME:][:3], packed[:])
+}
+
+// unlock_stop_ask says that this service asks the stop of the `unlock`
+// that runs: its stop does not count.
+unlock_stop_ask :: proc "contextless" () {
+	if unlock_run.stage == .Running {
+		unlock_run.stage = .Stop_Asked
+	}
+}
+
+// unlock_creating says if the `unlock` that runs creates a named
+// principal: a reader of the records sees the state Creating, and the first
+// record that it gives is a record of this run.
+unlock_creating :: proc "contextless" () -> bool {
+	return (unlock_run.stage == .Running || unlock_run.stage == .Stop_Asked) && unlock_run.mode == .Create_Principal
 }
 
 // A creation never runs during a session while the system holds one named
@@ -152,9 +197,7 @@ principal_create :: proc "contextless" (name: string) -> system.Status {
 		return .Bad_State
 	}
 	system.log_in("programs", .Info, "root: the principal \"", name, "\" is created in the window of unlock")
-	status := unlock_start(.Create_Principal, name)
-	unlock_creating = status == .Ok
-	return status
+	return unlock_start(.Create_Principal, name)
 }
 
 // principal_record takes the public part of the record of a named
@@ -179,8 +222,7 @@ principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 	record^ = {state = .Locked, name = name, name_length = name_length, public_key = public_key}
 	// Only a record that `unlock` made in this run lets its first key write
 	// over a table that does not verify (principal_key_take).
-	principal_created_in_this_run[1] = unlock_creating
-	unlock_creating = false
+	principal_created_in_this_run[1] = unlock_creating()
 	completion^[0] = 1
 	digits := system_description.hexadecimal(public_key)
 	system.log_in("programs", .Info, "root: principal 1 \"", principal_name(1), "\" is recorded, its public key ", string(digits[:16]), "...; its session is locked")
@@ -195,7 +237,7 @@ principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 // completion: the values of the command hold a key where a name would be,
 // so the record of `refusal` is never built from them.
 principal_unlock :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> system.Status {
-	kind := u32(system.Root_Command.Principal_Unlock)
+	kind := u32(root_ring.Root_Command.Principal_Unlock)
 	number := values[4]
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state == .Absent {
 		completion^ = errors.ring_fail(kind, .Absent, .Principals, 2, i64(min(number, 1 << 62)))
@@ -212,7 +254,7 @@ principal_unlock :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 	principal_records[number].state = .Unlocked
 	// The client keys that the principal allowed take calls again.
 	remote_clients_session_changed(number, false)
-	unlock_failed_stops = 0
+	unlock_run.failed_stops = 0
 	system.log_in("programs", .Info, "root: the session of principal ", number, " \"", principal_name(number), "\" starts: the desktop starts each program in it")
 	return .Ok
 }
@@ -241,7 +283,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	remote_clients_session_changed(number, true)
 	completion^[0] = count
 	system.log_in("programs", .Info, "root: the session of principal ", number, " \"", principal_name(number), "\" ends: ", count, " programs stopped")
-	unlock_failed_stops = 0
+	unlock_run.failed_stops = 0
 	// One `unlock` runs at a time. During a session only the session can
 	// have asked for it (a change, a machine passphrase, a seal of the
 	// machine key), so it stops with the session, whatever its mode: else
@@ -252,9 +294,9 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	// The `unlock` of the lock starts after the reap
 	// (unlock_for_a_locked_principal).
 	if running := find("unlock"); running != nil {
-		unlock_stop_asked = true
+		unlock_stop_ask()
 		system.call(.Program_Stop, u64(running.program), 0)
-		system.log_in("programs", .Info, "root: the lock stops the window of unlock, which ran for ", principals.mode_words(unlock_running_mode), "; unlock asks for the passphrase when it stopped")
+		system.log_in("programs", .Info, "root: the lock stops the window of unlock, which ran for ", principals.mode_words(unlock_run.mode), "; unlock asks for the passphrase when it stopped")
 		return .Ok
 	}
 	unlock_start(.Unlock, "")
@@ -268,15 +310,14 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 // a fault is.
 unlock_stopped :: proc "contextless" () {
 	// A creation that stopped before it gave its record created nothing:
-	// a later `unlock` is not a creation.
-	unlock_creating = false
-	asked := unlock_stop_asked
-	unlock_stop_asked = false
+	// the stage Stopped says that no `unlock` creates.
+	asked := unlock_run.stage == .Stop_Asked
+	unlock_run.stage = .Stopped
 	if asked || !principal_locked() {
 		return
 	}
-	unlock_failed_stops += 1
-	if unlock_failed_stops == UNLOCK_RESTART_LIMIT {
+	unlock_run.failed_stops += 1
+	if unlock_run.failed_stops == UNLOCK_RESTART_LIMIT {
 		system.log_in("programs", .Warning, "root: unlock stopped ", u64(UNLOCK_RESTART_LIMIT), " times while a principal is locked, with no stop that the root service asked: it starts no more until the machine starts again")
 	}
 }
@@ -297,13 +338,13 @@ principal_locked :: proc "contextless" () -> bool {
 // all reach the same rule, so no path leaves the principal locked with no
 // way in. The main loop calls it after each reap.
 unlock_for_a_locked_principal :: proc "contextless" () {
-	if !principal_locked() || find("unlock") != nil || unlock_failed_stops >= UNLOCK_RESTART_LIMIT {
+	if !principal_locked() || find("unlock") != nil || unlock_run.failed_stops >= UNLOCK_RESTART_LIMIT {
 		return
 	}
 	// A full table is not counted: a slot comes free only with a stop, and
 	// a stop is an event, so the next pass tries again with no hot loop.
 	if status := unlock_start(.Unlock, ""); status != .Ok && status != .No_Slot {
-		unlock_failed_stops += 1
+		unlock_run.failed_stops += 1
 	}
 }
 
@@ -311,17 +352,17 @@ unlock_for_a_locked_principal :: proc "contextless" () {
 // `unlock` sends: the change ended. The end goes to the caller of
 // Principal_Change.
 principal_change_end :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> system.Status {
-	kind := u32(system.Root_Command.Principal_Change_End)
+	kind := u32(root_ring.Root_Command.Principal_Change_End)
 	if !principal_change_waiting {
 		completion^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
-	end, end_status, end_refusal := system.ring_member_of_word(principals.Change_End, values[4], .Principal_Change_End, 2)
+	end, end_status, end_refusal := root_ring.member_of_word(principals.Change_End, values[4], .Principal_Change_End, 2)
 	if end_status != .Ok {
 		completion^ = end_refusal
 		return end_status
 	}
-	problem, problem_status, problem_refusal := system.ring_member_of_word(principals.Change_Problem, values[5], .Principal_Change_End, 3)
+	problem, problem_status, problem_refusal := root_ring.member_of_word(principals.Change_Problem, values[5], .Principal_Change_End, 3)
 	if problem_status != .Ok {
 		completion^ = problem_refusal
 		return problem_status
@@ -378,12 +419,12 @@ principal_change :: proc "contextless" (caller: ^Started, tag: u32, change: u64,
 }
 
 principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, values: ^[7]u64) -> (status: system.Status, held: bool) {
-	kind := u32(system.Root_Command.Principal_Change)
+	kind := u32(root_ring.Root_Command.Principal_Change)
 	if .Acts_For_Principal not_in grants_held(caller) {
 		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
 		return .No_Right, false
 	}
-	asked, asked_status, asked_refusal := system.ring_member_of_word(system.Principal_Change, change, .Principal_Change, 2)
+	asked, asked_status, asked_refusal := root_ring.member_of_word(root_ring.Principal_Change, change, .Principal_Change, 2)
 	if asked_status != .Ok {
 		values^ = asked_refusal
 		return asked_status, false
@@ -431,7 +472,7 @@ principal_read :: proc "contextless" (number: u64, completion: ^[7]u64) -> syste
 	}
 	record := &principal_records[number]
 	state := record.state
-	if state == .Absent && number != principals.MACHINE && find("unlock") != nil && unlock_creating {
+	if state == .Absent && number != principals.MACHINE && find("unlock") != nil && unlock_creating() {
 		state = .Creating
 	}
 	if state == .Absent {
@@ -443,10 +484,6 @@ principal_read :: proc "contextless" (number: u64, completion: ^[7]u64) -> syste
 	completion^ = {u64(state), packed[0], packed[1], packed[2], packed[3], key[0], record.measured ? measure[0] : 0}
 	return .Ok
 }
-
-// Set while `unlock` runs to create a principal: a reader of the records
-// sees the state Creating.
-unlock_creating: bool
 
 // For each principal: its record was made by a creation in this run of the
 // machine, not read from a file that existed. Only such a principal can

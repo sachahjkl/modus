@@ -63,7 +63,7 @@ font_service_start :: proc "contextless" () {
 	}
 	slot: ^Started
 	for &item in started {
-		if item.program == 0 {
+		if place_is_free(&item) {
 			slot = &item
 			break
 		}
@@ -76,7 +76,7 @@ font_service_start :: proc "contextless" () {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	grants[demand_cache.SERVICE_GRANT_CACHE] = {demand_cache_memory, {.Read, .Write}}
-	grants[op.CONTEXT_LOG] = log_grant(FONT_SERVICE_NAME)
+	grants[op.CONTEXT_LOG] = log_grant(role_of(FONT_SERVICE_NAME))
 	// The outlines, read-only, from the boot image: the mapping has no flag.
 	mappings := [1]system.Mapping{font_outlines_mapping}
 	mappings[0].flags = {}
@@ -93,7 +93,7 @@ font_service_start :: proc "contextless" () {
 			slot.hash = item.hash
 		}
 	}
-	slot.role = {.System_Part}
+	slot.role = {grants = {.System_Part}}
 	copy(slot.name[:len(slot.name) - 1], FONT_SERVICE_NAME)
 	font_service = slot
 	started_log(FONT_SERVICE_NAME, principals.MACHINE, "")

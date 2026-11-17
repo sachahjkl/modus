@@ -2,6 +2,7 @@
 package disk_program
 
 import "core:testing"
+import "modus:contract/root_ring"
 import "modus:contract/start_grant"
 
 @(private = "file")
@@ -406,4 +407,25 @@ client_keys_through_the_persisted_form :: proc(t: ^testing.T) {
 	read, problem = table_decode(bytes[:], &key)
 	testing.expect(t, problem == .None && read.client_key_count == 0)
 	testing.expect_value(t, table.client_key_count, 2)
+}
+
+// No command gives a disk program a start grant of a root ring: each grant
+// of ROOT_RING_GRANTS is Never, and each grant that a command gives now or
+// could give later is outside them. A disk program then has no root ring,
+// whatever its nickname, and sends no command of the root ring.
+@(test)
+no_command_gives_a_disk_program_a_root_ring :: proc(t: ^testing.T) {
+	for grant in root_ring.ROOT_RING_GRANTS {
+		_, answer := grant_by_command(grant)
+		testing.expectf(t, answer == .Never, "a command can give a disk program the grant %v of a root ring: %v", grant, answer)
+	}
+	given_by_a_command: bit_set[start_grant.Grant]
+	for grant in start_grant.Grant {
+		if _, answer := grant_by_command(grant); answer != .Never {
+			testing.expectf(t, grant not_in root_ring.ROOT_RING_GRANTS, "a command can give a disk program the grant %v of a root ring", grant)
+			given_by_a_command += {grant}
+		}
+	}
+	testing.expect(t, !root_ring.root_ring_given(given_by_a_command))
+	testing.expect(t, .Store in given_by_a_command)
 }

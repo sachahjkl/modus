@@ -82,6 +82,7 @@ import "modus:support/storage"
 import terminal "modus:support/terminal"
 import "modus:contract/ring"
 import "modus:support/random"
+import "modus:contract/root_ring"
 import "modus:support/system"
 import "base:intrinsics"
 
@@ -490,7 +491,7 @@ tally_load :: proc "contextless" () -> bool {
 	return true
 }
 
-requests: ring.Ring // To the root service: Connect only (the grant Connect), and callable_of gives this program no service.
+requests: ring.Ring // To the root service: Connect only (the grant Connect), and its role in the root service names no service.
 has_requests: bool
 request_tag: u32
 
@@ -502,7 +503,7 @@ root_connect :: proc "contextless" (name: string) -> (completion: ring.Record, o
 	}
 	request_tag += 1
 	packed := system.name_pack(name)
-	if !system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
+	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
 		return {}, false
 	}
 	// The bound only ends a hang.
@@ -552,7 +553,7 @@ case_root_connect :: proc "contextless" (writer: ^system.Writer) -> bool {
 		return false
 	}
 	error := errors.completion_record(completion.values)
-	system.ring_error_text(writer, &error, "root", system.root_command_name(error.operation), system.root_argument_name(error.operation, error.argument))
+	system.ring_error_text(writer, &error, "root", root_ring.root_command_name(error.operation), root_ring.root_argument_name(error.operation, error.argument))
 	return system.Status(completion.kind) == .No_Right && errors.Kind(error.kind) == .No_Grant && errors.Unit(error.unit) == .Connection
 }
 

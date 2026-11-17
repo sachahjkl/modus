@@ -60,7 +60,7 @@
 // - **Remote_Clients**: the client table, read-only: the key of each
 //   client that a principal allowed, and that principal.
 // - **Connect**: a ring to the root service for `Connect` and `Disconnect`,
-//   to the services of `callable_of`: compositor, date, debugger, inspect,
+//   to the services of its role (`program_role_rows`): compositor, date, debugger, inspect,
 //   log, manual, monitor, settings and storage, each for one row of the
 //   client table. A call to another service fails with the refusal of the
 //   root service.
@@ -86,6 +86,7 @@ import "modus:support/interface"
 import "modus:support/network"
 import "modus:support/quic"
 import "modus:support/random"
+import "modus:contract/root_ring"
 import "modus:support/system"
 
 // 2 QUIC connections of about 85 KiB each, 8 streams of about 130 KiB for
@@ -269,7 +270,7 @@ Service_Connection :: struct {
 	count:         u64, // The calls through this connection.
 }
 
-// The 9 services of callable_of("remote") in the root service, for each of
+// The 9 services of the row of "remote" in program_role_rows in the root service, for each of
 // the CAPACITY connections, each of which can have a key of another row.
 SERVICE_CONNECTION_CAPACITY :: 24
 
@@ -978,7 +979,7 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 	packed := system.name_pack(name)
 	request_tag += 1
 	// values[4] names the row from 1, as the root service takes it.
-	if !system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(client.row + 1), 5 = client.serial}}) {
+	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(client.row + 1), 5 = client.serial}}) {
 		return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(system.Status.No_Slot))
 	}
 	limit := system.time() + CONNECT_LIMIT
@@ -1044,7 +1045,7 @@ connection_end :: proc "contextless" (connection: ^Service_Connection, tell: boo
 	if tell {
 		packed := system.name_pack(remote.name_text(&connection.name))
 		request_tag += 1
-		system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection.row + 1)}})
+		system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection.row + 1)}})
 	}
 	if connection.calls.head != nil {
 		system.ring_close(&connection.calls)
