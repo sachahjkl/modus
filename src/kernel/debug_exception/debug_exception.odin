@@ -2,12 +2,11 @@
 // hypervisor gave again: an int1 whose delivery was cut, given as a fault
 // before the int1 ran. It is a kernel part: the kernel alone compiles it
 // in, and it reads what the processor that the hypervisor shows gives. The
-// procedure is pure: it takes the bytes that
-// the kernel read, so the host tests try each edge with no machine. The
-// kernel calls it from debug_exception_is_dropped
-// (src/kernel/breakpoints.odin), which reads each byte by itself, also
-// across the border of two pages; the guide is docs/ARCHITECTURE.md, "The
-// fault ring".
+// procedure is pure: it takes the bytes that the kernel read, so the host
+// tests try each edge with no machine. The kernel calls it from
+// debug_exception_is_dropped (src/kernel/breakpoints.odin), which reads
+// each byte by itself, also across the border of two pages; the guide is
+// docs/ARCHITECTURE.md, "The fault ring".
 //
 // This package allocates no memory and calls no kernel operation.
 package debug_exception

@@ -144,10 +144,10 @@ library_import_paths_that_the_rule_allows :: proc(t: ^testing.T) {
 		}
 	}
 
-	// A kernel part: the kernel itself ("kernel:" alone) and a path with
-	// ".." are refused in each form, a kernel part in each form outside the
+	// A kernel part: the kernel itself ("kernel:" alone, "kernel:."), a path
+	// with a part "." or ".." are refused in each form, a kernel part in each form outside the
 	// kernel, and the last case, a kernel part in the kernel and its tests.
-	for path in ([]string{KERNEL_IMPORT_START, KERNEL_IMPORT_START + "../programs/clock", KERNEL_IMPORT_START + "iommu/../../programs"}) {
+	for path in ([]string{KERNEL_IMPORT_START, KERNEL_IMPORT_START + ".", KERNEL_IMPORT_START + "./iommu", KERNEL_IMPORT_START + "iommu/.", CONTRACT_IMPORT_START + "./ring", KERNEL_IMPORT_START + "../programs/clock", KERNEL_IMPORT_START + "iommu/../../programs"}) {
 		for form in ([]Library_Source_Form{kernel_source, kernel_test, contract_source, contract_test, system_source, system_test, copied_source}) {
 			testing.expectf(t, !library_import_is_allowed(path, form), "%q is refused in %v", path, form)
 		}
@@ -232,9 +232,19 @@ library_import_of_a_kernel_part_outside_the_kernel_is_refused :: proc(t: ^testin
 	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/device.odin", "package ring\n\nimport \"" + part + "\"\n")
 	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/itself.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + "\"\n")
 	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/around.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + "../programs/clock\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/here.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + ".\"\n")
+	// A host test outside the kernel reaches a kernel part by a relative
+	// path, which the compiler accepts there: once to a part, once to the
+	// folder of the kernel itself.
+	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/reach_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"../../../kernel/iommu\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/whole_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"../../../kernel\"\n")
 	reading, read_ok := library_import_breaches_of_tree(root)
 	testing.expect(t, read_ok)
-	testing.expectf(t, len(reading.breaches[:]) == 6, "%v", reading.breaches[:])
+	testing.expectf(t, len(reading.breaches[:]) == 9, "%v", reading.breaches[:])
+	relative, relative_found := breach_of_file(reading.breaches[:], SOURCE_FOLDER_SUPPORT + "/sentence/reach_test.odin")
+	testing.expect(t, relative_found, "the test that reaches a kernel part by a relative path is not named")
+	testing.expect_value(t, relative.line, 5)
+	testing.expect_value(t, relative.text, "\"../../../kernel/iommu\"")
 	module, module_found := breach_of_file(reading.breaches[:], SOURCE_FOLDER_PROGRAMS + "/clock/main.odin")
 	testing.expect(t, module_found, "the module that imports a kernel part is not named")
 	testing.expect_value(t, module.line, 4)
@@ -243,20 +253,89 @@ library_import_of_a_kernel_part_outside_the_kernel_is_refused :: proc(t: ^testin
 	sentence := library_import_breach_sentence(module)
 	testing.expect(t, strings.contains(sentence, SOURCE_FOLDER_PROGRAMS + "/clock/main.odin:4: the import \"" + part + "\" is refused"), sentence)
 	testing.expect(t, strings.contains(sentence, "is imported from " + SOURCE_FOLDER_KERNEL + " only"), sentence)
-	for file in ([]string{SOURCE_FOLDER_SUPPORT + "/sentence/tables.odin", SOURCE_FOLDER_SUPPORT + "/sentence/tables_test.odin", SOURCE_FOLDER_CONTRACT + "/ring/device.odin", SOURCE_FOLDER_KERNEL + "/itself.odin", SOURCE_FOLDER_KERNEL + "/around.odin"}) {
+	for file in ([]string{SOURCE_FOLDER_SUPPORT + "/sentence/tables.odin", SOURCE_FOLDER_SUPPORT + "/sentence/tables_test.odin", SOURCE_FOLDER_CONTRACT + "/ring/device.odin", SOURCE_FOLDER_KERNEL + "/itself.odin", SOURCE_FOLDER_KERNEL + "/around.odin", SOURCE_FOLDER_KERNEL + "/here.odin", SOURCE_FOLDER_SUPPORT + "/sentence/whole_test.odin"}) {
 		testing.expectf(t, breach_count_of_file(reading.breaches[:], file) == 1, "%s: the import is not refused one time", file)
 	}
 
 	// The kernel, a kernel part that imports another part and a contract
-	// package, and the host test of the part.
+	// package, the host test of the part, and a host test of the library
+	// whose relative path lands beside the kernel, not in it.
 	clean := library_tree_make(t)
 	defer os.remove_all(clean)
+	library_tree_file_write(clean, SOURCE_FOLDER_SUPPORT + "/sentence/beside_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"../../../modules/cryptography\"\nimport \"../../../kernel_notes\"\n")
 	library_tree_folder_make(clean, SOURCE_FOLDER_KERNEL + "/iommu")
 	library_tree_folder_make(clean, SOURCE_FOLDER_KERNEL + "/acpi_processors")
 	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/devices.odin", "package kernel\n\nimport iommu \"" + part + "\"\n")
 	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/iommu/iommu.odin", "package iommu\n\nimport \"" + KERNEL_IMPORT_START + "acpi_processors\"\nimport ring \"" + CONTRACT_IMPORT_START + "ring\"\n")
 	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/iommu/iommu_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage iommu\n\nimport \"core:testing\"\nimport \"" + KERNEL_IMPORT_START + "acpi_processors\"\n")
 	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/acpi_processors/acpi_processors.odin", "package acpi_processors\n")
+	accepted, accepted_ok := library_import_breaches_of_tree(clean)
+	testing.expect(t, accepted_ok)
+	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
+}
+
+// A source of a kernel part keeps no state and reaches no machine. Each
+// impure construct is refused with its line: a package variable with no
+// @(rodata), a variable marked @(static) or @(thread_local) (also beside
+// @(rodata)), a foreign import and a foreign block, an asm template, and an
+// intrinsic that reads the machine, also under another local name. The
+// same constructs in the package of the kernel itself and in a test of the
+// part are not read by this rule. The last case: a part with @(rodata)
+// tables and a pure intrinsic passes.
+@(test)
+library_kernel_part_that_is_not_pure_is_refused :: proc(t: ^testing.T) {
+	root := library_tree_make(t)
+	defer os.remove_all(root)
+	part :: SOURCE_FOLDER_KERNEL + "/iommu"
+	library_tree_folder_make(root, part)
+	library_tree_file_write(root, part + "/state.odin", "package iommu\n\ncount := 0\n")
+	library_tree_file_write(root, part + "/static.odin", "package iommu\n\nnext :: proc \"contextless\" () -> int {\n\t@(static) calls: int\n\tcalls += 1\n\treturn calls\n}\n")
+	library_tree_file_write(root, part + "/thread.odin", "package iommu\n\n@(rodata, thread_local)\nlast := 0\n")
+	library_tree_file_write(root, part + "/outside.odin", "package iommu\n\nforeign import kernel_symbols \"kernel_symbols.o\"\n\nforeign kernel_symbols {\n\tkernel_symbol :: proc() ---\n}\n")
+	library_tree_file_write(root, part + "/template.odin", "package iommu\n\nbarrier :: asm() [\n\t#volatile,\n\t#clobber memory,\n] {\n\tmfence\n}\n")
+	library_tree_file_write(root, part + "/machine.odin", "package iommu\n\nimport \"base:intrinsics\"\n\nstamp :: proc \"contextless\" () -> i64 {\n\treturn intrinsics.read_cycle_counter()\n}\n")
+	library_tree_file_write(root, part + "/renamed.odin", "package iommu\n\nimport processor \"base:intrinsics\"\n\nidentify :: proc \"contextless\" () -> u32 {\n\teax, _, _, _ := processor.x86_cpuid(0, 0)\n\treturn eax\n}\n")
+	// Not a kernel part: the package of the kernel holds its state, and a
+	// host test of the part runs on the host.
+	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/state.odin", "package kernel\n\ncount := 0\n")
+	library_tree_file_write(root, part + "/state_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage iommu\n\nimport \"core:testing\"\n\nruns := 0\n")
+	reading, read_ok := library_import_breaches_of_tree(root)
+	testing.expect(t, read_ok)
+	testing.expectf(t, len(reading.breaches[:]) == 8, "%v", reading.breaches[:])
+	for breach in reading.breaches {
+		testing.expectf(t, breach.reason == .Impure_Kernel_Part, "%v is not an impure construct", breach)
+	}
+	expected := []struct {
+		file:  string,
+		line:  int,
+		words: string,
+	} {
+		{part + "/state.odin", 3, "the package variable count with no @(rodata)"},
+		{part + "/static.odin", 4, "a variable marked @(static)"},
+		{part + "/thread.odin", 4, "a variable marked @(thread_local)"},
+		{part + "/template.odin", 3, "an asm template"},
+		{part + "/machine.odin", 6, "the intrinsic intrinsics.read_cycle_counter, which reads the machine"},
+		{part + "/renamed.odin", 6, "the intrinsic processor.x86_cpuid, which reads the machine"},
+	}
+	for item in expected {
+		breach, found := breach_of_file(reading.breaches[:], item.file)
+		if !testing.expectf(t, found, "%s is not refused", item.file) {
+			continue
+		}
+		testing.expect_value(t, breach.line, item.line)
+		testing.expect_value(t, breach.text, item.words)
+		testing.expect_value(t, breach_count_of_file(reading.breaches[:], item.file), 1)
+	}
+	testing.expect_value(t, breach_count_of_file(reading.breaches[:], part + "/outside.odin"), 2)
+	sentence := library_import_breach_sentence(reading.breaches[0])
+	testing.expect(t, strings.contains(sentence, "a kernel part is pure, so each package variable is @(rodata)"), sentence)
+
+	// The last case: tables marked @(rodata), one of them beside another
+	// attribute, constants, and an intrinsic that computes a value.
+	clean := library_tree_make(t)
+	defer os.remove_all(clean)
+	library_tree_folder_make(clean, part)
+	library_tree_file_write(clean, part + "/pure.odin", "package iommu\n\nimport \"base:intrinsics\"\n\nLIMIT :: 4\n\n@(rodata)\nTEXTS := [2]string{\"a\", \"b\"}\n\n@(private, rodata)\nCODES := [2]u8{1, 2}\n\nones :: proc \"contextless\" (value: u32) -> u32 {\n\treturn intrinsics.count_ones(value)\n}\n")
 	accepted, accepted_ok := library_import_breaches_of_tree(clean)
 	testing.expect(t, accepted_ok)
 	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])

@@ -9,8 +9,8 @@ import iommu "kernel:iommu"
 // kernel reads the ACPI tables DMAR, IVRS and MCFG at its start with the
 // readers of the kernel part `iommu`, and the list of the processors in the
 // table APIC with the kernel part `acpi_processors`. They run on the host
-// as they run in the kernel; the walk of the root of ACPI to a table stays in the kernel,
-// as it reads physical memory.
+// as they run in the kernel; the walk of the root of ACPI to a table stays
+// in the kernel, as it reads physical memory.
 
 // The first byte of an input chooses the table; the bytes after it are the
 // table, with its ACPI header.

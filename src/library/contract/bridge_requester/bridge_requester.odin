@@ -13,9 +13,10 @@
 // This package allocates no memory and calls no kernel operation.
 package bridge_requester
 
-// The words of the configuration of a function that the kernel reads to
-// know the kind of a bridge: the first 256 bytes, the space of PCI before
-// PCI Express, which holds the capability of PCI Express.
+// The words of the configuration of a function that the kernel and the
+// root service read to know the kind of a bridge: the first 256 bytes, the
+// space of PCI before PCI Express, which holds the capability of PCI
+// Express.
 CONFIGURATION_WORDS :: 64
 CAPABILITY_PCI_EXPRESS :: 0x10
 STATUS_CAPABILITIES :: u32(1) << 20 // The bit of the status, in the word 1: the function has a list of capabilities.
