@@ -535,26 +535,26 @@ two_level_tree :: proc(t: ^testing.T, disk: ^Test_Disk, pool: ^Pool) -> Pointer 
 expect_damaged_tree :: proc(t: ^testing.T, disk: ^Test_Disk, pool: ^Pool, damaged_root: Pointer, damaged_block: u64, location := #caller_location) {
 	keys, _, walk_failure, _ := walk_all(disk, damaged_root)
 	delete(keys)
-	testing.expect_value(t, walk_failure, Failure.Damaged, location)
+	testing.expect_value(t, walk_failure, Failure.Damaged, loc = location)
 	// A change in the child 0, then the commit: the path of the fault.
 	pool_reset(pool)
 	work := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE, root = damaged_root}
 	blocks_before := len(disk.blocks)
 	key := name_of_number(16)
 	value := entry_of_number(16)
-	testing.expect(t, !put(&work, key[:], ([^]u8)(&value)[:size_of(value)], true), "put accepts the change", location)
-	testing.expect_value(t, pool.failure, Failure.Damaged, location)
-	testing.expect_value(t, pool.failed_block, damaged_block, location)
-	testing.expect_value(t, finish(&work, &disk.writer), damaged_root, location)
-	testing.expect_value(t, work.root, damaged_root, location)
-	testing.expect(t, !work.root_is_reference, "the root is a reference", location)
-	testing.expect_value(t, len(disk.blocks), blocks_before, location)
-	testing.expect_value(t, pool.written, 0, location)
-	testing.expect_value(t, pool.released_count, 0, location)
+	testing.expect(t, !put(&work, key[:], ([^]u8)(&value)[:size_of(value)], true), "put accepts the change", loc = location)
+	testing.expect_value(t, pool.failure, Failure.Damaged, loc = location)
+	testing.expect_value(t, pool.failed_block, damaged_block, loc = location)
+	testing.expect_value(t, finish(&work, &disk.writer), damaged_root, loc = location)
+	testing.expect_value(t, work.root, damaged_root, loc = location)
+	testing.expect(t, !work.root_is_reference, "the root is a reference", loc = location)
+	testing.expect_value(t, len(disk.blocks), blocks_before, loc = location)
+	testing.expect_value(t, pool.written, 0, loc = location)
+	testing.expect_value(t, pool.released_count, 0, loc = location)
 	// The reads refuse it too.
 	pool_reset(pool)
-	testing.expect(t, !get(&work, key[:], ([^]u8)(&value)[:size_of(value)]), "get reads the tree", location)
-	testing.expect_value(t, pool.failure, Failure.Damaged, location)
+	testing.expect(t, !get(&work, key[:], ([^]u8)(&value)[:size_of(value)]), "get reads the tree", loc = location)
+	testing.expect_value(t, pool.failure, Failure.Damaged, loc = location)
 }
 
 // A branch of the disk whose first or last child has no block: its check
