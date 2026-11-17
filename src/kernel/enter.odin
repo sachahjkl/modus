@@ -72,6 +72,8 @@ Operation_Outcome :: enum u32 {
 	No_Budget     = u32(op.Status.No_Budget),
 	Needs_Control = u32(max(op.Status)) + 1,
 }
+// A status added to the contract does not build until it has its member here.
+#assert(len(Operation_Outcome) == len(op.Status) + 1)
 
 // status_of_outcome gives the status of the completion record of a
 // command. Needs_Control from the run with the control lock is a fault of
@@ -143,8 +145,9 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 	}
 	outcome := execute_locked(index, command, results)
 	if outcome == .Needs_Control {
-		// The first run changed nothing: the second starts from the same
-		// facts.
+		// The first run changed no state that the second run does twice:
+		// Memory_Physical can have given the frames of the object and made
+		// context entries, and the second run finds them made.
 		results^ = {}
 		control_take()
 		cpu.operation = {running = true, control = true}
@@ -523,7 +526,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		results[1] = u64(intrinsics.atomic_load(&threads[slot.object].control_stops))
 		results[2] = extended_state_size
 		results[3] = transmute(u64)extended_state_components
-		results[4] = extended_state_form == .Fxsave ? 0 : 1
+		results[4] = u64(EXTENDED_STATE_LAYOUTS[extended_state_form])
 		return .Ok
 
 	case .Program_Stop:

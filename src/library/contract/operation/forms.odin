@@ -13,13 +13,14 @@ package operation
 // argument by its name and its value in its form.
 Form :: enum u8 {
 	None    = 0, // No parameter.
-	Value   = 1, // A number that the form does not bound. The operation can still refuse it: the code of `Machine_Stop` above `MACHINE_STOP_CODE_MOST`.
+	Value   = 1, // A number that the operation does not check.
 	Handle  = 2, // A handle of `kind` (None: any kind) with `rights`.
 	Handle_Or_Zero = 3, // The same, or 0: the caller itself, or no handle.
 	Address = 4, // An address in the program.
 	Count   = 5, // A count. `limit`: the largest, or 0.
 	Flags   = 6, // A set of flags. `limit`: the flags that the operation knows.
 	Choice  = 7, // A value of an enumeration. `limit`: the largest.
+	Bounded = 8, // A number that is neither a count nor a choice, from 0 to `limit`: the code of `Machine_Stop`.
 }
 
 // One parameter of a kernel operation, as `OPERATIONS` describes it.
@@ -31,7 +32,7 @@ Parameter_Form :: struct {
 	form:   Form, // What the value is.
 	kind:   Object_Kind, // For a handle: the kind of object that it must name. `None`: any kind.
 	rights: Rights, // For a handle: the rights that it must have.
-	limit:  u64, // For a count, a set of flags or a choice: the bound that the comment of `Form` gives. 0: none.
+	limit:  u64, // For a count, a set of flags, a choice or a bounded value: the bound that the comment of `Form` gives. 0: none.
 }
 
 // One kernel operation, as a sentence names it: its name and its seven
@@ -62,7 +63,7 @@ OPERATIONS := [Operation]Operation_Form {
 	.Interrupt_Read = {"Interrupt_Read", {{"interrupt", .Handle, .Interrupt, {.Read}, 0}, {}, {}, {}, {}, {}, {}}},
 	.Device_Create = {"Device_Create", {{"machine", .Handle, .Machine, {.Devices}, 0}, {"kind", .Choice, .None, {}, u64(max(Device_Kind))}, {"a", .Value, .None, {}, 0}, {"b", .Value, .None, {}, 0}, {}, {}, {}}},
 	.Inspect = {"Inspect", {{"machine", .Handle, .Machine, {.Inspect}, 0}, {"kind", .Choice, .None, {}, u64(max(Inspect_Kind))}, {"index", .Value, .None, {}, 0}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {}, {}}},
-	.Machine_Stop = {"Machine_Stop", {{"machine", .Handle, .Machine, {.Stop}, 0}, {"code", .Value, .None, {}, 0}, {}, {}, {}, {}, {}}},
+	.Machine_Stop = {"Machine_Stop", {{"machine", .Handle, .Machine, {.Stop}, 0}, {"code", .Bounded, .None, {}, MACHINE_STOP_CODE_MOST}, {}, {}, {}, {}, {}}},
 	.Thread_Create = {"Thread_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"entry", .Address, .None, {}, 0}, {"stack", .Address, .None, {}, 0}, {"parameter", .Value, .None, {}, 0}, {"weight", .Count, .None, {}, WEIGHT_FULL}, {"request", .Count, .None, {}, REQUEST_LIMIT}, {}}},
 	.Thread_Stop = {"Thread_Stop", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {}, {}, {}, {}, {}, {}}},
 	.Thread_State = {"Thread_State", {{"thread", .Handle, .Thread, {.Read}, 0}, {}, {}, {}, {}, {}, {}}},

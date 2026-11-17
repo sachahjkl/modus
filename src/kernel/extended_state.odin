@@ -66,6 +66,16 @@ Extended_State_Form :: enum u8 {
 	Xsave    = 2,
 }
 
+// The layout of the area that each form writes, as Thread_State gives it.
+// The table names each form, so a new form does not build without its
+// layout.
+@(rodata)
+EXTENDED_STATE_LAYOUTS := [Extended_State_Form]op.Extended_State_Layout {
+	.Fxsave   = .Legacy,
+	.Xsaveopt = .With_Header,
+	.Xsave    = .With_Header,
+}
+
 foreign _ {
 	// The save of a thread that a processor leaves, and the restore of a
 	// thread that a processor takes; also the proofs at boot.

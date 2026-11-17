@@ -774,6 +774,16 @@ read_pays_for :: proc "contextless" (budget: u32, region: u32) -> bool {
 	return regions[region].budget == budget
 }
 
+// memory_create_cost gives the pages that a Memory_Create with these pages
+// and flags takes from its budget: the kinds of the object as execute reads
+// them from the flags (a Large_Pages object is contiguous), and the cost
+// that region_create charges for that kind.
+@(private = "file")
+memory_create_cost :: proc "contextless" (page_count: u64, flags_word: u64) -> u64 {
+	flags := transmute(op.Memory_Flags)flags_word
+	return region_create_cost(page_count, contiguous = .Contiguous in flags || .Large_Pages in flags, uncommitted = .Uncommitted in flags)
+}
+
 // budget_explain gives what an operation asks of a budget, and what the
 // budget holds of it.
 @(private = "file")
@@ -822,8 +832,7 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	if .Read not_in rights {
 		#partial switch operation {
 		case .Memory_Create:
-			flags := transmute(op.Memory_Flags)v[2]
-			record_set(record, .Budget_Hidden, .Pages, 1, v[0], region_cost(v[1], .Contiguous in flags), 0)
+			record_set(record, .Budget_Hidden, .Pages, 1, v[0], memory_create_cost(v[1], v[2]), 0)
 		case .Program_Create:
 			record_set(record, .Budget_Hidden, .Programs, 1, v[0], 1, 0)
 		case .Thread_Create:
@@ -838,8 +847,7 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	argument := 1
 	#partial switch operation {
 	case .Memory_Create:
-		flags := transmute(op.Memory_Flags)v[2]
-		unit, asked, held = .Pages, region_cost(v[1], .Contiguous in flags), holds.pages
+		unit, asked, held = .Pages, memory_create_cost(v[1], v[2]), holds.pages
 	case .Program_Create:
 		unit, asked, held = .Programs, 1, holds.programs
 		if holds.programs != 0 {

@@ -962,8 +962,10 @@ log_record :: proc "contextless" (program: u32, program_serial: u32, owner: ^Pro
 	word_wake(physical_of(&log_head.written), max(u64))
 }
 
-// machine_stop ends the machine under QEMU, or halts the processor.
-machine_stop :: proc "contextless" (reason: Machine_Stop_Reason) -> ! {
+// machine_stop ends the machine under QEMU, or halts the processor. It is
+// inlined, so each caller calls machine_stop_with_code: the measure of the
+// kernel stack names that one edge.
+machine_stop :: #force_inline proc "contextless" (reason: Machine_Stop_Reason) -> ! {
 	machine_stop_with_code(u8(reason))
 }
 

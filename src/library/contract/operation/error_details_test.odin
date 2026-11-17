@@ -156,6 +156,42 @@ the_bounds_of_the_table_are_the_named_constants :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(report.name), PROGRAM_NAME_BYTES_MOST + 1)
 	// The code of Machine_Stop fits the one byte that the host receives.
 	testing.expect_value(t, u64(MACHINE_STOP_CODE_MOST), u64(max(u8)))
+	testing.expect_value(t, OPERATIONS[.Machine_Stop].parameters[1].limit, u64(MACHINE_STOP_CODE_MOST))
+}
+
+// A code of Machine_Stop past the one byte of the host is refused, with the
+// bound: one past it and the largest word first, then 0 and the bound.
+@(test)
+a_stop_code_past_one_byte :: proc(t: ^testing.T) {
+	values := [7]u64{0, MACHINE_STOP_CODE_MOST + 1, 0, 0, 0, 0, 0}
+	problem, limit := argument_value_problem(.Machine_Stop, 1, values)
+	testing.expect_value(t, problem, errors.Kind.Bad_Value)
+	testing.expect_value(t, limit, u64(MACHINE_STOP_CODE_MOST))
+	values[1] = max(u64)
+	problem, limit = argument_value_problem(.Machine_Stop, 1, values)
+	testing.expect_value(t, problem, errors.Kind.Bad_Value)
+	testing.expect_value(t, limit, u64(MACHINE_STOP_CODE_MOST))
+	values[1] = 0
+	problem, _ = argument_value_problem(.Machine_Stop, 1, values)
+	testing.expect_value(t, problem, errors.Kind.None)
+	values[1] = MACHINE_STOP_CODE_MOST
+	problem, _ = argument_value_problem(.Machine_Stop, 1, values)
+	testing.expect_value(t, problem, errors.Kind.None)
+}
+
+// Each layout of the extended state area reads back from its word; a word
+// past the last layout names none.
+@(test)
+each_extended_state_layout_reads_back :: proc(t: ^testing.T) {
+	_, past_ok := member_of_word(Extended_State_Layout, u64(max(Extended_State_Layout)) + 1)
+	testing.expect(t, !past_ok)
+	_, largest_ok := member_of_word(Extended_State_Layout, max(u64))
+	testing.expect(t, !largest_ok)
+	for layout in Extended_State_Layout {
+		read, ok := member_of_word(Extended_State_Layout, u64(layout))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, layout)
+	}
 }
 
 // An argument that the other values make unused is not read, so it gets no

@@ -718,7 +718,8 @@ Operation :: enum u32 {
 	// 2. its stop count (`Thread_Control`);
 	// 3. the bytes of the extended state area of a thread on this machine;
 	// 4. its components: the bits of XCR0 (0 x87, 1 SSE, 2 AVX, 5 to 7 AVX-512);
-	// 5. 1 when the area has the header of `xsave` at byte 512, 0 when it is the 512 bytes of `fxsave`.
+	// 5. its `Extended_State_Layout`: `With_Header` when the area has the header of `xsave` at byte 512,
+	//    `Legacy` when it is the 512 bytes of `fxsave`.
 	//
 	// **Statuses**
 	//
@@ -2523,6 +2524,14 @@ thread_registers_refusal :: proc "contextless" (registers: ^Thread_Registers) ->
 EXTENDED_STATE_MXCSR_OFFSET :: 24
 EXTENDED_STATE_LEGACY_BYTES :: 512 // The area of fxsave, and the first part of the area of xsave.
 EXTENDED_STATE_HEADER_BYTES :: 64 // At EXTENDED_STATE_LEGACY_BYTES: XSTATE_BV, then XCOMP_BV and reserved bytes.
+
+// The layout of the extended state area of a thread on this machine: the
+// result 5 of `Thread_State`. Its word crosses the completion record, so
+// each value is explicit; a reader takes it through `member_of_word`.
+Extended_State_Layout :: enum u64 {
+	Legacy      = 0, // The EXTENDED_STATE_LEGACY_BYTES bytes of fxsave, with no header.
+	With_Header = 1, // The header of xsave at EXTENDED_STATE_LEGACY_BYTES, then the components of XCR0.
+}
 
 // extended_state_refusal says what a write of an extended state area
 // refuses: the conditions under which xrstor or fxrstor fault on it, in the

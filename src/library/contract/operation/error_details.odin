@@ -46,7 +46,8 @@ command_takes_error_details :: proc "contextless" (operation: Operation) -> bool
 // argument_value_problem says what the form of a parameter refuses in its
 // value, from the values of the command alone: a count above its limit
 // (`Too_Long`), a flag outside the flags of the form (`Bad_Flags`), a choice
-// above its largest value or 0 where 0 names nothing (`Bad_Value`). `limit`
+// above its largest value or 0 where 0 names nothing, a bounded value above
+// its limit (`Bad_Value`). `limit`
 // is the bound that the value passed. `None`: the form refuses nothing in
 // it. A handle, an address and a plain value are never refused here.
 //
@@ -73,6 +74,10 @@ argument_value_problem :: proc "contextless" (operation: Operation, index: int, 
 		}
 	case .Choice:
 		if value > parameter.limit || value == 0 && !choice_zero_names_something(operation, index) {
+			return .Bad_Value, parameter.limit
+		}
+	case .Bounded:
+		if value > parameter.limit {
 			return .Bad_Value, parameter.limit
 		}
 	}

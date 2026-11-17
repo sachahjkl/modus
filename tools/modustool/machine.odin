@@ -999,6 +999,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "kernel: boot: kernel: other processors: ", any_order = true},
 	{kind = .Wait, text = "kernel: boot: kernel: root service: ", any_order = true},
 	{kind = .Wait, text = "root: ok"},
+	// The kernel refuses a stop code past one byte, and the machine runs on.
+	{kind = .Wait, text = "root: Machine_Stop refused the codes 256 and 18446744073709551615 with Bad_Operation and the record Bad_Value of the code, limit 255, and the machine runs on: as it must"},
 	// The virtual mouse of QEMU answers the IntelliMouse sequence: its
 	// packets have the wheel.
 	{kind = .Wait, text = "input: ok, the mouse has a wheel"},

@@ -608,6 +608,13 @@ region_cost :: proc "contextless" (page_count: u64, contiguous: bool) -> u64 {
 	return contiguous ? page_count : op.memory_cost(page_count)
 }
 
+// region_create_cost gives the pages that region_create takes from a
+// budget for an object of this kind. The error record of a refused
+// Memory_Create names this cost, so it names what the kernel charges.
+region_create_cost :: proc "contextless" (page_count: u64, contiguous: bool, uncommitted: bool) -> u64 {
+	return uncommitted ? uncommitted_base_cost(page_count) : region_cost(page_count, contiguous)
+}
+
 // frame_take gives one page frame, not zero, for a page that a budget
 // reserved or paid (memory.odin, frame_take_held): it cannot fail. The
 // caller holds the frame lock.
@@ -625,7 +632,7 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 	}
 	// An uncommitted object pays its frame list only, and at least one page:
 	// no budget holds a slot of the table of memory objects for nothing.
-	cost := uncommitted ? uncommitted_base_cost(page_count) : region_cost(page_count, contiguous)
+	cost := region_create_cost(page_count, contiguous, uncommitted)
 	// One section of the frame lock: the budget pays, the slot is taken, the
 	// frames of a contiguous object or of the frame list are taken, the pages
 	// are reserved. The frames are zero filled after the section.
