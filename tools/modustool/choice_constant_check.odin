@@ -104,6 +104,7 @@ CHOICE_CONSTANT_EXCEPTIONS := [?]Choice_Constant_Exception {
 	{SOURCE_FOLDER_CONTRACT + "/iommu", "AMD", .First, "the entry and block types of the ACPI table IVRS and the event codes of the event log of AMD-Vi (AMD I/O virtualization, sections 2.5 and 5.2): an entry of another type is legal and is skipped by its length, and an event of another code is written with its number"},
 	{SOURCE_FOLDER_CONTRACT + "/iommu", "STRUCTURE", .First, "the structure types of the ACPI table DMAR (Intel VT-d, section 8.1): a structure of another type is legal and is skipped by its length"},
 	{SOURCE_FOLDER_CONTRACT + "/iommu", "SCOPE", .First, "the device scope types of the ACPI table DMAR (Intel VT-d, section 8.3.1): a scope of another type is legal and is skipped"},
+	{SOURCE_FOLDER_CONTRACT + "/acpi_processors", "ENTRY", .First, "the entry types of the ACPI table APIC (ACPI 6.5, section 5.2.12): an entry of another type is legal and is skipped by its length"},
 	{SOURCE_FOLDER_SUPPORT + "/display", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
 	{SOURCE_FOLDER_SUPPORT + "/keyboard_layout", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
 	{SOURCE_FOLDER_PROGRAMS + "/input", "SCAN", .First, "the scan codes of the keyboard (PS/2 set 1): the device sends any scan code"},

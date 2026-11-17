@@ -149,6 +149,10 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// It writes its lines to a terminal and reads the key Space from
 		// it: it has no surface and needs nothing else.
 		return {.Terminal}
+	case "hostile_terminal":
+		// The test of the records of a terminal ring whose kind names no
+		// record: it writes them to its terminal, as flood writes lines.
+		return {.Terminal}
 	case "inspect":
 		// A developer tool: it reads the reports of the machine and the names
 		// of the modules, and serves the same facts (docs/TOOLS.md).

@@ -1,0 +1,3 @@
+type: Added
+
+**Fuzzing of the last readers of the system**: `modustool fuzz` and the fuzz check of `modustool check` now also give hostile inputs to the sentences of the error records, the palette table, the demand cache, the value runs, the text encoding check, the kept stop reports, the kept settings, the answers of the TPM, the shaping tables of the fonts, and the list of the processors in the ACPI table APIC, whose reader moved from the kernel into the contract package `acpi_processors`. The instrumented build now counts the edges of a package by the name that its sources declare, so the terminal records count too.
