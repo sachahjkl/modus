@@ -2254,6 +2254,46 @@ The design: `docs/MODULE_CONTRACT.md`, "The source library of a module".
 
 Do not use: collection, SDK, libc, static library.
 
+### Private part
+
+A private part is a package of the source library that one module alone compiles in, with its host tests.
+
+A private part holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole program for the host. Its folder is `src/library/private/<module>/<part>`, and its import line names the module: `modus:private/storage/storage_tree`. The tool refuses an import of it from another module, and refuses a support package that only one module reaches. The tool reads some private parts too, as a disk image of the storage service; that does not make them shared. The move of the packages of the library that one module reaches is planned work of `ROADMAP.md`.
+
+The design: `src/md/infrastructure/repository_layout.md`.
+
+Do not use: internal package, helper package, program package.
+
+### Kernel part
+
+A kernel part is a pure package in a folder under `src/kernel`, which the kernel alone compiles in, with its host tests.
+
+A kernel part is imported through a second source library, `kernel`: `kernel:iommu`. Only the compile of the kernel, the host tests of its parts and the tool get that source library, so the compiler refuses the import in a module. A kernel part declares no package variable: the state of the kernel stays in the package of the kernel, and a host test runs each procedure with no machine. A format that only the kernel reads, such as an ACPI table, is a kernel part and not a contract. The move of these packages out of the contract packages is planned work of `ROADMAP.md`.
+
+The design: `src/md/infrastructure/repository_layout.md`.
+
+Do not use: kernel module (a module is a file), kernel library, subsystem.
+
+### Module group
+
+A module group is the folder of `src/modules` that holds the modules of one use: `system`, `libraries`, `demonstrations` or `tests`.
+
+The group of a module is the folder of its source, and the tool reads it from there. It is not a second format: the module file holds no group, and the loader and the root service never read it. A release leaves out the group `tests`. The one folder of modules is planned work of `ROADMAP.md`; today the programs are in `src/programs` and the other modules in `src/modules`.
+
+The design: `src/md/infrastructure/repository_layout.md`.
+
+Do not use: role (the term is program role, the grants of a program), category, kind of module.
+
+### Test module
+
+A test module is a module that only a machine test starts or imports, and that is wrong on purpose or shows nothing of its own.
+
+Examples: `test_callee` and `test_caller`, the loader test of an import; `hostile_exports`, exports that are wrong on purpose; `lonely`, a module whose import is not in the boot image; `debug_target`, the program that the test of the debugger debugs. A test module is in the module group `tests`. A program that shows a property to a principal is a demonstration, not a test module, even when a machine test starts it.
+
+The design: `src/md/infrastructure/repository_layout.md`.
+
+Do not use: fixture (a fixture is the small tree of a host test), mock, stub.
+
 ### Outside module
 
 An outside module is a module whose source is in a folder outside the repository of the system.
