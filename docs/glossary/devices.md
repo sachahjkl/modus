@@ -160,6 +160,26 @@ The design: `docs/ARCHITECTURE.md`, "U4. Device services".
 
 Do not use: PCI tree.
 
+### Class protocol
+
+A class protocol is the ring and the records that every device service of one device class serves, whatever the vendor of its device.
+
+A class protocol hides the vendor: the storage service reads the block ring the same way for a virtio disk and for an NVMe disk. The device service translates between the registers of its device and the class protocol. The block ring, the frame ring and the input records are class protocols; the display, sound and the handle of one USB device have none yet. A class protocol is not a queue of a device: only the device service sees those.
+
+The design: `src/md/features/device_services.md`.
+
+Do not use: device interface, HAL, ioctl.
+
+### Timed stream
+
+A timed stream is a class protocol whose records carry the time at which their content must reach the device: the samples of sound, later the frames of a video.
+
+A ring of the block or the frame class says what to do; a timed stream also says when. Sound through virtio-snd is its first user, and it comes early because it forces this design. Its records and the rule of a late record are not designed yet.
+
+The design: `src/md/features/desktop_to_browser.md`.
+
+Do not use: audio stream, media pipe.
+
 ### Disk
 
 A disk is a device that keeps blocks when the machine stops.

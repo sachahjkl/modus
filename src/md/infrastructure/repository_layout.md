@@ -263,7 +263,7 @@ Subtle points:
 
 The tool holds each rule at the start of each build, and in `modustool check` ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The imports of the sources of the system"). The reader is the parser of the library of the compiler. It reads each file of `src/`, also a file that a build tag leaves out: the check is stricter than the compiler, never looser.
 
-- A source of `src/` that is not a test imports a package of `base:` or of `modus:` only, and a kernel source also `kernel:`. A package of the core library is refused: it reaches the host.
+- A source of `src/` that is not a test imports a package of `base:` or of `modus:` only, and a kernel source also `kernel:`. A package of the core library is refused: it reaches the host. `gt:` is refused too: the toolkit of rich programs serves outside modules only, which import `gt:` and the core library on the target modus ([third_party_module.md](third_party_module.md); [../features/desktop_to_browser.md](../features/desktop_to_browser.md), "The toolkit of rich programs"). This rule binds the code of the system, and no outside module.
 - A test imports a package of the core library only with `#+build !freestanding` as its first build line.
 - The kernel and a kernel part import a contract package or a kernel part only. A contract package imports no support package and no private part.
 - `kernel:` is refused in each file of `src/` outside `src/kernel`, and so is a relative path that lands in `src/kernel`.
