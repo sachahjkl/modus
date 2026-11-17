@@ -124,18 +124,20 @@ tool_build_current :: proc() {
 	// The table holds the time of the start: a source that changes during
 	// the compile then gives no record, and the next command compiles again.
 	table := input_file_table_make(root, nil)
-	defer input_file_table_destroy(table)
 	inputs := tool_build_key_inputs()
 	binary := join(root, "/", TOOL_BINARY)
 	record_path := join(root, "/", TOOL_BUILD_RECORD)
 	current, reason := tool_binary_is_current(record_path, binary, inputs, table)
 	if current {
+		input_file_table_destroy(table)
 		return
 	}
 	// The lines of the compile go to the standard error: the standard
 	// output of a command is its own, and a caller can read it.
 	fmt.eprintfln("modustool: the tool is compiled again (%s)", reason)
-	if !tool_build(root, binary, record_path, inputs, table) {
+	built := tool_build(root, binary, record_path, inputs, table)
+	input_file_table_destroy(table)
+	if !built {
 		os.exit(EXIT_FAILURE)
 	}
 	os.exit(tool_run_again(binary))

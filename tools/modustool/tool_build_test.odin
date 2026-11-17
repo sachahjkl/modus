@@ -51,8 +51,8 @@ tool_compile_words_of_the_flake :: proc(t: ^testing.T) {
 	base := TOOL_COMPILE_COMMAND
 	words := strings.join(base[:], " ", context.temp_allocator)
 	testing.expect_value(t, strings.count(flake, words), 2)
-	testing.expect(t, strings.contains(flake, words + " -out:" + TOOL_BINARY), "the first binary of the shell is at the place of the binary")
-	testing.expect(t, strings.contains(flake, words + " " + TOOL_NEVER_BUILDS_ITSELF_FLAG), "the binary of the check never compiles itself")
+	testing.expect(t, strings.contains(flake, strings.concatenate({words, " -out:", TOOL_BINARY}, context.temp_allocator)), "the first binary of the shell is at the place of the binary")
+	testing.expect(t, strings.contains(flake, strings.concatenate({words, " ", TOOL_NEVER_BUILDS_ITSELF_FLAG}, context.temp_allocator)), "the binary of the check never compiles itself")
 }
 
 // A record that a file changed after the table hashed it is never
