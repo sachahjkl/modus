@@ -88,9 +88,9 @@ Why not the others:
 
 With one source library, `"modus:support/system"` compiles in the kernel. The refusal by the compiler is lost. The tool takes its place, with one rule and one reader:
 
-- **The rule**: each import of each source file of `src/kernel` and of `src/library/contract` names a package of the base library or of the core library of the compiler, or a package under `modus:contract/`. Each other import is refused, and a relative import too.
-- **Why this is complete**: if no file of the two folders imports outside that list, no chain of imports from the kernel reaches a support package.
-- **The reader** is the parser of the compiler's own library, which the tool already uses for the declaration index. It reads each file of the two folders, also a file that a build tag leaves out: the check is stricter than the compiler, never looser.
+- **The rule**: a source of `src/` that is not a test imports a package of the base library or of the library `modus` only, and a package of the core library is refused. A test imports a package of the core library only with `#+build !freestanding` as its first build line, so that no build of the system reads it. The kernel imports a package under `modus:contract/` only, and a contract package imports no support package. A source that is not a test imports no relative path; a host test and a file of the copy of the cryptography reach a folder of the repository by one.
+- **Why this is complete**: if no file of `src/` imports outside its list, no chain of imports from the kernel reaches a support package, and no source that a build of the system reads reaches the host through a package of the core library.
+- **The reader** is the parser of the compiler's own library, which the tool already uses for the declaration index. It reads each file of `src/`, also a file that a build tag leaves out: the check is stricter than the compiler, never looser.
 - **When**: at the start of each build, not only in `modustool check`. A writer who adds the import gets a build that stops with the file and the line, as the compiler stopped before.
 - It replaces the loop of `modustool check` that compiled each contract package with the contract library only.
 
@@ -98,7 +98,7 @@ The subtle points of the rule, each with its reason:
 
 - **A path with `..` is refused.** `"modus:contract/../support/system"` starts as a contract package, and the compiler follows it to a support package. A check of the start of the path alone lets it pass.
 - **A relative import of a contract package is refused too.** It reaches no support package, but it gives one package two import lines.
-- **The core library is allowed.** A host test of a contract package imports the test package of the core library. So the check does not prove that the kernel is freestanding: the compile of the kernel does, with its target.
+- **A test that imports the core library names its build line.** The line keeps the file out of every build of the system, so the check does not prove that the kernel is freestanding: the compile of the kernel does, with its target. A file that the manifest of the cryptography of Odin names keeps the imports of its origin, which `modustool cryptography-origin` proves with the listed changes only.
 - **The vendor library is refused.** The compiler of the project has none, and no contract needs one.
 - **A file that the parser cannot read whole is refused as a file.** An import after an error of syntax can be unread. An import inside a procedure is such an error.
 - **A foreign import is not read.** It names a file of assembly or an object, not a package.

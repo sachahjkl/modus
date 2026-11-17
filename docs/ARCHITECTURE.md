@@ -1263,7 +1263,7 @@ The copy of `user_copy` is a template (`rep movsb`), not a call by name: it is t
 
 ### 5. The proof that the kernel has no vector instruction
 
-A template is compiled code: the check of the build (`tools/modustool/vector_check.odin`) disassembles the linked kernel and reads each template in the code of its callers. No template of the kernel names a vector register, so the check passes. The kernel imports the contract packages only, and the tool checks each of its imports before each build (`docs/TOOLS.md`, "The imports of the kernel and of the contract packages"); the templates with vector registers of other packages (for programs) are not in its build.
+A template is compiled code: the check of the build (`tools/modustool/vector_check.odin`) disassembles the linked kernel and reads each template in the code of its callers. No template of the kernel names a vector register, so the check passes. The kernel imports the contract packages only, and the tool checks each import of `src/` before each build (`docs/TOOLS.md`, "The imports of the sources of the system"); the templates with vector registers of other packages (for programs) are not in its build.
 
 ### 6. The measure
 
