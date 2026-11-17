@@ -138,6 +138,7 @@ module_builds := [?]Module_Build {
 	{name = "counters", source = PROGRAM_SOURCES + "counters", image = true},
 	{name = "terminal", source = PROGRAM_SOURCES + "terminal", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "flood", source = PROGRAM_SOURCES + "flood", image = true},
+	{name = "hostile_terminal", source = PROGRAM_SOURCES + "hostile_terminal", image = true},
 	{name = "processors", source = PROGRAM_SOURCES + "processors", imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "boot", source = PROGRAM_SOURCES + "boot", image = true},
 	{name = "pages", source = PROGRAM_SOURCES + "pages", image = true},

@@ -4,12 +4,9 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **No press of the pointer lost while test parts run at once.** Two whole tests with four parts at once lost one action of the pointer at the start of a machine, where the tool moves the pointer without the confirmation of the compositor, and each part passes alone. With the cause fixed, a whole test passes each time, whatever the load of the host. [Design](src/md/infrastructure/machine_test_parts.md)
-
 ## Next
 
 - **Fuzzing of the kernel operations.** A test machine runs operation sequences that the tool builds from the forms of the 35 kernel operations, guided by the edge counters of a test kernel, with the checks of the kernel as oracles. A fault of the kernel that a sequence finds is confirmed on the kernel that ships. [Design](src/md/infrastructure/fuzzing.md)
-- **A machine case for each refused ring word.** A hostile test program sends `None`, the word one past the last member and the largest word to the block, frame and network services, to the compositor as a window, to a terminal and to the palette provider of the console, and the scenario waits for each answer: the record `Unsupported`, or the line and the count. Each program then shows that it answers what its host-tested border decided. [Design](src/md/infrastructure/choice_constants.md)
 - **A check of the tool for a cast of a word to an enum.** The check of the choice constants refuses a cast of a word to an enum whose value the code keeps, passes or switches on, and accepts it only as one operand of `==` or `!=` with a member. A cast that skips a border then stops `modustool check`, not only a review. [Design](src/md/infrastructure/choice_constants.md)
 - **A word in place of the other enum fields of a shared record.** The kind of a code run of the terminal, the result and the parameter kinds of an entry of the palette table, the types of a module file, the kinds of an event record and of a fault record of the kernel, the mode of the lockers board, the kind of a storage entry and the self test and the floor states of the boot information hold a word that each reader takes through its border, and a value of a setting that the setting does not have is refused, not read as the value 0. The reader of each of these records then holds no member that its writer did not name. [Design](src/md/infrastructure/choice_constants.md)
 
@@ -71,6 +68,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The host tests of the check in the measure record.** The measure record counts the host tests of `modustool check` beside the machine tests and the second build of `modustool screenshots`. The site then shows the count of every check of a release.
 
 ## Maybe
+
+- **A machine case for the refused ring words of the frame and palette rings.** The frame service and the palette provider of the console show on a machine that they answer the refused words as their host-tested borders decided. Their one writer is the network service or the compositor, so two ways are open: a test program that holds their ring, which waits for a choice to give a test program the grant `Network_Device` or the place of the compositor; or a test build of the writer that sends the words, which waits for a choice to put test code in a program of the system. [Design](src/md/infrastructure/choice_constants.md)
 
 - **A guest on a machine with an Intel processor.** A program runs a guest on a machine with an Intel processor too, with the same operation and the same exit records as on AMD. One way is open, and it waits for a host with an Intel processor: QEMU emulates no VMX, so only such a host runs the machine test of it. [Design](src/md/features/guest.md)
 - **The release image started on a real machine.** The image starts from a USB key on the UEFI firmware of a real machine, with the certificate of the publisher enrolled, Secure Boot on and the machine key sealed by its TPM. One way is open, and it waits for a real machine with a TPM and a USB key: today the image starts in the machine test only, on the firmware of QEMU. [Design](src/md/infrastructure/release_image.md)

@@ -262,6 +262,8 @@ TCP is tested at three levels: the library alone on the host, the system against
 
 `odin test src/library/contract/datagram` gives `grant_unpack` each word that it must refuse first: each bit from 51 to 63 alone and beside a whole grant, and the largest word. Then the edges: 0, each flag alone, the largest address and port. The grants of the programs come last. `odin test src/library/support/network` gives the decisions of the network service (`endpoint_add_grant`, `endpoint_grant_change`) the words with bit 51 and with bit 63, alone and beside a whole grant, and a grant of another form: each gives its status and its record, with a positive value, and leaves the grant of the endpoint unchanged.
 
+`odin test src/library/contract/datagram` gives `command_of_ring_word` each word that names no command: `None`, the word one past the last command and the largest word. On the machine of `modustool test network`, `net` sends the same three words on its datagram ring. The network service answers each one with `Bad_Command` and the record `Unsupported` of the word, and serves the `Info` after it: "net: the command word 10 of the datagram ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must".
+
 `odin test src/library/contract/byte_order` checks the reads and the writes of a number in each order: 0, 1, the largest value, the place of each byte, a write that leaves its neighbors unchanged. The checksum has its edges: no byte, one byte, the fold of a carry that makes a new carry, the largest sum, and the example of RFC 1071, whose sum before its fold (0x2DDF0) shows that the sum keeps its carries.
 
 ### One place for the byte order and the checksum

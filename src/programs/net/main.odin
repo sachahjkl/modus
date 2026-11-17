@@ -32,7 +32,10 @@
 //
 // **What a reader sees**: the window lists the cases; the log has one line
 // for each case ("net: ...: answer", with "(WRONG)" after an unexpected
-// answer), then "net: ok, N cases", then the measures:
+// answer), one line for each word of a command record that names no
+// command (None, one past the last command, the largest word), which the
+// network service refuses with Bad_Command and the record Unsupported,
+// then "net: ok, N cases", then the measures:
 //
 // - the header and the checksum of one datagram of 1472 bytes, in this
 //   program;
@@ -169,7 +172,13 @@ microseconds :: proc "contextless" (cycles: u64) -> u64 {
 }
 
 request :: proc "contextless" (command: datagram.Command, tag: u32, values: [7]u64 = {}) {
-	record := ring.Record{kind = u32(command), tag = tag, values = values}
+	request_word(u32(command), tag, values)
+}
+
+// request_word sends one record with the word of its kind as it is: the
+// cases of the words that name no command send it.
+request_word :: proc "contextless" (word: u32, tag: u32, values: [7]u64 = {}) {
+	record := ring.Record{kind = word, tag = tag, values = values}
 	for !system.send(&datagrams.commands, record) {
 		wait: system.Wait
 		system.wait_room(&wait, &datagrams.commands)
@@ -197,8 +206,14 @@ answer :: proc "contextless" (deadline: u64 = system.WAIT_FOREVER) -> (record: r
 // call sends one command and waits for its completion. The completions of
 // other tags that arrive meanwhile are dropped. The bound only ends a hang.
 call :: proc "contextless" (command: datagram.Command, values: [7]u64 = {}) -> (record: ring.Record, ok: bool) {
+	return call_word(u32(command), values)
+}
+
+// call_word sends one record with the word of its kind as it is, and waits
+// for its completion, as call does.
+call_word :: proc "contextless" (word: u32, values: [7]u64 = {}) -> (record: ring.Record, ok: bool) {
 	next_tag += 1
-	request(command, next_tag, values)
+	request_word(word, next_tag, values)
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		record = answer(deadline) or_return
@@ -427,6 +442,33 @@ cases_run :: proc "contextless" () {
 	}
 }
 
+// The words of the kind of a command record that name no command: None,
+// the word one past the last command, and the largest word of the field.
+// The network service decides each one at its border, which a host test
+// gives the same words (datagram.command_of_ring_word); this case shows
+// that the service answers what its border decided.
+@(rodata)
+refused_command_words := [3]u32{u32(datagram.Command.None), u32(max(datagram.Command)) + 1, max(u32)}
+
+// command_words_check sends each refused word on the datagram ring, checks
+// that the completion is Bad_Command with the record Unsupported of the
+// word, and that the next Info gives the same endpoint: the refusal changed
+// nothing. One line for each word, apart from the cases of the window: the
+// window has room for the cases of the grant only.
+command_words_check :: proc "contextless" () {
+	for word in refused_command_words {
+		refused, has_refused := call_word(word)
+		error := errors.completion_record(refused.values)
+		after, has_after := call(.Info)
+		right := has_refused && refused.kind == u32(datagram.Status.Bad_Command) && error.kind == i64(errors.Kind.Unsupported) && error.unit == i64(errors.Unit.None) && error.operation == i64(word) && error.argument == 0 && error.value == i64(word) && has_after && after.kind == u32(datagram.Status.Ok) && after.values[1] == u64(local_port)
+		if right {
+			system.log("net: the command word ", u64(word), " of the datagram ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must")
+		} else {
+			system.log("net: the command word ", u64(word), " of the datagram ring: WRONG: ", has_refused ? "the status " : "no answer, the status ", u64(refused.kind), ", the error kind ", u64(max(error.kind, 0)), ", the operation ", u64(max(error.operation, 0)), "; the next Info: the status ", u64(after.kind))
+		}
+	}
+}
+
 // measure_round_trips sends one datagram at a time and waits for its answer.
 measure_round_trips :: proc "contextless" () {
 	times: [ROUND_TRIPS]u64
@@ -614,6 +656,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region = ([^]u8)(address)
 	draw(&window)
 	cases_run()
+	command_words_check()
 	draw(&window)
 	wrong := 0
 	for item in cases[:case_count] {
