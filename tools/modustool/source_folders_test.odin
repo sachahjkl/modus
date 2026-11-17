@@ -8,7 +8,7 @@ import "core:testing"
 @(test)
 source_folders_are_folders_of_the_repository :: proc(t: ^testing.T) {
 	folders := SOURCE_FOLDERS
-	testing.expect_value(t, len(folders), 7)
+	testing.expect_value(t, len(folders), 8)
 	for folder in folders {
 		testing.expectf(t, os.is_dir(folder), "%s is not a folder of the repository", folder)
 	}

@@ -381,7 +381,8 @@ similarity_read_sources :: proc(analysis: ^Similarity_Analysis, sources: []Simil
 				for declaration in tree.imports {
 					name, path := similarity_import_name(declaration)
 					builder.imports[name] = path
-					if strings.has_prefix(path, SUPPORT_IMPORT_START) {
+					// A private part is compiled in as a support package is.
+					if strings.has_prefix(path, SUPPORT_IMPORT_START) || strings.has_prefix(path, PRIVATE_IMPORT_START) {
 						append(&support, path)
 					}
 				}

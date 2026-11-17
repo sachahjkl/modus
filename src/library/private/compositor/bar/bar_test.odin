@@ -9,7 +9,7 @@ import "modus:support/vector_font"
 // the cache of the names of the bar.
 @(private = "file")
 b612_cache_of :: proc(t: ^testing.T) -> (cache: glyph_cache.Cache, memory: []u64) {
-	bytes := #load("../../../../resources/fonts/b612.ttf")
+	bytes := #load("../../../../../resources/fonts/b612.ttf")
 	font, problem := vector_font.font_open(bytes)
 	testing.expect_value(t, problem, vector_font.Font_Problem.None)
 	render := new(vector_font.Render_Memory)

@@ -13,30 +13,33 @@ SOURCE_FOLDER_BOOT :: "src/boot" // The boot program.
 SOURCE_FOLDER_RUNTIME :: "src/runtime" // The memory procedures in assembly.
 SOURCE_FOLDER_PROGRAMS :: "src/programs" // The programs of the system: one folder for each.
 SOURCE_FOLDER_MODULES :: "src/modules" // The modules that are not programs: one folder for each.
-SOURCE_FOLDER_LIBRARY :: "src/library" // The source library of the system: the two folders below, and nothing else.
+SOURCE_FOLDER_LIBRARY :: "src/library" // The source library of the system: the three folders below, and nothing else.
 SOURCE_FOLDER_CONTRACT :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_CONTRACT // The contract packages.
 SOURCE_FOLDER_SUPPORT :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_SUPPORT // The support packages.
+SOURCE_FOLDER_PRIVATE :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_PRIVATE // The private parts: one folder for each module that has one, named by the module.
 
 // Each folder of the sources of the system. A list of the tool that reads
 // a part of them names its folders by their constants, in its own order:
 // the order of a list can be the order of an output.
-SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT}
+SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE}
 
 // The name of the one source library of the system: the word before the
 // ":" of an import line (docs/glossary/communication.md, "Source library"). The name is
 // not the folder: the flag of the compiler joins the two.
 SOURCE_LIBRARY_NAME :: "modus"
 
-// The two parts of the library: the first folder of the path of a
+// The three parts of the library: the first folder of the path of a
 // package, after the ":" of an import line.
 LIBRARY_PART_CONTRACT :: "contract" // What two parties agree on.
-LIBRARY_PART_SUPPORT :: "support" // What a program compiles in to use the contracts.
+LIBRARY_PART_SUPPORT :: "support" // What two modules or more compile in.
+LIBRARY_PART_PRIVATE :: "private" // What one module alone compiles in: "private/<module>/<part>".
 
 // The start of the path of an import of each part: "modus:contract/ring",
-// "modus:support/system".
+// "modus:support/system", "modus:private/storage/storage_tree".
 SOURCE_LIBRARY_IMPORT_START :: SOURCE_LIBRARY_NAME + ":"
 CONTRACT_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_CONTRACT + "/"
 SUPPORT_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_SUPPORT + "/"
+PRIVATE_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_PRIVATE + "/"
 
 // The one flag of the compiler for the library. Each command of the tool
 // that runs the compiler gives it, the compile of the kernel too: flake.nix

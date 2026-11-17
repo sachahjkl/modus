@@ -224,7 +224,7 @@ Do not use: preference, option, configuration.
 
 A dead key is a key of a layout of the keyboard that gives no character itself, and puts its accent on the character of the next key.
 
-The layout of France has four: the circumflex and the diaeresis on the key right of P, and the tilde and the grave accent with AltGr. `^` then `e` gives ê, because the words of French need accented letters that the keyboard has no other key for. A space after a dead key gives the accent alone; a key with no accented form gives the accent, then its own character. The input service keeps the accent that waits; the tables are in `src/library/support/keyboard_layout`.
+The layout of France has four: the circumflex and the diaeresis on the key right of P, and the tilde and the grave accent with AltGr. `^` then `e` gives ê, because the words of French need accented letters that the keyboard has no other key for. A space after a dead key gives the accent alone; a key with no accented form gives the accent, then its own character. The input service keeps the accent that waits; the tables are in `src/library/private/input/keyboard_layout`.
 
 The design: `src/md/features/keyboard_layout.md`.
 
@@ -484,7 +484,7 @@ Do not use: lookup table (alone), LUT.
 
 A Markdown block is one unit of the Markdown of a source comment that stands on its own rows: a paragraph, a list item, a fenced block or an example.
 
-The reader of the system (`src/library/support/source_comment_markdown`) gives the blocks of a documentation text in order. A block is a range of bytes of that text, with its kind. A list item has its mark and its depth, a fenced block has the word after its opening fence, and a block says whether an empty line is before it. The Markdown spans of a block follow it. Example: `manual` starts a row for each block, and draws a band behind a fenced block. It is not a block of storage.
+The reader of the system (`src/library/private/manual/source_comment_markdown`) gives the blocks of a documentation text in order. A block is a range of bytes of that text, with its kind. A list item has its mark and its depth, a fenced block has the word after its opening fence, and a block says whether an empty line is before it. The Markdown spans of a block follow it. Example: `manual` starts a row for each block, and draws a band behind a fenced block. It is not a block of storage.
 
 The design: `docs/SITE.md`, "The reader of the system".
 

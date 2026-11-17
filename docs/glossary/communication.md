@@ -52,7 +52,7 @@ Do not use: condition variable, semaphore, signal, barrier.
 
 A source library is a named folder of source packages that a module compiles in.
 
-An import of the source names the library and the package: `modus:contract/ring`. The modules have one source library, `modus`, in the folder `src/library`. It has two parts: `contract` (what two parties agree on) and `support` (what a program compiles in to use the contracts). The kernel has a second source library of its own, `kernel`, in the folder `src/kernel`, for its kernel parts: `kernel:iommu`. A source library is not a module: it has no file, no hash and no edge in the module graph.
+An import of the source names the library and the package: `modus:contract/ring`. The modules have one source library, `modus`, in the folder `src/library`. It has three parts: `contract` (what two parties agree on), `support` (what two modules or more compile in) and `private` (what one module alone compiles in). The kernel has a second source library of its own, `kernel`, in the folder `src/kernel`, for its kernel parts: `kernel:iommu`. A source library is not a module: it has no file, no hash and no edge in the module graph.
 
 The design: `docs/MODULE_CONTRACT.md`, "The source library of a module".
 
@@ -334,7 +334,7 @@ Do not use: color code, severity (for text).
 
 A token is the smallest part of a line of the console: a name, a number, a text, an operator, the arrow `->`, or one byte of no other token.
 
-One scanner (`src/library/support/console_language`) gives them to the parser of the console and to its colors, so the colors never disagree with the parser.
+One scanner (`src/library/private/console/console_language`) gives them to the parser of the console and to its colors, so the colors never disagree with the parser.
 
 Do not use: lexeme, word (for this).
 

@@ -1445,7 +1445,7 @@ A name of a document on a page is a reference to a real place, or a link, or it 
 
 ## The Markdown of a source comment
 
-A source comment is Markdown: bold, italics, lists and links to declarations, so that the text that the site takes from the code reads as the guides do. The code is `tools/modustool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the programs of the system is `src/library/support/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
+A source comment is Markdown: bold, italics, lists and links to declarations, so that the text that the site takes from the code reads as the guides do. The code is `tools/modustool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the programs of the system is `src/library/private/manual/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
 
 A source comment is Markdown in a small part, written by the renderer of the guides (`Site_Renderer.comment`): one renderer, and a mode that refuses what a comment does not have.
 
@@ -1488,7 +1488,7 @@ The documentation of a module is the same comments (`describe_package`). The mod
 
 ### The reader of the system
 
-The part of Markdown of a comment has two readers, and one rule: the table of this section. The site has the renderer of the guides in its mode for comments. The programs of the system have `src/library/support/source_comment_markdown`: a library with no allocator, which the program `manual` uses for the documentation text of a module.
+The part of Markdown of a comment has two readers, and one rule: the table of this section. The site has the renderer of the guides in its mode for comments. The programs of the system have `src/library/private/manual/source_comment_markdown`: a library with no allocator, which the program `manual` uses for the documentation text of a module.
 
 The library reads the text once and gives it in order, as Markdown blocks and Markdown spans (`glossary/text.md`), to two procedures of its caller (`read`) or into two tables of its caller (`read_into_table`). A block and a span are ranges of bytes of the text: nothing is copied.
 

@@ -6,10 +6,10 @@ import "modus:contract/palette_table"
 import "modus:contract/ring"
 import "modus:contract/settings"
 import "modus:contract/text_encoding"
-import "modus:support/bar"
+import "modus:private/compositor/bar"
 import "modus:support/display"
 import "modus:support/interface"
-import "modus:support/palette"
+import "modus:private/compositor/palette"
 import "modus:support/system"
 import "base:intrinsics"
 
@@ -18,7 +18,7 @@ import "base:intrinsics"
 // and the pointer that reach it, its two sources of entries (the names of
 // the programs and the client table), what a chosen entry does, its draw
 // table and its lines in the log. The state, the ranking and the draw
-// records are in src/library/support/palette, where the host tests run them.
+// records are in src/library/private/compositor/palette, where the host tests run them.
 //
 // The panel holds no right. A program starts through the root service as
 // the menu of the programs starts it; a window comes to the front as a

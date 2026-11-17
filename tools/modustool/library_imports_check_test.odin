@@ -274,6 +274,117 @@ library_import_of_a_kernel_part_outside_the_kernel_is_refused :: proc(t: ^testin
 	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
 }
 
+// A private part is imported from the folder of its module and from the
+// private parts of the same module only. Each other importer is refused with
+// its line: another module, a support package and its host test, a private
+// part of another module, a contract package; and a path that names no
+// module of the table, or a module and no part. The last case: the module,
+// a private part of the same module and its host test import it.
+@(test)
+library_import_of_a_private_part_from_another_module_is_refused :: proc(t: ^testing.T) {
+	root := library_tree_make(t)
+	defer os.remove_all(root)
+	part :: PRIVATE_IMPORT_START + "console/line_cutter"
+	library_tree_folder_make(root, SOURCE_FOLDER_PRIVATE + "/console/line_cutter")
+	library_tree_folder_make(root, SOURCE_FOLDER_PRIVATE + "/compositor/panel")
+	library_tree_folder_make(root, SOURCE_FOLDER_PROGRAMS + "/compositor")
+	library_tree_folder_make(root, SOURCE_FOLDER_PROGRAMS + "/console")
+	library_tree_file_write(root, SOURCE_FOLDER_PRIVATE + "/console/line_cutter/cutter.odin", "package line_cutter\n")
+	library_tree_file_write(root, SOURCE_FOLDER_PROGRAMS + "/compositor/main.odin", "package compositor\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/cut.odin", "package sentence\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/cut_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_PRIVATE + "/compositor/panel/panel.odin", "package panel\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_PROGRAMS + "/console/unknown.odin", "package console\n\nimport \"" + PRIVATE_IMPORT_START + "no_such_module/part\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_PROGRAMS + "/console/short.odin", "package console\n\nimport \"" + PRIVATE_IMPORT_START + "console\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/cut.odin", "package ring\n\nimport \"" + part + "\"\n")
+	reading, read_ok := library_import_breaches_of_tree(root)
+	testing.expect(t, read_ok)
+	testing.expectf(t, len(reading.breaches[:]) == 7, "%v", reading.breaches[:])
+	other, other_found := breach_of_file(reading.breaches[:], SOURCE_FOLDER_PROGRAMS + "/compositor/main.odin")
+	testing.expect(t, other_found, "the module that imports a private part of another module is not named")
+	testing.expect_value(t, other.line, 3)
+	testing.expect_value(t, other.text, "\"" + part + "\"")
+	testing.expect_value(t, other.reason, Library_Import_Breach_Reason.Private_Part_Of_Another_Module)
+	sentence := library_import_breach_sentence(other)
+	testing.expect(t, strings.contains(sentence, SOURCE_FOLDER_PROGRAMS + "/compositor/main.odin:3: the import \"" + part + "\" is refused"), sentence)
+	for file in ([]string{SOURCE_FOLDER_SUPPORT + "/sentence/cut.odin", SOURCE_FOLDER_SUPPORT + "/sentence/cut_test.odin", SOURCE_FOLDER_PRIVATE + "/compositor/panel/panel.odin", SOURCE_FOLDER_PROGRAMS + "/console/unknown.odin", SOURCE_FOLDER_PROGRAMS + "/console/short.odin"}) {
+		breach, found := breach_of_file(reading.breaches[:], file)
+		testing.expectf(t, found && breach.reason == .Private_Part_Of_Another_Module && breach_count_of_file(reading.breaches[:], file) == 1, "%s: the import is not refused one time as a private part of another module", file)
+	}
+	// A contract package imports no private part, by the rule of its folder.
+	in_contract, contract_found := breach_of_file(reading.breaches[:], SOURCE_FOLDER_CONTRACT + "/ring/cut.odin")
+	testing.expect(t, contract_found && in_contract.reason == .Refused_Import, "the contract package that imports a private part is not refused")
+
+	// The last case: the module, a private part of the same module, and the
+	// host test of that part.
+	clean := library_tree_make(t)
+	defer os.remove_all(clean)
+	library_tree_folder_make(clean, SOURCE_FOLDER_PRIVATE + "/console/line_cutter")
+	library_tree_folder_make(clean, SOURCE_FOLDER_PRIVATE + "/console/history")
+	library_tree_folder_make(clean, SOURCE_FOLDER_PROGRAMS + "/console")
+	library_tree_file_write(clean, SOURCE_FOLDER_PRIVATE + "/console/line_cutter/cutter.odin", "package line_cutter\n")
+	library_tree_file_write(clean, SOURCE_FOLDER_PROGRAMS + "/console/main.odin", "package console\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(clean, SOURCE_FOLDER_PRIVATE + "/console/history/history.odin", "package history\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(clean, SOURCE_FOLDER_PRIVATE + "/console/history/history_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage history\n\nimport \"core:testing\"\nimport \"" + part + "\"\n")
+	accepted, accepted_ok := library_import_breaches_of_tree(clean)
+	testing.expect(t, accepted_ok)
+	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
+}
+
+// The owners of a package are the bodies of code whose chain of imports
+// reaches it, and a test is no owner. Refused: a support package that no
+// body reaches, one that one module reaches (also through a private part of
+// that module, so by two importing files, and also when a host test of
+// another module imports it), and a private part that its module does not
+// reach. The last case: a support package with two owners, one through a
+// private part, and a private part that its module reaches.
+@(test)
+library_support_package_with_one_owner_is_refused :: proc(t: ^testing.T) {
+	root := library_tree_make(t)
+	defer os.remove_all(root)
+	for folder in ([]string{SOURCE_FOLDER_SUPPORT + "/alone", SOURCE_FOLDER_SUPPORT + "/twice", SOURCE_FOLDER_PRIVATE + "/console/history", SOURCE_FOLDER_PRIVATE + "/console/unused", SOURCE_FOLDER_PROGRAMS + "/console", SOURCE_FOLDER_PROGRAMS + "/compositor"}) {
+		library_tree_folder_make(root, folder)
+	}
+	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/alone/alone.odin", "package alone\n")
+	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/twice/twice.odin", "package twice\n")
+	library_tree_file_write(root, SOURCE_FOLDER_PRIVATE + "/console/history/history.odin", "package history\n\nimport \"" + SUPPORT_IMPORT_START + "twice\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_PRIVATE + "/console/unused/unused.odin", "package unused\n")
+	library_tree_file_write(root, SOURCE_FOLDER_PROGRAMS + "/console/main.odin", "package console\n\nimport \"" + SUPPORT_IMPORT_START + "alone\"\nimport \"" + SUPPORT_IMPORT_START + "twice\"\nimport \"" + PRIVATE_IMPORT_START + "console/history\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_PROGRAMS + "/compositor/main_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage compositor\n\nimport \"core:testing\"\nimport \"" + SUPPORT_IMPORT_START + "alone\"\n")
+	reading, read_ok := library_import_breaches_of_tree(root)
+	testing.expect(t, read_ok)
+	testing.expectf(t, len(reading.breaches[:]) == 0, "%v", reading.breaches[:])
+	owners := library_owner_breaches(reading)
+	testing.expectf(t, len(owners) == 4, "%v", owners)
+	nobody, nobody_found := breach_of_file(owners, SOURCE_FOLDER_SUPPORT + "/sentence")
+	testing.expect(t, nobody_found && nobody.reason == .Support_Package_With_One_Owner && nobody.text == "", "the support package that no body reaches is not refused")
+	testing.expect(t, strings.contains(library_import_breach_sentence(nobody), "no body of code reaches this support package"), library_import_breach_sentence(nobody))
+	for folder in ([]string{SOURCE_FOLDER_SUPPORT + "/alone", SOURCE_FOLDER_SUPPORT + "/twice"}) {
+		breach, found := breach_of_file(owners, folder)
+		testing.expectf(t, found && breach.reason == .Support_Package_With_One_Owner && breach.text == "console", "%s: %v", folder, breach)
+		sentence := library_import_breach_sentence(breach)
+		testing.expect(t, strings.contains(sentence, join(folder, ": only console reaches this support package")) && strings.contains(sentence, SOURCE_FOLDER_PRIVATE + "/<module>/"), sentence)
+	}
+	unused, unused_found := breach_of_file(owners, SOURCE_FOLDER_PRIVATE + "/console/unused")
+	testing.expect(t, unused_found && unused.reason == .Private_Part_Without_Its_Module && unused.text == "", "the private part that its module does not reach is not refused")
+
+	// The last case.
+	clean := library_tree_make(t)
+	defer os.remove_all(clean)
+	for folder in ([]string{SOURCE_FOLDER_SUPPORT + "/twice", SOURCE_FOLDER_PRIVATE + "/console/history", SOURCE_FOLDER_PROGRAMS + "/console", SOURCE_FOLDER_PROGRAMS + "/compositor"}) {
+		library_tree_folder_make(clean, folder)
+	}
+	library_tree_file_write(clean, SOURCE_FOLDER_SUPPORT + "/twice/twice.odin", "package twice\n\nimport \"" + SUPPORT_IMPORT_START + "sentence\"\n")
+	library_tree_file_write(clean, SOURCE_FOLDER_PRIVATE + "/console/history/history.odin", "package history\n\nimport \"" + SUPPORT_IMPORT_START + "twice\"\n")
+	library_tree_file_write(clean, SOURCE_FOLDER_PROGRAMS + "/console/main.odin", "package console\n\nimport \"" + PRIVATE_IMPORT_START + "console/history\"\n")
+	library_tree_file_write(clean, SOURCE_FOLDER_PROGRAMS + "/compositor/main.odin", "package compositor\n\nimport \"" + SUPPORT_IMPORT_START + "twice\"\n")
+	accepted, accepted_ok := library_import_breaches_of_tree(clean)
+	testing.expect(t, accepted_ok)
+	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
+	accepted_owners := library_owner_breaches(accepted)
+	testing.expectf(t, len(accepted_owners) == 0, "%v", accepted_owners)
+}
+
 // A source of a kernel part keeps no state and reaches no machine. Each
 // impure construct is refused with its line: a package variable with no
 // @(rodata), a variable marked @(static) or @(thread_local) (also beside
@@ -505,6 +616,9 @@ library_imports_of_the_repository :: proc(t: ^testing.T) {
 	reading, read_ok := library_import_breaches_of_tree("")
 	testing.expect(t, read_ok, "the sources cannot be read")
 	for breach in reading.breaches {
+		testing.expect(t, false, library_import_breach_sentence(breach))
+	}
+	for breach in library_owner_breaches(reading) {
 		testing.expect(t, false, library_import_breach_sentence(breach))
 	}
 	testing.expect(t, reading.source_count > 0 && reading.test_count > 0 && reading.import_count > 0, "the check read no file or no import: a folder of the check is empty")

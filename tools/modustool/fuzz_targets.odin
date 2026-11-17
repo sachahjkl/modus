@@ -49,8 +49,8 @@ fuzz_target_table := [?]Fuzz_Target {
 	{
 		name = "storage_tree",
 		kind = .Generated,
-		about = "support/storage_tree: the B-tree against a sorted model, its walk after each commit, then damaged nodes",
-		packages = {SOURCE_FOLDER_SUPPORT + "/storage_tree"},
+		about = "private/storage/storage_tree: the B-tree against a sorted model, its walk after each commit, then damaged nodes",
+		packages = {SOURCE_FOLDER_PRIVATE + "/storage/storage_tree"},
 		input_limit = 8 << 10,
 		execute = fuzz_storage_tree_execute,
 		start = fuzz_storage_tree_start,
@@ -61,8 +61,8 @@ fuzz_target_table := [?]Fuzz_Target {
 	{
 		name = "storage_mount",
 		kind = .Generated,
-		about = "support/storage_mount: the open of a disk gives back each object of its writer, then never a wrong object of a damaged disk",
-		packages = {SOURCE_FOLDER_SUPPORT + "/storage_mount", SOURCE_FOLDER_SUPPORT + "/storage_object", SOURCE_FOLDER_SUPPORT + "/storage_tree"},
+		about = "private/storage/storage_mount: the open of a disk gives back each object of its writer, then never a wrong object of a damaged disk",
+		packages = {SOURCE_FOLDER_PRIVATE + "/storage/storage_mount", SOURCE_FOLDER_PRIVATE + "/storage/storage_object", SOURCE_FOLDER_PRIVATE + "/storage/storage_tree"},
 		input_limit = 4 << 10,
 		execute = fuzz_storage_mount_execute,
 		start = fuzz_storage_mount_start,

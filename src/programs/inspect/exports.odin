@@ -3,7 +3,7 @@ package inspect
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
-import "modus:support/addresses"
+import "modus:private/inspect/addresses"
 import "modus:support/system"
 
 // The same facts as the window, as tables of records, not text: a caller

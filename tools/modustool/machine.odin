@@ -2,8 +2,8 @@ package modustool
 
 import "modus:contract/glyph_cache"
 import "modus:contract/store"
-import tree "modus:support/storage_tree"
-import "modus:support/bar"
+import tree "modus:private/storage/storage_tree"
+import "modus:private/compositor/bar"
 import "core:fmt"
 import "core:math/rand"
 import "core:os"
@@ -875,7 +875,7 @@ object_damage :: proc(path: string, store_name: string, object_name: string) -> 
 }
 
 // tree_entry_find finds an entry of a tree on a disk file: the walk down
-// the B+ tree of the tree, as src/library/support/storage_tree does.
+// the B+ tree of the tree, as src/library/private/storage/storage_tree does.
 tree_entry_find :: proc(file: ^os.File, root: store.Pointer, name: string) -> (found_entry: store.Entry, found: bool, ok: bool) {
 	key := store.entry_name(name)
 	pointer := root

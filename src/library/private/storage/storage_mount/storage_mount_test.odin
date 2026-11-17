@@ -2,7 +2,7 @@
 package storage_mount
 
 import format "modus:contract/store"
-import block_tree "modus:support/storage_object"
+import block_tree "modus:private/storage/storage_object"
 import "core:testing"
 
 // A disk built in memory, block by block, and read through a Block_Reader.

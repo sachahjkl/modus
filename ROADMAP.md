@@ -7,7 +7,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Next
 
 - **Fuzzing of the kernel operations.** A test machine runs operation sequences that the tool builds from the forms of the 35 kernel operations, guided by the edge counters of a test kernel, with the checks of the kernel as oracles. A fault of the kernel that a sequence finds is confirmed on the kernel that ships. [Design](src/md/infrastructure/kernel_fuzzing.md)
-- **The private parts of a module.** The 16 support packages that one module alone reaches move under that module in the library, and the tool refuses a support package with fewer than two owners. A reader then tells shared code from the private code of one module by its folder. [Design](src/md/infrastructure/repository_layout.md)
 - **One folder of modules by group.** The programs and the other modules are one folder, `src/modules`, in the groups system, libraries, demonstrations and tests, and the table of the modules reads the group from the folder. A reader finds a module by what it is for. [Design](src/md/infrastructure/repository_layout.md)
 - **The tool in packages.** The tool is one command over packages for the build, the checks, the resources, the fuzzer, the similarity finder, the machine tests and the site. A developer reads one concern in one folder and runs the host tests of one package. [Design](src/md/infrastructure/repository_layout.md)
 

@@ -4,7 +4,7 @@ import format "modus:contract/store"
 import "core:fmt"
 import "core:os"
 import "core:sync"
-import "modus:support/storage_mount"
+import "modus:private/storage/storage_mount"
 
 // The dropped write (src/md/features/dropped_write.md). The disk that the
 // tool serves drops three writes of the console to one object, each found
