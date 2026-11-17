@@ -4,7 +4,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **No press of the pointer lost while test parts run at once.** Two whole tests with four parts at once lost one action of the pointer at the start of a machine, where the tool moves the pointer without the confirmation of the compositor: the menu did not open, or a window was not in the menu. Each part passes alone. With the cause found and fixed, a whole test passes each time, whatever the load of the host. [Design](src/md/infrastructure/machine_test_parts.md)
+- **No press of the pointer lost while test parts run at once.** Two whole tests with four parts at once lost one action of the pointer at the start of a machine, where the tool moves the pointer without the confirmation of the compositor, and each part passes alone. With the cause fixed, a whole test passes each time, whatever the load of the host. [Design](src/md/infrastructure/machine_test_parts.md)
 
 ## Next
 
