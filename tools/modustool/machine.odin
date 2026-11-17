@@ -514,6 +514,12 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "net: UDP from 10.0.2.2 port 9 to this endpoint: refused: from port 9; a row of this endpoint"},
 	{kind = .Wait, text = "net: malformed frames from the wire: 9 refused in 9 kinds, 9 of 9 expected; no fault"},
 	{kind = .Wait, text = "net: ICMP echo from 10.0.2.2 to this machine: the network service answered 1 request"},
+	// The words of a command record that name no command: None, one past
+	// the last command, the largest word. The network service answers what
+	// its border decided, and serves the next command.
+	{kind = .Wait, text = "net: the command word 0 of the datagram ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must"},
+	{kind = .Wait, text = "net: the command word 10 of the datagram ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must"},
+	{kind = .Wait, text = "net: the command word 4294967295 of the datagram ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must"},
 	{kind = .Wait, text = "net: ok, 14 cases"},
 	{kind = .Wait, text = "net: the header and the checksum of a datagram of 1472 bytes: "},
 	{kind = .Wait, text = "net: the round trip of one datagram of 64 bytes: "},
@@ -2751,6 +2757,18 @@ scenario := [?]Step {
 	// The scenario closes the window: the terminal stops.
 	{kind = .Close, text = "flood"},
 	{kind = .Wait, text = "root: terminal stopped"},
+	// The words of a record of the terminal ring that name no record:
+	// None, one past the last kind, the largest word. The terminal sends no
+	// answer on the ring: it writes one line at the first word, and the
+	// count when the program stops. The program stops after its check.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "start(\"hostile_terminal\")"},
+	{kind = .Wait, text = "root: started hostile_terminal, with a terminal", any_order = true},
+	{kind = .Wait, text = "terminal: hostile_terminal sent a record of the kind 0, which names no record: it is refused", any_order = true},
+	{kind = .Wait, text = "hostile_terminal: the terminal read the kind words 0, 9 and 4294967295, and the line after them: as it must"},
+	{kind = .Wait, text = "terminal: hostile_terminal stopped after 3 records whose kind names no record"},
+	{kind = .Close, text = "hostile_terminal"},
+	{kind = .Wait, text = "root: terminal stopped"},
 	// The block service: the root service gives one virtio disk to one
 	// block service, and the block ring to its client. The device reads and
 	// writes the memory of the client.
@@ -2765,10 +2783,22 @@ scenario := [?]Step {
 	{kind = .Wait, text = "disk: read, 16 blocks in each request, 8 in flight: "},
 	{kind = .Record, program = "disk", level = "info", text = "disk: ok, 5 runs, 0 errors, write then read back: 0 wrong"},
 	{kind = .Wait, text = "disk: a read of 2 blocks from the last block: block.Read: the argument first reaches 8193 blocks, past the end: there are 8192 blocks"},
+	// The words of a command record that name no command: None, one past
+	// the last command, the largest word. The block service answers what
+	// its border decided, and serves the next command.
+	{kind = .Wait, text = "disk: the command word 0 of the block ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must"},
+	{kind = .Wait, text = "disk: the command word 7 of the block ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must"},
+	{kind = .Wait, text = "disk: the command word 4294967295 of the block ring: refused with Bad_Command and the record Unsupported of the word, and the next Info is served: as it must"},
+	// The same three words on the ring of its window: the compositor
+	// sends no answer there; it writes one line at the first word, and the
+	// count when the window closes.
+	{kind = .Wait, text = "compositor: a window sent the word 0, which names no command; the next ones are counted, and the count comes when the window closes", any_order = true},
+	{kind = .Wait, text = "disk: the window sent the command words 0, 6 and 4294967295: the compositor read the three: as it must"},
 	{kind = .Shot, text = "disk"},
 	// The client stops: its block service stops, and the device stops
 	// using memory.
 	{kind = .Close, text = "disk"},
+	{kind = .Wait, text = "compositor: window disk closed after 3 records whose word names no command"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: disk stopped with code 0"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: block stopped with code 0"},
 	// The storage service runs since the boot (the boot pass of settings
@@ -4533,12 +4563,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			pointer_known_make(machine, index) or_return
 			if step.kind == .Launch {
 				menu_x, menu_y := bar.button_center(layout)
-				if !pointer_move(machine, menu_x, menu_y) {
-					fmt.eprintfln("modustool: test failed: step %d: the pointer did not reach its place", index + 1)
-					return false
-				}
-				pointer_button(machine, true) or_return
-				pointer_button(machine, false) or_return
+				pointer_click(machine, menu_x, menu_y, index) or_return
 				// The compositor writes that the menu is open: a press that
 				// the machine did not receive is a failure of this step, with
 				// its cause, and not of a later one.
@@ -4554,11 +4579,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					return false
 				}
 			}
-			if !pointer_move(machine, step.x, step.y) {
-				fmt.eprintfln("modustool: test failed: step %d: the pointer did not reach its place", index + 1)
-				return false
-			}
-			pointer_button(machine, true) or_return
+			pointer_press_at(machine, step.x, step.y, index) or_return
 			if step.kind == .Drag {
 				if !pointer_move(machine, step.to_x, step.to_y) {
 					fmt.eprintfln("modustool: test failed: step %d: the pointer did not reach its place", index + 1)

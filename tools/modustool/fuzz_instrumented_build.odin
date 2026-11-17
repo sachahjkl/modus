@@ -69,22 +69,83 @@ fuzz_command_tokens :: proc(line: string) -> []string {
 }
 
 // fuzz_package_is_instrumented says if an IR file of the compiler belongs
-// to one of the packages under test: its name is the name of the output,
-// "-", the name of the package, then ".ll", "-" and the name of a file of
-// the package, or "$" and a number.
-fuzz_package_is_instrumented :: proc(file_name: string, packages: []string) -> bool {
+// to one of the packages under test, by the names that their sources
+// declare: the name of the file is the name of the output, "-", the name of
+// the package, then ".ll", "-" and the name of a file of the package, or
+// "$" and a number.
+fuzz_package_is_instrumented :: proc(file_name: string, package_names: []string) -> bool {
+	_, found := fuzz_package_of_file(file_name, package_names)
+	return found
+}
+
+// fuzz_package_of_file gives the index of the package of package_names
+// that an IR file belongs to.
+fuzz_package_of_file :: proc(file_name: string, package_names: []string) -> (index: int, found: bool) {
 	prefix := FUZZ_INSTRUMENTED_NAME + "-"
 	if !strings.has_prefix(file_name, prefix) || !strings.has_suffix(file_name, ".ll") {
-		return false
+		return 0, false
 	}
 	stem := file_name[len(prefix):len(file_name) - len(".ll")]
-	for package_folder in packages {
-		name := package_folder[strings.last_index_byte(package_folder, '/') + 1:]
+	for name, number in package_names {
 		if stem == name || strings.has_prefix(stem, strings.concatenate({name, "-"}, context.temp_allocator)) || strings.has_prefix(stem, strings.concatenate({name, "$"}, context.temp_allocator)) {
-			return true
+			return number, true
 		}
 	}
-	return false
+	return 0, false
+}
+
+// fuzz_package_name_of_line gives the name of a line `package <name>`: the
+// name ends at the first space, tab or "/", so a comment after it is no
+// part of it.
+fuzz_package_name_of_line :: proc(line: string) -> (name: string, found: bool) {
+	if !strings.has_prefix(line, "package ") {
+		return "", false
+	}
+	name = strings.trim_left_space(line[len("package "):])
+	if end := strings.index_any(name, " \t\r/"); end >= 0 {
+		name = name[:end]
+	}
+	return name, len(name) > 0
+}
+
+// fuzz_package_name_of_folder gives the name that the sources of a folder
+// of the source library declare. The compiler names an IR file by it, and
+// it can differ from the name of the folder: the folder support/terminal
+// holds the package terminal_records. A folder whose sources cannot be read
+// gives the name of the folder, and the build then fails, naming each
+// folder that no IR file belongs to.
+fuzz_package_name_of_folder :: proc(package_folder: string) -> string {
+	folder_name := package_folder[strings.last_index_byte(package_folder, '/') + 1:]
+	folder := strings.concatenate({SOURCE_FOLDER_LIBRARY, "/", package_folder}, context.temp_allocator)
+	entries, error := os.read_all_directory_by_path(folder, context.temp_allocator)
+	if error != nil {
+		return folder_name
+	}
+	slice.sort_by(entries, proc(a, b: os.File_Info) -> bool {return a.name < b.name})
+	for entry in entries {
+		if entry.type != .Regular || !strings.has_suffix(entry.name, ".odin") || strings.has_suffix(entry.name, "_test.odin") {
+			continue
+		}
+		bytes, read_error := os.read_entire_file(entry.fullpath, context.temp_allocator)
+		if read_error != nil {
+			continue
+		}
+		for line in strings.split_lines(string(bytes), context.temp_allocator) {
+			if name, found := fuzz_package_name_of_line(line); found {
+				return name
+			}
+		}
+	}
+	return folder_name
+}
+
+// fuzz_package_names gives the declared name of the package of each folder.
+fuzz_package_names :: proc(packages: []string) -> []string {
+	names := make([dynamic]string, context.temp_allocator)
+	for package_folder in packages {
+		append(&names, fuzz_package_name_of_folder(package_folder))
+	}
+	return names[:]
 }
 
 // The commands that the compiler printed: the assembly of each file of
@@ -180,13 +241,23 @@ fuzz_instrumented_build :: proc(packages: []string) -> bool {
 	objects_commands := make([dynamic][]string, context.temp_allocator)
 	objects := make([dynamic]string, context.temp_allocator)
 	instrumented_count := 0
+	package_names := fuzz_package_names(packages)
+	// The IR files of each package: a package with none would run with no
+	// edge counted, and no message would say so.
+	files_of_package := make([]int, len(package_names), context.temp_allocator)
 	for entry in entries {
 		if !strings.has_suffix(entry.name, ".ll") {
 			continue
 		}
 		ir := strings.concatenate({FUZZ_INSTRUMENTED_FOLDER, "/", entry.name}, context.temp_allocator)
 		object := strings.concatenate({FUZZ_INSTRUMENTED_FOLDER, "/objects/", entry.name[:len(entry.name) - len(".ll")], ".o"}, context.temp_allocator)
-		if fuzz_package_is_instrumented(entry.name, packages) {
+		if package_index, found := fuzz_package_of_file(entry.name, package_names); found {
+			// Two folders of one declared name share their IR files.
+			for name, index in package_names {
+				if name == package_names[package_index] {
+					files_of_package[index] += 1
+				}
+			}
 			command := make([dynamic]string, context.temp_allocator)
 			append(&command, "opt")
 			options := FUZZ_COVERAGE_PASS_OPTIONS
@@ -199,8 +270,17 @@ fuzz_instrumented_build :: proc(packages: []string) -> bool {
 		append(&objects_commands, slice.clone([]string{"llc", "-O1", "-relocation-model=pic", "-filetype=obj", "-o", object, ir}, context.temp_allocator))
 		append(&objects, object)
 	}
-	if instrumented_count == 0 {
-		fmt.eprintfln("modustool: no IR file of the compiler belongs to the packages under test: %v", packages)
+	all_found := instrumented_count > 0
+	if len(packages) == 0 {
+		fmt.eprintln("modustool: the instrumented child names no package under test")
+	}
+	for count, index in files_of_package {
+		if count == 0 {
+			fmt.eprintfln("modustool: no IR file of the compiler belongs to the package %s of the folder %s: its edges would not be counted", package_names[index], packages[index])
+			all_found = false
+		}
+	}
+	if !all_found {
 		return false
 	}
 	// The objects of the assembly files: the command that the compiler

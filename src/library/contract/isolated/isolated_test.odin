@@ -252,7 +252,7 @@ nine_parameters_round_trip :: proc(t: ^testing.T) {
 	// The bound: twelve arguments fit, thirteen do not.
 	_, described := record_size(function)
 	testing.expect(t, described)
-	function.parameters[9], function.parameters[10] = u8(module.Type.Integer), .Integer
+	function.parameters[9], function.parameters[10] = u8(module.Type.Integer), u8(module.Type.Integer)
 	function.parameter_count = 11
 	_, described = record_size(function)
 	testing.expect(t, !described, "eleven parameters, a Text result and an error record are thirteen arguments")

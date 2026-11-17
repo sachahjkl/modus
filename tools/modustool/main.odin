@@ -144,6 +144,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/glyph_cache",
 	SOURCE_FOLDER_CONTRACT + "/datagram",
 	SOURCE_FOLDER_CONTRACT + "/byte_order",
+	SOURCE_FOLDER_CONTRACT + "/acpi_processors",
 }
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 // The boot program of the main boot volume, and its object: each boot

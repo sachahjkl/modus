@@ -1156,7 +1156,7 @@ step_one :: proc "contextless" (number: u64, deadline: u64) -> (stepped: bool, a
 		}
 		record_keep(record, record.thread == number)
 		if record.thread == number {
-			return true, record.kind == .Debug && record.error_code & op.DEBUG_STATUS_BREAKPOINTS != 0, .Ok
+			return true, record.kind == u64(op.Fault_Kind.Debug) && record.error_code & op.DEBUG_STATUS_BREAKPOINTS != 0, .Ok
 		}
 	}
 }

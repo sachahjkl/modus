@@ -1,13 +1,16 @@
 package modustool
 
+import "core:slice"
+import "modus:contract/acpi_processors"
 import iommu "modus:contract/iommu"
 
-// The fuzz target of the tables of the firmware
+// The fuzz targets of the tables of the firmware
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"): the
 // kernel reads the ACPI tables DMAR, IVRS and MCFG at its start with the
-// readers of `contract/iommu`, which run on the host as they run in the
-// kernel. The search of the processors in the ACPI tables reads raw
-// addresses inside the kernel, and no host code calls it.
+// readers of `contract/iommu`, and the list of the processors in the table
+// APIC with `contract/acpi_processors`. They run on the host as they run in
+// the kernel; the walk of the root of ACPI to a table stays in the kernel,
+// as it reads physical memory.
 
 // The first byte of an input chooses the table; the bytes after it are the
 // table, with its ACPI header.
@@ -227,4 +230,107 @@ fuzz_firmware_tables_seeds :: proc(seeds: ^[dynamic][]u8) {
 		short[0] = u8(kind)
 		append(seeds, short)
 	}
+}
+
+// ---------------------------------------------------------------------
+// The processors of the table APIC.
+
+// The most processors that one read keeps: more than an input of
+// FUZZ_ACPI_PROCESSORS_INPUT_LIMIT bytes can name with entries of 8 bytes,
+// so no read is cut and the two modes compare whole lists.
+@(private = "file")
+FUZZ_PROCESSOR_LIMIT :: 1024
+FUZZ_ACPI_PROCESSORS_INPUT_LIMIT :: 4 << 10
+#assert(FUZZ_ACPI_PROCESSORS_INPUT_LIMIT / acpi_processors.LOCAL_CONTROLLER_SIZE < FUZZ_PROCESSOR_LIMIT)
+
+// The word that a read must leave in each place past its count.
+@(private = "file")
+FUZZ_PROCESSOR_UNTOUCHED :: u32(0xA5A5_A5A5)
+
+// fuzz_processors_read reads a table in a mode, into a table of a capacity
+// with a word in each place, and checks that no place past the count
+// changed.
+@(private = "file")
+fuzz_processors_read :: proc(table: []u8, extended: bool, capacity: int) -> (identifiers: []u32, count: int, untouched: bool) {
+	identifiers = make([]u32, capacity, context.temp_allocator)
+	slice.fill(identifiers, FUZZ_PROCESSOR_UNTOUCHED)
+	count = acpi_processors.processors_read(table, extended, identifiers)
+	untouched = true
+	for identifier in identifiers[clamp(count, 0, capacity):] {
+		if identifier != FUZZ_PROCESSOR_UNTOUCHED {
+			untouched = false
+		}
+	}
+	return identifiers, count, untouched
+}
+
+// fuzz_acpi_processors_execute reads the input as a table APIC. In each
+// mode the count stays in the capacity and no place past it changes; a
+// smaller capacity gives the first identifiers of a larger one; the mode
+// of identifiers of 8 bits gives no larger identifier, and its processors
+// are the processors of the other mode in their order. The read changes no
+// byte of the table.
+fuzz_acpi_processors_execute :: proc(input: []u8) -> Fuzz_Verdict {
+	before := slice.clone(input, context.temp_allocator)
+	whole: [2][]u32
+	for extended, mode in ([2]bool{false, true}) {
+		identifiers, count, untouched := fuzz_processors_read(input, extended, FUZZ_PROCESSOR_LIMIT)
+		if count < 0 || count > FUZZ_PROCESSOR_LIMIT || !untouched {
+			return fuzz_broken(.Contract, "processors_read gives %d processors in a table of %d places, or writes past them", count, FUZZ_PROCESSOR_LIMIT)
+		}
+		whole[mode] = identifiers[:count]
+		for capacity in ([4]int{0, 1, count / 2, max(count - 1, 0)}) {
+			part, part_count, part_untouched := fuzz_processors_read(input, extended, capacity)
+			if part_count != min(count, capacity) || !part_untouched || !slice.equal(part[:part_count], whole[mode][:part_count]) {
+				return fuzz_broken(.Contract, "processors_read in %d places gives %d processors, not the first %d of %d", capacity, part_count, min(count, capacity), count)
+			}
+		}
+	}
+	for identifier in whole[0] {
+		if identifier > u32(max(u8)) {
+			return fuzz_broken(.Contract, "processors_read gives the identifier %x in the mode of 8 bits", identifier)
+		}
+	}
+	// The processors of 8 bits are in the other mode too, in their order.
+	next := 0
+	for identifier in whole[0] {
+		for next < len(whole[1]) && whole[1][next] != identifier {
+			next += 1
+		}
+		if next == len(whole[1]) {
+			return fuzz_broken(.Two_Readers, "a processor of the mode of 8 bits is not a processor of the other mode")
+		}
+		next += 1
+	}
+	if !slice.equal(before, input) {
+		return fuzz_broken(.Contract, "processors_read changed the table")
+	}
+	return FUZZ_PASSED
+}
+
+fuzz_acpi_processors_seeds :: proc(seeds: ^[dynamic][]u8) {
+	// The table of QEMU with four processors, one of them disabled; an
+	// entry of another kind; an extended entry; an entry one byte short of
+	// its flags; then the table one byte short of its last entry, and of
+	// its first.
+	table := make([dynamic]u8)
+	append(&table, ..transmute([]u8)string("APIC"))
+	for len(table) < acpi_processors.ENTRIES_START {
+		append(&table, 0)
+	}
+	for identifier in 0 ..< 4 {
+		append(&table, acpi_processors.ENTRY_LOCAL_CONTROLLER, acpi_processors.LOCAL_CONTROLLER_SIZE, u8(identifier), u8(identifier))
+		fuzz_firmware_word(&table, 4, identifier == 2 ? 0 : u64(acpi_processors.FLAG_ENABLED))
+	}
+	append(&table, 1, 12, 0, 0)
+	fuzz_firmware_word(&table, 4, 0xFEC0_0000)
+	fuzz_firmware_word(&table, 4, 0)
+	append(&table, acpi_processors.ENTRY_LOCAL_CONTROLLER_EXTENDED, acpi_processors.LOCAL_CONTROLLER_EXTENDED_SIZE, 0, 0)
+	fuzz_firmware_word(&table, 4, 0x1_0000)
+	fuzz_firmware_word(&table, 4, u64(acpi_processors.FLAG_ENABLED))
+	fuzz_firmware_word(&table, 4, 9)
+	append(&table, acpi_processors.ENTRY_LOCAL_CONTROLLER, acpi_processors.LOCAL_CONTROLLER_SIZE - 1, 0, 7, 1, 0, 0)
+	append(seeds, table[:])
+	append(seeds, slice.clone(table[:len(table) - 1]))
+	append(seeds, slice.clone(table[:acpi_processors.ENTRIES_START + 1]))
 }

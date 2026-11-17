@@ -1170,7 +1170,8 @@ program_entries :: proc "contextless" (program: Handle) -> u64 {
 // program_state gives the state of a program, and its code when it stopped.
 program_state :: proc "contextless" (program: Handle) -> (state: op.Program_State, code: u32) {
 	results, _ := call(.Program_State, u64(program))
-	state, known := enum_word.member_of_word(op.Program_State, results[0])
+	known: bool
+	state, known = enum_word.member_of_word(op.Program_State, results[0])
 	if !known {
 		kernel_word_refused("the state of a program", results[0])
 	}

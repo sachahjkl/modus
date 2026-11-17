@@ -312,10 +312,10 @@ fuzz_isolated_call_start :: proc() -> bool {
 	offset := u64(size_of(module.Header) + size_of(Directory))
 	records := [3]module.Record{1 = {size = 16, first_field = 1, field_count = 2}, 2 = {size = 24, first_field = 3, field_count = 2}}
 	fields := [5]module.Field {
-		1 = {offset = 0, type = .Handle, detail = 6},
-		2 = {offset = 8, type = .Integer},
-		3 = {offset = 0, type = .Text, detail = 16},
-		4 = {offset = 16, type = .Integer},
+		1 = {offset = 0, type = u8(module.Type.Handle), detail = 6},
+		2 = {offset = 8, type = u8(module.Type.Integer)},
+		3 = {offset = 0, type = u8(module.Type.Text), detail = 16},
+		4 = {offset = 16, type = u8(module.Type.Integer)},
 	}
 	directory[module.Table_Kind.Records] = {offset = offset, count = len(records), record_size = size_of(module.Record)}
 	copy(file[offset:], mem.ptr_to_bytes(&records))

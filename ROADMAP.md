@@ -4,13 +4,9 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **No press of the pointer lost while test parts run at once.** Two whole tests with four parts at once lost one action of the pointer at the start of a machine, where the tool moves the pointer without the confirmation of the compositor, and each part passes alone. With the cause fixed, a whole test passes each time, whatever the load of the host. [Design](src/md/infrastructure/machine_test_parts.md)
-
 ## Next
 
 - **Fuzzing of the kernel operations.** A test machine runs operation sequences that the tool builds from the forms of the 35 kernel operations, guided by the edge counters of a test kernel, with the checks of the kernel as oracles. A fault of the kernel that a sequence finds is confirmed on the kernel that ships. [Design](src/md/infrastructure/fuzzing.md)
-- **Fuzzing of the last readers of the system.** The sentences of the error records, the palette table, the demand cache, the value runs, the text encoding check, the kept stop report, the kept settings, the TPM answers and the shaping tables of the fonts get their fuzz targets, and the search of the processors in the ACPI tables moves into a contract package where a target reaches it. The edges of the terminal records are counted in the instrumented build. [Design](src/md/infrastructure/fuzzing.md)
-- **A machine case for each refused ring word.** A hostile test program sends `None`, the word one past the last member and the largest word to the block, frame and network services, to the compositor as a window, to a terminal and to the palette provider of the console, and the scenario waits for each answer: the record `Unsupported`, or the line and the count. Each program then shows that it answers what its host-tested border decided. [Design](src/md/infrastructure/choice_constants.md)
 
 ## Later
 
@@ -73,6 +69,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Maybe
 
 - **An auto_cast to a type that is no enum, past the check of the casts.** The check of the casts refuses each `auto_cast`, because the syntax tree does not hold its target, and it would accept one whose target is no enum. Two ways are open: the types that the compiler infers, which wait for an output of `odin check` that names the type of each expression, or a type checker in the tool, which waits for a need of the system that a written conversion does not meet. [Design](src/md/infrastructure/choice_constants.md)
+- **A machine case for the refused ring words of the frame and palette rings.** The frame service and the palette provider of the console show on a machine that they answer the refused words as their host-tested borders decided. Their one writer is the network service or the compositor, so two ways are open: a test program that holds their ring, which waits for a choice to give a test program the grant `Network_Device` or the place of the compositor; or a test build of the writer that sends the words, which waits for a choice to put test code in a program of the system. [Design](src/md/infrastructure/choice_constants.md)
+
 - **A guest on a machine with an Intel processor.** A program runs a guest on a machine with an Intel processor too, with the same operation and the same exit records as on AMD. One way is open, and it waits for a host with an Intel processor: QEMU emulates no VMX, so only such a host runs the machine test of it. [Design](src/md/features/guest.md)
 - **The release image started on a real machine.** The image starts from a USB key on the UEFI firmware of a real machine, with the certificate of the publisher enrolled, Secure Boot on and the machine key sealed by its TPM. One way is open, and it waits for a real machine with a TPM and a USB key: today the image starts in the machine test only, on the firmware of QEMU. [Design](src/md/infrastructure/release_image.md)
 - **A whole frame on the display of a real machine.** The compositor flips its screen pages on a real display too, writes the page that the display showed only after its next vertical blank, and writes the pixels through a write-combining entry of the page attribute table, which the kernel sets at the start, and not through the memory type that the firmware chose. One way is open, and it waits for a real machine whose display offers a page flip: today the flip uses the display registers of the standard VGA of QEMU, whose flip takes effect when its write returns. [Design](src/md/infrastructure/whole_frame.md)
