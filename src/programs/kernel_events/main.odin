@@ -224,9 +224,7 @@ Measure :: struct {
 }
 measures: [4]Measure
 
-records_now, records_before: [256]interface.Draw_Record
-text_now, text_before: [4096]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(256, 4096)
 
 // A child of this program: its handle and the page that it shares.
 Child :: struct {
@@ -741,7 +739,7 @@ case_of_the_cost :: proc "contextless" (load: ^Child, other: ^Child) {
 }
 
 interface_draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "KERNEL EVENTS", "the kernel records its own work by a table of rules, into one ring for each processor", graphics.colors.kernel)
 	column := interface.column_of(content)
@@ -763,7 +761,7 @@ interface_draw :: proc "contextless" (window: ^display.Window) {
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "the longest operation", shown.longest == 0 ? string("none yet") : longest, graphics.colors.kernel, 380)
 	lost_line: [64]u8
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "records lost", system.format(lost_line[:], shown_lost), graphics.colors.kernel, 380)
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // The loaders of the load child: each one enters the kernel with one
@@ -896,7 +894,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
 		system.log("kernel_events: no boot image")
@@ -963,6 +960,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		interface_draw(&window)
 		display.wait(&window, system.time() + 1000)
-		interface.window_events(&drawing, &window)
+		interface.window_events(&window_memory.drawing, &window)
 	}
 }

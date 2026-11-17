@@ -59,9 +59,7 @@ bar_items :: proc "contextless" () -> [5]interface.Action_Bar_Item {
 }
 bar: interface.Action_Bar_State
 
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 // What the window shows: the state of the program.
 presses: u64
@@ -147,12 +145,12 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 		value: u64,
 		unit:  string,
 	} {
-		{"records", u64(drawing.before.record_count), ""},
-		{"bytes of text", u64(drawing.before.text_count), " B"},
+		{"records", u64(window_memory.drawing.before.record_count), ""},
+		{"bytes of text", u64(window_memory.drawing.before.text_count), " B"},
 		{"damage rectangles", u64(last_damage.count), ""},
-		{"build", drawing.build_time / 1000, " us"},
-		{"difference", drawing.difference_time / 1000, " us"},
-		{"draw", drawing.draw_time / 1000, " us"},
+		{"build", window_memory.drawing.build_time / 1000, " us"},
+		{"difference", window_memory.drawing.difference_time / 1000, " us"},
+		{"draw", window_memory.drawing.draw_time / 1000, " us"},
 	}
 	for fact in facts {
 		value: interface.Text_Builder
@@ -186,13 +184,13 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 // frame_draw builds and draws one frame. The key of an item that a press
 // ran goes into the input of the next frame, the way of a typed key.
 frame_draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	bar_result := build(&frame, frames)
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	if bar_result.ran {
-		interface.input_key_add(&drawing.input, bar_result.run)
+		interface.input_key_add(&window_memory.drawing.input, bar_result.run)
 	}
-	last_damage = drawing.damage
+	last_damage = window_memory.drawing.damage
 	frames += 1
 }
 
@@ -200,8 +198,8 @@ frame_draw :: proc "contextless" (window: ^display.Window) {
 // case: nothing changed, one number changed, or everything moved.
 measure :: proc "contextless" (name: string, number_before, number_now: u64, move: bool) {
 	ROUNDS :: 100
-	before := interface.Draw_Table{records = records_before[:], text = text_before[:], interface_font = display.interface_font_of()}
-	now := interface.Draw_Table{records = records_now[:], text = text_now[:], interface_font = display.interface_font_of()}
+	before := interface.Draw_Table{records = window_memory.records_before[:], text = window_memory.text_before[:], interface_font = display.interface_font_of()}
+	now := interface.Draw_Table{records = window_memory.records_now[:], text = window_memory.text_now[:], interface_font = display.interface_font_of()}
 	state: interface.Interface_State
 	input: interface.Input
 	difference, rectangles: u64
@@ -242,7 +240,7 @@ measure_fonts :: proc "contextless" (window: ^display.Window) {
 			break
 		}
 		for _ in 0 ..< ROUNDS {
-			table := interface.Draw_Table{records = records_now[:], text = text_now[:], interface_font = font}
+			table := interface.Draw_Table{records = window_memory.records_now[:], text = window_memory.text_now[:], interface_font = font}
 			state: interface.Interface_State
 			input: interface.Input
 			start := system.nanoseconds()
@@ -275,21 +273,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	measure("one number changed", 7, 8, false)
 	measure("everything moved", 7, 7, true)
 	measure_fonts(&window)
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	// The whole frame, drawn with no comparison, then a frame where only
 	// the counters changed, drawn in its damage. The surface has two
 	// pictures, and the first frame of each one is whole: the third frame
 	// is the first that is drawn in its damage, the changes of two frames.
 	frame_draw(&window)
-	whole := drawing.draw_time
+	whole := window_memory.drawing.draw_time
 	frame_draw(&window)
 	frame_draw(&window)
-	system.log("interface_elements: ok, the whole frame drawn in ", whole / 1000, " us; the next frame drawn in its ", u64(drawing.damage.count), " damage rectangles in ", drawing.draw_time / 1000, " us")
+	system.log("interface_elements: ok, the whole frame drawn in ", whole / 1000, " us; the next frame drawn in its ", u64(window_memory.drawing.damage.count), " damage rectangles in ", window_memory.drawing.draw_time / 1000, " us")
 	deadline := system.time()
 	for {
 		deadline += TICK
 		display.wait(&window, deadline)
-		interface.window_events(&drawing, &window)
+		interface.window_events(&window_memory.drawing, &window)
 		frame_draw(&window)
 	}
 }

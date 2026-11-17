@@ -58,9 +58,7 @@ import "modus:support/interface"
 import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 DURATION :: 1000 // Milliseconds of one measure, in a measure run.
 REQUESTS_CHECKED :: 256 // The requests of one run of the check.
@@ -242,67 +240,69 @@ refusal_text :: proc "contextless" (buffer: []u8, completion: ring.Record) -> st
 	return system.written(&writer)
 }
 
-bar :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, value, most: u64, color: graphics.Color) {
-	interface.draw_rectangle(table, x, y + 3, BAR_WIDTH, 10, graphics.colors.track)
-	interface.draw_rectangle(table, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
-	interface.draw_unsigned(table, x + BAR_WIDTH + 8, y, value, graphics.colors.text)
-}
-
 checked: bool
 
+// The columns of a row of the table, from the left margin: the kind of the
+// request, its blocks and their word, the requests in flight, the rate and
+// the kernel entries.
+ROW_SIZES :: [6]interface.Size{{.Pixels, 52}, {.Pixels, 28}, {.Pixels, 64}, {.Pixels, RATE_X - 156}, {.Pixels, ENTRIES_X - RATE_X}, {.Share, 1}}
+// The columns of the head of the table: the request, the requests in
+// flight, the rate and the kernel entries.
+HEAD_SIZES :: [4]interface.Size{{.Pixels, 128}, {.Pixels, RATE_X - 140}, {.Pixels, ENTRIES_X - RATE_X}, {.Share, 1}}
+
 draw :: proc "contextless" (window: ^display.Window) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
-	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
+	frame := interface.window_frame_start(&window_memory, window)
 	measured := system.measure_run()
 	most_rate, most_entries: u64
 	for measure in measures {
 		most_rate, most_entries = max(most_rate, measured ? measure.rate : measure.requests), max(most_entries, measure.client + measure.service)
 	}
-	y := 12
-	interface.draw_text(table, 12, y, "the block service: a virtio disk, a ring, the data in shared memory.", graphics.colors.dim)
-	y += LINE
-	interface.draw_text(table, 12, y, "the device reads and writes the memory of this program: no copy.", graphics.colors.dim)
-	y += LINE
-	interface.draw_text(table, 12, y, "disk:", graphics.colors.dim)
-	interface.draw_unsigned(table, 60, y, disk_blocks, graphics.colors.text)
-	digits := 1
-	for value := disk_blocks; value >= 10; value /= 10 {
-		digits += 1
+	// Each line is a line of a table: its text 4 pixels under its top.
+	column := interface.column_of({12, 8, WIDTH - 24, HEIGHT - 8})
+	interface.cell_text(&frame, interface.column_take(&column, LINE), "the block service: a virtio disk, a ring, the data in shared memory.", graphics.colors.dim)
+	interface.cell_text(&frame, interface.column_take(&column, LINE), "the device reads and writes the memory of this program: no copy.", graphics.colors.dim)
+	// The size of the disk: a label, its number, and the unit after it.
+	number: interface.Text_Builder
+	disk_line := interface.column_take(&column, LINE)
+	text_y := disk_line.y + (disk_line.height - interface.line_height({})) / 2
+	interface.draw_text(frame.table, disk_line.x, text_y, "disk:", graphics.colors.dim)
+	after := interface.draw_text(frame.table, disk_line.x + 48, text_y, interface.number_text(&number, disk_blocks), graphics.colors.text)
+	interface.cell_text(&frame, {after + 8, disk_line.y, disk_line.x + disk_line.width - (after + 8), disk_line.height}, "blocks of 4096 bytes", graphics.colors.dim)
+	interface.column_take(&column, LINE / 2)
+	head_sizes := HEAD_SIZES
+	head: [len(HEAD_SIZES)]interface.Area
+	interface.row_split(interface.column_take(&column, LINE), head_sizes[:], head[:])
+	titles := [len(HEAD_SIZES)]string{"request", "in flight", measured ? "blocks in one second" : "requests answered", "kernel entries, 100 requests"}
+	for title, index in titles {
+		interface.cell_text(&frame, head[index], title, graphics.colors.dim)
 	}
-	interface.draw_text(table, 60 + 8 * (digits + 1), y, "blocks of 4096 bytes", graphics.colors.dim)
-	y += LINE + LINE / 2
-	interface.draw_text(table, 12, y, "request         in flight", graphics.colors.dim)
-	interface.draw_text(table, RATE_X, y, measured ? "blocks in one second" : "requests answered", graphics.colors.dim)
-	interface.draw_text(table, ENTRIES_X, y, "kernel entries, 100 requests", graphics.colors.dim)
-	y += LINE
+	row_sizes := ROW_SIZES
+	cells: [len(ROW_SIZES)]interface.Area
 	for measure, index in measures {
-		if index % 2 == 0 {
-			interface.draw_rectangle(table, 6, y - 4, WIDTH - 12, LINE, graphics.colors.card_top)
-		}
-		interface.draw_text(table, 12, y, measure.write ? "write" : "read", graphics.colors.text)
-		interface.draw_unsigned(table, 64, y, measure.blocks, graphics.colors.text)
-		interface.draw_text(table, 92, y, measure.blocks == 1 ? "block" : "blocks", graphics.colors.dim)
-		interface.draw_unsigned(table, 156, y, u64(measure.depth), graphics.colors.text)
+		row := interface.column_take(&column, LINE)
+		interface.table_band(&frame, {row.x - 6, row.y, row.width + 12, row.height}, index)
+		interface.row_split(row, row_sizes[:], cells[:])
+		interface.cell_text(&frame, cells[0], measure.write ? "write" : "read", graphics.colors.text)
+		interface.cell_text(&frame, cells[1], interface.number_text(&number, measure.blocks), graphics.colors.text)
+		interface.cell_text(&frame, cells[2], measure.blocks == 1 ? "block" : "blocks", graphics.colors.dim)
+		interface.cell_text(&frame, cells[3], interface.number_text(&number, u64(measure.depth)), graphics.colors.text)
 		if measure.done {
-			bar(table, RATE_X, y, measured ? measure.rate : measure.requests - measure.errors, most_rate, measure.errors == 0 ? graphics.colors.program : graphics.colors.failed)
-			bar(table, ENTRIES_X, y, measure.client + measure.service, most_entries, graphics.colors.kernel)
+			interface.bar_with_value(&frame, cells[4], BAR_WIDTH, measured ? measure.rate : measure.requests - measure.errors, most_rate, measure.errors == 0 ? graphics.colors.program : graphics.colors.failed)
+			interface.bar_with_value(&frame, cells[5], BAR_WIDTH, measure.client + measure.service, most_entries, graphics.colors.kernel)
 		} else {
-			interface.draw_text(table, RATE_X, y, "...", graphics.colors.dim)
+			interface.cell_text(&frame, cells[4], "...", graphics.colors.dim)
 		}
-		y += LINE
 	}
-	y += LINE / 2
+	interface.column_take(&column, LINE / 2)
+	checked_line := interface.column_take(&column, LINE)
 	if checked {
-		interface.draw_text(table, 12, y, wrong == 0 ? "write, flush, read back: 128 blocks, 0 wrong" : "write, flush, read back: WRONG", wrong == 0 ? graphics.colors.program : graphics.colors.failed)
+		interface.cell_text(&frame, checked_line, wrong == 0 ? "write, flush, read back: 128 blocks, 0 wrong" : "write, flush, read back: WRONG", wrong == 0 ? graphics.colors.program : graphics.colors.failed)
 	}
+	measure_line := interface.column_take(&column, LINE)
 	if !measured {
-		interface.draw_text(table, 12, y + LINE, "the blocks in one second are a measure: run `modustool measure disk`.", graphics.colors.dim)
+		interface.cell_text(&frame, measure_line, "the blocks in one second are a measure: run `modustool measure disk`.", graphics.colors.dim)
 	}
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // entry runs the five runs once, shows them, then keeps the window open

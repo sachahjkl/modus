@@ -73,9 +73,7 @@ render_memory: vector_font.Render_Memory
 build_times: [len(candidates)]u64
 cache_sizes: [len(candidates)]int
 
-records_now, records_before: [256]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(256, 8192)
 
 // with_font draws with one candidate: it builds its cache, gives it to
 // src/library/support/graphics, and gives the state of the system to restore after.
@@ -123,7 +121,7 @@ ENLARGED_TOP :: LIST_TOP + (len(candidates) + 1) * ROW_HEIGHT + 16
 // draw draws the whole window: the frame with the interface package, then
 // the lines of each candidate over it.
 draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing)
+	frame := interface.window_frame_start(&window_memory)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FONT OF THE SYSTEM", "resources/fonts: seven candidates, ASCII subsets, glyf outlines", graphics.colors.machine)
 	interface.draw_text(frame.table, content.x, content.y, "the same line in each font, at scale 1 (8 x 16 pixels), then a word enlarged 4 times", graphics.colors.dim)
@@ -143,7 +141,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	// The lines below are drawn by hand over the frame, in the same
 	// picture of the surface, before the present.
-	if !interface.window_frame_end_without_present(&drawing, &frame, window) {
+	if !interface.window_frame_end_without_present(&window_memory.drawing, &frame, window) {
 		return
 	}
 
@@ -178,7 +176,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 
 	// The measures, before the window: one glyph from its outline, in fixed
 	// point, at each scale; one glyph from the glyph cache of the system;
@@ -238,7 +235,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("vector_glyphs: ok, ", u64(len(candidates)), " candidates beside Spleen 8x16")
 	for {
 		display.wait(&window)
-		if interface.window_events(&drawing, &window) {
+		if interface.window_events(&window_memory.drawing, &window) {
 			draw(&window)
 		}
 	}

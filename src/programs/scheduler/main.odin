@@ -1443,9 +1443,7 @@ strategy_color :: proc "contextless" (index: int) -> graphics.Color {
 }
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [1024]interface.Draw_Record
-text_now, text_before: [16384]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(1024, 16384)
 frame_table: ^interface.Draw_Table // The table of the frame that draw builds.
 WHOLE :: interface.Area{0, 0, WIDTH, HEIGHT}
 
@@ -1636,10 +1634,7 @@ HEAD_HEIGHT :: 96
 MEASURES_HEIGHT :: CARD_TITLE + 24 + 6 * ROW + 2 * CHART + 8
 
 draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, processors: u64) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame_value := interface.window_frame_begin(&drawing, window)
+	frame_value := interface.window_frame_start(&window_memory, window)
 	frame := &frame_value
 	frame_table = frame.table
 	interface.background(frame, WHOLE)
@@ -1703,7 +1698,7 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 	top := MARGIN + HEAD_HEIGHT + MARGIN
 	if view == .Shares {
 		draw_shares(frame, top)
-		interface.window_frame_end(&drawing, frame, window)
+		interface.window_frame_end(&window_memory.drawing, frame, window)
 		return
 	}
 	// The rows of the rates and of the late wakes have a number in a
@@ -1858,7 +1853,7 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 	case:
 		write(last, 0, status_y, system.format(line[:], "wrong: ", problem), graphics.colors.failed)
 	}
-	interface.window_frame_end(&drawing, frame, window)
+	interface.window_frame_end(&window_memory.drawing, frame, window)
 }
 
 STRATEGY_NAME_LIMIT :: 16 // The bytes of the name of a strategy in a call of strategy_set.
@@ -2071,8 +2066,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		// The events go to the input of the next frame: a click or Enter on
 		// a tile chooses its strategy there; the keys 1 2 3 choose here.
-		interface.window_events(&drawing, &window)
-		for &key in drawing.input.keys[:drawing.input.key_count] {
+		interface.window_events(&window_memory.drawing, &window)
+		for &key in window_memory.drawing.input.keys[:window_memory.drawing.input.key_count] {
 			switch {
 			case key.character >= '1' && key.character <= '3':
 				key.taken = true

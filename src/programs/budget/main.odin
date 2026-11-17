@@ -37,9 +37,7 @@ import "modus:support/system"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 598, programs = 1, threads = 4, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 LINE :: 22
 ANSWER_X :: 336
@@ -179,38 +177,32 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	for {
-		if drawing.now.records == nil {
-			drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-		}
-		frame := interface.window_frame_begin(&drawing, &window)
-		table := frame.table
-		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
-		y := 12
-		interface.draw_text(table, 12, y, "no object comes from nothing: a budget pays for each page,", graphics.colors.dim)
-		y += LINE
-		interface.draw_text(table, 12, y, "each program and each thread. what ends returns to its budget.", graphics.colors.dim)
-		y += LINE + LINE / 2
-		interface.draw_text(table, 12, y, "the program asks", graphics.colors.dim)
-		interface.draw_text(table, ANSWER_X, y, "the kernel answers", graphics.colors.dim)
-		interface.draw_text(table, BAR_X, y, "pages of the budget", graphics.colors.dim)
-		y += LINE
+		frame := interface.window_frame_start(&window_memory, &window)
+		// Each line is a line of a table: its text 3 pixels under its top.
+		column := interface.column_of({12, 9, WIDTH - 24, HEIGHT - 9})
+		interface.cell_text(&frame, interface.column_take(&column, LINE), "no object comes from nothing: a budget pays for each page,", graphics.colors.dim)
+		interface.cell_text(&frame, interface.column_take(&column, LINE), "each program and each thread. what ends returns to its budget.", graphics.colors.dim)
+		interface.column_take(&column, LINE / 2)
+		sizes := [3]interface.Size{interface.pixels(ANSWER_X - 12), interface.pixels(BAR_X - ANSWER_X), interface.share()}
+		cells: [3]interface.Area
+		interface.row_split(interface.column_take(&column, LINE), sizes[:], cells[:])
+		interface.cell_text(&frame, cells[0], "the program asks", graphics.colors.dim)
+		interface.cell_text(&frame, cells[1], "the kernel answers", graphics.colors.dim)
+		interface.cell_text(&frame, cells[2], "pages of the budget", graphics.colors.dim)
 		for &row, index in rows[:row_count] {
-			if index % 2 == 0 {
-				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.colors.card_top)
-			}
-			interface.draw_text(table, 12, y, row.text, graphics.colors.text)
+			line := interface.column_take(&column, LINE)
+			interface.table_band(&frame, {line.x - 6, line.y, line.width + 12, line.height}, index)
+			interface.row_split(line, sizes[:], cells[:])
+			interface.cell_text(&frame, cells[0], row.text, graphics.colors.text)
 			// The expected answer, a refusal too, is the expected answer of
 			// the rules; another answer is a check that did not pass. The
 			// words of the answer say whether it is a refusal.
 			color := row.correct ? graphics.colors.program : graphics.colors.failed
-			interface.draw_text(table, ANSWER_X, y, string(row.buffer[:row.count]), color)
-			interface.draw_rectangle(table, BAR_X, y + 2, BAR_WIDTH, 10, graphics.colors.track)
+			interface.cell_text(&frame, cells[1], string(row.buffer[:row.count]), color)
 			// The pages of a budget are memory.
-			interface.draw_rectangle(table, BAR_X, y + 2, int(row.pages * BAR_WIDTH / max(start.pages, 1)), 10, graphics.colors.memory)
-			interface.draw_unsigned(table, BAR_X + BAR_WIDTH + 8, y, row.pages, graphics.colors.text)
-			y += LINE
+			interface.bar_with_value(&frame, cells[2], BAR_WIDTH, row.pages, start.pages, graphics.colors.memory)
 		}
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window)
 		for _ in display.next_event(&window) {
 		}

@@ -44,9 +44,7 @@ import op "modus:contract/operation"
 import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 WIDTH :: 520
 // The rows of about 20 programs, and one last line that counts the programs
@@ -117,12 +115,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		report: op.System_Report
 		_, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
-		if drawing.now.records == nil {
-			drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-		}
-		frame := interface.window_frame_begin(&drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		table := frame.table
-		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 		if status != .Ok {
 			interface.draw_text(table, 10, 10, "no grant to inspect the machine", graphics.colors.text)
 			if !lost {
@@ -231,7 +225,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_text(table, x, y, " more programs: monitor.programs() gives them", graphics.colors.dim)
 			}
 		}
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		pictures += 1
 		if !logged {
 			system.log("monitor: ok")

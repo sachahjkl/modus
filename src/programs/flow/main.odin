@@ -48,9 +48,7 @@ import "base:intrinsics"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1475, programs = 1, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 DURATION :: 1000 // Milliseconds of one measure, in a measure run.
 RECORDS_CHECKED :: 200_000 // The records that the writer sends in the check.
@@ -191,51 +189,48 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 	return received == RECORDS_CHECKED
 }
 
-bar :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, value, most: u64, color: graphics.Color) {
-	interface.draw_rectangle(table, x, y + 3, BAR_WIDTH, 10, graphics.colors.track)
-	interface.draw_rectangle(table, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
-	interface.draw_unsigned(table, x + BAR_WIDTH + 8, y, value, graphics.colors.text)
-}
+// The columns of the table, from the left margin: the capacity, what the
+// reader does before a wait, the rate and the kernel entries.
+COLUMN_SIZES :: [4]interface.Size{{.Pixels, 80}, {.Pixels, RATE_X - 92}, {.Pixels, ENTRIES_X - RATE_X}, {.Share, 1}}
 
 draw :: proc "contextless" (window: ^display.Window) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
-	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
+	frame := interface.window_frame_start(&window_memory, window)
 	measured := system.measure_run()
 	most_rate, most_entries: u64
 	for measure in measures {
 		most_rate, most_entries = max(most_rate, measured ? measure.rate : measure.received), max(most_entries, measure.entries)
 	}
-	y := 12
-	interface.draw_text(table, 12, y, measured ? "one thread writes records in a ring, one thread reads them, for one second." : "one thread writes 200000 records in a ring, one thread reads them.", graphics.colors.dim)
-	y += LINE
-	interface.draw_text(table, 12, y, "a queue operation does not enter the kernel. a wait does.", graphics.colors.dim)
-	y += LINE + LINE / 2
-	interface.draw_text(table, 12, y, "capacity  before a wait", graphics.colors.dim)
-	interface.draw_text(table, RATE_X, y, measured ? "records in one second" : "records read in order", graphics.colors.dim)
-	interface.draw_text(table, ENTRIES_X, y, "kernel entries, one million records", graphics.colors.dim)
-	y += LINE
+	// Each line is a line of a table: its text 4 pixels under its top.
+	column := interface.column_of({12, 8, WIDTH - 24, HEIGHT - 8})
+	interface.cell_text(&frame, interface.column_take(&column, LINE), measured ? "one thread writes records in a ring, one thread reads them, for one second." : "one thread writes 200000 records in a ring, one thread reads them.", graphics.colors.dim)
+	interface.cell_text(&frame, interface.column_take(&column, LINE), "a queue operation does not enter the kernel. a wait does.", graphics.colors.dim)
+	interface.column_take(&column, LINE / 2)
+	sizes := COLUMN_SIZES
+	cells: [len(COLUMN_SIZES)]interface.Area
+	interface.row_split(interface.column_take(&column, LINE), sizes[:], cells[:])
+	titles := [len(COLUMN_SIZES)]string{"capacity", "before a wait", measured ? "records in one second" : "records read in order", "kernel entries, one million records"}
+	for title, index in titles {
+		interface.cell_text(&frame, cells[index], title, graphics.colors.dim)
+	}
+	number: interface.Text_Builder
 	for measure, index in measures {
-		if index % 2 == 0 {
-			interface.draw_rectangle(table, 6, y - 4, WIDTH - 12, LINE, graphics.colors.card_top)
-		}
-		interface.draw_unsigned(table, 12, y, u64(measure.capacity), graphics.colors.text)
-		interface.draw_text(table, 92, y, measure.spin ? "read counters" : "nothing", graphics.colors.text)
+		row := interface.column_take(&column, LINE)
+		interface.table_band(&frame, {row.x - 6, row.y, row.width + 12, row.height}, index)
+		interface.row_split(row, sizes[:], cells[:])
+		interface.cell_text(&frame, cells[0], interface.number_text(&number, u64(measure.capacity)), graphics.colors.text)
+		interface.cell_text(&frame, cells[1], measure.spin ? "read counters" : "nothing", graphics.colors.text)
 		if measure.done {
-			bar(table, RATE_X, y, measured ? measure.rate : measure.received - measure.lost, most_rate, measure.lost == 0 ? graphics.colors.program : graphics.colors.failed)
-			bar(table, ENTRIES_X, y, measure.entries, most_entries, graphics.colors.kernel)
+			interface.bar_with_value(&frame, cells[2], BAR_WIDTH, measured ? measure.rate : measure.received - measure.lost, most_rate, measure.lost == 0 ? graphics.colors.program : graphics.colors.failed)
+			interface.bar_with_value(&frame, cells[3], BAR_WIDTH, measure.entries, most_entries, graphics.colors.kernel)
 		} else {
-			interface.draw_text(table, RATE_X, y, "...", graphics.colors.dim)
+			interface.cell_text(&frame, cells[2], "...", graphics.colors.dim)
 		}
-		y += LINE
 	}
 	if !measured {
-		interface.draw_text(table, 12, y + LINE / 2, "the records in one second are a measure: run `modustool measure flow`.", graphics.colors.dim)
+		interface.column_take(&column, LINE / 2)
+		interface.cell_text(&frame, interface.column_take(&column, LINE), "the records in one second are a measure: run `modustool measure flow`.", graphics.colors.dim)
 	}
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // entry finds its own slot with the machine handle, runs the four rings

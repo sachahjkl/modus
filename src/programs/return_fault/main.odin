@@ -115,9 +115,7 @@ program_generator: random.Generator
 image: []u8
 with_avx: bool
 
-records_now, records_before: [256]interface.Draw_Record
-text_now, text_before: [4096]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(256, 4096)
 
 // child_instruction_address writes a syscall in the last two bytes of an
 // object, maps the object with Execute at the last page below the half of a
@@ -199,7 +197,7 @@ case_run :: proc "contextless" (item: ^Case) {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE RETURN TO A PROGRAM", "each child gives the kernel a thread that the processor would refuse at iretq", graphics.colors.kernel)
 	column := interface.column_of(content)
@@ -219,7 +217,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	interface.column_take(&column, 8)
 	interface.cell_text(&frame, interface.column_take(&column, LINE), with_avx ? "the child of the instruction address holds values in the high halves of ymm0 to ymm15" : "no AVX here: the child of the instruction address holds no ymm values", graphics.colors.dim)
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // The entry of return_fault: a child runs its one hostile case; the parent
@@ -259,7 +257,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
 	if status != .Ok {
 		system.log("return_fault: no boot image")
@@ -284,6 +281,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		draw(&window)
 		display.wait(&window, system.time() + 1000)
-		interface.window_events(&drawing, &window)
+		interface.window_events(&window_memory.drawing, &window)
 	}
 }

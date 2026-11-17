@@ -4811,6 +4811,18 @@ The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 10)".
 
 Do not use: display list, command buffer, render tree.
 
+### Window memory
+
+A window memory is the record of a program that holds the drawing of one window and the memory of its two draw tables.
+
+The program declares one for each window (`Window_Memory(RECORDS, TEXT)` of `src/library/support/interface`), with the capacity of each draw table in records and in bytes of text, and starts each frame with `window_frame_start`. The record is memory of the program, so the package allocates nothing. Example: `budget` keeps `window_memory: interface.Window_Memory(512, 8192)`.
+
+A window memory is not the surface of the window: the pixels are in the memory object of the surface, which the compositor reads.
+
+The design: `docs/INTERFACE.md`, "2.3 Memory of the caller, errors as values".
+
+Do not use: window buffer, frame memory.
+
 ### Text grid
 
 A text grid is a grid of text cells of a program (a character, reverse, a color, or a fill), drawn by one draw record.

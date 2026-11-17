@@ -89,9 +89,7 @@ import "base:intrinsics"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1476, programs = 3, threads = 4, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [1024]interface.Draw_Record
-text_now, text_before: [16384]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(1024, 16384)
 
 WIDTH :: 1000
 LINE :: 16
@@ -1188,12 +1186,8 @@ case_at :: proc "contextless" (at: int) -> int {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	interface.draw_text(table, 16, 8, "each case makes an error for real; under it, the sentence of its record: errors.Error_Record,", graphics.colors.dim)
 	interface.draw_text(table, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. Its key or a click runs a case again; tab: the next page", graphics.colors.dim)
 	page_text: [32]u8
@@ -1218,5 +1212,5 @@ draw :: proc "contextless" (window: ^display.Window) {
 	y += 8
 	line: [192]u8
 	interface.draw_text_wrapped(table, 16, y, WIDTH - 32, system.format(line[:], "a failure with its error record: ", kernel_failed, " ns in a kernel operation (success: ", kernel_good, " ns), ", direct_failed, " ns in a direct call (success: ", direct_good, " ns)"), graphics.colors.dim)
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }

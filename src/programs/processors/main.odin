@@ -98,9 +98,7 @@ picture_pixels: [PICTURE_WIDTH * PICTURE_HEIGHT]graphics.Color
 // The one picture memory of the draw tables: the drawing module reads the
 // picture there.
 picture_memories: [1][]graphics.Color
-records_now, records_before: [128]interface.Draw_Record
-text_now, text_before: [1024]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(128, 1024)
 machine: system.Handle
 processor_count: u64
 processors: [PROCESSOR_ROWS]Processor
@@ -242,13 +240,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	picture = {pixels = raw_data(picture_pixels[:]), width = PICTURE_WIDTH, height = PICTURE_HEIGHT, stride = PICTURE_WIDTH}
 	graphics.clear(picture, graphics.colors.background)
 	picture_memories[0] = picture_pixels[:]
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	drawing.now.picture_memories = picture_memories[:]
-	drawing.before.picture_memories = picture_memories[:]
+	window_memory.drawing.now.picture_memories = picture_memories[:]
+	window_memory.drawing.before.picture_memories = picture_memories[:]
 	{
-		frame := interface.window_frame_begin(&drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		interface.draw_text(frame.table, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.colors.text)
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 	}
 
 	machine = ctx.handles[system.GRANT_MACHINE]
@@ -322,7 +319,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			measured_at = now
 		}
 
-		frame := interface.window_frame_begin(&drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		table := frame.table
 		interface.draw_text(table, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.colors.text)
 		// The pixels change when a row is complete, and when a new picture
@@ -373,7 +370,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// A wait of the lock is a wait in the kernel.
 		after = interface.draw_text(table, x, y, "lock waits ", graphics.colors.kernel)
 		interface.draw_unsigned(table, after, y, u64(job.lock.waits), graphics.colors.kernel)
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		for _ in display.next_event(&window) {}
 		display.wait(&window, now + FRAME_TIME)
 	}

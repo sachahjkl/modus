@@ -41,9 +41,7 @@ import "modus:support/storage"
 import "modus:support/system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
-records_now, records_before: [512]interface.Draw_Record
-text_now, text_before: [8192]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(512, 8192)
 
 NOTE_CAPACITY :: 60
 MARGIN :: 12
@@ -206,13 +204,9 @@ restore :: proc "contextless" () {
 }
 
 draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
-	if drawing.now.records == nil {
-		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	}
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.action_bar_input_take(&frame, &bar)
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.colors.background)
 	buffer: [32]u8
 	x := interface.draw_text(table, 12, 12, "note  ", graphics.colors.dim)
 	x = interface.draw_text(table, x, 12, string(note[:note_count]), graphics.colors.text)
@@ -268,7 +262,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	}
 	items := bar_items()
 	bar_result := interface.action_bar(&frame, {0, KEYS_Y, WIDTH, HEIGHT - KEYS_Y}, items[:], &bar, {overflow = .Wrap})
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	return bar_result
 }
 
@@ -323,7 +317,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Pointer:
 				// The pointer reaches the action bar only: the next turn
 				// draws a frame with it.
-				interface.input_add(&drawing.input, event)
+				interface.input_add(&window_memory.drawing.input, event)
 			case .Key:
 				if !event.pressed {
 					continue

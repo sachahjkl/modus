@@ -85,9 +85,7 @@ picture_pixels: [PICTURE_WIDTH * PICTURE_HEIGHT]graphics.Color
 // The one picture memory of the draw tables: the drawing module reads the
 // picture there.
 picture_memories: [1][]graphics.Color
-records_now, records_before: [96]interface.Draw_Record
-text_now, text_before: [512]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(96, 512)
 sum_locked, sum_free: u64
 made_locked, made_free: u64
 nothing: u64 // Always 0.
@@ -212,13 +210,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	picture = {pixels = raw_data(picture_pixels[:]), width = PICTURE_WIDTH, height = PICTURE_HEIGHT, stride = PICTURE_WIDTH}
 	graphics.clear(picture, graphics.colors.background)
 	picture_memories[0] = picture_pixels[:]
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	drawing.now.picture_memories = picture_memories[:]
-	drawing.before.picture_memories = picture_memories[:]
+	window_memory.drawing.now.picture_memories = picture_memories[:]
+	window_memory.drawing.before.picture_memories = picture_memories[:]
 	{
-		frame := interface.window_frame_begin(&drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		interface.draw_text(frame.table, MARGIN, 8, "One queue of tiles, one lock, four threads.", graphics.colors.text)
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 	}
 
 	made_locked = add_with_threads(true)
@@ -275,7 +272,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.unlock(&queue.lock)
 		}
 
-		frame := interface.window_frame_begin(&drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		table := frame.table
 		interface.draw_text(table, MARGIN, 8, "One queue of tiles, one lock, four threads.", graphics.colors.text)
 		// The pixels change when a tile is complete: the number of the
@@ -309,7 +306,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		after = interface.draw_text(table, x + 8, line + 60, "no lock: lost ", graphics.colors.text)
 		// The additions that the run with no lock lost: a sum that is wrong.
 		interface.draw_unsigned(table, after, line + 60, made_free - sum_free, graphics.colors.failed)
-		interface.window_frame_end(&drawing, &frame, &window)
+		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window, now + FRAME_TIME)
 	}
 }

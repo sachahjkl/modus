@@ -231,9 +231,7 @@ entry_nanoseconds: [Level]u64 // 0: not measured (the level is not usable).
 finished: bool
 passed: bool
 
-records_now, records_before: [1024]interface.Draw_Record
-text_now, text_before: [16384]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(1024, 16384)
 
 // mix gives 64 bits from a number: the finalizer of splitmix64.
 mix :: proc "contextless" (value: u64) -> u64 {
@@ -630,7 +628,7 @@ components_text :: proc "contextless" (builder: ^interface.Text_Builder, compone
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing, window)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	builder: interface.Text_Builder
 
@@ -725,7 +723,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	if finished {
 		interface.label_value_line(&frame, interface.column_take(&column, LINE), "result", passed ? "each register of each thread was kept" : "a register was not kept: see the log", passed ? graphics.colors.program : graphics.colors.failed, ENTRY_VALUE_X)
 	}
-	interface.window_frame_end(&drawing, &frame, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // entry starts the threads that fill and check the registers
@@ -739,7 +737,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	facts = sets.processor_facts_read()
 	usable = sets.usable_from(facts)
 	held_level = .Sse
@@ -780,7 +777,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for !finished {
 		draw(&window)
 		display.wait(&window, system.time() + 100)
-		interface.window_events(&drawing, &window)
+		interface.window_events(&window_memory.drawing, &window)
 		all_done := true
 		for &worker in workers[:worker_count] {
 			if !intrinsics.atomic_load(&worker.done) {
@@ -820,6 +817,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		draw(&window)
 		display.wait(&window, system.time() + 1000)
-		interface.window_events(&drawing, &window)
+		interface.window_events(&window_memory.drawing, &window)
 	}
 }

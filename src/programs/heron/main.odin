@@ -218,9 +218,7 @@ home_body: interface.Rectangle // The rectangle of the natural heron in its plac
 
 // The memory of the interface package for the window (docs/INTERFACE.md):
 // one Picture record for each tile, then the records of the band.
-records_now, records_before: [TILE_COUNT + 96]interface.Draw_Record
-text_now, text_before: [1024]u8
-drawing: interface.Window_Drawing
+window_memory: interface.Window_Memory(TILE_COUNT + 96, 1024)
 
 // One row of the table of animations().
 Animation_Row :: struct {
@@ -751,7 +749,7 @@ band_draw :: proc "contextless" (frame: ^interface.Frame) {
 // the last frame of the window.
 damage_pixels :: proc "contextless" (count: int) -> u64 {
 	total: u64
-	for rectangle in drawing.damage.rectangles[:clamp(count, 0, len(drawing.damage.rectangles))] {
+	for rectangle in window_memory.drawing.damage.rectangles[:clamp(count, 0, len(window_memory.drawing.damage.rectangles))] {
 		cut := interface.intersection(rectangle, {0, 0, WIDTH, HEIGHT})
 		if !interface.empty(cut) {
 			total += u64(cut.right - cut.left) * u64(cut.bottom - cut.top)
@@ -861,10 +859,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for &picture, index in pictures {
 		picture = graphics.view(stage, index % TILE_COLUMNS * TILE, index / TILE_COLUMNS * TILE, TILE, TILE)
 	}
-	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	picture_memories[0] = stage_pixels[:]
-	drawing.now.picture_memories = picture_memories[:]
-	drawing.before.picture_memories = picture_memories[:]
+	window_memory.drawing.now.picture_memories = picture_memories[:]
+	window_memory.drawing.before.picture_memories = picture_memories[:]
 	order_memory = mark.ORDER_MEMORY_EMPTY
 	still_start()
 	last := system.nanoseconds()
@@ -879,7 +876,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			case .Settings_Changed:
 				// A new font: each text of the band is drawn again.
-				interface.draw_whole_window_next(&drawing)
+				interface.draw_whole_window_next(&window_memory.drawing)
 			}
 		}
 		// The compositor did not take the last picture yet: it can still
@@ -899,12 +896,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		last = start
 		counted := state == .Animation && !paused
 		stage_draw()
-		frame := interface.window_frame_begin(&drawing, &window)
+		frame := interface.window_frame_start(&window_memory, &window)
 		for generation, index in tile_generations {
 			interface.draw_picture(frame.table, index % TILE_COLUMNS * TILE, index / TILE_COLUMNS * TILE, pictures[index], generation)
 		}
 		band_draw(&frame)
-		damage_count := interface.window_frame_end(&drawing, &frame, &window)
+		damage_count := interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		if counted {
 			asked_pictures += 1
 			asked_draw_time += system.nanoseconds() - start
