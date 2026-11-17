@@ -555,33 +555,43 @@ A path is read from the root of the repository. A path that names nothing gives 
 
 **What the check does not prove.** It proves that a path names something, not that it names the right thing. A span that names a package and a declaration in one text, a folder then `.` and a name, is read as a file and is refused: write the declaration and the folder in two spans.
 
-## The imports of the kernel and of the contract packages
+## The imports of the sources of the system
 
-The system has one source library, so the compiler accepts each package of the library in each source: an import of a support package compiles in the kernel. The rule that the kernel imports the contract packages only is held by the tool, with `library_imports_check` (`tools/modustool/library_imports_check.odin`).
+The system has one source library, so the compiler accepts each package of the library in each source: an import of a support package compiles in the kernel, and so does an import of a package of the core library. Two rules are then held by the tool, with `library_imports_check` (`tools/modustool/library_imports_check.odin`): a source that is not a test imports no package of the core library, which reaches the host; and the kernel imports no support package.
 
-**The rule.** Each import of each source file of `src/kernel` and of `src/library/contract` names one of these, and nothing else:
+**The rule of each file.** Each import of each source file of `src/` names one of these, and nothing else:
 
-| Import | Example |
+| File | Imports allowed |
 |---|---|
-| A package of the base library of the compiler | `"base:intrinsics"` |
-| A package of the core library of the compiler | `"core:testing"`, in a host test of a contract package |
-| A contract package | `"modus:contract/ring"` |
+| A source of `src/kernel` that is not a test | A package of `base:`, or a contract package |
+| A test of `src/kernel` | The same, and a package of `core:` |
+| A source of `src/library/contract` that is not a test | A package of `base:`, or a contract package |
+| A test of `src/library/contract` | The same, and a package of `core:` |
+| Any other source of `src/` that is not a test | A package of `base:`, or a package of `modus:` |
+| Any other test of `src/` | The same, a package of `core:`, or a relative path of the repository |
+| A file that `src/library/support/cryptography/origin.manifest` names | A package of `base:`, of `modus:`, of `core:`, or a relative path of the copy |
 
 Each other import is refused:
 
-- a support package (`"modus:support/sentence"`);
-- a relative path (`"../../support/sentence"`), also one that names a contract package;
+- a package of `core:` in a source that is not a test: it reaches the host, and the system runs on the machine;
+- a support package in a source of the kernel or of a contract package (`"modus:support/sentence"`);
+- a relative path in a source that is not a test, and in any file of the kernel or of a contract package (`"../../support/sentence"`);
 - a path with `..` after the name of the library (`"modus:contract/../support/sentence"`);
 - a package of another library, the vendor library of the compiler too.
 
-**Why this is complete.** If no file of the two folders imports outside that list, no chain of imports from the kernel reaches a support package.
+**The build line of a host test.** A test that imports a package of `core:` runs on the host: its first build line is `#+build !freestanding`, so that no build of the system reads it. A test with no such line is refused, with its file and the line of its first import of `core:`.
 
-**What it reads.** Each `.odin` file of the two folders and of each folder under them, with the parser of the library of the compiler. It reads more than the compiler compiles: a host test, a file that a build tag leaves out, and an import inside a `when` whatever its condition. The check is stricter than the compiler, never looser. A file with an error of syntax is refused as a file, because the parser does not read it whole. A foreign import names a file of assembly or an object, not a package: the check does not read it.
+**The copy of the cryptography of Odin.** `src/library/support/cryptography/origin.manifest` names the files that the system took from the cryptography of Odin. They keep the imports of their origin, and `modustool cryptography-origin` proves that nothing else changed. A file that the manifest does not name follows the rule of its folder.
 
-**When it runs.** Before the first compiler of each build starts: `build`, `test`, `run`, `measure`, `screenshots`, `film`, `repeat`, and `module <name>` with no step. `modustool check` runs it first, and `modustool library-imports` runs it alone. A refused import stops the build with the file, the line and the text of the import:
+**Why this is complete.** If no file of `src/` imports outside its list, no chain of imports from the kernel reaches a support package, and no source that a build of the system reads imports a package of the core library.
+
+**What it reads.** Each `.odin` file of `src/` and of each folder under it, with the parser of the library of the compiler. It reads more than the compiler compiles: a host test, a file that a build tag leaves out, and an import inside a `when` whatever its condition. The check is stricter than the compiler, never looser. A file with an error of syntax is refused as a file, because the parser does not read it whole. A foreign import names a file of assembly or an object, not a package: the check does not read it.
+
+**When it runs.** Before the first compiler of each build starts: `build`, `test`, `run`, `measure`, `screenshots`, `film`, `repeat`, and `module <name>` with no step. `modustool check` runs it first, and `modustool library-imports` runs it alone. A refused import, and a test with no build line, stop the build with the file, the line and the text:
 
 ```
-modustool: src/kernel/serial.odin:12: the import "modus:support/sentence" is refused: a source of src/kernel and of src/library/contract imports a package of base:, of core: or under modus:contract/ only, by a path with no ".."; the kernel and a contract package import no support package
+modustool: src/kernel/serial.odin:12: the import "modus:support/sentence" is refused: a source of src/kernel imports a package of base: or under modus:contract/, by a path with no ".."; the kernel imports no support package
+modustool: src/library/support/sentence/parse_test.odin:4: the test imports "core:testing" and has no build line: a test of src/ that imports a package of core: starts with "#+build !freestanding", so that no build of the system reads it
 ```
 
 **What it does not prove.** It does not prove that a contract package uses no kernel operation: that rule is held by review.
@@ -806,7 +816,7 @@ The sizes, the hashes and the exports of this example are not those of a real mo
 
 **The rule of the three places.** Each source that the compiler read for an outside module is in one of three places: the folder of the module or a folder under it, the source library `modus`, the libraries of the compiler. The tool reads the list that the compiler writes, after the compile step and before the conversion. A source in another place stops the build with its path. So a relative import that leaves the folder of the module is refused, and an import of a folder of the system that is not its library too. A package in a folder under the folder of the module is allowed, with a relative import.
 
-**The rules that the tool does not apply to an outside module.** The rule of the comments, the rule of the names, the rule of the imports of the kernel, the check of the fixed addresses and the checks of the documents are rules of the repository of the system.
+**The rules that the tool does not apply to an outside module.** The rule of the comments, the rule of the names, the rule of the imports of the sources of the system, the check of the fixed addresses and the checks of the documents are rules of the repository of the system.
 
 **The path of a source in the debug object.** A source of an outside module has the path from the folder that holds the folder of the module: `my_program/main.odin`. A stop report and the debugger show that path. The debug object holds no folder above the folder of the module.
 
@@ -868,7 +878,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "modustool: all tests passed", then the times of the test (below) |
 | `measure ...` | A measure run: a machine that measures with no other load. No argument: the locks. `scheduler N`, `clock`, `crowd`, `disk`, `flow`, `limits`: the program alone, and its lines. `windows`, `address_space`, `shortage`. The numbers are measures, never conditions ("A check by count, a measure by time") |
 | `screenshots` | The whole test, then the copy of the pictures to `docs/screenshots` and to the development log: the pictures are a fact of the machines, so they are copied as soon as each machine passed. Then a second build and the measure runs whose numbers the measure record holds (the locks, `clock`, `disk`, `scheduler`), then the measure record. `screenshots compress` compresses the PNG files that are stored with no compression |
-| `check` | `odin check -vet`, the imports of the kernel and of the contract packages, the example of a program outside the sources and the host tests, the fuzz targets ("The fuzzing"), the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
+| `check` | `odin check -vet`, the imports of the sources of the system, the example of a program outside the sources and the host tests, the fuzz targets ("The fuzzing"), the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the file index of the intent folder, the source paths in the documents, the changelog, the news, the roadmap), then `test` and a second build that must give the same bytes. Each of its builds is a whole build |
 | `fuzz list`, `fuzz <target> [executions [processes [seed]]]`, `fuzz all [executions]`, `fuzz show <target> <file>`, `fuzz minimize <target> <file>`, `fuzz regression <target> <file>`, `fuzz corpus <target>` | Fuzzes the readers of the system on the host: the module file, the debug object, the storage format, QUIC and TLS, TCP and HTTP. It builds the instrumented child, runs a fuzz target, and minimizes each fuzz finding ("The fuzzing") |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
 | `module-hashes write <file>`, `module-hashes compare <file>` | Records the hash of each module of the build in a file, or compares the build with such a record and fails when a module has another hash ("The hashes of the modules of two builds") |
@@ -883,7 +893,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `font`, `vector_fonts`, `pointers`, `logo`, `portraits` | Convert a source (a font, a pointer theme, the mark, the pictures of the hall of fame) into the files of the repository. A build reads the result, never the source |
 | `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `similarity`, `similarity near <file>:<line>`, `similarity pair <file>:<line> <file>:<line>` | Measures how similar the code pieces of `src/` and `tools/` are: families with their factoring template, ranked by the nodes that a factoring saves, in `build/similarity/`; or the procedures most similar to one; or the score of two procedures ("The similarity finder") |
-| `library-imports` | Checks that each import of each source file of the kernel and of the contract packages names a package of the compiler or a contract package ("The imports of the kernel and of the contract packages") |
+| `library-imports` | Checks that each import of each source file of `src/` follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of `core:` starts with `#+build !freestanding` ("The imports of the sources of the system") |
 | `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, and that no family of integer constants is a closed set of choices ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron \| boot]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4` and `build/films/<name>.webm` ("The film"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
