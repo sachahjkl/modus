@@ -769,6 +769,15 @@ transport_parameters_that_this_side_sends :: proc(t: ^testing.T) {
 				parameters.has_retry_source_connection_id = true
 				parameters.retry_source_connection_id_length = CONNECTION_ID_LIMIT + 1
 			}},
+		{"a retry_source_connection_id of length -1", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.has_retry_source_connection_id = true
+				parameters.retry_source_connection_id_length = -1
+			}},
+		{"a byte after the length of a retry_source_connection_id that is there", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.has_retry_source_connection_id = true
+				parameters.retry_source_connection_id_length = copy(parameters.retry_source_connection_id[:], []u8{3, 3})
+				parameters.retry_source_connection_id[CONNECTION_ID_LIMIT - 1] = 5
+			}},
 		{"a retry_source_connection_id with a length and no has_ field", .Server, proc(parameters: ^Sent_Transport_Parameters) {
 				parameters.retry_source_connection_id_length = 1
 				parameters.retry_source_connection_id[0] = 7

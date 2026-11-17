@@ -406,6 +406,9 @@ Connection :: struct {
 //
 // - `Bad_Value`, argument 3: the least seed strength of the configuration is
 //   under `.Processor`.
+// - `Bad_Value`, argument 3, unit `Milliseconds`: the idle timeout of the
+//   configuration is over `VARIABLE_LENGTH_INTEGER_LARGEST`, which
+//   `max_idle_timeout` cannot carry.
 // - The error of `random.fill_for_a_key`: the seed of the generator is weaker
 //   than the least seed strength.
 // - The error of `initial_keys` or of `tls_start`: an export of the
@@ -416,7 +419,7 @@ connection_start_client :: proc "contextless" (connection: ^Connection, streams:
 	connection.configuration.tls.role = .Client
 	connection.address_validated = true
 	connection.handshake_deadline = saturating_add(now, HANDSHAKE_TIME_LIMIT)
-	if !connection_seed_strength_check(configuration, 3, error) {
+	if !connection_seed_strength_check(configuration, 3, error) || !connection_idle_timeout_check(configuration, 3, error) {
 		connection.state = .Closed
 		return false
 	}
@@ -465,13 +468,15 @@ connection_start_client :: proc "contextless" (connection: ^Connection, streams:
 //
 // - `Bad_Value`, argument 3: the least seed strength of the configuration is
 //   under `.Processor`.
+// - `Bad_Value`, argument 3, unit `Milliseconds`: the idle timeout of the
+//   configuration is over `VARIABLE_LENGTH_INTEGER_LARGEST`.
 // - The error of `random.fill_for_a_key`: the seed of the generator is weaker
 //   than the least seed strength, so the server makes no connection identifier.
 connection_start_server :: proc "contextless" (connection: ^Connection, streams: []Stream, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, now: u64, error: ^errors.Error_Record) -> bool {
 	connection_reset(connection, streams, configuration, cryptography, generator, now)
 	connection.configuration.tls.role = .Server
 	connection.streams_limit_given = u64(len(streams))
-	if !connection_seed_strength_check(configuration, 3, error) {
+	if !connection_seed_strength_check(configuration, 3, error) || !connection_idle_timeout_check(configuration, 3, error) {
 		connection.state = .Closed
 		return false
 	}
@@ -497,6 +502,21 @@ connection_start_server :: proc "contextless" (connection: ^Connection, streams:
 connection_seed_strength_check :: proc "contextless" (configuration: ^Connection_Configuration, argument: i64, error: ^errors.Error_Record) -> bool {
 	if configuration.tls.least_seed_strength < .Processor {
 		errors.fail(error, -1, .Bad_Value, .None, argument, i64(configuration.tls.least_seed_strength), i64(random.Seed_Strength.Processor), 0)
+		return false
+	}
+	return true
+}
+
+// connection_idle_timeout_check refuses a configuration whose idle timeout is
+// over `VARIABLE_LENGTH_INTEGER_LARGEST`: the transport parameter
+// `max_idle_timeout` is a variable-length integer, so the peer could never be
+// told that value. It gives false and writes `Bad_Value` with the unit
+// `Milliseconds`, the value found and the largest value allowed. `argument`
+// has the meaning of the one of `connection_seed_strength_check`.
+@(private)
+connection_idle_timeout_check :: proc "contextless" (configuration: ^Connection_Configuration, argument: i64, error: ^errors.Error_Record) -> bool {
+	if configuration.idle_timeout_milliseconds > VARIABLE_LENGTH_INTEGER_LARGEST {
+		errors.fail(error, -1, .Bad_Value, .Milliseconds, argument, i64(configuration.idle_timeout_milliseconds), i64(VARIABLE_LENGTH_INTEGER_LARGEST), 0)
 		return false
 	}
 	return true
@@ -593,7 +613,8 @@ connection_initial_keys_install :: proc "contextless" (connection: ^Connection, 
 //
 // It then starts TLS with them, and erases the private key of a server from
 // the configuration of the connection: the handshake has its own copy. It
-// gives false with `Too_Long` when the parameters do not fit
+// gives false with `Bad_Value` when `transport_parameters_write` refuses the
+// record, with `Too_Long` when the parameters do not fit
 // `TRANSPORT_PARAMETERS_LIMIT`, or with the error of `tls_start`.
 @(private)
 connection_tls_start :: proc "contextless" (connection: ^Connection, error: ^errors.Error_Record) -> bool {
@@ -626,6 +647,12 @@ connection_tls_start :: proc "contextless" (connection: ^Connection, error: ^err
 		parameters.has_original_destination_connection_id = true
 	}
 	tls_configuration := &connection.configuration.tls
+	// The writer gives 0 for a refused record and for a full buffer: the
+	// check first keeps the two causes apart in the error record.
+	if !sent_transport_parameters_valid(parameters, tls_configuration.role) {
+		errors.fail(error, -1, .Bad_Value, .None, 1, 0, 0, 0)
+		return false
+	}
 	tls_configuration.transport_parameters_length = transport_parameters_write(parameters, tls_configuration.role, tls_configuration.transport_parameters[:])
 	if tls_configuration.transport_parameters_length == 0 {
 		return fail_at(error, .Too_Long, 1, TRANSPORT_PARAMETERS_LIMIT)
