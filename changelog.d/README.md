@@ -3,7 +3,7 @@
 ## For an agent on a branch
 
 - Your branch adds one fragment for each change that a reader of the system notices.
-- Write it with `nix develop -c modustool changelog new <type> <subject> - < text.md`: the text comes from the standard input. If the text has no `` ` ``, no `$` and no quote, `"<text>"` in place of `-` also works. The command `modustool` runs through `odin run`, which gives the arguments to a shell: the shell runs a `` `...` `` of an argument.
+- Write it with `nix develop -c modustool changelog new <type> <subject> - < text.md`: the text comes from the standard input. If the text has no `` ` ``, no `$` and no quote, `"<text>"` in place of `-` also works: the shell where you type the command runs a `` `...` `` and reads a `$` of an argument in double quotes.
 - Never edit `CHANGELOG.md` or `src/library/contract/release/release.odin`. `modustool ship` writes them when the coordinator releases a step.
 - If a change has no effect that a reader notices (a document, a comment, a rename inside one file), it has no fragment.
 

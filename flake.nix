@@ -192,24 +192,62 @@
       };
     };
 
-    # The command "modustool": it compiles tools/modustool with the source
+    # The command "modustool" of the development shells: it runs the
+    # binary build/tool/modustool of the folder of the project, which
+    # compiles itself again when the build key of its sources changes
+    # (src/md/infrastructure/repository_layout.md, "The tool built once").
+    # With no binary, the command compiles the first one, with the source
     # library of the project and the kernel parts (the tool reads two of
-    # them), and runs it in the folder of the project.
+    # them), into a file of its own that it then moves: a compile that
+    # stops leaves no binary that cannot run.
     # With MODUS_SYSTEM set, the folder of the project is that folder and
     # the command runs where it is typed: the folder of another project,
     # for the command "module-build"
     # (docs/TOOLS.md, "A module from a source outside the repository").
     modustool = pkgs.writeShellScriptBin "modustool" ''
-      if [ -n "''${MODUS_SYSTEM:-}" ]; then
-        mkdir -p "$MODUS_SYSTEM/build"
-        # The tool compiles in the folder of the system: a source of the
-        # tool includes an assembly file by a path from that folder.
-        (cd "$MODUS_SYSTEM" && odin build tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -out:build/modustool) || exit 1
-        exec "$MODUS_SYSTEM/build/modustool" "$@"
+      system="''${MODUS_SYSTEM:-$PWD}"
+      if [ ! -x "$system/build/tool/modustool" ]; then
+        mkdir -p "$system/build/tool"
+        # The compiler reads the paths of the tool from the folder of the system.
+        (cd "$system" && odin build tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -out:build/tool/modustool.first && mv build/tool/modustool.first build/tool/modustool) || exit 1
       fi
-      mkdir -p build
-      exec odin run tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -out:build/modustool -- "$@"
+      exec "$system/build/tool/modustool" "$@"
     '';
+
+    # The files that the compile of the tool reads in the repository: the
+    # sources of its package, of the source library, of the kernel parts
+    # (each folder under src/kernel, not the kernel), of the module
+    # cryptography that the peer imports by a relative path, and the font
+    # that a fuzz target loads. A host test is not a source of the binary:
+    # its name ends with _test, before the suffixes of a platform that the
+    # compiler reads (blend_vectors_test_amd64.odin).
+    sourcesOfOdin = inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "odin" && builtins.match ".*_test(_[a-z0-9]+)*\\.odin" file.name == null);
+    kernelParts = map (name: ./src/kernel + "/${name}") (builtins.attrNames (inputs.nixpkgs.lib.filterAttrs (_: type: type == "directory") (builtins.readDir ./src/kernel)));
+    # The cryptography of the library links the memory procedures of the
+    # host in assembly, which nasm assembles at the compile of the tool; that
+    # file includes the memory procedures of the system.
+    toolSources = inputs.nixpkgs.lib.fileset.unions ([(sourcesOfOdin ./tools/modustool) (sourcesOfOdin ./src/library) (sourcesOfOdin ./src/modules/cryptography) (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "asm") ./src/runtime) ./resources/fonts/commit_mono.ttf] ++ map sourcesOfOdin kernelParts);
+
+    # The tool as a derivation of its own: the check and the release shell
+    # run this binary, and Nix builds it again only when a file of
+    # toolSources changes. It never compiles itself: its sources are the
+    # inputs of the derivation. -show-timings prints the time of each
+    # phase of the compiler in the log of the build, as a measure.
+    modustoolBinary = pkgs.stdenvNoCC.mkDerivation {
+      name = "modustool";
+      src = inputs.nixpkgs.lib.fileset.toSource {
+        root = ./.;
+        fileset = toolSources;
+      };
+      nativeBuildInputs = [odin pkgs.nasm];
+      buildPhase = ''
+        export HOME=$TMPDIR
+        odin build tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -define:TOOL_BUILDS_ITSELF=false -show-timings -out:modustool
+      '';
+      installPhase = ''
+        install -D modustool $out/bin/modustool
+      '';
+    };
 
     # modustool check: the host code passes -vet and its tests, the system builds,
     # and the machine test passes under QEMU (console, desktop, tools). This is
@@ -234,7 +272,7 @@
           fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./ROADMAP.md ./changelog.d ./news ./README.md ./AGENTS.md ./LICENSE (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "md") ./docs) (inputs.nixpkgs.lib.fileset.maybeMissing ./docs/films) ./resources ./src ./tools ./.project];
         };
         inherit screenshotNames;
-        nativeBuildInputs = buildTools ++ [modustool];
+        nativeBuildInputs = buildTools ++ [modustoolBinary];
         # /dev/kvm in the sandbox. Without it QEMU falls back to TCG, which
         # takes every register write: the self test of a refused register
         # then fails, and the thread counters have nothing to try
@@ -282,9 +320,10 @@
       # The shell of the release workflow: the build tools and the firmware,
       # with no pointer theme of the owner and no hook. `modustool release
       # image` makes the theme of the system only in any shell; this shell
-      # also keeps the workflow from fetching the theme of the owner.
+      # also keeps the workflow from fetching the theme of the owner. Its
+      # tool is the binary of the check, built from the same sources.
       release = pkgs.mkShell ({
-          packages = buildTools ++ [modustool];
+          packages = buildTools ++ [modustoolBinary];
         }
         // firmware);
 

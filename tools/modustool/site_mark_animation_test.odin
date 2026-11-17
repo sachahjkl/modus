@@ -610,12 +610,18 @@ site_mark_check_steps_follow_the_rule :: proc(t: ^testing.T) {
 
 // The name of the mark on a page: the font is a file of the site that the
 // style sheet declares once, the class names it, and the box of the name
-// has the size of the name in cells at each of the two sizes.
+// has the size of the name in cells at each of the two sizes. The sheet
+// declares two fonts, each once with its own file: the font of the name of
+// the mark and the font of the diagrams of the guides.
 @(test)
 site_mark_name_rules_name_the_font :: proc(t: ^testing.T) {
 	sheet := site_style_sheet("")
-	testing.expect_value(t, strings.count(sheet, "@font-face"), 1)
-	testing.expect(t, strings.contains(sheet, "@font-face { font-family: \"" + MARK_FONT_FAMILY + "\"; src: url(\"" + SITE_MARK_FONT + "\") format(\"truetype\");"))
+	mark_face := "@font-face { font-family: \"" + MARK_FONT_FAMILY + "\"; src: url(\"" + SITE_MARK_FONT + "\") format(\"truetype\");"
+	diagram_face := "@font-face { font-family: \"" + SITE_DIAGRAM_FONT_FAMILY + "\"; src: url(\"" + SITE_DIAGRAM_FONT + "\") format(\"truetype\");"
+	testing.expect_value(t, strings.count(sheet, "@font-face"), 2)
+	testing.expect_value(t, strings.count(sheet, mark_face), 1)
+	testing.expect_value(t, strings.count(sheet, diagram_face), 1)
+	testing.expect(t, SITE_MARK_FONT != SITE_DIAGRAM_FONT && MARK_FONT_FAMILY != SITE_DIAGRAM_FONT_FAMILY)
 	testing.expect(t, strings.contains(sheet, "font-display: block;"))
 	testing.expect(t, strings.contains(sheet, "." + SITE_MARK_NAME_CLASS + " { display: inline-block;"))
 	testing.expect(t, strings.contains(sheet, "font-family: \"" + MARK_FONT_FAMILY + "\", var(--mono);"))
