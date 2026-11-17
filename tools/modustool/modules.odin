@@ -412,6 +412,9 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 		append(&compile, strings.concatenate({"-define:", define}, context.temp_allocator))
 	}
 	if build.kernel {
+		// The kernel parts: no other module gets this source library, so
+		// the compiler refuses a kernel part in a module.
+		append(&compile, KERNEL_LIBRARY_FLAG)
 		append(&compile, "-disable-red-zone")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_LOCK_ORDER=true" : "-define:TEST_BUILD_CHECKS_LOCK_ORDER=false")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")

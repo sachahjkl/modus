@@ -2,6 +2,7 @@
 package iommu
 
 import "core:testing"
+import "modus:contract/bridge_requester"
 
 store_16 :: proc(bytes: []u8, offset: int, value: u16) {
 	bytes[offset] = u8(value)
@@ -347,11 +348,10 @@ the_forms_that_the_kernel_refuses :: proc(t: ^testing.T) {
 	}
 }
 
-// A bridge of PCI Express passes the requester of each device behind it; a
-// conventional bridge does not, and neither does a list of capabilities
-// that loops.
+// The header of a bridge, and its secondary and subordinate buses. The kind
+// of a bridge is in the host tests of the package bridge_requester.
 @(test)
-the_kinds_of_a_bridge :: proc(t: ^testing.T) {
+the_header_of_a_bridge :: proc(t: ^testing.T) {
 	header: [HEADER_WORDS]u32
 	header[3] = 0x0001_0000 // The header type 1.
 	header[6] = 0x0003_0200 // Primary 0, secondary 2, subordinate 3.
@@ -361,22 +361,6 @@ the_kinds_of_a_bridge :: proc(t: ^testing.T) {
 	testing.expect_value(t, subordinate, u32(3))
 	header[3] = 0
 	testing.expect(t, !header_is_bridge(header))
-
-	configuration: [CONFIGURATION_WORDS]u32
-	testing.expect(t, !bridge_passes_requesters(&configuration)) // No list of capabilities.
-	configuration[1] = STATUS_CAPABILITIES
-	configuration[0x34 / 4] = 0x40
-	configuration[0x40 / 4] = 0x0000_6005 // A capability of messages, then 0x60.
-	configuration[0x60 / 4] = u32(PORT_ROOT) << 20 | 0x10 // PCI Express: a root port.
-	testing.expect(t, bridge_passes_requesters(&configuration))
-	configuration[0x60 / 4] = u32(PORT_SWITCH_DOWNSTREAM) << 20 | 0x10
-	testing.expect(t, bridge_passes_requesters(&configuration))
-	configuration[0x60 / 4] = u32(PORT_PCI_EXPRESS_TO_PCI) << 20 | 0x10 // A bridge from PCI Express to PCI.
-	testing.expect(t, !bridge_passes_requesters(&configuration))
-	configuration[0x60 / 4] = 0x0000_4005 // A list that comes back to 0x40.
-	testing.expect(t, !bridge_passes_requesters(&configuration))
-	_, found := express_port_type(&configuration)
-	testing.expect(t, !found)
 }
 
 // The shared requester of a conventional bridge, as QEMU 10 gives it to the
@@ -386,21 +370,21 @@ the_kinds_of_a_bridge :: proc(t: ^testing.T) {
 // with its own requester.
 @(test)
 the_shared_requester_of_a_conventional_bridge :: proc(t: ^testing.T) {
-	configuration: [CONFIGURATION_WORDS]u32
+	configuration: [bridge_requester.CONFIGURATION_WORDS]u32
 	// No list of capabilities: the bridge itself, at 0:1C.0, before bus 1.
 	testing.expect_value(t, bridge_shared_requester(&configuration, 0, 0x1C, 0, 1), requester(0, 0x1C, 0))
-	configuration[1] = STATUS_CAPABILITIES
+	configuration[1] = bridge_requester.STATUS_CAPABILITIES
 	configuration[0x34 / 4] = 0x40
-	configuration[0x40 / 4] = u32(PORT_PCI_EXPRESS_TO_PCI) << 20 | 0x10
-	port, found := express_port_type(&configuration)
+	configuration[0x40 / 4] = u32(bridge_requester.PORT_PCI_EXPRESS_TO_PCI) << 20 | bridge_requester.CAPABILITY_PCI_EXPRESS
+	port, found := bridge_requester.express_port_type(&configuration)
 	testing.expect(t, found)
-	testing.expect_value(t, port, u32(PORT_PCI_EXPRESS_TO_PCI))
+	testing.expect_value(t, port, u32(bridge_requester.PORT_PCI_EXPRESS_TO_PCI))
 	// A bridge from PCI Express to PCI at 1:0.0, before bus 2.
 	testing.expect_value(t, bridge_shared_requester(&configuration, 1, 0, 0, 2), requester(2, 0, 0))
-	// A bridge from PCI to PCI Express (the port type 8) is conventional
-	// too, and names itself.
-	configuration[0x40 / 4] = u32(PORT_PCI_EXPRESS_TO_PCI + 1) << 20 | 0x10
-	testing.expect(t, !bridge_passes_requesters(&configuration))
+	// A bridge from PCI to PCI Express (the port type after it) is
+	// conventional too, and names itself.
+	configuration[0x40 / 4] = u32(bridge_requester.PORT_PCI_EXPRESS_TO_PCI + 1) << 20 | bridge_requester.CAPABILITY_PCI_EXPRESS
+	testing.expect(t, !bridge_requester.bridge_passes_requesters(&configuration))
 	testing.expect_value(t, bridge_shared_requester(&configuration, 3, 4, 1, 5), requester(3, 4, 1))
 }
 

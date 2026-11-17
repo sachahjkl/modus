@@ -4,7 +4,7 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
-import "modus:contract/processor_counters"
+import "kernel:processor_counters"
 
 // The objects, the handle tables, the programs and their threads
 // (docs/ARCHITECTURE.md, "Handle table"). The scheduler is in schedule.odin

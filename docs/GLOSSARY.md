@@ -2248,7 +2248,7 @@ Do not use: condition variable, semaphore, signal, barrier.
 
 A source library is a named folder of source packages that a module compiles in.
 
-An import of the source names the library and the package: `modus:contract/ring`. The project has one source library, `modus`, in the folder `src/library`. It has two parts: `contract` (what two parties agree on) and `support` (what a program compiles in to use the contracts). A program of the system and a program outside the repository import a package with the same line. A source library is not a module: it has no file and no hash of its own, and it is not an edge of the module graph.
+An import of the source names the library and the package: `modus:contract/ring`. The project has one source library, `modus`, in the folder `src/library`. It has two parts: `contract` (what two parties agree on) and `support` (what a program compiles in to use the contracts). A program of the system and a program outside the repository import a package with the same line. The kernel has a second source library of its own, `kernel`, in the folder `src/kernel`, for its kernel parts: `kernel:iommu`. A source library is not a module: it has no file and no hash of its own, and it is not an edge of the module graph.
 
 The design: `docs/MODULE_CONTRACT.md`, "The source library of a module".
 
@@ -2268,7 +2268,7 @@ Do not use: internal package, helper package, program package.
 
 A kernel part is a pure package in a folder under `src/kernel`, which the kernel alone compiles in, with its host tests.
 
-A kernel part is imported through a second source library, `kernel`: `kernel:iommu`. Only the compile of the kernel, the host tests of its parts and the tool get that source library, so the compiler refuses the import in a module. A kernel part declares no package variable: the state of the kernel stays in the package of the kernel, and a host test runs each procedure with no machine. A format that only the kernel reads, such as an ACPI table, is a kernel part and not a contract. The move of these packages out of the contract packages is planned work of `ROADMAP.md`.
+A kernel part is imported through a second source library, `kernel`: `kernel:iommu`. Only the compile of the kernel, the host tests of its parts and the tool get that source library, so the compiler refuses the import in a module, and the tool refuses it in each other file of `src/`. A kernel part is pure: the state of the kernel stays in the package of the kernel, and a host test runs each procedure with no machine. A format that only the kernel reads, such as an ACPI table, is a kernel part and not a contract. The kernel parts are `iommu`, `acpi_processors`, `debug_exception` and `processor_counters`.
 
 The design: `src/md/infrastructure/repository_layout.md`.
 

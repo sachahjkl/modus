@@ -2,7 +2,7 @@ package kernel
 
 import "base:intrinsics"
 import op "modus:contract/operation"
-import "modus:contract/processor_counters"
+import "kernel:processor_counters"
 
 // The counters of a thread (docs/ARCHITECTURE.md, "The counters of a
 // thread"; src/md/features/processor_counters.md): the kernel programs the

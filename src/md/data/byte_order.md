@@ -22,4 +22,4 @@ Formats of the network, of the TPM and of the files of the system hold numbers i
 
 ## State
 
-Built: the package, its host tests, and its callers in the network, the TPM, the boot program, the line editor, the principals, the disk program and the manual pages. Left: `src/library/support/vector_font` and `src/library/contract/iommu` keep their own reads.
+Built: the package, its host tests, and its callers in the network, the TPM, the boot program, the line editor, the principals, the disk program and the manual pages. Left: `src/library/support/vector_font` and `src/kernel/iommu` keep their own reads.

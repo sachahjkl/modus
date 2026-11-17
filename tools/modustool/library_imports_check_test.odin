@@ -143,6 +143,21 @@ library_import_paths_that_the_rule_allows :: proc(t: ^testing.T) {
 			testing.expectf(t, !library_import_is_allowed(path, form), "%q is not an import of %v", path, form)
 		}
 	}
+
+	// A kernel part: the kernel itself ("kernel:" alone) and a path with
+	// ".." are refused in each form, a kernel part in each form outside the
+	// kernel, and the last case, a kernel part in the kernel and its tests.
+	for path in ([]string{KERNEL_IMPORT_START, KERNEL_IMPORT_START + "../programs/clock", KERNEL_IMPORT_START + "iommu/../../programs"}) {
+		for form in ([]Library_Source_Form{kernel_source, kernel_test, contract_source, contract_test, system_source, system_test, copied_source}) {
+			testing.expectf(t, !library_import_is_allowed(path, form), "%q is refused in %v", path, form)
+		}
+	}
+	for form in ([]Library_Source_Form{contract_source, contract_test, system_source, system_test, copied_source}) {
+		testing.expectf(t, !library_import_is_allowed(KERNEL_IMPORT_START + "iommu", form), "a kernel part is not an import of %v", form)
+	}
+	for form in ([]Library_Source_Form{kernel_source, kernel_test}) {
+		testing.expectf(t, library_import_is_allowed(KERNEL_IMPORT_START + "iommu", form), "a kernel part is an import of %v", form)
+	}
 }
 
 // The names of a host test: the two forms that the rule reads, and the names
@@ -198,6 +213,53 @@ library_import_of_a_support_package_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, contract_found, "the file of the contract package is not named")
 	testing.expect_value(t, in_contract.line, 3)
 	testing.expect_value(t, in_contract.text, "\"../../support/sentence\"")
+}
+
+// A kernel part is imported from the kernel only. A module, a support
+// package, a host test of the library and a contract package that import
+// one are each refused with their line; inside the kernel, the package of
+// the kernel itself ("kernel:" alone) and a path with ".." are refused too.
+// The last case: the kernel, a kernel part and its host test import one.
+@(test)
+library_import_of_a_kernel_part_outside_the_kernel_is_refused :: proc(t: ^testing.T) {
+	root := library_tree_make(t)
+	defer os.remove_all(root)
+	part :: KERNEL_IMPORT_START + "iommu"
+	library_tree_folder_make(root, SOURCE_FOLDER_PROGRAMS + "/clock")
+	library_tree_file_write(root, SOURCE_FOLDER_PROGRAMS + "/clock/main.odin", "package clock\n\nimport \"base:intrinsics\"\nimport iommu \"" + part + "\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/tables.odin", "package sentence\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_SUPPORT + "/sentence/tables_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage sentence\n\nimport \"core:testing\"\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_CONTRACT + "/ring/device.odin", "package ring\n\nimport \"" + part + "\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/itself.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + "\"\n")
+	library_tree_file_write(root, SOURCE_FOLDER_KERNEL + "/around.odin", "package kernel\n\nimport \"" + KERNEL_IMPORT_START + "../programs/clock\"\n")
+	reading, read_ok := library_import_breaches_of_tree(root)
+	testing.expect(t, read_ok)
+	testing.expectf(t, len(reading.breaches[:]) == 6, "%v", reading.breaches[:])
+	module, module_found := breach_of_file(reading.breaches[:], SOURCE_FOLDER_PROGRAMS + "/clock/main.odin")
+	testing.expect(t, module_found, "the module that imports a kernel part is not named")
+	testing.expect_value(t, module.line, 4)
+	testing.expect_value(t, module.text, "\"" + part + "\"")
+	testing.expect_value(t, module.reason, Library_Import_Breach_Reason.Refused_Import)
+	sentence := library_import_breach_sentence(module)
+	testing.expect(t, strings.contains(sentence, SOURCE_FOLDER_PROGRAMS + "/clock/main.odin:4: the import \"" + part + "\" is refused"), sentence)
+	testing.expect(t, strings.contains(sentence, "is imported from " + SOURCE_FOLDER_KERNEL + " only"), sentence)
+	for file in ([]string{SOURCE_FOLDER_SUPPORT + "/sentence/tables.odin", SOURCE_FOLDER_SUPPORT + "/sentence/tables_test.odin", SOURCE_FOLDER_CONTRACT + "/ring/device.odin", SOURCE_FOLDER_KERNEL + "/itself.odin", SOURCE_FOLDER_KERNEL + "/around.odin"}) {
+		testing.expectf(t, breach_count_of_file(reading.breaches[:], file) == 1, "%s: the import is not refused one time", file)
+	}
+
+	// The kernel, a kernel part that imports another part and a contract
+	// package, and the host test of the part.
+	clean := library_tree_make(t)
+	defer os.remove_all(clean)
+	library_tree_folder_make(clean, SOURCE_FOLDER_KERNEL + "/iommu")
+	library_tree_folder_make(clean, SOURCE_FOLDER_KERNEL + "/acpi_processors")
+	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/devices.odin", "package kernel\n\nimport iommu \"" + part + "\"\n")
+	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/iommu/iommu.odin", "package iommu\n\nimport \"" + KERNEL_IMPORT_START + "acpi_processors\"\nimport ring \"" + CONTRACT_IMPORT_START + "ring\"\n")
+	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/iommu/iommu_test.odin", LIBRARY_HOST_BUILD_LINE + "\npackage iommu\n\nimport \"core:testing\"\nimport \"" + KERNEL_IMPORT_START + "acpi_processors\"\n")
+	library_tree_file_write(clean, SOURCE_FOLDER_KERNEL + "/acpi_processors/acpi_processors.odin", "package acpi_processors\n")
+	accepted, accepted_ok := library_import_breaches_of_tree(clean)
+	testing.expect(t, accepted_ok)
+	testing.expectf(t, len(accepted.breaches[:]) == 0, "%v", accepted.breaches[:])
 }
 
 // The check reads what the compiler leaves out: an import inside a `when`

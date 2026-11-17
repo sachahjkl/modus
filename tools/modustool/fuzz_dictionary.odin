@@ -28,7 +28,7 @@ fuzz_dictionary_fill :: proc(engine: ^Fuzz_Engine) {
 	values := make([dynamic]i64, context.temp_allocator)
 	texts := make([dynamic]string, context.temp_allocator)
 	for package_folder in engine.target.packages {
-		fuzz_constants_of_folder(strings.concatenate({SOURCE_FOLDER_LIBRARY, "/", package_folder}, context.temp_allocator), &values, &texts)
+		fuzz_constants_of_folder(package_folder, &values, &texts)
 	}
 	slice.sort(values[:])
 	values_unique := slice.unique(values[:])

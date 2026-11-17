@@ -55,9 +55,10 @@ BUILD_FOLDER :: "build"
 // "modus:contract/ring", "modus:support/system".
 //   contract   what two parties agree on: records, numbers, and the code
 //              that reads them. It uses no kernel operation. The kernel
-//              imports these packages only.
+//              imports these packages and its own kernel parts only.
 //   support    what a program compiles in to use the contracts.
-// The name, the folder and the flag of the library are in
+// The kernel parts are a second source library, "kernel:iommu". The names,
+// the folders and the flags of the two libraries are in
 // source_folders.odin; the rule of the kernel is held by
 // library_imports_check.odin.
 
@@ -78,9 +79,10 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/quic",
 	SOURCE_FOLDER_CONTRACT + "/date",
 	SOURCE_FOLDER_CONTRACT + "/disk_program_page",
-	SOURCE_FOLDER_CONTRACT + "/iommu",
-	SOURCE_FOLDER_CONTRACT + "/debug_exception",
-	SOURCE_FOLDER_CONTRACT + "/processor_counters",
+	SOURCE_FOLDER_KERNEL + "/iommu",
+	SOURCE_FOLDER_CONTRACT + "/bridge_requester",
+	SOURCE_FOLDER_KERNEL + "/debug_exception",
+	SOURCE_FOLDER_KERNEL + "/processor_counters",
 	SOURCE_FOLDER_SUPPORT + "/storage_mount",
 	SOURCE_FOLDER_SUPPORT + "/storage_object",
 	SOURCE_FOLDER_SUPPORT + "/storage_tree",
@@ -145,7 +147,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/glyph_cache",
 	SOURCE_FOLDER_CONTRACT + "/datagram",
 	SOURCE_FOLDER_CONTRACT + "/byte_order",
-	SOURCE_FOLDER_CONTRACT + "/acpi_processors",
+	SOURCE_FOLDER_KERNEL + "/acpi_processors",
 }
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 // The boot program of the main boot volume, and its object: each boot
@@ -1101,7 +1103,7 @@ run_measure :: proc(args: []string) -> int {
 run_check :: proc(args: []string) -> int {
 	// The full check proves the build: it keeps no output of an earlier build.
 	build_whole = true
-	if !run({"odin", "check", TOOL_SOURCE_FOLDER, "-vet", SOURCE_LIBRARY_FLAG}) {
+	if !run({"odin", "check", TOOL_SOURCE_FOLDER, "-vet", SOURCE_LIBRARY_FLAG, KERNEL_LIBRARY_FLAG}) {
 		return EXIT_FAILURE
 	}
 	// The kernel and the contract packages import no support package. The
@@ -1123,7 +1125,15 @@ run_check :: proc(args: []string) -> int {
 	host_test_folders := HOST_TEST_FOLDERS
 	for folder in host_test_folders {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
-		if !run({"odin", "test", folder, "-vet", SOURCE_LIBRARY_FLAG, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
+		test_command := make([dynamic]string, context.temp_allocator)
+		append(&test_command, "odin", "test", folder, "-vet", SOURCE_LIBRARY_FLAG)
+		// The kernel parts only for the folders that import them: a host
+		// test of the library that names one then fails to compile.
+		if source_folder_takes_kernel_library(folder) {
+			append(&test_command, KERNEL_LIBRARY_FLAG)
+		}
+		append(&test_command, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator))
+		if !run(test_command[:]) {
 			return EXIT_FAILURE
 		}
 	}

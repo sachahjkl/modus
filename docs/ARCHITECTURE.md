@@ -830,7 +830,7 @@ Two more commands, `Read_Placement` and `Write_Placement`, read and write the pl
 
 ### The counters of a thread
 
-A program counts what the processor does for its own code: the instructions retired, the cycles, the cache misses and the branch misses. A developer then measures the cost of a data layout, and not only its time. The program `counters` shows it: it counts a loop of known length, and the same reads of 2 MiB of memory in order and by page (`modustool test kernel_events`). The terms are in `GLOSSARY.md`: performance counter, thread counters, register trial. The design and the refused forms are in `src/md/features/processor_counters.md`; the code is `src/kernel/thread_counters.odin`, and the counter plan of each vendor is `processor_counters.plan_of_identification` in `src/library/contract/processor_counters`, with host tests.
+A program counts what the processor does for its own code: the instructions retired, the cycles, the cache misses and the branch misses. A developer then measures the cost of a data layout, and not only its time. The program `counters` shows it: it counts a loop of known length, and the same reads of 2 MiB of memory in order and by page (`modustool test kernel_events`). The terms are in `GLOSSARY.md`: performance counter, thread counters, register trial. The design and the refused forms are in `src/md/features/processor_counters.md`; the code is `src/kernel/thread_counters.odin`, and the counter plan of each vendor is `processor_counters.plan_of_identification` in `src/kernel/processor_counters`, with host tests.
 
 **The commands.** Three commands of `Thread_Control`, not a new operation: they act on the state of a thread, as the other commands do.
 
@@ -870,7 +870,7 @@ Each access is a register trial (`GLOSSARY.md`): a protection fault of that one 
 
 Another processor whose trial fails writes its own line: "kernel: performance counters: none that the kernel uses: on the processor 3, ...". The other outcomes of a trial are "a counter was on before the kernel: another user counts with it, at the select register ..." and "a counter did not give back the value that the kernel wrote, at the register ...".
 
-The self test 7 proves the way back from a refusal on a machine: the kernel writes an address that is not canonical to `IA32_KERNEL_GS_BASE` in a register trial, and goes on after the refusal ("Self test" in `GLOSSARY.md`). The host tests of `src/library/contract/processor_counters` prove the order of the trial and each outcome.
+The self test 7 proves the way back from a refusal on a machine: the kernel writes an address that is not canonical to `IA32_KERNEL_GS_BASE` in a register trial, and goes on after the refusal ("Self test" in `GLOSSARY.md`). The host tests of `src/kernel/processor_counters` prove the order of the trial and each outcome.
 
 **The switch.** A thread that counts has the flag `counting` in the hot line of its record. The processor that takes it writes 0 in the four counters, then turns the selects on; the processor that leaves it turns the selects off, then adds the counters to the totals of the thread (64 bits each). `Read_Counters` gives the totals plus the counters of this processor now. So the registers of a processor count for one thread at most, and a switch to a thread that does not count tests one byte and writes no register. A counter of 48 bits starts at 0 at each take, and a turn of 10 ms cannot reach its end.
 
@@ -1273,7 +1273,7 @@ The copy of `user_copy` is a template (`rep movsb`), not a call by name: it is t
 
 ### 5. The proof that the kernel has no vector instruction
 
-A template is compiled code: the check of the build (`tools/modustool/vector_check.odin`) disassembles the linked kernel and reads each template in the code of its callers. No template of the kernel names a vector register, so the check passes. The kernel imports the contract packages only, and the tool checks each import of `src/` before each build (`docs/TOOLS.md`, "The imports of the sources of the system"); the templates with vector registers of other packages (for programs) are not in its build.
+A template is compiled code: the check of the build (`tools/modustool/vector_check.odin`) disassembles the linked kernel and reads each template in the code of its callers. No template of the kernel names a vector register, so the check passes. The kernel imports the contract packages and its kernel parts only, and the tool checks each import of `src/` before each build (`docs/TOOLS.md`, "The imports of the sources of the system"); the templates with vector registers of other packages (for programs) are not in its build.
 
 ### 6. The measure
 

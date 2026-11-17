@@ -10,9 +10,14 @@
 //     only, and no package of core:, which reaches the host. The files that
 //     the manifest of the cryptography of Odin names are the one exception,
 //     below.
-//   - The kernel imports the contract packages only, and a contract package
-//     imports no support package. A chain of imports from the kernel then
-//     reaches no support package.
+//   - The kernel imports the contract packages and its kernel parts only,
+//     and a contract package imports no support package. A chain of imports
+//     from the kernel then reaches no support package.
+//   - A kernel part ("kernel:iommu", a folder under src/kernel) is imported
+//     from src/kernel only. The compiler already refuses it in a module,
+//     which gets no flag of the kernel parts; the check refuses it in each
+//     other file of src/ too, because a language server gives one set of
+//     source libraries to every folder and then compiles the import.
 //   - A test that imports a package of core: runs on the host: its first
 //     build line is "#+build !freestanding", so that no build of the system
 //     reads it. A test, and a file of the copy, may also import a relative
@@ -54,10 +59,10 @@ LIBRARY_HOST_BUILD_LINE :: "#+build !freestanding"
 LIBRARY_TEST_ARCHITECTURES :: [?]string{"amd64", "arm64"}
 
 // The folder of src/ that a file is in: the kernel and the contract packages
-// import the contract packages only, and a source of another folder imports
-// each part of the library.
+// import the contract packages only, the kernel its kernel parts too, and a
+// source of another folder imports each part of the library.
 Library_Source_Kind :: enum {
-	Kernel,
+	Kernel, // src/kernel and each kernel part under it.
 	Contract,
 	System,
 }
@@ -197,6 +202,11 @@ library_import_is_allowed :: proc(path: string, form: Library_Source_Form) -> bo
 	if library_import_names_a_package_under(path, library_start) {
 		return true
 	}
+	// "kernel:" alone names the package of the kernel itself, which no
+	// file imports: a kernel part names its folder.
+	if form.kind == .Kernel && library_import_names_a_package_under(path, KERNEL_IMPORT_START) {
+		return true
+	}
 	return form.test && library_import_names_a_package_under(path, LIBRARY_IMPORT_CORE_START)
 }
 
@@ -209,9 +219,9 @@ library_import_rule_words :: proc(form: Library_Source_Form) -> string {
 	}
 	if form.kind == .Kernel {
 		if form.test {
-			return "a test of " + SOURCE_FOLDER_KERNEL + " imports a package of base:, of core: or under " + CONTRACT_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
+			return "a test of " + SOURCE_FOLDER_KERNEL + " imports a package of base:, of core:, under " + CONTRACT_IMPORT_START + " or under " + KERNEL_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
 		}
-		return "a source of " + SOURCE_FOLDER_KERNEL + " imports a package of base: or under " + CONTRACT_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
+		return "a source of " + SOURCE_FOLDER_KERNEL + " imports a package of base:, under " + CONTRACT_IMPORT_START + " or under " + KERNEL_IMPORT_START + ", by a path with no \"..\"; the kernel imports no support package"
 	}
 	if form.kind == .Contract {
 		if form.test {
@@ -220,9 +230,9 @@ library_import_rule_words :: proc(form: Library_Source_Form) -> string {
 		return "a source of " + SOURCE_FOLDER_CONTRACT + " imports a package of base: or under " + CONTRACT_IMPORT_START + ", by a path with no \"..\"; a contract package imports no support package"
 	}
 	if form.test {
-		return "a test of src/ imports a package of base:, of core: or of " + SOURCE_LIBRARY_IMPORT_START + ", or a relative path of the repository, by a path with no \"..\" after the name of a library"
+		return "a test of src/ imports a package of base:, of core: or of " + SOURCE_LIBRARY_IMPORT_START + ", or a relative path of the repository, by a path with no \"..\" after the name of a library; a kernel part (" + KERNEL_IMPORT_START + ") is imported from " + SOURCE_FOLDER_KERNEL + " only"
 	}
-	return "a source of src/ that is not a test imports a package of base: or of " + SOURCE_LIBRARY_IMPORT_START + ", by a path with no \"..\""
+	return "a source of src/ that is not a test imports a package of base: or of " + SOURCE_LIBRARY_IMPORT_START + ", by a path with no \"..\"; a kernel part (" + KERNEL_IMPORT_START + ") is imported from " + SOURCE_FOLDER_KERNEL + " only"
 }
 
 // library_source_has_host_build_line says if the first build line of a
