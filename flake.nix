@@ -223,7 +223,9 @@
     # compiler reads (blend_vectors_test_amd64.odin).
     sourcesOfOdin = inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "odin" && builtins.match ".*_test(_[a-z0-9]+)*\\.odin" file.name == null);
     kernelParts = map (name: ./src/kernel + "/${name}") (builtins.attrNames (inputs.nixpkgs.lib.filterAttrs (_: type: type == "directory") (builtins.readDir ./src/kernel)));
-    toolSources = inputs.nixpkgs.lib.fileset.unions ([(sourcesOfOdin ./tools/modustool) (sourcesOfOdin ./src/library) (sourcesOfOdin ./src/modules/cryptography) ./resources/fonts/commit_mono.ttf] ++ map sourcesOfOdin kernelParts);
+    # The cryptography of the library links the memory procedures of the
+    # host in assembly, which nasm assembles at the compile of the tool.
+    toolSources = inputs.nixpkgs.lib.fileset.unions ([(sourcesOfOdin ./tools/modustool) (sourcesOfOdin ./src/library) (sourcesOfOdin ./src/modules/cryptography) ./src/runtime/memory_for_host_tests.asm ./resources/fonts/commit_mono.ttf] ++ map sourcesOfOdin kernelParts);
 
     # The tool as a derivation of its own: the check and the release shell
     # run this binary, and Nix builds it again only when a file of
@@ -236,7 +238,7 @@
         root = ./.;
         fileset = toolSources;
       };
-      nativeBuildInputs = [odin];
+      nativeBuildInputs = [odin pkgs.nasm];
       buildPhase = ''
         export HOME=$TMPDIR
         odin build tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -define:TOOL_BUILDS_ITSELF=false -show-timings -out:modustool
