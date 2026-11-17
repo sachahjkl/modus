@@ -1,5 +1,7 @@
 package modustool
 
+import "modus:contract/operation_sequence"
+
 // The fuzz targets (src/md/infrastructure/fuzzing.md, "The targets, in
 // order of value"). A new target adds its row here and its folder of corpus
 // under tools/modustool/fuzzing_corpus. The important formats have a raw
@@ -363,6 +365,25 @@ fuzz_target_table := [?]Fuzz_Target {
 		seeds = fuzz_text_shaping_seeds,
 		regions = fuzz_text_shaping_regions,
 		start = fuzz_text_shaping_start,
+	},
+	{
+		name = "operation_sequence",
+		kind = .Raw,
+		about = "contract/operation_sequence: a sequence that check accepts follows each rule of its format and writes again to its bytes; a refusal names its step, its area or its argument",
+		packages = {"contract/operation_sequence"},
+		input_limit = operation_sequence.SEQUENCE_BYTES_MOST + 1,
+		execute = fuzz_operation_sequence_execute,
+		seeds = fuzz_operation_sequence_seeds,
+		regions = fuzz_operation_sequence_regions,
+	},
+	{
+		name = "operation_sequence_generated",
+		kind = .Generated,
+		about = "contract/operation_sequence: each sequence that the generator builds from the forms of OPERATIONS is one that check accepts and reads back whole",
+		packages = {"contract/operation_sequence"},
+		input_limit = 16 << 10,
+		execute = fuzz_operation_sequence_generated_execute,
+		start = fuzz_operation_sequence_start,
 	},
 }
 
