@@ -107,7 +107,7 @@ The ring, the copy of the sequence and the result area are in no area. A sequenc
 
 ### The sequence format and the grammar
 
-The format is the contract package `src/library/contract/operation_sequence`. The tool writes it, and `operation_fuzzing` and the runner read it. A sequence has a head (the magic, the format, the count of steps, at most `OPERATION_SEQUENCE_STEPS_MOST`, which is 64) and its steps. A step has:
+The format is the contract package the new contract package `operation_sequence`. The tool writes it, and `operation_fuzzing` and the runner read it. A sequence has a head (the magic, the format, the count of steps, at most `OPERATION_SEQUENCE_STEPS_MOST`, which is 64) and its steps. A step has:
 
 - the operation word;
 - its flags: no table of error details, or the same kernel entry as the step before, which tests a batch of records;
