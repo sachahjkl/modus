@@ -100,11 +100,16 @@ qmp_line_read :: proc(qmp: ^Qmp) -> (line: string, ok: bool) {
 // gave no reply within the bound of a hang (the tool prints why), or QEMU
 // closed the connection, with no message: qmp.ended says so, and the
 // caller decides, because a machine that the system stopped is no failure.
-qmp_command :: proc(qmp: ^Qmp, command: string) -> (value: string, ok: bool) {
+// print_failure false: the caller prints its own line, because the
+// command is no step of the test (processor_state.odin).
+qmp_command :: proc(qmp: ^Qmp, command: string, print_failure := true) -> (value: string, ok: bool) {
 	if qmp.ended {
 		return "", false
 	}
 	if !qmp.open {
+		if !print_failure {
+			return "", false
+		}
 		fmt.eprintfln("modustool: test failed: no connection to QEMU for the command %s", command)
 		return "", false
 	}
@@ -116,7 +121,7 @@ qmp_command :: proc(qmp: ^Qmp, command: string) -> (value: string, ok: bool) {
 	for {
 		reply, read := qmp_line_read(qmp)
 		if !read {
-			if !qmp.ended {
+			if !qmp.ended && print_failure {
 				fmt.eprintfln("modustool: test failed: QEMU gave no reply to the command %s within %v", command, HANG_BOUND)
 			}
 			return "", false
@@ -126,7 +131,9 @@ qmp_command :: proc(qmp: ^Qmp, command: string) -> (value: string, ok: bool) {
 		case .Return:
 			return text, true
 		case .Error:
-			fmt.eprintfln("modustool: test failed: QEMU refused the command %s: %s", command, text)
+			if print_failure {
+				fmt.eprintfln("modustool: test failed: QEMU refused the command %s: %s", command, text)
+			}
 			return "", false
 		}
 		// An event, or a line that is not of the protocol: not the reply.

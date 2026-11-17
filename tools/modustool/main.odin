@@ -1233,6 +1233,23 @@ Machine_Iommu :: enum {
 	Amd,
 }
 
+// firmware_files names the files of a firmware: the variable of the
+// environment that gives its code, the one that gives its variable store,
+// the copy of that store outside a test, and the end of the name of the
+// copy of a test machine. The start of a machine and the names of the
+// addresses at a failure both read them, so the two name the same files.
+firmware_files :: proc(firmware: Machine_Firmware) -> (code_variable, variables_variable, variables_copy, variables_suffix: string) {
+	switch firmware {
+	case .Usual:
+		code_variable, variables_variable, variables_copy, variables_suffix = "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES, FIRMWARE_VARIABLES_SUFFIX
+	case .With_Tpm_Driver:
+		code_variable, variables_variable, variables_copy, variables_suffix = "OVMF_TPM_CODE", "OVMF_TPM_VARS", FIRMWARE_TPM_VARIABLES, FIRMWARE_TPM_VARIABLES_SUFFIX
+	case .With_Secure_Boot:
+		code_variable, variables_variable, variables_copy, variables_suffix = "OVMF_FULL_CODE", "OVMF_FULL_VARS", FIRMWARE_FULL_VARIABLES, FIRMWARE_FULL_VARIABLES_SUFFIX
+	}
+	return
+}
+
 machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc") -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
@@ -1252,17 +1269,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	if !disk_prepare(scratch_disk, SCRATCH_DISK_SIZE, true) {
 		return nil, false
 	}
-	code_variable, variables_variable, variables_copy := "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES
-	variables_suffix := FIRMWARE_VARIABLES_SUFFIX
-	switch firmware {
-	case .Usual:
-	case .With_Tpm_Driver:
-		code_variable, variables_variable, variables_copy = "OVMF_TPM_CODE", "OVMF_TPM_VARS", FIRMWARE_TPM_VARIABLES
-		variables_suffix = FIRMWARE_TPM_VARIABLES_SUFFIX
-	case .With_Secure_Boot:
-		code_variable, variables_variable, variables_copy = "OVMF_FULL_CODE", "OVMF_FULL_VARS", FIRMWARE_FULL_VARIABLES
-		variables_suffix = FIRMWARE_FULL_VARIABLES_SUFFIX
-	}
+	code_variable, variables_variable, variables_copy, variables_suffix := firmware_files(firmware)
 	if test_output != "" {
 		variables_copy = machine_file(test_output, variables_suffix)
 	}

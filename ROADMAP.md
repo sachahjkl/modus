@@ -62,6 +62,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A processor time that the other programs do not set.** The processor time of a program is an amount that its budget holds and divides among its children, as its log records are. A thread then cannot learn from its own share that a sibling ran. [Design](src/md/features/log_side_channels.md)
 - **A document service with a picker.** A service owns the objects of the principal that belong to no one program, and gives a program a handle to a document only when the principal picks it. The principal then lists and revokes each grant of a document (`docs/ARCHITECTURE.md`, section U6).
 - **The host tests of the check in the measure record.** The measure record counts the host tests of `modustool check` beside the machine tests and the second build of `modustool screenshots`. The site then shows the count of every check of a release.
+- **The boot program named in the processors of a failed step.** The tool learns where the firmware loaded the boot program, so an instruction address of a processor there names the boot program and not "no known code". A stall between the start of the boot program and the kernel then says which of the two held the processor.
 
 ## Maybe
 
