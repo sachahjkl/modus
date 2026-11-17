@@ -148,7 +148,7 @@ The principal gives a disk program a grant with a command. The rules of the tabl
 
 **The nickname.** The name of the entry of a file in the store `programs` is its nickname: the principal chooses it, and the file never does. The root service names the program by its nickname (the slot, the log, `grants`, `stop`, the monitor), and the log writes the hash of the file beside it.
 
-**The disk grant table.** The root service keeps one disk grant table for each principal ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Disk grant table"). A row binds a nickname to the hash of one file, and holds the grants of that file. 16 rows at most. It is apart from the tables by name of the root service (`grants_of`), which a disk program never reaches.
+**The disk grant table.** The root service keeps one disk grant table for each principal ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Disk grant table"). A row binds a nickname to the hash of one file, and holds the grants of that file. 16 rows at most. It is apart from the table of the roles by name of the root service (`program_roles`), which a disk program never reaches.
 
 **Two hashes never share a nickname.** The rule holds in the root service, at `start_from_disk`, and not in the storage service:
 
@@ -319,7 +319,7 @@ The read and the write are states of the loop of the root service, as the load o
 - **The name of the caller of the connection is `programs`.** The root service is no row of its own table of started programs, so the connection has a caller record of its own. Its grant is the limit of the store, with no grant to act for a principal.
 - **The connection ends with the load.** The root service holds no handle of the storage service between two loads.
 - **The rule of the debug access needs no change.** It reads the grants that a program received at its start. A disk program with no grant can be debugged by a caller that acts for its principal. A disk program with the grant `store` cannot: a store is a grant of one program.
-- **The root service finds a disk program by a flag of its slot, not by its name.** The connection of a disk program to the storage service gets the store of its nickname and the limit of that store, from the grants of its start, and never the grants that `grants_of` gives a name.
+- **The root service finds a disk program by a flag of its slot, not by its name.** The connection of a disk program to the storage service gets the store of its nickname and the limit of that store, from the grants of its start, and never the grants that `program_roles` gives a name.
 - **A move does not change a program that runs.** It keeps its grants and its connections. The next start reads the row again.
 - **A read makes no commit.** The storage service writes the limit of a store at a change only. A machine whose disk has no store `programs` gets no new store from a refused command.
 - **The tag does not stop an older table.** The storage service keeps the versions of `grant_table`, and a caller that acts for the principal of the table can restore one in its store `programs`. The tag of an older version verifies: a grant that `disallow` took can come back. A counter that only grows, in the TPM, ends it; it is not built.

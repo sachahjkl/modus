@@ -35,7 +35,23 @@ import "modus:support/system"
 
 // grant_slot_refused writes the line of a start that a taken slot stopped:
 // two roles of the program have one slot, and the program does not start
-// with one of the two handles lost.
+// with one of the two handles lost. A slot is an int that the starter
+// named, which can be negative: the line writes its word.
 grant_slot_refused :: proc "contextless" (name: string, slot: int) {
 	system.log_in("programs", .Error, "root: cannot start ", system.Module_Name{name}, ": two grants of its role take the handle ", u64(slot), " of its context, and a handle would be lost")
+}
+
+// context_refused says if a write into the context of a program was
+// refused, and writes its line: each starter of this service reads it once,
+// before the start, so no program starts with a handle or a value lost.
+context_refused :: proc "contextless" (name: string, grants: ^system.Context_Grants, values: ^system.Context_Values) -> bool {
+	if grants.refusal.refused {
+		grant_slot_refused(name, grants.refusal.place)
+		return true
+	}
+	if values.refusal.refused {
+		system.log_in("programs", .Error, "root: cannot start ", system.Module_Name{name}, ": two parts of its start write the value ", u64(values.refusal.place), " of its context, and a value would be lost")
+		return true
+	}
+	return false
 }

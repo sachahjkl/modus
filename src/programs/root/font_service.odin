@@ -1,7 +1,6 @@
 package root
 
 import "modus:contract/demand_cache"
-import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 import "modus:support/principals"
 import "modus:support/random"
@@ -73,16 +72,20 @@ font_service_start :: proc "contextless" () {
 		return
 	}
 	slot^ = {}
-	grants: [op.CONTEXT_HANDLES]system.Grant
-	values: [op.CONTEXT_VALUES]u64
-	grants[demand_cache.SERVICE_GRANT_CACHE] = {demand_cache_memory, {.Read, .Write}}
-	grants[op.CONTEXT_LOG] = log_grant(role_of(FONT_SERVICE_NAME))
+	role := role_of(FONT_SERVICE_NAME)
+	context_grants: system.Context_Grants
+	values: system.Context_Values
+	system.grant_put(&context_grants, demand_cache.SERVICE_GRANT_CACHE, {demand_cache_memory, {.Read, .Write}})
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role))
 	// The outlines, read-only, from the boot image: the mapping has no flag.
 	mappings := [1]system.Mapping{font_outlines_mapping}
 	mappings[0].flags = {}
-	fixed_addresses.range_mapped_add(&values, .Font_Outlines)
+	system.range_mapped_put(&values, .Font_Outlines)
+	if context_refused(FONT_SERVICE_NAME, &context_grants, &values) {
+		return
+	}
 	status: system.Status
-	slot.program, status = system.program_start(file, FONT_SERVICE_NAME, grants, random.values_with_seed(&program_generator, values), budget_of(file, FONT_SERVICE_NAME), mappings[:], &prepared)
+	slot.program, status = system.program_start(file, FONT_SERVICE_NAME, context_grants.grants, random.values_with_seed(&program_generator, values.values), budget_of(file, FONT_SERVICE_NAME), mappings[:], &prepared)
 	if status != .Ok {
 		system.log_in("programs", .Warning, "root: cannot start the font service: status ", status, ": each program draws its glyphs past the glyph caches itself")
 		slot^ = {}
@@ -93,7 +96,7 @@ font_service_start :: proc "contextless" () {
 			slot.hash = item.hash
 		}
 	}
-	slot.role = {grants = {.System_Part}}
+	slot.role = role
 	copy(slot.name[:len(slot.name) - 1], FONT_SERVICE_NAME)
 	font_service = slot
 	started_log(FONT_SERVICE_NAME, principals.MACHINE, "")
@@ -103,7 +106,7 @@ font_service_start :: proc "contextless" () {
 // program, with the bit of its range. The mapping uses the handle that this
 // service keeps for the cache: it adds no handle. The cache holds what the
 // font service published: whole entries only, from its first to its last.
-demand_cache_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
+demand_cache_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
 	if demand_cache_memory == 0 {
 		return
 	}
@@ -113,7 +116,7 @@ demand_cache_give :: proc "contextless" (mappings: []system.Mapping, count: ^int
 	}
 	mappings[count^] = {memory = demand_cache_memory, address = demand_cache.ADDRESS, first = 0, page_count = demand_cache.PAGE_COUNT, flags = {}}
 	count^ += 1
-	fixed_addresses.range_mapped_add(values, .Demand_Cache)
+	system.range_mapped_put(values, .Demand_Cache)
 }
 
 // font_service_end forgets the font service when it stopped. Its work ends

@@ -6,7 +6,6 @@ import "modus:contract/glyph_cache"
 import "modus:support/bootscreen"
 import "modus:support/display"
 import "modus:contract/settings"
-import op "modus:contract/operation"
 import "modus:support/graphics"
 import "modus:support/system"
 
@@ -115,7 +114,7 @@ text_settings_create :: proc "contextless" () {
 // program, the program `settings` included. The pages of the caches and of
 // the outlines come from the boot image, whose one handle (of this
 // service) has no right Write.
-text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
+text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
 	if settings_page == nil {
 		return
 	}
@@ -126,20 +125,20 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 	}
 	mappings[count^] = {memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}
 	count^ += 1
-	fixed_addresses.range_mapped_add(values, .Settings_Page)
+	system.range_mapped_put(values, .Settings_Page)
 	for mapping, cache in glyph_cache_mappings {
 		if mapping.page_count != 0 {
 			mappings[count^] = mapping
 			mappings[count^].flags = {}
 			count^ += 1
-			fixed_addresses.range_mapped_add(values, settings.glyph_cache_ranges[cache])
+			system.range_mapped_put(values, settings.glyph_cache_ranges[cache])
 		}
 	}
 	if font_outlines_mapping.page_count != 0 {
 		mappings[count^] = font_outlines_mapping
 		mappings[count^].flags = {}
 		count^ += 1
-		fixed_addresses.range_mapped_add(values, .Font_Outlines)
+		system.range_mapped_put(values, .Font_Outlines)
 	}
 	demand_cache_give(mappings, count, values)
 }

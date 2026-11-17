@@ -14,7 +14,7 @@
 // prints the hash. `start("visitor")` is refused: the boot image has no
 // such module.
 //
-// **Grants**: none by its name. It is not named in `grants_of`. After
+// **Grants**: none by its name. It has no row in `program_roles`. After
 // `allow("visitor", "store")`, its next start has the store of its
 // nickname, `disk-visitor`.
 //

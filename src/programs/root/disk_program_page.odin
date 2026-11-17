@@ -1,8 +1,6 @@
 package root
 
 import program_page "modus:contract/disk_program_page"
-import "modus:contract/fixed_addresses"
-import op "modus:contract/operation"
 import "modus:support/disk_program"
 import "modus:support/system"
 
@@ -37,7 +35,7 @@ disk_program_page_create :: proc "contextless" () {
 
 // disk_program_page_give adds the disk program page, read-only, to the
 // mappings of a program, and sets its bit in the values.
-disk_program_page_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
+disk_program_page_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
 	if disk_program_page_memory == 0 {
 		return
 	}
@@ -47,7 +45,7 @@ disk_program_page_give :: proc "contextless" (mappings: []system.Mapping, count:
 	}
 	mappings[count^] = {memory = disk_program_page_memory, address = program_page.PAGE_ADDRESS, first = 0, page_count = 1, flags = {}}
 	count^ += 1
-	fixed_addresses.range_mapped_add(values, .Disk_Program_Page)
+	system.range_mapped_put(values, .Disk_Program_Page)
 }
 
 // disk_program_page_index gives the row of a slot of `started`.

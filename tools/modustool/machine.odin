@@ -3017,7 +3017,7 @@ scenario := [?]Step {
 	// A table from the host: rows of field values go into the call region
 	// of the monitor. A Change table is refused by the tool: its rows would
 	// not come back. The service sample is not reachable from the network
-	// (the row of remote in program_role_rows).
+	// (the row of remote in program_roles).
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"processors\")])", expected = "2 rows of Count"},
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"nothing\")])", outcome = .Failed, expected = "names nothing that exists"},
 	// The table of error details: each row that names nothing, not only the first.

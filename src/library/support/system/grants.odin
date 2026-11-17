@@ -1,6 +1,7 @@
 package system
 
 import "base:intrinsics"
+import "modus:contract/fixed_addresses"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/root_ring"
@@ -14,10 +15,11 @@ import "modus:contract/start_grant"
 //
 // A handle that the program was not granted is 0. Two roles share one slot
 // only when no program holds both: a program has a window or a terminal,
-// one device service, and the TPM or an endpoint of the network. The root
-// service writes each handle through one procedure that refuses a slot
-// that is taken already, so a role that holds two roles of one slot does
-// not start, and loses no handle in silence (src/md/api/root_ring.md).
+// one device service, and the TPM or an endpoint of the network. Each
+// starter of the root service writes each handle and each value through
+// one procedure that refuses a place that is taken already, so a role that
+// holds two roles of one slot does not start, and loses no handle and no
+// value in silence (src/md/api/root_ring.md).
 // The package of each reader names its slots after this table: an alias,
 // or a constant that the root service checks against it.
 
@@ -187,24 +189,120 @@ role_slot_taken_twice :: proc "contextless" (role: bit_set[start_grant.Grant]) -
 	return 0, false
 }
 
+// The first write into a context that was refused. A starter writes the
+// whole context through grant_put, value_put, values_put and
+// range_mapped_put, then reads this record once, before the start: a
+// refused write stops the start, and the record names its place. A later
+// refusal keeps the first, which is the one that a reader can act on.
+Context_Refusal :: struct {
+	refused: bool,
+	place:   int, // The slot of the handle, or the index of the value, as the starter named it.
+}
+
+// context_refusal_note keeps the first refused place.
+context_refusal_note :: proc "contextless" (refusal: ^Context_Refusal, place: int) {
+	if !refusal.refused {
+		refusal^ = {refused = true, place = place}
+	}
+}
+
 // The handles that a starter writes into the context of a program, with
 // the slots that it took. A slot takes one handle: a second write to it is
-// refused and changes nothing, so two roles of one slot never lose a
+// refused and writes no handle, so two roles of one slot never lose a
 // handle in silence.
 Context_Grants :: struct {
-	grants: [op.CONTEXT_HANDLES]Grant,
-	taken:  bit_set[0 ..< op.CONTEXT_HANDLES; u16],
+	grants:  [op.CONTEXT_HANDLES]Grant,
+	taken:   bit_set[0 ..< op.CONTEXT_HANDLES; u16],
+	refusal: Context_Refusal,
 }
 
 // grant_put writes a handle into a slot of the context. It refuses a slot
-// past the handles of the context and a slot that holds a handle already:
-// the caller then does not start the program, and says which slot.
+// past the handles of the context, the slot of the budget, which the
+// loader writes, and a slot that holds a handle already: it writes no
+// handle and keeps the refusal, and the caller then does not start the
+// program, and says which slot.
 grant_put :: proc "contextless" (context_grants: ^Context_Grants, slot: int, grant: Grant) -> (ok: bool) {
-	if slot < 0 || slot >= op.CONTEXT_HANDLES || slot in context_grants.taken {
+	if slot < 0 || slot >= op.CONTEXT_HANDLES || slot == op.CONTEXT_BUDGET || slot in context_grants.taken {
+		context_refusal_note(&context_grants.refusal, slot)
 		return false
 	}
 	context_grants.taken += {slot}
 	context_grants.grants[slot] = grant
+	return true
+}
+
+// The values that a starter writes into the context of a program, with
+// the indexes that it took. An index takes one value, as a slot takes one
+// handle: two parts of a start that write one index lose no value in
+// silence.
+Context_Values :: struct {
+	values:  [op.CONTEXT_VALUES]u64,
+	taken:   bit_set[0 ..< op.CONTEXT_VALUES; u32],
+	refusal: Context_Refusal,
+}
+
+// The facts of the seed of the system: the values 0 to 7 of the program
+// `randomness` (random.report_values_write).
+SEED_FACTS_VALUE_COUNT :: 8
+
+// value_index_of_the_system says if a starter writes an index of the
+// values with no value_put: the seed and its strength, which
+// random.values_with_seed writes last over the values, and the fixed
+// ranges, which range_mapped_put writes bit by bit.
+value_index_of_the_system :: proc "contextless" (index: int) -> bool {
+	in_the_seed := index >= op.CONTEXT_VALUE_SEED && index < op.CONTEXT_VALUE_SEED + op.CONTEXT_VALUE_SEED_COUNT
+	return in_the_seed || index == op.CONTEXT_VALUE_SEED_STRENGTH || index == op.CONTEXT_VALUE_FIXED_RANGES_MAPPED
+}
+
+// value_put writes one value of the context. It refuses an index past the
+// values, an index of the system, and an index that holds a value
+// already: it writes no value and keeps the refusal.
+value_put :: proc "contextless" (context_values: ^Context_Values, index: int, value: u64) -> (ok: bool) {
+	if index < 0 || index >= op.CONTEXT_VALUES || value_index_of_the_system(index) || index in context_values.taken {
+		context_refusal_note(&context_values.refusal, index)
+		return false
+	}
+	context_values.taken += {index}
+	context_values.values[index] = value
+	return true
+}
+
+// values_put writes the words of one value of several words (a name) from
+// the index `first`. It writes them all or none: a write with no word, a
+// word past the values, or a word whose index value_put refuses refuses
+// the whole write, and the refusal names the first index that is refused.
+values_put :: proc "contextless" (context_values: ^Context_Values, first: int, words: []u64) -> (ok: bool) {
+	if first < 0 || first >= op.CONTEXT_VALUES || len(words) == 0 {
+		context_refusal_note(&context_values.refusal, first)
+		return false
+	}
+	if len(words) > op.CONTEXT_VALUES - first {
+		context_refusal_note(&context_values.refusal, op.CONTEXT_VALUES)
+		return false
+	}
+	for index in first ..< first + len(words) {
+		if value_index_of_the_system(index) || index in context_values.taken {
+			context_refusal_note(&context_values.refusal, index)
+			return false
+		}
+	}
+	for word, offset in words {
+		context_values.taken += {first + offset}
+		context_values.values[first + offset] = word
+	}
+	return true
+}
+
+// range_mapped_put states in the values that the starter maps a fixed
+// range (fixed_addresses.range_mapped_add). It refuses a range that is
+// stated already: two mappings at one address, one of which the program
+// would never read. The refusal names the value of the fixed ranges.
+range_mapped_put :: proc "contextless" (context_values: ^Context_Values, range: fixed_addresses.Fixed_Range) -> (ok: bool) {
+	if range in fixed_addresses.ranges_mapped(&context_values.values) {
+		context_refusal_note(&context_values.refusal, op.CONTEXT_VALUE_FIXED_RANGES_MAPPED)
+		return false
+	}
+	fixed_addresses.range_mapped_add(&context_values.values, range)
 	return true
 }
 

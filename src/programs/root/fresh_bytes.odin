@@ -1,9 +1,7 @@
 package root
 
 import "base:intrinsics"
-import "modus:contract/fixed_addresses"
 import "modus:contract/fresh_bytes"
-import op "modus:contract/operation"
 import "modus:support/random"
 import "modus:support/system"
 
@@ -52,7 +50,7 @@ fresh_bytes_page_of :: proc "contextless" (index: int) -> ^fresh_bytes.Page {
 // it, read-only, to the mappings of the program, with the bit of its range.
 // The clear comes before the start: the program reads no byte that the
 // program before it in the place read.
-fresh_bytes_page_give :: proc "contextless" (item: ^Started, mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
+fresh_bytes_page_give :: proc "contextless" (item: ^Started, mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
 	if fresh_bytes_memory == 0 {
 		return
 	}
@@ -67,7 +65,7 @@ fresh_bytes_page_give :: proc "contextless" (item: ^Started, mappings: []system.
 	fresh_bytes.clear(fresh_bytes_page_of(index))
 	mappings[count^] = {memory = fresh_bytes_memory, address = fresh_bytes.PAGE_ADDRESS, first = u64(index), page_count = 1, flags = {}}
 	count^ += 1
-	fixed_addresses.range_mapped_add(values, .Fresh_Bytes_Page)
+	system.range_mapped_put(values, .Fresh_Bytes_Page)
 	fresh_bytes_given[index] = true
 }
 

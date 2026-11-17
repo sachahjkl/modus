@@ -1,26 +1,36 @@
 #+build !freestanding
 package system
 
+import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 import "modus:contract/start_grant"
 import "core:testing"
 
 // A slot of the context takes one handle. The slots that the edges name
-// are refused first: -1, one past the last handle, the largest slot; then a
-// second write to a slot that is taken, for each pair of roles that share
-// a slot of the table. Each refusal changes nothing. The roles of the
-// grants Terminal and Store, which shared the slot 7, then take their slots
-// together, last.
+// are refused first: -1, one past the last handle, the largest slot, and
+// the slot of the budget, which the loader writes; then a second write to
+// a slot that is taken, for each pair of roles that share a slot of the
+// table. Each refusal writes no handle, and its record names the first
+// refused slot. The roles of the grants Terminal and Store, which shared
+// the slot 7, then take their slots together, last.
 @(test)
 grant_put_refuses_a_slot_that_is_taken :: proc(t: ^testing.T) {
 	first := Grant{handle = 1, rights = {.Read}}
 	second := Grant{handle = 2, rights = {.Read, .Write}}
-	context_grants: Context_Grants
-	outside := [?]int{-1, op.CONTEXT_HANDLES, op.CONTEXT_HANDLES + 1, max(int), min(int)}
+	outside := [?]int{-1, op.CONTEXT_HANDLES, op.CONTEXT_HANDLES + 1, max(int), min(int), op.CONTEXT_BUDGET}
+	empty: Context_Grants
 	for slot in outside {
+		context_grants: Context_Grants
 		testing.expectf(t, !grant_put(&context_grants, slot, first), "the slot %d is taken", slot)
-		testing.expect_value(t, context_grants, Context_Grants{})
+		testing.expect_value(t, context_grants.grants, empty.grants)
+		testing.expect_value(t, context_grants.taken, empty.taken)
+		testing.expect_value(t, context_grants.refusal, Context_Refusal{refused = true, place = slot})
 	}
+	// The first refusal stays: a second one names another slot.
+	kept: Context_Grants
+	grant_put(&kept, -1, first)
+	grant_put(&kept, op.CONTEXT_HANDLES, first)
+	testing.expect_value(t, kept.refusal, Context_Refusal{refused = true, place = -1})
 	shared := [?][2]int {
 		{GRANT_ROOT, GRANT_TERMINAL_PROGRAM},
 		{GRANT_LOG_RECORDS, GRANT_TERMINAL_TEXT},
@@ -39,7 +49,9 @@ grant_put_refuses_a_slot_that_is_taken :: proc(t: ^testing.T) {
 		testing.expect(t, grant_put(&one, pair[0], first))
 		before := one
 		testing.expectf(t, !grant_put(&one, pair[1], second), "the slot %d takes a second handle", pair[1])
-		testing.expect_value(t, one, before)
+		testing.expect_value(t, one.grants, before.grants)
+		testing.expect_value(t, one.taken, before.taken)
+		testing.expect_value(t, one.refusal, Context_Refusal{refused = true, place = pair[1]})
 		testing.expect_value(t, one.grants[pair[0]], first)
 	}
 	// The terminal and the private store: each slot holds its own handle.
@@ -52,6 +64,107 @@ grant_put_refuses_a_slot_that_is_taken :: proc(t: ^testing.T) {
 		testing.expect_value(t, both.grants[slot].handle, Handle(index + 1))
 	}
 	testing.expect_value(t, both.grants[GRANT_STORAGE_RING].handle, Handle(3))
+	testing.expect(t, !both.refusal.refused)
+}
+
+// An index of the values takes one value. The edges come first: -1, one
+// past the last value, the largest index; then each index that the
+// system writes (the seed, its strength, the fixed ranges); then a second
+// write to an index that is taken. Each refusal writes no value and names
+// its index. A value at the first and at the last free index is written,
+// last.
+@(test)
+value_put_refuses_an_index_that_is_taken :: proc(t: ^testing.T) {
+	refused := make([dynamic]int, context.temp_allocator)
+	append(&refused, -1, op.CONTEXT_VALUES, op.CONTEXT_VALUES + 1, max(int), min(int), op.CONTEXT_VALUE_SEED_STRENGTH, op.CONTEXT_VALUE_FIXED_RANGES_MAPPED)
+	for index in op.CONTEXT_VALUE_SEED ..< op.CONTEXT_VALUE_SEED + op.CONTEXT_VALUE_SEED_COUNT {
+		append(&refused, index)
+	}
+	empty: Context_Values
+	for index in refused {
+		context_values: Context_Values
+		testing.expectf(t, !value_put(&context_values, index, max(u64)), "the index %d takes a value", index)
+		testing.expect_value(t, context_values.values, empty.values)
+		testing.expect_value(t, context_values.taken, empty.taken)
+		testing.expect_value(t, context_values.refusal, Context_Refusal{refused = true, place = index})
+	}
+	// The unlock mode and the rows of a terminal share the index 5: one
+	// program never holds both, and a start that wrote both loses none.
+	testing.expect_value(t, GRANT_VALUE_UNLOCK_MODE, GRANT_VALUE_TERMINAL_ROWS)
+	twice: Context_Values
+	testing.expect(t, value_put(&twice, GRANT_VALUE_UNLOCK_MODE, 1))
+	testing.expect(t, !value_put(&twice, GRANT_VALUE_TERMINAL_ROWS, 2))
+	testing.expect_value(t, twice.values[GRANT_VALUE_UNLOCK_MODE], u64(1))
+	testing.expect_value(t, twice.refusal, Context_Refusal{refused = true, place = GRANT_VALUE_TERMINAL_ROWS})
+	edges: Context_Values
+	testing.expect(t, value_put(&edges, 0, 0))
+	testing.expect(t, value_put(&edges, op.CONTEXT_VALUES - 1, max(u64)))
+	testing.expect_value(t, edges.values[op.CONTEXT_VALUES - 1], max(u64))
+	testing.expect(t, !edges.refusal.refused)
+}
+
+// A value of several words is written whole or not at all. The edges come
+// first: no word, a first index of -1 and one past the values, words that
+// run one past the last value, words over the seed, words over a taken
+// index; each refusal writes no word. A name of four words at the index of
+// the name of a terminal is written, last.
+@(test)
+values_put_writes_all_the_words_or_none :: proc(t: ^testing.T) {
+	words := [4]u64{1, 2, 3, max(u64)}
+	Refused_Write :: struct {
+		first: int,
+		count: int,
+		place: int,
+	}
+	refused := [?]Refused_Write {
+		{first = 0, count = 0, place = 0},
+		{first = -1, count = 1, place = -1},
+		{first = op.CONTEXT_VALUES, count = 1, place = op.CONTEXT_VALUES},
+		{first = max(int), count = 1, place = max(int)},
+		{first = op.CONTEXT_VALUES - 3, count = 4, place = op.CONTEXT_VALUES},
+		{first = op.CONTEXT_VALUE_SEED - 1, count = 2, place = op.CONTEXT_VALUE_SEED},
+	}
+	empty: Context_Values
+	for write in refused {
+		context_values: Context_Values
+		testing.expectf(t, !values_put(&context_values, write.first, words[:write.count]), "the write of %d words at %d is taken", write.count, write.first)
+		testing.expect_value(t, context_values.values, empty.values)
+		testing.expect_value(t, context_values.taken, empty.taken)
+		testing.expect_value(t, context_values.refusal, Context_Refusal{refused = true, place = write.place})
+	}
+	over_a_taken: Context_Values
+	testing.expect(t, value_put(&over_a_taken, 2, 7))
+	testing.expect(t, !values_put(&over_a_taken, 0, words[:]))
+	testing.expect_value(t, over_a_taken.values[0], u64(0))
+	testing.expect_value(t, over_a_taken.values[2], u64(7))
+	testing.expect_value(t, over_a_taken.refusal, Context_Refusal{refused = true, place = 2})
+	name: Context_Values
+	testing.expect(t, values_put(&name, GRANT_VALUE_TERMINAL_NAME, words[:]))
+	testing.expect_value(t, name.values[GRANT_VALUE_TERMINAL_NAME + 3], max(u64))
+	testing.expect(t, !value_put(&name, GRANT_VALUE_TERMINAL_NAME + 3, 0))
+}
+
+// A fixed range is stated once: a second statement is two mappings at one
+// address, and is refused with the index of the fixed ranges and no change.
+// Each range, then all of them, is stated last.
+@(test)
+range_mapped_put_refuses_a_range_twice :: proc(t: ^testing.T) {
+	for range in fixed_addresses.Fixed_Range {
+		context_values: Context_Values
+		testing.expect(t, range_mapped_put(&context_values, range))
+		before := context_values.values
+		testing.expectf(t, !range_mapped_put(&context_values, range), "the range %v is stated twice", range)
+		testing.expect_value(t, context_values.values, before)
+		testing.expect_value(t, context_values.refusal, Context_Refusal{refused = true, place = op.CONTEXT_VALUE_FIXED_RANGES_MAPPED})
+	}
+	all: Context_Values
+	for range in fixed_addresses.Fixed_Range {
+		testing.expect(t, range_mapped_put(&all, range))
+	}
+	for range in fixed_addresses.Fixed_Range {
+		testing.expect(t, range in fixed_addresses.ranges_mapped(&all.values))
+	}
+	testing.expect(t, !all.refusal.refused)
 }
 
 // A role whose handles meet in one context slot is found before its start.

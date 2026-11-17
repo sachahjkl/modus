@@ -17,7 +17,7 @@
 // that it needs; this program shows that strength.
 //
 // **Start**: `start("randomness")` in the console, or the bar of the
-// desktop. It has no grant of `grants_of`: the root service writes the
+// desktop. Its row of `program_roles` has no grant: the root service writes the
 // facts of the seed into its context because of its name, and these are
 // facts, not the seed.
 //

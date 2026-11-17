@@ -1878,7 +1878,7 @@ Do not use: permission, authorization, consent.
 
 A start grant is one thing of the list of what the root service gives a program by its name: a service, a private store, a right of the machine.
 
-The root service decides the start grants of a program from its name (`grants_of`) one time, at its start, and keeps them in the program role of the program that runs. Each rule after the start reads them there: the sender of a command of the root ring, the grant of a connection, the debug access. The list and the number of each start grant are a contract (`src/library/contract/start_grant`). Its name has capital letters: `Store`, `Serve`, `System_Part`. A start grant is not a recorded grant, whose name is in lower case: the start grants `Inspect`, `Stop` and `Schedule` are rights of the one recorded grant `machine`.
+The root service decides the start grants of a program from its name (its row of `program_roles`) one time, at its start, and keeps them in the program role of the program that runs. Each rule after the start reads them there: the sender of a command of the root ring, the grant of a connection, the debug access. The list and the number of each start grant are a contract (`src/library/contract/start_grant`). Its name has capital letters: `Store`, `Serve`, `System_Part`. A start grant is not a recorded grant, whose name is in lower case: the start grants `Inspect`, `Stop` and `Schedule` are rights of the one recorded grant `machine`.
 
 Example: `debug("notes")` is refused: "the grant Store of the program refuses it".
 
@@ -1902,7 +1902,7 @@ Do not use: permission, access right, token.
 
 A program role is what the root service gives a program at its start: its start grants and the terms beside them, kept with the program while it runs.
 
-The root service reads the role of a program of the boot image one time, at its start, from its name (`role_of` in `src/programs/root/roles.odin`): the start grants of `grants_of`, the services that it can connect to, the blocks of its private store, the log with the right Give, the size of its terminal. Each rule after the start reads the role that the program keeps, never its name. A disk program has the role of the row of its nickname in the disk grant table.
+The root service reads the role of a program of the boot image one time, at its start, from its name (`role_of` in `src/programs/root/roles.odin`): the row of the program in the one table `program_roles`, with its start grants, the services that it can connect to, the blocks of its private store, the log with the right Give, the size of its terminal. Each program of the boot image has one row, and the build stops when one has none. Each rule after the start reads the role that the program keeps, never its name. A disk program has the role of the row of its nickname in the disk grant table.
 
 Example: the role of `remote` holds Connect, Network, Acts_For_Principal and Remote_Clients, and the nine services that it connects to.
 
@@ -1956,7 +1956,7 @@ Do not use: program table, origin page.
 
 A disk grant table is the table of the root service that binds each nickname of one principal to the hash of one module file, with the grants of that file.
 
-The root service keeps one disk grant table for each principal. `allow` and `disallow` change the grants of a row, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The table persists only under a key of its principal, with a tag of keyed BLAKE2b; a table whose tag fails gives no grant. It is not the grant table of the boot image (`grants_of`).
+The root service keeps one disk grant table for each principal. `allow` and `disallow` change the grants of a row, and each start of a disk program reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. The table persists only under a key of its principal, with a tag of keyed BLAKE2b; a table whose tag fails gives no grant. It is not the table of the roles of the boot image (`program_roles`).
 
 The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk program".
 

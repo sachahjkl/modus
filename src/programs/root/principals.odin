@@ -1,7 +1,6 @@
 package root
 
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/system_description"
 import "modus:support/principals"
@@ -155,14 +154,14 @@ unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string) 
 // that starts: its mode and the name of the principal to create. After a
 // lock this service holds the key of the table of principal 0: unlock
 // does not ask for the machine passphrase again.
-unlock_values_write :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) {
+unlock_values_write :: proc "contextless" (values: ^system.Context_Values) {
 	start_mode := unlock_run.mode
 	if start_mode == .Unlock && machine_key_held() {
 		start_mode = .Unlock_Machine_Key_Held
 	}
-	values[system.GRANT_VALUE_UNLOCK_MODE] = u64(start_mode)
+	system.value_put(values, system.GRANT_VALUE_UNLOCK_MODE, u64(start_mode))
 	packed := principals.name_pack(string(unlock_run.name[:unlock_run.name_length]))
-	copy(values^[system.GRANT_VALUE_UNLOCK_NAME:][:3], packed[:])
+	system.values_put(values, system.GRANT_VALUE_UNLOCK_NAME, packed[:])
 }
 
 // unlock_stop_ask says that this service asks the stop of the `unlock`
