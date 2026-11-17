@@ -14,8 +14,8 @@ import "core:time"
 // the sandbox). After a failure it starts no new process; the processes
 // that run end.
 //
-// Each folder has its own log under HOST_TEST_OUTPUT_FOLDER, and its own
-// private temporary folder for its compiler and its tests. The compiler names the object of an
+// Each folder has its own log under HOST_TEST_OUTPUT_FOLDER. Each folder of
+// the runtime also has its own private temporary folder for its compiler. The compiler names the object of an
 // assembly file in its temporary folder by the name of the file and an
 // address of its own memory, and the two folders of the runtime assemble
 // two files of one name, `memory_for_host_tests.asm`: with one temporary
@@ -49,7 +49,10 @@ host_test_log_file :: proc(folder: string) -> string {
 // host test of the library that names one then fails to compile.
 host_test_command :: proc(folder, temporary_folder: string) -> []string {
 	command := make([dynamic]string, context.temp_allocator)
-	append(&command, "env", join("TMPDIR=", temporary_folder), "odin", "test", folder, "-vet", SOURCE_LIBRARY_FLAG)
+	if temporary_folder != "" {
+		append(&command, "env", join("TMPDIR=", temporary_folder))
+	}
+	append(&command, "odin", "test", folder, "-vet", SOURCE_LIBRARY_FLAG)
 	if source_folder_takes_kernel_library(folder) {
 		append(&command, KERNEL_LIBRARY_FLAG)
 	}
@@ -112,10 +115,8 @@ host_tests_run :: proc(folders: []string) -> bool {
 	}
 	// The logs of an earlier check are not the logs of this one.
 	reset_folder(HOST_TEST_OUTPUT_FOLDER) or_return
-	// Each temporary folder is a new private folder in the temporary folder
-	// of the check, with a short name: a test makes a Unix socket in it,
-	// whose path takes 107 bytes at most, and the key folder of a test
-	// must be in a folder that only its owner opens.
+	// A temporary folder of its own is a new private folder in the
+	// temporary folder of the check.
 	commands := make([][]string, len(folders), context.temp_allocator)
 	temporary_folders := make([]string, len(folders), context.temp_allocator)
 	defer for temporary_folder in temporary_folders {
@@ -124,6 +125,13 @@ host_tests_run :: proc(folders: []string) -> bool {
 		}
 	}
 	for folder, place in folders {
+		// Only the folders of the runtime assemble the file of one name;
+		// every other folder keeps the temporary folder of the check, so
+		// the paths of its tests do not grow.
+		if !strings.has_prefix(folder, SOURCE_FOLDER_RUNTIME) {
+			commands[place] = host_test_command(folder, "")
+			continue
+		}
 		temporary_folder, temporary_error := os.make_directory_temp("", "host_*", context.temp_allocator)
 		if temporary_error != nil {
 			fmt.eprintfln("modustool: cannot make a temporary folder for the host tests of %s: %v", folder, temporary_error)

@@ -111,6 +111,11 @@ host_test_commands_take_the_kernel_parts_where_they_compile :: proc(t: ^testing.
 	testing.expect(t, strings.contains(strings.join(tool, " ", context.temp_allocator), KERNEL_LIBRARY_FLAG), "the tool takes the kernel parts")
 	library := host_test_command(SOURCE_FOLDER_CONTRACT + "/ring", "/temporary")
 	testing.expect(t, !strings.contains(strings.join(library, " ", context.temp_allocator), KERNEL_LIBRARY_FLAG), "a folder of the library does not take the kernel parts")
+	// With no temporary folder of its own, a folder keeps the temporary
+	// folder of the check: its command sets no variable.
+	inherited := host_test_command(SOURCE_FOLDER_CONTRACT + "/ring", "")
+	testing.expect_value(t, inherited[0], "odin")
+	testing.expect(t, !strings.contains(strings.join(inherited, " ", context.temp_allocator), "TMPDIR="), "no temporary folder is set")
 }
 
 // The end of a log: no line for a count of 0 or less, the whole text when
