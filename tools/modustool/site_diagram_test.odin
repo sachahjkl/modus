@@ -187,7 +187,9 @@ site_diagram_refuses_each_syntax_outside_the_subset :: proc(t: ^testing.T) {
 		{"flowchart LR\n  a[\"A\"] -.-> b[\"B\"]\n", 2, "an edge is"},
 		{"flowchart LR\n  a[\"A\"] -- \"x\" --- b[\"B\"]\n", 2, "an edge is"},
 		{"flowchart LR\n  a[\"A\"] -. \"x\" --> b[\"B\"]\n", 2, "an edge is"},
-		{"flowchart LR\n  a[\"A\"] -- \"unclosed --> b[\"B\"]\n", 2, "an edge is"},
+		// The label runs to the next quote, after `b[`: its text holds the
+		// arrow, whose > is markup.
+		{"flowchart LR\n  a[\"A\"] -- \"unclosed --> b[\"B\"]\n", 2, "the character >"},
 		{"flowchart LR\n  a[\"A\"] -- \"\" --> b[\"B\"]\n", 2, "an edge with an empty label"},
 		{"flowchart LR\n  a[\"A\"] -- \"x;y\" --> b[\"B\"]\n", 2, "the character ;"},
 		{"flowchart TB\n  a(\"A\")\n", 2, "a shape other than a box"},
