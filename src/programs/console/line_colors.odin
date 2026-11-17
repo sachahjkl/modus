@@ -3,10 +3,10 @@ package console
 // The colors of the code of the console (docs/CONSOLE.md, section 7): the
 // edit line at each key, the line that the console writes back when the
 // input enters it, and the rows of the completion list. The scanner of
-// src/library/support/console_language gives what each part is; the console gives the
+// src/library/private/console/console_language gives what each part is; the console gives the
 // roles of its names; the terminal maps each kind to a color.
 
-import "modus:support/console_language"
+import "modus:private/console/console_language"
 import "modus:support/line_editor"
 import "modus:support/system"
 import terminal "modus:support/terminal"

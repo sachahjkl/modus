@@ -2,7 +2,7 @@ package console
 
 import "modus:contract/errors"
 import module "modus:contract/module"
-import "modus:support/console_language"
+import "modus:private/console/console_language"
 import "modus:support/system"
 
 // The language of the console.
@@ -214,7 +214,7 @@ scratch_text :: proc "contextless" (parts: ..system.Part) -> string {
 	return text
 }
 
-// The parser reads its tokens with the scanner of src/library/support/console_language,
+// The parser reads its tokens with the scanner of src/library/private/console/console_language,
 // the one that colors the lines: the two agree on each token.
 skip_spaces :: proc "contextless" () {
 	position = console_language.space_end(source, position)

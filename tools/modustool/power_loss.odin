@@ -12,9 +12,9 @@ import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:time"
-import "modus:support/storage_mount"
-import block_tree "modus:support/storage_object"
-import tree "modus:support/storage_tree"
+import "modus:private/storage/storage_mount"
+import block_tree "modus:private/storage/storage_object"
+import tree "modus:private/storage/storage_tree"
 
 // The loss of power: a stop of the machine never shows a part of a commit.
 // The tool serves the data disk itself (network_block_device.odin), so it
@@ -28,7 +28,7 @@ import tree "modus:support/storage_tree"
 // writes, and the last of them can be torn (some of its sectors new, the
 // others old). The tool builds many such images and checks each one on the
 // host with the code that the storage service runs at its start
-// (src/library/support/storage_mount): no machine for each image.
+// (src/library/private/storage/storage_mount): no machine for each image.
 //
 // What each image must give:
 //   - the disk opens, with no wrong block, no block named two times, and the

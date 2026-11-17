@@ -68,7 +68,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:contract/ring"
-import "modus:support/debugging"
+import "modus:private/debugger/debugging"
 import "modus:contract/root_ring"
 import "modus:support/system"
 

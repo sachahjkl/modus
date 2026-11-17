@@ -8,7 +8,7 @@ import "core:sys/linux"
 import "core:time"
 import format "modus:contract/store"
 import "modus:support/principals"
-import "modus:support/storage_mount"
+import "modus:private/storage/storage_mount"
 import "modus:support/tpm2"
 
 // The machines of the machine key sealed by the TPM

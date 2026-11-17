@@ -5,7 +5,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 
-import "modus:support/bar"
+import "modus:private/compositor/bar"
 
 // The press of a machine test on an element by its name
 // (src/md/infrastructure/test_pointer.md; docs/TOOLS.md, "The scenario

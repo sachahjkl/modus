@@ -15,9 +15,9 @@ import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
 import "modus:contract/settings"
-import "modus:support/bar"
+import "modus:private/compositor/bar"
 import "modus:support/graphics"
-import "modus:support/palette"
+import "modus:private/compositor/palette"
 import "modus:support/system"
 
 // The values of the context that give the theme file, mapped read-only.

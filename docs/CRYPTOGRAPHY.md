@@ -184,7 +184,7 @@ The boot program verifies the description signature (`docs/TRUSTED_BOOT.md`) wit
 
 ## 6b. Ed25519 in the root service
 
-The root service verifies the signature of a replacement row (`docs/MODULE_CONTRACT.md`, "Who may replace a module") with the same `src/library/support/cryptography/ed25519`, compiled in through `src/library/support/replacement_signature`. The root service imports no module, so it cannot call the module `cryptography`. It links the same packages as the boot program, runs the code with a zero `context`, and verifies only: it holds no private key. The tool signs the rows on the host, with the same package.
+The root service verifies the signature of a replacement row (`docs/MODULE_CONTRACT.md`, "Who may replace a module") with the same `src/library/support/cryptography/ed25519`, compiled in through `src/library/private/root/replacement_signature`. The root service imports no module, so it cannot call the module `cryptography`. It links the same packages as the boot program, runs the code with a zero `context`, and verifies only: it holds no private key. The tool signs the rows on the host, with the same package.
 
 ## 7. What is not done
 

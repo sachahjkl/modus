@@ -27,6 +27,18 @@
 //     machine. The compiler refuses a write to a variable that is
 //     @(rodata), and the memory of the machine refuses a write through a
 //     pointer to it: the check needs only the attributes.
+//   - A private part ("modus:private/storage/storage_tree", a folder of
+//     src/library/private/<module>) is what one module alone compiles in. It
+//     is imported from the folder of its module, or from another private
+//     part of the same module, and from no other file of src/. The tool,
+//     outside src/, reads some of them too: it is not a part of the system.
+//   - The owners of a package of the library are the bodies of code (the
+//     kernel, the boot program, each module) whose chain of imports reaches
+//     it. A support package has two owners or more, and a private part has
+//     its module as its one owner: a reader then tells shared code from the
+//     code of one module by its folder. The count is of owners, never of
+//     importing files: a package that a private part of one module and that
+//     module import has one owner.
 //   - A test that imports a package of core: runs on the host: its first
 //     build line is "#+build !freestanding", so that no build of the system
 //     reads it. A test, and a file of the copy, may also import a relative
@@ -90,29 +102,36 @@ Library_Import_Breach_Reason :: enum {
 	Refused_Import, // The import names a package that the rule of the file refuses.
 	Test_Without_Build_Line, // A test imports a package of core: and has no build line of the host.
 	Impure_Kernel_Part, // A source of a kernel part keeps state or reaches the machine.
+	Private_Part_Of_Another_Module, // The import names a private part of another module, or of no module.
+	Support_Package_With_One_Owner, // A support package that fewer than two bodies of code reach.
+	Private_Part_Without_Its_Module, // A private part that its module does not reach.
 }
 
 // One refused import, one test without its build line, one impure
-// construct of a kernel part, or one file that the parser cannot read whole.
+// construct of a kernel part, one package of the library with a wrong count
+// of owners, or one file that the parser cannot read whole.
 Library_Import_Breach :: struct {
-	file: string,
-	line: int, // 0: the parser refuses the file.
+	file: string, // For a count of owners: the folder of the package.
+	line: int, // 0: the parser refuses the file, or a count of owners.
 	// The import as the source writes it, with its quotes; for an impure
-	// construct, its words ("the package variable TABLE with no @(rodata)").
-	// "": the parser refuses the file.
+	// construct, its words ("the package variable TABLE with no @(rodata)");
+	// for a count of owners, the owners, separated by ", ". "": the parser
+	// refuses the file, or a package that no body of code reaches.
 	text: string,
 	reason: Library_Import_Breach_Reason,
 	form: Library_Source_Form,
 }
 
-// The result of the check on a tree: each breach, and the count of each kind
-// of file that the check read.
+// The result of the check on a tree: each breach, the count of each kind of
+// file that the check read, and the imports of the library of each source
+// that is not a test, which the count of the owners reads.
 Library_Import_Reading :: struct {
 	breaches: [dynamic]Library_Import_Breach,
 	source_count: int, // A source of src/ that is not a test and not a copy.
 	test_count: int, // A host test of src/.
 	copy_count: int, // A file of the copy of the cryptography of Odin.
 	import_count: int,
+	library_imports: map[string][dynamic]string, // From the root of the tree: each "modus:" import path of the file.
 }
 
 // library_source_is_a_test says if the name of a file says that it is a host
@@ -436,11 +455,179 @@ kernel_part_impure_constructs :: proc(file: string, tree: ^ast.File, form: Libra
 	}
 }
 
+// library_module_source_of_name gives the source folder of the module of the
+// table of the modules that has a name, the module of a private part. A
+// kernel is not such a module: a private part of it is refused.
+library_module_source_of_name :: proc(name: string) -> (source: string, found: bool) {
+	for build in module_builds {
+		if !build.kernel && build.name == name {
+			return build.source, true
+		}
+	}
+	return "", false
+}
+
+// library_private_part_parts gives the module and the part that the path of
+// a private part names, from the root of the library ("private/storage/
+// storage_tree/x.odin" or "private/storage/storage_tree"). named: the path
+// names a module and a part.
+@(private = "file")
+library_private_part_parts :: proc(path_in_library: string) -> (module_name: string, part_name: string, named: bool) {
+	parts := strings.split(path_in_library, "/", context.temp_allocator)
+	if len(parts) < 3 || parts[0] != LIBRARY_PART_PRIVATE || parts[1] == "" || parts[2] == "" {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
+}
+
+// library_private_import_is_allowed says whether a file, as a path from the
+// root of the tree, may import the path of an import: a path that names no
+// private part is not this rule. A private part is imported from the
+// folder of its module, or from a private part of the same module; a path
+// whose module names no row of the table of the modules is refused.
+library_private_import_is_allowed :: proc(file, path: string) -> bool {
+	if !strings.has_prefix(path, PRIVATE_IMPORT_START) {
+		return true
+	}
+	module_name, _, named := library_private_part_parts(path[len(SOURCE_LIBRARY_IMPORT_START):])
+	if !named {
+		return false
+	}
+	source, found := library_module_source_of_name(module_name)
+	if !found {
+		return false
+	}
+	return strings.has_prefix(file, source + "/") || strings.has_prefix(file, SOURCE_FOLDER_PRIVATE + "/" + module_name + "/")
+}
+
+// library_package_node gives the package of the library that a path inside
+// the library names, as the owner rule counts it: "support/<name>" for a
+// support package with each folder under it, "private/<module>/<part>" for a
+// private part, "contract/<name>" for a contract package. found: the path
+// names a package.
+library_package_node :: proc(path_in_library: string) -> (node: string, found: bool) {
+	parts := strings.split(path_in_library, "/", context.temp_allocator)
+	if len(parts) >= 3 && parts[0] == LIBRARY_PART_PRIVATE {
+		return strings.join(parts[:3], "/", context.temp_allocator), parts[1] != "" && parts[2] != ""
+	}
+	if len(parts) >= 2 && parts[1] != "" {
+		return strings.join(parts[:2], "/", context.temp_allocator), true
+	}
+	return "", false
+}
+
+// library_owner_unit_of gives the body of code or the package of the library
+// that a file of src/ is a part of: the package of the library (is_package),
+// the name of a module of the table, or the folder of the kernel, of the
+// boot program or of the runtime.
+@(private = "file")
+library_owner_unit_of :: proc(file: string) -> (unit: string, is_package: bool) {
+	if strings.has_prefix(file, SOURCE_FOLDER_LIBRARY + "/") {
+		rest := file[len(SOURCE_FOLDER_LIBRARY) + 1:]
+		if slash := strings.last_index_byte(rest, '/'); slash >= 0 {
+			if node, found := library_package_node(rest[:slash]); found {
+				return node, true
+			}
+		}
+		return rest, true
+	}
+	for build in module_builds {
+		if !build.kernel && strings.has_prefix(file, build.source + "/") {
+			return build.name, false
+		}
+	}
+	for folder in ([]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME}) {
+		if strings.has_prefix(file, folder + "/") {
+			return folder, false
+		}
+	}
+	if slash := strings.last_index_byte(file, '/'); slash >= 0 {
+		return file[:slash], false
+	}
+	return file, false
+}
+
+// library_owner_breaches counts the owners of each support package and of
+// each private part that has a source in the reading, from the imports of
+// the sources that are not tests. A support package with fewer than two
+// owners, and a private part that its module does not own, is a breach that
+// names its folder.
+library_owner_breaches :: proc(reading: Library_Import_Reading) -> []Library_Import_Breach {
+	list := make([dynamic]Library_Import_Breach, context.temp_allocator)
+	edges := make(map[string][dynamic]string, context.temp_allocator)
+	bodies := make([dynamic]string, context.temp_allocator)
+	packages := make(map[string]bool, context.temp_allocator)
+	for file, imports in reading.library_imports {
+		unit, is_package := library_owner_unit_of(file)
+		if is_package {
+			packages[unit] = true
+		} else if !slice.contains(bodies[:], unit) {
+			append(&bodies, unit)
+		}
+		unit_edges := edges[unit]
+		if unit_edges == nil {
+			unit_edges = make([dynamic]string, context.temp_allocator)
+		}
+		for path in imports {
+			if node, found := library_package_node(path[len(SOURCE_LIBRARY_IMPORT_START):]); found {
+				append(&unit_edges, node)
+			}
+		}
+		edges[unit] = unit_edges
+	}
+	slice.sort(bodies[:])
+	owners := make(map[string][dynamic]string, context.temp_allocator)
+	for body in bodies {
+		seen := make(map[string]bool, context.temp_allocator)
+		stack := make([dynamic]string, context.temp_allocator)
+		body_edges := edges[body]
+		append(&stack, ..body_edges[:])
+		for len(stack) > 0 {
+			node := pop(&stack)
+			if node in seen {
+				continue
+			}
+			seen[node] = true
+			node_edges := edges[node]
+			append(&stack, ..node_edges[:])
+			node_owners := owners[node]
+			if node_owners == nil {
+				node_owners = make([dynamic]string, context.temp_allocator)
+			}
+			append(&node_owners, body)
+			owners[node] = node_owners
+		}
+	}
+	nodes := make([dynamic]string, context.temp_allocator)
+	for node in packages {
+		append(&nodes, node)
+	}
+	slice.sort(nodes[:])
+	for node in nodes {
+		owners_of_node := owners[node]
+		node_owners := owners_of_node[:]
+		folder := strings.concatenate({SOURCE_FOLDER_LIBRARY, "/", node}, context.temp_allocator)
+		text := strings.join(node_owners, ", ", context.temp_allocator)
+		switch {
+		case strings.has_prefix(node, LIBRARY_PART_SUPPORT + "/"):
+			if len(node_owners) < 2 {
+				append(&list, Library_Import_Breach{file = folder, text = text, reason = .Support_Package_With_One_Owner})
+			}
+		case strings.has_prefix(node, LIBRARY_PART_PRIVATE + "/"):
+			module_name, _, _ := library_private_part_parts(node)
+			if len(node_owners) != 1 || node_owners[0] != module_name {
+				append(&list, Library_Import_Breach{file = folder, text = text, reason = .Private_Part_Without_Its_Module})
+			}
+		}
+	}
+	return list[:]
+}
+
 // library_import_breaches_of_source gives each refused import of one source
 // file, and the test without its build line. A file with an error of syntax
 // is one breach: the parser does not read it whole, so an import of it can
 // be unread. An import inside a procedure is such an error.
-library_import_breaches_of_source :: proc(file, source: string, form: Library_Source_Form) -> (breaches: []Library_Import_Breach, import_count: int) {
+library_import_breaches_of_source :: proc(file, source: string, form: Library_Source_Form, library_imports: ^[dynamic]string = nil) -> (breaches: []Library_Import_Breach, import_count: int) {
 	list := make([dynamic]Library_Import_Breach, context.temp_allocator)
 	// The tree of the parser lives in an arena of its own, freed before
 	// the next file: a breach keeps only copies of its texts.
@@ -467,10 +654,16 @@ library_import_breaches_of_source :: proc(file, source: string, form: Library_So
 		for declaration in tree.imports {
 			text := declaration.relpath.text
 			path := strings.trim(text, "\"`")
-			if library_import_is_allowed(path, form) && !library_relative_import_reaches_a_kernel_part(file, path, form) {
+			if library_imports != nil && library_import_names_a_package_under(path, SOURCE_LIBRARY_IMPORT_START) {
+				append(library_imports, strings.clone(path, context.temp_allocator))
+			}
+			if !library_import_is_allowed(path, form) || library_relative_import_reaches_a_kernel_part(file, path, form) {
+				append(&list, Library_Import_Breach{file = file, line = declaration.relpath.pos.line, text = strings.clone(text, context.temp_allocator), reason = .Refused_Import, form = form})
 				continue
 			}
-			append(&list, Library_Import_Breach{file = file, line = declaration.relpath.pos.line, text = strings.clone(text, context.temp_allocator), reason = .Refused_Import, form = form})
+			if !library_private_import_is_allowed(file, path) {
+				append(&list, Library_Import_Breach{file = file, line = declaration.relpath.pos.line, text = strings.clone(text, context.temp_allocator), reason = .Private_Part_Of_Another_Module, form = form})
+			}
 		}
 		if form.part && !form.test {
 			kernel_part_impure_constructs(file, tree, form, &list)
@@ -518,6 +711,7 @@ library_import_breaches_of_tree :: proc(root: string) -> (reading: Library_Impor
 		}
 	}
 	reading.breaches = make([dynamic]Library_Import_Breach, context.temp_allocator)
+	reading.library_imports = make(map[string][dynamic]string, context.temp_allocator)
 	for file in files {
 		source, read_ok := site_read_quiet(library_source_path(root, file))
 		if !read_ok {
@@ -530,7 +724,16 @@ library_import_breaches_of_tree :: proc(root: string) -> (reading: Library_Impor
 			copy = file in copied,
 			part = library_source_is_in_a_kernel_part(file),
 		}
-		file_breaches, file_imports := library_import_breaches_of_source(file, source, form)
+		// A test runs on the host: it makes no body of code an owner.
+		library_imports: ^[dynamic]string
+		file_library_imports := make([dynamic]string, context.temp_allocator)
+		if !form.test {
+			library_imports = &file_library_imports
+		}
+		file_breaches, file_imports := library_import_breaches_of_source(file, source, form, library_imports)
+		if !form.test {
+			reading.library_imports[file] = file_library_imports
+		}
 		append(&reading.breaches, ..file_breaches)
 		reading.import_count += file_imports
 		switch {
@@ -557,6 +760,18 @@ library_import_breach_sentence :: proc(breach: Library_Import_Breach) -> string 
 		return fmt.tprintf("%s:%d: the test imports %s and has no build line: a test of src/ that imports a package of core: starts with %q, so that no build of the system reads it", breach.file, breach.line, breach.text, LIBRARY_HOST_BUILD_LINE)
 	case .Refused_Import:
 		return fmt.tprintf("%s:%d: the import %s is refused: %s", breach.file, breach.line, breach.text, library_import_rule_words(breach.form))
+	case .Private_Part_Of_Another_Module:
+		return fmt.tprintf("%s:%d: the import %s is refused: a private part (%s<module>/<part>) is imported from the folder of its module or from a private part of the same module only, and <module> is the name of a module of the table", breach.file, breach.line, breach.text, PRIVATE_IMPORT_START)
+	case .Support_Package_With_One_Owner:
+		if breach.text == "" {
+			return fmt.tprintf("%s: no body of code reaches this support package: a support package has two owners or more", breach.file)
+		}
+		return fmt.tprintf("%s: only %s reaches this support package: a support package has two owners or more, and a package of one module is its private part, in %s/<module>/", breach.file, breach.text, SOURCE_FOLDER_PRIVATE)
+	case .Private_Part_Without_Its_Module:
+		if breach.text == "" {
+			return fmt.tprintf("%s: no body of code reaches this private part: a private part has its module as its one owner", breach.file)
+		}
+		return fmt.tprintf("%s: the owners of this private part are %s: a private part has its module as its one owner", breach.file, breach.text)
 	}
 	return ""
 }
@@ -570,6 +785,7 @@ library_imports_hold :: proc() -> (reading: Library_Import_Reading, hold: bool) 
 	if !read_ok {
 		return {}, false
 	}
+	append(&found.breaches, ..library_owner_breaches(found))
 	for breach in found.breaches {
 		fmt.eprintfln("modustool: %s", library_import_breach_sentence(breach))
 	}

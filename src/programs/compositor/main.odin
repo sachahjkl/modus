@@ -91,9 +91,9 @@ import "modus:contract/date"
 import "modus:support/calendar"
 import "modus:support/graphics"
 import "modus:support/interface"
-import "modus:support/bar"
+import "modus:private/compositor/bar"
 import "modus:support/mark"
-import "modus:support/palette"
+import "modus:private/compositor/palette"
 import "modus:contract/ring"
 import "modus:support/key_path"
 import "modus:support/system"
@@ -1674,7 +1674,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 }
 
 // window_frame_of gives the frame that the compositor draws around the
-// surface of a client, for the places of src/library/support/bar.
+// surface of a client, for the places of src/library/private/compositor/bar.
 window_frame_of :: proc "contextless" (client: ^Client) -> bar.Window_Frame {
 	return {outer_width = client.surface.width + 2 * BORDER, border = BORDER, close_size = CLOSE_SIZE, title_height = TITLE_HEIGHT}
 }

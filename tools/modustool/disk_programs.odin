@@ -12,7 +12,7 @@ package modustool
 // object nodes of each file, one leaf with the entries, the store block,
 // then the root. It is not the engine of the storage service: it writes a
 // whole disk one time, and changes none. A host test opens its image with
-// the code of the open of the service (src/library/support/storage_mount),
+// the code of the open of the service (src/library/private/storage/storage_mount),
 // and compares each object and each hash (disk_programs_test.odin).
 
 import "core:fmt"
@@ -24,7 +24,7 @@ import debug_object "modus:contract/debug_object"
 import "modus:contract/disk_program_page"
 import format "modus:contract/store"
 import "modus:support/disk_program"
-import block_tree "modus:support/storage_object"
+import block_tree "modus:private/storage/storage_object"
 
 // The module that the tool writes on the disk of the test: a row of the
 // module table that is not in the boot image.

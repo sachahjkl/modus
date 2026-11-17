@@ -2,7 +2,7 @@
 package storage_mount
 
 import format "modus:contract/store"
-import block_tree "modus:support/storage_object"
+import block_tree "modus:private/storage/storage_object"
 import "core:testing"
 
 // The erase of versions through a loss of power

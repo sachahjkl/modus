@@ -386,7 +386,7 @@ Do not use: descriptor, span, fat pointer, buffer record (for this).
 
 ### Information function
 
-An information function is a function that reads the flat tables of modules, the module records of the kernel or the replacement table, and fills a table in memory of the caller (`src/library/support/information`).
+An information function is a function that reads the flat tables of modules, the module records of the kernel or the replacement table, and fills a table in memory of the caller (`src/library/private/manual/information`).
 
 The information functions replace a database of modules. They allocate nothing and keep no state; each one reads the tables in a line and gives records. The manual service exports them, so the console can combine them: `manual.running()`, `manual.edges()`, `manual.check()`. A new kind of question is a new function, or a combination of functions in the console.
 

@@ -41,7 +41,7 @@ The console owns the line that the input edits: its bytes, the caret, the line h
 
 A line of the console is one expression of a small language, or a variable that takes the value of one. The console reads the line, calls the functions that it names with typed values, and draws the one result that comes back: a value, or an error. No program receives the text of the line: the text stops at the console, and only typed values go to the functions (`PROPERTIES.md`, "19. A command is a function: no text between programs").
 
-The code is `src/programs/console/language.odin` (the parser and the values), `src/programs/console/commands.odin` (the commands and the calls), `src/programs/console/tables.odin` (the commands of tables), `src/programs/console/results.odin` (the result of a line and its drawing), `src/programs/console/line_records.odin` (the log records of a line) and `src/library/support/console_results` (the drawers).
+The code is `src/programs/console/language.odin` (the parser and the values), `src/programs/console/commands.odin` (the commands and the calls), `src/programs/console/tables.odin` (the commands of tables), `src/programs/console/results.odin` (the result of a line and its drawing), `src/programs/console/line_records.odin` (the log records of a line) and `src/library/private/console/console_results` (the drawers).
 
 ### The form of a line
 
@@ -53,7 +53,7 @@ factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "("
 ```
 
 - **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each.
-- **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/support/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
+- **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/private/console/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. A text has no escape, so it cannot hold a quote.
 - **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them. A division by zero is an error. So is the one division whose result does not fit: the least integer by `-1`.
 
@@ -210,7 +210,7 @@ A line has one result, and the console draws it by its kind. No command writes t
 
 ### The drawers
 
-One drawer exists for each kind of result. A drawer knows no command: it reads the value, and for a record or a table the description of its record. The drawers are in `src/library/support/console_results`: they have no state, call no allocator and make no kernel call, and host tests draw each kind into a text (`src/library/support/console_results/console_results_test.odin`). A drawer writes parts of a line to the console with what each part is; the console chooses the color.
+One drawer exists for each kind of result. A drawer knows no command: it reads the value, and for a record or a table the description of its record. The drawers are in `src/library/private/console/console_results`: they have no state, call no allocator and make no kernel call, and host tests draw each kind into a text (`src/library/private/console/console_results/console_results_test.odin`). A drawer writes parts of a line to the console with what each part is; the console chooses the color.
 
 | Kind | What the drawer writes |
 |---|---|
@@ -570,7 +570,7 @@ Why after each line and not at most one write in a second: a generation counts t
 
 The console colors each part of a line by what it is: a function name, a type, a number or a text. The console decides the kind of each part; the terminal decides its color, so one table sets the colors of every terminal.
 
-The edit line, the line that the console writes back when Enter is pressed, and the rows of the completion list are colored by what each part is in the language of the console. One scanner reads them: `src/library/support/console_language`. The parser of the console reads its names, numbers and texts with the same procedures (`space_end`, `name_end`, `number_end`, `text_end`), so the colors and the parser agree on where a token starts and ends. The scanner calls no allocator, keeps no state, and never stops at a fault: a byte that the language does not take is one token of the kind Unknown.
+The edit line, the line that the console writes back when Enter is pressed, and the rows of the completion list are colored by what each part is in the language of the console. One scanner reads them: `src/library/private/console/console_language`. The parser of the console reads its names, numbers and texts with the same procedures (`space_end`, `name_end`, `number_end`, `text_end`), so the colors and the parser agree on where a token starts and ends. The scanner calls no allocator, keeps no state, and never stops at a fault: a byte that the language does not take is one token of the kind Unknown.
 
 **The kinds.** The console sends kinds, not colors (`terminal.Code_Kind`). The terminal maps each kind to a class of the colors of code (`terminal.code_kind_classes`), and each class to a color of the design rules (`src/library/support/graphics/code_colors.odin`, the table that the site reads too: `docs/DESIGN.md`, section 4). One table changes the colors of every terminal.
 
@@ -653,7 +653,7 @@ The console writes the table again after each line, when the command table chang
 | `Refused` | The choice names no entry that the console can run | Shows the sentence |
 | `Edit_Opened` | An entry with parameters | The window of the console comes to the front |
 
-The result area holds what the drawer of the kind of the result wrote (`src/library/support/console_results`), as runs: a byte that says what the run is (a label, a number, the name of a record, a failure), a byte of length, then the bytes. The panel draws each run in the color of what it is, the colors of the same parts in the console. It parses no text.
+The result area holds what the drawer of the kind of the result wrote (`src/library/private/console/console_results`), as runs: a byte that says what the run is (a label, a number, the name of a record, a failure), a byte of length, then the bytes. The panel draws each run in the color of what it is, the colors of the same parts in the console. It parses no text.
 
 **What the compositor checks.** The console is another program for the compositor: its table and its answers are hostile input. The compositor copies the table, then checks the copy, and reads only the copy after that: the magic number and the version; a count of entries of at most 256; a change count that is even and the same before and after the copy, in at most 4 tries; for each entry, each kind and each flag in its range, each reserved byte 0, each length inside its field, a name of 1 byte at least, each text for a reader (the signature, the help sentence, the parameter names) valid UTF-8 with no control character (`src/library/contract/text_encoding`), the name, the act name, the name of a setting row and the name of a value in ASCII (they are identifiers), a signature that starts with the name, for a `Setting` entry a setting and a value that `src/library/contract/settings` has, and the name of a setting on a `Setting` or `Provider_Setting` entry only, always with the name of a value. A table that fails gives a palette with the programs and the windows only, one line of the log with the problem and its entry, and "the commands of the console were refused" in the footer. An answer is checked the same way: the count of bytes inside the result area, each run inside the count, each part in its range, each run valid UTF-8, at most 12 lines. A line of a result has at most 76 characters, and a character outside ASCII takes more than one byte of the area.
 

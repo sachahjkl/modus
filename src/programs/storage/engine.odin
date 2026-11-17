@@ -6,10 +6,10 @@ import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import format "modus:contract/store"
-import "modus:support/storage_mount"
-import block_tree "modus:support/storage_object"
-import "modus:support/storage_retention"
-import tree "modus:support/storage_tree"
+import "modus:private/storage/storage_mount"
+import block_tree "modus:private/storage/storage_object"
+import "modus:private/storage/storage_retention"
+import tree "modus:private/storage/storage_tree"
 import "modus:support/system"
 
 // The format of the disk, and the one rule that keeps it whole (copy on
@@ -43,7 +43,7 @@ Block :: [BLOCK_SIZE]u8
 // What the service knows of the disk. The store block of each store stays
 // in memory; nodes, object nodes, versions and data are read when a caller asks. The blocks
 // in use and the reference count of each one are in `opened`, the state of
-// the open (src/library/support/storage_mount), which the service keeps up to date.
+// the open (src/library/private/storage/storage_mount), which the service keeps up to date.
 root: Root
 root_place: u64 // 0 or 1: the place of the root on the disk.
 store_blocks: [STORE_CAPACITY]Store_Block
@@ -315,7 +315,7 @@ read_raw :: proc "contextless" (number: u64, into: ^Block) -> Read {
 	return .Good
 }
 
-// The block trees of the objects (src/library/support/storage_object) read their
+// The block trees of the objects (src/library/private/storage/storage_object) read their
 // object nodes through the cache, checked, and their blocks of data with
 // no check: the tree checks each one by its value at its place.
 object_source := block_tree.Source {
@@ -352,7 +352,7 @@ object_read_block :: proc "contextless" (_: ^block_tree.Source, number: u64, int
 Mount :: storage_mount.Mount
 
 // The open of the disk: the same code as the check of the modus tool on
-// the host (src/library/support/storage_mount). The service keeps the blocks in use and
+// the host (src/library/private/storage/storage_mount). The service keeps the blocks in use and
 // their reference counts there.
 opened: storage_mount.State
 
@@ -729,7 +729,7 @@ child_release :: proc "contextless" (child: Object_Child, level: int) {
 }
 
 // The names and the writes of the work of a commit on an object
-// (src/library/support/storage_object): through the plan.
+// (src/library/private/storage/storage_object): through the plan.
 object_counter := block_tree.Counter {
 	name       = counter_name,
 	release    = counter_release,

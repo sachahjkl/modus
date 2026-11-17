@@ -171,7 +171,7 @@ Lines of the machine test, after the console called the module `probe`, which te
 
 A debugger stops a program where its author asks, shows its threads, its registers, its stack and its variables, and runs it one instruction at a time. The debugger of the system is a service, the program `debugger`. Each command of the debugger is an export of that service, and each export gives a table of records: the console, a window and a developer on another machine call the same exports.
 
-The code is `src/programs/debugger` (the service), `src/library/support/debugging` (the parts with no kernel operation: the path of a value, the walk of the frames, the place of a breakpoint, the location of a variable, the text of a value), `src/library/contract/debug_object` (the reader of the debug objects) and `src/programs/console/debugger_commands.odin` (the short names). The kernel part is in `ARCHITECTURE.md`, "The debugger of a program"; the reasons of the form are in "The debugger: the design" below.
+The code is `src/programs/debugger` (the service), `src/library/private/debugger/debugging` (the parts with no kernel operation: the path of a value, the walk of the frames, the place of a breakpoint, the location of a variable, the text of a value), `src/library/contract/debug_object` (the reader of the debug objects) and `src/programs/console/debugger_commands.odin` (the short names). The kernel part is in `ARCHITECTURE.md`, "The debugger of a program"; the reasons of the form are in "The debugger: the design" below.
 
 ### The service
 
@@ -347,7 +347,7 @@ Debugging from another machine needs no mechanism of its own.
 
 ### The test
 
-`modustool test debugger` runs two machines. The first one is the contract of the kernel (the program `debugged`). The second one is the commands: the console starts the program `debug_target`, which has no grant and values that the test knows, and waits for exact rows: a breakpoint by a procedure name and by a file and a line, the frames of the stack, a local variable of a caller, the fields of a record inside a record, an element of an array, the name of an enumeration value, a text, one step, one line, a watch of a global, and the detach. Then the rule: a program with a private store, a service and a device service are refused; a program with a right of the machine is given, the revocation of the grant `machine` of the console ends its debugging, and a new attach is refused; the revocation of the grant to act for the principal, while a thread is held, gives the program back. Then the same exports from the host through `remote`, with the source line that the tool reads in the repository. The parts with no kernel operation have host tests (`src/library/support/debugging`).
+`modustool test debugger` runs two machines. The first one is the contract of the kernel (the program `debugged`). The second one is the commands: the console starts the program `debug_target`, which has no grant and values that the test knows, and waits for exact rows: a breakpoint by a procedure name and by a file and a line, the frames of the stack, a local variable of a caller, the fields of a record inside a record, an element of an array, the name of an enumeration value, a text, one step, one line, a watch of a global, and the detach. Then the rule: a program with a private store, a service and a device service are refused; a program with a right of the machine is given, the revocation of the grant `machine` of the console ends its debugging, and a new attach is refused; the revocation of the grant to act for the principal, while a thread is held, gives the program back. Then the same exports from the host through `remote`, with the source line that the tool reads in the repository. The parts with no kernel operation have host tests (`src/library/private/debugger/debugging`).
 
 ### The window of the debugger
 
@@ -559,7 +559,7 @@ A path is read from the root of the repository. A path that names nothing gives 
 
 ## The imports of the sources of the system
 
-The system has one source library, so the compiler accepts each package of the library in each source: an import of a support package compiles in the kernel, and so does an import of a package of the core library. Three rules are then held by the tool, with `library_imports_check` (`tools/modustool/library_imports_check.odin`): a source that is not a test imports no package of the core library, which reaches the host; the kernel imports no support package; and a kernel part is imported from the kernel only.
+The system has one source library, so the compiler accepts each package of the library in each source: an import of a support package compiles in the kernel, and so does an import of a package of the core library. Five rules are then held by the tool, with `library_imports_check` (`tools/modustool/library_imports_check.odin`): a source that is not a test imports no package of the core library, which reaches the host; the kernel imports no support package; a kernel part is imported from the kernel only; a private part is imported from its module only; and a support package has two owners or more.
 
 **The kernel parts.** A kernel part is a pure package in a folder under `src/kernel`, with host tests: `iommu`, `acpi_processors`, `debug_exception`, `processor_counters`. It is imported through a second source library, `kernel`, with the flag `-collection:kernel=src/kernel`: `import "kernel:iommu"`. The tool gives that flag to the compile of the kernel, to the host test of each folder under `src/kernel`, and to its own compile, because two fuzz targets and the depth of the kernel stack read two kernel parts. No other module and no other host test gets it, so the compiler refuses a kernel part there. The check refuses it too in each file of `src/` outside `src/kernel`, because a language server gives one set of source libraries to every folder.
 
@@ -584,6 +584,14 @@ Each other import is refused:
 - a relative path in a source that is not a test, and in any file of the kernel or of a contract package (`"../../support/sentence"`);
 - a path with `..` after the name of a library (`"modus:contract/../support/sentence"`, `"kernel:../programs/clock"`);
 - a package of another library, the vendor library of the compiler too.
+
+**The private parts.** A private part is a package that one module alone compiles in, with its host tests, in `src/library/private/<module>/<part>`: `import "modus:private/storage/storage_tree"`. The check refuses an import of a private part from any file of `src/` other than the folder of its module and the private parts of the same module, its host tests too, and a path whose `<module>` names no module of the table of the modules or that names no part. The tool is outside `src/`: it reads some private parts, as the disk images of the storage service, and is no reader that the rule counts.
+
+**The owners of a package.** The owners of a package of the library are the bodies of code (the kernel, the boot program, each module) whose chain of imports reaches it; a test is no owner. A support package, with each folder under it, has two owners or more, and a private part has its module as its one owner. The check counts owners, never importing files: a package that a module and a private part of that module import has one owner. A refusal names the folder of the package and its one owner:
+
+```
+modustool: src/library/support/alone: only console reaches this support package: a support package has two owners or more, and a package of one module is its private part, in src/library/private/<module>/
+```
 
 **The build line of a host test.** A test that imports a package of `core:` runs on the host: its first build line is `#+build !freestanding`, so that no build of the system reads it. A test with no such line is refused, with its file and the line of its first import of `core:`.
 
@@ -1117,7 +1125,7 @@ A fifth machine starts on the same disk. The scenario skips the machine passphra
 
 A sixth machine starts on the same disk. The scenario skips the machine passphrase and types the passphrase of alice. The root service reads her table, 1 row and 1 client key, writes nothing, and the key holds again for alice with no new allow (`PRINCIPALS.md`, "The client keys of remote"). In a console of her session, `start_from_disk("visitor", "")` has the grant store again, and the visit 2. Then `remote` starts, and a call of the peer acts for alice. `remote_disallow` in her console writes the table with no key, `remote` ends the open connection with the code Revoked, and refuses the key in the next handshake.
 
-Host tests check the writer with the code of the open of the storage service (`src/library/support/storage_mount`): no block of the image is wrong, the counts of the store are the counts of what it names, each object gives its bytes, each entry has the hash that its block tree gives, and a file with no hole has the BLAKE3 hash of its bytes.
+Host tests check the writer with the code of the open of the storage service (`src/library/private/storage/storage_mount`): no block of the image is wrong, the counts of the store are the counts of what it names, each object gives its bytes, each entry has the hash that its block tree gives, and a file with no hole has the BLAKE3 hash of its bytes.
 
 ### The clock of a test machine
 

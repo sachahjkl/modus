@@ -6,7 +6,7 @@ import "modus:contract/blake3"
 import format "modus:contract/store"
 import "modus:support/disk_program"
 import "modus:support/principals"
-import "modus:support/storage_mount"
+import "modus:private/storage/storage_mount"
 
 // The line that the scenario of the debugger names is the line of the
 // call of sleep_for_ever in the entry of visitor.
