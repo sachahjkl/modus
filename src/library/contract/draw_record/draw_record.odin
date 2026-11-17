@@ -39,10 +39,10 @@ UNITS_PER_PIXEL :: 64 // The units of a place in one pixel: the unit of the meas
 UNIT_SHIFT :: 6 // log2 of UNITS_PER_PIXEL: a place in units to pixels is a shift.
 
 // The places of a record stay inside this distance of the corner of the
-// surface, in pixels. In units, an edge is then inside 2^30, so the
-// difference of two edges and the sum of an edge and an ink margin fit an
-// i32. A surface is far smaller.
-COORDINATE_LIMIT :: 1 << 24
+// surface, in pixels. In units, an edge is then inside 2^29, so the
+// difference of two edges (at most 2^30) and the sum of an edge and an ink
+// margin fit an i32. A surface is far smaller.
+COORDINATE_LIMIT :: 1 << 23
 COORDINATE_UNIT_LIMIT :: COORDINATE_LIMIT * UNITS_PER_PIXEL // The same limit in units.
 
 // The largest thickness of a line, in pixels: past it, the squares of a
@@ -97,7 +97,7 @@ Problem :: enum u8 {
 	Box_Inverted              = 3, // The right edge of the box is left of its left edge, or its bottom above its top.
 	Box_Past_Coordinate_Limit = 4, // An edge of the box is past COORDINATE_LIMIT.
 	Box_Not_On_Whole_Pixels   = 5, // An edge of the box is not a whole pixel: no kind of this version draws inside a pixel.
-	Field_Past_Bound          = 6, // A field of the kind is out of its range: a scale, a weight, a thickness, an end of a line, a count, an origin.
+	Field_Past_Bound          = 6, // A field of the kind is out of its range: a color with a high byte, a scale, a weight, a thickness, an end of a line, a count, an origin.
 }
 
 // One draw record, 48 bytes, little-endian. A record holds values only:
@@ -296,108 +296,129 @@ font_weight_of_word :: proc "contextless" (word: u8) -> (weight: Font_Weight, ok
 // reserved byte or a byte that the kind does not name that is not 0, a box
 // whose right is left of its left or whose bottom is above its top, an
 // edge past COORDINATE_LIMIT or not on a whole pixel, and a field of the
-// kind out of its range. A refused record draws nothing.
+// kind out of its range, a color whose high byte is not 0 too. A refused
+// record draws nothing. The checks run in that order, so a record with two
+// faults gives the problem of the first check.
+//
+// A record that the border reads is canonical: each byte that the kind does
+// not name is 0, and each color has a high byte of 0. Two records that it
+// reads draw the same thing only if their bytes are equal, but the first
+// byte of a range in the text table.
 //
 // The checks are on the record alone. What a record names in the tables of
 // its frame (a range of the text table, the pixels of a picture memory) is
 // checked where the table is: the record does not hold it.
 read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, problem: Problem) {
-	copied := record
-	kind, known := draw_kind_of_word(copied.kind)
+	kind, known := draw_kind_of_word(record.kind)
 	if !known {
 		return nil, .Unknown_Kind
 	}
-	if !all_zero(copied.reserved[:]) {
+	if !all_zero(record.reserved) {
 		return nil, .Reserved_Not_Zero
 	}
-	if !inside_coordinate_limit(copied.left) || !inside_coordinate_limit(copied.top) || !inside_coordinate_limit(copied.right) || !inside_coordinate_limit(copied.bottom) {
+	if !inside_coordinate_limit(record.left) || !inside_coordinate_limit(record.top) || !inside_coordinate_limit(record.right) || !inside_coordinate_limit(record.bottom) {
 		return nil, .Box_Past_Coordinate_Limit
 	}
-	if copied.right < copied.left || copied.bottom < copied.top {
+	if record.right < record.left || record.bottom < record.top {
 		return nil, .Box_Inverted
 	}
-	if !on_whole_pixel(copied.left) || !on_whole_pixel(copied.top) || !on_whole_pixel(copied.right) || !on_whole_pixel(copied.bottom) {
+	if !on_whole_pixel(record.left) || !on_whole_pixel(record.top) || !on_whole_pixel(record.right) || !on_whole_pixel(record.bottom) {
 		return nil, .Box_Not_On_Whole_Pixels
 	}
 	switch kind {
 	case .None:
-		if !all_zero(copied.fields[:]) {
+		if !all_zero(record.fields) {
 			return nil, .Reserved_Not_Zero
 		}
 		return Draw_Nothing{}, .None
 	case .Clip:
-		if !all_zero(copied.fields[:]) {
+		if !all_zero(record.fields) {
 			return nil, .Reserved_Not_Zero
 		}
 		return Draw_Clip{}, .None
 	case .Rectangle:
-		fields := transmute(Rectangle_Fields)copied.fields
-		if !all_zero(fields.reserved[:]) {
+		fields := transmute(Rectangle_Fields)record.fields
+		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
+		}
+		if !color_valid(fields.color) {
+			return nil, .Field_Past_Bound
 		}
 		return Draw_Rectangle{color = fields.color}, .None
 	case .Vertical_Gradient:
-		fields := transmute(Vertical_Gradient_Fields)copied.fields
-		if !all_zero(fields.reserved[:]) {
+		fields := transmute(Vertical_Gradient_Fields)record.fields
+		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
+		}
+		if !color_valid(fields.top_color) || !color_valid(fields.bottom_color) {
+			return nil, .Field_Past_Bound
 		}
 		return Draw_Vertical_Gradient{top_color = fields.top_color, bottom_color = fields.bottom_color}, .None
 	case .Horizontal_Gradient:
-		fields := transmute(Horizontal_Gradient_Fields)copied.fields
-		if !all_zero(fields.reserved[:]) {
+		fields := transmute(Horizontal_Gradient_Fields)record.fields
+		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
+		}
+		if !color_valid(fields.left_color) || !color_valid(fields.right_color) {
+			return nil, .Field_Past_Bound
 		}
 		return Draw_Horizontal_Gradient{left_color = fields.left_color, right_color = fields.right_color}, .None
 	case .Point_Grid:
-		fields := transmute(Point_Grid_Fields)copied.fields
-		if !all_zero(fields.reserved[:]) {
+		fields := transmute(Point_Grid_Fields)record.fields
+		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
+		}
+		if !color_valid(fields.color) {
+			return nil, .Field_Past_Bound
 		}
 		return Draw_Point_Grid{color = fields.color}, .None
 	case .Folded_Gap:
-		fields := transmute(Folded_Gap_Fields)copied.fields
-		if !all_zero(fields.reserved[:]) {
+		fields := transmute(Folded_Gap_Fields)record.fields
+		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
+		}
+		if !color_valid(fields.line_color) || !color_valid(fields.track_color) {
+			return nil, .Field_Past_Bound
 		}
 		return Draw_Folded_Gap{line_color = fields.line_color, track_color = fields.track_color}, .None
 	case .Text:
-		fields := transmute(Text_Fields)copied.fields
-		if !all_zero(fields.reserved[:]) {
+		fields := transmute(Text_Fields)record.fields
+		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
 		}
 		weight, weight_ok := font_weight_of_word(fields.weight)
-		if !weight_ok || fields.scale < 1 || fields.scale > TEXT_SCALE_LIMIT {
+		if !weight_ok || fields.scale < 1 || fields.scale > TEXT_SCALE_LIMIT || !color_valid(fields.color) {
 			return nil, .Field_Past_Bound
 		}
 		return Draw_Text{first = fields.first, count = fields.count, color = fields.color, scale = fields.scale, weight = weight}, .None
 	case .Picture:
-		fields := transmute(Picture_Fields)copied.fields
-		if !all_zero(fields.memory_reserved[:]) || !all_zero(fields.reserved[:]) {
+		fields := transmute(Picture_Fields)record.fields
+		if !all_zero(fields.memory_reserved) || !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
 		}
 		return Draw_Picture{memory = fields.memory, first = fields.first, stride = fields.stride, generation = fields.generation}, .None
 	case .Text_Grid:
-		fields := transmute(Text_Grid_Fields)copied.fields
-		if !all_zero(fields.reserved[:]) {
+		fields := transmute(Text_Grid_Fields)record.fields
+		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
 		}
 		return Draw_Text_Grid{first = fields.first, count = fields.count, columns = fields.columns}, .None
 	case .Line:
-		fields := transmute(Line_Fields)copied.fields
-		if !all_zero(fields.reserved[:]) {
+		fields := transmute(Line_Fields)record.fields
+		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
 		}
-		if fields.thickness < 1 || fields.thickness > LINE_THICKNESS_LIMIT || !line_end_valid(fields.start_x) || !line_end_valid(fields.start_y) || !line_end_valid(fields.end_x) || !line_end_valid(fields.end_y) {
+		if !color_valid(fields.color) || fields.thickness < 1 || fields.thickness > LINE_THICKNESS_LIMIT || !line_end_valid(fields.start_x) || !line_end_valid(fields.start_y) || !line_end_valid(fields.end_x) || !line_end_valid(fields.end_y) {
 			return nil, .Field_Past_Bound
 		}
 		return Draw_Line{start_x = fields.start_x, start_y = fields.start_y, end_x = fields.end_x, end_y = fields.end_y, color = fields.color, thickness = fields.thickness}, .None
 	case .Interface_Text:
-		fields := transmute(Interface_Text_Fields)copied.fields
-		if !all_zero(fields.reserved[:]) {
+		fields := transmute(Interface_Text_Fields)record.fields
+		if !all_zero(fields.reserved) {
 			return nil, .Reserved_Not_Zero
 		}
 		weight, weight_ok := font_weight_of_word(fields.weight)
-		if !weight_ok || fields.scale < 1 || fields.scale > TEXT_SCALE_LIMIT || fields.count > INTERFACE_TEXT_LIMIT || !origin_valid(fields.origin_x, copied.left) {
+		if !weight_ok || fields.scale < 1 || fields.scale > TEXT_SCALE_LIMIT || !color_valid(fields.color) || fields.count > INTERFACE_TEXT_LIMIT || !origin_valid(fields.origin_x, record.left) {
 			return nil, .Field_Past_Bound
 		}
 		return Draw_Interface_Text{first = fields.first, count = fields.count, color = fields.color, origin_x = fields.origin_x, scale = fields.scale, weight = weight}, .None
@@ -549,11 +570,18 @@ origin_valid :: proc "contextless" (origin_x, left: i32) -> bool {
 
 // all_zero says if each byte is 0.
 @(private)
-all_zero :: proc "contextless" (bytes: []u8) -> bool {
+all_zero :: proc "contextless" (bytes: [$COUNT]u8) -> bool {
 	for value in bytes {
 		if value != 0 {
 			return false
 		}
 	}
 	return true
+}
+
+// color_valid says if a color is 0x00RRGGBB: its high byte is 0. A color
+// with another high byte draws the same pixels, so the border refuses it,
+// and two records that draw the same thing keep the same bytes.
+color_valid :: proc "contextless" (color: u32) -> bool {
+	return color & 0xFF00_0000 == 0
 }

@@ -357,3 +357,124 @@ pixels_of_a_place :: proc(t: ^testing.T) {
 	testing.expect_value(t, pixels_ceiling(UNITS_PER_PIXEL + 1), 2)
 	testing.expect_value(t, pixels_floor(-COORDINATE_UNIT_LIMIT), -COORDINATE_LIMIT)
 }
+
+// Each color field of each kind with a high byte that is not 0, the
+// smallest and the largest: the border refuses it, so a record that it
+// reads is canonical.
+@(test)
+read_refuses_a_color_with_a_high_byte :: proc(t: ^testing.T) {
+	colored :: proc(color: u32) -> [11]Draw_Primitive {
+		line := Draw_Line{start_x = units_of_pixels(1), start_y = units_of_pixels(1), end_x = units_of_pixels(9), end_y = units_of_pixels(1), color = color, thickness = 1}
+		return [11]Draw_Primitive {
+			Draw_Rectangle{color = color},
+			Draw_Vertical_Gradient{top_color = color},
+			Draw_Vertical_Gradient{bottom_color = color},
+			Draw_Horizontal_Gradient{left_color = color},
+			Draw_Horizontal_Gradient{right_color = color},
+			Draw_Text{count = 1, color = color, scale = 1},
+			Draw_Point_Grid{color = color},
+			Draw_Folded_Gap{line_color = color},
+			Draw_Folded_Gap{track_color = color},
+			line,
+			Draw_Interface_Text{count = 1, color = color, origin_x = units_of_pixels(12), scale = 1},
+		}
+	}
+	highs := [2]u32{0x0100_0000, 0xFF00_0000}
+	for high in highs {
+		refused := colored(high | 0x0012_3456)
+		for primitive, index in refused {
+			_, problem := read(sample_record(primitive))
+			testing.expectf(t, problem == .Field_Past_Bound, "the color field %d with the high byte of %08x: %v", index, high, problem)
+		}
+	}
+	// The same fields with a high byte of 0 are read.
+	accepted := colored(0x00FF_FFFF)
+	for primitive, index in accepted {
+		_, problem := read(sample_record(primitive))
+		testing.expectf(t, problem == .None, "the color field %d of 00FFFFFF: %v", index, problem)
+	}
+}
+
+// An edge one unit past the limit, on each side: the limit is checked
+// before the whole pixel.
+@(test)
+read_refuses_an_edge_one_unit_past_the_limit :: proc(t: ^testing.T) {
+	for value in ([2]i32{COORDINATE_UNIT_LIMIT + 1, -COORDINATE_UNIT_LIMIT - 1}) {
+		for side in 0 ..< 4 {
+			box := [4]i32{-units_of_pixels(4), -units_of_pixels(4), units_of_pixels(4), units_of_pixels(4)}
+			box[side] = value
+			_, problem := read(record_of(Draw_Rectangle{color = 1}, 0, box[0], box[1], box[2], box[3]))
+			testing.expectf(t, problem == .Box_Past_Coordinate_Limit, "the edge %d at %d units: %v", side, value, problem)
+		}
+	}
+}
+
+// The widest box, from one limit to the other: its width and its height in
+// units fit an i32, and are the two limits apart.
+@(test)
+the_widest_box_has_a_width_in_an_i32 :: proc(t: ^testing.T) {
+	record := record_of(Draw_Rectangle{color = 1}, 0, -COORDINATE_UNIT_LIMIT, -COORDINATE_UNIT_LIMIT, COORDINATE_UNIT_LIMIT, COORDINATE_UNIT_LIMIT)
+	_, problem := read(record)
+	testing.expect_value(t, problem, Problem.None)
+	width: i32 = record.right - record.left
+	height: i32 = record.bottom - record.top
+	testing.expect_value(t, i64(width), 2 * i64(COORDINATE_UNIT_LIMIT))
+	testing.expect_value(t, i64(height), 2 * i64(COORDINATE_UNIT_LIMIT))
+	testing.expect(t, width > 0 && height > 0, "the width of the widest box wraps")
+	// The ink margin past the right edge of the widest box still fits.
+	testing.expect(t, i64(record.right) + i64(INK_MARGIN_LIMIT + 1) * UNITS_PER_PIXEL < i64(max(i32)))
+}
+
+// The origin of a text in the interface font: at the largest margin, a
+// unit past it, and in a box at a negative place, where the part of a
+// pixel is read on the two's complement.
+@(test)
+the_origin_of_an_interface_text_at_its_edges :: proc(t: ^testing.T) {
+	left := units_of_pixels(10)
+	largest := left + units_of_pixels(INK_MARGIN_LIMIT) + UNITS_PER_PIXEL * 2 / 3
+	_, problem := read(sample_record(Draw_Interface_Text{count = 1, color = 1, origin_x = largest, scale = 1}))
+	testing.expect_value(t, problem, Problem.None)
+	_, problem = read(sample_record(Draw_Interface_Text{count = 1, color = 1, origin_x = largest + 1, scale = 1}))
+	testing.expect_value(t, problem, Problem.Field_Past_Bound)
+	// A box at -10 pixels and the origin two pixels and a third right of it.
+	negative := record_of(Draw_Interface_Text{count = 1, color = 1, origin_x = units_of_pixels(-8) + UNITS_PER_PIXEL / 3, scale = 1}, 0, units_of_pixels(-10), units_of_pixels(-20), units_of_pixels(-2), units_of_pixels(-4))
+	_, problem = read(negative)
+	testing.expect_value(t, problem, Problem.None)
+	off_third := record_of(Draw_Interface_Text{count = 1, color = 1, origin_x = units_of_pixels(-8) + 1, scale = 1}, 0, units_of_pixels(-10), units_of_pixels(-20), units_of_pixels(-2), units_of_pixels(-4))
+	_, problem = read(off_third)
+	testing.expect_value(t, problem, Problem.Field_Past_Bound)
+}
+
+// A record with two faults gives the problem of the first check: the kind,
+// the reserved bytes of the header, the limit, the order of the edges, the
+// whole pixels, then the fields of the kind, their reserved bytes before
+// their bounds.
+@(test)
+read_states_the_order_of_its_checks :: proc(t: ^testing.T) {
+	Case :: struct {
+		record:   Draw_Record,
+		expected: Problem,
+	}
+	unknown_and_reserved := sample_record(Draw_Nothing{})
+	unknown_and_reserved.kind = u8(max(Draw_Kind)) + 1
+	unknown_and_reserved.reserved[0] = 1
+	reserved_and_past := record_of(Draw_Rectangle{color = 1}, 0, max(i32) - 63, 0, max(i32) - 63, 0)
+	reserved_and_past.reserved[1] = 1
+	past_and_inverted := record_of(Draw_Rectangle{color = 1}, 0, COORDINATE_UNIT_LIMIT + UNITS_PER_PIXEL, 0, 0, units_of_pixels(1))
+	inverted_and_inside := record_of(Draw_Rectangle{color = 1}, 0, units_of_pixels(4) + 1, 0, 0, units_of_pixels(1))
+	inside_and_field := record_of(Draw_Text{count = 1, color = 1, scale = 0}, 0, 1, 0, units_of_pixels(4), units_of_pixels(4))
+	field_reserved_and_bound := sample_record(Draw_Text{count = 1, color = 1, scale = 0})
+	field_reserved_and_bound.fields[FIELDS_SIZE - 1] = 1
+	cases := [?]Case {
+		{unknown_and_reserved, .Unknown_Kind},
+		{reserved_and_past, .Reserved_Not_Zero},
+		{past_and_inverted, .Box_Past_Coordinate_Limit},
+		{inverted_and_inside, .Box_Inverted},
+		{inside_and_field, .Box_Not_On_Whole_Pixels},
+		{field_reserved_and_bound, .Reserved_Not_Zero},
+	}
+	for item, index in cases {
+		_, problem := read(item.record)
+		testing.expectf(t, problem == item.expected, "the case %d: %v, not %v", index, problem, item.expected)
+	}
+}

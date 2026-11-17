@@ -522,7 +522,10 @@ interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: 
 	copy(table.text[start:], text)
 	table.text_count += len(text)
 	fields := draw_record.Draw_Interface_Text{first = u32(start), count = u32(len(text)), color = color, origin_x = i32(origin), scale = u8(scale), weight = font.weight}
-	record_append(table, placed_record_of_edges(fields, element, left, y, end + margin, y + graphics.CELL_HEIGHT * scale))
+	// The top and the bottom by the rule of each writer: the edges of a
+	// place and a size, each cut to the limit, so no sum passes the int.
+	top, bottom := cut_edges(y, graphics.CELL_HEIGHT * scale)
+	record_append(table, record_of_pixels(fields, element, left, top, cut_place(end + margin), bottom))
 	return end
 }
 

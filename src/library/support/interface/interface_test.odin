@@ -2307,3 +2307,149 @@ the_focus_by_an_act_name :: proc(t: ^testing.T) {
 	round_robin, eevdf := build(&table, &state, &input)
 	testing.expect(t, eevdf.focused && !round_robin.focused)
 }
+
+// A record in a box of whole pixels, and the same record with a byte that
+// its kind does not name, which the border refuses.
+@(private = "file")
+record_in_pixels :: proc(primitive: draw_record.Draw_Primitive, left, top, right, bottom: int) -> Draw_Record {
+	return draw_record.record_of(primitive, 0, draw_record.units_of_pixels(left), draw_record.units_of_pixels(top), draw_record.units_of_pixels(right), draw_record.units_of_pixels(bottom))
+}
+
+@(private = "file")
+refused_copy :: proc(record: Draw_Record) -> Draw_Record {
+	refused := record
+	refused.reserved[0] = 1
+	return refused
+}
+
+// A refused record through the difference: it is equal to no record whose
+// bytes differ, so both boxes are damaged; the same refused bytes in two
+// frames draw nothing in both, and damage nothing.
+@(test)
+a_refused_record_damages_its_box :: proc(t: ^testing.T) {
+	valid := record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFF}, 0, 0, 10, 10)
+	refused := refused_copy(record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFF}, 50, 50, 60, 60))
+	_, problem := draw_record.read(refused)
+	testing.expect_value(t, problem, draw_record.Problem.Reserved_Not_Zero)
+	before_records, now_records := [1]Draw_Record{valid}, [1]Draw_Record{refused}
+	before := Draw_Table{records = before_records[:], record_count = 1}
+	now := Draw_Table{records = now_records[:], record_count = 1}
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 2)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{0, 0, 10, 10})
+	testing.expect_value(t, damage.rectangles[1], Rectangle{50, 50, 60, 60})
+	// The same refused record in the two frames: no damage.
+	before_records[0] = refused
+	damage = {}
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 0)
+	// A refused record whose bytes differ from a refused record before:
+	// both boxes.
+	other := refused
+	other.reserved[0] = 2
+	before_records[0] = other
+	damage = {}
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{50, 50, 60, 60})
+}
+
+// A line that becomes refused: its box is damaged, where version 10 of the
+// record damaged nothing for a refused line, and it draws nothing.
+@(test)
+a_refused_line_damages_its_box_and_draws_nothing :: proc(t: ^testing.T) {
+	memory: Tables
+	before := table_of(&memory)
+	draw_line(&before, 2, 2, 20, 2, 1, 0xFFFFFF)
+	testing.expect_value(t, before.record_count, 1)
+	line := before.records[0]
+	fields := transmute(draw_record.Line_Fields)line.fields
+	fields.thickness = 0
+	refused := line
+	refused.fields = transmute([draw_record.FIELDS_SIZE]u8)fields
+	_, problem := draw_record.read(refused)
+	testing.expect_value(t, problem, draw_record.Problem.Field_Past_Bound)
+	now_records := [1]Draw_Record{refused}
+	now := Draw_Table{records = now_records[:], record_count = 1}
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], record_rectangle(line))
+	testing.expect_value(t, damage.rectangles[0], Rectangle{2, 2, 21, 3})
+	pixels: [32 * 8]graphics.Color
+	execute(&now, {pixels = raw_data(pixels[:]), width = 32, height = 8, stride = 32})
+	testing.expect(t, pixels == [32 * 8]graphics.Color{}, "a refused line draws")
+}
+
+// A refused Clip keeps the cut that was in force; the records after it
+// still draw and still damage.
+@(test)
+a_refused_clip_keeps_the_cut :: proc(t: ^testing.T) {
+	SIDE :: 32
+	clip := record_in_pixels(draw_record.Draw_Clip{}, 0, 0, 8, 8)
+	refused_clip := refused_copy(record_in_pixels(draw_record.Draw_Clip{}, 0, 0, SIDE, SIDE))
+	fill := record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFF}, 0, 0, SIDE, SIDE)
+	records := [3]Draw_Record{clip, refused_clip, fill}
+	table := Draw_Table{records = records[:], record_count = 3}
+	pixels: [SIDE * SIDE]graphics.Color
+	execute(&table, {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+	for y in 0 ..< SIDE {
+		for x in 0 ..< SIDE {
+			testing.expectf(t, (pixels[y * SIDE + x] == 0xFFFFFF) == (x < 8 && y < 8), "the pixel (%d, %d) after a refused clip", x, y)
+		}
+	}
+	// A refused record alone draws nothing.
+	refused_fill := [1]Draw_Record{refused_copy(fill)}
+	alone := Draw_Table{records = refused_fill[:], record_count = 1}
+	pixels = {}
+	execute(&alone, {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+	testing.expect(t, pixels == [SIDE * SIDE]graphics.Color{}, "a refused rectangle draws")
+	// The same clips in two frames and a rectangle that changes: the
+	// rectangle is damaged.
+	changed := records
+	changed[2] = record_in_pixels(draw_record.Draw_Rectangle{color = 0x00FF00}, 4, 4, 12, 12)
+	now := Draw_Table{records = changed[:], record_count = 3}
+	damage: Damage
+	damage_by_difference(&table, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{0, 0, SIDE, SIDE})
+	// A refused clip whose bytes change: each record after it is damaged.
+	moved := records
+	moved[1].reserved[0] = 2
+	moved[2] = record_in_pixels(draw_record.Draw_Rectangle{color = 0xFFFFFF}, 20, 20, 24, 24)
+	rest := Draw_Table{records = moved[:], record_count = 3}
+	damage = {}
+	damage_by_difference(&table, &rest, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{0, 0, SIDE, SIDE})
+}
+
+// Text_Grid records that grid_of refuses: no column, a first byte that is
+// not a multiple of 4, bytes that are not a whole count of rows. And a
+// Picture record of a picture memory past the list of the table.
+@(test)
+grid_of_and_picture_of_refuse_what_the_table_does_not_hold :: proc(t: ^testing.T) {
+	words: [32]u32
+	table := Draw_Table{text = grid_text(words[:]), text_count = len(words) * 4}
+	refused := [?]draw_record.Draw_Text_Grid {
+		{first = 0, count = 32, columns = 0},
+		{first = 2, count = 32, columns = 2},
+		{first = 0, count = 32 + 16, columns = 2},
+	}
+	for fields, index in refused {
+		_, ok := grid_of(&table, record_in_pixels(fields, 0, 0, 16, 16))
+		testing.expectf(t, !ok, "the grid %d names cells", index)
+	}
+	_, ok := grid_of(&table, record_in_pixels(draw_record.Draw_Text_Grid{first = 4, count = 32, columns = 2}, 0, 0, 16, 16))
+	testing.expect(t, ok, "a grid at a multiple of 4 is read")
+	memory: [16]graphics.Color
+	memories := [][]graphics.Color{memory[:]}
+	pictures := Draw_Table{picture_memories = memories}
+	for number in ([3]u8{1, 2, max(u8)}) {
+		_, found := picture_of(&pictures, record_in_pixels(draw_record.Draw_Picture{memory = number, stride = 4}, 0, 0, 4, 4))
+		testing.expectf(t, !found, "a picture of the memory %d, past a list of one", number)
+	}
+	_, found := picture_of(&pictures, record_in_pixels(draw_record.Draw_Picture{memory = 0, stride = 4}, 0, 0, 4, 4))
+	testing.expect(t, found, "a picture of the memory 0 is read")
+}
