@@ -14,7 +14,7 @@ The study of prior art: [`docs/research/code_similarity_prior_art.md`](../../../
 - The corpus is the Odin sources of `src/` and `tools/`: about 312,000 lines, 785 files, about 9,700 procedures, about 3 million syntax nodes. A step that is linear in the nodes is cheap. A step over all pairs of procedures (about 47 million pairs) needs a filter.
 - The finder runs outside the build and outside `modustool check`. It can take minutes. Its host tests are part of the host tests of the tool, as each other test is.
 - The output is reproducible: the same sources give the same bytes of the report and of the tables. No order comes from a hash map, a thread or a random number.
-- A factoring proposal obeys the import rules of the repository ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The imports of the kernel and of the contract packages") and the rule that no source of the system calls an allocator ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The rules that a check holds"). The finder never proposes a home that breaks a rule.
+- A factoring proposal obeys the import rules of the repository ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The imports of the sources of the system") and the rule that no source of the system calls an allocator ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The rules that a check holds"). The finder never proposes a home that breaks a rule.
 
 ## The chosen form
 

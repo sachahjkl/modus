@@ -206,7 +206,7 @@ build_modules_in_parallel :: proc() -> bool {
 	// Each build of each command passes here, in the process that starts
 	// the module processes: the rule of the imports is read one time,
 	// before the first compiler starts (library_imports_check.odin).
-	if _, _, imports_hold := library_imports_hold(); !imports_hold {
+	if _, imports_hold := library_imports_hold(); !imports_hold {
 		return false
 	}
 	levels := module_levels() or_return
@@ -328,7 +328,7 @@ run_module :: proc(args: []string) -> int {
 	// of the imports is read here. A step of the parallel build has a
 	// parent that read it.
 	if len(args) == 3 {
-		if _, _, imports_hold := library_imports_hold(); !imports_hold {
+		if _, imports_hold := library_imports_hold(); !imports_hold {
 			return EXIT_FAILURE
 		}
 	}

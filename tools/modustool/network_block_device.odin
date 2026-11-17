@@ -80,12 +80,21 @@ Network_Block_Device :: struct {
 	reads:    int,
 	failure:  string, // A request that the protocol does not permit.
 	// The loss of power: at the first write of a root (blocks 0 and 1 of
-	// the data disk, src/library/contract/store) from the write with this number (from
-	// 1) on, the disk answers nothing more, as a disk whose power went off
-	// during that write. The write of a root is the hardest moment: the
-	// blocks of the commit are durable, its root is not. 0: never.
-	power_off_after_write: int,
-	powered_off:           bool,
+	// the data disk, src/library/contract/store) that is not durable at its
+	// reply, from the root with the number power_off_at_root (from 1) on,
+	// the disk answers nothing more, as a disk whose power went off during
+	// that write. The write of a root is the hardest moment: the blocks of
+	// the commit are durable, its root is not. 0: never.
+	//
+	// The disk counts the roots itself, so the cut falls at a commit that
+	// the scenario names, whatever the speed of the machine and the lag of
+	// its serial port. The count starts at the arm, or, with a marker, at
+	// the first write of a block whose bytes start with it.
+	power_off_at_root:  int,
+	power_off_marker:   string,
+	power_off_counting: bool, // The count of the roots runs.
+	power_off_roots:    int, // The writes of a root since the count started.
+	powered_off:        bool,
 	// The dropped write (dropped_write.odin): not empty, the disk answers Ok
 	// to the first write that holds a block whose bytes start with this
 	// marker, and keeps nothing of that block: a read gives its bytes from
@@ -166,6 +175,38 @@ marker_block :: proc(offset: u64, bytes: []u8, marker: string) -> int {
 		}
 	}
 	return -1
+}
+
+// power_off_arm arms the loss of power: the disk loses it at the write of
+// the root with the number `at_root`, counted from now, or from the first
+// write of a block whose bytes start with `marker` when it is not empty.
+// The marker is copied: the text of a step can live in the temporary memory
+// that the run of a scenario frees after each step.
+power_off_arm :: proc(server: ^Network_Block_Device, at_root: int, marker: string) {
+	sync.mutex_lock(&server.lock)
+	server.power_off_at_root = at_root
+	server.power_off_marker = strings.clone(marker)
+	server.power_off_counting = marker == ""
+	server.power_off_roots = 0
+	sync.mutex_unlock(&server.lock)
+}
+
+// power_off_decide counts the writes of a root for one write, and says if
+// the disk loses its power at it. The caller holds the lock.
+@(private = "file")
+power_off_decide :: proc(server: ^Network_Block_Device, offset: u64, bytes: []u8, durable_at_reply: bool) -> bool {
+	if server.power_off_at_root == 0 {
+		return false
+	}
+	if !server.power_off_counting {
+		server.power_off_counting = marker_block(offset, bytes, server.power_off_marker) >= 0
+		return false
+	}
+	if offset >= ROOT_BLOCK_PLACES * format.BLOCK_SIZE {
+		return false
+	}
+	server.power_off_roots += 1
+	return server.power_off_roots >= server.power_off_at_root && !durable_at_reply
 }
 
 // drop_decide moves the dropped writes to their next state for one write.
@@ -296,7 +337,9 @@ disk_server_free :: proc(server: ^Network_Block_Device) {
 	delete(server.current)
 	delete(server.durable)
 	delete(server.durable_at_hidden_root)
+	delete(server.power_off_marker)
 	server.current, server.durable, server.durable_at_hidden_root = nil, nil, nil
+	server.power_off_marker = ""
 }
 
 disk_server_run :: proc(server: ^Network_Block_Device) {
@@ -484,7 +527,7 @@ disk_server_serve :: proc(server: ^Network_Block_Device, client: net.TCP_Socket)
 					append(&server.pending, Pending_Write{offset = offset, bytes = clone_bytes(data[:length])})
 				}
 				server.writes += 1
-				off := server.power_off_after_write != 0 && server.writes >= server.power_off_after_write && offset < ROOT_BLOCK_PLACES * format.BLOCK_SIZE && flags & NBD_COMMAND_FLAG_FUA == 0
+				off := power_off_decide(server, offset, data[:length], flags & NBD_COMMAND_FLAG_FUA != 0)
 				sync.mutex_unlock(&server.lock)
 				if off {
 					sync.atomic_store(&server.powered_off, true)

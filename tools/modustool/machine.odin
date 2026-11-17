@@ -118,7 +118,14 @@ Step_Kind :: enum {
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool takes the name that the system wrote in a frame, or names a frame "module + offset" from the debug object of its module, and the names start with `names`.
 	Record, // A log record with the program `program`, the channel `channel`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place. A later step names the number of the record that it found with {record} (RECORD_MARK) in its text.
 	Agree, // The program `text`: the mapped pages and the threads that inspect.mappings() and inspect.threads() give are the ones that monitor.programs() gives (two tools, two reports of the kernel).
-	Power_Loss, // The disk that the tool serves loses its power at the first write of a root after a seeded count of writes (1 to 40 after this step): it answers nothing more, and the tool ends QEMU with no warning (power_loss.odin).
+	// The disk that the tool serves will lose its power at a write of a
+	// root: after `commits` writes of a root and a seeded 1 to 40 more,
+	// counted from this step, or with text, from the first write of a block
+	// whose bytes start with text. The step comes before the work whose
+	// commit the loss must cut, so the disk, not a line of the log, places
+	// the cut (power_loss.odin).
+	Power_Loss_Arm,
+	Power_Loss, // Wait until the disk of the last Power_Loss_Arm loses its power: it answers nothing more, and the tool ends QEMU with no warning (power_loss.odin).
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
 	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
@@ -181,6 +188,7 @@ Step :: struct {
 	notches:    int, // For Wheel: the notches of the wheel, in NOTCH_TOWARD_THE_END.
 	form:       string, // For Point: the pointer form that compositor.pointer() must also report, "dark" or "light" (docs/POINTERS.md).
 	shown_only: bool, // For Screen_Text: the text must be read off the screen, and is not kept: the step proves that a window shows it, and a later step still types the texts kept before.
+	commits:    int, // For Power_Loss_Arm: the writes of a root that the disk lets through before the seeded count.
 }
 
 // The two clocks agree to whole seconds: the machine reads its real-time
@@ -4752,29 +4760,67 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			monitor_send(machine, "quit")
 		case .Monitor:
 			monitor_send(machine, step.text)
+		case .Power_Loss_Arm:
+			server := machine.disk_server
+			if server == nil {
+				fmt.eprintfln("modustool: test failed: step %d: the tool does not serve the data disk", index + 1)
+				return false
+			}
+			if step.commits < 0 {
+				fmt.eprintfln("modustool: test failed: step %d: a step Power_Loss_Arm with %d commits", index + 1, step.commits)
+				return false
+			}
+			generator := rand.create_u64(POWER_LOSS_SEED)
+			at_root := step.commits + 1 + rand.int_max(POWER_LOSS_SEEDED_ROOTS, rand.default_random_generator(&generator))
+			power_off_arm(server, at_root, step.text)
+			if step.text == "" {
+				fmt.printfln("modustool: the disk loses its power at the write of the root %d from now (%d, then %d seeded, seed %d)", at_root, step.commits, at_root - step.commits, POWER_LOSS_SEED)
+			} else {
+				fmt.printfln("modustool: the disk loses its power at the write of the root %d after the block that starts with \"%s\" (%d, then %d seeded, seed %d)", at_root, step.text, step.commits, at_root - step.commits, POWER_LOSS_SEED)
+			}
 		case .Power_Loss:
 			server := machine.disk_server
 			if server == nil {
 				fmt.eprintfln("modustool: test failed: step %d: the tool does not serve the data disk", index + 1)
 				return false
 			}
-			generator := rand.create_u64(POWER_LOSS_SEED)
-			after := 1 + rand.int_max(40, rand.default_random_generator(&generator))
 			sync.mutex_lock(&server.lock)
-			server.power_off_after_write = server.writes + after
+			armed := server.power_off_at_root != 0
 			sync.mutex_unlock(&server.lock)
-			for start := time.now(); !sync.atomic_load(&server.powered_off) && time.since(start) < HANG_BOUND; {
+			if !armed {
+				fmt.eprintfln("modustool: test failed: step %d: a step Power_Loss with no step Power_Loss_Arm before it", index + 1)
+				return false
+			}
+			// The bound ends a stall only: each write is progress toward the
+			// root of the cut.
+			last_writes := -1
+			last_progress := time.now()
+			for !sync.atomic_load(&server.powered_off) && time.since(last_progress) < HANG_BOUND {
+				sync.mutex_lock(&server.lock)
+				writes := server.writes
+				sync.mutex_unlock(&server.lock)
+				if writes != last_writes {
+					last_writes = writes
+					last_progress = time.now()
+				}
 				time.sleep(time.Millisecond)
 			}
 			// A kill: QEMU writes nothing more. The tool knows what was
 			// durable when the disk lost its power.
 			_ = os.process_kill(machine.process)
 			machine.powered_off = true
+			sync.mutex_lock(&server.lock)
+			roots, at_root, counting, writes, marker := server.power_off_roots, server.power_off_at_root, server.power_off_counting, server.writes, server.power_off_marker
+			sync.mutex_unlock(&server.lock)
 			if !sync.atomic_load(&server.powered_off) {
-				fmt.eprintfln("modustool: test failed: step %d: the machine made no write for %d writes", index + 1, after)
+				if !counting {
+					fmt.eprintfln("modustool: test failed: step %d: the machine made no write for the time of a hang, and no write of a block that starts with \"%s\"", index + 1, marker)
+				} else {
+					fmt.eprintfln("modustool: test failed: step %d: the machine made no write for the time of a hang, after %d of the %d writes of a root", index + 1, roots, at_root)
+				}
 				return false
 			}
-			fmt.printfln("modustool: the power of the disk went off at its write %d, the write of a root, %d writes or more after the step before (seed %d)", server.writes, after, POWER_LOSS_SEED)
+			fmt.printfln("modustool: the power of the disk went off at its write %d, the write of the root %d after the start of the count (seed %d)", writes, roots, POWER_LOSS_SEED)
 		case .Shot:
 			if !screen_save(machine, step.text) {
 				return false
