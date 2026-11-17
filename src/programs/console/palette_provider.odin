@@ -415,8 +415,8 @@ palette_turn :: proc "contextless" () {
 		}
 		// The compositor writes the word: a word that names no command, and
 		// None, are refused with a line, and the next record is read.
-		palette_command, palette_command_ok := enum_word.member_of_word(palette_table.Command, u64(record.kind))
-		if !palette_command_ok || palette_command == .None {
+		palette_command, palette_command_ok := palette_table.command_of_ring_word(record.kind)
+		if !palette_command_ok {
 			system.log("console: the palette sent the command word ", u64(record.kind), ", which names no command: it is refused")
 			continue
 		}

@@ -78,7 +78,6 @@ package network_service
 
 import "modus:contract/byte_order"
 import "modus:contract/datagram"
-import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/frame"
 import "modus:contract/ring"
@@ -479,14 +478,14 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 	kind := record.kind
 	// The program of the endpoint writes the word: a word that names no
 	// command, and None, are refused with their record.
-	command_kind, command_kind_ok := enum_word.member_of_word(datagram.Command, u64(record.kind))
+	command_kind, command_kind_ok := datagram.command_of_ring_word(record.kind)
 	if !command_kind_ok {
 		complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Unsupported, .None, 0, i64(kind)))
 		return true
 	}
 	switch command_kind {
 	case .None:
-		complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Unsupported, .None, 0, i64(kind)))
+		// The border refused None above.
 	case .Info:
 		hardware_value: u64
 		for byte, place in hardware {
@@ -936,15 +935,14 @@ controlled :: proc "contextless" (record: ring.Record) {
 	handle := system.Handle(record.values[0])
 	// The root service writes the word: a word that names no control, and
 	// None, are refused with their record.
-	control_kind, control_kind_ok := enum_word.member_of_word(datagram.Control, u64(record.kind))
+	control_kind, control_kind_ok := datagram.control_of_ring_word(record.kind)
 	if !control_kind_ok {
 		system.send(&control.completions, ring.Record{kind = u32(datagram.Status.Bad_Command), tag = record.tag, values = errors.ring_fail(record.kind, .Unsupported, .None, 0, i64(record.kind))})
 		return
 	}
 	switch control_kind {
 	case .None:
-		result = .Bad_Command
-		values = errors.ring_fail(record.kind, .Unsupported, .None, 0, i64(record.kind))
+		// The border refused None above.
 	case .Endpoint_Add:
 		region_handle := system.Handle(record.values[1])
 		kind, _, through := system.handle_state(handle, control_memory)

@@ -154,6 +154,26 @@ a_provider_setting_entry_is_checked :: proc(t: ^testing.T) {
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
 }
 
+// The compositor writes the kind of each record of the ring of the provider:
+// None, one past the last command and the largest word are refused, and
+// give None. Then each command but None comes back from its word.
+@(test)
+command_of_ring_word_refuses_a_word_that_names_no_command :: proc(t: ^testing.T) {
+	refused := [?]u32{u32(Command.None), u32(max(Command)) + 1, max(u32)}
+	for word in refused {
+		read, ok := command_of_ring_word(word)
+		testing.expectf(t, !ok, "the word %d names no command, and it is taken", word)
+		testing.expect_value(t, read, Command.None)
+	}
+	for member in Command {
+		if member != .None {
+			read, ok := command_of_ring_word(u32(member))
+			testing.expect(t, ok)
+			testing.expect_value(t, read, member)
+		}
+	}
+}
+
 // The kind of an entry is a word that the provider wrote: one past the last
 // kind, a word past the width of the byte and the largest word name no
 // kind. Each kind then comes back from its own word. 0 is the kind Command.

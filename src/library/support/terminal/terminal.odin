@@ -604,6 +604,15 @@ input :: proc "contextless" (terminal: ^Terminal) -> (given: Input_Record, ok: b
 	}
 }
 
+// kind_of_ring_word is the border of the kind of a record of the terminal
+// ring, which the program of the terminal writes: the kind, or false for a
+// word that names no record, None included. The terminal counts a refusal.
+// It reads and changes no state.
+kind_of_ring_word :: proc "contextless" (word: u32) -> (kind: Kind, ok: bool) {
+	member := enum_word.member_of_word(Kind, u64(word)) or_return
+	return member, member != .None
+}
+
 // input_of_record is the border of an input record of the terminal: the
 // record, or false for a kind that names no input, None included. It reads
 // and changes no state, so a host test gives it each refused kind.

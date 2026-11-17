@@ -429,9 +429,10 @@ apply :: proc "contextless" (record: ring.Record) {
 	records_read += 1
 	// The program writes the word: a word that names no record, and None,
 	// are refused and counted, and the log says it once.
-	kind, kind_ok := enum_word.member_of_word(terminal.Kind, u64(record.kind))
-	if !kind_ok || kind == .None {
-		records_refused += 1
+	kind, kind_ok := terminal.kind_of_ring_word(record.kind)
+	if !kind_ok {
+		// The drawer reads the count when the program stops.
+		intrinsics.atomic_add(&records_refused, 1)
 		if !records_refusal_logged {
 			records_refusal_logged = true
 			system.log("terminal: ", program_name, " sent a record of the kind ", u64(record.kind), ", which names no record: it is refused")
@@ -1474,6 +1475,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.log("terminal: ", program_name, " stopped with code ", u64(code), " after ", view.count - 1, " lines and ", view.records, " records")
 				if lost, ended := key_path.loss_end(&keys_loss); ended {
 					system.log("terminal: ", program_name, " stopped and did not read its keys: ", lost, " keys were lost")
+				}
+				if refused := intrinsics.atomic_load(&records_refused); refused != 0 {
+					system.log("terminal: ", program_name, " stopped after ", refused, " records whose kind names no record")
 				}
 				system.close(program)
 				program = 0

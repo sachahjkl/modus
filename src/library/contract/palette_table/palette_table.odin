@@ -239,6 +239,15 @@ Outcome :: enum u64 {
 	Manual_Opened    = 7, // The window of the manual shows the page.
 }
 
+// command_of_ring_word is the border of the kind of a record that the
+// compositor writes in the ring of the provider: the command, or false for
+// a word that names no command, None included. The provider refuses it with
+// a line. It reads and changes no state.
+command_of_ring_word :: proc "contextless" (word: u32) -> (command: Command, ok: bool) {
+	member := enum_word.member_of_word(Command, u64(word)) or_return
+	return member, member != .None
+}
+
 // outcome_of_word is the border of the outcome word of an answer of the
 // provider: the member, or false for a word that names none.
 outcome_of_word :: proc "contextless" (word: u64) -> (outcome: Outcome, ok: bool) {

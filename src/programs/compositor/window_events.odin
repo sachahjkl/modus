@@ -69,7 +69,10 @@ window_queue_memory_open :: proc "contextless" (index: int) {
 // window_event_send gives an event to a window. The records that wait for
 // the window go first; when its ring is full, the event waits in the queue
 // of the window, and a move of the pointer replaces the move that waits.
-window_event_send :: proc "contextless" (client: ^Client, kind: display.Event_Kind, record: ring.Record) {
+// The record is made here from the kind, so its word and the class of the
+// queue come from one member.
+window_event_send :: proc "contextless" (client: ^Client, kind: display.Event_Kind, values: [7]u64) {
+	record := ring.Record{kind = u32(kind), values = values}
 	index := client_index(client)
 	queue := &window_queues[index]
 	target := &client.ring.completions

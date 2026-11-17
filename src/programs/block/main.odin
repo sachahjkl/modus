@@ -379,7 +379,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			result := block.Status.Ok
 			values: [7]u64
-			kind, kind_ok := block.command_of_word(i64(command.kind))
+			kind, kind_ok := block.command_of_ring_word(command.kind)
 			if !kind_ok {
 				complete(command.tag, .Bad_Command, errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind)))
 				changed += 1
@@ -387,8 +387,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			switch kind {
 			case .None:
-				result = .Bad_Command
-				values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))
+				// The border refused None above.
 			case .Attach:
 				result, values = attach(system.Handle(command.values[0]))
 			case .Info:

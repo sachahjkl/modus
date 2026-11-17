@@ -85,7 +85,6 @@ package compositor
 
 import "modus:support/bochs_display"
 import "modus:support/display"
-import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/settings"
 import "modus:contract/date"
@@ -623,7 +622,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		for record in system.receive(&control.commands) {
-			kind, kind_ok := enum_word.member_of_word(display.Control, u64(record.kind))
+			kind, kind_ok := display.control_of_ring_word(record.kind)
 			if !kind_ok {
 				system.log("compositor: the root service sent the control word ", u64(record.kind), ", which names no control command")
 				continue
@@ -638,21 +637,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Palette_Provider_Remove:
 				palette_provider_remove()
 			case .None, .Start, .Stop:
-				// None is no command, and Start and Stop go from the
+				// The border refused None above. Start and Stop go from the
 				// compositor to the root service, never to the compositor.
 				system.log("compositor: the root service sent the control command ", u64(record.kind), ", which the compositor does not take")
 			}
 		}
 		window_events_pass() // The records that wait go before the new ones.
 		for record in system.receive(&input.commands) {
-			kind, kind_ok := enum_word.member_of_word(display.Input, u64(record.kind))
+			kind, kind_ok := display.input_of_ring_word(record.kind)
 			if !kind_ok {
 				system.log("compositor: the input service sent the word ", u64(record.kind), ", which names no input")
 				continue
 			}
 			switch kind {
 			case .None:
-				system.log("compositor: the input service sent the input None")
+				// The border refused None above.
 			case .Key:
 				key_records += 1
 				if !palette_key(u32(record.values[0]), display.key_character_of(record.values[1]), record.values[2] != 0, u32(record.values[3])) && order_count > 0 {
@@ -683,10 +682,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// are counted, and the first one of a window writes a line,
 				// so a window that writes many cannot fill the log of the
 				// compositor.
-				command, command_ok := enum_word.member_of_word(display.Command, u64(record.kind))
-				if !command_ok || command == .None {
+				command, command_ok := display.command_of_ring_word(record.kind)
+				if !command_ok {
 					if client.commands_refused == 0 {
-						system.log("compositor: a window sent the word ", u64(record.kind), ", which names no command; the next ones are counted")
+						system.log("compositor: a window sent the word ", u64(record.kind), ", which names no command; the next ones are counted, and the count comes when the window closes")
 					}
 					client.commands_refused += 1
 					continue
@@ -820,7 +819,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 // a member: the compositor writes the word of the record here, and reads
 // no word back to know the class of the event.
 send :: proc "contextless" (client: ^Client, kind: display.Event_Kind, values: [7]u64) {
-	window_event_send(client, kind, ring.Record{kind = u32(kind), values = values})
+	window_event_send(client, kind, values)
 }
 
 // client_add takes the ring of a new program from the root service. For a
@@ -868,6 +867,9 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		damage_focus()
 		if client.surface.pixels != nil {
 			system.memory_unmap(client.pictures)
+		}
+		if client.commands_refused != 0 {
+			system.log("compositor: window ", system.name_of(client.title[:]), " closed after ", client.commands_refused, " records whose word names no command")
 		}
 		window_queue_close(index) // window_events.odin
 		system.ring_close(&client.ring)
