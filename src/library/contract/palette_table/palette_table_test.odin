@@ -326,7 +326,7 @@ an_act_name_and_a_setting_row_are_checked :: proc(t: ^testing.T) {
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
 	entry.reserved_end = 0
 	// A command can have an act name, and joins no setting row.
-	entry.kind, entry.setting_value = .Command, 0
+	entry.kind, entry.setting_value = u8(Entry_Kind.Command), 0
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
 	entry.setting_name_length, entry.value_name_length = 0, 0
 	testing.expect_value(t, entry_problem(&entry), Problem.None)
@@ -392,7 +392,7 @@ the_texts_of_an_entry_are_utf_8 :: proc(t: ^testing.T) {
 	act.act_name_length = u8(copy(act.act_name[:], "a b")) // An identifier has no space.
 	testing.expect_value(t, entry_problem(&act), Problem.Bad_Byte)
 	row := entry
-	row.kind = .Provider_Setting
+	row.kind = u8(Entry_Kind.Provider_Setting)
 	row.setting_name_length = u8(copy(row.setting_name[:], "subpixel order"))
 	row.value_name_length = u8(copy(row.value_name[:], "rgb"))
 	testing.expect_value(t, entry_problem(&row), Problem.None)

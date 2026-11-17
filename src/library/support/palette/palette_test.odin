@@ -1889,8 +1889,8 @@ the_strategy_in_use_is_the_mark_of_the_provider :: proc(t: ^testing.T) {
 	table := table_make(given[:])
 	defer delete(table)
 	entries := ([^]palette_table.Entry)(&table[palette_table.ENTRIES_OFFSET])
-	entries[0].kind = .Provider_Setting
-	entries[1].kind = .Provider_Setting
+	entries[0].kind = u8(palette_table.Entry_Kind.Provider_Setting)
+	entries[1].kind = u8(palette_table.Entry_Kind.Provider_Setting)
 	entries[1].flags = {.In_Use}
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
 	// The entry of a row of the list, by its name: the order of two
@@ -1927,7 +1927,7 @@ the_strategy_in_use_is_the_mark_of_the_provider :: proc(t: ^testing.T) {
 	testing.expect(t, setting_in_use(panel, listed(panel, "set strategy to fair")))
 	testing.expect(t, !setting_in_use(panel, listed(panel, "set strategy to eevdf")))
 	// The flag on an entry that is no such setting: the table is refused.
-	entries[0].kind = .Command
+	entries[0].kind = u8(palette_table.Entry_Kind.Command)
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.Bad_Setting)
 }
 
@@ -1970,13 +1970,13 @@ the_values_of_one_setting_are_one_row :: proc(t: ^testing.T) {
 	row_texts_set(&entries[2], "settings.set:font", "font", "spleen")
 	strategies := [3]string{"round_robin", "fair", "eevdf"}
 	for value, index in strategies {
-		entries[3 + index].kind = .Provider_Setting
+		entries[3 + index].kind = u8(palette_table.Entry_Kind.Provider_Setting)
 		row_texts_set(&entries[3 + index], "strategy", "strategy", value)
 	}
 	entries[5].flags = {.In_Use}
 	shades := [7]string{"a", "b", "c", "d", "e", "f", "g"}
 	for value, index in shades {
-		entries[6 + index].kind = .Provider_Setting
+		entries[6 + index].kind = u8(palette_table.Entry_Kind.Provider_Setting)
 		row_texts_set(&entries[6 + index], "shade", "shade", value)
 	}
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
