@@ -82,7 +82,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_CONTRACT + "/enum_word",
 	SOURCE_FOLDER_SUPPORT + "/sentence",
 	SOURCE_FOLDER_SUPPORT + "/cryptography/vectors",
-	LIBRARY_MODULE_SOURCES + "cryptography",
+	SOURCE_FOLDER_PRIVATE + "/cryptography/cryptography_primitives",
 	SOURCE_FOLDER_SUPPORT + "/quic",
 	SOURCE_FOLDER_CONTRACT + "/date",
 	SOURCE_FOLDER_CONTRACT + "/disk_program_page",

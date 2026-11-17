@@ -62,7 +62,7 @@ Do not use: collection, SDK, libc, static library.
 
 A private part is a package of the source library that one module alone compiles in, with its host tests.
 
-A private part holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole program for the host. Its folder is `src/library/private/<module>/<part>`, and its import line names the module: `modus:private/storage/storage_tree`. The tool refuses an import of it from another module, and refuses a support package that only one module reaches. The tool reads some private parts too, as a disk image of the storage service; that does not make them shared.
+A private part holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole program for the host. Its folder is `src/library/private/<module>/<part>`, and its import line names the module: `modus:private/storage/storage_tree`. The tool refuses an import of it from another module, and a support package that only one module reaches. The tool and the host tests of a caller of a library module read some private parts too (`cryptography_primitives`); that does not make them shared.
 
 The design: `src/md/infrastructure/repository_layout.md`.
 

@@ -1,7 +1,8 @@
 #+build !freestanding
-// The exports of the module on the host: what a caller sees, with hostile
-// arguments and with bytes that another thread changes during the call.
-package cryptography
+// The code of the exports of the module cryptography on the host: what a
+// caller sees, with hostile arguments and with bytes that another thread
+// changes during the call.
+package cryptography_primitives
 
 import "base:intrinsics"
 import "modus:contract/errors"
@@ -55,7 +56,7 @@ an_open_while_another_thread_changes_the_sealed_text :: proc(t: ^testing.T) {
 		shared: Changing_Bytes
 		sealed_buffer := shared.bytes[:]
 		error: errors.Error_Record
-		shared.count = int(aead_export(aead, true, &key_text, &nonce, &additional, &text, &sealed_buffer, &error))
+		shared.count = int(aead_call(aead, true, &key_text, &nonce, &additional, &text, &sealed_buffer, &error))
 		testing.expect_value(t, shared.count, len(SUNSCREEN) + TAG_SIZE)
 		shared.place = 20
 		shared.first = shared.bytes[20]
@@ -66,7 +67,7 @@ an_open_while_another_thread_changes_the_sealed_text :: proc(t: ^testing.T) {
 			sealed := string(shared.bytes[:shared.count])
 			opened: [256]u8
 			opened_buffer := opened[:]
-			count := aead_export(aead, false, &key_text, &nonce, &additional, &sealed, &opened_buffer, &error)
+			count := aead_call(aead, false, &key_text, &nonce, &additional, &sealed, &opened_buffer, &error)
 			switch {
 			case count == i64(len(SUNSCREEN)) && string(opened[:count]) == SUNSCREEN:
 				true_texts += 1
@@ -239,7 +240,7 @@ hkdf_expand_at_its_limit :: proc(t: ^testing.T) {
 	testing.expect(t, hkdf_sha256_expand(&key, &long_info, 32, &output, &error) < 0 && error.argument == 2)
 }
 
-// Each point of small order gives Bad_Value from the export x25519: its
+// Each point of small order gives Bad_Value from x25519: its
 // shared secret would be 32 zero bytes (RFC 7748, section 6.1).
 @(test)
 x25519_refuses_points_of_small_order :: proc(t: ^testing.T) {
@@ -258,7 +259,7 @@ x25519_refuses_points_of_small_order :: proc(t: ^testing.T) {
 		output: [32]u8
 		result := output[:]
 		error: errors.Error_Record
-		testing.expectf(t, x25519_export(&scalar, &point, &result, &error) < 0 && error.kind == i64(errors.Kind.Bad_Value) && error.argument == 2, "the point %s", point_text)
+		testing.expectf(t, x25519(&scalar, &point, &result, &error) < 0 && error.kind == i64(errors.Kind.Bad_Value) && error.argument == 2, "the point %s", point_text)
 		testing.expect(t, output == [32]u8{})
 	}
 }

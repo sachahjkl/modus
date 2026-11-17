@@ -30,8 +30,10 @@
 //   - A private part ("modus:private/storage/storage_tree", a folder of
 //     src/library/private/<module>) is what one module alone compiles in. It
 //     is imported from the folder of its module, or from another private
-//     part of the same module, and from no other file of src/. The tool,
-//     outside src/, reads some of them too: it is not a part of the system.
+//     part of the same module, and from no other source of src/; a host
+//     test may import one of a module of the group libraries (below). The
+//     tool, outside src/, reads some of them too: it is not a part of the
+//     system.
 //   - The owners of a package of the library are the bodies of code (the
 //     kernel, the boot program, each module) whose chain of imports reaches
 //     it. A support package has two owners or more, and a private part has
@@ -44,6 +46,13 @@
 //     reads it. A test, and a file of the copy, may also import a relative
 //     path, which reaches a folder of the repository that has no name in the
 //     library.
+//   - A relative import never lands in the folder of a module from a file
+//     outside that folder, in src/ or in tools/: the compiler accepts it in
+//     a host test and in the tool, and it makes the code of one module a
+//     library of another reader. The code that a module and a host program
+//     both need is a private part of the module; a host test may import a
+//     private part of a module of the group libraries, because it stands in
+//     for that module, which a host program cannot load.
 //
 // src/library/support/cryptography/origin.manifest names the files that the
 // system took from the cryptography of Odin. They keep the imports of their
@@ -72,6 +81,11 @@ LIBRARY_IMPORT_CORE_START :: "core:"
 // The build line of a host test: the compiler builds the file for the host
 // only, and no build of the system reads it.
 LIBRARY_HOST_BUILD_LINE :: "#+build !freestanding"
+
+// The folder of the programs of the host that build the system: the check
+// reads each of its files for the rule of the relative imports into a
+// module alone, because the tool imports the core library freely.
+LIBRARY_IMPORTS_TOOL_FOLDER :: "tools"
 
 // The architectures whose host tests the check reads: a test of one
 // architecture ends in "_test_<arch>.odin". A name of another architecture
@@ -105,6 +119,7 @@ Library_Import_Breach_Reason :: enum {
 	Private_Part_Of_Another_Module, // The import names a private part of another module, or of no module.
 	Support_Package_With_One_Owner, // A support package that fewer than two bodies of code reach.
 	Private_Part_Without_Its_Module, // A private part that its module does not reach.
+	Relative_Import_Into_A_Module, // A relative import that lands in the folder of a module from outside it.
 }
 
 // One refused import, one test without its build line, one impure
@@ -130,7 +145,8 @@ Library_Import_Reading :: struct {
 	source_count: int, // A source of src/ that is not a test and not a copy.
 	test_count: int, // A host test of src/.
 	copy_count: int, // A file of the copy of the cryptography of Odin.
-	import_count: int,
+	import_count: int, // The imports of the files of src/.
+	tool_count: int, // A file of tools/, read for the relative imports into a module alone.
 	library_imports: map[string][dynamic]string, // From the root of the tree: each "modus:" import path of the file.
 }
 
@@ -222,8 +238,8 @@ library_import_is_allowed :: proc(path: string, form: Library_Source_Form) -> bo
 		return false
 	}
 	// A relative path names a folder of the repository. A host test and a
-	// file of the copy may reach a package that has no name in the library,
-	// as a module of src/modules.
+	// file of the copy may reach a package that has no name in the library;
+	// where the path lands is the rule of library_relative_import_landing.
 	if strings.has_prefix(path, "./") || strings.has_prefix(path, "../") {
 		return form.copy || (form.test && form.kind == .System)
 	}
@@ -319,15 +335,46 @@ library_source_has_host_build_line :: proc(source: string) -> bool {
 // where the path lands shows that it names a kernel part. file is a path
 // from the root of the tree.
 library_relative_import_reaches_a_kernel_part :: proc(file, path: string, form: Library_Source_Form) -> bool {
-	if form.kind == .Kernel || !(strings.has_prefix(path, "./") || strings.has_prefix(path, "../")) {
+	if form.kind == .Kernel {
 		return false
+	}
+	landing, relative := library_relative_import_landing(file, path)
+	return relative && (landing == SOURCE_FOLDER_KERNEL || strings.has_prefix(landing, SOURCE_FOLDER_KERNEL + "/"))
+}
+
+// library_relative_import_landing gives the folder where a relative import
+// of a file lands, as a path from the root of the tree: the compiler reads
+// the path from the folder of the file. relative: the path starts with "./"
+// or "../"; another path names a library and lands nowhere.
+library_relative_import_landing :: proc(file, path: string) -> (landing: string, relative: bool) {
+	if !(strings.has_prefix(path, "./") || strings.has_prefix(path, "../")) {
+		return "", false
 	}
 	folder := ""
 	if slash := strings.last_index_byte(file, '/'); slash >= 0 {
 		folder = file[:slash]
 	}
-	landing := path_without_dots(join(folder, "/", path))
-	return landing == SOURCE_FOLDER_KERNEL || strings.has_prefix(landing, SOURCE_FOLDER_KERNEL + "/")
+	return path_without_dots(join(folder, "/", path)), true
+}
+
+// library_relative_import_reaches_another_module says if a relative import
+// of a file, a path from the root of the tree, lands in src/modules outside
+// the folder of the module of the file. The folder of a module is
+// src/modules/<group>/<module>; a landing on src/modules or on the folder
+// of a group names no module, and is refused from each file.
+library_relative_import_reaches_another_module :: proc(file, path: string) -> bool {
+	landing, relative := library_relative_import_landing(file, path)
+	if !relative || (landing != SOURCE_FOLDER_MODULES && !strings.has_prefix(landing, SOURCE_FOLDER_MODULES + "/")) {
+		return false
+	}
+	// The parts of src/modules, then the group and the module.
+	module_part_count := strings.count(SOURCE_FOLDER_MODULES, "/") + 3
+	parts := strings.split(landing, "/", context.temp_allocator)
+	if len(parts) < module_part_count {
+		return true
+	}
+	module_folder := strings.join(parts[:module_part_count], "/", context.temp_allocator)
+	return !strings.has_prefix(file, join(module_folder, "/"))
 }
 
 // The intrinsics that read or change the machine, by the start of their
@@ -484,8 +531,11 @@ library_private_part_parts :: proc(path_in_library: string) -> (module_name: str
 // root of the tree, may import the path of an import: a path that names no
 // private part is not this rule. A private part is imported from the
 // folder of its module, or from a private part of the same module; a path
-// whose module names no row of the table of the modules is refused.
-library_private_import_is_allowed :: proc(file, path: string) -> bool {
+// whose module names no row of the table of the modules is refused. A host
+// test may also import a private part of a module of the group libraries:
+// a host program cannot load a module, so the test of a package that calls
+// the exports of that module stands in for it with the code of the part.
+library_private_import_is_allowed :: proc(file, path: string, form: Library_Source_Form) -> bool {
 	if !strings.has_prefix(path, PRIVATE_IMPORT_START) {
 		return true
 	}
@@ -497,7 +547,10 @@ library_private_import_is_allowed :: proc(file, path: string) -> bool {
 	if !found {
 		return false
 	}
-	return strings.has_prefix(file, join(source, "/")) || strings.has_prefix(file, join(SOURCE_FOLDER_PRIVATE, "/", module_name, "/"))
+	if strings.has_prefix(file, join(source, "/")) || strings.has_prefix(file, join(SOURCE_FOLDER_PRIVATE, "/", module_name, "/")) {
+		return true
+	}
+	return form.test && strings.has_prefix(source, LIBRARY_MODULE_SOURCES)
 }
 
 // library_package_node gives the package of the library that a path inside
@@ -661,7 +714,11 @@ library_import_breaches_of_source :: proc(file, source: string, form: Library_So
 				append(&list, Library_Import_Breach{file = file, line = declaration.relpath.pos.line, text = strings.clone(text, context.temp_allocator), reason = .Refused_Import, form = form})
 				continue
 			}
-			if !library_private_import_is_allowed(file, path) {
+			if library_relative_import_reaches_another_module(file, path) {
+				append(&list, Library_Import_Breach{file = file, line = declaration.relpath.pos.line, text = strings.clone(text, context.temp_allocator), reason = .Relative_Import_Into_A_Module, form = form})
+				continue
+			}
+			if !library_private_import_is_allowed(file, path, form) {
 				append(&list, Library_Import_Breach{file = file, line = declaration.relpath.pos.line, text = strings.clone(text, context.temp_allocator), reason = .Private_Part_Of_Another_Module, form = form})
 			}
 		}
@@ -684,7 +741,8 @@ library_import_breaches_of_source :: proc(file, source: string, form: Library_So
 	return list[:], import_count
 }
 
-// library_import_breaches_of_tree reads each source file of src/ of a tree.
+// library_import_breaches_of_tree reads each source file of src/ of a tree,
+// and each file of tools/ for the relative imports into a module.
 // root is the folder of the tree: "" is the folder where the tool runs, the
 // root of the repository. The manifest of the cryptography of Odin of the
 // tree names the files that the check reads with the rule of a copy.
@@ -745,7 +803,61 @@ library_import_breaches_of_tree :: proc(root: string) -> (reading: Library_Impor
 			reading.source_count += 1
 		}
 	}
+	// The files of tools/: the rule of the relative imports into a module
+	// alone.
+	tool_paths := make([dynamic]string, context.temp_allocator)
+	source_files_of_a_folder(root == "" ? LIBRARY_IMPORTS_TOOL_FOLDER : join(root, "/", LIBRARY_IMPORTS_TOOL_FOLDER), &tool_paths) or_return
+	tool_files := make([dynamic]string, context.temp_allocator)
+	for path in tool_paths {
+		append(&tool_files, library_source_relative_to_root(root, path))
+	}
+	slice.sort(tool_files[:])
+	for file in tool_files {
+		source, read_ok := site_read_quiet(library_source_path(root, file))
+		if !read_ok {
+			fmt.eprintfln("modustool: cannot read %s", file)
+			return {}, false
+		}
+		append(&reading.breaches, ..library_tool_import_breaches_of_source(file, source))
+		reading.tool_count += 1
+	}
 	return reading, true
+}
+
+// library_tool_import_breaches_of_source gives each relative import of one
+// file of tools/ that lands in the folder of a module. The tool imports the
+// core library and the private parts freely: it builds the system and is
+// not a part of it. A file that the parser cannot read whole is one breach,
+// as in src/.
+library_tool_import_breaches_of_source :: proc(file, source: string) -> []Library_Import_Breach {
+	list := make([dynamic]Library_Import_Breach, context.temp_allocator)
+	form := Library_Source_Form{kind = .System}
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil {
+		append(&list, Library_Import_Breach{file = file, reason = .Unreadable_File, form = form})
+		return list[:]
+	}
+	defer virtual.arena_destroy(&arena)
+	{
+		context.allocator = virtual.arena_allocator(&arena)
+		tree := ast.new_from_positions(ast.File, {}, {})
+		tree.src = source
+		tree.fullpath = file
+		reader := parser.default_parser()
+		reader.err = site_code_quiet_error
+		reader.warn = site_code_quiet_error
+		if !parser.parse_file(&reader, tree) || tree.syntax_error_count > 0 {
+			append(&list, Library_Import_Breach{file = file, reason = .Unreadable_File, form = form})
+			return list[:]
+		}
+		for declaration in tree.imports {
+			text := declaration.relpath.text
+			if library_relative_import_reaches_another_module(file, strings.trim(text, "\"`")) {
+				append(&list, Library_Import_Breach{file = file, line = declaration.relpath.pos.line, text = strings.clone(text, context.temp_allocator), reason = .Relative_Import_Into_A_Module, form = form})
+			}
+		}
+	}
+	return list[:]
 }
 
 // library_import_breach_sentence gives the line of the output for one
@@ -753,7 +865,7 @@ library_import_breaches_of_tree :: proc(root: string) -> (reading: Library_Impor
 library_import_breach_sentence :: proc(breach: Library_Import_Breach) -> string {
 	switch breach.reason {
 	case .Unreadable_File:
-		return fmt.tprintf("%s: the parser cannot read the file whole, so its imports are not checked: a source of src/ has no error of syntax, and no import inside a procedure", breach.file)
+		return fmt.tprintf("%s: the parser cannot read the file whole, so its imports are not checked: a source of src/ or of tools/ has no error of syntax, and no import inside a procedure", breach.file)
 	case .Impure_Kernel_Part:
 		return fmt.tprintf("%s:%d: %s is refused: a kernel part is pure, so each package variable is @(rodata), no variable is @(static) or @(thread_local), and it holds no foreign block, no foreign import, no asm and no intrinsic that reads the machine", breach.file, breach.line, breach.text)
 	case .Test_Without_Build_Line:
@@ -761,7 +873,9 @@ library_import_breach_sentence :: proc(breach: Library_Import_Breach) -> string 
 	case .Refused_Import:
 		return fmt.tprintf("%s:%d: the import %s is refused: %s", breach.file, breach.line, breach.text, library_import_rule_words(breach.form))
 	case .Private_Part_Of_Another_Module:
-		return fmt.tprintf("%s:%d: the import %s is refused: a private part (%s<module>/<part>) is imported from the folder of its module or from a private part of the same module only, and <module> is the name of a module of the table", breach.file, breach.line, breach.text, PRIVATE_IMPORT_START)
+		return fmt.tprintf("%s:%d: the import %s is refused: a private part (%s<module>/<part>) is imported from the folder of its module or from a private part of the same module only, and by a host test when <module> is in %s; <module> is the name of a module of the table", breach.file, breach.line, breach.text, PRIVATE_IMPORT_START, LIBRARY_MODULE_SOURCES)
+	case .Relative_Import_Into_A_Module:
+		return fmt.tprintf("%s:%d: the import %s is refused: a relative import lands in the folder of a module (%s<group>/<module>) from outside it; the code that a module and another reader need is a private part of the module, imported as %s<module>/<part>", breach.file, breach.line, breach.text, SOURCE_FOLDER_MODULES + "/", PRIVATE_IMPORT_START)
 	case .Support_Package_With_One_Owner:
 		if breach.text == "" {
 			return fmt.tprintf("%s: no body of code reaches this support package: a support package has two owners or more", breach.file)
@@ -797,10 +911,10 @@ library_imports_hold :: proc() -> (reading: Library_Import_Reading, hold: bool) 
 library_imports_check :: proc() -> bool {
 	reading, hold := library_imports_hold()
 	if !hold {
-		fmt.eprintln("modustool: test failed: an import of a source of src/, the build line of a host test, or a construct of a kernel part that is not pure, is refused")
+		fmt.eprintln("modustool: test failed: an import of a source of src/ or of tools/, the build line of a host test, or a construct of a kernel part that is not pure, is refused")
 		return false
 	}
-	test_passed_print("each of the %d imports of the %d sources and of the %d host tests of src/ is allowed, each host test that imports a package of core: starts with the build line of the host, each source of a kernel part is pure, and the %d files of the copy of the cryptography of Odin are exempt", reading.import_count, reading.source_count, reading.test_count, reading.copy_count)
+	test_passed_print("each of the %d imports of the %d sources and of the %d host tests of src/ is allowed, each host test that imports a package of core: starts with the build line of the host, each source of a kernel part is pure, the %d files of the copy of the cryptography of Odin are exempt, and no relative import of the %d files of tools/ lands in a module", reading.import_count, reading.source_count, reading.test_count, reading.copy_count, reading.tool_count)
 	return true
 }
 
