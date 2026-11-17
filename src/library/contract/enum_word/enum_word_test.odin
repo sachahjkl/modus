@@ -47,7 +47,7 @@ member_of_word_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) {
 		testing.expect_value(t, read, member)
 	}
 	for member in Negative {
-		read, ok := member_of_word(Negative, transmute(u64)i64(member))
+		read, ok := member_of_word(Negative, cast(u64)i64(member))
 		testing.expect(t, ok)
 		testing.expect_value(t, read, member)
 	}

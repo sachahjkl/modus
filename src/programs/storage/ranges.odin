@@ -4,7 +4,6 @@ import "base:intrinsics"
 import "modus:contract/errors"
 import format "modus:contract/store"
 import "modus:contract/value_kinds"
-import answers "modus:support/storage"
 import block_tree "modus:support/storage_object"
 import "modus:support/system"
 

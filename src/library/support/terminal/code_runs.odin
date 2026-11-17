@@ -17,7 +17,6 @@ package terminal_records
 import "modus:contract/enum_word"
 import "modus:contract/ring"
 import "modus:support/graphics"
-import "modus:support/system"
 
 // What a run of code is.
 Code_Kind :: enum u8 {
