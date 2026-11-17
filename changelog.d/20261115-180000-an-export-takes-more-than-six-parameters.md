@@ -1,3 +1,0 @@
-type: Changed
-
-**An export takes more than six parameters**: an export takes up to 12 arguments, its parameters, the buffer of a result and the error record included; the first six go in registers and the others on the stack, as the C convention of the machine passes them. The console, the call from the host, a call host and a service call such an export, and the tool describes it and checks the declaration of its import. The module format is version 2, with a description of 168 bytes for each export, so a module of an earlier release does not load. The palette lists no command with more than six parameters: the console line calls it.

@@ -1,3 +1,0 @@
-type: Changed
-
-**The reuse list of the properties is checked.** The reuse list of `docs/PROPERTIES.md` now names each work of others that the system ships or copies: the font subsets, Spleen, the Posy pointer theme, the cryptography of Odin and fiat-crypto, the runtime of the Odin compiler and `core:reflect`, and each portrait of the hall of fame, with its SPDX license and its license file. The candidates that the system does not use, the designs and the tools of the host left the list. `modustool check` refuses a work with no row, a row for a work that the repository does not hold, a license that is not the recorded one, and a missing license file.

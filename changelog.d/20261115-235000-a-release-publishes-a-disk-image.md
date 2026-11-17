@@ -1,3 +1,0 @@
-type: Added
-
-**A release publishes a disk image of the system.** `modustool release image` builds the release volume with the keys of the publisher of the system, puts it in a GPT disk for a USB key, compresses it with zstd, and writes `SHA256SUMS.txt` and its Ed25519 release signature in `dist/`; it refuses the test keys and every boot image of a test. `modustool verify` checks the signature, then the hash, and `docs/INSTALL.md` gives the same check with OpenSSL, the write with `dd`, and the setting of Secure Boot. The release workflow publishes the files at each tag `v<release number>`, the check workflow runs `nix flake check` at each push, and the home and the page of the releases name the files and the release signing key.

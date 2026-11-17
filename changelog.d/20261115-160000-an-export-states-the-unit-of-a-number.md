@@ -1,3 +1,0 @@
-type: Added
-
-**An export states the unit of a number.** An Integer parameter of an export can count a size or a time: its source gives it a type such as `value_kinds.Size_In_Bytes` or `value_kinds.Time_In_Milliseconds`, and the description of the export holds the unit. The palette shows the unit after the number of the field, as for a built-in command of the console: `hkdf_sha256_expand` takes a length in bytes, `debugger.memory` and `debugger.watch` bytes, `debugger.wait_stop` milliseconds, `storage.set_size` bytes. The unit is part of the meaning of the export: a replacement whose export counts in another unit fails the check of the loader, and an import declaration with another unit, or with a plain `i64`, stops the build.

@@ -1,3 +1,0 @@
-type: Fixed
-
-**A word that names no choice is refused, and never read as a known one**: `unlock` stops with a line of the log for a mode that names no mode, where it ran an unlock; a seed whose strength names no strength is refused, where it was read as the strongest; the root service refuses a word of the root ring that names no action, state, change or origin; the console says that a state of a client key or a cause of a refused change names nothing, where it showed "holds" or "the mode is not a change"; a twin of `frames` stops for a mode that names no mode, where it slept. `modustool rule-checks` refuses a family of integer constants that the code uses as a closed set of choices.

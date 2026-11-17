@@ -1,3 +1,0 @@
-type: Changed
-
-**The pushes and the indirect tail calls in the measure of the kernel stack**: the build now follows the stack pointer through each compiled procedure of the kernel. It adds the arguments that a caller pushes outside its frame before a call (32 bytes before `thread_create` in `execute`), and it takes a jump through a register where no frame stays as a tail call that needs a row with its targets. A chain in the measure line shows "(... bytes pushed for the call)". A `ret` or a tail call that finds bytes on the stack stops the build, so the scan proves its own reading. The margin of a quarter of each stack is now only for a chain of the graph that no input runs.

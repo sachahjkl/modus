@@ -1,3 +1,0 @@
-type: Added
-
-**The time zone as a setting**: the setting `time_zone` is a fixed offset from UTC, from `-12:00` to `+14:00` by quarters of an hour, with `+00:00` as the default (`settings.set("time_zone", "+08:00")`, or a row of four buttons in the window of `settings`). The bar shows the local date and time, and the setting `appearance` `auto` turns light at 07:00 of the local time. The zone has no summer time: a principal in a zone with summer time changes it twice a year. The date of the system stays in UTC. The kept record of the settings has a new version, so the settings of an older disk read as the defaults once.

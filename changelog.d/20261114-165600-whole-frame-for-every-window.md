@@ -1,3 +1,0 @@
-type: Fixed
-
-**A window never shows a picture that is being drawn.** The surface of every window has two pictures: its program draws one while the compositor reads the other, and the compositor shows a picture only when it is complete. Before, 48 of the 51 programs with a window drew in the memory that the compositor read, and the screen could show a part of a new picture with a part of the old one. A program writes no code for the rule, the option `two_pictures` of `display.open` is removed, and `compositor.windows()` gives for each window the count `pictures_drawn_again`, which is 0 for a program that keeps the rule.

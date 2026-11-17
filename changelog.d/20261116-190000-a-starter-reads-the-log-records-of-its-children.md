@@ -1,3 +1,0 @@
-type: Added
-
-**A starter reads the log records of its children.** The log service has two new exports, `program_records(program, after)` and `program_value_runs(program, after)`. They give the records of the program whose program handle the caller lends with the right Read, numbered by the own numbers of that program, and no record of another program. A starter holds the handle of each child, so a test reads what its children wrote without the right to read the whole log. A grandchild is read only with a handle that the child gives. A handle that names no program gives the error record `Handle_Kind`. The program `log_reader` starts two children and checks that it reads the one record of each child, and none of an earlier run.

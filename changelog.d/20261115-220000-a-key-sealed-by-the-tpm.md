@@ -1,3 +1,0 @@
-type: Added
-
-**A key sealed by the TPM, and a recovery key**: on a machine with Secure Boot on, `machine_seal()` gives principal 0 a machine key that the new TPM service seals to PCR 7 and PCR 11, so the disk grants of the machine persist with no passphrase, and an older or a changed system, or a copy of the disk on another machine, opens nothing. Before each unseal the TPM proves that it made the sealed object under the PCR values of its policy, so a record that another system on the machine wrote is refused. The window of `unlock` shows a recovery key one time; when the TPM refuses, that key opens the machine key, and with Secure Boot on `unlock` seals it again to the system that runs.

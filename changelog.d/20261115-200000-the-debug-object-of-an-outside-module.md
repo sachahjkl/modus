@@ -1,3 +1,0 @@
-type: Added
-
-**The debug object of an outside module in a machine.** `modustool program-disk` puts the debug object of each module file beside it in the store `programs`, under the hash of the module, and refuses one that names another module. At `attach`, the debugger service reads it through a connection that reads only, which the root service gives with the debug access (the command `Debug_Store` of the root ring), checks that it names the module, and names the procedures, the lines and the variables of a disk program: `outsider  entry      outsider/main.odin    81`. A connection of a service can now read only (`isolated.CALLER_READS_ONLY`, bit 47; the amount has bits 0 to 46).

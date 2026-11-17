@@ -1,3 +1,0 @@
-type: Changed
-
-**The drawing exports take the rectangles of a frame in one call.** The draw export of the drawing module is now `execute_draw_table_in_rectangles_10`: it takes the shape of the canvas (`Canvas_Shape`) and a table of up to 8 damage rectangles, refuses more with `Too_Long`, and draws them in order with the same pixels as one call for each rectangle; `execute_draw_table_10` is gone. A window crosses the border of the module 2 times for a frame with damage, where it crossed it up to 9 times, and draws all the rectangles of one frame in one font. The compositor makes one call for each part of its screen with all the rectangles that the part meets: at most 18 calls for a frame of 8 rectangles over 17 windows, where it made up to 144.

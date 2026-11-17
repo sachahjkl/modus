@@ -1,3 +1,0 @@
-type: Added
-
-**A measure of the similarity of the code.** `modustool similarity` gives a similarity score from 0 to 1 to the code pieces of the Odin sources, groups the similar ones in families with the factoring template that a procedure can take and its blanks, and ranks the families by the syntax nodes that a factoring saves, each node counted once, with a home that obeys the import rules. `similarity near <file>:<line>` lists the procedures most similar to one, and `similarity pair` gives the score of two. It never edits a source; a family kept on purpose is a line of `tools/modustool/similarity_kept.txt`.

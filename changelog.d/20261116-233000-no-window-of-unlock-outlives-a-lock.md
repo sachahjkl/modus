@@ -1,3 +1,0 @@
-type: Security
-
-**No window of `unlock` outlives a lock.** A lock now also stops the window of `unlock` that the session asked for: the setting of the machine passphrase, the seal of the machine key, a change of the passphrase or a new recovery key. Before, anyone at the keyboard of the locked machine could read the recovery key of a new machine passphrase or set the machine passphrase. Each window that shows a new recovery key writes its record or its file only after Enter, so a lock, a close or a fault before Enter leaves the disk as it was, and no recovery key that nobody wrote down opens anything. The creation of a principal starts its session after Enter too.

@@ -1,3 +1,0 @@
-type: Added
-
-**The grants of a disk program of a named principal persist across a restart.** A console that the desktop starts during the session of a named principal acts for that principal: its `allow`, `disallow`, `nickname_move` and `disk_persistence` change the disk grant table of that principal. The root service keeps that table as the object `grant_table` of the store `programs.principal.1`, with a tag under a key that `unlock` derives from the unlock key of the principal and gives with `Principal_Unlock` (values 0 to 3, and its origin in value 5). The root service reads the table at the first unlock of a run; a table that does not verify gives no grant, and is written over only at the creation of the principal.

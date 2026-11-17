@@ -1,3 +1,0 @@
-type: Fixed
-
-**A terminal that always draws the end of an output**: a record that comes while the terminal draws a picture now makes a due picture before the terminal waits for its next frame. Before, the terminal waited up to 16 ms with that change and said that no picture was due, so a machine test could take a settled picture of the console that showed a running call and not its result. The stop of the program of a terminal now ends its wait at once, where it waited up to 250 ms, and a frame whose `Present` did not reach the compositor is drawn again at the next frame, where the older picture stayed until the next record or key.

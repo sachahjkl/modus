@@ -1,3 +1,0 @@
-type: Security
-
-**The kernel checks the text of a line of the log**: a program that called the operation `Log` itself could write a carriage return, an escape sequence or a control character of C1 to the serial port, and forge or hide a line on a terminal of the host; a program could also name a child program with such bytes, and that name starts each line of the child. The kernel now writes `?` in place of each byte of each invalid sequence of UTF-8 in its copy of the text, ends a record of the log after a whole character, and `Program_Create` refuses a name with a byte outside the visible characters of ASCII (`Bad_Operation`).

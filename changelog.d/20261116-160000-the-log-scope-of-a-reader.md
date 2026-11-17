@@ -1,3 +1,0 @@
-type: Added
-
-**A program reads its own log records.** A caller of the log service that does not act for the principal now receives its own records from `log.records(after)` and `log.value_runs(after)`, in place of a refusal: the records with its program slot and its program serial, which the kernel now writes in each log record with the own number of the record among the records of its program. Its rows, its `after` and its `lost` count its own records only, so it receives no number or count of the records of other programs, and a new program in the same slot does not read the records of the program before it. A reader of the log never keeps a record that the kernel was writing over during its copy. The program `log_reader` checks it in the machine test, in two runs.
