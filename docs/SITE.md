@@ -1,14 +1,12 @@
 # The site
 
-Status: started on 2026-11-12, at the request of the owner. The owner has not reviewed the choices below.
-
-The site (`GLOSSARY.md`) is the documentation of the system `modus`. The home is its front door: the one page that shows the system. The docs (`GLOSSARY.md`) are the documentation: a guide (a document of `docs/`, how a part is designed and why) or a reference table (what exists in this build, generated from the code and the files that define it), under one section with a home of its own, the docs home (`GLOSSARY.md`). The status, the news and the releases are sections of their own. The owner asked for this order on 2026-11-12: "we need to be more \"doc like\", even though it's obviously fine to have a landing page that kinda does the house tour and shows off".
+The site (`GLOSSARY.md`) is the documentation of the system `modus`. The home is its front door: the one page that shows the system. The docs (`GLOSSARY.md`) are the documentation: a guide (a document of `docs/`, how a part is designed and why) or a reference table (what exists in this build, generated from the code and the files that define it), under one section with a home of its own, the docs home (`GLOSSARY.md`). The status, the news and the releases are sections of their own. The site is documentation first; the home is the one page that presents the system.
 
 No page holds a text that a person must remember to update: each page is generated from files of the repository and from the logs of the last machine tests. The news entries are the one text that a person writes for the site: each one is written once, in the step that made its thing, and is not updated after (see "The news").
 
 ## The command
 
-`modustool site` writes the site in `build/site/`. The folder is not committed. `modustool site --address https://<host>/<path>` sets the address of the site for one run (see "What the owner must decide").
+`modustool site` writes the site in `build/site/`. The folder is not committed. `modustool site --address https://<host>/<path>` sets the address of the site for one run (see "How the site is published").
 
 - One style sheet for all pages, one small script for the search (see "The search") and a few small scripts of one page each (the animations of the mark and the carousel on the home, the module graph, the index of the glossary), no request to another server: the pages work from a file, from a folder of a host and from the root of a domain. Each link inside the site is relative. Each page is whole with no script.
 - Before it writes a page, the command checks all the pages. A failure stops the command with the page and the reason, and no page is written:
@@ -35,7 +33,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 
 | Page | Generated from |
 |---|---|
-| `index.html`, the home | The mark (`src/library/support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the line of time of the start from the lines `kernel: boot: ...` of `build/test_output.txt` or of the measure record (see "The measure record"), the tiles of the boot image (see "The tiles of the boot image"), the charts of the measures, the carousel of the pictures of the gallery table that the home shows (see "The carousel of the home"), the band of the newest release of `CHANGELOG.md`, the download section (see "The download section"); see "The home" |
+| `index.html`, the home | The mark (`src/library/support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the whole paragraph is too long for a tagline; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the line of time of the start from the lines `kernel: boot: ...` of `build/test_output.txt` or of the measure record (see "The measure record"), the tiles of the boot image (see "The tiles of the boot image"), the charts of the measures, the carousel of the pictures of the gallery table that the home shows (see "The carousel of the home"), the band of the newest release of `CHANGELOG.md`, the download section (see "The download section"); see "The home" |
 | `gallery/`, the gallery | The gallery table and the pictures of `docs/screenshots`; see "The gallery" |
 | `pictures/thumbnails/<name>.png` | The thumbnail of each picture of the gallery; see "The thumbnails" |
 | `docs/`, the docs home | See "The docs home" |
@@ -68,7 +66,7 @@ The tool reads the commit from the files of git (`.git`, `HEAD`, the reference, 
 
 ## The addresses of the pages
 
-The owner asked for it on 2026-11-12: "j'aimerais des urls genre /reference/licenses au lieu de licenses.html (possible avec index.html dans dossier". Then, of the two sections Guides and Reference: "pourquoi \"reference\" et pas \"docs\" ? ça parle plus aux gens ?", and "on garde une page d'index sur docs avec un sous chemin reference et guides ?".
+An address names a folder, not a file: `/docs/reference/licenses/`, not `licenses.html`. The guides and the reference are two parts under one section, Docs, with an index page of its own.
 
 - Each page is the `index.html` of its own folder: `docs/reference/licenses/index.html`, `docs/guides/NETWORK/index.html`, `news/index.html`. The home is `index.html` at the root. `site_page_file` in `tools/modustool/site_frame.odin` gives the file of a page from its folder; no other code writes the path of a page.
 - The folders come from one place: `SITE_DOCS_FOLDER` (`docs`), `SITE_GUIDE_FOLDER` and `SITE_REFERENCE_FOLDER` under it, the folder of each reference table under the reference, and `site_section_folders` for the page of each section. A change of these lines moves the pages, the links, the canonical addresses, the sitemap, the page graphs, the feeds, `llms.txt` and the index of the search together.
@@ -145,6 +143,7 @@ The glossary (`docs/GLOSSARY.md`) is one source, read by one reader: `glossary_r
 - A term is a heading of level 3 in its group. Its name is the text of the heading, with no code marks. Its anchor is `term-<name>`, the name as the rule of the ids gives it; a second term of the same name gets `-2`, as a heading does.
 - The first paragraph under the heading is the short definition: one sentence that stands alone, with no document reference. The site shows it alone: as the tooltip (`title`) of each link to the term on another page, in a result of the search, and as the `description` of the term in the page graph.
 - The paragraphs after it are the explanation, in the Markdown of the guides: what the term is for, how a program gets and uses it, its neighbours, what it is not, an example from the system, and a document reference to its full design.
+- The explanation has at most 100 words, its document reference included. That is about five sentences of 20 words: one for each part above. A longer explanation repeats its guide, and then one fact has two places to keep true. The mechanism in detail, the refused forms and the numbers that the code decides go in the guide or the intent file that the reference names.
 - The last paragraph starts with "Do not use: " and lists the words that the term replaces. It is optional.
 
 `glossary_read` refuses a table of terms (the form before this one), two groups whose headings have one slug (each group is a page, named by its slug), a term before the first group, a term with no short definition or whose first paragraph is a list, a table, a quote or a fence, a heading of level 4 or more inside an entry, and a line "Do not use" that is not the last paragraph of its entry. `modustool check` and `modustool site` stop on each of them, with the line.
@@ -187,7 +186,7 @@ The documentation tree lists the groups under the glossary, each with the count 
 
 ## The news
 
-The owner asked for it on 2026-11-12: "\"What runs today\" watch out cause it'll be a nightmare to udate the description. we could have a \"parallel changelog\" (changelog is very technical/list-like) which would be like a \"status report\" or like \"News\"".
+A text that says what runs today must be kept true by hand at each change. The news is a parallel changelog in its place: the changelog is a technical list, and a news entry is a short report that is written once and never updated.
 
 A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject>.md`, never moved or merged: a head of six lines `key: value` (`title`, `date`, `release`, `picture`, `kind`, `guide`), one more line `film` in an entry that has a film, an empty line, then the text in the Markdown of this document. `news/README.md` gives the form, the four kinds and when a step writes an entry. The text is at most 1200 bytes (`NEWS_TEXT_LIMIT`): a few sentences for a reader; a longer report belongs in the guide that the entry names.
 
@@ -195,7 +194,7 @@ A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject
 |---|---|---|
 | Shown | A reader can now see or use a new thing in the running system | The color of a program |
 | Measured | A number about a thing that exists is measured, with its conditions | The color of memory |
-| Decided | The owner chose a thing that a reader sees: a name, a mark, a font | The color of the kernel |
+| Decided | A choice was made about a thing that a reader sees: a name, a mark, a font | The color of the kernel |
 | Fixed | A thing that a reader saw fail now works | The color of the machine |
 
 - `modustool news new <subject>` writes an entry with the date of the host, `release: next`, and no title and no text, so that the check fails until a person writes them. `modustool news check` checks each entry: the head, each key known and present once, the date a date of the calendar and the date of the file name, the picture a PNG file of `docs/screenshots/` or `resources/logo/`, the release a release of `CHANGELOG.md` or `next`, the guide a document of `docs/` that is a page of the site, the film a WebM file of `docs/films/` under its size bound in an entry that has a picture ("The film of a news entry"), the text not empty, at most 1200 bytes, with no heading and no line of HTML, and no two titles the same. `modustool check` runs it, and `modustool site` stops on the same faults.
@@ -257,7 +256,7 @@ Not done: the page graph of the news names no `VideoObject` for a film.
 
 ## The roadmap
 
-The owner asked for it on 2026-11-14: "j'aimerais [...] qu'on [la] rende visible sur le site, la roadmap, joliment, tout simplement, parallèle au changelog".
+The roadmap is a page of the site, beside the page of the releases: the work that is planned, beside the work that is done.
 
 `roadmap/` shows `ROADMAP.md`, the planned work of the system (`GLOSSARY.md`, "Roadmap"). It is the other half of `releases/`: the releases list the work that is done, the roadmap the work that is planned. The form of the file and its check are in `TOOLS.md`, "The roadmap"; the code of the page is `tools/modustool/site_roadmap.odin`.
 
@@ -286,7 +285,7 @@ The roadmap has no feed: an entry is not an event with a date, and it leaves the
 
 ## The search
 
-The owner asked for it on 2026-11-12: "une doc riche et auto générée, avec recherche, modules, etc.". The search needs no server and makes no request to another host.
+The documentation is generated, and a reader searches all of it. The search needs no server and makes no request to another host.
 
 ### The index
 
@@ -319,7 +318,7 @@ The owner asked for it on 2026-11-12: "une doc riche et auto générée, avec re
 
 The box and the list are those of the console (the picture `docs/screenshots/console_completion.png`):
 
-- A page has one search field (`GLOSSARY.md`), in one of two places (`Site_Search_Place`): at the right of the bar, in the place of the clock of the bar of the desktop, on every page but one; in the middle of the docs home, as a large field, on that page, whose bar has none. The owner, 2026-11-12, when asked whether the bar keeps its field beside the large one: "non c'est redondant. autant ne l'avoir que sur toutes les autres pages (exclusivité mutuelle)".
+- A page has one search field (`GLOSSARY.md`), in one of two places (`Site_Search_Place`): at the right of the bar, in the place of the clock of the bar of the desktop, on every page but one; in the middle of the docs home, as a large field, on that page, whose bar has none: two fields on one page say the same thing twice.
 - One markup for both places (`site_search_field_html`): the same ids, so the script finds the field of the page by its id; the class of its box and its placeholder differ. One script serves both: it opens the site menu for the field only when the menu holds it.
 - `/` puts the focus in the field of the page when the focus is not in a field.
 - Under the box, a line says how many entries match and how many are not shown, and the keys; then at most 8 rows, the best first; then the text of the chosen row. A row is the title with the matched characters in the accent color (`colors.boot_program`, at half its light in the light form) and, at its right in the dim color, its kind, after the icon of its kind in the color of its kind, and the title of its page. The chosen row has the band of the track and the blue line at its left.
@@ -331,7 +330,7 @@ With no script, the site is whole: every page is reachable by its links, and the
 
 ## The docs home
 
-The owner asked for it on 2026-11-12: "on garde une page d'index sur docs avec un sous chemin reference et guides ? avec une belle \"page d'accueil de docs\" avec une searchbar, qui cherche parmi tout ?". The code is `tools/modustool/site_docs_home.odin`.
+The docs home is the index page of the guides and of the reference, with a search field that searches all of them. The code is `tools/modustool/site_docs_home.odin`.
 
 `docs/` is a door to the docs, not a list: the presentation layout (one centred column, no tree, no "On this page"), the title "Docs", and from the top:
 
@@ -348,7 +347,7 @@ The text of the page needs the entries of the index, and the index has an entry 
 
 ### The chart of what the search finds
 
-The owner asked for it on 2026-11-12, of the paragraph that gave the counts under the field: "Un truc visuel, parce que là, juste l'espèce de boum, gros cube de texte, ça n'a aucun intérêt en dessous de la barre de recherche, ça prend juste de la place.", then "Et tant qu'à mettre un histogramme, autant le rendre dynamique." Then, of its place in the column of the reference, under the cards: "pas ouf le placement sur le site de l'histogramme (alors qu'il est trop cool !) genre on le voit quasi pas c'est dommage." Its point is that it moves while the reader types: it is under the field, in a compact form that does not push the cards away. The code is `site_search_chart` in `tools/modustool/site_docs_home.odin`, and the part of `search.js` that follows the field.
+The counts under the field are a chart, not a paragraph: a block of text under a search field takes room and tells a reader little. The chart follows the field. Its point is that it moves while the reader types: it is under the field, in a compact form that does not push the cards away. The code is `site_search_chart` in `tools/modustool/site_docs_home.odin`, and the part of `search.js` that follows the field.
 
 With no script, the chart is whole and static:
 
@@ -356,7 +355,7 @@ With no script, the chart is whole and static:
 - The bar: one segment for each kind that has entries, in the tie order of the kinds (the order of `search.json`), side by side from the left: a rectangle with square corners in the color of the value kind of the kind (`site_search_kinds`, the color that the list of results shows), with a line of 1 pixel of the background between two segments. The width of a segment: a least share of 8 thousandths of the bar (`SITE_SEARCH_CHART_LEAST_SHARE`, about 9 pixels at 1152 pixels and 3 at 360), so that a count of 1 among 1000 still shows a mark; the rest of the bar in proportion to the counts, rounded down; the last segment takes what the rounding left, so that the segments fill the bar (`site_search_chart_segments`). A kind with no entry has no segment and no chip.
 - Under the bar, one row of chips that wraps, a chip for each kind in the same order: the icon of the kind, its name for many entries ("terms", "news entries"), and its count as a number value, right-aligned in a width of four figures (the index holds at most 4096 entries). The name stays the name for many entries at every count: a chip keeps its width while the reader types, so the row does not break at another place and the cards under it do not move.
 - A chip whose kind has a page that lists every entry of the kind is a link to that page: the modules and the programs to the index of the modules, the operations, the error kinds, the commands of the console, the terms (the glossary), the license rows and the types to their reference pages, the guide sections to the index of the guides, the properties to the status page, the news entries to the news, the releases to the releases. The pages and the exports have no page of their own: their chips are not links.
-- The names and the counts are the text of the chart, for a reader with no picture and for a screen reader. The bar and the icons are `aria-hidden`. The heading "What the search finds" names the section for a screen reader; it is not shown: it is a line of text in the place that the owner wants free.
+- The names and the counts are the text of the chart, for a reader with no picture and for a screen reader. The bar and the icons are `aria-hidden`. The heading "What the search finds" names the section for a screen reader; it is not shown: a visible line of text there takes the room that the chart needs.
 - The height at 1420 pixels: the line of the bar (24 pixels) and two rows of chips of 24 pixels, about 3 lines. On a narrow screen the chips wrap on more rows; nothing scrolls sideways.
 
 Why an SVG rectangle: a page holds no style attribute, so a width cannot be a `width` of the style of an element. An inline `<svg>` with no `viewBox` takes the width of its box from the style sheet, and a `<rect x="12.3%" width="4.5%">` is a part of that width: the place and the width are attributes, they scale with the page, and the style sheet needs no rule for each width.
@@ -372,7 +371,7 @@ With the script, the chart follows the field:
 
 ## The home
 
-The owner looked at the home on 2026-11-14 and asked for six changes: the text of a news card with no picture at its top; a line of time in the place of the boxes of the start ("Soit on affiche une timeline [...] avec des informations riches, mais là l'espèce de boîte c'est nul"); a chart or nothing for the measures ("Soit on fait des rapports de statistiques qu'on affiche sur un graphe ou des histogrammes [...], soit on n'affiche rien"); a newest release that is worth a look ("le texte tout plat comme ça, c'est pas très aguicheur [...] il y a un manque d'emphase sur les mots"); an animation at a click on the heron; and the states of the buttons ("The states of a control"). The code is `tools/modustool/site_home.odin`; its host tests are `site_home_test.odin`; the intent is `src/md/features/site_home.md`.
+Six rules shape the home: the text of a news card with no picture starts at its top; the start is a line of time with its facts, not a set of boxes; a measure is a chart or nothing; the newest release has the emphasis of its words; a click on the heron starts an animation; each button has its states ("The states of a control"). The code is `tools/modustool/site_home.odin`; its host tests are `site_home_test.odin`; the intent is `src/md/features/site_home.md`.
 
 The home does the tour: it shows the system. From its top: the head (the heron, the name, the tagline, the doors), the news, "What it is", the line of time of the start, the tiles of the boot image, the charts of the measures, the carousel, the band of the newest release, the download section.
 
@@ -468,7 +467,7 @@ A click, a tap, Enter or Space on the large heron plays one animation at once.
 
 ## The gallery
 
-The owner asked for it on 2026-11-14, of the program `heron`: "faudra évidemment le rendre visible dans les captures du site parce que c'est super sympa. D'ailleurs je veux pas mettre trop de captures sur la page d'accueil [...] idéalement avoir [un] carrousel et une page galerie". The code is `tools/modustool/site_gallery.odin`; its host tests are `site_gallery_test.odin`.
+The home shows a few pictures in a carousel, and the gallery shows all of them. The code is `tools/modustool/site_gallery.odin`; its host tests are `site_gallery_test.odin`.
 
 Before it, the home showed 20 pictures in 7 groups, from a list of its own, and a picture that the list did not name was on no page: 91 of the 111 pictures of `docs/screenshots` were not on the site.
 
@@ -604,7 +603,7 @@ Not done: the page graph names no `ImageGallery` for the page; the script has no
 
 ## What other sites read
 
-The owner asked for it on 2026-11-12: "we'll want a sitemap, json-ld, good seo (graph) etc". The structure follows a site of the owner that has these parts; no fact of that site is copied here. The code is `tools/modustool/site_metadata.odin`; its host tests are `site_metadata_test.odin`, with a site address and with none.
+The site gives a search engine a sitemap and a page graph in JSON-LD. The code is `tools/modustool/site_metadata.odin`; its host tests are `site_metadata_test.odin`, with a site address and with none.
 
 A canonical address, an address of Open Graph and an `@id` of JSON-LD must be absolute: a relative one is wrong for the program that receives it. So each part that needs one is written only with a site address (`GLOSSARY.md`), and the command lists the parts that it did not write.
 
@@ -637,14 +636,14 @@ One `@graph` for each page, built from the data that the page shows; no value is
 
 `BlogPosting`, not `NewsArticle`: a news entry is a dated report of the project, as a post of a blog. `NewsArticle` is for the articles of a publisher of news, and a search engine reads it as journalism.
 
-Not verified against a validator of schema.org or the documents of a search engine, since this work runs with no network: the field `availableOnDevice` of `SoftwareApplication`; whether a search engine accepts a free text "Operating system" for `applicationCategory` (its list of categories has no operating system); whether the `SearchAction` is still read (one search engine stopped showing a box of search for it in 2024); the limit of 110 characters of a headline. The author (owner, 2026-11-12: "pour l'auteur du site évidemment tu peux mettre"): a `Person` node, `<site address>/#author`, on each page. Its `name` is the holder of the line `Copyright` of `LICENSE` (the words after `(c)` and the years), the one fact of an author that the repository holds; its `url` is the account that owns the repository (`SITE_REPOSITORY_ADDRESS` without its last part). It is the `author` of the `SoftwareApplication`, the `SoftwareSourceCode`, each `TechArticle` and each `BlogPosting`, and the `publisher` of the `WebSite`. Each page has `<meta name="author">`, also with no site address, and the two feeds name it in `<author>`. When `LICENSE` names no holder, there is no `Person`, no field names one, and the feeds name the system.
+Not verified against a validator of schema.org or the documents of a search engine, since this work runs with no network: the field `availableOnDevice` of `SoftwareApplication`; whether a search engine accepts a free text "Operating system" for `applicationCategory` (its list of categories has no operating system); whether the `SearchAction` is still read (one search engine stopped showing a box of search for it in 2024); the limit of 110 characters of a headline. The author: a `Person` node, `<site address>/#author`, on each page. Its `name` is the holder of the line `Copyright` of `LICENSE` (the words after `(c)` and the years), the one fact of an author that the repository holds; its `url` is the account that owns the repository (`SITE_REPOSITORY_ADDRESS` without its last part). It is the `author` of the `SoftwareApplication`, the `SoftwareSourceCode`, each `TechArticle` and each `BlogPosting`, and the `publisher` of the `WebSite`. Each page has `<meta name="author">`, also with no site address, and the two feeds name it in `<author>`. When `LICENSE` names no holder, there is no `Person`, no field names one, and the feeds name the system.
 
 ### The sitemap, robots.txt and the feeds
 
 - `sitemap.xml` lists the canonical address of each page that the command writes, once, by path. A page has a `lastmod` only when the tool knows the date of its last change: `news/` (the date of its newest entry) and `releases/` (the date of its newest release). The other pages have none: each build changes their foot, and the tool does not read the history of their sources. A wrong `lastmod` teaches a search engine to ignore the field.
 - `robots.txt` allows each page and gives the address of the sitemap. A crawler reads `robots.txt` only at the root of a host: when the site address has a path, the command says that the `robots.txt` of the root must have the line `Sitemap:`.
 - `releases.xml` is the feed of the releases (Atom): one entry for each release of `CHANGELOG.md`, newest first, with its release time (`published` and `updated`, `2026-11-15T18:48:00Z`; an old release with its day alone gives 00:00 UTC), its first change as its summary, and its changes in HTML. The id of an entry is `<repository>/blob/master/CHANGELOG.md#release-<number>`: a release is never renamed, so the id does not change when the site gets an address. The subscribe menu of the page of the releases links it ("The subscribe menu").
-- `llms.txt` follows the form of llmstxt.org, as the site of the owner has one: the name, the lead of `README.md` as a quote, then a list of the pages for each section, each with its title and its description; the module pages are in the part `## Optional`.
+- `llms.txt` follows the form of llmstxt.org: the name, the lead of `README.md` as a quote, then a list of the pages for each section, each with its title and its description; the module pages are in the part `## Optional`.
 - `site.webmanifest`: the name, the description (the whole first paragraph of `README.md`, cut at 160 bytes), `lang`, `start_url` and `scope` `./` (the root of the site, where the manifest is), the dark background as the background and theme color, and three icons: 192 and 512 with `"purpose": "any"`, and 512 with `"purpose": "maskable"`. Its addresses are relative to it.
 
 ### The pictures
@@ -815,7 +814,7 @@ Code takes the text color, because the dim color on the track is 4.33. The color
 
 ### The tables
 
-The owner asked for it on 2026-11-12, of the measured numbers at a width of 1630 pixels: "tableau pas ouf, si possible de faire un tableau scrollable ? pck la colonne compressée".
+A table wider than its column scrolls inside its box: a column of a table is never compressed to fit.
 
 The writer of each generated table states the kind of each column (`Site_Column_Kind` in `tools/modustool/site_pages.odin`), because it knows what the column holds. `site_table_start` writes the class of the kind on each header cell, and `site_table_end` writes it on each cell of the body, by the place of the cell in its row. The style sheet gives each kind its least width as a `width` on the header cell: in the automatic layout of a table, that width is a least width, and a table with more room shares it in proportion to those widths.
 
@@ -830,7 +829,7 @@ The writer of each generated table states the kind of each column (`Site_Column_
 | List | Several names: modules, grants, statuses, labels | 8 em, and at least its longest name | Between its names, never inside one |
 | Any | A column of a table of a document of `docs/` | 6 em, about 12 characters | At spaces; a cell that holds only a number or a date gets that kind |
 
-A list of names is not a name. On 2026-11-13 the table of the grants of each program showed each set of grants as its Odin literal, on one line that pushed the column of the reasons out of its box, and a row of several programs started lines with a comma. A cell or a fact that holds several names is a list of values (`site_value_list`): a `<ul class="value-list">` with one value in each item, each item on one line, the list wrapping between its items, with no brace, no period before a member and no comma. A screen reader reads the count of the items. Its least width is its longest name, so a column of lists never pushes the column of prose out of the box. The writers that use it: the programs and the grants of the page of the grants (each grant a link to its row in the table "What a program receives at its start", with its name and no period), the grants and the budget of a program on its module page, the imports of the index of the modules, the imports, the importers and the build settings of a module page, the table of the edges of the module graph, the statuses that the text of an operation names, the parameters of a command of the console and of an export, the types that a wire form names, the variants of a union and the places that name a type. A value of a source is never shown as its literal: a set of grants of the root service is read as its members (see "The reference tables").
+A list of names is not a name. A set of grants written as its Odin literal, on one line, pushes the column of the reasons out of its box, and a row of several programs then starts lines with a comma. A cell or a fact that holds several names is a list of values (`site_value_list`): a `<ul class="value-list">` with one value in each item, each item on one line, the list wrapping between its items, with no brace, no period before a member and no comma. A screen reader reads the count of the items. Its least width is its longest name, so a column of lists never pushes the column of prose out of the box. The writers that use it: the programs and the grants of the page of the grants (each grant a link to its row in the table "What a program receives at its start", with its name and no period), the grants and the budget of a program on its module page, the imports of the index of the modules, the imports, the importers and the build settings of a module page, the table of the edges of the module graph, the statuses that the text of an operation names, the parameters of a command of the console and of an export, the types that a wire form names, the variants of a union and the places that name a type. A value of a source is never shown as its literal: a set of grants of the root service is read as its members (see "The reference tables").
 
 The measured numbers are What (Prose), The line of the log (Line), Log, line, machine (Prose) and Written (Date): 13 + 30 + 13 em and the date, under the 1120 pixels of the column of the page, so the table does not scroll on a wide screen, and a line of a log takes two or three lines.
 
@@ -844,7 +843,7 @@ The measured numbers are What (Prose), The line of the log (Line), Log, line, ma
 
 ### The site menu
 
-The owner asked for it on 2026-11-12: "il manque un menu burger sur la version mobile du site".
+On a narrow screen, the sections of the bar are in a menu.
 
 - The sections and the search field are in one `<details class="bar-menu">` of the bar (on the docs home, the sections only: its field is in the page): one list of links for every width, so a screen reader reads each section once. Its `<summary>` is the button: a square of 32 pixels with three lines of 16 by 2 pixels drawn by the style sheet, and the word "Menu" as its name, hidden by the style sheet. With no style sheet the word shows, and the button opens the list.
 - Under 720 pixels: the heron and the name at the left, the button at the right. The open menu lies over the page under the bar, over the whole width: the sections one under the other, the current one marked by a line at its left, then the search over the whole width with its list under it. The open button has the border and the lines in the color of the line of a link. The focus is visible (the rule of the site). The button is a `summary`: Enter and Space open and close it with no script.
@@ -857,7 +856,7 @@ The owner asked for it on 2026-11-12: "il manque un menu burger sur la version m
 
 ### The buttons and the menu of the bar
 
-The owner decided it on 2026-11-14, on the fact that six sections do not fit the one line of the bar near 720 pixels: "Regrouper certains trucs dans un dropdown et voilà". The code is `tools/modustool/site_bar.odin`; its host tests are `site_bar_test.odin`; the intent is `src/md/features/site_bar.md`.
+Six sections do not fit the one line of the bar near 720 pixels, so three of them are in one menu. The code is `tools/modustool/site_bar.odin`; its host tests are `site_bar_test.odin`; the intent is `src/md/features/site_bar.md`.
 
 The bar is one line of 41 pixels, and the parts under it are placed by that height ("The polish of the browser's parts"). Six sections stand under the home. The bar names them all:
 
@@ -921,7 +920,7 @@ The label of the feed is "Atom feed": the two feeds are Atom, and the site write
 
 ### The states of a control
 
-The owner asked for it on 2026-11-14: "les boutons [...] manquent d'un état visuel au survolage et actif." The code is `tools/modustool/site_controls.odin`; the intent is `src/md/features/site_bar.md`.
+A button shows when the pointer is over it and when it is pressed. The code is `tools/modustool/site_controls.odin`; the intent is `src/md/features/site_bar.md`.
 
 A site control (`GLOSSARY.md`) is a part of a page that a reader presses. Before this rule a button had no sign of the pointer: a link under the pointer takes the track color, and a button is already a rectangle of the track.
 
@@ -954,7 +953,7 @@ The host test `site_controls_have_their_states` checks, for each control of the 
 
 ### The two layouts
 
-The owner asked for it on 2026-11-12: "la doc, je veux un vrai truc de doc, comme Odin par exemple, où ils ont une sidebar, il y a des documentations techniques au centre, il y a les symboles à droite". The code is `tools/modustool/site_documentation.odin`.
+A page of the documentation has three columns, as the documentation of Odin has: the tree at the left, the text in the middle, the list "On this page" at the right. The code is `tools/modustool/site_documentation.odin`.
 
 The writer of each page states its layout (`Site_Page.layout`); the tool does not guess it from a path.
 
@@ -1026,7 +1025,7 @@ The host tests: `site_documentation_tree_has_tree_lines` (each list under an ite
 
 ### The kinds of values
 
-The owner asked for it on 2026-11-12: "que les valeurs techniques, comme par exemple le fait de dire handle ou les valeurs numériques, soient affichées en monospace, qu'elles aient une couleur [...] accompagnées d'un icône". The rule of the two fonts of the desktop holds (`DESIGN.md`, "Two fonts"): a name or an explanation in the reading font, a value in the monospace font. The code is `tools/modustool/site_values.odin`.
+A technical value, such as a handle or a number, is in the monospace font, with a color and an icon. The rule of the two fonts of the desktop holds (`DESIGN.md`, "5. Text"): a name or an explanation in the reading font, a value in the monospace font. The code is `tools/modustool/site_values.odin`.
 
 The value kinds (`GLOSSARY.md`) are one enumeration of the system, `value_kinds.Value_Kind` (`src/library/contract/value_kinds`), with the name of each kind (`VALUE_KIND_NAMES`, the class `value-<name>`): a log record of the system keeps the same kinds. The color of each kind is one table of the system, `src/library/support/graphics/value_colors.odin`: an accent of `src/library/support/graphics/rules.odin` with a `graphics.shade` for each color scheme (`DESIGN.md`, "The colors of values"); the program `log` reads the same table. The icon of each kind is its kind icon (`GLOSSARY.md`), one table of the system too, `src/library/support/kind_icons` (12 by 12 cells, `#` a cell; `DESIGN.md`, "The icons of the kinds"): the palette of the desktop draws the same cells. The table of the site, `site_value_kinds`, gives each kind what only the site shows: its title and its meaning. The contrast is that of the text of a value on the two surfaces of a table: the background and the band of every second row (dark: `0x0B1018`, `0x17212E`; light: `0xF4F6F8`, white). A host test computes each one.
 
@@ -1087,7 +1086,7 @@ The site is behind a proxy that keeps a file for hours. Each link to a file whos
 
 ### A page of an older build
 
-A version in the address works for a file that a page names; it cannot work for the page itself, whose address is the one that a reader types or follows. The host serves each page with `max-age=600`, and the site cannot set the headers of its host. So a browser can show a page of an older build for 10 minutes after a publication, and the edge of the host for as long as it keeps it. On 2026-11-13 the owner saw a page whose code was not colored and a bare name of a document; the site served with an empty cache had neither: his browser or the edge had kept the older page.
+A version in the address works for a file that a page names; it cannot work for the page itself, whose address is the one that a reader types or follows. The host serves each page with `max-age=600`, and the site cannot set the headers of its host. So a browser can show a page of an older build for 10 minutes after a publication, and the edge of the host for as long as it keeps it. A reader then can see a page of the older build, while the site served with an empty cache is the new one.
 
 What the site does:
 
@@ -1240,7 +1239,7 @@ The bytes of a tile map. Its pixels are red, green, blue and alpha, 8 bits each,
 
 ### The icons
 
-The owner asked for it on 2026-11-12: "la favicon faut qu'elle soit bien configurée". Each icon is a row of the table of the uses of the mark (`DESIGN.md`, "The variants of the mark"), and the generator of the pictures of the mark makes its file (`TOOLS.md`, "The pictures of the mark"). `tools/modustool/site_icons.odin` holds what is not the mark: the list of the icons of the manifest, and the checks.
+Each icon is a row of the table of the uses of the mark (`DESIGN.md`, "The variants of the mark"), and the generator of the pictures of the mark makes its file (`TOOLS.md`, "The pictures of the mark"). `tools/modustool/site_icons.odin` holds what is not the mark: the list of the icons of the manifest, and the checks.
 
 The heron is pixels: each raster icon is the drawing of `src/library/support/mark` at a whole cell size, centred with an even margin, never scaled by a filter. The entry of 32 pixels of `favicon.ico` is the cells variant; each other raster icon has two pixels or more for a cell and is the smooth variant.
 
@@ -1253,7 +1252,7 @@ The heron is pixels: each raster icon is the drawing of `src/library/support/mar
 | `pictures/icon_512.png` | 512 | 21 (504) | 4 | Transparent, the light form | The manifest, `"purpose": "any"` |
 | `pictures/icon_512_maskable.png` | 512 | 12 (288) | 112 | Opaque: the dark background, the dark form | The manifest, `"purpose": "maskable"` |
 
-- No icon of 16 pixels: 16 pixels cannot hold the 24 cells of the heron, and the table has no smaller drawing. A browser scales the 32 of `favicon.ico` for a tab of 16 pixels, as it does for most sites. A reduced table would be a new drawing of the mark, which only the owner can decide.
+- No icon of 16 pixels: 16 pixels cannot hold the 24 cells of the heron, and the table has no smaller drawing. A browser scales the 32 of `favicon.ico` for a tab of 16 pixels, as it does for most sites. A reduced table would be a new drawing of the mark, and the site does not make one.
 - The tab of a browser is light or dark. A transparent icon takes the light form of the mark: its neck (`0x9FB2C8`) reads on a light and on a dark tab, where the pale neck of the dark form disappears on white.
 - The icon of a phone and the maskable icon are opaque, because iOS fills a transparent part and Android cuts the icon to a shape. The maskable drawing fits inside the circle of 80 percent of the icon: its corners are at 203.6 pixels from the centre (144 times the square root of 2), under 204.8.
 - `favicon.ico` is the ICO container with PNG entries: a header of 6 bytes, an entry of 16 bytes for each picture (its width and height, 1 plane, 32 bits, its bytes and its offset, little endian), then the PNG files. Each entry is the PNG file that the generator writes for the picture of its row, byte for byte. The generator writes the file (`mark_ico_encode`), and the check of the site reads its directory back (`mark_ico_read`).
@@ -1323,7 +1322,7 @@ The index of the modules links to the page of the module graph.
 
 ## The module graph
 
-The owner asked for it on 2026-11-12: "et on a de quoi faire du déboggage de modules ? (et pourquoi pas un outil de visualisation des \"dépendances\"/carte d'identité module(s) ?". The code is `tools/modustool/site_module_graph.odin`; its host tests are `site_module_graph_test.odin`. The same facts for what runs now are `manual.edges()` (`MODULE_CONTRACT.md`, "Replacement of an import").
+The module graph shows the imports of each module, to debug a module and to see its dependencies. The code is `tools/modustool/site_module_graph.odin`; its host tests are `site_module_graph_test.odin`. The same facts for what runs now are `manual.edges()` (`MODULE_CONTRACT.md`, "Replacement of an import").
 
 `docs/reference/module-graph/` draws the module graph (`GLOSSARY.md`) of the build. The reference index, the card of the reference of the docs home and the tree list it after the modules, and the index of the modules links to it.
 
@@ -1373,7 +1372,7 @@ The identity card (`GLOSSARY.md`) of a module: its name (a link to its page, but
 
 ## The references to documents
 
-The owner asked for it on 2026-11-12, of the page of a module that started with "The kernel (docs/ARCHITECTURE.md, systems K1 to K5).": "ça devrait pas etre genre un \"tag\" ou une \"référence\" ? genre un lien, affiché avec un style pour architecture.md ? je comprends pas ce texte en fait. K1 to K5 ?". The code is `tools/modustool/site_document_references.odin`; its host tests are `site_document_references_test.odin`.
+A reference to a document in a text, such as "docs/ARCHITECTURE.md, systems K1 to K5", is a link with a style of its own, not bare text that a reader cannot follow. The code is `tools/modustool/site_document_references.odin`; its host tests are `site_document_references_test.odin`.
 
 A comment of the source names a document for a person who reads the code: a document pointer (`GLOSSARY.md`). The rule of the comments allows it. On a page, the path and a label such as "U3" or "section 8" mean nothing: the site writes a document reference (`GLOSSARY.md`) in its place.
 
@@ -1424,11 +1423,11 @@ The command prints "N document references, M with no heading found: <the first t
 
 Before it writes a page, the command checks every pointer, also those of a comment that no page shows: each comment of each source file of `src/kernel`, `src/programs`, `src/modules`, `src/library/support`, `src/library/contract`, `src/runtime` and `src/boot` (the lines of comment that follow each other are one text), and each code span that names a document in the guides, the glossary, the news and the intent files. In an intent file, a link to a guide with the heading of a place after it is a pointer too (`TOOLS.md`, "The intent folder"). A pointer whose labels do not all find their place stops the command, with its file and its line: a stale pointer or a label that names no heading (a free text) cannot come back. The tool is not read: its tests hold stale pointers on purpose. The target of a link `[text](docs/X.md#id)` is not a pointer; the same pass checks each link of the comments (see "The links of a comment"). A guide names no working record of `docs/` and no decision; it can name an intent file, which holds the reasons of a design. The one working record is `docs/SITE.md`: it is not a page of the site, and a link to it names the file in the repository.
 
-The owner asked for the check of the pages on 2026-11-13: "il reste des références là, par exemple docs/TOOLS.md. Alors, soit on met une référence vers quelque chose de réel, soit on met un lien, soit on l'enlève, mais on peut pas laisser ça comme ça." Before it writes a page, the command reads the text of each page, outside a link, a code element, a block of code, a script and a style, and stops on a name of a document there (`site_document_name_problem`), with the page and the words around the name. A name of a document is `docs/<NAME>.md` (by its form, also when no such file exists), or `<NAME>.md` for a guide, a working record, `README.md`, `CHANGELOG.md` or `AGENTS.md` (`site_document_names`), as a whole word: a `/` can come before it (`news/README.md`), a letter, a digit or a period cannot. An attribute is not text. No text is an exception: a document that a page names is a reference, a link or code. The form of each source: in a guide, a code span (`` `DESIGN.md`, section 5 ``), also in a cell of a table, which the renderer writes as prose; in a source comment, the pointer `(docs/DESIGN.md, section 5)`; in the text of a command of the tool, a code span, which the page of the commands writes as code in its table and as a link to the file under it. The host test `site_document_names_are_never_bare` holds the cases.
+A name of a document on a page is a reference to a real place, or a link, or it is not there. Before it writes a page, the command reads the text of each page, outside a link, a code element, a block of code, a script and a style, and stops on a name of a document there (`site_document_name_problem`), with the page and the words around the name. A name of a document is `docs/<NAME>.md` (by its form, also when no such file exists), or `<NAME>.md` for a guide, a working record, `README.md`, `CHANGELOG.md` or `AGENTS.md` (`site_document_names`), as a whole word: a `/` can come before it (`news/README.md`), a letter, a digit or a period cannot. An attribute is not text. No text is an exception: a document that a page names is a reference, a link or code. The form of each source: in a guide, a code span (`` `DESIGN.md`, section 5 ``), also in a cell of a table, which the renderer writes as prose; in a source comment, the pointer `(docs/DESIGN.md, section 5)`; in the text of a command of the tool, a code span, which the page of the commands writes as code in its table and as a link to the file under it. The host test `site_document_names_are_never_bare` holds the cases.
 
 ## The Markdown of a source comment
 
-The owner asked for it on 2026-11-13: "I suppose you extract text from the code BUT it lacks emphasis (bold, italics, lists, shit like that) and makes the paragraphs displayed in the docs look very plain and boring to read. we could use markdown for this (and have []() references to symbols and stuff if that's not already done". The code is `tools/modustool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the programs of the system is `src/library/support/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
+A source comment is Markdown: bold, italics, lists and links to declarations, so that the text that the site takes from the code reads as the guides do. The code is `tools/modustool/comment_markdown.odin`, `site_comment_links.odin` and the mode for comments of `site_render.odin`; the host tests are `comment_markdown_test.odin`. The reader of the same part for the programs of the system is `src/library/support/source_comment_markdown` (see "The reader of the system"). `docs/TOOLS.md`, "The form of a documented comment", is the rule for the author of a comment.
 
 A source comment is Markdown in a small part, written by the renderer of the guides (`Site_Renderer.comment`): one renderer, and a mode that refuses what a comment does not have.
 
@@ -1499,7 +1498,7 @@ What `manual` does with the blocks and the spans:
 - The system has no italic face. A word in italics has a line of 1 pixel under it, in the dim color: the color of the word does not change, so the sign is not a color alone.
 - A list item has its mark in the dim color, and its text starts after the mark. An item inside an item is 2 cells to the right.
 - A fenced block and an example have a band behind their rows, from their indentation to the end of the text.
-- A link is a name in the color of a link. A link whose target is a module of the boot image, or a module and one of its exports (`manual.show`), also has a line of 1 pixel under it: a click on it shows the page of that module, from the signature of that export. A term, a guide, a declaration and a kernel operation have no page in the system: their links are colored names only.
+- A link is a name in the color of a link. A link that opens also has a line of 1 pixel under it; a link with no page has none. A module of the boot image, or a module and one of its exports (`manual.show`), opens the page of that module, from the signature of that export. A term, a heading of a guide and a declaration that no module describes open their link page of the resource `manual_pages`, when the tool wrote one at the build. An address is shown, not opened. Tab and Enter reach a link with the keyboard, and Backspace goes back (`MODULE_CONTRACT.md`, "The links of a page of the manual"; `src/md/features/manual_links.md`).
 - A row is broken between two words, at the width of the text, with the width of each word in the font that draws it. Two spans with no space between them, as a bold word and the comma after it, are one word. Only a word that is longer than a row is cut. A text longer than the window scrolls.
 - When the font setting changes, `manual` makes the rows of its page again, at the same place: the widths of the words changed.
 
@@ -1507,7 +1506,7 @@ When it starts, `manual` checks the page of its own module, whose comments have 
 
 ## The types
 
-The owner asked for it on 2026-11-12: "Si c'était possible sur les différents data types, d'avoir un tool type qui explique le type. Genre sa carte d'identité, sa taille, des informations techniques. Sa taille, son alignement, les trucs normaux qu'on aimerait savoir quand on vient sur cette doc." The code is `tools/modustool/site_types.odin`; its host tests are `site_types_test.odin`.
+Each data type has a card: its kind, its size, its alignment and its fields. The code is `tools/modustool/site_types.odin`; its host tests are `site_types_test.odin`.
 
 ### What a type card holds
 
@@ -1626,7 +1625,7 @@ The id of a diagram is `byte-layout-<key>`, as the rule of the ids gives it (`by
 
 ## The colors of the code
 
-The owner asked for it on 2026-11-12: "Un peu dommage aussi qu'on ait pas de coloration du code, peut-être avec Shiki, on peut, parce que là je vois du Odin qui est pas coloré." The code is `tools/modustool/site_code.odin`; its host tests are `site_code_test.odin`. The colors of the classes are the table of the colors of code of the system (`src/library/support/graphics/code_colors.odin`, `docs/DESIGN.md`, section 4), which the terminal of the system reads too: a type has one color on the site and in the console.
+The code on a page is colored by the tool, with no library of another project. The code is `tools/modustool/site_code.odin`; its host tests are `site_code_test.odin`. The colors of the classes are the table of the colors of code of the system (`src/library/support/graphics/code_colors.odin`, `docs/DESIGN.md`, section 4), which the terminal of the system reads too: a type has one color on the site and in the console.
 
 The tool colors the code when it writes the pages: static markup, no script, no request, nothing new in the Content-Security-Policy. Not Shiki: it is a library of Node, and the automation of the repository is commands of the Odin tool, with no script of another language. Odin is read by the tokenizer of the compiler itself (`core:odin/tokenizer`), not by a grammar of regular expressions: a token is what the compiler sees.
 
@@ -1658,13 +1657,13 @@ Where it applies: only a block that the tool knows to be Odin.
 - The fenced blocks of the guides marked `odin`. A block with no language stays plain: the language is not guessed.
 - A code span of a text that is a fragment of Odin by the test of "The declarations of the sources": a span is short, and the test refuses each form of a command, a path and a log, so a span is colored only when it can be nothing but code.
 
-The fenced blocks of `docs/*.md` on 2026-11-12: 15 blocks; 9 with no language, 5 `mermaid`, 1 `odin`. No block is marked `asm`, `sh`, `console`, `nix` or `yaml`, so the tool has no other lexer: a lexer for a language that no block names is code with no use. The 5 mermaid blocks stay plain, as before. The one block of Odin (`MODULE_CONTRACT.md`, the export `seal`) is colored.
+The fenced blocks of `docs/*.md` have no language, `mermaid`, `odin` or `byte-layout`. No block is marked `asm`, `sh`, `console`, `nix` or `yaml`, so the tool has no other lexer: a lexer for a language that no block names is code with no use. A mermaid block stays plain. A block of Odin is colored.
 
 The size: the declarations of the page of the types are 963 lines, 53 KB of text, about 7 900 tokens; their spans and references add about 100 KB to that page (estimated, not measured). The guide of the module contract grows by about 1.5 KB; the other guides do not change.
 
 ## The declarations of the sources
 
-The owner asked for it on 2026-11-12, of a paragraph of a guide with code spans that name procedures and files and hold an expression: "dans ce genre de texte, ce serait cool d'avoir des références vers les fonctions/symboles/etc mentionnées + de la coloration syntactique, meme dans les inline snippets, si possible". The code is `tools/modustool/site_declarations.odin`; its host tests are `site_declarations_test.odin`.
+A code span in a guide that names a procedure links to its declaration, and a code span that holds an expression is colored. The code is `tools/modustool/site_declarations.odin`; its host tests are `site_declarations_test.odin`.
 
 ### The declaration index
 
@@ -1721,7 +1720,7 @@ The command prints the declarations of the index by kind, the files that the par
 
 ## The polish of the browser's parts
 
-The owner asked for it on 2026-11-12: "si tu peux styliser les scroll-bars, s'il te plaît, ce serait cool. Tu as tous les trucs de peaufinage en CSS là que tu peux mettre, genre la couleur de highlight, enfin tout ce bordel." In the design of the system: square, the colors of the palette, both color schemes, and nothing more. The rules are `SITE_POLISH_RULES` in `tools/modustool/site_style.odin`, after the colors, so that print and the forced colors win over them.
+The site styles the parts that the browser draws: the scroll bars, the color of a selection. In the design of the system: square, the colors of the palette, both color schemes, and nothing more. The rules are `SITE_POLISH_RULES` in `tools/modustool/site_style.odin`, after the colors, so that print and the forced colors win over them.
 
 - Scroll bars: see "The scroll bars". `scrollbar-gutter: stable` on the page.
 - `color-scheme: dark light` on the root; each page already has `<meta name="color-scheme" content="dark light">`.
@@ -1775,24 +1774,9 @@ The host test `site_style_sheet_scroll_bars` checks: the rules of both engines; 
 
 The home shows one tile for each module of `build/boot.image`: the width from the size of the module (5 rows of 1088 pixels for all, at least 48 pixels), the color from the first byte of its hash (`graphics.hue_color`). Each tile links to its module page. The colors and the widths are rules of the style sheet, because the pages hold no inline style. When the image is not built, the tiles are the modules of `module_builds` that it holds, with no size and no color, and the home says so.
 
-## Not done yet
-
-The work is in layers; each layer adds pages to a site that works.
-
-- (a) Done: the pages, the bar, the transparent mark, the renderer, the guides; also the tables of the licenses.
-- (b) Done: the status page, the reference tables generated from the code, the module pages, the tiles of the boot image on the home, the links from the code spans of the guides to the rows.
-- The metadata for other sites goes into the head of `site_page_html`, which writes every page.
-- (c) Done: the news (`news/`, `modustool news`), its page, its door on the home, its feed and its links from the releases.
-- (d) Done: the search: its index, its script, its box in the bar.
-- (e) Done: what other sites read (`tools/modustool/site_metadata.odin`): the canonical address, Open Graph, the summary card, the page graph, the manifest, `sitemap.xml`, `robots.txt`, `releases.xml`, `llms.txt`, the pictures of the repository compressed, and their checks. See "What other sites read".
-- Done: the module graph, the identity card and the neighbours of each module (see "The module graph").
-- (f) Done: one section Docs in the bar, the guides and the reference under `docs/`, the docs home with its own search field, and the redirect pages of the two generations of old addresses. See "The sections", "The redirect pages" and "The docs home".
-- The count of checks of `modustool check` on the site: the measure record counts the checks of `modustool screenshots` only (the machine tests and the second build), not the host tests of `modustool check`.
-- An embedded font for the text: Paper Mono is under the SIL OFL 1.1 with no Reserved Font Name (`resources/fonts/paper_mono.license`): its ASCII subsets can be copied into the site with `OFL.txt` and their `.license` files and declared with `@font-face`. The site uses the fonts of the reader's system for its text; its one font file is the font of the name of the mark.
-
 ## How the site is published
 
-The owner chose it on 2026-11-12: "pour la publication du site je préfère un workflow GitHub évidemment". The site is at `https://modus.froment.software/` (`SITE_ADDRESS` in `tools/modustool/site_frame.odin`). `modustool site --address https://<host>/<path>` writes it for another address for one run (see "What other sites read").
+A GitHub workflow publishes the site. The site is at `https://modus.froment.software/` (`SITE_ADDRESS` in `tools/modustool/site_frame.odin`). `modustool site --address https://<host>/<path>` writes it for another address for one run (see "What other sites read").
 
 The site workflow (`GLOSSARY.md`), `.github/workflows/site.yml`, runs at each push to `master` and by hand (`workflow_dispatch`). It holds no logic: each step calls the tool or an action, and each action is pinned by a version tag.
 
@@ -1827,7 +1811,7 @@ The time of the step `modustool build` on a runner of GitHub is not measured yet
 The domain:
 
 - The custom domain is a setting of the repository (Settings, Pages: the source "GitHub Actions", the custom domain `modus.froment.software`, "Enforce HTTPS"). With a deployment of an artifact, GitHub Pages ignores a `CNAME` file: the site has none.
-- The record at Cloudflare: `modus.froment.software`, a `CNAME` to `sachahjkl.github.io`, through the proxy of Cloudflare (the owner accepted the proxy). Not verified here: GitHub Pages makes the certificate of a custom domain only when its check of the record sees GitHub, and the proxy hides it. The usual order: the record with no proxy until GitHub shows "Enforce HTTPS", then the proxy, with the TLS mode "Full (strict)" of Cloudflare.
+- The record at Cloudflare: `modus.froment.software`, a `CNAME` to `sachahjkl.github.io`, through the proxy of Cloudflare. Not verified here: GitHub Pages makes the certificate of a custom domain only when its check of the record sees GitHub, and the proxy hides it. The usual order: the record with no proxy until GitHub shows "Enforce HTTPS", then the proxy, with the TLS mode "Full (strict)" of Cloudflare.
 - The branch `gh-pages` that served the first version by hand is no longer read once the source is "GitHub Actions".
 
 The headers: GitHub Pages sends no header that a site chooses. The proxy of Cloudflare adds these to each answer for the host `modus.froment.software` (a rule that changes the headers of the response):
@@ -1843,9 +1827,3 @@ The headers: GitHub Pages sends no header that a site chooses. The proxy of Clou
 | `Cross-Origin-Opener-Policy` | `same-origin` | A page of another host that opens the site gets no handle on its window |
 
 A `<meta>` policy is not written: `frame-ancestors` has no effect there, and `'self'` does not work for a page opened from a file. The types of the files are those of GitHub Pages, from their extensions: `application/xml` for the two feeds, which feed readers read.
-
-## What the owner must decide
-
-1. Done: the measured numbers of the site online come from the measure record (see "The measure record").
-2. The cache of the workflow: the cache of GitHub Actions (`magic-nix-cache-action`, now) or FlakeHub Cache (`flakehub-cache-action`, which needs a FlakeHub account for the repository).
-3. Done: the description of the project is one sentence, "A fast, modular operating system, sandboxed by default", in the lead of `README.md`, which the site reads, in the `description` of `flake.nix` and in the description of the repository.

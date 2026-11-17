@@ -605,7 +605,7 @@ The run passes: OpenSSL takes the Retry, completes the handshake with the raw pu
 4. `remote` writes on the same stream the call answer: one `remote.Answer` header of 112 bytes, whose `total` counts the bytes of the result, then those bytes, then the end of the stream. The host checks that the bytes are exactly a header and its total (`remote.answer_check`).
 5. The stream ends when both ends were read and acknowledged: its stream record is free, and the server gives the host one more stream (MAX_STREAMS).
 
-The stream names the call: the headers have no request number, and the answers in parts are gone. A lost datagram is sent again by QUIC, so a call is never sent again by the host: a call whose answer did not come may have run, and the tool says so.
+The stream names the call, so a header carries no number of its own for the call. A lost datagram is sent again by QUIC, so a call is never sent again by the host: a call whose answer did not come may have run, and the tool says so.
 
 ### Several calls at once
 
@@ -642,7 +642,7 @@ A host that vanishes while `remote` holds a stream of it (an answer whose end it
 
 ### The client of the tool
 
-**The tool.** The peer of the tool is the QUIC client (`tools/modustool/peer_remote.odin`).
+**The tool.** The peer of the tool is the QUIC client (`tools/modustool/peer_remote.odin`). If the peer does not answer, a call fails with "the peer of the tool does not answer at <path>: does `modustool run` run?".
 - It pins the key that `remote` logged (the step Remote_Key of the machine test), or the key that `modustool call <key> "..."` names, read in the window of `remote`. A new key closes the connection; the next call makes a new one.
 - A pin belongs to one start of `remote`: each start makes a new key. The test tool forgets the pin after each step that starts or closes `remote`, and refuses to run a scenario that has a step that calls `remote` with no step Remote_Key since the last start of `remote` (`remote_key_problem`). The peer of a machine test takes the key of the log only: a call that names another key fails, and does not change the pin. The peer of `modustool run` takes the key that each call names.
 - When `remote` presents another key than the pinned one, the handshake fails with bad_certificate, and the call fails at once with both keys in hexadecimal ("the pin does not match: the pinned key of remote is ..., and remote presented ..."). Each next call fails the same way, with no connection, until a new pin. A connection that ends before the end of its handshake fails the calls that wait for it: the peer never makes connections in a loop. The library keeps the key that a client refused (`Tls_Handshake.refused_server_public_key`) for that text.

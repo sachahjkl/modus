@@ -35,7 +35,7 @@ This guide describes the line that is typed at the console: the language that th
 
 ## What the console owns
 
-The console owns the line that the input edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. A line is UTF-8: a key of the layout of France types é in its two bytes, and each key moves the caret over a whole character, or removes a whole character (`docs/GLOSSARY.md`, "Text encoding"). The procedures that change the line are in `src/library/support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`src/library/support/line_editor/line_editor_test.odin`). The console uses them in `src/programs/console/main.odin` and `src/programs/console/completion.odin`.
+The console owns the line that the input edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The terminal holds a surface, the two memory objects that it shares with its program (the terminal ring and the text region), and a handle that reads the state of the program. A line is UTF-8: a key of the layout of France types é in its two bytes, and each key moves the caret over a whole character, or removes a whole character (`docs/GLOSSARY.md`, "Text encoding"). The procedures that change the line are in `src/library/support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`src/library/support/line_editor/line_editor_test.odin`). The console uses them in `src/programs/console/main.odin` and `src/programs/console/completion.odin`.
 
 ## The language of the console
 

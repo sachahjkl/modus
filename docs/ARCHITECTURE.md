@@ -25,7 +25,7 @@ This document names the key systems of `modus` and shows how they connect: the k
 | "The return to a program" | How the kernel makes the frame of a thread safe before it returns to it |
 | "The control registers of a processor", "The instructions of the kernel" | The state of each processor, and the code that the kernel runs |
 | "Kernel events" | The records that the kernel writes of its own work, for a program that observes it |
-| "How the systems depend on each other", "Three flows", "Direction", "Open questions about the architecture", "Order of construction" | The order of the systems, three examples of a flow, and the decisions of direction |
+| "How the systems depend on each other", "Three flows", "Direction", "Open questions about the architecture" | The order of the systems, three examples of a flow, and the decisions of direction. What is built is in `DEMONSTRATIONS.md`; what is left is in `ROADMAP.md` |
 
 ## Vocabulary
 
@@ -33,7 +33,7 @@ This document names the key systems of `modus` and shows how they connect: the k
 
 - A **program** is the unit of isolation: its own address space, its own handles, one or more threads.
 - A **handle** is the number by which a program names one kernel object, with the rights that it holds on it. A program has no other way to reach an object.
-- A **kernel operation** is one of the 33 things that a program can ask the kernel. A thread asks with a command record in its kernel ring.
+- A **kernel operation** is one of the things that a program can ask the kernel; `PROPERTIES.md`, "1. Small kernel with a small, counted interface", gives their count. A thread asks with a command record in its kernel ring.
 - A **ring** is a pair of queues of records in memory that two parties share. Data between programs goes through rings, not through the kernel.
 - A **service** is a program that other programs call through rings; a **device service** is a service that drives one device.
 
@@ -46,23 +46,21 @@ flowchart TB
   subgraph programs["Programs: sandboxed, no access at start"]
     app1["Program"]
     app2["Program"]
-    shell["Desktop shell"]
+    console["Console"]
   end
 
   subgraph services["Services: user space, reached through rings"]
-    compositor["Compositor"]
-    documents["Document service"]
+    compositor["Compositor: the display and the desktop"]
     storage["Storage service"]
-    network["Network steering service"]
-    unitstore["Module store and loader"]
+    network["Network service"]
     root["Root service"]
   end
 
   subgraph devices["Device services: user space, one per device class"]
     blk["Block"]
-    net["Network card"]
-    gpu["Display"]
+    net["Frame: the network device"]
     input["Input"]
+    entropy["Entropy"]
     tpm["TPM"]
   end
 
@@ -89,17 +87,18 @@ flowchart TB
 
 Solid arrows carry data. They do not enter the kernel (P5, P6).
 Dotted arrows are kernel operations. They set up mappings, transfer handles, and wait.
+The picture shows the systems that run. The document service ("U6. Document service") and a desktop shell apart from the compositor ("U10. Desktop shell") have a design and no code. The module store is the store `programs` of the storage service ("U3. Module store and loader").
 
 The same picture in text:
 
 ```
- Programs            program   program   desktop shell
+ Programs            program   program   console
                         |         |           |
                   ======|=========|===========|======  rings in shared memory
- Services          compositor  documents  storage  network  module store  root
+ Services          compositor (display, desktop)  storage  network  root
                         |         |           |
                   ======|=========|===========|======  rings in shared memory
- Device services     display    block    network card   input   TPM
+ Device services     block    frame (network device)   input   entropy   TPM
                         |         |           |
                   ======|=========|===========|======  device queues, mapped once
  Machine             virtio queues, framebuffer, timers
@@ -110,7 +109,7 @@ The same picture in text:
 
 ## Kernel systems
 
-The kernel is small on purpose: it does only what a program cannot do safely for itself (P1, P4). It has five systems, and 35 kernel operations reach them (`src/library/contract/operation`, `Operation`). Each system owns a small set of flat tables of fixed size (P13), so the kernel allocates nothing while it runs.
+The kernel is small on purpose: it does only what a program cannot do safely for itself (P1, P4). It has five systems, and the kernel operations reach them (`src/library/contract/operation`, `Operation`; their count is in `PROPERTIES.md`, "1. Small kernel with a small, counted interface"). Each system owns a small set of flat tables of fixed size (P13), so the kernel allocates nothing while it runs.
 
 The fixed sizes of the tables, from `src/kernel/program.odin`, `src/kernel/processor.odin` and `src/library/contract/operation`:
 
@@ -146,6 +145,7 @@ The handle table is how the kernel knows who can do what. A program names an obj
 | `Budget` | An amount of pages, programs, threads, processor time and log records that pays for objects | `Budget_Create` |
 | `Log` | The log of the kernel | Given at boot; each program has it at `CONTEXT_LOG` |
 
+- **The life of a program**: its starter makes it with `Program_Create`, and a budget pays for its slot, its page tables and its first thread. It starts with no memory and no handle, and it sees only the programs whose handles it holds. It runs while a handle names it: when its last handle closes, the kernel stops it with the stop code `STOP_CODE_NO_HANDLE`. A program with no thread stops too. Its kernel objects end with it, and what they cost returns to the budget that paid.
 - **Not an object kind**: a ring, a timer, an address space alone. A ring is memory that two programs map. A time is the deadline of a kernel entry. The address space belongs to its program.
 - **Does not**: know names, paths, users or files.
 - **Example**: the program `rights` holds a part of the rights of two handles; the kernel does the four operations that those rights allow and refuses the five others, each with its status. The program `origin` shows the origin of a handle through twelve cases of copies, gifts and revocations.
@@ -158,6 +158,7 @@ The memory system gives each program its own address space and lets two programs
 
 - **Does**: Tracks physical page frames. Builds address spaces. Gives "reserve address space", "commit pages", and "map this region in that program" (P14).
 - **As implemented**: `Memory_Create` reserves: the budget pays for each page, and each page gets its page frame at its first use, by the program (a page fault) or by the kernel. The flag `Frames_Now` gives all the frames at creation. Map is a separate operation. No access fails for lack of memory: a reserved page always has a free frame. A page table lives while a mapping holds an entry in it, and returns to the budget that paid for it with the unmap that empties it.
+- **Budgets**: the kernel gives one budget to the root service: all the free memory and all the slots. A budget made from it holds a part, and when the last handle to a budget closes, what it holds returns to the budget that it came from, which then pays for its objects. `Budget_Read`, with the right Read, gives what a budget can still pay and what it used.
 - **Owns**: the page frame table; one address space record per program; the frame list of each memory object.
 - **Does not**: page to disk, cache files, or allocate hidden memory for a caller.
 - **Example**: `Memory_Create` with 16 pages and no flag pays 16 pages of the budget now; the frames come one at a time, at the first touch of each page. The program `frames` shows ten such cases with the answer of the kernel. The inside of this system is in "The virtual memory of a program", below.
@@ -179,6 +180,7 @@ A thread talks to the kernel through a ring, and waits through the kernel. Rings
 - **Does**: Executes the commands that a thread puts in its kernel ring. Gives the one blocking point of the system: a thread enters the kernel and waits until a word that it names changes (`Word_Wait`, `Word_Wake`), or until a deadline. A ring between two programs uses that wait: a reader waits on a word of the ring, and a writer wakes it.
 - **Owns**: the wait table (buckets of the words that threads wait on, named by their physical address, so two programs that map one memory object wait on one word). The kernel has no table of rings: a ring between programs is a memory object, and the kernel does not know its layout.
 - **The kernel ring**: each **thread** has one ring to the kernel, one page after its thread record (`src/library/contract/operation`, the comment of the package; `MODULE_CONTRACT.md`, section 6). A completion therefore never reaches another thread of the same program. All kernel operations are records in that ring, and the one entry point is the `syscall` instruction, "enter": run the commands of the ring, then return or wait. One entry point keeps the interface counted and small (P1, P4).
+- **A ring between programs** is one memory object (`src/library/contract/ring`): page 0 holds the counters, then come the command records, then the completion records. A record is 64 bytes: a kind, a tag and seven values. All-zero memory is an empty ring. The writer advances one counter and the reader another, each in its own cache line, so data does not pass through the kernel. A side that must wait (an empty queue, a full queue) waits on the counter with the word wait; the other side enters the kernel to wake it only when a flag says that it waits. A side never trusts the numbers of the other side: it computes the capacity from the size that the kernel gives, and a place is a count modulo the capacity. A program gets a ring as a memory handle from the program that made it; the root service makes the rings between a program and a service.
 - **Example**: `system.word_wait(&ready, 0, deadline)` waits while the word `ready` holds 0, at most until `deadline`.
 
 ### K5. Device grant and interrupts
@@ -231,7 +233,7 @@ The first program. The kernel gives it every handle that exists at boot.
 
 A resource is a file of the boot image that is not a module: data that a program reads in place, such as a pointer theme file (`docs/POINTERS.md`). This section is the one description of the mechanism; each kind of resource has its own format and its own document.
 
-Today the boot image is the one source of every module and every resource: the system has no other place to load code or data from before the storage service runs, and no module comes from storage yet. That is a state of the construction, not the model. In the model the boot image is a transport: it carries only the objects that the machine needs before the storage service runs, and the rest are objects of the tree of the system, named by their hash (`STORAGE.md`, "1. The model" and "5. Not built: the next steps").
+Today the boot image is the one source of every resource and of every module that runs before the storage service; after it, a program can also start from a module file of the store `programs` ("U3. Module store and loader"). That is a state of the construction, not the model. In the model the boot image is a transport: it carries only the objects that the machine needs before the storage service runs, and the rest are objects of the tree of the system, named by their hash (`STORAGE.md`, "1. The model" and "5. Not built: the next steps").
 
 - **In the image** (`src/library/contract/boot_info`): after the table of the modules (`Image_Header.count` entries), a second table of `Image_Header.resource_count` entries of the same record, `Image_Entry`: a name of 31 bytes at most, the BLAKE3 hash of the bytes, the offset and the size. Each file starts on a page. A reader of modules reads the first table only, so a resource is never taken for a module; an image with `resource_count` 0 has no resource.
 - **Identity** (P11): the hash of the bytes, as for a module. The name is for people and for the code that chooses.
@@ -243,7 +245,7 @@ Today the boot image is the one source of every module and every resource: the s
 
 A module is the unit of code of the system; a program starts from one module and the modules that it imports. This system finds a module by its hash and makes a program of it.
 
-- **Store** (designed, not built): keeps modules by content hash. Answers "give me the module with this hash". It has no separate index: functions read the flat tables of the modules (P11, P12). Today the boot image is the one source of modules: the boot program brings it, the root service checks each file of it against the system description, and a program with the grant `Image` (the console) finds a module in it by name. The direction, where modules are objects of storage named by their hash, is in `STORAGE.md`, "5. Not built: the next steps".
+- **Store**: keeps modules by content hash, and answers "give me the module with this hash". It has no separate index: functions read the flat tables of the modules (P11, P12). A module comes from one of two sources. The boot image: the boot program brings it, the root service checks each file of it against the system description, and a program with the grant `Image` (the console) finds a module in it by name. The store `programs` of the storage service: the root service starts a program from a module file of that store, named by its hash, and finds each library module that it imports there by the hash of its bytes (`src/md/features/programs_from_a_disk.md`).
 - **Loader** (built: `src/library/support/system`, `load.odin`): builds a new program. It asks the kernel for a new program (`Program_Create`), maps the segments of the module and of the modules that it imports (`Memory_Map`), records each module for the reports (`Program_Module`), and starts it (`Program_Start`).
 - The loader is in user space. The kernel only maps memory.
 
@@ -265,6 +267,11 @@ A device service is the driver of one device class, as a normal program with the
 | Entropy device | `entropy` | The virtio entropy device, through the entropy ring, to the root service, which mixes its bytes into its random generator (`RANDOMNESS.md`, "3. The seed of the system, and what is claimed") |
 | TPM | `tpm` | The registers of the CRB interface of the TPM, after the start: Seal and Unseal of the machine key through the TPM ring, to `unlock` (`PRINCIPALS.md`, "The machine key sealed by the TPM"). Before the kernel starts, the boot program asks the firmware for the measure (`TRUSTED_BOOT.md`, "6. The measure") |
 
+- **The bus.** Only the root service holds the ports of the configuration, 0xCF8 to 0xCFF, as a ports handle that it makes with `Device_Create`. It reads the configuration at the fixed place of each device, checks that the device there is the expected virtio device, enables it, gives it the right to use memory (bus master), sets its message interrupt, and starts its device service. On the test machine the places are fixed: the data disk at device 16 (`pci.DATA_DISK_DEVICE`), the disk of the measures at 17, the network device at 18, the entropy device at 19. With no device of the right kind at a place, the root service writes one line, such as "root: no virtio device for block at the place 16 of the bus", and starts no service.
+- **What a device service receives.** A copy of the first 256 bytes of the configuration, read-only (`GRANT_CONFIGURATION` of `src/library/support/pci`); the device memory of its registers, one object for each base address register (`Device_Create` of the kind `Memory`, with a physical address that is a multiple of 4096 and a count of pages; the roles `GRANT_BAR + n`); one message interrupt; memory for its queues; and the machine handle with the right **Physical** only. The root service starts one block service for each disk that a program needs, with exactly one device.
+- **Virtio.** The system uses virtio 1 over PCI, the modern interface, with no older interface (`disable-legacy=on` in the command of QEMU). A start asks the device for a reset and reads its status until it is 0, at most `RESET_READ_LIMIT` times (`src/library/support/virtio`); a device that does not finish its reset makes its service write "the device did not finish its reset" and stop.
+- **The first lines.** Each device service writes one line when its device is ready. The block service, on the disk of the measures: "block: ok, 8192 blocks of 4096 bytes, a queue of ...", then the size of the queue of the device, the most requests in flight, and whether the disk has a cache that `Flush` empties. The frame service: "frame: ok, the hardware address 52:54:00:12:34:56, the link is up, ...", then the sizes of its two queues and the count of places for the frames that arrive. The test machine has one virtio network device, with the hardware address 52:54:00:12:34:56.
+- **The disk of the measures.** The program `disk` drives a block service on the second disk of the test machine (the place 17). For one second in each measure, it reads and writes the first 4096 blocks (16 MiB) with one request in flight, then with 32, and counts the blocks and the kernel entries of the two programs for each request. Then it writes a pattern, flushes, reads the pattern back and compares. It shows the result in its window.
 - **Not built**: a device queue granted to a program, so that the program talks to the device with no service in the path (P5).
 
 ### U5. Storage service
@@ -284,7 +291,7 @@ The terms are in `GLOSSARY.md`, section Storage.
 - **Where it is on the disk** (`src/library/contract/store`). The entry of an object in its tree names a version index (one block: up to 254 leaf blocks); a leaf holds 85 version entries of 48 bytes (`store.Version_Entry`: generation, size, time, date, the root of the block tree of the state). Up to 21590 versions for each object. A commit rewrites the index and the leaf that it changes: 2 blocks, copy on write as each other block. The versions follow the entry: a rename keeps them.
 - **What a version costs.** Nothing more for its bytes: the blocks of the state before a commit are on the disk already, and copy on write never wrote over them. A commit keeps them in place of making them free. A block of data whose bytes did not change is not written again: the new block tree names the old block (a shared block), so a change of one block of a large object costs 1 block of data, one object node on each level above it, the leaf and the index, and the nodes of the trees on the path, the store block and the root block (`STORAGE.md`, "The cost of a commit"). The version holds the blocks that only it names: its object nodes and its changed blocks. The extra writes of each commit: the index and the leaf (2 blocks), and one read of each.
 - **The accounting.** The blocks of a store are its distinct blocks: a shared block is counted one time (the reference count of each block, in the memory of the service, made again by the open from the disk). The limit of the store (the grant of the root service) counts the versions too: a program cannot fill the disk with versions (P20, and the rule of the budget: each thing is paid by its owner).
-- **Thinning.** The retention rule: each version is kept 10 minutes; after that, one version for each hour (the newest of the hour) until it is one day old; after that, one for each day. The service applies it to an object at a commit of that object, at most one time each minute (a full read of its leaves). At the limit of the store, a change that does not fit thins the oldest versions of the store (the lowest generations, in any object of the store), in the same commit as the change, until it fits: a commit is still one change, and a loss of power never keeps a thinning without its change. The order is the generation: the version that the change itself makes can go too, when each other version of the store is newer. A change that does not fit with every earlier version thinned is refused before any thinning, so a refused change destroys no history: Over_Limit, with the blocks that the current objects need with the change and the limit, and the sentence says "with no earlier version kept". The count of the current objects counts a block that two clones share two times: such a refusal can come early.
+- **Thinning.** The retention rule: each version is kept 10 minutes; after that, one version for each hour (the newest of the hour) until it is one day old; after that, one for each day. The service applies it to an object at a commit of that object, at most one time each minute (a full read of its leaves). The hours and the days are counted from the format of the disk, so the buckets do not move from one application to the next, and a version that the rule keeps stays kept until it changes zone. The code of the rule is pure and has host tests (`src/library/support/storage_retention`). At the limit of the store, a change that does not fit thins the oldest versions of the store (the lowest generations, in any object of the store), in the same commit as the change, until it fits: a commit is still one change, and a loss of power never keeps a thinning without its change. The order is the generation: the version that the change itself makes can go too, when each other version of the store is newer. A change that does not fit with every earlier version thinned is refused before any thinning, so a refused change destroys no history: Over_Limit, with the blocks that the current objects need with the change and the limit, and the sentence says "with no earlier version kept". The count of the current objects counts a block that two clones share two times: such a refusal can come early.
 - **The time of a version.** Each version keeps the time since the format of the disk (the root block keeps it at each commit; the service adds its own time since its start) and the date (seconds since 1970, UTC; 0 when the system had no date). The age of a version for the retention rule is the smaller of its age by the date and its age by the time since the format (`storage_retention.age`): the date counts the time when no machine ran, but a clock can be wrong on one start (an empty battery) and right on the next, and then the versions of the wrong start would look years old; the time since the format never makes a version older than it is. A date at or after the year 10000 is no date. The generation orders the versions in all cases.
 - **The exports** (P19, each with a description and error records). `versions(place, name)`: a Table of the versions (generation, time, date, bytes, the blocks that only this version holds). `version(place, name, generation)`: the bytes. `restore(place, name, generation)`: a commit whose current version has the block tree of that version (no block of data is written); the current version before it becomes a version. `compare(place, name, first, second)`: a Table of the byte ranges that differ: two equal pointers are equal bytes, so only the blocks that differ are read. `clone(place, name, new_name)`: a new object with the same block tree. `erase_versions(place, name)`: a commit that ends each version, a read back of its blocks, the root written again, then zeros over each block that the commit freed; a program with the grant `Versions_Erase`, on its own store, only (`STORAGE.md`, "4.8 The erase of versions"). The place is a place of the store of the caller, or a place on another store that `open_store(store)` gave to a caller that may name it (the console and `remote` for the host, which act for the principal): No_Grant Acts_For_Principal else (`STORAGE.md`, "4.1 Places").
 - **The open and the checks.** The open walks the versions too: each object node once, each block of data once, and it counts the names of each block (32 bits; a count that would pass 2^32 - 1 refuses its commit with Over_Limit, unit References). A count that the format does not permit is damage, as a wrong check: an index of more than 254 leaves, a leaf of 0 or more than 85 entries, an object node that breaks the rules of its format (`STORAGE.md`, "3.3 The commit and the open"). The count of each store is its recount by the open: the blocks under a wrong block are not counted, and they are free in memory too, so they leave the limit of the store (a root whose count is not the recount, in a store with no damage, is a fault of the engine that wrote it: the log says it, and the open takes the recount). A store block, a node, an index or a leaf named two times, a block named from two stores, or a count that passes its type, is a fault of the engine: the service makes no change in those stores until its next start (Damaged, unit Counts), and it gives their objects. A commit that would take a count below 0 is refused in the same way: that is a fault of the engine too.
@@ -1611,7 +1618,7 @@ After the mapping, the kernel and the service are not in the path.
 Status: Decided.
 
 - **First use**: a dedicated machine. The system is not a general replacement for an existing desktop at first.
-- **Compatibility**: none at first. The project defines a small, fundamental interface that shows its concepts. Later layers are built above it. A POSIX layer and a Win32/NT layer are possible later, as layers above the interface and not as parts of it.
+- **Compatibility**: none. The project defines a small, fundamental interface that shows its concepts. The system implements no POSIX layer and no Win32/NT layer, above the interface or inside it: a foreign system runs whole inside a guest (`PROPERTIES.md`, "Objective", rule 3; `src/md/features/foreign_systems.md`).
 - **Console**: a normal program. It has a terminal: it writes text records and reads key records. A terminal is a normal program too. The system has no terminal concept in the kernel and no equivalent of the Linux TTY.
 - **Composition of programs**: the console uses a real programming language. The principal calls the exported functions of modules directly, with typed data. The system has no pipes of text and no shell script language.
 - **Concepts to research first**: the contract between modules; identity and several machines.
@@ -1621,25 +1628,8 @@ Status: Decided.
 ## Open questions about the architecture
 
 1. **Kernel ring or direct operations.** Closed: kernel ring only. Every kernel operation is a record in the kernel ring, plus one "enter and wait" entry point.
-2. **Loader location.** U3 puts the loader in user space. The first programs then need the boot program to load them. The alternative is a minimal loader in the kernel.
-3. **Queue filtering for the network.** A program must receive only its own packets. This needs a card with several queues and filters, or a software switch in the network card service. virtio-net under QEMU needs the second form.
-4. **Compositor and the WebGPU library.** Which side owns the display device: the compositor alone, or each program through the library.
+2. **Loader location.** Closed: the loader is in user space (`src/library/support/system`; "U3. Module store and loader"). The boot program holds a copy of it to load the kernel module (`MODULE_CONTRACT.md`, "Closed rules", rule 9); the kernel has no loader.
+3. **Queue filtering for the network.** Closed for the device of the test machine: a program receives only its own packets because the network service is the software switch ("U7. Network steering service"). A card with a queue and a filter for each endpoint is not built (`NETWORK.md`).
+4. **Compositor and the WebGPU library.** Closed: the compositor alone owns the display ("U8. Graphics: WebGPU library and compositor").
 5. **Root service size.** It holds all power at boot. It must stay small enough to read completely.
 6. **Threads.** Closed. The choice is the one that Blow would make, with no complication of the execution model: a program can have several threads in one address space. A thread is a plain kernel object: a stack and a register state. The system has no `fork`, no signals, no asynchronous runtime, and no thread state hidden in a language runtime. Blow reasons in threads and asks for a thread with limited write permission. [Blow, STAG-2026 00:00] This choice is an inference from his statements, not a quotation. Implemented (`src/kernel/program.odin`, `system.thread_start`): the kernel operations `Thread_Create`, `Thread_Stop` and `Thread_State`. Each thread has its own kernel ring, so a completion never goes to another thread. The stack is memory of the program: the kernel does not know it. A fault in one thread stops the program, because the threads share all their memory, unless the program named a fault handler for that kind of fault ("The fault ring").
-
-## Order of construction
-
-Each step adds one system to a system that already works.
-
-1. U1 boot program, and a kernel that prints.
-2. K2 memory, K1 handles, K3 scheduler: two programs run, isolated.
-3. K4 rings: the two programs exchange a record.
-4. U2 root service: programs get handles from it and not from the kernel.
-5. K5 and one device service: the console, then block.
-6. U3 module store and loader, then U5 storage.
-7. U8 software graphics and compositor, then input.
-8. U6 documents, U10 shell.
-9. U7 network.
-10. Secure Boot and TPM measurement, on the boot program of item 1.
-
-The items 1 to 5, 7, 9 and 10 are built; item 6 is built for storage, with the loader in `src/library/support/system` and no module store; item 8 is not built (no document service; the compositor is the shell).
