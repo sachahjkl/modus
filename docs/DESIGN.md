@@ -33,11 +33,12 @@ Forms are rectangles by preference, because a rectangle can carry a measure (its
 - A point or a mark is a square.
 - A line is a rectangle that is 1 or 2 pixels thick.
 - Lines at an angle are allowed. The boot display keeps its own use of them: a part that has no measure on this scale (the firmware before the line of time).
-- There is no shadow and no transparency.
+- The look is sober by choice. A shadow is sharp, with no blur. Transparency is used only where it informs, as a menu over the window that it acts on. An animation is short, and only says a change of state. A blur comes later, with the GPU.
+- These rules are the look of the desktop of the system. They are not limits of the draw table: a program can draw any form, alpha, paths and effects (`PROPERTIES.md`, "18. One 2D interface: the draw table").
 
 ## 3. Surfaces
 
-A surface is a level of depth: the background, a card on it, and a track inside a card. The only sign of depth is a gradient from lighter at the top to darker at the bottom: no shadow.
+A surface is a level of depth: the background, a card on it, and a track inside a card. The sign of depth of these levels is a gradient from lighter at the top to darker at the bottom. A surface that lies over another one, as a menu or a window over the desktop, can also have a sharp shadow (section 2).
 
 There are three levels. Each is a color token of the package, with a value in each appearance (section 4, "The appearances").
 
@@ -47,7 +48,7 @@ There are three levels. Each is a color token of the package, with a value in ea
 | Card | `colors.card_top`, `colors.card_bottom` | `0x17212E` at the top to `0x111822` at the bottom | `0xFFFFFF` to `0xF9FAFB` | The frame of one subject |
 | Track | `colors.track` | `0x1C2633` | `0xD6DBE0` | The empty part of a bar, a band or a tube |
 
-- A surface has a color that goes from lighter at the top to darker at the bottom. This is the one sign of depth.
+- A surface has a color that goes from lighter at the top to darker at the bottom. This is the sign of depth of the three levels.
 - A card has a border of 1 pixel in its accent, at 28 % at the top and 14 % at the bottom.
 - A full part of a bar goes from 120 to 130 % of its color at the top to 78 % at the bottom.
 

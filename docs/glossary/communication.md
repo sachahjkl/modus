@@ -108,6 +108,16 @@ The design: `docs/TOOLS.md`, "A module from a source outside the repository".
 
 Do not use: third-party module, external module, plugin.
 
+### Rich program
+
+A rich program is an outside module whose interface is built with `gui_toolkit`, the toolkit of rich programs.
+
+It imports `gt:` packages and the core library of Odin on the target modus, which a source of `src/` never does. It still draws through the draw table, and later through the WebGPU subset. A program of the system in `src/modules` uses the `interface` package instead. Examples: an editor, the browser `wren` once it is ported.
+
+The design: `src/md/features/desktop_to_browser.md`.
+
+Do not use: rich client, GUI application.
+
 ### Module build file
 
 A module build file is the file `module.txt` in the folder of an outside module, which holds the fields of a row of the module table.
