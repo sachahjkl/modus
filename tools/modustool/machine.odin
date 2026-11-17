@@ -51,7 +51,7 @@ KEYS_HELD_LINE :: "1000 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 
 #assert(len(KEYS_HELD_LINE) == 100)
 
 // The places of the scroll bar of the window of the console, inside its
-// surface (src/programs/terminal/main.odin, layout; src/programs/root/main.odin,
+// surface (src/modules/system/terminal/main.odin, layout; src/modules/system/root/main.odin,
 // role_terminal: 96 columns and 26 rows). The surface is 8 + 96 * 8 + 7 + 17
 // = 800 pixels wide; the bar is its last 17 pixels, from y = 0 to the line
 // over the status at 8 + 26 * 16 + 8 - 4 = 428, with an arrow button of 17
@@ -988,7 +988,7 @@ self_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	return true
 }
 
-// The positions below come from src/programs/compositor/main.odin: the buttons
+// The positions below come from src/modules/system/compositor/main.odin: the buttons
 // in the bar, and the place of window n at (60 + 36 n, 52 + 30 n).
 scenario := [?]Step {
 	{kind = .Wait, text = "boot program: ok"},
@@ -3115,7 +3115,7 @@ scenario := [?]Step {
 	{kind = .Point, inside_window = "pointers", x = 100, y = 12, text = "move"}, // The title bar.
 	{kind = .Point, inside_window = "pointers", x = -14, y = 12, text = "pointing_hand"}, // The close button.
 	{kind = .Point, inside_window = "pointers", x = 1, y = 300, text = "arrow"}, // The left border.
-	{kind = .Point, inside_window = "pointers", x = 2 + 208 + 60, y = 24 + 368 + 60, text = "wait"}, // The tile of wait (src/programs/pointers, tile_area(6)): the request of the program.
+	{kind = .Point, inside_window = "pointers", x = 2 + 208 + 60, y = 24 + 368 + 60, text = "wait"}, // The tile of wait (src/modules/demonstrations/pointers, tile_area(6)): the request of the program.
 	{kind = .Wait, text = "compositor: pointers asks for the pointer shape wait over its surface"},
 	{kind = .Shot, text = "pointers"},
 	{kind = .Point, inside_window = "pointers", x = 2 + 16 + 60, y = 24 + 216 + 60, text = "arrow"}, // The tile of arrow.

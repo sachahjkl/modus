@@ -68,7 +68,7 @@ Fixed_Range :: enum u8 {
 	// call host starts, and states their size in the values of its
 	// context: a call host has no handle to the boot image, so it cannot
 	// look for them.
-	Pointer_Themes, // The pointer themes of the compositor, one after the other (src/programs/root).
+	Pointer_Themes, // The pointer themes of the compositor, one after the other (src/modules/system/root).
 	// The root service maps the theme files of the boot image there,
 	// read-only, in the compositor, and gives the address and the size of
 	// each one in the values of its context.

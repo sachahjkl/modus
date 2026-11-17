@@ -56,7 +56,8 @@ site_module_group_ids := [Site_Module_Group]string {
 }
 
 // site_module_group gives the group of a module: a kernel runs in kernel
-// mode, a program has its source in src/programs/, each other one is a module.
+// mode, a program is a row of the table of the modules marked program, each
+// other one is a module.
 site_module_group :: proc(item: Site_Module) -> Site_Module_Group {
 	if item.build.kernel {
 		return .Kernel

@@ -35,7 +35,7 @@ Site_Constant :: struct {
 }
 
 // One row of the table of the roles of the root service (`program_roles`
-// of src/programs/root/roles.odin): a program, its start grants and the
+// of src/modules/system/root/roles.odin): a program, its start grants and the
 // other terms of its role. A page shows each grant as one value, never the
 // literal itself.
 Site_Role_Row :: struct {

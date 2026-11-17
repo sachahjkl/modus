@@ -108,7 +108,7 @@ operation_count_check :: proc() -> bool {
 
 // The folders whose sources call no allocator: each source that becomes
 // the system.
-ALLOCATOR_CHECKED_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_LIBRARY}
+ALLOCATOR_CHECKED_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_LIBRARY}
 
 // The calls and the names of an allocator. A call is the name, then "(",
 // with no letter, digit, "_" or "." before the name: `caller_grant_make(`

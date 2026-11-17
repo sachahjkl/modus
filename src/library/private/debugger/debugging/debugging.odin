@@ -3,7 +3,7 @@
 // location of a variable, and the text of a value by its type
 // (docs/TOOLS.md, "The debugger").
 //
-// The debugger service (`src/programs/debugger`) compiles it in, and gives it
+// The debugger service (`src/modules/system/debugger`) compiles it in, and gives it
 // the memory of the debugged program through a `Memory_Reader`. The host
 // tests give it memory that they made by hand, so each rule is tested with
 // no machine.
@@ -195,7 +195,7 @@ path_parse :: proc "contextless" (text: string) -> (path: Path, problem: Path_Pr
 // What the place of a breakpoint names.
 Place_Kind :: enum {
 	Procedure = 0, // The name of a procedure: "fault::three".
-	Line      = 1, // A source file and a line: "src/programs/fault/main.odin:15".
+	Line      = 1, // A source file and a line: "src/modules/demonstrations/fault/main.odin:15".
 }
 
 // place_parse reads the place of a breakpoint. A text that ends with ":"

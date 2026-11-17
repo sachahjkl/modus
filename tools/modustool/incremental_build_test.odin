@@ -772,8 +772,8 @@ no_conversion_record_with_a_source_that_changed_during_the_build :: proc(t: ^tes
 // and no built file: the compile step reads none.
 @(test)
 compile_key_of_a_module_holds_no_import :: proc(t: ^testing.T) {
-	importer := Module_Build{name = "importer", source = MODULE_SOURCES + "agenda", imports = {"calendar"}}
-	alone := Module_Build{name = "importer", source = MODULE_SOURCES + "agenda"}
+	importer := Module_Build{name = "importer", source = DEMONSTRATION_MODULE_SOURCES + "agenda", imports = {"calendar"}}
+	alone := Module_Build{name = "importer", source = DEMONSTRATION_MODULE_SOURCES + "agenda"}
 	with_import, readable := module_compile_key_inputs(importer)
 	without_import, readable_alone := module_compile_key_inputs(alone)
 	testing.expect(t, readable && readable_alone, "the folder of the module can be listed")

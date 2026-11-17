@@ -18,7 +18,7 @@ A caller reads why a call failed, in every service and every module, from one fo
 
 **The rule.** An export with an Integer result (`-> i64`) that has a path where it fails takes the last parameter `error: ^errors.Error_Record`, and writes the record on that path, usually with `errors.fail`. An export with no failing path needs no record.
 
-**The check** (`export_error_record_check`, `tools/modustool/export_error_record_check.odin`). It reads each source file of `src/programs` and of `src/modules` that is not a test, one package (one folder) at a time. For each export with an `i64` result, no parameter `error` and a name other than `entry`, it reads each `return` of the body. A `return` gives a failing result when its one value is one of these:
+**The check** (`export_error_record_check`, `tools/modustool/export_error_record_check.odin`). It reads each source file of `src/modules` that is not a test, one package (one folder) at a time. For each export with an `i64` result, no parameter `error` and a name other than `entry`, it reads each `return` of the body. A `return` gives a failing result when its one value is one of these:
 
 - a minus before a literal, a call or a conversion (`-1`, `-i64(status)`), or before a constant of the package;
 - a constant of the package whose value is a minus before a literal (`ERROR :: -1`);

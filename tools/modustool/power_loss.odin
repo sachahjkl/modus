@@ -851,7 +851,7 @@ scenario_power_loss_ranges := [?]Step {
 }
 
 // The bytes at the start of the object loop that the program ranges writes
-// in the first commit of its loop (src/programs/ranges/main.odin,
+// in the first commit of its loop (src/modules/tests/ranges/main.odin,
 // LOOP_MARKER): no other block of the disk starts with them.
 RANGES_LOOP_MARKER :: "ranges: the first commit of the loop of range commits"
 

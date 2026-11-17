@@ -242,11 +242,11 @@ Do not use: expression, watch expression, selector, accessor.
 
 A debug place is the text that names a place of a debugged program for the debugger service: a procedure, a file and a line, an address or a value path of a global.
 
-`break_at` takes a procedure (`debug_target::add_step`) or a file and a line (`src/programs/debug_target/main.odin:82`); `watch` and `memory` take an address (`0x403010`) or a global (`debug_target::rounds`). The service parses it: the console and the window of the debugger pass the text as it is, and compute no address. The window of the debugger has a field for it, with the buttons break at, watch and memory.
+`break_at` takes a procedure (`debug_target::add_step`) or a file and a line (`src/modules/tests/debug_target/main.odin:82`); `watch` and `memory` take an address (`0x403010`) or a global (`debug_target::rounds`). The service parses it: the console and the window of the debugger pass the text as it is, and compute no address. The window of the debugger has a field for it, with the buttons break at, watch and memory.
 
 It is not a place of the storage service ("Place"), which a connection holds as a number.
 
-Example: `debugger.break_at("src/programs/fault/main.odin:15")`; in the window, `debug_target::rounds 4` then the button watch.
+Example: `debugger.break_at("src/modules/demonstrations/fault/main.odin:15")`; in the window, `debug_target::rounds 4` then the button watch.
 
 The design: `docs/TOOLS.md`, "The window of the debugger"; `src/md/features/debugger_window.md`.
 
@@ -372,7 +372,7 @@ Do not use: overhead, estimate, automatic budget.
 
 The least budget is the budget that a starter gives to a module that asks for nothing, and for each part of a budget request that is 0.
 
-The least budget of the root service is 2048 pages, one program and one thread (`LEAST_BUDGET` in `src/programs/root/budgets.odin`). A module whose request is smaller gets its smaller request: the least budget fills a part that the module does not state, it is no floor.
+The least budget of the root service is 2048 pages, one program and one thread (`LEAST_BUDGET` in `src/modules/system/root/budgets.odin`). A module whose request is smaller gets its smaller request: the least budget fills a part that the module does not state, it is no floor.
 
 Do not use: default budget, minimum budget.
 
@@ -380,7 +380,7 @@ Do not use: default budget, minimum budget.
 
 The largest budget is the most that a starter gives to one program for each part of a budget request.
 
-A part above it starts the program with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service is 16384 pages, 8 programs and 32 threads for a program of the boot image (`LARGEST_BUDGET` in `src/programs/root/budgets.odin`). A disk program, and a module of another project, has a smaller one, 8192 pages, one program and 4 threads, and one budget of the root service pays all of them together (`src/library/support/disk_program/budget.odin`).
+A part above it starts the program with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service is 16384 pages, 8 programs and 32 threads for a program of the boot image (`LARGEST_BUDGET` in `src/modules/system/root/budgets.odin`). A disk program, and a module of another project, has a smaller one, 8192 pages, one program and 4 threads, and one budget of the root service pays all of them together (`src/library/support/disk_program/budget.odin`).
 
 Do not use: maximum budget, cap, ceiling.
 
@@ -388,7 +388,7 @@ Do not use: maximum budget, cap, ceiling.
 
 A budget exception is a row of a starter that gives one program, by its name, another largest budget or other limits in time, with the reason beside it.
 
-A row with a larger amount widens a request, a row with a smaller amount limits it. The root service has two (`budget_exceptions` in `src/programs/root/budgets.odin`). The name of a disk program never selects a row: a name gives nothing.
+A row with a larger amount widens a request, a row with a smaller amount limits it. The root service has two (`budget_exceptions` in `src/modules/system/root/budgets.odin`). The name of a disk program never selects a row: a name gives nothing.
 
 Do not use: budget override, special case.
 

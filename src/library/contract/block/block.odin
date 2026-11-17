@@ -1,6 +1,6 @@
 // The block contract: what a program and a block service agree on. A block
 // service is the device service of one disk. The first one drives a virtio
-// block device (src/programs/block); a driver of another device class (NVMe)
+// block device (src/modules/system/block); a driver of another device class (NVMe)
 // serves the same contract.
 //
 // A disk is a row of blocks of BLOCK_SIZE bytes, numbered from 0. The client

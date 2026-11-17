@@ -11,7 +11,7 @@ import "core:sync"
 import "core:time"
 import "modus:support/quic"
 import "modus:support/random"
-import cryptography_module "../../src/modules/cryptography"
+import cryptography_module "../../src/modules/libraries/cryptography"
 
 // The peer as the QUIC client of the remote service (docs/QUIC.md,
 // section 7). The thread of the peer holds one connection to `remote` and

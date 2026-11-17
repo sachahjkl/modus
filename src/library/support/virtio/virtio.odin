@@ -1,6 +1,6 @@
 // Virtio over PCI, the "modern" interface (virtio 1.x): what each device
 // service of a virtio device does the same way. The block service
-// (src/programs/block) and the frame service (src/programs/frame) use it.
+// (src/modules/system/block) and the frame service (src/modules/system/frame) use it.
 //
 // A device service has one device (src/library/support/pci): the memory of its BARs,
 // one message interrupt, memory for its queues, and a copy of its

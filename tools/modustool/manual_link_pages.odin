@@ -118,7 +118,7 @@ manual_link_pages_make :: proc(modules: []Manual_Module_File, readers: Manual_Pa
 
 // manual_name_described says if a module of the image describes what a
 // name names, by the rule of the manual (link_resolve in
-// src/programs/manual/page_text.odin): a module by its name, a module and
+// src/modules/system/manual/page_text.odin): a module by its name, a module and
 // one of its exports, or a record by the last part of the name.
 manual_name_described :: proc(modules: []Manual_Module_File, target: string) -> bool {
 	name, export := target, ""

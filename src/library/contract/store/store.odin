@@ -61,7 +61,7 @@
 // wrong check, or a node that breaks a rule of this format, damages its
 // store.
 //
-// Who uses it: the storage service (`src/programs/storage`, with
+// Who uses it: the storage service (`src/modules/system/storage`, with
 // `src/library/private/storage/storage_tree` and `src/library/private/storage/storage_object`), and the tools that
 // check or damage a disk in the tests. A program never reads the disk: it
 // calls the storage service. The parts:

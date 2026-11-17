@@ -52,7 +52,7 @@ TOOL_SOURCE_FOLDER :: "tools/modustool"
 // hashes each of their files once, before the first compiler starts. A
 // file outside them (the libraries of the compiler) is hashed at its first
 // use.
-INPUT_FOLDERS :: [?]string{SOURCE_FOLDER_BOOT, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_PROGRAMS, RESOURCE_FOLDER, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE, TOOL_SOURCE_FOLDER}
+INPUT_FOLDERS :: [?]string{SOURCE_FOLDER_BOOT, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_MODULES, RESOURCE_FOLDER, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE, TOOL_SOURCE_FOLDER}
 
 // The threads that read and hash files at once. A thread holds one whole
 // file in memory, and a boot volume is 64 MiB.

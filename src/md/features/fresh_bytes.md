@@ -66,7 +66,7 @@ An entropy service that stops after the reads of the start writes one line too:
 - **A call of the root service for fresh bytes.** It needs a ring for each program, and the root service would answer at the rate that each program chooses. The page has neither cost, and a program reads it with no wait.
 - **A connection of each program to the entropy service.** It gives each program a part of a device, a new right, and the entropy service many clients; the root service is its one client.
 - **The bytes of the device given as they are.** One read of 32 bytes would go to one program, or the same bytes to several. The stream of the root service after the mix gives each program its own bytes, from one read.
-- **A memory object for each program.** Each object is one more handle of the root service, and a full handle table of the root service refuses the load of the next program (the comment of `demand_cache_memory` in `src/programs/root/font_service.odin` says how the table fills). One object of 32 pages is one handle.
+- **A memory object for each program.** Each object is one more handle of the root service, and a full handle table of the root service refuses the load of the next program (the comment of `demand_cache_memory` in `src/modules/system/root/font_service.odin` says how the table fills). One object of 32 pages is one handle.
 - **A check of the page at each draw.** See "Why the mix is never done for each draw".
 - **A refresh with no entropy device.** The stream of the root service alone holds nothing that the seed of a program did not already come from. A machine with no device writes no fresh bytes, and each page keeps the change count 0.
 - **A line of the log for each refresh.** 120 lines an hour say the same fact.

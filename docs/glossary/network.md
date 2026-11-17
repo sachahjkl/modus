@@ -156,7 +156,7 @@ An access record is the record of one request that `server` answered: the remote
 
 The access records let the principal see the traffic of the server with no text log to parse. `server` keeps the last ones in its window, and writes one log record for each request on its log channel `requests`. The time runs from the first byte of the head to the last byte of the answer in the send buffer. Example: "server: GET /hello.html 200, 12 bytes, 157 us, 10.0.2.2 port 49200". An access record is not a line of an access log in a common format: it is a record of fixed size.
 
-The design: `src/programs/server`.
+The design: `src/modules/demonstrations/server`.
 
 Do not use: access log line, hit.
 

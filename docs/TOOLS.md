@@ -55,8 +55,8 @@ A log record (`glossary/running_code.md`) keeps its text and the value runs of t
 On the serial port, each line starts with the program and the channel in brackets. Two lines of the console, from the machine test:
 
 ```
-[console] error: the instruction is at peek + 0x4 in probe (src/modules/probe/probe.odin:18)
-[console] error: frame 0: peek + 0x4 in probe (src/modules/probe/probe.odin:18), the instruction
+[console] error: the instruction is at peek + 0x4 in probe (src/modules/tests/probe/probe.odin:18)
+[console] error: frame 0: peek + 0x4 in probe (src/modules/tests/probe/probe.odin:18), the instruction
 ```
 
 ### The writer states the kind
@@ -136,7 +136,7 @@ One window for one program that the principal chooses in a list. It shows:
 1. **The address space** (`Inspect_Kind.Program_Mappings`, `op.Program_Mapping_Report`): each mapping of the program, with its address, its pages, the first page of its memory object, the pages that have a frame (a count that each mapping keeps where an entry becomes present, under the program lock: the report reads one count for each mapping, not one entry for each page), the size and the serial of the memory object, and flags (`op.Program_Mapping_Flag`): Write, Execute, Uncached, Device, Contiguous, Shared (another mapping or handle names the object), Thread_Area, Uncommitted (an object made with Uncommitted: the field `committed` says which part its budget pays), Large (pages of 2 MiB), Protected (`Memory_Protect` changed pages of the mapping) and No_Access (its protection is No_Access now). The window draws one band scaled by address. A gap between two mappings is folded: it has a fixed width and lines at an angle (`DESIGN.md`, section 2: lines at an angle are a part with no measure on the scale). The kind of a mapping comes from these facts and from the module records: module code, module constants, module data, thread area, device, shared memory, memory of the program. The kernel does not know a stack: it is memory of the program.
 2. **The modules** (`Module_Report`): name (from the boot image), hash, base and size. Each address in the window is `module + offset` when a module record holds it, as the stack trace of a fault names a frame (`MODULE_CONTRACT.md`, section 8).
 3. **The threads** (`Inspect_Kind.Threads`, `op.Thread_Table_Report`): the machine number, the thread area, the state, the processor that runs it and its home queue, the weight and the request, the virtual time, the virtual deadline and the lag of the strategy, the processor time, the words of a word wait and its deadline. The kernel reads the fields of the scheduler with no run lock: each field is whole, two fields can come from two instants.
-4. **The stop report** of a program that stopped on a fault (`Inspect_Kind.Stop`): the vector, the address, and each frame with the name of its procedure and its source line, `fault::three + 0x8 in fault (src/programs/fault/main.odin:15)`, from the debug image (section "Names and lines"). With no debug image, or a frame that no procedure of the debug object holds, the frame is `module + offset, near export`. The names are made when the stop report changes, not at each picture. The kernel filters the report (see below). The machine test waits for the log line `inspect: fault stopped: page fault at 0x0; stack: fault::three + 0x...`.
+4. **The stop report** of a program that stopped on a fault (`Inspect_Kind.Stop`): the vector, the address, and each frame with the name of its procedure and its source line, `fault::three + 0x8 in fault (src/modules/demonstrations/fault/main.odin:15)`, from the debug image (section "Names and lines"). With no debug image, or a frame that no procedure of the debug object holds, the frame is `module + offset, near export`. The names are made when the stop report changes, not at each picture. The kernel filters the report (see below). The machine test waits for the log line `inspect: fault stopped: page fault at 0x0; stack: fault::three + 0x...`.
 5. **Live**: a sample each 250 ms. A value that changed since the sample before is drawn in the color of the boot program for one sample. Space freezes the sample. The window shows the time of one sample and its kernel entries.
 6. **A hex view** of the memory of `inspect` itself (the code of its export `entry`, and four pages of a memory object of which two were written): 16 bytes in each row, the address as `module + offset`, the ASCII at the right, the boundary of each page marked. A page with no frame is shown as such, and the tool does not read it: it asks `Inspect_Kind.Pages` (`op.Page_Report`) which pages have a frame, so its read gives no frame to a page. `Pages` answers for the program that asks only: about another program it is a side channel (a holder of Inspect watches which pages of a program get a frame, page by page, as the program runs), finer than each other report.
 7. **One program, by its slot and its serial.** Each report has the serial of the program of the slot. A sample whose reports have two serials (a program ended, and a new one took its slot between two reports) is dropped, and the window keeps the sample before. The tool chooses a program by its slot and its serial, not by its name: two programs can have one name.
@@ -155,14 +155,14 @@ The debug object also holds what a debugger shows: the types, the global variabl
 - **Who names**: a program with the grant `Debug_Image` of the root service: `console`, `inspect`, `errors` and `debugger`. The root service maps the debug image read-only into each of them (the fixed range `Debug_Image`). The kernel reads no debug object: its line of the log stays "in module <hash> at offset X".
 - **The form of a frame**: `procedure + offset in module (file:line)`. Frame 0 is the instruction. Each next frame is a return address: the procedure and the line are those of the call, the byte before the return address. The offset is the distance of the address from the start of the procedure.
 - **The console**: a call host that stops on a fault prints "error: the instruction is at " and the name of its instruction, then one line "error: frame N: ..." for each frame (`fault_print`). A frame that no procedure of the debug object holds stays `module + offset`.
-- **The program `errors`**: the case of the program `fault` writes its stack trace with the names: "fault::three + 0x8 in fault (src/programs/fault/main.odin:15), fault::two + 0x... in fault (src/programs/fault/main.odin:20), ...".
+- **The program `errors`**: the case of the program `fault` writes its stack trace with the names: "fault::three + 0x8 in fault (src/modules/demonstrations/fault/main.odin:15), fault::two + 0x... in fault (src/modules/demonstrations/fault/main.odin:20), ...".
 - **The machine test** (`Trace`): the tool takes the names that the system wrote, or names a frame `module + offset` from the debug object of the module in `build/modules`, with the same reader.
 - **With no debug image** (a volume with no file `DEBUG/OBJECTS.IMG`): each frame is `module + offset`.
 
 Lines of the machine test, after the console called the module `probe`, which tests the sandbox of an isolated call and reads an address that it must not read. Frame 1 is in a part of `host` that no procedure of its debug object holds:
 
 ```
-[console] error: frame 0: peek + 0x4 in probe (src/modules/probe/probe.odin:18), the instruction
+[console] error: frame 0: peek + 0x4 in probe (src/modules/tests/probe/probe.odin:18), the instruction
 [console] error: frame 1: host + 0x2e14
 [console] error: frame 2: entry + 0x224d in host (src/library/support/system/service.odin:337)
 ```
@@ -171,7 +171,7 @@ Lines of the machine test, after the console called the module `probe`, which te
 
 A debugger stops a program where its author asks, shows its threads, its registers, its stack and its variables, and runs it one instruction at a time. The debugger of the system is a service, the program `debugger`. Each command of the debugger is an export of that service, and each export gives a table of records: the console, a window and a developer on another machine call the same exports.
 
-The code is `src/programs/debugger` (the service), `src/library/private/debugger/debugging` (the parts with no kernel operation: the path of a value, the walk of the frames, the place of a breakpoint, the location of a variable, the text of a value), `src/library/contract/debug_object` (the reader of the debug objects) and `src/programs/console/debugger_commands.odin` (the short names). The kernel part is in `ARCHITECTURE.md`, "The debugger of a program"; the reasons of the form are in "The debugger: the design" below.
+The code is `src/modules/system/debugger` (the service), `src/library/private/debugger/debugging` (the parts with no kernel operation: the path of a value, the walk of the frames, the place of a breakpoint, the location of a variable, the text of a value), `src/library/contract/debug_object` (the reader of the debug objects) and `src/modules/system/console/debugger_commands.odin` (the short names). The kernel part is in `ARCHITECTURE.md`, "The debugger of a program"; the reasons of the form are in "The debugger: the design" below.
 
 ### The service
 
@@ -189,9 +189,9 @@ The root service gives the debug access: the handle of the program with the righ
 The rule compares two sets of grants. It names no program:
 
 1. **The caller acts for the principal whose session runs the program.** The caller holds the grant to act for the principal, and the program is in the session of the same principal (`PRINCIPALS.md`). A program of the machine does not debug a program of a named principal, and a program of one principal does not debug a program of another.
-2. **Each grant of the program is a grant that the caller holds.** A debugger acts with each handle of the program that it debugs and reads each byte of it, so the right `Debug` on a program is each grant of that program. The grants of the program are those that the root service gave it at its start, which the root service keeps in the state of the program that runs (`Started.role` in `src/programs/root/main.odin`): the rule reads no table by the name of a program, so it holds for a program that comes from a disk as for a program of the boot image.
+2. **Each grant of the program is a grant that the caller holds.** A debugger acts with each handle of the program that it debugs and reads each byte of it, so the right `Debug` on a program is each grant of that program. The grants of the program are those that the root service gave it at its start, which the root service keeps in the state of the program that runs (`Started.role` in `src/modules/system/root/main.odin`): the rule reads no table by the name of a program, so it holds for a program that comes from a disk as for a program of the boot image.
 3. **A revoked grant is not a grant that the caller holds.** After `revoke("console", "machine")`, the console does not debug a program that has a right of the machine.
-4. **A grant refuses the debug access for each caller when what it reaches belongs to that one program.** Two holders of such a grant do not hold the same thing, so the caller does not hold what the program holds. The grants (`GRANTS_OF_ONE_PROGRAM` in `src/programs/root/main.odin`): Serve (a service holds what its callers lent it and what it keeps for them); Store and History_Store (a store of its own: a caller that acts for the principal reads each store of that principal and writes only its own, and through the registers of the program a debugger would write the store of the program); Terminal (a terminal of its own, with the keys typed in it); Network (an endpoint names its own remote and its own ports); Connect (the services that a program can connect to are its own list); Data_Disk, Scratch_Disk and Network_Device (a device service started for the program alone); Principals (a ring of its own, and the records of the principals); Remote_Clients (a connection for a row of the client table acts for the principal of that row, which is not the principal of the caller). Each other grant reaches one thing that each of its holders reaches: the machine by its rights, the boot image, the debug image, the replacement table, the settings page, the date page, the records of the log, the commands of the root ring.
+4. **A grant refuses the debug access for each caller when what it reaches belongs to that one program.** Two holders of such a grant do not hold the same thing, so the caller does not hold what the program holds. The grants (`GRANTS_OF_ONE_PROGRAM` in `src/modules/system/root/main.odin`): Serve (a service holds what its callers lent it and what it keeps for them); Store and History_Store (a store of its own: a caller that acts for the principal reads each store of that principal and writes only its own, and through the registers of the program a debugger would write the store of the program); Terminal (a terminal of its own, with the keys typed in it); Network (an endpoint names its own remote and its own ports); Connect (the services that a program can connect to are its own list); Data_Disk, Scratch_Disk and Network_Device (a device service started for the program alone); Principals (a ring of its own, and the records of the principals); Remote_Clients (a connection for a row of the client table acts for the principal of that row, which is not the principal of the caller). Each other grant reaches one thing that each of its holders reaches: the machine by its rights, the boot image, the debug image, the replacement table, the settings page, the date page, the records of the log, the commands of the root ring.
 5. **A revocation ends a debugging that the rule no longer gives.** After each revocation of a grant of a caller, the root service checks each debugging of that caller against the rule again, and ends each one that fails: the program is given back as on a detach, with no thread left stopped. So `revoke("console", "machine")` ends the debugging of `clock` by the console, and `revoke("remote", "acts_for_principal")` ends each debugging of the host. The end needs nothing of the caller. `detach()` needs no grant either.
 
 What follows from the rule:
@@ -224,7 +224,7 @@ The creator of a program also has the right `Debug` on the handle that the creat
 
 ### The exports of the service
 
-Each export gives a table, or a negative number with an error record. A caller that does not act for the principal gets `No_Grant` (`Acts_For_Principal`). The reference of each export, with its parameters and its errors, is its comment in `src/programs/debugger/exports.odin`.
+Each export gives a table, or a negative number with an error record. A caller that does not act for the principal gets `No_Grant` (`Acts_For_Principal`). The reference of each export, with its parameters and its errors, is its comment in `src/modules/system/debugger/exports.odin`.
 
 | Export | What it gives |
 |---|---|
@@ -238,7 +238,7 @@ Each export gives a table, or a negative number with an error record. A caller t
 | `locals(thread, frame)` | One row for each parameter and each local variable that is visible at the instruction of the frame: its name, its role, its type, its value or "not readable", its location |
 | `value(thread, frame, path)` | One variable or one global by a path: one row for each field of a record, each element of an array or of a slice, or one row for a value with no part. Each row: the name, the type, the value, the address |
 | `source(thread, frame)` | One row: the line number, the path of the file, and the hash of the file at the build. The system holds no source text |
-| `break_at(place)` | An execute breakpoint at a procedure (`fault::three`) or at a file and a line (`src/programs/fault/main.odin:15`). One row for each breakpoint |
+| `break_at(place)` | An execute breakpoint at a procedure (`fault::three`) or at a file and a line (`src/modules/demonstrations/fault/main.odin:15`). One row for each breakpoint |
 | `watch(place, length)` | A data breakpoint on 1, 2, 4 or 8 bytes that the program writes, at an address or at a global. One row for each breakpoint |
 | `breaks()`, `break_remove(number)` | The breakpoints of the debugger; remove one |
 | `step(thread)` | One instruction. The row of the thread at its new instruction; `pending` 1 when the step did not end in 1000 ms |
@@ -342,7 +342,7 @@ Debugging from another machine needs no mechanism of its own.
 - **Who the caller is.** The caller is `remote`, through a connection for one row of the client table: the root service applies the rule of "Who can debug which program" to `remote`, with the principal of that row, the principal that allowed the key of the client (`PRINCIPALS.md`, "The client keys of remote"). `remote` holds the grant to act for the principal, and grants Network, Connect and Remote_Clients, which reach things of `remote` alone: so a client on another machine debugs exactly the programs with no grant, in the session of the principal that allowed its key. Each other program is refused. The connection adds no right; `revoke("remote", "acts_for_principal")` ends each debugging of the host, and the end of the grant of a client key ends the connections to services of that key, and the debuggings with them.
 - **What the host can do.** For a program with no grant, a client whose key a principal allowed reads each byte of its memory and each register, writes its registers, and so chooses what the program runs. With the handles of that program it draws in its window and reads the keys and the pointer events that the compositor sends to it. The clients of one principal are the one caller `remote`: they share one debugging, and one can steer or detach the debugging of another (`QUIC.md`, section 7, "Who may call").
 - **The time of a call.** `remote` ends a call that takes more than 5000 ms, and with it its connection to the service: the root service then ends the debugging. Each export of the service has a bound under that time ("The bounds of the exports"). `wait_stop` waits 3000 ms at most: a caller on another machine calls it again, or reads `events()` after the line of the stop in the log.
-- **The source line.** `modustool call` prints, after a table whose record has the fields `path`, `line` and `hash`, the text of each line from the file of the repository, only when the file has that hash: "source: src/programs/debug_target/main.odin:79: ...". With another hash it says that the file changed since the build. A path that is absolute, that has a part `..` or that names a file of the compiler is not read.
+- **The source line.** `modustool call` prints, after a table whose record has the fields `path`, `line` and `hash`, the text of each line from the file of the repository, only when the file has that hash: "source: src/modules/tests/debug_target/main.odin:79: ...". With another hash it says that the file changed since the build. A path that is absolute, that has a part `..` or that names a file of the compiler is not read.
 - **Where the debug objects are.** In the debug image of the debugged machine: the service names each address there. The module of a disk program is not in the debug image: at `attach`, the service reads its debug object from the store `programs`, beside its module file, through a connection that reads only and that the root service gives with the debug access (`MODULE_CONTRACT.md`, "The debug object of a disk program"). A caller on another machine can also read raw values (`registers`, `memory`) and name them with its own debug objects, by the hash of the module.
 
 ### The test
@@ -377,7 +377,7 @@ With no program attached, the keys type a name in the name field, then Enter att
 
 | Button | The debug place | The export |
 |---|---|---|
-| break at (or Enter in the field) | A procedure (`debug_target::add_step`), or a file and a line (`src/programs/debug_target/main.odin:82`) | `break_at` |
+| break at (or Enter in the field) | A procedure (`debug_target::add_step`), or a file and a line (`src/modules/tests/debug_target/main.odin:82`) | `break_at` |
 | watch | An address (`0x403010`) or a global (`debug_target::rounds`). A last word `1`, `2`, `4` or `8` after a space is the bytes of the watch: 8 with none | `watch` |
 | memory | An address or a global: the memory view shows 128 bytes from it | `memory` |
 
@@ -430,7 +430,7 @@ A comment must stay true for a reader who has only the source file. A number of 
 
 `modustool check` reads each comment of the sources and refuses a comment that names a property, a choice, a step, a review or a decision by its number, its label or its date. A comment gives the reason itself, in plain words. When the reason is long, a pointer names a document and its heading, as `(docs/MODULE_CONTRACT.md, "Did not fit, across calls")`, or a numbered section, as `(docs/CONSOLE.md, section 3)`.
 
-The check reads the `.odin`, `.asm` and `.nix` files of `src/kernel`, `src/boot`, `src/runtime`, `src/library/contract`, `src/library/support`, `src/modules`, `src/programs` and `tools`, with their tests, and `flake.nix`. It reads a comment with the scanner of the site (`tools/modustool/site_source_readers.odin`): the lines of comment that follow each other are one text. A form that a line break cuts is found, at the line where it starts. A string of the code is not a comment.
+The check reads the `.odin`, `.asm` and `.nix` files of `src/kernel`, `src/boot`, `src/runtime`, `src/library/contract`, `src/library/support`, `src/library/private`, `src/modules` and `tools`, with their tests, and `flake.nix`. It reads a comment with the scanner of the site (`tools/modustool/site_source_readers.odin`): the lines of comment that follow each other are one text. A form that a line break cuts is found, at the line where it starts. A string of the code is not a comment.
 
 | Form | Example | Message |
 |---|---|---|
@@ -543,7 +543,7 @@ A code span of a document that names a file of the repository is a link on the s
 |---|---|
 | `src/kernel/enter.odin`, `src/library/support/system` | A file or a folder: it must exist |
 | `src/kernel/enter.odin:34` | The path before the `:`. A line number is not checked |
-| `src/programs/*/main.odin`, `src/programs/<name>/main.odin` | A name that is not written out ends the path at the folder before it: `src/programs` must exist |
+| `src/modules/system/*/main.odin`, `src/modules/system/<name>/main.odin` | A name that is not written out ends the path at the folder before it: `src/modules/system` must exist |
 | `build/modules/x`, `docs/reference/modules/` | Not a source path: the name of a source folder is inside a longer path |
 | `modustool check`, `kernel`, `"modus:contract/ring"` | Not a source path: the span does not start with the name of a folder and a `/` |
 
@@ -622,9 +622,9 @@ modustool: src/library/support/sentence/parse_test.odin:4: the test imports "cor
 
 ## The table of the roles of the root service
 
-The root service gives each program of the boot image the role of its row in the table `program_roles` (`src/programs/root/roles.odin`): its start grants and the other terms of its role. A name with no row gets the zero role, so the tool keeps the table whole (`tools/modustool/program_roles_check.odin`). It reads the rows with the parser of Odin and refuses:
+The root service gives each program of the boot image the role of its row in the table `program_roles` (`src/modules/system/root/roles.odin`): its start grants and the other terms of its role. A name with no row gets the zero role, so the tool keeps the table whole (`tools/modustool/program_roles_check.odin`). It reads the rows with the parser of Odin and refuses:
 
-- a program of the boot image (a source of `src/programs` in the boot image, not a disk program) with no row, the root service apart;
+- a program of the boot image (a row of the table of the modules marked `program`, in the boot image, not a disk program) with no row, the root service apart;
 - a row that names no module of the boot image, a disk program or the root service;
 - a program with two rows;
 - a grant that is no member of `start_grant.Grant`;
@@ -634,7 +634,7 @@ The root service gives each program of the boot image the role of its row in the
 **When it runs.** Before the first compiler of each build starts, after the check of the imports, and when `modustool site` reads the table for the page of the grants. A fault stops the build with the file and the line:
 
 ```
-modustool: src/programs/root/roles.odin: the program clock of the boot image has no row in program_roles: write its role, with no grant when it needs none
+modustool: src/modules/system/root/roles.odin: the program clock of the boot image has no row in program_roles: write its role, with no grant when it needs none
 ```
 
 The host test `the_table_of_the_roles_is_whole` gives each fault to the check, the test `each_role_of_program_roles_takes_each_context_slot_once` checks that the handles of each row take one context slot each, and `the_layout_of_a_device_service_takes_each_slot_once` tries the ring of a device contract in each slot of the layout of a device service.
@@ -647,7 +647,7 @@ Four rules of the system are checked when the tool builds, not only read.
 
 **No source of the system calls an allocator.** A program has no heap: its memory is a mapping that it asks the kernel for, or a variable of its module. The tool reads each source file of the kernel, of the boot program, of the programs, of the modules and of the source library that is not a test, and refuses a line that calls `make`, `new`, `new_clone`, `delete`, `free` or `free_all`, or that names `context.allocator`, `context.temp_allocator` or `[dynamic]`. A comment and the text of a string are not read. A procedure of the system whose name ends with one of these words, as `caller_grant_make`, is not a call of the built-in procedure. The compiler also gets `-default-to-nil-allocator`: with it a call of an allocator fails when the program runs; the check refuses the call before the program exists.
 
-**Each export that fails gives an error record.** A caller reads why a call failed from the error record of the export (`MODULE_CONTRACT.md`, "8. Errors that diagnose"), never from a bare negative number. A negative result can be an answer (`number("-5")` is -5), so the check reads the forms of a failure, not the values. `export_error_record_check` (`tools/modustool/export_error_record_check.odin`) parses each source file of `src/programs` and of `src/modules` that is not a test, one folder as one package. For each export with an `i64` result, no parameter `error`, and a name other than `entry`, it refuses a `return` whose value is:
+**Each export that fails gives an error record.** A caller reads why a call failed from the error record of the export (`MODULE_CONTRACT.md`, "8. Errors that diagnose"), never from a bare negative number. A negative result can be an answer (`number("-5")` is -5), so the check reads the forms of a failure, not the values. `export_error_record_check` (`tools/modustool/export_error_record_check.odin`) parses each source file of `src/modules` that is not a test, one folder as one package. For each export with an `i64` result, no parameter `error`, and a name other than `entry`, it refuses a `return` whose value is:
 
 - a minus before a literal, a call or a conversion, or before a constant of the package: `-1`, `-i64(status)`;
 - a constant of the package whose value is a minus before a literal: `ERROR :: -1`;
@@ -657,7 +657,7 @@ Four rules of the system are checked when the tool builds, not only read.
 A minus before a variable is an answer, and a procedure literal inside the body is another procedure: the check reads neither. A refused `return` stops the check with its place:
 
 ```
-modustool: src/programs/manual/main.odin:618: the export show gives a negative number with no error record: give it the last parameter error: ^errors.Error_Record, and write the record on this path with errors.fail (docs/MODULE_CONTRACT.md, "8. Errors that diagnose")
+modustool: src/modules/system/manual/main.odin:618: the export show gives a negative number with no error record: give it the last parameter error: ^errors.Error_Record, and write the record on this path with errors.fail (docs/MODULE_CONTRACT.md, "8. Errors that diagnose")
 ```
 
 What it does not see: a `return` of a variable that holds a negative number, a helper of another package, and a failure that gives 0 or an empty text. A 0 and an empty text are also answers (`tally.last()` before the first add, `roman(0)`), and the source does not tell the two apart. Review holds them. The design: `src/md/api/export_error_records.md`.
@@ -739,8 +739,8 @@ It runs outside the build and outside `modustool check`, and it can take minutes
 
 ```
 nix develop -c modustool similarity
-nix develop -c modustool similarity near src/programs/console/commands.odin:120
-nix develop -c modustool similarity pair src/programs/root/main.odin:300 src/programs/unlock/main.odin:410
+nix develop -c modustool similarity near src/modules/system/console/commands.odin:120
+nix develop -c modustool similarity pair src/modules/system/root/main.odin:300 src/modules/system/unlock/main.odin:410
 ```
 
 - With no argument, it prints the report with the first 30 families of each list and the time of each phase, and writes the whole report and two tables in `build/similarity/`.
@@ -955,7 +955,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 
 The tool is compiled once for each change of its sources, not at each command. The design is in `src/md/infrastructure/repository_layout.md`.
 
-- **In the development shell**, `modustool` runs `build/tool/modustool`. When the file is absent, the command compiles it first. Before each command, the binary computes the build key of its sources and compares it with its build record, `build/tool/modustool.build_record`, as the incremental build does for a module ("The incremental build"). The key covers the files that its compiler read (the tool, the source library, the kernel parts, `src/modules/cryptography`, the libraries of the compiler, the files of `#load`), every other file of their folders, the command of the compiler and the program `odin`. When the key differs, the binary prints `modustool: the tool is compiled again (<reason>)`, compiles the tool, and runs the new binary with the same arguments. A command after a change of a guide or of a host test starts with no compile.
+- **In the development shell**, `modustool` runs `build/tool/modustool`. When the file is absent, the command compiles it first. Before each command, the binary computes the build key of its sources and compares it with its build record, `build/tool/modustool.build_record`, as the incremental build does for a module ("The incremental build"). The key covers the files that its compiler read (the tool, the source library, the kernel parts, `src/modules/libraries/cryptography`, the libraries of the compiler, the files of `#load`), every other file of their folders, the command of the compiler and the program `odin`. When the key differs, the binary prints `modustool: the tool is compiled again (<reason>)`, compiles the tool, and runs the new binary with the same arguments. A command after a change of a guide or of a host test starts with no compile.
 - **In the check of the flake and in the release shell**, `modustool` is the binary of the derivation `modustoolBinary`, compiled from the `.odin` files that are not tests of those folders, and from the font that a fuzz target loads. Nix builds it again only when one of those files changes. That binary never compiles itself.
 - **The measure.** Each compile in the development shell prints `modustool: measure: the compile of the tool: <seconds> s`. The derivation compiles with `-show-timings`: its build log (`nix log`) gives the time of each phase of the compiler. Each is a measure, never a condition.
 - **A compile that fails** prints the errors of the compiler and runs no command; the next command compiles again.

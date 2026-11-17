@@ -19,12 +19,12 @@ SITE_ERRORS_FILE :: SOURCE_FOLDER_CONTRACT + "/errors/errors.odin"
 SITE_FIXED_ADDRESSES_FILE :: FIXED_ADDRESSES_FOLDER + "/fixed_addresses.odin"
 SITE_SYSTEM_GRANTS_FILE :: SYSTEM_LIBRARY_FOLDER + "/grants.odin"
 // The table of the roles of the root service (program_roles_check.odin).
-SITE_ROOT_ROLES_FILE :: PROGRAM_SOURCES + "root/roles.odin"
+SITE_ROOT_ROLES_FILE :: SYSTEM_MODULE_SOURCES + "root/roles.odin"
 // The rule of the root service for the budget that a module asks for.
-SITE_ROOT_BUDGETS_FILE :: PROGRAM_SOURCES + "root/budgets.odin"
+SITE_ROOT_BUDGETS_FILE :: SYSTEM_MODULE_SOURCES + "root/budgets.odin"
 SITE_START_GRANT_FILE :: SOURCE_FOLDER_CONTRACT + "/start_grant/start_grant.odin"
 SITE_MODULES_FILE :: "tools/modustool/modules.odin"
-SITE_CONSOLE_COMMAND_FILES :: [?]string{PROGRAM_SOURCES + "console/commands.odin", PROGRAM_SOURCES + "console/debugger_commands.odin", PROGRAM_SOURCES + "console/tables.odin"}
+SITE_CONSOLE_COMMAND_FILES :: [?]string{SYSTEM_MODULE_SOURCES + "console/commands.odin", SYSTEM_MODULE_SOURCES + "console/debugger_commands.odin", SYSTEM_MODULE_SOURCES + "console/tables.odin"}
 
 // The folder of each page of a generated table: site_page_file gives its file.
 SITE_OPERATIONS_FOLDER :: SITE_REFERENCE_FOLDER + "/operations"
@@ -42,7 +42,7 @@ SITE_CONTEXT_SIZES :: [?]string{"CONTEXT_HANDLES", "CONTEXT_VALUES"}
 // One module of module_builds, with what its source says of it.
 Site_Module :: struct {
 	build:       Module_Build,
-	kind:        string, // "program" for a source in src/programs/, else "module".
+	kind:        string, // "program" for a row marked program, else "module".
 	page:        string,
 	description: Module_Description,
 }
@@ -210,7 +210,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	modules := make([dynamic]Site_Module, context.temp_allocator)
 	for build in module_builds {
 		description := describe_package(build.source) or_return
-		kind := strings.has_prefix(build.source, PROGRAM_SOURCES) ? "program" : "module"
+		kind := build.program ? "program" : "module"
 		append(&modules, Site_Module{build = build, kind = kind, page = site_module_page(build.name), description = description})
 	}
 	reference.modules = modules[:]

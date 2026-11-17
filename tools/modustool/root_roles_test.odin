@@ -143,13 +143,13 @@ the_layout_of_a_device_service_takes_each_slot_once :: proc(t: ^testing.T) {
 @(test)
 the_table_of_the_roles_is_whole :: proc(t: ^testing.T) {
 	builds := []Module_Build {
-		{name = "root", source = PROGRAM_SOURCES + "root", image = true},
-		{name = "alpha", source = PROGRAM_SOURCES + "alpha", image = true},
-		{name = "beta", source = PROGRAM_SOURCES + "beta", image = true},
-		{name = "compositor", source = PROGRAM_SOURCES + "compositor", image = true},
-		{name = "block", source = PROGRAM_SOURCES + "block", image = true},
-		{name = "visitor", source = PROGRAM_SOURCES + "visitor", image = true, disk = true},
-		{name = "library", source = MODULE_SOURCES + "library", image = true},
+		{name = "root", source = SYSTEM_MODULE_SOURCES + "root", program = true, image = true},
+		{name = "alpha", source = DEMONSTRATION_MODULE_SOURCES + "alpha", program = true, image = true},
+		{name = "beta", source = DEMONSTRATION_MODULE_SOURCES + "beta", program = true, image = true},
+		{name = "compositor", source = SYSTEM_MODULE_SOURCES + "compositor", program = true, image = true},
+		{name = "block", source = SYSTEM_MODULE_SOURCES + "block", program = true, image = true},
+		{name = "visitor", source = TEST_MODULE_SOURCES + "visitor", program = true, image = true, disk = true},
+		{name = "library", source = LIBRARY_MODULE_SOURCES + "library", image = true},
 	}
 	system_parts := []string{"root", "compositor", "block"}
 	// The whole table, with one row replaced or added.

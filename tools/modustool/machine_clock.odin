@@ -62,7 +62,7 @@ step_line_wait :: proc(machine: ^Machine, index: int, step: Step) -> (line: stri
 }
 
 // The words of the line of the bar of the compositor
-// (src/programs/compositor/main.odin, screen_build): "compositor: the bar
+// (src/modules/system/compositor/main.odin, screen_build): "compositor: the bar
 // shows the local time 2026-11-16 09:04:05 with the time zone +08:00, at
 // 1794791045 s since 1970".
 BAR_LINE_ZONE :: " with the time zone "
