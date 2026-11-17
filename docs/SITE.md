@@ -1645,7 +1645,7 @@ Each other line is a fault: another kind or direction, another arrow, another sh
 
 The text of a diagram is in B612, the interface font of the system, at 14 pixels, with lines of 20 pixels. The site serves the subset of the repository as `fonts/b612.ttf`. The text of the pages is in the font of the system of the reader, whose advances no build can know; the tool reads the advances and the pairs of B612 and measures each line. Each line carries its measured width in the SVG, so it keeps that width in any font. A character that the font lacks is a fault.
 
-A label wraps at its spaces onto more lines: a node at 176 pixels, the label of a subgraph at 160 (or the width of its column of nodes), the label of an edge at 160, a participant at 160, a message at 320 or at the width between its two lifelines, a message to the same participant at 240. A word wider than its bound is a line of its own, and its box grows: no text is cut.
+A label wraps at its spaces onto more lines: a node at 176 pixels, the label of a subgraph at 160, the label of an edge at 160, a participant at 160, a message at 320 or at the width between its two lifelines when that is less, a message to the same participant at 240. A line is wider than its bound only when it is one word that is wider than the bound by itself: that word is a line of its own, and its box grows to hold it. No text is cut, and a host test checks each line of each picture against its bound.
 
 ### The layout of a flowchart
 

@@ -21,7 +21,7 @@ The details of the page are in [`docs/SITE.md`](../../../docs/SITE.md), "The dia
 
 **The font of the text is a font that the site serves.** The text of the pages is in the font of the system of the reader, whose advances no build can know. So a diagram names one font of its own: B612, the interface font of the system, whose subset the repository already holds with its license. The tool reads its advances and its pairs with the reader of fonts of the system (`vector_font`). Each line of text in the SVG carries the width that the layout measured (`textLength`): while the font loads, or in a browser that sets the pairs in another way, the line keeps its measured width, so it never passes its box. A character that the font lacks is a fault: another font would draw it with another advance.
 
-**A text wraps; a word is never cut.** A label wraps at its spaces onto more lines, to a bound for each kind of box. A word wider than the bound is a line of its own, and its box grows.
+**A text wraps; a word is never cut.** A label wraps at its spaces onto more lines, to one bound for each kind of text. A line is wider than its bound only when it is one word that is wider than the bound by itself: that word is a line of its own, and its box grows. The label of a subgraph keeps its bound when a node with a long word makes the column of the subgraph wide: a bound that followed the column would let a sentence pass the bound with no word that needs it.
 
 **A flowchart is a layered layout.**
 

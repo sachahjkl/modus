@@ -74,7 +74,11 @@ picture_check :: proc(t: ^testing.T, font: ^Site_Diagram_Font, picture: ^Site_Di
 		for width, line_index in box.text.widths {
 			testing.expectf(t, width <= box.text_place.width, "%s: the line %q of the box %d passes its place", name, box.text.lines[line_index], box_index)
 			testing.expect_value(t, width, site_diagram_text_width(font, box.text.lines[line_index]))
+			// A line passes the bound of its text only when it is one word
+			// that is wider than the bound by itself.
+			testing.expectf(t, width <= box.text.limit || !strings.contains(box.text.lines[line_index], " "), "%s: the line %q of the box %d is %d pixels wide, past its bound %d, and is not one word", name, box.text.lines[line_index], box_index, width, box.text.limit)
 		}
+		testing.expectf(t, box.text.limit > 0, "%s: the text of the box %d has no bound", name, box_index)
 		for other, other_index in picture.boxes {
 			if other_index <= box_index {
 				continue
@@ -296,13 +300,15 @@ site_diagram_wraps_a_long_label :: proc(t: ^testing.T) {
 				// The sentence wraps onto more lines, each inside its bound.
 				testing.expectf(t, len(box.text.lines) > 1, "%s: a label of 200 characters is on one line", name)
 				for width in box.text.widths {
-					testing.expect(t, width <= SITE_DIAGRAM_MESSAGE_LABEL_LIMIT)
+					testing.expectf(t, width <= box.text.limit, "%s: a line of %d pixels passes its bound %d", name, width, box.text.limit)
 				}
 			}
 			if joined == word {
-				// A word is never cut: its box grows past the bound.
+				// A word is never cut: it is one line, wider than its bound,
+				// and its box grows to hold it.
 				testing.expect_value(t, len(box.text.lines), 1)
-				testing.expect(t, box.text.width > SITE_DIAGRAM_MESSAGE_LABEL_LIMIT)
+				testing.expectf(t, box.text.width > box.text.limit, "%s: the word of 200 characters is %d pixels, inside its bound %d", name, box.text.width, box.text.limit)
+				testing.expect(t, site_diagram_rectangle_inside(box.text_place, box.rectangle))
 			}
 		}
 	}

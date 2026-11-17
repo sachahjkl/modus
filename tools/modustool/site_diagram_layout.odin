@@ -115,11 +115,13 @@ Site_Diagram_Text :: struct {
 	widths: []int,
 	width:  int, // The widest line.
 	height: int, // The lines times the line height.
+	limit:  int, // The bound that the text was wrapped to.
 }
 
 // site_diagram_wrap cuts a text into lines no wider than limit, at its
-// spaces. A word wider than limit is a line of its own, wider than limit:
-// the box of the text grows, and the word is never cut.
+// spaces. The rule: a line is wider than limit only when it is one word
+// that is wider than limit by itself. That word is a line of its own, the
+// box of the text grows to hold it, and the word is never cut.
 site_diagram_wrap :: proc(font: ^Site_Diagram_Font, text: string, limit: int) -> Site_Diagram_Text {
 	words := strings.fields(text, context.temp_allocator)
 	lines := make([dynamic]string, context.temp_allocator)
@@ -143,7 +145,7 @@ site_diagram_wrap :: proc(font: ^Site_Diagram_Font, text: string, limit: int) ->
 		append(&lines, current)
 		append(&widths, site_diagram_text_width(font, current))
 	}
-	result := Site_Diagram_Text{lines = lines[:], widths = widths[:], height = len(lines) * font.line_height}
+	result := Site_Diagram_Text{lines = lines[:], widths = widths[:], height = len(lines) * font.line_height, limit = limit}
 	for width in widths {
 		result.width = max(result.width, width)
 	}
@@ -336,7 +338,9 @@ site_diagram_flowchart_draw :: proc(chart: ^Site_Diagram_Flowchart, font: ^Site_
 			for node in group.nodes {
 				column = max(column, node_sizes[node].x)
 			}
-			inside.label = site_diagram_wrap(font, group.label, max(column, SITE_DIAGRAM_GROUP_LABEL_LIMIT))
+			// One bound for each kind of text: a node with a long word
+			// makes its column wide, and the label does not follow it.
+			inside.label = site_diagram_wrap(font, group.label, SITE_DIAGRAM_GROUP_LABEL_LIMIT)
 			inner_width := max(column, inside.label.width)
 			inside.label_place = {padding + (inner_width - inside.label.width) / 2, padding, inside.label.width, inside.label.height}
 			y := padding + inside.label.height + padding

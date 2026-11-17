@@ -183,7 +183,10 @@ site_diagram_named_parse :: proc(text: string) -> (named: Site_Diagram_Named, pr
 			return {}, text_problem
 		}
 		rest = rest[2 + closing + 2:]
-	} else if len(rest) > 0 && strings.index_byte("([{>", rest[0]) >= 0 {
+	} else if strings.has_prefix(rest, "[") {
+		// The shape is a box; only the quotes are missing.
+		return {}, fmt.tprintf("the label of the node %s has no quotes: a label is a text in quotes inside brackets: id[\"label\"]", named.id)
+	} else if len(rest) > 0 && strings.index_byte("({>", rest[0]) >= 0 {
 		return {}, fmt.tprintf("the node %s has a shape other than a box: write id[\"label\"]", named.id)
 	}
 	named.rest = strings.trim_left_space(rest)

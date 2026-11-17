@@ -3,7 +3,7 @@ date: 2026-11-17
 release: next
 picture: none
 kind: Fixed
-guide: docs/SITE.md
+guide: docs/ARCHITECTURE.md
 
 modus is an operating system whose site publishes its guides. The guide of the architecture holds five diagrams in the text form of mermaid: the layers of the system, the order of construction, and three flows in time. The site showed each one as its text.
 
