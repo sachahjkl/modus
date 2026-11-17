@@ -3,6 +3,7 @@ package modustool
 import "core:mem"
 import "core:slice"
 import "modus:contract/demand_cache"
+import "modus:contract/enum_word"
 import "modus:contract/glyph_cache"
 import "modus:contract/text_encoding"
 
@@ -50,11 +51,12 @@ fuzz_demand_words :: proc() -> []u32 {
 // false for a key that names no face.
 @(private = "file")
 fuzz_demand_character_of :: proc(key: u32) -> (face: demand_cache.Face, character: rune, ok: bool) {
-	word := key >> demand_cache.KEY_FACE_SHIFT
-	if word >= len(demand_cache.Face) {
+	known: bool
+	face, known = enum_word.member_of_word(demand_cache.Face, u64(key >> demand_cache.KEY_FACE_SHIFT))
+	if !known {
 		return {}, 0, false
 	}
-	return demand_cache.Face(word), rune(key & (1 << demand_cache.KEY_FACE_SHIFT - 1)), true
+	return face, rune(key & (1 << demand_cache.KEY_FACE_SHIFT - 1)), true
 }
 
 fuzz_demand_cache_execute :: proc(input: []u8) -> Fuzz_Verdict {

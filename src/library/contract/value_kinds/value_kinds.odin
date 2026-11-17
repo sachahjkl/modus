@@ -13,6 +13,8 @@
 // the runs read the same bytes as before (docs/TOOLS.md, "The log").
 package value_kinds
 
+import "modus:contract/enum_word"
+
 // What a value is: the kind of a part of a text. See
 // [value run](term:value-run).
 Value_Kind :: enum u8 {
@@ -206,9 +208,11 @@ integer_unit_text :: proc "contextless" (integer_unit: Integer_Unit) -> string {
 	}
 	switch integer_unit.kind {
 	case .Size:
-		return SIZE_UNIT_TEXTS[Size_Unit(integer_unit.unit)]
+		size_unit, known := enum_word.member_of_word(Size_Unit, u64(integer_unit.unit))
+		return known ? SIZE_UNIT_TEXTS[size_unit] : ""
 	case .Time:
-		return DURATION_UNIT_TEXTS[Duration_Unit(integer_unit.unit)]
+		duration_unit, known := enum_word.member_of_word(Duration_Unit, u64(integer_unit.unit))
+		return known ? DURATION_UNIT_TEXTS[duration_unit] : ""
 	case .None, .Number, .Handle, .Value, .Grant, .Status, .Type, .Operation, .Command, .Module, .File, .Guide, .Term, .Version, .Yes, .No, .Procedure, .Constant, .Variable:
 	}
 	return ""

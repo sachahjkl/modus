@@ -362,7 +362,11 @@ advance :: proc "contextless" (elapsed: u64) {
 		}
 		still_left -= max(step, 1)
 		if still_left <= 0 {
-			animation_start(mark.Animation(mark.next_animation(&order_memory, chance())), false)
+			// The choice is a place among the animations, from 0: its
+			// border names the animation of that place.
+			if next, known := enum_word.member_of_word(mark.Animation, u64(mark.next_animation(&order_memory, chance()))); known {
+				animation_start(next, false)
+			}
 		}
 	case .Animation:
 		step := int(min(elapsed / 1000, STEP_MOST))
@@ -736,7 +740,11 @@ band_draw :: proc "contextless" (frame: ^interface.Frame) {
 	interface.bar(frame, {PROGRESS_X, y + 4, WIDTH - PROGRESS_X - BAND_MARGIN, 8}, progress, whole, graphics.colors.kernel)
 	y += interface.LINE + 8
 	for name, index in animation_keys {
-		band_key(table, BAND_MARGIN + index % KEYS_IN_A_LINE * KEY_COLUMN, y + index / KEYS_IN_A_LINE * interface.LINE, name, mark.animation_names[mark.Animation(index)], state_color(playing && int(animation) == index))
+		key_animation, key_known := enum_word.member_of_word(mark.Animation, u64(index))
+		if !key_known {
+			continue
+		}
+		band_key(table, BAND_MARGIN + index % KEYS_IN_A_LINE * KEY_COLUMN, y + index / KEYS_IN_A_LINE * interface.LINE, name, mark.animation_names[key_animation], state_color(playing && animation == key_animation))
 	}
 	y += KEY_LINES * interface.LINE + 4
 	band_key(table, CONTROL_PAUSE_X, y, "space", "pause", state_color(paused))

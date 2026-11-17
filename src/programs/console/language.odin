@@ -48,6 +48,56 @@ Value :: struct {
 	detail:  u32, // A Record or a Table: the index of the description of the record in the module.
 }
 
+// kind_of_type gives the kind of a type of the module contract.
+kind_of_type :: proc "contextless" (type: module.Type) -> (kind: Kind) {
+	switch type {
+	case .None:
+		kind = .None
+	case .Integer:
+		kind = .Integer
+	case .Text:
+		kind = .Text
+	case .Record:
+		kind = .Record
+	case .Handle:
+		kind = .Handle
+	case .Table:
+		kind = .Table
+	case .Bytes:
+		kind = .Bytes
+	}
+	return kind
+}
+
+// type_of_kind gives the type of the module contract of a kind.
+type_of_kind :: proc "contextless" (kind: Kind) -> (type: module.Type) {
+	switch kind {
+	case .None:
+		type = .None
+	case .Integer:
+		type = .Integer
+	case .Text:
+		type = .Text
+	case .Record:
+		type = .Record
+	case .Handle:
+		type = .Handle
+	case .Table:
+		type = .Table
+	case .Bytes:
+		type = .Bytes
+	}
+	return type
+}
+
+// kind_of_type_word is the border of a byte of a type of a module file
+// (module.type_of_word), as a kind of the console: false for a byte that
+// names no type.
+kind_of_type_word :: proc "contextless" (word: u8) -> (kind: Kind, ok: bool) {
+	type := module.type_of_word(word) or_return
+	return kind_of_type(type), true
+}
+
 @(rodata)
 kind_names := [Kind]string {
 	.None    = "None",
@@ -68,9 +118,19 @@ type_text :: proc "contextless" (file: []u8, kind: Kind, detail: u32) -> string 
 	writer := system.Writer {
 		buffer = scratch[scratch_count:],
 	}
-	system.write_type(&writer, file, module.Type(kind), detail)
+	system.write_type(&writer, file, type_of_kind(kind), detail)
 	scratch_count += writer.count
 	return system.written(&writer)
+}
+
+// type_text_of_word gives the name of the type of a byte of a module file,
+// as type_text: "?" for a byte that names no type.
+type_text_of_word :: proc "contextless" (file: []u8, word: u8, detail: u32) -> string {
+	kind, kind_ok := kind_of_type_word(word)
+	if !kind_ok {
+		return "?"
+	}
+	return type_text(file, kind, detail)
 }
 
 // parameter_text gives the type of a parameter of a command, with the
@@ -79,7 +139,7 @@ parameter_text :: proc "contextless" (item: ^Command, index: int) -> string {
 	writer := system.Writer {
 		buffer = scratch[scratch_count:],
 	}
-	system.write_parameter_type(&writer, item.file, module.Type(item.parameters[index]), item.function.parameter_details[index], item.function.parameter_directions[index])
+	system.write_parameter_type(&writer, item.file, type_of_kind(item.parameters[index]), item.function.parameter_details[index], item.function.parameter_directions[index])
 	scratch_count += writer.count
 	return system.written(&writer)
 }
@@ -106,7 +166,9 @@ field_value :: proc "contextless" (value: Value, name: string) -> (result: Value
 		if module.string_at(value.file, item.name_offset, item.name_count) != name {
 			continue
 		}
-		switch item.type {
+		// A byte that names no type gives no value, as a field of no value.
+		type := module.field_type(item) or_return
+		switch type {
 		case .Integer:
 			return {kind = .Integer, integer = module.field_integer(value.record, item)}, true
 		case .Handle:

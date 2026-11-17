@@ -92,4 +92,36 @@ the_record_keeps_its_size :: proc(t: ^testing.T) {
 	testing.expect_value(t, size_of(Fault_Record), 64)
 	testing.expect_value(t, offset_of(Fault_Record, kind), 40)
 	testing.expect_value(t, offset_of(Fault_Record, error_code), 48)
+	testing.expect_value(t, size_of(Event_Record), 64)
+	testing.expect_value(t, offset_of(Event_Record, kind), 8)
+	testing.expect_value(t, size_of(Event_Record{}.kind), 4)
+}
+
+// The word of the kind of a fault record that names no kind is refused: a
+// vector that is no delivered kind (2, the vector between Debug and
+// Breakpoint), one past the last kind, a vector past 255 and the largest
+// word. The word of the kind of an event record is refused past the last
+// kind and at the largest word. Each kind then reads back from its word.
+@(test)
+a_word_of_a_kind_of_a_record_that_names_no_kind :: proc(t: ^testing.T) {
+	refused_faults := [?]u64{2, u64(max(Fault_Kind)) + 1, 0x100, max(u64)}
+	for word in refused_faults {
+		_, ok := fault_kind_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no kind of a fault, and it is taken", word)
+	}
+	refused_events := [?]u32{u32(max(Event_Kind)) + 1, 0x100, max(u32)}
+	for word in refused_events {
+		_, ok := event_kind_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no kind of an event, and it is taken", word)
+	}
+	for member in Fault_Kind {
+		kind, ok := fault_kind_of_word(u64(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, kind, member)
+	}
+	for member in Event_Kind {
+		kind, ok := event_kind_of_word(u32(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, kind, member)
+	}
 }

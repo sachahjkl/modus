@@ -23,7 +23,7 @@ module_with_one_integer :: proc(storage: []u8, detail: u32) -> []u8 {
 	offset += 2 * size_of(module.Export)
 	directory[module.Table_Kind.Functions] = {offset = offset, count = 2, record_size = size_of(module.Function)}
 	function := (^module.Function)(&storage[offset + size_of(module.Function)])
-	function.parameter_count, function.parameters[0], function.parameter_details[0], function.result = 1, .Integer, detail, .Integer
+	function.parameter_count, function.parameters[0], function.parameter_details[0], function.result = 1, u8(module.Type.Integer), detail, u8(module.Type.Integer)
 	offset += 2 * size_of(module.Function)
 	(^module.Header)(&storage[0])^ = {magic = module.MAGIC, version = module.VERSION, header_size = size_of(module.Header), machine = .X86_64, table_count = module.TABLE_COUNT}
 	(^Directory)(&storage[size_of(module.Header)])^ = directory

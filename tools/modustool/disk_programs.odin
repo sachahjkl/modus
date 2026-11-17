@@ -185,7 +185,7 @@ program_object_write :: proc(disk: ^Program_Disk, bytes: []u8) -> (entry: format
 		return {}, 0, false
 	}
 	entry = {
-		kind       = .Object,
+		kind       = u64(format.Entry_Kind.Object),
 		size       = size,
 		generation = PROGRAM_DISK_GENERATION,
 		hash       = hash,

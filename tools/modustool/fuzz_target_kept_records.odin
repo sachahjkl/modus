@@ -17,34 +17,57 @@ import "modus:support/disk_program"
 // The kept settings.
 
 // fuzz_kept_settings_execute reads the input as a kept record, as the text
-// of a zone, and as a settings page. A record that kept_read refuses gives
-// the defaults; one that it accepts gives valid values, and kept_of of
-// them reads again to the same values. A zone that zone_parse accepts is
-// written and read again to the same minutes. A page always reads as valid
-// values, and a page written with them reads again to them.
+// of a zone, and as a settings page. The model of a record is read from
+// its bytes: a record of this size, magic, version and count is accepted
+// only when each value inside its count names a value of its setting; one
+// value that names nothing refuses the record whole. A refused record gives
+// the defaults; an accepted one gives its values, the default past its
+// count, and the valid zone, and kept_of of the choice reads again to the
+// same choice. A zone that zone_parse accepts is written and read again to
+// the same minutes. A page is read against the same model.
 fuzz_kept_settings_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	before := slice.clone(input, context.temp_allocator)
-	values, zone, ok := settings.kept_read(input)
+	choice, zone, ok := settings.kept_read(input)
 	if !slice.equal(before, input) {
 		return fuzz_broken(.Contract, "kept_read changed the bytes that it read")
 	}
+	// The model: what the rule says of these bytes.
+	model_ok := len(input) == size_of(settings.Kept_Settings)
+	record: settings.Kept_Settings
+	model_values: [settings.Setting]u32
+	if model_ok {
+		copy(mem.ptr_to_bytes(&record), input)
+		model_ok = record.magic == settings.KEPT_MAGIC && record.version == settings.KEPT_VERSION && record.count <= settings.SETTING_CAPACITY
+	}
+	if model_ok {
+		for setting in settings.Setting {
+			if u32(setting) >= record.count {
+				continue // A setting that the record did not hold: its default.
+			}
+			model_values[setting] = record.values[setting]
+			if !settings.value_valid(setting, record.values[setting]) {
+				model_ok = false
+			}
+		}
+	}
+	if ok != model_ok {
+		return fuzz_broken(.Model, "kept_read gives ok %v, and the record has ok %v: a value of no member must refuse the whole record", ok, model_ok)
+	}
 	if !ok {
-		if values != ([settings.Setting]u32{}) || zone != 0 {
+		if settings.values_of(choice) != ([settings.Setting]u32{}) || zone != 0 {
 			return fuzz_broken(.Contract, "kept_read refuses the record and gives values")
 		}
 	} else {
-		for setting in settings.Setting {
-			if settings.valid(setting, values[setting]) != values[setting] {
-				return fuzz_broken(.Contract, "kept_read gives the value %d of the setting %v", values[setting], setting)
-			}
+		if settings.values_of(choice) != model_values {
+			return fuzz_broken(.Model, "kept_read gives the values %v of a record of the values %v", settings.values_of(choice), model_values)
 		}
-		if settings.zone_offset_minutes_valid(zone) != zone {
-			return fuzz_broken(.Contract, "kept_read gives the zone %d", zone)
+		if zone != settings.zone_offset_minutes_valid(record.zone_offset_minutes) {
+			return fuzz_broken(.Contract, "kept_read gives the zone %d of a record of the zone %d", zone, record.zone_offset_minutes)
 		}
-		kept := settings.kept_of(values, zone)
-		again_values, again_zone, again_ok := settings.kept_read(mem.ptr_to_bytes(&kept))
-		if !again_ok || again_values != values || again_zone != zone {
-			return fuzz_broken(.Round_Trip, "the record of kept_of reads as %v, %d, %v", again_values, again_zone, again_ok)
+		kept := settings.kept_of(choice, zone)
+		again_choice, again_zone, again_ok := settings.kept_read(mem.ptr_to_bytes(&kept))
+		if !again_ok || settings.values_of(again_choice) != settings.values_of(choice) || again_zone != zone {
+			return fuzz_broken(.Round_Trip, "the record of kept_of reads as %v, %d, %v", settings.values_of(again_choice), again_zone, again_ok)
 		}
 	}
 	// The text of a zone: "-00:00" is read as UTC, which is written
@@ -66,34 +89,56 @@ fuzz_kept_settings_execute :: proc(input: []u8) -> Fuzz_Verdict {
 }
 
 // fuzz_settings_page_check reads the start of an input as a settings page.
+// A page in a change is refused with the defaults and its count. A stable
+// page is accepted only when each value names a value of its setting and
+// the word of the appearance in force names one: one word that names
+// nothing refuses the whole page, with the defaults and its count. An
+// accepted page gives its words as members, and a page written with the
+// choice reads again to it.
 @(private = "file")
 fuzz_settings_page_check :: proc(input: []u8) -> Fuzz_Verdict {
 	page: settings.Page
 	copy(mem.ptr_to_bytes(&page), input)
-	choice := settings.read(&page)
+	choice, ok := settings.read(&page)
+	refused := settings.Choice{change_count = page.change_count}
 	if page.change_count & 1 != 0 {
 		// A writer that stays in its change: the defaults, with the count.
-		if choice != (settings.Choice{change_count = page.change_count}) {
-			return fuzz_broken(.Contract, "read of a page in a change gives %v", choice)
+		if ok || choice != refused {
+			return fuzz_broken(.Contract, "read of a page in a change gives %v, ok %v", choice, ok)
+		}
+		return FUZZ_PASSED
+	}
+	model_ok := page.appearance_in_force <= u32(max(settings.Appearance_In_Force))
+	page_values: [settings.Setting]u32
+	for setting in settings.Setting {
+		page_values[setting] = page.values[setting]
+		if !settings.value_valid(setting, page.values[setting]) {
+			model_ok = false
+		}
+	}
+	if ok != model_ok {
+		return fuzz_broken(.Model, "read gives ok %v, and the page has ok %v: a word of no member must refuse the whole page", ok, model_ok)
+	}
+	if !ok {
+		if choice != refused {
+			return fuzz_broken(.Contract, "read refuses the page and gives %v", choice)
 		}
 		return FUZZ_PASSED
 	}
 	if choice.change_count != page.change_count {
 		return fuzz_broken(.Contract, "read gives the count %d of a page of the count %d", choice.change_count, page.change_count)
 	}
-	for setting in settings.Setting {
-		if choice.values[setting] != settings.valid(setting, page.values[setting]) {
-			return fuzz_broken(.Contract, "read gives the value %d of the setting %v for the word %d", choice.values[setting], setting, page.values[setting])
-		}
+	if settings.values_of(choice) != page_values {
+		return fuzz_broken(.Model, "read gives the values %v of a page of the values %v", settings.values_of(choice), page_values)
 	}
-	if choice.zone_offset_minutes != settings.zone_offset_minutes_valid(page.zone_offset_minutes) || choice.appearance_in_force > max(settings.Appearance_In_Force) {
-		return fuzz_broken(.Contract, "read gives the zone %d and the appearance %d", choice.zone_offset_minutes, u32(choice.appearance_in_force))
+	if choice.zone_offset_minutes != settings.zone_offset_minutes_valid(page.zone_offset_minutes) || u32(choice.appearance_in_force) != page.appearance_in_force {
+		return fuzz_broken(.Contract, "read gives the zone %d and the appearance %d of a page of %d and %d", choice.zone_offset_minutes, u32(choice.appearance_in_force), page.zone_offset_minutes, page.appearance_in_force)
 	}
 	written: settings.Page
-	settings.write(&written, choice.values, choice.zone_offset_minutes, choice.appearance_in_force)
-	again := settings.read(&written)
-	if settings.values_differ(again, choice) || again.change_count != 2 {
-		return fuzz_broken(.Round_Trip, "a page written with the values that read gave reads as %v", again)
+	settings.write(&written, choice, choice.zone_offset_minutes, choice.appearance_in_force)
+	again, again_ok := settings.read(&written)
+	if !again_ok || settings.values_differ(again, choice) || again.change_count != 2 {
+		return fuzz_broken(.Round_Trip, "a page written with the choice that read gave reads as %v, ok %v", again, again_ok)
 	}
 	return FUZZ_PASSED
 }
@@ -105,16 +150,30 @@ fuzz_kept_settings_seeds :: proc(seeds: ^[dynamic][]u8) {
 	for setting in settings.Setting {
 		values[setting] = settings.descriptions[setting].value_count - 1
 	}
-	for record_values, index in ([2][settings.Setting]u32{{}, values}) {
-		kept := settings.kept_of(record_values, index == 0 ? 0 : settings.ZONE_OFFSET_MINUTES_MOST)
+	last, _, last_ok := settings.choice_of_values(values)
+	if !last_ok {
+		panic("modustool: the last value of a setting names no value of it")
+	}
+	for record_choice, index in ([2]settings.Choice{{}, last}) {
+		kept := settings.kept_of(record_choice, index == 0 ? 0 : settings.ZONE_OFFSET_MINUTES_MOST)
 		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
 		kept.count = settings.SETTING_CAPACITY
 		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
 		kept.count = settings.SETTING_CAPACITY + 1
 		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
 	}
+	// A value one past the last value of each setting, which refuses the
+	// record whole; then that value past the count of an older record,
+	// which the record does not hold.
+	for setting in settings.Setting {
+		kept := settings.kept_of(last, 0)
+		kept.values[setting] = settings.descriptions[setting].value_count
+		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
+		kept.count = u32(setting)
+		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
+	}
 	// A record of another version, one byte short and one byte long.
-	kept := settings.kept_of(values, 0)
+	kept := settings.kept_of(last, 0)
 	kept.version = settings.KEPT_VERSION + 1
 	append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
 	append(seeds, slice.clone(mem.ptr_to_bytes(&kept)[:size_of(kept) - 1]))
@@ -246,7 +305,7 @@ fuzz_kept_stop_reports_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		name := fuzz_stop_report_name(number)
 		// Only a keep can take the place of another report.
 		eviction_allowed := false
-		switch Fuzz_Stop_Report_Step(fuzz_choice_below(&choices, len(Fuzz_Stop_Report_Step))) {
+		switch enum_member_at(Fuzz_Stop_Report_Step, fuzz_choice_below(&choices, len(Fuzz_Stop_Report_Step))) {
 		case .Keep:
 			report := fuzz_stop_report_of(&choices)
 			disk_program.stop_report_hide(&report)

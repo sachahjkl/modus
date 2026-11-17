@@ -145,7 +145,7 @@ command :: proc "contextless" (active: int, mode: lockers.Mode, start, end, limi
 	for index in 0 ..< active {
 		slot := &board.slots[index]
 		seen[index] = intrinsics.atomic_load(&slot.done)
-		slot.mode = mode
+		slot.mode = u32(mode)
 		slot.start = start
 		slot.end = end
 		slot.limit = limit
@@ -293,7 +293,7 @@ pairs :: proc "contextless" (load: int) -> u64 {
 	for index in 0 ..< load {
 		slot := &board.slots[index]
 		seen[index] = intrinsics.atomic_load(&slot.done)
-		slot.mode = .Entries
+		slot.mode = u32(lockers.Mode.Entries)
 		slot.start = start
 		slot.end = end
 		slot.limit = measured ? 0 : LOAD_ENTRIES_CHECKED
@@ -564,7 +564,7 @@ frames_stress :: proc "contextless" () {
 		for index in 0 ..< lockers.LOCKER_CAPACITY {
 			slot := &board.slots[index]
 			seen[index] = intrinsics.atomic_load(&slot.done)
-			slot.mode = modes[index]
+			slot.mode = u32(modes[index])
 			slot.start = start
 			slot.end = end
 			slot.limit = 0

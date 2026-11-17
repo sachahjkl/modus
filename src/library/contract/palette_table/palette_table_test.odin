@@ -14,7 +14,7 @@ table_of_test :: proc(count: int) -> []u8 {
 		entry.name_length = u8(copy(entry.name[:], "time"))
 		entry.signature_length = u8(copy(entry.signature[:], "time() -> Integer"))
 		entry.about_length = u8(copy(entry.about[:], "the time of the system"))
-		entry.result = .Integer
+		entry.result = u8(Value_Kind.Integer)
 	}
 	return memory
 }
@@ -32,7 +32,9 @@ a_good_table_is_copied :: proc(t: ^testing.T) {
 		testing.expect_value(t, snapshot.entry_count, count)
 		testing.expect_value(t, snapshot.generation, 2)
 	}
-	testing.expect_value(t, snapshot.entries[ENTRY_CAPACITY - 1].result, Value_Kind.Integer)
+	result, result_ok := result_kind_of(&snapshot.entries[ENTRY_CAPACITY - 1])
+	testing.expect(t, result_ok)
+	testing.expect_value(t, result, Value_Kind.Integer)
 }
 
 // The copy is checked, not the memory: a problem names its entry, and the
@@ -66,6 +68,46 @@ a_bad_entry_is_named :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, Problem.Never_Stable)
 	problem, _ = snapshot_take(memory[:TABLE_BYTES - 1], snapshot)
 	testing.expect_value(t, problem, Problem.Too_Small)
+}
+
+// A byte of the kind of the result or of a parameter that names no kind is
+// refused by the check of the entry and by each border: one past the last
+// kind, and the largest byte. An index of a parameter past the capacity, or
+// negative, is refused. Each kind then reads back from its own byte.
+@(test)
+a_kind_of_a_result_or_a_parameter_that_names_no_kind :: proc(t: ^testing.T) {
+	entry: Entry
+	entry.kind = u8(Entry_Kind.Command)
+	entry.name_length = u8(copy(entry.name[:], "time"))
+	entry.signature_length = u8(copy(entry.signature[:], "time"))
+	refused_bytes := [?]u8{u8(max(Value_Kind)) + 1, max(u8)}
+	for value in refused_bytes {
+		entry.result = value
+		testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+		_, result_ok := result_kind_of(&entry)
+		testing.expectf(t, !result_ok, "the result byte %d names no kind, and it is taken", value)
+		entry.result = u8(Value_Kind.None)
+		for index in 0 ..< PARAMETER_CAPACITY {
+			entry.parameters[index] = value
+			testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
+			_, parameter_ok := parameter_kind_of(&entry, index)
+			testing.expectf(t, !parameter_ok, "the byte %d of the parameter %d names no kind, and it is taken", value, index)
+			entry.parameters[index] = u8(Value_Kind.None)
+		}
+	}
+	_, below_ok := parameter_kind_of(&entry, -1)
+	_, past_ok := parameter_kind_of(&entry, PARAMETER_CAPACITY)
+	testing.expect(t, !below_ok && !past_ok)
+	testing.expect_value(t, entry_problem(&entry), Problem.None)
+	for member in Value_Kind {
+		entry.result = u8(member)
+		entry.parameters[PARAMETER_CAPACITY - 1] = u8(member)
+		result, result_ok := result_kind_of(&entry)
+		parameter, parameter_ok := parameter_kind_of(&entry, PARAMETER_CAPACITY - 1)
+		testing.expect(t, result_ok && parameter_ok)
+		testing.expect_value(t, result, member)
+		testing.expect_value(t, parameter, member)
+	}
 }
 
 // The runs of a result: what a writer writes is valid; a line or a run
@@ -352,7 +394,7 @@ an_integer_unit_is_checked :: proc(t: ^testing.T) {
 	entry.name_length = u8(copy(entry.name[:], "bytes"))
 	entry.signature_length = u8(copy(entry.signature[:], "bytes(Handle, Integer, Integer) -> Bytes"))
 	entry.parameter_count = 3
-	entry.parameters[0], entry.parameters[1], entry.parameters[2] = .Handle, .Integer, .Integer
+	entry.parameters[0], entry.parameters[1], entry.parameters[2] = u8(Value_Kind.Handle), u8(Value_Kind.Integer), u8(Value_Kind.Integer)
 	entry.parameter_units[2] = value_kinds.size_in(.Bytes)
 	testing.expect_value(t, entry_problem(&entry), Problem.None)
 	entry.parameter_units[2] = value_kinds.time_in(.Seconds)

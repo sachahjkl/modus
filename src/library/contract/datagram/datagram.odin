@@ -82,6 +82,8 @@
 // This package allocates no memory and calls no kernel operation.
 package datagram
 
+import "modus:contract/enum_word"
+
 RING_CAPACITY :: 256 // The capacity of the datagram ring.
 UDP_HEADER :: 8 // The header of UDP: the two ports, the length and the checksum.
 DATA_LIMIT :: 1472 // The bytes of the data of one datagram: one frame of Ethernet, no fragment.
@@ -392,15 +394,19 @@ control_of_ring_word :: proc "contextless" (word: u32) -> (control: Control, ok:
 // command_name gives the name of a command from an error record, or "an
 // unknown command".
 command_name :: proc "contextless" (command: i64) -> string {
-	return command >= 0 && command <= i64(max(Command)) ? COMMAND_NAMES[Command(command)] : "an unknown command"
+	member, known := enum_word.member_of_word(Command, u64(command))
+	return known ? COMMAND_NAMES[member] : "an unknown command"
 }
 
 // argument_name gives the name of a value of a command, from 1.
 argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
-	if argument < 1 || argument > 7 {
+	member, known := enum_word.member_of_word(Command, u64(command))
+	if !known || argument < 1 || argument > 7 {
 		return ""
 	}
-	#partial switch Command(command) {
+	// An open choice: the commands whose values have names are named here,
+	// and each other command gives no name, as a value past the names does.
+	#partial switch member {
 	case .Send:
 		names := [?]string{"place", "count", "address", "port"}
 		return argument <= len(names) ? names[argument - 1] : ""
@@ -435,13 +441,20 @@ CONTROL_NAMES := [Control]string {
 // control_name gives the name of a command of the control ring, or "an
 // unknown command".
 control_name :: proc "contextless" (command: i64) -> string {
-	return command >= 0 && command <= i64(max(Control)) ? CONTROL_NAMES[Control(command)] : "an unknown command"
+	member, known := enum_word.member_of_word(Control, u64(command))
+	return known ? CONTROL_NAMES[member] : "an unknown command"
 }
 
 // control_argument_name gives the name of a value of a command of the
 // control ring, from 1.
 control_argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
-	#partial switch Control(command) {
+	member, known := enum_word.member_of_word(Control, u64(command))
+	if !known {
+		return ""
+	}
+	switch member {
+	case .None:
+		// No control: its values have no names.
 	case .Endpoint_Add:
 		names := [?]string{"ring", "region", "grant"}
 		return argument >= 1 && argument <= len(names) ? names[argument - 1] : ""

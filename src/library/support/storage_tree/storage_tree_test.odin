@@ -63,7 +63,7 @@ number_of_name :: proc(key: []u8) -> u64 {
 }
 
 entry_of_number :: proc(number: u64) -> (value: format.Entry) {
-	value.kind = .Object
+	value.kind = u64(format.Entry_Kind.Object)
 	value.size = number * 3
 	value.generation = number
 	return value
@@ -313,7 +313,7 @@ names_in_order_and_in_pages :: proc(t: ^testing.T) {
 	names := []string{"b", "ab", "a", "abc", "z", "B", "é"}
 	for name, index in names {
 		key := format.entry_name(name)
-		value := format.Entry{kind = .Object, size = u64(index)}
+		value := format.Entry{kind = u64(format.Entry_Kind.Object), size = u64(index)}
 		put(&work, key[:], ([^]u8)(&value)[:size_of(value)], false)
 	}
 	finish(&work, &disk.writer)

@@ -385,11 +385,13 @@ rings_read :: proc "contextless" (tally: ^Tally) {
 }
 
 tally_add :: proc "contextless" (tally: ^Tally, record: op.Event_Record) {
-	if record.kind > max(op.Event_Kind) {
+	// The ring is shared memory: a word that names no kind is not counted.
+	kind, kind_ok := op.event_kind_of_word(record.kind)
+	if !kind_ok {
 		return
 	}
-	tally.kinds[record.kind] += 1
-	switch record.kind {
+	tally.kinds[kind] += 1
+	switch kind {
 	case .None, .Switch, .Lock_Wait:
 		// The count above is all that the tally keeps of these.
 	case .Operation:

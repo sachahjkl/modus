@@ -566,6 +566,13 @@ fuzz_sequence_read: operation_sequence.Sequence
 fuzz_sequence_generated: operation_sequence.Sequence
 @(private = "file")
 fuzz_sequence_bytes: [operation_sequence.SEQUENCE_BYTES_MOST]u8
+// The generated target has its own memory: the host tests run the two
+// targets on two threads at once, where the fuzz engine runs one target in
+// each process.
+@(private = "file")
+fuzz_sequence_generated_bytes: [operation_sequence.SEQUENCE_BYTES_MOST]u8
+@(private = "file")
+fuzz_sequence_generated_read: operation_sequence.Sequence
 
 // fuzz_operation_sequence_execute: a sequence that check accepts follows
 // each rule of its format and writes again to its own bytes; a refusal
@@ -761,15 +768,15 @@ fuzz_operation_sequence_generated_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	choices := fuzz_choices_of(input)
 	generated := &fuzz_sequence_generated
 	fuzz_operation_sequence_generate(&choices, generated)
-	written, ok := operation_sequence.write(fuzz_sequence_bytes[:], generated)
+	written, ok := operation_sequence.write(fuzz_sequence_generated_bytes[:], generated)
 	if !ok {
 		return fuzz_broken(.Contract, "the writer refuses a sequence of the generator: %d steps, %d areas", generated.step_count, generated.area_count)
 	}
-	refusal := operation_sequence.check(written, &fuzz_sequence_read)
+	refusal := operation_sequence.check(written, &fuzz_sequence_generated_read)
 	if refusal.problem != .None {
-		return fuzz_broken(.Contract, "check refuses a sequence of the generator: %v at the index %d, the argument %d", refusal.problem, refusal.index, refusal.argument)
+		return fuzz_broken(.Contract, "check refuses a sequence of the generator: %v at the index %d, the argument %d; %d bytes written, %d steps, %d areas", refusal.problem, refusal.index, refusal.argument, len(written), generated.step_count, generated.area_count)
 	}
-	if fuzz_sequence_read != generated^ {
+	if fuzz_sequence_generated_read != generated^ {
 		return fuzz_broken(.Round_Trip, "check reads another sequence than the generator built")
 	}
 	return FUZZ_PASSED

@@ -108,10 +108,8 @@ STREAM_ERROR_NAMES := [Stream_Error]string {
 // stream_error_name gives the name of an application error code, or "" for
 // a code that this contract does not name.
 stream_error_name :: proc "contextless" (code: u64) -> string {
-	if code >= u64(len(STREAM_ERROR_NAMES)) {
-		return ""
-	}
-	return STREAM_ERROR_NAMES[Stream_Error(code)]
+	stream_error, known := enum_word.member_of_word(Stream_Error, code)
+	return known ? STREAM_ERROR_NAMES[stream_error] : ""
 }
 
 // What a request asks.

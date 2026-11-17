@@ -8,6 +8,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import "modus:contract/blake3"
+import "modus:contract/enum_word"
 
 // The commands of the fuzzing (src/md/infrastructure/fuzzing.md, "The run
 // of the check and the long runs"; docs/TOOLS.md, "The fuzzing"): the
@@ -115,8 +116,7 @@ fuzz_children_watch :: proc(children: []Fuzz_Running_Child) {
 			_, wait_error := os.process_wait(child.process, 0)
 			if wait_error != os.General_Error.Timeout {
 				child.ended = true
-				state := Fuzz_Child_State(intrinsics.atomic_load_explicit(&child.mailbox.state, .Acquire))
-				if state != .Done {
+				if intrinsics.atomic_load_explicit(&child.mailbox.state, .Acquire) != u32(Fuzz_Child_State.Done) {
 					stop_all = true
 				}
 				continue
@@ -167,7 +167,9 @@ fuzz_fault_place :: proc(error_text: string) -> string {
 // fuzz_child_outcome reads what an ended child left.
 fuzz_child_outcome :: proc(child: ^Fuzz_Running_Child) -> (outcome: Fuzz_Child_Outcome) {
 	mailbox := child.mailbox
-	outcome.state = Fuzz_Child_State(intrinsics.atomic_load_explicit(&mailbox.state, .Acquire))
+	state_word := intrinsics.atomic_load_explicit(&mailbox.state, .Acquire)
+	state, state_known := enum_word.member_of_word(Fuzz_Child_State, u64(state_word))
+	outcome.state = state
 	outcome.executions = intrinsics.atomic_load_explicit(&mailbox.executions, .Acquire)
 	outcome.kept = mailbox.kept
 	outcome.edges_reached = mailbox.edges_reached
@@ -177,13 +179,20 @@ fuzz_child_outcome :: proc(child: ^Fuzz_Running_Child) -> (outcome: Fuzz_Child_O
 	input := fuzz_mailbox_input(mailbox)[:min(mailbox.input_length, FUZZ_INPUT_CAPACITY)]
 	error_bytes, _ := os.read_entire_file(child.error_path, context.temp_allocator)
 	error_text := string(error_bytes)
+	// The mailbox is memory that the child writes: a word that names no
+	// state, or no oracle, is a child that broke its mailbox.
+	oracle, oracle_known := enum_word.member_of_word(Fuzz_Oracle, u64(mailbox.oracle))
 	switch {
+	case !state_known || state == .Finding && !oracle_known:
+		outcome.oracle = .Fault
+		outcome.text = fmt.tprintf("the mailbox of the child names the state %d and the oracle %d, one of which names nothing\n%s", state_word, mailbox.oracle, error_text)
+		outcome.signature = "fault: the mailbox names no state or no oracle"
 	case child.stalled:
 		outcome.oracle = .End
 		outcome.text = fmt.tprintf("an execution did not end in %v", HANG_BOUND)
 		outcome.signature = "end"
 	case outcome.state == .Finding:
-		outcome.oracle = Fuzz_Oracle(mailbox.oracle)
+		outcome.oracle = oracle
 		outcome.text = strings.clone(string(mailbox.text[:min(int(mailbox.text_length), len(mailbox.text))]), context.temp_allocator)
 		// The words before the first colon name the broken fact; the values
 		// after it change with the input, so they are not a part of the

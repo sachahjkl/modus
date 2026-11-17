@@ -474,7 +474,7 @@ open :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> i64
 	if outcome == .Device || outcome == .Wrong {
 		return lookup_refusal(outcome, error, 2)
 	}
-	if outcome != .Found || value.kind != .Tree {
+	if outcome != .Found || value.kind != u64(format.Entry_Kind.Tree) {
 		return errors.fail(error, failure(.Absent), .Absent, .Trees, 2)
 	}
 	named.path.names[named.path.depth] = named.name.key

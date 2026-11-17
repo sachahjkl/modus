@@ -100,25 +100,42 @@ ERROR_STORE :: -4
 
 // values_text writes the values of a choice: "font vector, subpixel order
 // rgb, pointer theme owner, grid fit on".
-values_text :: proc "contextless" (writer: ^system.Writer, values: [settings.Setting]u32) -> string {
+values_text :: proc "contextless" (writer: ^system.Writer, choice: settings.Choice) -> string {
+	values := settings.values_of(choice)
 	for setting in settings.Setting {
 		description := settings.descriptions[setting]
 		system.write_part(writer, setting == .Font ? "" : ", ")
 		system.write_part(writer, description.title)
 		system.write_part(writer, " ")
-		system.write_part(writer, description.value_names[settings.valid(setting, values[setting])])
+		system.write_part(writer, description.value_names[values[setting]])
 	}
 	return system.written(writer)
+}
+
+// with_value gives a choice with one setting at the value of a button or of
+// a name: its index in the names of the values of the setting. ok false: the
+// setting has no value of that index.
+with_value :: proc "contextless" (choice: settings.Choice, setting: settings.Setting, index: int) -> (changed: settings.Choice, ok: bool) {
+	values := settings.values_of(choice)
+	values[setting] = u32(index)
+	changed, _, ok = settings.choice_of_values(values)
+	if !ok {
+		return choice, false
+	}
+	changed.appearance_in_force = choice.appearance_in_force
+	changed.zone_offset_minutes = choice.zone_offset_minutes
+	changed.change_count = choice.change_count
+	return changed, true
 }
 
 // keep writes the record of the values and the zone to the private store:
 // one object, one commit. It gives false, with a log line, when the store
 // refuses.
-keep :: proc "contextless" (values: [settings.Setting]u32, zone_offset_minutes: i32) -> bool {
+keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -> bool {
 	if !has_store {
 		return false
 	}
-	kept := settings.kept_of(values, zone_offset_minutes)
+	kept := settings.kept_of(choice, zone_offset_minutes)
 	error: errors.Error_Record
 	_, status := storage.write(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, ([^]u8)(&kept)[:size_of(kept)], &error)
 	if status != .Ok {
@@ -138,10 +155,9 @@ keep :: proc "contextless" (values: [settings.Setting]u32, zone_offset_minutes: 
 // writes the appearance of a new zone after the program `date` copies it,
 // so the page never holds the appearance of a zone that the date page does
 // not have yet.
-in_force_now :: proc "contextless" (values: [settings.Setting]u32, buffer: []u8) -> (settings.Appearance_In_Force, string) {
-	setting := settings.Appearance(settings.valid(.Appearance, values[.Appearance]))
+in_force_now :: proc "contextless" (choice: settings.Choice, buffer: []u8) -> (settings.Appearance_In_Force, string) {
 	moment := appearance.moment_of(date_page, system.time())
-	return appearance.in_force_of(setting, moment), appearance.sentence_write(buffer, setting, moment)
+	return appearance.in_force_of(choice.appearance, moment), appearance.sentence_write(buffer, choice.appearance, moment)
 }
 
 // page_write writes the values and their appearance in force on the page in
@@ -149,37 +165,49 @@ in_force_now :: proc "contextless" (values: [settings.Setting]u32, buffer: []u8)
 // write, it writes the sentence of the appearance in force on the log when
 // the setting or the appearance changes, or when `always`: the log then
 // has it before the line of the compositor that the write causes.
-page_write :: proc "contextless" (values: [settings.Setting]u32, zone_offset_minutes: i32, always := false) {
-	before := settings.read(page)
+page_write :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32, always := false) {
+	before, before_ok := settings.read(page)
 	sentence_buffer: [192]u8
-	in_force, sentence := in_force_now(values, sentence_buffer[:])
-	if always || before.values[.Appearance] != values[.Appearance] || before.appearance_in_force != in_force {
+	in_force, sentence := in_force_now(choice, sentence_buffer[:])
+	if always || !before_ok || before.appearance != choice.appearance || before.appearance_in_force != in_force {
 		system.log("settings: ", sentence)
 	}
-	settings.write(page, values, zone_offset_minutes, in_force)
+	settings.write(page, choice, zone_offset_minutes, in_force)
 	system.word_wake(&page.change_count, 64)
+}
+
+// page_choice reads the page that this program writes. A refused page (a
+// word that names no value: no write of this program makes one) is said on
+// the log, and gives the defaults, which the next change writes over it.
+page_choice :: proc "contextless" () -> (choice: settings.Choice, ok: bool) {
+	choice, ok = settings.read(page)
+	if !ok && choice.change_count & 1 == 0 {
+		system.log_in("programs", .Warning, "settings: the settings page holds a value that its setting does not have, or was never stable: the defaults")
+	}
+	return choice, ok
 }
 
 // change keeps the values and the zone, then writes them on the page and
 // wakes the compositor and the program `date`.
-change :: proc "contextless" (values: [settings.Setting]u32, zone_offset_minutes: i32) -> bool {
-	choice := settings.read(page)
+change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -> bool {
+	current, current_ok := page_choice()
 	zone := settings.zone_offset_minutes_valid(zone_offset_minutes)
-	if choice.values == values && choice.zone_offset_minutes == zone {
+	values_same := current_ok && settings.values_of(current) == settings.values_of(choice)
+	if values_same && current.zone_offset_minutes == zone {
 		return true
 	}
-	kept := keep(values, zone)
+	kept := keep(choice, zone)
 	kept_text := kept ? "; kept in the store" : "; NOT kept: the store refused"
-	if choice.values != values {
+	if !values_same {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
-		system.log("settings: ", values_text(&writer, values), kept_text)
+		system.log("settings: ", values_text(&writer, choice), kept_text)
 	}
-	if choice.zone_offset_minutes != zone {
+	if current.zone_offset_minutes != zone {
 		zone_buffer: [settings.ZONE_TEXT_SIZE]u8
 		system.log("settings: ", settings.TIME_ZONE_TITLE, " ", settings.zone_text(zone_buffer[:], zone), kept_text)
 	}
-	page_write(values, zone)
+	page_write(choice, zone)
 	return kept
 }
 
@@ -254,7 +282,8 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 		if !zone_ok {
 			return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
 		}
-		if !change(settings.read(page).values, zone) {
+		current, _ := settings.read(page)
+		if !change(current, zone) {
 			return errors.fail(error, ERROR_STORE, .Refused, .None, 2)
 		}
 		return 1
@@ -266,10 +295,12 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 	description := &settings.descriptions[setting]
 	for value_name, index in description.value_names[:description.value_count] {
 		if value_name == given {
-			choice := settings.read(page)
-			values := choice.values
-			values[setting] = u32(index)
-			if !change(values, choice.zone_offset_minutes) {
+			current, _ := settings.read(page)
+			changed, changed_ok := with_value(current, setting, index)
+			if !changed_ok {
+				return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
+			}
+			if !change(changed, current.zone_offset_minutes) {
 				return errors.fail(error, ERROR_STORE, .Refused, .None, 2)
 			}
 			return 1
@@ -300,7 +331,8 @@ get :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i
 	}
 	if wanted == settings.TIME_ZONE_NAME {
 		zone_buffer: [settings.ZONE_TEXT_SIZE]u8
-		zone_name := settings.zone_text(zone_buffer[:], settings.read(page).zone_offset_minutes)
+		current, _ := settings.read(page)
+		zone_name := settings.zone_text(zone_buffer[:], current.zone_offset_minutes)
 		copy(result^, zone_name)
 		return i64(len(zone_name))
 	}
@@ -308,7 +340,9 @@ get :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i
 	if !found {
 		return errors.fail(error, ERROR_NAME, .Absent, .None, 1)
 	}
-	values := settings.read(page).values
+	// A refused page gives the defaults, which each program draws with.
+	current, _ := settings.read(page)
+	values := settings.values_of(current)
 	// The count of the whole text: a caller with a smaller buffer sees that
 	// it does not fit.
 	value_name := settings.descriptions[setting].value_names[values[setting]]
@@ -337,16 +371,19 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 	if count < 1 || count > 1000 {
 		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1, count, 1000)
 	}
-	choice := settings.read(page)
-	values := choice.values
+	choice, _ := settings.read(page)
+	// The font of the record n is the value n mod 2, its order of the
+	// stripes the value n mod 3: the members in the order of their values.
+	fonts := [2]settings.Font{.Vector, .Spleen}
+	orders := [3]settings.Subpixel_Order{.Red_Green_Blue, .Blue_Green_Red, .None}
 	for number in 0 ..< count {
-		values[.Font] = u32(number % 2)
-		values[.Subpixel_Order] = u32(number % 3)
-		if !keep(values, choice.zone_offset_minutes) {
+		choice.font = fonts[number % 2]
+		choice.subpixel_order = orders[number % 3]
+		if !keep(choice, choice.zone_offset_minutes) {
 			return errors.fail(error, ERROR_STORE, .Refused, .None, 1, number)
 		}
 	}
-	page_write(values, choice.zone_offset_minutes)
+	page_write(choice, choice.zone_offset_minutes)
 	system.log("settings: kept ", u64(count), " records, one commit each")
 	return count
 }
@@ -356,7 +393,7 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 boot_pass :: proc "contextless" () -> ! {
 	start := system.nanoseconds()
 	buffer: [64]u8
-	values: [settings.Setting]u32
+	choice: settings.Choice
 	zone_offset_minutes: i32
 	what := "no settings kept: the defaults"
 	if has_store {
@@ -368,28 +405,29 @@ boot_pass :: proc "contextless" () -> ! {
 		case:
 			read, read_zone, valid := settings.kept_read(bytes)
 			if valid {
-				values = read
+				choice = read
 				zone_offset_minutes = read_zone
 				what = "the settings kept in the store"
 			} else {
-				// A record of another version (a disk of an older system):
+				// A record of another version (a disk of an older system),
+				// or a record with a value that its setting does not have:
 				// the defaults take its place in the store, so the next boot
 				// reads a valid record and the defaults hold once, not at
 				// each boot until the next change of a setting.
-				if keep(values, zone_offset_minutes) {
-					what = "the record of the store is not a record of this version: the defaults, kept in its place"
+				if keep(choice, zone_offset_minutes) {
+					what = "the record of the store is refused (another version, or a value that its setting does not have): the defaults, kept in its place"
 				} else {
-					what = "the record of the store is not a record of this version: the defaults, NOT kept: the store refused"
+					what = "the record of the store is refused (another version, or a value that its setting does not have): the defaults, NOT kept: the store refused"
 				}
 			}
 		}
 	} else {
 		what = "no private store: the defaults"
 	}
-	page_write(values, zone_offset_minutes, always = true)
+	page_write(choice, zone_offset_minutes, always = true)
 	text: [256]u8
 	writer := system.Writer{buffer = text[:]}
-	system.log("settings: the boot pass: ", what, ": ", values_text(&writer, values), "; in ", (system.nanoseconds() - start) / 1000, " us")
+	system.log("settings: the boot pass: ", what, ": ", values_text(&writer, choice), "; in ", (system.nanoseconds() - start) / 1000, " us")
 	system.stop(0)
 }
 
@@ -422,7 +460,7 @@ zone_row :: proc "contextless" (frame: ^interface.Frame, x, y: int, choice: sett
 		element := interface.identity(interface.text_of(&builder))
 		if interface.button(frame, {left, y, width, 24}, element, step.label).activated {
 			moved := clamp(choice.zone_offset_minutes + step.minutes, settings.ZONE_OFFSET_MINUTES_LEAST, settings.ZONE_OFFSET_MINUTES_MOST)
-			change(choice.values, moved)
+			change(choice, moved)
 		}
 		left += width + 8
 	}
@@ -432,7 +470,9 @@ zone_row :: proc "contextless" (frame: ^interface.Frame, x, y: int, choice: sett
 // time zone, then the text of the system at its three sizes, then the facts
 // of the glyph caches.
 draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
-	choice := settings.read(page)
+	// A refused page shows the defaults: a press writes a whole page again.
+	choice, _ := settings.read(page)
+	values := settings.values_of(choice)
 	frame := interface.window_frame_start(&window_memory)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	interface.action_bar_input_take(&frame, &bar)
@@ -455,11 +495,11 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 			interface.text_put(&builder, description.name)
 			interface.text_put(&builder, value_name)
 			element := interface.identity(interface.text_of(&builder))
-			in_use := choice.values[setting] == u32(index)
+			in_use := values[setting] == u32(index)
 			if interface.button(&frame, area, element, value_name, in_use).activated {
-				values := choice.values
-				values[setting] = u32(index)
-				change(values, choice.zone_offset_minutes)
+				if changed, changed_ok := with_value(choice, setting, index); changed_ok {
+					change(changed, choice.zone_offset_minutes)
+				}
 			}
 			if in_use {
 				// The palette sets this setting with the export set, and
@@ -478,7 +518,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	interface.draw_text(frame.table, content.x, content.y + rows_height + 8, "the console: settings.set(\"font\", \"spleen\")", graphics.colors.dim)
 
 	top := 8 + 40 + rows_height + 32 + 8
-	vector := settings.font_of(choice) == .Vector && graphics.text_vector_drawn()
+	vector := choice.font == .Vector && graphics.text_vector_drawn()
 	sample := interface.card(&frame, {8, top, WIDTH - 16, HEIGHT - top - 8 - interface.ACTION_BAR_ROW_HEIGHT}, "THE TEXT OF THE SYSTEM", vector ? "the vector font, from the glyph cache" : "Spleen 8x16, the fallback", graphics.colors.machine)
 	lines := [?]string {
 		"> print(monitor.programs())   31 programs",
@@ -517,7 +557,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	if choice.change_count != drawn_change && drawn_change != 1 {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
-		system.log("settings: drawn with ", values_text(&writer, choice.values))
+		system.log("settings: drawn with ", values_text(&writer, choice))
 	}
 	drawn_change = choice.change_count
 	return bar_result
@@ -569,7 +609,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	draw_with_bar(&window)
 	buffer: [256]u8
 	writer := system.Writer{buffer = buffer[:]}
-	system.log("settings: ok, ", values_text(&writer, settings.read(page).values))
+	started, _ := settings.read(page)
+	system.log("settings: ok, ", values_text(&writer, started))
 	for {
 		wait := system.wait_begin()
 		display.wait_events(&wait, &window)

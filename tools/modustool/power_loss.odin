@@ -254,9 +254,9 @@ contents_visit :: proc "contextless" (one: ^tree.Walk, key: []u8, value: []u8) {
 	item := Stored_Object {
 		store = walking.store,
 		name  = strings.join(parts[:], "/", walking.allocator),
-		tree  = entry.kind == .Tree,
+		tree  = entry.kind == u64(format.Entry_Kind.Tree),
 	}
-	if entry.kind == .Tree {
+	if entry.kind == u64(format.Entry_Kind.Tree) {
 		append(&walking.objects, item)
 		if nesting < format.NESTING_LIMIT {
 			walking.path[nesting] = name
@@ -753,10 +753,11 @@ kept_settings_of :: proc(contents: ^Disk_Contents) -> (text: string, found: bool
 		if item.store != "settings" || item.name != settings.KEPT_OBJECT_NAME {
 			continue
 		}
-		values, _, ok := settings.kept_read(item.bytes)
+		choice, _, ok := settings.kept_read(item.bytes)
 		if !ok {
 			return "", true, false
 		}
+		values := settings.values_of(choice)
 		builder := strings.builder_make(context.temp_allocator)
 		for setting in settings.Setting {
 			description := settings.descriptions[setting]

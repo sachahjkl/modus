@@ -395,7 +395,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The check of two descriptions with another type: the record has both.
 	math := system.image_find(image, "math")
 	difference, parameter, expected, given := module.functions_compare(math, module.export_find(math, "number"), math, module.export_find(math, "fibonacci"))
-	note("the check of number against fibonacci (math)", difference == .Parameter_Type && parameter == 1 && expected.type == .Text && given.type == .Integer, "parameter 1: Integer, not Text")
+	note("the check of number against fibonacci (math)", difference == .Parameter_Type && parameter == 1 && expected.type == u8(module.Type.Text) && given.type == u8(module.Type.Integer), "parameter 1: Integer, not Text")
 
 	// 4. An import that is not in what the program was granted.
 	// With a table of error details: one load error for each import that is

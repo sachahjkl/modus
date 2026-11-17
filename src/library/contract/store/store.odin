@@ -180,6 +180,19 @@ Entry_Kind :: enum u64 {
 	Tree   = 2, // A tree: names of other entries.
 }
 
+// entry_kind_of_word is the border of the kind of an entry (Entry.kind): the
+// member, or false for a word that names no kind. The word comes from the
+// disk, so a reader takes it through here and never casts it; a reader
+// that holds no None refuses that member after the border.
+entry_kind_of_word :: proc "contextless" (word: u64) -> (kind: Entry_Kind, ok: bool) {
+	for member in Entry_Kind {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
 // The key of an entry: its name, with zero bytes after it. The order of the
 // bytes is the order of the entries: a shorter name comes before the names
 // that start with it.
@@ -191,7 +204,7 @@ Entry_Name :: [ENTRY_NAME_CAPACITY]u8
 // commit, and gives its fields to a program as the state of an object or of
 // a tree. 104 bytes. See [entry](term:entry).
 Entry :: struct {
-	kind:       Entry_Kind, // An object or a tree.
+	kind:       u64, // An object or a tree: the word of an Entry_Kind, read through entry_kind_of_word.
 	size:       u64, // An object: its bytes. A tree: its entries.
 	generation: u64, // The commit of its last change.
 	time:       u64, // The time since the format at that commit, in milliseconds.

@@ -579,8 +579,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	settings_told: settings.Choice
 	settings_told_once: bool
 	if display.settings_page != nil {
-		first_choice := settings.read(display.settings_page)
-		pointer_theme_choose(settings.pointer_theme_of(first_choice))
+		// A refused page gives the defaults: the compositor draws with
+		// them, as with a page that never stays stable.
+		first_choice, _ := settings.read(display.settings_page)
+		pointer_theme_choose(first_choice.pointer_theme)
 		pointer_form_choose(pointer_form_in_force(first_choice)) // pointer_picture.odin
 	}
 
@@ -612,7 +614,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if display.settings_page != nil {
 			// The root service changes the appearance in force alone, with
 			// no new change count, and wakes this loop.
-			if choice := settings.read(display.settings_page); choice.change_count != settings_seen || choice.appearance_in_force != settings_told.appearance_in_force {
+			// A refused page gives the defaults with its count: the windows
+			// draw with them, as with a page that never stays stable.
+			if choice, _ := settings.read(display.settings_page); choice.change_count != settings_seen || choice.appearance_in_force != settings_told.appearance_in_force {
 				settings_seen = choice.change_count
 				if !settings_told_once || settings.values_differ(choice, settings_told) {
 					settings_told = choice
@@ -791,7 +795,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 		bar_mark_build()
 	}
 	bar_layout_update()
-	pointer_theme_choose(settings.pointer_theme_of(choice)) // pointer_picture.odin
+	pointer_theme_choose(choice.pointer_theme) // pointer_picture.odin
 	pointer_form_choose(pointer_form_in_force(choice))
 	told := 0
 	for &client in clients {
@@ -804,12 +808,13 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	palette_refresh() // An open panel is measured again in the new font.
 	buffer: [256]u8
 	writer := system.Writer{buffer = buffer[:]}
+	values := settings.values_of(choice)
 	for setting in settings.Setting {
 		description := settings.descriptions[setting]
 		system.write_part(&writer, setting == .Font ? "" : ", ")
 		system.write_part(&writer, description.title)
 		system.write_part(&writer, " ")
-		system.write_part(&writer, description.value_names[choice.values[setting]])
+		system.write_part(&writer, description.value_names[values[setting]])
 	}
 	system.write_part(&writer, "; the appearance in force ")
 	system.write_part(&writer, settings.appearance_in_force_names[choice.appearance_in_force])

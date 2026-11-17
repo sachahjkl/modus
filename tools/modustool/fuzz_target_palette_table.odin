@@ -2,6 +2,7 @@ package modustool
 
 import "core:mem"
 import "core:slice"
+import "modus:contract/enum_word"
 import "modus:contract/palette_table"
 import "modus:contract/settings"
 import "modus:contract/text_encoding"
@@ -50,7 +51,7 @@ fuzz_palette_table_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		return FUZZ_PASSED
 	}
 	body := input[1:]
-	switch Fuzz_Palette_Part(input[0] % len(Fuzz_Palette_Part)) {
+	switch enum_member_at(Fuzz_Palette_Part, int(input[0]) % len(Fuzz_Palette_Part)) {
 	case .Entries:
 		header := fuzz_palette_place(0, body[:min(len(body), size_of(palette_table.Header))])
 		entries := fuzz_palette_place(palette_table.ENTRIES_OFFSET, body[len(header):])
@@ -121,8 +122,13 @@ fuzz_palette_entries_check :: proc() -> Fuzz_Verdict {
 		if !text_encoding.identifier_words_valid(name) || string(entry.signature[:entry.name_length]) != string(name) {
 			return fuzz_broken(.Contract, "the accepted entry %d has the name %q", number, string(name))
 		}
-		if kind == .Setting && u32(entry.setting_value) >= settings.descriptions[settings.Setting(entry.setting)].value_count {
-			return fuzz_broken(.Contract, "the accepted entry %d names the value %d of the setting %d", number, entry.setting_value, entry.setting)
+		// A second reader of the setting: the names of the values of the
+		// setting, not the border of the contract.
+		if kind == .Setting {
+			setting, setting_known := enum_word.member_of_word(settings.Setting, u64(entry.setting))
+			if !setting_known || u32(entry.setting_value) >= settings.descriptions[setting].value_count {
+				return fuzz_broken(.Contract, "the accepted entry %d names the value %d of the setting %d", number, entry.setting_value, entry.setting)
+			}
 		}
 	}
 	return FUZZ_PASSED
@@ -165,7 +171,11 @@ fuzz_palette_result_check :: proc(length: u64) -> Fuzz_Verdict {
 			append(&expected, part, 0)
 			continue
 		}
-		palette_table.result_run(&writer, palette_table.Run_Part(part), string(text))
+		run_part, run_part_known := enum_word.member_of_word(palette_table.Run_Part, u64(part))
+		if !run_part_known {
+			return fuzz_broken(.Contract, "result_copy accepts the run part %d, which names no part", part)
+		}
+		palette_table.result_run(&writer, run_part, string(text))
 		if run_length > 0 {
 			append(&expected, part, u8(run_length))
 			append(&expected, ..text)
@@ -258,8 +268,8 @@ fuzz_palette_entry_of :: proc(kind: palette_table.Entry_Kind, name: string, abou
 	case .Command:
 	case .Export:
 		entry.parameter_count = 2
-		entry.parameters[0], entry.parameters[1] = .Text, .Text
-		entry.result = .Integer
+		entry.parameters[0], entry.parameters[1] = u8(palette_table.Value_Kind.Text), u8(palette_table.Value_Kind.Text)
+		entry.result = u8(palette_table.Value_Kind.Integer)
 		entry.parameter_name_lengths[0] = u8(copy(entry.parameter_names[0][:], "name"))
 	case .Setting:
 		entry.setting = u8(max(settings.Setting))
@@ -341,7 +351,7 @@ fuzz_palette_table_regions :: proc(input: []u8, regions: ^[dynamic]Fuzz_Region) 
 	if len(input) < 1 {
 		return
 	}
-	switch Fuzz_Palette_Part(input[0] % len(Fuzz_Palette_Part)) {
+	switch enum_member_at(Fuzz_Palette_Part, int(input[0]) % len(Fuzz_Palette_Part)) {
 	case .Entries:
 		if len(input) >= 1 + size_of(palette_table.Header) {
 			append(regions, Fuzz_Region{offset = 1, type = palette_table.Header, count = 1})

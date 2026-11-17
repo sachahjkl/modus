@@ -91,6 +91,11 @@ code_kind_of_refuses_a_byte_that_names_no_kind :: proc(t: ^testing.T) {
 	}
 }
 
+// test_run writes one run with the byte of its kind, as a program does.
+test_run :: proc(start, length: u8, kind: Code_Kind) -> Code_Run {
+	return {start = start, length = length, kind = u8(kind)}
+}
+
 // The runs of a row: inside it, in order, with no overlap, at least one
 // byte, a kind that exists. One run that is not: no runs, and the text
 // stays as it is.
@@ -102,17 +107,21 @@ code_runs_checked_against_their_row :: proc(t: ^testing.T) {
 		length: int,
 		kept:   bool,
 	}
-	bad_kind := transmute(Code_Kind)u8(99)
+	past_the_last_kind := Code_Run{start = 0, length = 1, kind = u8(max(Code_Kind)) + 1}
+	largest_byte := Code_Run{start = 0, length = 1, kind = max(u8)}
+	none := test_run(0, 0, .None)
 	cases := [?]Case {
-		{{{0, 3, .Function, 0}, {3, 1, .Operator, 0}, {5, 2, .Number, 0}}, 3, 8, true},
-		{{{0, 3, .Function, 0}, {3, 1, .Operator, 0}, {5, 4, .Number, 0}}, 3, 8, false}, // Past the row.
-		{{{0, 3, .Function, 0}, {2, 1, .Operator, 0}, {0, 0, .None, 0}}, 2, 8, false}, // Overlap.
-		{{{4, 1, .Operator, 0}, {0, 3, .Function, 0}, {0, 0, .None, 0}}, 2, 8, false}, // Not in order.
-		{{{0, 0, .Function, 0}, {0, 0, .None, 0}, {0, 0, .None, 0}}, 1, 8, false}, // No byte.
-		{{{0, 1, bad_kind, 0}, {0, 0, .None, 0}, {0, 0, .None, 0}}, 1, 8, false}, // A kind that does not exist.
-		{{{0, 1, .None, 0}, {0, 0, .None, 0}, {0, 0, .None, 0}}, 1, 8, false},
-		{{{255, 1, .Words, 0}, {0, 0, .None, 0}, {0, 0, .None, 0}}, 1, RUN_LIMIT, true}, // The last byte of a row of RUN_LIMIT bytes.
-		{{{0, 0, .None, 0}, {0, 0, .None, 0}, {0, 0, .None, 0}}, 0, 0, true},
+		{{past_the_last_kind, none, none}, 1, 8, false}, // A kind that does not exist.
+		{{largest_byte, none, none}, 1, 8, false},
+		{{test_run(0, 3, .Function), test_run(3, 1, .Operator), {start = 4, length = 1, kind = u8(max(Code_Kind)) + 1}}, 3, 8, false}, // A refused kind after good runs.
+		{{test_run(0, 1, .None), none, none}, 1, 8, false},
+		{{test_run(0, 3, .Function), test_run(3, 1, .Operator), test_run(5, 4, .Number)}, 3, 8, false}, // Past the row.
+		{{test_run(0, 3, .Function), test_run(2, 1, .Operator), none}, 2, 8, false}, // Overlap.
+		{{test_run(4, 1, .Operator), test_run(0, 3, .Function), none}, 2, 8, false}, // Not in order.
+		{{test_run(0, 0, .Function), none, none}, 1, 8, false}, // No byte.
+		{{test_run(255, 1, .Words), none, none}, 1, RUN_LIMIT, true}, // The last byte of a row of RUN_LIMIT bytes.
+		{{none, none, none}, 0, 0, true},
+		{{test_run(0, 3, .Function), test_run(3, 1, .Operator), test_run(5, 2, .Number)}, 3, 8, true},
 	}
 	for &item, index in cases {
 		runs: Code_Runs
@@ -125,7 +134,7 @@ code_runs_checked_against_their_row :: proc(t: ^testing.T) {
 	// A count past the limit is the limit.
 	many: Code_Runs
 	for &run, index in many.runs {
-		run = {u8(index), 1, .Operator, 0}
+		run = test_run(u8(index), 1, .Operator)
 	}
 	many.count = 1000
 	testing.expect(t, code_runs_check(&many, RUN_LIMIT) && many.count == CODE_RUN_LIMIT)
@@ -135,7 +144,7 @@ code_runs_checked_against_their_row :: proc(t: ^testing.T) {
 // of bytes that is not a whole count of runs gives no runs.
 @(test)
 code_runs_read_from_the_text_region :: proc(t: ^testing.T) {
-	runs := [2]Code_Run{{0, 7, .Module, 0}, {7, 1, .Operator, 0}}
+	runs := [2]Code_Run{test_run(0, 7, .Module), test_run(7, 1, .Operator)}
 	bytes := transmute([8]u8)runs
 	read, ok := code_runs_read(bytes[:3], bytes[3:])
 	testing.expect(t, ok && read.count == 2 && read.runs[0] == runs[0] && read.runs[1] == runs[1])
@@ -150,10 +159,12 @@ code_runs_read_from_the_text_region :: proc(t: ^testing.T) {
 @(test)
 code_runs_kind_of_each_byte :: proc(t: ^testing.T) {
 	runs: Code_Runs
-	runs.runs[0] = {2, 7, .Module, 0}
-	runs.runs[1] = {9, 1, .Operator, 0}
-	runs.runs[2] = {12, 2, .Number, 0}
-	runs.count = 3
+	runs.runs[0] = test_run(2, 7, .Module)
+	runs.runs[1] = test_run(9, 1, .Operator)
+	runs.runs[2] = test_run(12, 2, .Number)
+	// A byte of no kind gives no color, even with no check of the runs.
+	runs.runs[3] = {start = 14, length = 1, kind = u8(max(Code_Kind)) + 1}
+	runs.count = 4
 	expected := [?]Code_Kind{.None, .None, .Module, .Module, .Module, .Module, .Module, .Module, .Module, .Operator, .None, .None, .Number, .Number, .None}
 	cursor := 0
 	for kind, place in expected {
@@ -167,7 +178,7 @@ code_runs_kind_of_each_byte :: proc(t: ^testing.T) {
 the_runs_of_a_refused_row_do_not_wait :: proc(t: ^testing.T) {
 	keeping: List_Keeping
 	name := "monitor.count"
-	runs := [3]Code_Run{{0, 7, .Module, 0}, {7, 1, .Operator, 0}, {8, 5, .Function, 0}}
+	runs := [3]Code_Run{test_run(0, 7, .Module), test_run(7, 1, .Operator), test_run(8, 5, .Function)}
 	bytes := transmute([12]u8)runs
 	list_keep_code_runs(&keeping, {0 = u64(Kind.List_Row), 1 = 1}, bytes[:], nil)
 	list_keep_row(&keeping, {0 = 1, 1 = 13, 4 = u64(max(List_Icon)) + 1}, transmute([]u8)name, nil)
@@ -187,7 +198,7 @@ the_runs_of_a_refused_row_do_not_wait :: proc(t: ^testing.T) {
 list_rows_take_their_runs :: proc(t: ^testing.T) {
 	keeping: List_Keeping
 	name := "monitor.count"
-	runs := [3]Code_Run{{0, 7, .Module, 0}, {7, 1, .Operator, 0}, {8, 5, .Function, 0}}
+	runs := [3]Code_Run{test_run(0, 7, .Module), test_run(7, 1, .Operator), test_run(8, 5, .Function)}
 	bytes := transmute([12]u8)runs
 	list_keep_code_runs(&keeping, {0 = u64(Kind.List_Row), 1 = 0}, bytes[:], nil)
 	list_keep_row(&keeping, {0 = 0, 1 = 13}, transmute([]u8)name, nil)

@@ -31,6 +31,7 @@
 // See [module](term:module) and [export](term:export).
 package module
 
+import "modus:contract/enum_word"
 import "modus:contract/value_kinds"
 
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
@@ -199,6 +200,36 @@ Type :: enum u8 {
 	// count and the capacity are in bytes. The detail is 0.
 }
 
+// type_of_word is the border of the byte of a Type in a module file
+// (Function.result, Function.parameters, Field.type): the member, or false
+// for a byte that names no type. A module file comes from its build or from
+// a disk, so its bytes are words: a reader takes each through this border
+// and never casts it.
+type_of_word :: proc "contextless" (word: u8) -> (type: Type, ok: bool) {
+	return enum_word.member_of_word(Type, u64(word))
+}
+
+// function_result_type reads the type of the result of an export through
+// the border.
+function_result_type :: proc "contextless" (function: Function) -> (type: Type, ok: bool) {
+	return type_of_word(function.result)
+}
+
+// function_parameter_type reads the type of the parameter index of an
+// export through the border: false for an index past PARAMETER_CAPACITY,
+// or negative, and for a byte that names no type.
+function_parameter_type :: proc "contextless" (function: Function, index: int) -> (type: Type, ok: bool) {
+	if index < 0 || index >= PARAMETER_CAPACITY {
+		return {}, false
+	}
+	return type_of_word(function.parameters[index])
+}
+
+// field_type reads the type of a field of a record through the border.
+field_type :: proc "contextless" (field: Field) -> (type: Type, ok: bool) {
+	return type_of_word(field.type)
+}
+
 // What the callee does with the memory of a Table or Bytes parameter
 // (docs/MODULE_CONTRACT.md, "Tables and bytes as parameters"). 0 is the
 // direction with the least power.
@@ -241,8 +272,8 @@ Function :: struct {
 	about_count:           u32, // The bytes of the line of help.
 	parameter_names:       [PARAMETER_CAPACITY]u32, // The name of each parameter, in the string table.
 	parameter_count:       u8, // At most PARAMETER_CAPACITY, and call_argument_count at most PARAMETER_CAPACITY.
-	result:                Type, // The type of the result: None, Integer, Text, Record or Table.
-	parameters:            [PARAMETER_CAPACITY]Type, // The type of each parameter, in the order of the arguments.
+	result:                u8, // The type of the result, the byte of a Type (function_result_type): None, Integer, Text, Record or Table.
+	parameters:            [PARAMETER_CAPACITY]u8, // The type of each parameter, the byte of a Type (function_parameter_type), in the order of the arguments.
 	parameter_name_counts: [PARAMETER_CAPACITY]u8, // The bytes of the name of each parameter.
 	// The direction of each Table or Bytes parameter, 0 (Read) for each other
 	// parameter.
@@ -271,8 +302,12 @@ Function :: struct {
 //
 // Example: an export with 9 parameters, a Text result and an error record
 // has 11 arguments.
-call_argument_count :: proc "contextless" (parameter_count: int, result: Type, has_error_record: bool) -> int {
-	return parameter_count + int(result == .Text || result == .Table || result == .Record) + int(has_error_record)
+//
+// result is the byte of the type of the result, as Function.result holds it:
+// a byte that names no type takes no argument, and the check of the
+// description refuses it.
+call_argument_count :: proc "contextless" (parameter_count: int, result: u8, has_error_record: bool) -> int {
+	return parameter_count + int(result == u8(Type.Text) || result == u8(Type.Table) || result == u8(Type.Record)) + int(has_error_record)
 }
 
 RECORD_SIZE_LIMIT :: 256 // The bytes of a record that a call carries.
@@ -312,7 +347,7 @@ Field :: struct {
 	name_offset:  u32, // In the string table.
 	name_count:   u32, // The bytes of the name.
 	offset:       u32, // From the start of the record, in bytes.
-	type:         Type, // Integer, Handle or Text.
+	type:         u8, // The byte of a Type (field_type): Integer, Handle or Text.
 	unsigned:     bool, // An Integer: true for an unsigned integer, false for a signed one.
 	integer_unit: value_kinds.Integer_Unit, // An Integer: what it counts, {} for a plain number. {} for a Handle and a Text.
 	detail:       u32, // An Integer: its size in bytes, 0 for 8. A Handle: the rights that the callee needs. A Text: its size in bytes.

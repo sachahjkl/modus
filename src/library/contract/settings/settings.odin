@@ -46,6 +46,7 @@
 package settings
 
 import "base:intrinsics"
+import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import "modus:contract/glyph_cache"
 import op "modus:contract/operation"
@@ -213,8 +214,8 @@ appearance_in_force_names := [Appearance_In_Force]string {
 // change_count stays even and the same.
 Page :: struct {
 	change_count:        u32, // Even when the page is stable. Each change adds 2.
-	appearance_in_force: u32, // Appearance_In_Force. The program `settings` and the root service write it.
-	values:              [SETTING_CAPACITY]u32, // By Setting. A reader keeps each value through `valid`.
+	appearance_in_force: u32, // The word of an Appearance_In_Force. The program `settings` and the root service write it.
+	values:              [SETTING_CAPACITY]u32, // By Setting. A reader takes them through choice_of_values, which refuses a word that names no value.
 	zone_offset_minutes: i32, // The time zone. A reader keeps it through zone_offset_minutes_valid.
 }
 #assert(size_of(Page) <= 4096)
@@ -255,70 +256,93 @@ glyph_cache_open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, cache: 
 	return glyph_cache.validate_at(uintptr(place.address), place.span)
 }
 
-// Choice: the values of a page, as one copy.
+// Choice: the values of a page, as one copy. Each value is the member of
+// its setting: the border of the page (choice_of_values) refused each word
+// that names no value, so no reader casts a word.
 Choice :: struct {
-	values:              [Setting]u32, // The value of each setting, kept valid.
+	font:                Font,
+	subpixel_order:      Subpixel_Order,
+	pointer_theme:       Pointer_Theme,
+	grid_fit:            Grid_Fit,
+	keyboard_layout:     Keyboard_Layout,
+	appearance:          Appearance, // The setting of the appearance: Auto, Dark or Light.
 	appearance_in_force: Appearance_In_Force, // The appearance that each program draws now.
 	zone_offset_minutes: i32, // The time zone that the principal chose, kept valid.
 	change_count:        u32, // The change count of the page at the copy.
 }
 
-// appearance_of gives the setting of the appearance of a choice.
-appearance_of :: #force_inline proc "contextless" (choice: Choice) -> Appearance {
-	return Appearance(choice.values[.Appearance])
-}
-
-// appearance_in_force_valid gives the appearance in force of a word of the
-// page: Dark for a value that the enumeration does not have.
-appearance_in_force_valid :: proc "contextless" (value: u32) -> Appearance_In_Force {
-	return value == u32(Appearance_In_Force.Light) ? .Light : .Dark
-}
-
-// font_of gives the font of a choice.
-font_of :: #force_inline proc "contextless" (choice: Choice) -> Font {
-	return Font(choice.values[.Font])
-}
-
-// subpixel_order_of gives the subpixel order of a choice.
-subpixel_order_of :: #force_inline proc "contextless" (choice: Choice) -> Subpixel_Order {
-	return Subpixel_Order(choice.values[.Subpixel_Order])
-}
-
-// pointer_theme_of gives the pointer theme of a choice.
-pointer_theme_of :: #force_inline proc "contextless" (choice: Choice) -> Pointer_Theme {
-	return Pointer_Theme(choice.values[.Pointer_Theme])
-}
-
-// grid_fit_of gives the grid fit of a choice.
-grid_fit_of :: #force_inline proc "contextless" (choice: Choice) -> Grid_Fit {
-	return Grid_Fit(choice.values[.Grid_Fit])
-}
-
-// valid gives the value, or the default 0 for a value that the setting does
-// not have (a page or a record of a later version).
-//
-// The count of the values of each setting is a number in the code here, and
-// not a read of `descriptions`: that table holds names, so it has addresses
-// that a loader writes, and a module that only reads a choice (the drawing
-// module) must have no such data (docs/MODULE_CONTRACT.md, "A library as a
-// module").
-valid :: proc "contextless" (setting: Setting, value: u32) -> u32 {
-	count: u32
+// value_valid says if a word names a value of a setting: the word of a
+// member of the enumeration of the setting.
+value_valid :: proc "contextless" (setting: Setting, word: u32) -> bool {
 	switch setting {
 	case .Font:
-		count = len(Font)
+		_, ok := enum_word.member_of_word(Font, u64(word))
+		return ok
 	case .Subpixel_Order:
-		count = len(Subpixel_Order)
+		_, ok := enum_word.member_of_word(Subpixel_Order, u64(word))
+		return ok
 	case .Pointer_Theme:
-		count = len(Pointer_Theme)
+		_, ok := enum_word.member_of_word(Pointer_Theme, u64(word))
+		return ok
 	case .Grid_Fit:
-		count = len(Grid_Fit)
+		_, ok := enum_word.member_of_word(Grid_Fit, u64(word))
+		return ok
 	case .Keyboard_Layout:
-		count = len(Keyboard_Layout)
+		_, ok := enum_word.member_of_word(Keyboard_Layout, u64(word))
+		return ok
 	case .Appearance:
-		count = len(Appearance)
+		_, ok := enum_word.member_of_word(Appearance, u64(word))
+		return ok
 	}
-	return value < count ? value : 0
+	return false
+}
+
+// choice_of_values is the border of the words of the settings: the choice
+// of the members, or ok false with the first setting whose word names no
+// value of it (a page or a record that a broken writer wrote). The word is
+// refused, never read as the default: the caller keeps what it had, or
+// refuses the whole page or record. The time zone, the appearance in force
+// and the count are not set.
+//
+// The members come from the enumerations, and not from `descriptions`:
+// that table holds names, so it has addresses that a loader writes, and a
+// module that only reads a choice (the drawing module) must have no such
+// data (docs/MODULE_CONTRACT.md, "A library as a module").
+choice_of_values :: proc "contextless" (values: [Setting]u32) -> (choice: Choice, refused: Setting, ok: bool) {
+	font_ok, order_ok, theme_ok, grid_ok, layout_ok, appearance_ok: bool
+	choice.font, font_ok = enum_word.member_of_word(Font, u64(values[.Font]))
+	choice.subpixel_order, order_ok = enum_word.member_of_word(Subpixel_Order, u64(values[.Subpixel_Order]))
+	choice.pointer_theme, theme_ok = enum_word.member_of_word(Pointer_Theme, u64(values[.Pointer_Theme]))
+	choice.grid_fit, grid_ok = enum_word.member_of_word(Grid_Fit, u64(values[.Grid_Fit]))
+	choice.keyboard_layout, layout_ok = enum_word.member_of_word(Keyboard_Layout, u64(values[.Keyboard_Layout]))
+	choice.appearance, appearance_ok = enum_word.member_of_word(Appearance, u64(values[.Appearance]))
+	member_ok := [Setting]bool {
+		.Font            = font_ok,
+		.Subpixel_Order  = order_ok,
+		.Pointer_Theme   = theme_ok,
+		.Grid_Fit        = grid_ok,
+		.Keyboard_Layout = layout_ok,
+		.Appearance      = appearance_ok,
+	}
+	for setting in Setting {
+		if !member_ok[setting] {
+			return {}, setting, false
+		}
+	}
+	return choice, {}, true
+}
+
+// values_of gives the word of each value of a choice: the form of the page,
+// of the kept record and of the window of `settings`, which treats each
+// setting as a row of buttons.
+values_of :: proc "contextless" (choice: Choice) -> (values: [Setting]u32) {
+	values[.Font] = u32(choice.font)
+	values[.Subpixel_Order] = u32(choice.subpixel_order)
+	values[.Pointer_Theme] = u32(choice.pointer_theme)
+	values[.Grid_Fit] = u32(choice.grid_fit)
+	values[.Keyboard_Layout] = u32(choice.keyboard_layout)
+	values[.Appearance] = u32(choice.appearance)
+	return values
 }
 
 // values_differ tells whether two choices have different values, a
@@ -329,12 +353,7 @@ valid :: proc "contextless" (setting: Setting, value: u32) -> u32 {
 // nothing (the compositor tells every window, and a window ring that is
 // full loses the keys of the input).
 values_differ :: proc "contextless" (first, second: Choice) -> bool {
-	for setting in Setting {
-		if first.values[setting] != second.values[setting] {
-			return true
-		}
-	}
-	return first.zone_offset_minutes != second.zone_offset_minutes || first.appearance_in_force != second.appearance_in_force
+	return values_of(first) != values_of(second) || first.zone_offset_minutes != second.zone_offset_minutes || first.appearance_in_force != second.appearance_in_force
 }
 
 // READ_TRIES: the most reads of a page that changes, or that its writer
@@ -343,43 +362,57 @@ values_differ :: proc "contextless" (first, second: Choice) -> bool {
 READ_TRIES :: 64
 
 // read copies the choice of a page that another program writes. It reads
-// again while the page changes, at most READ_TRIES times; then it gives the
-// defaults (all values 0) with the count that it saw, so a writer that
-// stops in a change, or changes the page with no end, changes the look of
-// the other programs and never stops them.
-read :: proc "contextless" (page: ^Page) -> Choice {
+// again while the page changes, at most READ_TRIES times. ok is false when
+// no copy was whole (a writer that stops in a change, or changes the page
+// with no end), and when a whole copy holds a word that names no value of
+// its setting, or no appearance in force: the page is refused, not read as
+// the defaults for that word. The choice is then the defaults with the
+// count that the read saw, so a broken writer changes the look of the other
+// programs and never stops them, and a reader that acts on the page (the
+// root service, the program `date`) acts on nothing.
+read :: proc "contextless" (page: ^Page) -> (choice: Choice, ok: bool) {
 	before: u32
 	for _ in 0 ..< READ_TRIES {
 		before = intrinsics.atomic_load_explicit(&page.change_count, .Acquire)
 		if before & 1 != 0 {
 			continue
 		}
-		choice: Choice
+		values: [Setting]u32
 		for setting in Setting {
-			choice.values[setting] = valid(setting, intrinsics.atomic_load_explicit(&page.values[setting], .Relaxed))
+			values[setting] = intrinsics.atomic_load_explicit(&page.values[setting], .Relaxed)
 		}
-		choice.zone_offset_minutes = zone_offset_minutes_valid(intrinsics.atomic_load_explicit(&page.zone_offset_minutes, .Relaxed))
+		zone_word := intrinsics.atomic_load_explicit(&page.zone_offset_minutes, .Relaxed)
 		// One word, which the root service also stores alone: the copy is
 		// the old or the new appearance, never a mix.
-		choice.appearance_in_force = appearance_in_force_valid(intrinsics.atomic_load_explicit(&page.appearance_in_force, .Relaxed))
+		in_force_word := intrinsics.atomic_load_explicit(&page.appearance_in_force, .Relaxed)
 		intrinsics.atomic_thread_fence(.Acquire)
-		if intrinsics.atomic_load_explicit(&page.change_count, .Relaxed) == before {
-			choice.change_count = before
-			return choice
+		if intrinsics.atomic_load_explicit(&page.change_count, .Relaxed) != before {
+			continue
 		}
+		values_ok, in_force_ok: bool
+		choice, _, values_ok = choice_of_values(values)
+		choice.appearance_in_force, in_force_ok = enum_word.member_of_word(Appearance_In_Force, u64(in_force_word))
+		if !values_ok || !in_force_ok {
+			return {change_count = before}, false
+		}
+		choice.zone_offset_minutes = zone_offset_minutes_valid(zone_word)
+		choice.change_count = before
+		return choice, true
 	}
-	return {change_count = before}
+	return {change_count = before}, false
 }
 
 // write changes the values of the page, the time zone and the appearance in
 // force, in one change. The one writer of the values is the program
 // `settings`; it wakes the waiters after (it owns the kernel calls, this
-// package has none).
-write :: proc "contextless" (page: ^Page, values: [Setting]u32, zone_offset_minutes: i32, appearance_in_force: Appearance_In_Force) {
+// package has none). The choice holds members only, so the page never holds
+// a word that names no value.
+write :: proc "contextless" (page: ^Page, choice: Choice, zone_offset_minutes: i32, appearance_in_force: Appearance_In_Force) {
+	values := values_of(choice)
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
 	intrinsics.atomic_thread_fence(.Release)
 	for setting in Setting {
-		intrinsics.atomic_store_explicit(&page.values[setting], valid(setting, values[setting]), .Relaxed)
+		intrinsics.atomic_store_explicit(&page.values[setting], values[setting], .Relaxed)
 	}
 	intrinsics.atomic_store_explicit(&page.zone_offset_minutes, zone_offset_minutes_valid(zone_offset_minutes), .Relaxed)
 	intrinsics.atomic_store_explicit(&page.appearance_in_force, u32(appearance_in_force), .Relaxed)
@@ -413,8 +446,9 @@ Kept_Settings :: struct {
 #assert(size_of(Kept_Settings) == 56)
 
 // kept_of makes the record of a choice.
-kept_of :: proc "contextless" (values: [Setting]u32, zone_offset_minutes: i32) -> (kept: Kept_Settings) {
+kept_of :: proc "contextless" (choice: Choice, zone_offset_minutes: i32) -> (kept: Kept_Settings) {
 	kept.magic, kept.version, kept.count = KEPT_MAGIC, KEPT_VERSION, len(Setting)
+	values := values_of(choice)
 	for setting in Setting {
 		kept.values[setting] = values[setting]
 	}
@@ -423,9 +457,13 @@ kept_of :: proc "contextless" (values: [Setting]u32, zone_offset_minutes: i32) -
 }
 
 // kept_read reads a record from its bytes: ok is false for bytes that are
-// not a record of this version. A value that a setting does not have, and
-// a zone that is not valid, are their defaults.
-kept_read :: proc "contextless" (bytes: []u8) -> (values: [Setting]u32, zone_offset_minutes: i32, ok: bool) {
+// not a record of this version, and for a record with a word that names no
+// value of its setting: such a record is refused whole, as a record of
+// another version is, and never read as the default of that one setting. A
+// setting past the count of the record has its default: the record did not
+// hold it. A zone that is not valid is UTC. The choice holds no appearance
+// in force and no count.
+kept_read :: proc "contextless" (bytes: []u8) -> (choice: Choice, zone_offset_minutes: i32, ok: bool) {
 	if len(bytes) != size_of(Kept_Settings) {
 		return {}, 0, false
 	}
@@ -434,10 +472,16 @@ kept_read :: proc "contextless" (bytes: []u8) -> (values: [Setting]u32, zone_off
 	if kept.magic != KEPT_MAGIC || kept.version != KEPT_VERSION || kept.count > SETTING_CAPACITY {
 		return {}, 0, false
 	}
+	values: [Setting]u32
 	for setting in Setting {
 		if u32(setting) < kept.count {
-			values[setting] = valid(setting, kept.values[setting])
+			values[setting] = kept.values[setting]
 		}
 	}
-	return values, zone_offset_minutes_valid(kept.zone_offset_minutes), true
+	values_ok: bool
+	choice, _, values_ok = choice_of_values(values)
+	if !values_ok {
+		return {}, 0, false
+	}
+	return choice, zone_offset_minutes_valid(kept.zone_offset_minutes), true
 }

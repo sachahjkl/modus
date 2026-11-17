@@ -1,5 +1,6 @@
 package palette
 
+import "modus:contract/enum_word"
 import "modus:contract/palette_table"
 import "modus:contract/value_kinds"
 import "modus:support/graphics"
@@ -1081,7 +1082,7 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 		interface.text_put(&prompt, "type the value of ")
 		name := field_name(form, form.current)
 		interface.text_put(&prompt, name != "" ? name : "the parameter")
-		interface.text_put(&prompt, form.given.parameters[form.current] == .Integer ? ": an Integer" : ": a Text")
+		interface.text_put(&prompt, field_is_integer(form, form.current) ? ": an Integer" : ": a Text")
 		if unit_text := field_unit_text(form, form.current); unit_text != "" {
 			interface.text_put(&prompt, ", in")
 			interface.text_put(&prompt, unit_text)
@@ -1129,17 +1130,18 @@ result_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y:
 			run_x = x + TEXT_MARGIN
 			continue
 		}
-		if part > u8(palette_table.RUN_PART_LAST) || length > len(runs) - place {
+		run_part, run_part_known := enum_word.member_of_word(palette_table.Run_Part, u64(part))
+		if !run_part_known || part > u8(palette_table.RUN_PART_LAST) || length > len(runs) - place {
 			return
 		}
 		text := string(runs[place:][:length])
 		place += length
 		line_y := y + LIST_TOP + RESULT_LINES_TOP + line * interface.LINE
 		if large && line == 0 {
-			run_x = interface.large_number(frame, run_x, line_y, text, part_color(palette_table.Run_Part(part)))
+			run_x = interface.large_number(frame, run_x, line_y, text, part_color(run_part))
 			continue
 		}
-		run_x = interface.draw_text(table, run_x, line_y, text, part_color(palette_table.Run_Part(part)))
+		run_x = interface.draw_text(table, run_x, line_y, text, part_color(run_part))
 	}
 }
 

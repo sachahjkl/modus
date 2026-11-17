@@ -316,7 +316,7 @@ an_export_with_nine_parameters_is_described_and_checked :: proc(t: ^testing.T) {
 		export := exports[0]
 		testing.expect_value(t, export.result, module.Type.Text)
 		testing.expect(t, export.error_record != 0, "the export has an error record")
-		testing.expect_value(t, module.call_argument_count(len(export.parameters), export.result, export.error_record != 0), 11)
+		testing.expect_value(t, module.call_argument_count(len(export.parameters), u8(export.result), export.error_record != 0), 11)
 		types := [9]module.Type{.Integer, .Text, .Integer, .Integer, .Integer, .Integer, .Table, .Text, .Table}
 		if testing.expect_value(t, len(export.parameters), 9) {
 			for type, index in types {

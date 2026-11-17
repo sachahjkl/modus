@@ -22,16 +22,16 @@ error_and_reading_file :: proc(file: ^[2048]u8) -> []u8 {
 	offset := u64(size_of(module.Header) + size_of(Directory))
 	records := [3]module.Record{1 = {size = 56, first_field = 1, field_count = 7}, 2 = {size = 16, first_field = 8, field_count = 3}}
 	fields := [11]module.Field {
-		1  = {offset = 0, type = .Integer},
-		2  = {offset = 8, type = .Integer},
-		3  = {offset = 16, type = .Integer},
-		4  = {offset = 24, type = .Integer},
-		5  = {offset = 32, type = .Integer},
-		6  = {offset = 40, type = .Integer},
-		7  = {offset = 48, type = .Integer},
-		8  = {offset = 0, type = .Integer, detail = 4, unsigned = true},
-		9  = {offset = 4, type = .Integer, detail = 4},
-		10 = {offset = 8, type = .Integer},
+		1  = {offset = 0, type = u8(module.Type.Integer)},
+		2  = {offset = 8, type = u8(module.Type.Integer)},
+		3  = {offset = 16, type = u8(module.Type.Integer)},
+		4  = {offset = 24, type = u8(module.Type.Integer)},
+		5  = {offset = 32, type = u8(module.Type.Integer)},
+		6  = {offset = 40, type = u8(module.Type.Integer)},
+		7  = {offset = 48, type = u8(module.Type.Integer)},
+		8  = {offset = 0, type = u8(module.Type.Integer), detail = 4, unsigned = true},
+		9  = {offset = 4, type = u8(module.Type.Integer), detail = 4},
+		10 = {offset = 8, type = u8(module.Type.Integer)},
 	}
 	directory[module.Table_Kind.Records] = {offset = offset, count = 3, record_size = size_of(module.Record)}
 	(^[3]module.Record)(&file[offset])^ = records
@@ -56,10 +56,10 @@ Reading_Row :: struct {
 @(private = "file")
 double_and_refuse_odd_description :: proc() -> (function: module.Function) {
 	function.parameter_count = 2
-	function.parameters[0], function.parameter_details[0], function.parameter_directions[0] = .Table, 2, .Change
-	function.parameters[1], function.parameter_details[1], function.parameter_directions[1] = .Table, 1, .Append
+	function.parameters[0], function.parameter_details[0], function.parameter_directions[0] = u8(module.Type.Table), 2, .Change
+	function.parameters[1], function.parameter_details[1], function.parameter_directions[1] = u8(module.Type.Table), 1, .Append
 	function.error_record = 1
-	function.result = .Integer
+	function.result = u8(module.Type.Integer)
 	return function
 }
 

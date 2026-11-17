@@ -330,7 +330,8 @@ names_place :: proc "contextless" (layout: ^Layout, width: int) {
 		present += summary.row_count
 	}
 	for _ in present ..< NAME_ROW_COUNT {
-		most := -1
+		most: File_Kind
+		most_found := false
 		most_hidden := 0
 		for kind in File_Kind {
 			if layout.kinds[kind].row_count == 0 {
@@ -338,14 +339,15 @@ names_place :: proc "contextless" (layout: ^Layout, width: int) {
 			}
 			hidden := layout.kinds[kind].count - kind_place(layout, kind, width, false)
 			if hidden > most_hidden {
-				most = int(kind)
+				most = kind
+				most_found = true
 				most_hidden = hidden
 			}
 		}
-		if most < 0 {
+		if !most_found {
 			break
 		}
-		layout.kinds[File_Kind(most)].row_count += 1
+		layout.kinds[most].row_count += 1
 	}
 	row := 0
 	for kind in File_Kind {

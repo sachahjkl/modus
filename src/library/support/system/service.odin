@@ -387,7 +387,7 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 	}
 	// For a Text or Table result, this is the count; the bytes are in the
 	// call region.
-	if function.result == .Integer || function.result == .Text || function.result == .Table {
+	if function.result == u8(module.Type.Integer) || function.result == u8(module.Type.Text) || function.result == u8(module.Type.Table) {
 		completion.values[0] = out[0]
 	}
 	return completion
@@ -437,7 +437,12 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 		lending.count += 1
 		return give(ring_memory, copy, wanted)
 	}
-	each: for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+	each: for word, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+		type, type_ok := module.type_of_word(word)
+		if !type_ok {
+			status = .Bad_Operation
+			break each
+		}
 		switch type {
 		case .None, .Integer, .Text:
 			// No handle and no memory object: nothing to lend.
@@ -468,7 +473,7 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 			}
 			for number in 0 ..< described.field_count {
 				item, _ := module.field(file, described, number)
-				if item.type != .Handle {
+				if item.type != u8(module.Type.Handle) {
 					continue
 				}
 				place := (^Handle)(&arguments[index].record[item.offset])

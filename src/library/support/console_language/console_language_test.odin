@@ -34,7 +34,8 @@ expect_runs :: proc(t: ^testing.T, text: string, runs: []terminal.Code_Run, expe
 	for index in 0 ..< min(len(runs), len(expected)) {
 		run := runs[index]
 		part := text[int(run.start):][:int(run.length)]
-		testing.expectf(t, part == expected[index].text && run.kind == expected[index].kind, "%q: run %d is %q %v, not %q %v", text, index, part, run.kind, expected[index].text, expected[index].kind, loc = loc)
+		kind, kind_ok := terminal.code_kind_of(run.kind)
+		testing.expectf(t, part == expected[index].text && kind_ok && kind == expected[index].kind, "%q: run %d is %q %d, not %q %v", text, index, part, run.kind, expected[index].text, expected[index].kind, loc = loc)
 	}
 }
 
@@ -45,7 +46,8 @@ expect_cover :: proc(t: ^testing.T, text: string, runs: []terminal.Code_Run, loc
 	end := 0
 	for run, index in runs {
 		start := int(run.start)
-		testing.expectf(t, run.length > 0 && start >= end && start + int(run.length) <= len(text) && run.kind != .None, "run %d (%d, %d, %v) of a text of %d bytes, after %d", index, start, run.length, run.kind, len(text), end, loc = loc)
+		kind, kind_ok := terminal.code_kind_of(run.kind)
+		testing.expectf(t, run.length > 0 && start >= end && start + int(run.length) <= len(text) && kind_ok && kind != .None, "run %d (%d, %d, %d) of a text of %d bytes, after %d", index, start, run.length, run.kind, len(text), end, loc = loc)
 		for place in end ..< min(start, len(text)) {
 			testing.expectf(t, text[place] == ' ', "the byte %d (%d) is in no run and is not a space", place, text[place], loc = loc)
 		}

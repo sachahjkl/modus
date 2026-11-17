@@ -735,7 +735,10 @@ appearance_apply :: proc "contextless" () -> (changed: bool) {
 	if settings_page == nil {
 		return false
 	}
-	return appearance_of_choice_use(settings.read(settings_page))
+	// A refused page gives the defaults: the program draws with them, as
+	// with a page that never stays stable.
+	choice, _ := settings.read(settings_page)
+	return appearance_of_choice_use(choice)
 }
 
 // appearance_of_choice_use makes the appearance in force of a choice the
@@ -759,14 +762,25 @@ text_settings_apply :: proc "contextless" () {
 	if settings_page == nil {
 		return
 	}
-	choice := settings.read(settings_page)
+	// A refused page gives the defaults: the program draws with them, as
+	// with a page that never stays stable.
+	choice, _ := settings.read(settings_page)
 	_ = appearance_of_choice_use(choice)
-	grid_fit := settings.grid_fit_of(choice)
-	font := settings.font_of(choice) == .Spleen ? graphics.Text_Font.Spleen : graphics.Text_Font.Vector
+	grid_fit := choice.grid_fit
+	font := choice.font == .Spleen ? graphics.Text_Font.Spleen : graphics.Text_Font.Vector
 	if glyph_cache_valid[grid_fit] {
 		graphics.text_cache_use(glyph_caches[grid_fit])
 	} else {
 		font = .Spleen
 	}
-	graphics.text_choice_set(font, graphics.Subpixel_Order(u8(settings.subpixel_order_of(choice))))
+	order: graphics.Subpixel_Order
+	switch choice.subpixel_order {
+	case .Red_Green_Blue:
+		order = .Red_Green_Blue
+	case .Blue_Green_Red:
+		order = .Blue_Green_Red
+	case .None:
+		order = .None
+	}
+	graphics.text_choice_set(font, order)
 }

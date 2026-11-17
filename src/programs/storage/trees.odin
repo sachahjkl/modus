@@ -145,7 +145,7 @@ plan_tree_open :: proc "contextless" (path: []Entry_Name) -> (index: int, refusa
 			if !tree.get(&plan.trees[current].work, key[:], entry_bytes(&value)) {
 				return -1, tree.failed(&plan.trees[current].work) ? .Failed : .Absent
 			}
-			if value.kind != .Tree {
+			if value.kind != u64(format.Entry_Kind.Tree) {
 				return -1, .Absent
 			}
 			if plan.tree_count >= PLAN_TREE_CAPACITY {
@@ -208,7 +208,7 @@ plan_entry_remove :: proc "contextless" (index: int) {
 	item := &plan.entries[index]
 	opened_tree := &plan.trees[item.tree]
 	key := item.name
-	if item.before.kind != .None {
+	if item.before.kind != u64(format.Entry_Kind.None) {
 		tree.remove(&opened_tree.work, key[:])
 		opened_tree.count_change -= 1
 		opened_tree.changed = true
@@ -225,7 +225,7 @@ plan_entries_put :: proc "contextless" () {
 		opened_tree := &plan.trees[item.tree]
 		key := item.name
 		tree.put(&opened_tree.work, key[:], entry_bytes(&item.entry), true)
-		if item.before.kind == .None {
+		if item.before.kind == u64(format.Entry_Kind.None) {
 			opened_tree.count_change += 1
 		}
 		opened_tree.changed = true
@@ -665,7 +665,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 	if plan_refused() {
 		return plan_refusal(error)
 	}
-	if found && plan.entries[index].before.kind != .Object {
+	if found && plan.entries[index].before.kind != u64(format.Entry_Kind.Object) {
 		plan_drop()
 		return errors.fail(error, failure(.Absent), .Absent, .Objects, name_argument) // The name is a tree.
 	}
@@ -690,9 +690,9 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 	}
 	item := &plan.entries[index]
 	old := item.before
-	existed := old.kind == .Object
+	existed := old.kind == u64(format.Entry_Kind.Object)
 	now := time_now()
-	next := Entry{kind = .Object, generation = root.generation + 1, time = now, date = date_now(), versions = old.versions}
+	next := Entry{kind = u64(format.Entry_Kind.Object), generation = root.generation + 1, time = now, date = date_now(), versions = old.versions}
 	damaged_before := existed && state_damaged(old.pointer)
 	old_blocks: u64
 	if existed {
@@ -868,7 +868,7 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	if plan_refused() {
 		return {}, plan_refusal(error)
 	}
-	if !found || plan.entries[index].before.kind != .Object {
+	if !found || plan.entries[index].before.kind != u64(format.Entry_Kind.Object) {
 		plan_drop()
 		return {}, errors.fail(error, failure(.Absent), .Absent, .Objects, 2)
 	}
@@ -937,7 +937,13 @@ entry_free :: proc "contextless" (index: int) {
 	item := &plan.entries[index]
 	old := item.before
 	plan_entry_remove(index)
-	switch old.kind {
+	// The entry was read through the check of its leaf: a word that names
+	// no kind frees nothing, as None does.
+	old_kind, old_kind_ok := format.entry_kind_of_word(old.kind)
+	if !old_kind_ok {
+		return
+	}
+	switch old_kind {
 	case .Object:
 		current_blocks_change(0, state_blocks_of(old.pointer, old.size))
 		state_release(old.pointer, old.size)
@@ -1018,8 +1024,8 @@ entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []
 	now := time_now()
 	date := date_now()
 	for number in 0 ..< count {
-		value := Entry{kind = added_kinds[number], generation = generation, time = now, date = date}
-		if value.kind == .Object {
+		value := Entry{kind = u64(added_kinds[number]), generation = generation, time = now, date = date}
+		if value.kind == u64(format.Entry_Kind.Object) {
 			value.hash = blake3.hash(nil) // The hash of an object of no byte.
 		}
 		key := added_names[number].key
@@ -1030,7 +1036,7 @@ entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []
 		if plan_refused() {
 			return plan_refusal(error)
 		}
-		if value.kind == .Object {
+		if value.kind == u64(format.Entry_Kind.Object) {
 			plan.store_block.objects += 1
 		} else {
 			plan.store_block.trees += 1
@@ -1161,7 +1167,7 @@ removal_step :: proc "contextless" () -> bool {
 		removal_failed(store_index, "the removal queue gives no first tree")
 		return true
 	}
-	if queued.kind != .Tree || queued.pointer.block == 0 {
+	if queued.kind != u64(format.Entry_Kind.Tree) || queued.pointer.block == 0 {
 		// An empty tree in the queue: it leaves the queue.
 		tree.remove(&queue.work, queued_name[:])
 		queue.changed = true
@@ -1191,7 +1197,7 @@ removal_step :: proc "contextless" () -> bool {
 			// The leaves of the versions of the objects of one step stay inside
 			// the leaf work of a commit: the step ends before an object whose
 			// versions would pass it; that object starts the next step.
-			if versions := removal_values[number].versions; removal_values[number].kind == .Object && versions.block != 0 {
+			if versions := removal_values[number].versions; removal_values[number].kind == u64(format.Entry_Kind.Object) && versions.block != 0 {
 				index_block: Version_Index
 				if read_single(versions, (^Block)(&index_block)) == .Good && number > 0 && plan.leaf_count + int(min(index_block.leaf_count, format.VERSION_INDEX_CAPACITY)) > LEAF_WORK_CAPACITY {
 					break
@@ -1246,7 +1252,7 @@ oldest_walks: [NESTING_LIMIT + 1]tree.Walk
 oldest_version_entry :: proc "contextless" () -> (index: int, found: bool) {
 	best := max(u64)
 	for &item, candidate in plan.entries[:plan.entry_count] {
-		if item.gone || item.entry.kind != .Object || item.entry.versions.block == 0 && !plan.index_work[candidate].touched {
+		if item.gone || item.entry.kind != u64(format.Entry_Kind.Object) || item.entry.versions.block == 0 && !plan.index_work[candidate].touched {
 			continue
 		}
 		leaf, has := version_first(candidate)
@@ -1293,7 +1299,12 @@ oldest_visit :: proc "contextless" (_: ^tree.Walk, key: []u8, value: []u8) {
 	entry := (^Entry)(raw_data(value))^
 	name := (^Entry_Name)(raw_data(key))^
 	nesting := oldest.nesting
-	switch entry.kind {
+	// A word of the disk that names no kind holds no version to read.
+	kind, kind_ok := format.entry_kind_of_word(entry.kind)
+	if !kind_ok {
+		return
+	}
+	switch kind {
 	case .Tree:
 		if nesting < NESTING_LIMIT {
 			oldest.stack[nesting] = name
@@ -1384,7 +1395,7 @@ tree_of :: proc "contextless" (store_index: int, path: []Entry_Name) -> (root_no
 		if !tree.get(&work, key[:], entry_bytes(&value)) {
 			return {}, reading_outcome(store_index)
 		}
-		if value.kind != .Tree {
+		if value.kind != u64(format.Entry_Kind.Tree) {
 			return {}, .Absent
 		}
 		root_node = value.pointer
@@ -1490,9 +1501,13 @@ tree_usage_node :: proc "contextless" (one: ^tree.Walk, _: Pointer) -> bool {
 
 tree_usage_record :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u8) {
 	entry := (^Entry)(raw_data(value))^
-	// The kind is a word of the disk: a word past the last kind runs no
-	// case, as None does, and the entry counts nothing.
-	switch entry.kind {
+	// The kind is a word of the disk: a word that names no kind counts
+	// nothing, as None does.
+	kind, kind_ok := format.entry_kind_of_word(entry.kind)
+	if !kind_ok {
+		return
+	}
+	switch kind {
 	case .None:
 	case .Tree:
 		tree_usage_state.trees += 1
@@ -1555,7 +1570,7 @@ object_locate :: proc "contextless" (store_name: string, path: []Entry_Name, nam
 	if outcome != .Found {
 		return -1, {}, lookup_refusal(outcome, error, argument)
 	}
-	if value.kind != .Object {
+	if value.kind != u64(format.Entry_Kind.Object) {
 		return -1, {}, errors.fail(error, failure(.Absent), .Absent, .Objects, argument)
 	}
 	return store_index, value, 0

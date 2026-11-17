@@ -16,7 +16,6 @@ package console
 // second thread changes the tables of names during a line, never between
 // two lines.
 
-import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/text_encoding"
 import "modus:support/display"
@@ -487,7 +486,7 @@ signature_write :: proc "contextless" (writer: ^system.Writer, item: ^Command, m
 		if kind == .None {
 			system.write_part(writer, "Value") // Any kind: the command checks it.
 		} else {
-			system.write_parameter_type(writer, item.file, module.Type(kind), item.function.parameter_details[index], item.function.parameter_directions[index])
+			system.write_parameter_type(writer, item.file, type_of_kind(kind), item.function.parameter_details[index], item.function.parameter_directions[index])
 		}
 		if index == marked {
 			marked_end = writer.count
@@ -496,7 +495,7 @@ signature_write :: proc "contextless" (writer: ^system.Writer, item: ^Command, m
 	system.write_part(writer, ")")
 	if item.result != .None {
 		system.write_part(writer, " -> ")
-		system.write_type(writer, item.file, module.Type(item.result), item.function.result_detail)
+		system.write_type(writer, item.file, type_of_kind(item.result), item.function.result_detail)
 	}
 	return marked_start, marked_end
 }
@@ -546,7 +545,7 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 			if value.kind == .None {
 				system.write_part(writer, "None")
 			} else {
-				system.write_type(writer, value.file, module.Type(value.kind), value.detail)
+				system.write_type(writer, value.file, type_of_kind(value.kind), value.detail)
 			}
 		}
 	case .History_Line:

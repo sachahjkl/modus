@@ -175,7 +175,7 @@ event_record :: proc "contextless" (cpu: ^Processor, kind: op.Event_Kind, progra
 	// inside the ring whatever the program wrote.
 	cpu.event_records[cpu.event_written & (cpu.event_capacity - 1)] = {
 		time           = cycles_now(),
-		kind           = kind,
+		kind           = u32(kind),
 		processor      = cpu.index,
 		program        = program,
 		thread         = program == 0 ? 0 : thread_number,

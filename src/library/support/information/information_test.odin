@@ -36,20 +36,20 @@ module_file :: proc(about: string, imported: [32]u8, has_import: bool) -> []u8 {
 	records[1].size, records[1].first_field, records[1].field_count = 16, 1, 2
 	fields := [3]module.Field{}
 	fields[1].name_offset, fields[1].name_count = text(&builder, "memory")
-	fields[1].type, fields[1].detail = .Handle, transmute(u32)op.Rights{.Read, .Write}
+	fields[1].type, fields[1].detail = u8(module.Type.Handle), transmute(u32)op.Rights{.Read, .Write}
 	fields[2].name_offset, fields[2].name_count = text(&builder, "count")
-	fields[2].offset, fields[2].type = 8, .Integer
+	fields[2].offset, fields[2].type = 8, u8(module.Type.Integer)
 	functions := [4]module.Function{}
 	functions[1].name_offset, functions[1].name_count = text(&builder, "entry")
 	functions[2].name_offset, functions[2].name_count = text(&builder, "fill")
 	functions[2].about_offset, functions[2].about_count = text(&builder, "fills the memory of a span")
 	functions[2].text_offset, functions[2].text_count = text(&builder, "fill fills the memory of a span. It writes each byte.")
-	functions[2].parameter_count, functions[2].parameters[0], functions[2].parameter_details[0], functions[2].result = 1, .Record, 1, .Integer
+	functions[2].parameter_count, functions[2].parameters[0], functions[2].parameter_details[0], functions[2].result = 1, u8(module.Type.Record), 1, u8(module.Type.Integer)
 	functions[2].parameter_names[0], _ = text(&builder, "span")
 	functions[2].parameter_name_counts[0] = 4
 	functions[3].name_offset, functions[3].name_count = text(&builder, "rows")
 	functions[3].about_offset, functions[3].about_count = text(&builder, "gives rows")
-	functions[3].result, functions[3].result_detail = .Integer, 0
+	functions[3].result, functions[3].result_detail = u8(module.Type.Integer), 0
 	exports := [4]module.Export{1 = {code_offset = 0, function = 1}, 2 = {code_offset = 16, function = 2}, 3 = {code_offset = 32, function = 3}}
 	documentation := [2]module.Documentation{}
 	documentation[1].about_offset, documentation[1].about_count = text(&builder, about)
@@ -285,13 +285,16 @@ malformed_modules :: proc(t: ^testing.T) {
 		{"more parameters than an export has", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameter_count = module.PARAMETER_CAPACITY + 1}, .Function, .Functions, 2},
 		{"as many parameters as an export has, and the buffer of a Text result", proc(file: []u8) {
 				function := record(file, .Functions, 2, module.Function)
-				function.parameter_count, function.result = module.PARAMETER_CAPACITY, .Text
+				function.parameter_count, function.result = module.PARAMETER_CAPACITY, u8(module.Type.Text)
 			}, .Function, .Functions, 2},
-		{"a type that does not exist", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameters[0] = module.Type(9)}, .Function, .Functions, 2},
+		{"a type that does not exist", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameters[0] = u8(max(module.Type)) + 1}, .Function, .Functions, 2},
+		{"the largest byte of a type", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameters[0] = max(u8)}, .Function, .Functions, 2},
+		{"a result type that does not exist", proc(file: []u8) {record(file, .Functions, 2, module.Function).result = u8(max(module.Type)) + 1}, .Function, .Functions, 2},
+		{"a field type that does not exist", proc(file: []u8) {record(file, .Fields, 2, module.Field).type = u8(max(module.Type)) + 1}, .Record, .Fields, 2},
 		{"a parameter that names no record", proc(file: []u8) {record(file, .Functions, 2, module.Function).parameter_details[0] = 5}, .Function, .Functions, 2},
 		{"an Integer parameter with a unit out of the contract", proc(file: []u8) {
 				function := record(file, .Functions, 2, module.Function)
-				function.parameters[0], function.parameter_details[0] = .Integer, 2
+				function.parameters[0], function.parameter_details[0] = u8(module.Type.Integer), 2
 			}, .Function, .Functions, 2},
 		{"a field out of its record", proc(file: []u8) {record(file, .Fields, 2, module.Field).offset = 12}, .Record, .Fields, 2},
 		{"a record of 300 bytes", proc(file: []u8) {record(file, .Records, 1, module.Record).size = 300}, .Record, .Records, 1},

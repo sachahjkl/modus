@@ -1286,11 +1286,22 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 			sandbox         = sandbox, // The owner of the command. A record has no call.
 		}
 		item.function.result_detail = index
+		// record_type refused a field of no type; the border reads each
+		// byte again, and a record with such a field is no command.
+		fields_known := true
 		for number in 0 ..< described.field_count {
 			field, _ := module.field(file, described, number)
-			item.parameters[number] = Kind(field.type)
+			kind, kind_ok := kind_of_type_word(field.type)
+			if !kind_ok {
+				fields_known = false
+				break
+			}
+			item.parameters[number] = kind
 			item.parameter_names[number] = module.string_at(file, field.name_offset, field.name_count)
 			item.function.parameter_details[number] = field.detail
+		}
+		if !fields_known {
+			continue
 		}
 		command_count += 1
 	}
@@ -1300,12 +1311,18 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 		if !ok || !has_address || index == head.entry_export || !callable_by_console(file, function) {
 			continue
 		}
+		// callable_by_console refused each byte of no type; the border reads
+		// them again, and an export with such a byte is no command.
+		result_kind, result_ok := kind_of_type_word(function.result)
+		if !result_ok {
+			continue
+		}
 		item := &commands[command_count]
 		item^ = {
 			name            = module.string_at(file, function.name_offset, function.name_count),
 			about           = module.string_at(file, function.about_offset, function.about_count),
 			parameter_count = int(function.parameter_count),
-			result          = Kind(function.result),
+			result          = result_kind,
 			export          = index,
 			function        = function,
 			file            = file,
@@ -1319,16 +1336,25 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 		} else {
 			item.address = address
 		}
-		for type, parameter in function.parameters[:function.parameter_count] {
-			item.parameters[parameter] = Kind(type)
+		parameters_known := true
+		for word, parameter in function.parameters[:function.parameter_count] {
+			kind, kind_ok := kind_of_type_word(word)
+			if !kind_ok {
+				parameters_known = false
+				break
+			}
+			item.parameters[parameter] = kind
 			item.parameter_names[parameter] = module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
 			// The description of the export states what its number counts,
 			// as a built-in command states it in `command`. A detail out of
 			// the contract comes from another party: the field is then a
 			// plain number.
-			if type == .Integer {
+			if kind == .Integer {
 				item.parameter_units[parameter], _ = value_kinds.integer_unit_of_detail(function.parameter_details[parameter])
 			}
+		}
+		if !parameters_known {
+			continue
 		}
 		// The table of error details is the last parameter: the console
 		// gives it, and the command shows the parameters before it.
@@ -1489,20 +1515,24 @@ services_check :: proc "contextless" () {
 // for the result of an export.
 callable_by_console :: proc "contextless" (file: []u8, function: module.Function) -> bool {
 	function := function
-	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || module.call_argument_count(int(function.parameter_count), function.result, function.error_record != 0) > system.CALL_INTEGERS || function.result > .Table || function.result == .Handle {
+	// The result is a byte of a module file: a byte that names no type, a
+	// Handle and Bytes have no value of the console as a result.
+	result_type, result_ok := module.function_result_type(function)
+	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || module.call_argument_count(int(function.parameter_count), function.result, function.error_record != 0) > system.CALL_INTEGERS || !result_ok || result_type == .Bytes || result_type == .Handle {
 		return false
 	}
-	if function.result == .Record || function.result == .Table {
+	if result_type == .Record || result_type == .Table {
 		if _, ok := module.record_type(file, function.result_detail); !ok {
 			return false
 		}
 	}
 	details_index, has_details := module.error_details_parameter(file, function)
-	for type, index in function.parameters[:function.parameter_count] {
+	for word, index in function.parameters[:function.parameter_count] {
 		direction := function.parameter_directions[index]
-		// The type is a byte of a module file: a byte past the last type
-		// names no type, and the export is not callable.
-		if type > max(module.Type) {
+		// The type is a byte of a module file: a byte that names no type
+		// makes the export not callable.
+		type, type_ok := module.type_of_word(word)
+		if !type_ok {
 			return false
 		}
 		switch type {
@@ -1517,7 +1547,7 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 			// A Read or Change table is a Table value. An Append table is a
 			// second result, which the language does not have; the table of
 			// error details is the one Append table: the console gives it.
-			if _, _, ok := isolated.table_record(file, type, function.parameter_details[index]); !ok || (direction == .Append && !(has_details && index == details_index)) {
+			if _, _, ok := isolated.table_record(file, word, function.parameter_details[index]); !ok || (direction == .Append && !(has_details && index == details_index)) {
 				return false
 			}
 		case .Bytes:
@@ -1550,9 +1580,9 @@ record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value
 	}
 	for argument, number in arguments {
 		field, _ := module.field(item.file, described, u32(number))
-		if field.type == .Text {
+		if field.type == u8(module.Type.Text) {
 			copy(bytes[field.offset:][:field.detail], argument.text)
-		} else if field.type == .Handle {
+		} else if field.type == u8(module.Type.Handle) {
 			(^u32)(&bytes[field.offset])^ = u32(argument.integer)
 		} else {
 			if !module.field_integer_fits(field, argument.integer) {
@@ -1582,7 +1612,7 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 	for &argument, index in arguments {
 		if index < int(item.parameter_count) && (item.parameters[index] == .Table || item.parameters[index] == .Bytes) {
 			bytes := argument.kind == .Text ? transmute([]u8)argument.text : argument.record
-			size, _, _ := isolated.table_record(item.file, module.Type(item.parameters[index]), item.function.parameter_details[index])
+			size, _, _ := isolated.table_record(item.file, u8(type_of_kind(item.parameters[index])), item.function.parameter_details[index])
 			count := u64(len(bytes)) / max(size, 1)
 			places[index] = {address = u64(uintptr(raw_data(bytes))), count = count, capacity = count}
 			integers[index] = u64(uintptr(&places[index]))
@@ -1993,7 +2023,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		// and those of a Change table come back.
 		if item.parameters[index] == .Table || item.parameters[index] == .Bytes {
 			bytes := argument.kind == .Text ? transmute([]u8)argument.text : argument.record
-			size, _, _ := isolated.table_record(item.file, module.Type(item.parameters[index]), item.function.parameter_details[index])
+			size, _, _ := isolated.table_record(item.file, u8(type_of_kind(item.parameters[index])), item.function.parameter_details[index])
 			encoded[index].table = {records = bytes, count = u64(len(bytes)) / max(size, 1)}
 		}
 	}
@@ -3038,7 +3068,7 @@ list_variables :: proc "contextless" (arguments: []Value) -> Value {
 		type_writer := system.Writer {
 			buffer = type_buffer[:],
 		}
-		system.write_type(&type_writer, value.file, module.Type(value.kind), value.detail)
+		system.write_type(&type_writer, value.file, type_of_kind(value.kind), value.detail)
 		value_buffer: [128]u8
 		value_writer := system.Writer {
 			buffer = value_buffer[:],

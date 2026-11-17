@@ -28,6 +28,7 @@ package quic
 // CONNECTION_CLOSE of QUIC, 0x100 + alert, RFC 9001 section 4.8) and an
 // error record whose found field is the alert.
 
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:support/random"
 
@@ -1291,7 +1292,12 @@ tls_receive :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption_
 // message to a server that is connected.
 @(private)
 message_read :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption_Level, message: []u8, error: ^errors.Error_Record) -> bool {
-	type := Handshake_Message(message[0])
+	// A type that this handshake does not name (a KeyUpdate, a type of a
+	// later version) fails as each unexpected message does.
+	type, type_known := enum_word.member_of_word(Handshake_Message, u64(message[0]))
+	if !type_known {
+		return tls_fail(handshake, error, .Unexpected_Message, .State, int(message[0]))
+	}
 	body := message[MESSAGE_HEADER_SIZE:]
 	Expected :: struct {
 		state: Tls_State,

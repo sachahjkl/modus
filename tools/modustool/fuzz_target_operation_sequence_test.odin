@@ -1,7 +1,6 @@
 package modustool
 
 import "core:testing"
-import "modus:contract/operation"
 import "modus:contract/operation_sequence"
 
 // The table of the address parameters refuses a parameter with no row, a
