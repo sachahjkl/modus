@@ -86,7 +86,7 @@ Failure :: enum {
 	None, // No failure.
 	Device, // A read failed on the device.
 	Wrong, // A node has a wrong check: `failed_block` names it.
-	Damaged, // A node breaks a rule of the format (its magic, its level, its count, the order of its keys): `failed_block` names it.
+	Damaged, // A node breaks a rule of the format (its magic, its level, its count, the block of each child, the order of its keys): `failed_block` names it, or is 0 when the damage is a root or a reference with no node.
 	Full, // The pool has no free slot, or a tree would pass DEPTH_LIMIT levels.
 	Write, // The writer gave no block.
 }
@@ -482,6 +482,11 @@ descend :: proc "contextless" (work: ^Work, key: []u8) -> (path: Path, ok: bool)
 path_dirty :: proc "contextless" (work: ^Work, path: ^Path) {
 	for depth in 0 ..< path.depth {
 		dirty(work, path.slots[depth])
+		// A reference names a dirty slot only: after a failed dirty, the
+		// slot stays clean and no parent may name it.
+		if failed(work) {
+			return
+		}
 		if depth == 0 {
 			work.root = reference(path.slots[0])
 			work.root_is_reference = true
@@ -675,6 +680,9 @@ put :: proc "contextless" (work: ^Work, key: []u8, value: []u8, replace: bool) -
 		return true
 	}
 	path_dirty(work, &path)
+	if failed(work) {
+		return false
+	}
 	leaf := bytes_of(work, path.slots[path.depth - 1])
 	position := path.positions[path.depth - 1]
 	if path.found {
@@ -693,6 +701,9 @@ remove :: proc "contextless" (work: ^Work, key: []u8) -> (existed: bool) {
 		return false
 	}
 	path_dirty(work, &path)
+	if failed(work) {
+		return false
+	}
 	leaf := bytes_of(work, path.slots[path.depth - 1])
 	record_remove(leaf, work.shape, path.positions[path.depth - 1])
 	rebalance(work, &path, path.depth - 1)
@@ -795,7 +806,9 @@ rebalance :: proc "contextless" (work: ^Work, path: ^Path, depth: int) {
 
 // finish writes the dirty nodes of a tree, each child before its parent,
 // and gives the Pointer of the root on the disk. The root is unchanged
-// when no node of the tree is dirty.
+// when no node of the tree is dirty. On a failure, the blocks that it
+// wrote before stay in the writer: only the caller, which drops the
+// commit, makes sure that the disk keeps none of them.
 finish :: proc "contextless" (work: ^Work, writer: ^Writer) -> Pointer {
 	if failed(work) {
 		return work.root
@@ -875,6 +888,12 @@ Walk :: struct {
 walk_tree :: proc "contextless" (walk: ^Walk, root: Pointer) -> Failure {
 	walk.failure = .None
 	walk.has_last = false
+	if is_reference(root) {
+		// A root with no block and a check names no node: the commits refuse
+		// it (root_of_disk_valid), so the walk of the open refuses it too.
+		walk.failure, walk.failed_block = .Damaged, 0
+		return walk.failure
+	}
 	if root.block == 0 {
 		return .None
 	}
