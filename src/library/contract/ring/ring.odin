@@ -21,12 +21,11 @@
 // Choose the capacity for the largest burst of the writer. When a queue is
 // full, `push` writes nothing and says so: the writer waits for room, or it
 // refuses the request that it serves and says so: a full queue slows the
-// writer to the speed of the reader. Two writers do not follow this rule
-// yet, and drop a record that does not fit with no word: the kernel drops
-// the completion of a command when the program left its completion queue
-// full (`enter` in src/kernel/enter.odin), and
-// `system.command_call` ignores a refused push of its command. The fix of
-// both is planned work of the roadmap.
+// writer to the speed of the reader. The kernel follows it too: it runs a
+// command of a kernel ring only when the completion queue has room for its
+// answer, and else leaves the command in the command queue, unrun, until
+// the thread reads its completions (`full`, and
+// src/md/api/kernel_ring_completion_room.md).
 //
 // Who uses it: the kernel (the kernel ring of each thread), every service
 // (its rings to its callers) and every program. The parts:
@@ -34,7 +33,7 @@
 // - `Record`: one command or one completion, 64 bytes.
 // - `Head`, `Counters`: the shared head of a ring.
 // - `Ring`, `Queue`: a ring as one side holds it.
-// - `open`, `push`, `pop`, `count`, `empty`, `complete`: the queue
+// - `open`, `push`, `pop`, `count`, `empty`, `full`, `complete`: the queue
 //   operations, with no lock and no kernel entry.
 // - `Shared_Head`, `shared_open` (`shared.odin`): the shared queue, which
 //   several writers fill.
@@ -168,6 +167,9 @@ count :: proc "contextless" (queue: ^Queue) -> u32 {
 // wake the reader (`system.send` does).
 push :: proc "contextless" (queue: ^Queue, record: Record) -> bool {
 	write := intrinsics.atomic_load_explicit(&queue.counters.write, .Relaxed)
+	// The same test as full, on the one read of the counter that the
+	// record and the new count use: the other side can write the shared
+	// counter between two reads.
 	if write - intrinsics.atomic_load_explicit(&queue.counters.read, .Acquire) > queue.mask {
 		return false
 	}
@@ -195,6 +197,17 @@ pop :: proc "contextless" (queue: ^Queue) -> (record: Record, ok: bool) {
 // empty says if a queue has no record to read.
 empty :: proc "contextless" (queue: ^Queue) -> bool {
 	return intrinsics.atomic_load_explicit(&queue.counters.write, .Relaxed) == intrinsics.atomic_load_explicit(&queue.counters.read, .Relaxed)
+}
+
+// full says if a push into a queue would be refused now: the queue holds
+// its capacity, or its counters say more records than it holds. The writer
+// calls it before work whose record must find room: the kernel checks the
+// completion queue of a thread before it runs a command. Only the reader
+// makes room after it, so a queue that is not full stays so for the writer
+// until its push, unless the reader writes a false count.
+full :: proc "contextless" (queue: ^Queue) -> bool {
+	write := intrinsics.atomic_load_explicit(&queue.counters.write, .Relaxed)
+	return write - intrinsics.atomic_load_explicit(&queue.counters.read, .Acquire) > queue.mask
 }
 
 // complete makes the last store of a counter complete in memory, as each
