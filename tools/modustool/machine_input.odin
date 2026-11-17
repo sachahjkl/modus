@@ -436,6 +436,10 @@ screen_dump_settled :: proc(machine: ^Machine, name: string) -> (dump: Screen_Du
 // screen is settled (screen_dump_settled). A worker thread makes the PNG
 // file, and pictures_join gives its result.
 screen_save :: proc(machine: ^Machine, name: string) -> bool {
+	if owner, claimed := picture_name_claim(machine.part.name, name); !claimed {
+		fmt.eprintfln("modustool: test failed: the picture %s is a picture of the part %s too: two parts that run at once would write one file; give one of them another name", name, owner)
+		return false
+	}
 	picture_started := time.tick_now()
 	machine.picture_time = {}
 	dump := screen_dump_settled(machine, name) or_return

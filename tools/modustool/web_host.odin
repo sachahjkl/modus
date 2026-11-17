@@ -54,13 +54,15 @@ Listener :: struct {
 	files:      []Listener_File, // Set before the thread starts, and never changed: the thread reads it with no lock.
 }
 
-// The ports of the loopback that this process gave to a QEMU, which binds
-// each one itself after the tool closed its own socket. Between the close
-// and the bind of QEMU, the system can give the same number to the next
-// socket of another machine that runs at the same time: so the tool never
-// gives a number again while it is in this list. Another program of the
-// host can still take a port in that time; the system then refuses the
-// bind of QEMU, and the machine fails at its start with that reason.
+// The ports of the loopback that this process gave to a QEMU for hostfwd,
+// which QEMU binds itself after the tool closed its own socket: hostfwd
+// takes no socket. The list holds only against free_port itself: two
+// machines never get one port from it. Between the close and the bind of
+// QEMU, any other socket that binds port 0 (a socket of the tool on another
+// thread, or another program of the host) can still take the number; QEMU
+// then fails at its start, and machine_test starts it again with a new
+// port, a bounded count of times (MACHINE_START_TRIES). The UDP port of the
+// peer never has that gap: QEMU uses a copy of the socket of the peer.
 Given_Loopback_Ports :: struct {
 	lock:  sync.Mutex,
 	ports: [dynamic]int,
@@ -103,6 +105,22 @@ loopback_port_take_back :: proc(port: int) {
 	}
 }
 
+// loopback_port_search gives the first port that next gives and that the
+// list does not hold, and adds it to the list, in at most FREE_PORT_TRIES
+// tries; false when next fails, or when each try gave a port of the list.
+loopback_port_search :: proc(next: proc(data: rawptr) -> (int, bool), data: rawptr) -> (port: int, ok: bool) {
+	for _ in 0 ..< FREE_PORT_TRIES {
+		candidate, found := next(data)
+		if !found {
+			return 0, false
+		}
+		if loopback_port_give(candidate) {
+			return candidate, true
+		}
+	}
+	return 0, false
+}
+
 // free_port gives a TCP port of the loopback that no socket holds now and
 // that this process gave to no QEMU that runs. The caller takes it back
 // with loopback_port_take_back.
@@ -113,46 +131,38 @@ free_port :: proc() -> (port: int, ok: bool) {
 			net.close(socket)
 		}
 	}
-	for _ in 0 ..< FREE_PORT_TRIES {
-		socket, err := net.listen_tcp({net.IP4_Loopback, 0})
-		if err != nil {
+	// Each socket stays open until the search ends, so the next one gets
+	// another number.
+	next :: proc(data: rawptr) -> (int, bool) {
+		sockets := (^[dynamic]net.TCP_Socket)(data)
+		listening, listen_error := net.listen_tcp({net.IP4_Loopback, 0})
+		if listen_error != nil {
 			return 0, false
 		}
-		append(&held, socket)
-		bound, bound_err := net.bound_endpoint(socket)
-		if bound_err != nil {
-			return 0, false
-		}
-		if loopback_port_give(bound.port) {
-			return bound.port, true
-		}
+		append(sockets, listening)
+		bound, bound_error := net.bound_endpoint(listening)
+		return bound.port, bound_error == nil
 	}
-	return 0, false
+	return loopback_port_search(next, &held)
 }
 
-// free_udp_port gives a UDP port of the loopback as free_port does.
-free_udp_port :: proc() -> (endpoint: net.Endpoint, ok: bool) {
-	held := make([dynamic]net.UDP_Socket, context.temp_allocator)
-	defer {
-		for socket in held {
-			net.close(socket)
+// loopback_ports_given_count gives the count of the ports in the list.
+loopback_ports_given_count :: proc() -> int {
+	sync.mutex_lock(&given_loopback_ports.lock)
+	defer sync.mutex_unlock(&given_loopback_ports.lock)
+	return len(given_loopback_ports.ports)
+}
+
+// loopback_port_is_given says if the list holds a port.
+loopback_port_is_given :: proc(port: int) -> bool {
+	sync.mutex_lock(&given_loopback_ports.lock)
+	defer sync.mutex_unlock(&given_loopback_ports.lock)
+	for given in given_loopback_ports.ports {
+		if given == port {
+			return true
 		}
 	}
-	for _ in 0 ..< FREE_PORT_TRIES {
-		socket, err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
-		if err != nil {
-			return {}, false
-		}
-		append(&held, socket)
-		bound, bound_err := net.bound_endpoint(socket)
-		if bound_err != nil {
-			return {}, false
-		}
-		if loopback_port_give(bound.port) {
-			return bound, true
-		}
-	}
-	return {}, false
+	return false
 }
 
 listener_start :: proc(listener: ^Listener, files: []Listener_File = nil) -> bool {

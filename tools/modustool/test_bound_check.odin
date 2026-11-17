@@ -72,7 +72,7 @@ test_bound_check :: proc() -> bool {
 				continue
 			}
 			sleeps += 1
-			if period == "" || period[0] >= '0' && period[0] <= '9' {
+			if sleep_period_has_a_number(period) {
 				fmt.eprintfln("modustool: test failed: %s:%d: a time.sleep of the tool has the number %s: a poll uses CONDITION_POLL_PERIOD, and any other period is a constant whose comment gives its reason", files[index], line_number, period)
 				found += 1
 			}
@@ -83,6 +83,33 @@ test_bound_check :: proc() -> bool {
 	}
 	test_passed_print("each of the %d steps with a bound of its own names a constant with its reason, and each of the %d time.sleep of the tool names its period (%d files read)", bounds, sleeps, len(files))
 	return true
+}
+
+// sleep_period_has_a_number says if the argument of a time.sleep is no
+// named period: empty, or with a digit anywhere outside a name, as in
+// `20 * time.Millisecond`, `time.Millisecond * 20`,
+// `time.Duration(20) * time.Millisecond` or `CONDITION_POLL_PERIOD * 20`.
+// A digit inside a name (`TPM2_PERIOD`) is a part of the name.
+sleep_period_has_a_number :: proc(period: string) -> bool {
+	if strings.trim_space(strings.trim_suffix(strings.trim_space(period), ")")) == "" {
+		return true
+	}
+	for index in 0 ..< len(period) {
+		character := period[index]
+		if character < '0' || character > '9' {
+			continue
+		}
+		// The start of the name that holds the digit, if one does.
+		start := index
+		for start > 0 && byte_of_a_name(period[start - 1]) {
+			start -= 1
+		}
+		first := period[start]
+		if first >= '0' && first <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 // sleep_period_of_a_line gives the argument of a call of time.sleep in a

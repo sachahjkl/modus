@@ -26,11 +26,19 @@ The machine test is a list of parts. A part is one or more machines that share a
 
 **The run of a part, `Test_Part_Run`.** What the machines of one part share lives in one record, and each machine reaches it through its machine record (`Machine.part`): the data disk of the part, the values of the steps Remember, the texts of the steps Screen_Text, and the times of its machines and steps. A command that starts machines outside the test (`measure`, `film`) makes one run with its own name.
 
-**The files of a machine are beside its log.** The picture of the screen that QEMU writes, the disk of the measures, the copy of the variable store of the firmware and the frames of QEMU user networking each have the name of the log with a suffix (`machine_file`). The log names are already distinct across the parts. `run` keeps the fixed names: it has no log file.
+**The files of a machine are beside its log.** The picture of the screen that QEMU writes, the disk of the measures, the copy of the variable store of the firmware, the frames of QEMU user networking and the sockets of a software TPM each have the name of the log with a suffix (`machine_file`); the machine removes the disk, the picture and the store at its end. A host test reads the constants of the logs and of the disks of the parts and refuses two that name one file. `run` keeps the fixed names: it has no log file.
 
-**The ports of the loopback.** QEMU binds the port of hostfwd and the UDP port of the peer itself, after the tool closed its own socket. Between the close and the bind, the system can give that number to the socket of another machine of the tool. So the tool keeps the list of the ports that it gave (`free_port`, `free_udp_port`) and gives no number again until the machine that holds it ended.
+**The boot volume is shared, and read only.** Many parts boot the main volume, and two boot `secure_boot` and `other_system`, at the same time. QEMU takes a lock for writing on each image that it opens for writing, so the drive of the boot volume has `snapshot=on`: QEMU reads the volume with a shared lock, and keeps any write of the machine in a temporary file of its own. No program of the system writes its boot volume, and no part reads a write to it; `snapshot=on` and not `readonly=on`, because the firmware is not code of the system, and a write that it makes must not fail the start.
 
-**The pool.** `test_parts_run` gives the rows to worker threads, one row at a time, in the order of the table. The table starts with the longest parts (the measured time of each part is in `build/test_times.txt`), so the last part to end starts early. After a failure no new part starts; the parts that run end. At most one part runs for each `MACHINE_PROCESSOR_COUNT` processors of the host: each machine has that many processors.
+**The names of the pictures.** The pictures of all the parts go to one folder. A part that saves a name that another part of the run saved fails its step, with the name of the other part (`picture_name_claim`): two parts would leave the picture of whichever part ended last. A static check of the table cannot hold this: several scenarios are built by code.
+
+**The ports of the loopback.** What is guaranteed, and what is not:
+
+- The UDP port of the peer for the machine is never free: the peer binds it, connects it to its own port, and QEMU gets a copy of that socket at its start (`-netdev dgram,local.type=fd`). The copy is open in the tool only from the command of QEMU to its start; a program that another thread starts in that time inherits it, holds the port of that machine until it ends, and never reads it.
+- The software TPM alone of a part has Unix sockets in the folder of its output: no port.
+- The port of hostfwd is the one port that QEMU binds itself: hostfwd takes no socket. `free_port` keeps the list of the ports that it gave, so two machines never get one port from it. Any other socket that binds port 0 between the close of the tool and the bind of QEMU (a socket of the tool on another thread, or another program of the host) can still take the number. QEMU then ends at its start; `machine_test` starts it again with a new port, at most `MACHINE_START_TRIES` times in all, and a QEMU that ends at each try fails the machine.
+
+**The pool.** `test_parts_run` gives the rows to worker threads, one row at a time, in the order of the table. The table starts with the longest parts (the measured time of each part is in `build/test_times.txt`), so the last part to end starts early. After a failure no new part starts; the parts that run end, and the pool waits for them. The summary says "not started" for a part that no worker took, not "failed". At most one part runs for each `MACHINE_PROCESSOR_COUNT` processors: the processors of the host, or `NIX_BUILD_CORES` when the sandbox of Nix gives fewer.
 
 **The times.** Each part keeps its own times. The report joins them in the order of the table, writes `build/test_times.txt` with the part of each machine, and prints the time of each part, the longest first, as a measure.
 
@@ -49,10 +57,11 @@ The machine test is a list of parts. A part is one or more machines that share a
 - The list of the boot volumes that the build made is read by every part and changed by the part `trusted_boot` (the disk of the release image): a lock holds it. The cache of the interface font is read once under a lock.
 - The lines of two parts that run at once are mixed on the terminal. Each line is whole. The end of the log of a machine that failed is one write, with the name of its log. The line of the end of each part names the part.
 - The data disk of a part that failed stays in `build/`; the disks of the parts that passed are removed.
-- `nix flake check` gives the sandbox the processors of the host, so the parts run at once there too.
+- `nix flake check` gives the sandbox the processors of the host, so the parts run at once there too, bounded by `NIX_BUILD_CORES`.
+- A panic of the tool on one worker ends the process; the QEMU of the other parts that run then stay as orphans until a kill.
 
 ## State
 
-Built: the table, the derived refusal, volumes and guide check, the run of a part, the files beside the log, the ports, the pool, the times of each part.
+Built: the table, the derived refusal, volumes and guide check, the run of a part, the files beside the log, the shared boot volume, the names of the pictures, the ports, the pool, the times of each part.
 
 Left: the main scenario in named sections, so that its sections run as parts at once; the host test folders of `modustool check` through the process pool of the build.

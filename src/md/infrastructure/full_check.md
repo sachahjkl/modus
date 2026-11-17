@@ -24,7 +24,7 @@ A full check is `nix flake check` and `modustool screenshots`, both passed. This
 3. copies the pictures to `docs/screenshots` and to a new folder of the development log;
 4. builds the volume of the measure runs on the host, runs the measure runs, and writes the measure record.
 
-So the order of the two commands does not matter: the second one finds the output of the first in the store.
+**The source of the check holds no byte that `screenshots` writes.** `screenshots` writes the pictures of `docs/screenshots` (the bar shows a clock: each run gives new bytes), the measure record (`docs/measures/measures.txt`) and the development log, outside the repository. The source of `boot-test` holds no file of `docs/measures`, and of `docs/screenshots` only the names of the PNG files: the build makes an empty file for each name, as the checks of the README, the news and the gallery read which pictures exist, not their bytes. So the source is the same before and after `screenshots`, and the order of the two commands does not matter: the second one finds the output of the first in the store. A run of the test that saves a picture with a new name gives a new source after its copy; that is a change of the test, which a new check must prove.
 
 ## What the full check proves, before and after
 
@@ -36,12 +36,15 @@ Each fact that the two runs proved is proved by the one run of the flake: the bu
 - **Two runs, one in each command.** That was the form before: each run of the machine test and each pair of whole builds twice, for no fact that one run does not prove.
 - **The measure runs in the sandbox.** The sandbox runs the machine test with several parts at once, and a rate under that load says little. The measure runs need a quiet host; the host of the developer is that host.
 - **`screenshots` that reads `build/` of an earlier `modustool check` on the host.** Nothing would tie those files to the tree; the store path of the flake check is the hash of its inputs.
+- **A rule of order, `nix flake check` first.** With the pictures in the source, `screenshots` after the check changes the source, and the next check runs every machine again; a rule that a developer must keep is weaker than a source that does not change.
+- **Empty pictures in the repository.** The checks need the names only in the sandbox; the documents need the bytes.
 
 ## Subtle points
 
 - The flake sees only the tracked files and the folders that `flake.nix` names. A new file must be added to git before the full check, or the check proves a tree without it.
 - The pictures come from the boot image of the flake, which has the pointer theme of the system only ([release_image.md](release_image.md)): the pointer in the pictures is the pointer of a release.
 - `build/flake_check` is a root of the garbage collector of Nix: the output of the last check stays in the store until the next one.
+- The pictures come from the host that built the check. When Nix takes the output from a binary cache (a cache that the check workflow filled, for example), the pictures and the logs are those of that host: on a host with no SVM or no counters for the test machine, the pictures of `guest` and `kernel_events` show the form with no support. The measure runs stay of the host of `screenshots`. The measure record names the host of `screenshots`, not of the check.
 - The output holds every picture of the test, so it is tens of megabytes.
 
 ## State

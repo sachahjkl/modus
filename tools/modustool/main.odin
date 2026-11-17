@@ -848,8 +848,9 @@ run_test :: proc(args: []string) -> int {
 			}
 		}
 	}
-	processors := os.get_processor_core_count()
+	processors := test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
 	at_once := test_parts_at_once(len(parts), processors)
+	picture_names_forget()
 	if len(parts) > 1 {
 		fmt.printfln("modustool: %d parts of the machine test, at most %d at once: %d processors, %d for each machine", len(parts), at_once, processors, MACHINE_PROCESSOR_COUNT)
 	}
@@ -1273,9 +1274,16 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		return nil, false
 	}
 	listener_port := forward.listener != nil ? forward.listener.port : 0
-	network_device := network_device_of(forward.host_port, listener_port, peer.port, peer.machine.port)
+	// With the peer, QEMU uses a copy of the socket of the peer for the
+	// machine; the caller closes the copy once QEMU started.
+	machine_descriptor := 0
+	if forward.host_port == 0 {
+		machine_descriptor = peer_machine_socket_lend(peer) or_return
+	}
+	network_device := network_device_of(forward.host_port, listener_port, machine_descriptor)
 	if problem := network_device_problem(network_device); problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
+		peer_machine_socket_lent_close(peer)
 		return nil, false
 	}
 	list := make([dynamic]string, context.temp_allocator)
@@ -1348,7 +1356,15 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-drive",
 		strings.concatenate({"if=pflash,format=raw,file=", variables_copy}, context.temp_allocator),
 		"-drive",
-		strings.concatenate({"if=none,id=boot,format=raw,file=", volume}, context.temp_allocator),
+		// Several machines boot one volume at the same time, and QEMU takes
+		// a lock for writing on each image that it opens for writing: the
+		// second machine would not start. With snapshot=on QEMU opens the
+		// volume to read only, with a shared lock, and keeps each write of
+		// the machine in a temporary file of its own. No program of the
+		// system writes its boot volume (the block service serves the data
+		// disk and the disk of the measures), and the firmware is not ours:
+		// a write that it makes stays private, and no machine reads one.
+		strings.concatenate({"if=none,id=boot,format=raw,snapshot=on,file=", volume}, context.temp_allocator),
 		"-device",
 		// The boot volume is the first boot option of the firmware: with no
 		// bootindex, the order of its options follows its own enumeration,
@@ -1466,11 +1482,13 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 // network_device_of gives the network device of a machine: QEMU user
 // networking with its TCP when host_port is not 0 (web_host.odin), else the
 // peer (`-netdev dgram`).
-network_device_of :: proc(host_port, listener_port, peer_port, machine_port: int) -> string {
+network_device_of :: proc(host_port, listener_port, machine_descriptor: int) -> string {
 	if host_port != 0 {
 		return fmt.tprintf("user,id=network,restrict=on,hostfwd=tcp:127.0.0.1:%d-10.0.2.15:80,guestfwd=tcp:%s:80-tcp:127.0.0.1:%d", host_port, GUEST_ADDRESS, listener_port)
 	}
-	return fmt.tprintf("dgram,id=network,remote.type=inet,remote.host=127.0.0.1,remote.port=%d,local.type=inet,local.host=127.0.0.1,local.port=%d", peer_port, machine_port)
+	// The socket is bound and connected to the peer: QEMU takes no
+	// address of its own (peer_start).
+	return fmt.tprintf("dgram,id=network,local.type=fd,local.str=%d", machine_descriptor)
 }
 
 // network_device_problem refuses a network device that forwards a UDP port

@@ -8,10 +8,13 @@ import "core:testing"
 // that port is refused in each form that QEMU reads.
 @(test)
 no_machine_forwards_a_port_to_remote :: proc(t: ^testing.T) {
-	with_user_network := network_device_of(40001, 40002, 40003, 40004)
-	with_peer := network_device_of(0, 0, 40003, 40004)
+	with_user_network := network_device_of(40001, 40002, 7)
+	with_peer := network_device_of(0, 0, 7)
 	testing.expect(t, strings.contains(with_user_network, "hostfwd=tcp:127.0.0.1:40001-10.0.2.15:80"))
-	testing.expect(t, strings.has_prefix(with_peer, "dgram,"))
+	testing.expect(t, !strings.contains(with_user_network, "local.str"), "QEMU user networking takes no socket of the peer")
+	// The peer gives its own socket: QEMU binds no port, so no other socket
+	// of the host can take it first.
+	testing.expect_value(t, with_peer, "dgram,id=network,local.type=fd,local.str=7")
 	testing.expect_value(t, network_device_problem(with_user_network), "")
 	testing.expect_value(t, network_device_problem(with_peer), "")
 	refused := []string {

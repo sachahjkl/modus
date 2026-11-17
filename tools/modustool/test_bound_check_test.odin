@@ -7,6 +7,20 @@ import "core:testing"
 @(private = "file")
 SLEEP :: "time." + "sleep("
 
+// A period with a number in any place is refused; a name, a name with a
+// digit inside it, and a variable pass.
+@(test)
+a_sleep_with_a_number_anywhere_is_refused :: proc(t: ^testing.T) {
+	refused := []string{"", ")", " )", "20 * time.Millisecond)", "time.Millisecond * 20)", "time.Duration(20) * time.Millisecond)", "CONDITION_POLL_PERIOD * 20)", "CONDITION_POLL_PERIOD * 2)", "0)", "1e3)", "CONDITION_POLL_PERIOD + 0)"}
+	for period in refused {
+		testing.expectf(t, sleep_period_has_a_number(period), "the period %q is refused", period)
+	}
+	passed := []string{"CONDITION_POLL_PERIOD)", "TPM2_POLL_PERIOD)", "due - now)", "time.Duration(step.milliseconds) * time.Millisecond)", "wait)"}
+	for period in passed {
+		testing.expectf(t, !sleep_period_has_a_number(period), "the period %q passes", period)
+	}
+}
+
 // The reader of a line finds the period of each call of time.sleep, and
 // only of a call: a comment, another name and a line with no call give none.
 @(test)

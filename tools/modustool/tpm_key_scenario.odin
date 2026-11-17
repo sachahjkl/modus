@@ -1,10 +1,10 @@
 package modustool
 
 import "core:fmt"
-import "core:net"
 import "core:os"
 import "core:strings"
 import "core:sync"
+import "core:sys/linux"
 import "core:time"
 import format "modus:contract/store"
 import "modus:support/principals"
@@ -950,36 +950,25 @@ tpm_lockout_reset_try :: proc(state_folder: string, number: int) -> (code: u32, 
 // TPM of a part: the tool sends it the commands that another system on the
 // machine can send.
 Tpm_Alone :: struct {
-	tpm:    Tpm_Process,
-	socket: net.TCP_Socket,
+	tpm:        Tpm_Process,
+	connection: linux.Fd, // The Unix socket of the commands, in the folder of the output.
 }
 
-// tpm_alone_start starts swtpm alone on a state of the software TPM, in the
-// folder of the output given, and connects to its port of the commands.
-tpm_alone_start :: proc(state_folder: string, output: string) -> (alone: Tpm_Alone, ok: bool) {
-	// Two ports of the loopback at once, so they differ: the commands and
-	// the control channel of swtpm.
-	server_socket, server_error := net.listen_tcp({net.IP4_Loopback, 0})
-	if server_error != nil {
-		fmt.eprintfln("modustool: test failed: no port of the loopback for swtpm: %v", server_error)
-		return {}, false
-	}
-	control_socket, control_error := net.listen_tcp({net.IP4_Loopback, 0})
-	if control_error != nil {
-		net.close(server_socket)
-		fmt.eprintfln("modustool: test failed: no port of the loopback for swtpm: %v", control_error)
-		return {}, false
-	}
-	server_endpoint, _ := net.bound_endpoint(server_socket)
-	control_endpoint, _ := net.bound_endpoint(control_socket)
-	net.close(server_socket)
-	net.close(control_socket)
+// The Unix sockets of swtpm alone, in the folder of its output: no port of
+// the loopback, which a machine of another part that runs at the same time
+// could hold.
+TPM_ALONE_SERVER_SOCKET :: "/server.socket"
+TPM_ALONE_CONTROL_SOCKET :: "/control.socket"
 
+// tpm_alone_start starts swtpm alone on a state of the software TPM, in the
+// folder of the output given, and connects to its socket of the commands.
+tpm_alone_start :: proc(state_folder: string, output: string) -> (alone: Tpm_Alone, ok: bool) {
 	folder := tpm_folder_of(output)
 	reset_folder(folder) or_return
 	log := strings.concatenate({"file=", folder, "/swtpm.log,level=20"}, context.temp_allocator)
-	server := fmt.tprintf("type=tcp,port=%d,bindaddr=127.0.0.1", server_endpoint.port)
-	control := fmt.tprintf("type=tcp,port=%d,bindaddr=127.0.0.1", control_endpoint.port)
+	server_path := strings.concatenate({folder, TPM_ALONE_SERVER_SOCKET}, context.temp_allocator)
+	server := strings.concatenate({"type=unixio,path=", server_path}, context.temp_allocator)
+	control := strings.concatenate({"type=unixio,path=", folder, TPM_ALONE_CONTROL_SOCKET}, context.temp_allocator)
 	// not-need-init and startup-clear: swtpm starts the TPM itself, as the
 	// firmware of a machine does, with no QEMU.
 	process, start_error := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", state_folder}, context.temp_allocator), "--server", server, "--ctrl", control, "--flags", "not-need-init,startup-clear", "--log", log}, stdout = os.stderr, stderr = os.stderr})
@@ -992,27 +981,25 @@ tpm_alone_start :: proc(state_folder: string, output: string) -> (alone: Tpm_Alo
 	// Wait until swtpm takes a connection.
 	start := time.tick_now()
 	for {
-		dialed, dial_error := net.dial_tcp(net.Endpoint{net.IP4_Loopback, server_endpoint.port})
-		if dial_error == nil {
-			alone.socket = dialed
+		connection, connected := call_socket_connect(server_path)
+		if connected {
+			alone.connection = connection
 			break
 		}
 		if time.tick_since(start) > TPM_START_TIMEOUT {
-			fmt.eprintfln("modustool: test failed: swtpm took no connection on the port %d in %v (%s)", server_endpoint.port, TPM_START_TIMEOUT, folder)
+			fmt.eprintfln("modustool: test failed: swtpm took no connection at %s in %v", server_path, TPM_START_TIMEOUT)
 			tpm_stop(&alone.tpm)
 			return {}, false
 		}
 		time.sleep(CONDITION_POLL_PERIOD)
 	}
-	// The bound only ends a wait for a TPM that does not answer.
-	_ = net.set_option(alone.socket, .Receive_Timeout, HANG_BOUND)
 	return alone, true
 }
 
 // tpm_alone_stop closes the connection and ends swtpm, which writes its
 // state.
 tpm_alone_stop :: proc(alone: ^Tpm_Alone) {
-	net.close(alone.socket)
+	call_socket_close(alone.connection)
 	tpm_stop(&alone.tpm)
 }
 
@@ -1020,7 +1007,7 @@ tpm_alone_stop :: proc(alone: ^Tpm_Alone) {
 // buffer given: the size of its header bounds it. what names the command in
 // a line of a failure.
 tpm_alone_transact :: proc(alone: ^Tpm_Alone, command: []u8, answer: []u8, what: string) -> (bytes: []u8, ok: bool) {
-	if len(command) == 0 || !send_all(alone.socket, command) {
+	if len(command) == 0 || !call_socket_send_all(alone.connection, command) {
 		fmt.eprintfln("modustool: test failed: the command %s did not go to swtpm (%s)", what, alone.tpm.folder)
 		return nil, false
 	}
@@ -1028,9 +1015,15 @@ tpm_alone_transact :: proc(alone: ^Tpm_Alone, command: []u8, answer: []u8, what:
 	HEADER_SIZE :: 10
 	received := 0
 	size := HEADER_SIZE
+	// The receive of the socket ends after its own short time with no byte;
+	// the bound only ends a wait for a TPM that does not answer.
+	start := time.tick_now()
 	for received < size {
-		got, receive_error := net.recv_tcp(alone.socket, answer[received:size])
-		if receive_error != nil || got == 0 {
+		got, receive_error := linux.recv(alone.connection, answer[received:size], {})
+		if (receive_error == .EAGAIN || receive_error == .EINTR) && time.tick_since(start) < HANG_BOUND {
+			continue
+		}
+		if receive_error != .NONE || got <= 0 {
 			fmt.eprintfln("modustool: test failed: swtpm gave %d bytes of an answer of %d to %s: %v (%s)", received, size, what, receive_error, alone.tpm.folder)
 			return nil, false
 		}

@@ -3930,6 +3930,28 @@ log_last_line :: proc(machine: ^Machine, text: string) -> string {
 	return strings.trim_right(end < 0 ? rest : rest[:end], "\r")
 }
 
+// The starts of a QEMU with hostfwd that ends at its start, each with a new
+// port: another socket of the host can take the port of hostfwd before QEMU
+// binds it (Given_Loopback_Ports). A bound: a QEMU that ends at each try
+// ends for another reason.
+MACHINE_START_TRIES :: 3
+
+// qmp_socket_wait waits until QEMU made the socket of its machine protocol,
+// or ended (then the process is reaped). A QEMU that ends before it makes
+// the socket fails its start at once, not at the bound of a hang.
+qmp_socket_wait :: proc(process: os.Process, path: string) -> (made: bool, ended: bool) {
+	for start := time.tick_now(); time.tick_since(start) < HANG_BOUND; {
+		if os.exists(path) {
+			return true, false
+		}
+		if state, wait_error := os.process_wait(process, 0); wait_error == nil && state.exited {
+			return false, true
+		}
+		time.sleep(CONDITION_POLL_PERIOD)
+	}
+	return false, false
+}
+
 // The machine of one machine test. The zero value of each field but the
 // first three is the usual machine.
 Machine_Options :: struct {
@@ -3988,32 +4010,81 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	}
 	defer listener_stop(&listener)
 	clock := machine_clock_of(time.time_to_unix(time.now()))
-	command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument)
-	if !ok {
-		return false
-	}
-	// The disk of the measures holds no data that a program keeps, and the
-	// last picture of the screen is in its PNG file: they would fill the
-	// build folder, one of each for each machine.
+	// The disk of the measures holds no data that a program keeps, the last
+	// picture of the screen is in its PNG file, and the copy of the variable
+	// store is of this machine only: they would fill the build folder, one
+	// of each for each machine.
 	defer {
 		_ = os.remove(machine_file(output, SCRATCH_DISK_SUFFIX))
 		_ = os.remove(machine_file(output, SCREEN_DUMP_SUFFIX))
+		for suffix in ([]string{FIRMWARE_VARIABLES_SUFFIX, FIRMWARE_TPM_VARIABLES_SUFFIX, FIRMWARE_FULL_VARIABLES_SUFFIX}) {
+			_ = os.remove(machine_file(output, suffix))
+		}
 	}
-	_ = os.remove(output)
-	_ = os.remove(qmp_socket_of(output))
-	_ = os.remove(film_qmp_socket_of(output))
-	_ = os.remove(film_vnc_socket_of(output))
-	monitor_read, monitor_write, pipe_err := os.pipe()
-	if pipe_err != nil {
-		fmt.eprintfln("modustool: cannot create a pipe: %v", pipe_err)
-		return false
-	}
-	process, start_err := os.process_start({command = command, stdin = monitor_read, stderr = os.stderr})
-	if start_err != nil {
-		fmt.eprintfln("modustool: cannot start %s: %v", command[0], start_err)
-		return false
+	process: os.Process
+	monitor_read, monitor_write: ^os.File
+	qmp: Qmp
+	qmp_opened := false
+	for try := 1; ; try += 1 {
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument)
+		if !ok {
+			return false
+		}
+		_ = os.remove(output)
+		_ = os.remove(qmp_socket_of(output))
+		_ = os.remove(film_qmp_socket_of(output))
+		_ = os.remove(film_vnc_socket_of(output))
+		pipe_err: os.Error
+		monitor_read, monitor_write, pipe_err = os.pipe()
+		if pipe_err != nil {
+			fmt.eprintfln("modustool: cannot create a pipe: %v", pipe_err)
+			return false
+		}
+		start_err: os.Error
+		process, start_err = os.process_start({command = command, stdin = monitor_read, stderr = os.stderr})
+		// QEMU has its copy of the socket of the peer now.
+		peer_machine_socket_lent_close(&peer)
+		if start_err != nil {
+			fmt.eprintfln("modustool: cannot start %s: %v", command[0], start_err)
+			os.close(monitor_write)
+			os.close(monitor_read)
+			return false
+		}
+		// The keys, the moves of the pointer and the pictures go through the
+		// machine protocol of QEMU: QEMU listens when it started.
+		socket_made, ended := qmp_socket_wait(process, qmp_socket_of(output))
+		qmp_opened = socket_made && qmp_open(&qmp, qmp_socket_of(output))
+		if qmp_opened || !options.user_network || try == MACHINE_START_TRIES {
+			break
+		}
+		// QEMU closed the protocol before its greeting: it ends.
+		if !ended && qmp.ended {
+			state, wait_error := os.process_wait(process, HANG_BOUND)
+			ended = wait_error == nil && state.exited
+		}
+		// A QEMU that runs and gave no greeting is a failure of the machine,
+		// not of its port: it is not started again.
+		if !ended {
+			break
+		}
+		// QEMU ended at its start: the bind of the port of hostfwd is the
+		// one step of its start that another socket of the host can make
+		// fail (Given_Loopback_Ports).
+		qmp_close(&qmp)
+		qmp = {}
+		os.close(monitor_write)
+		os.close(monitor_read)
+		loopback_port_take_back(forward.host_port)
+		port, free := free_port()
+		forward.host_port = free ? port : 0
+		if !free {
+			fmt.eprintln("modustool: no port of the loopback for the TCP of QEMU")
+			return false
+		}
+		fmt.printfln("modustool: QEMU of %s ended at its start, which a port of hostfwd that another socket took gives: start %d of %d, with the port %d", output, try + 1, MACHINE_START_TRIES, port)
 	}
 	machine := Machine {
+		qmp = qmp,
 		part = part,
 		started_at = time.tick_now(),
 		started_unix = time.time_to_unix(time.now()),
@@ -4026,9 +4097,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		forward   = forward,
 		disk_server = options.disk_server,
 	}
-	// The keys, the moves of the pointer and the pictures go through the
-	// machine protocol of QEMU: QEMU listens when it started.
-	passed := qmp_open(&machine.qmp, qmp_socket_of(output)) && scenario_run(&machine, steps)
+	passed := qmp_opened && scenario_run(&machine, steps)
 	scenario_ended := time.tick_now()
 	// A scenario that failed between Film_Start and Film_Stop: its worker
 	// ends before the connections to QEMU close.

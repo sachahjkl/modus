@@ -331,6 +331,19 @@ test_times_of_parts :: proc(runs: []Test_Part_Run, build: time.Duration) -> Test
 	return times
 }
 
+// test_part_run_outcome_note gives what the summary writes after a part:
+// nothing when it passed, else whether it failed or never started. One
+// failure stops the start of the others: they did not fail.
+test_part_run_outcome_note :: proc(part_run: Test_Part_Run) -> string {
+	switch {
+	case part_run.passed:
+		return ""
+	case !part_run.started:
+		return " (not started)"
+	}
+	return " (failed)"
+}
+
 // test_part_runs_by_duration gives a copy of the runs, the longest first;
 // two equal durations keep the order of the table. The copy is of the
 // temporary memory and shares the texts of the runs.
@@ -362,7 +375,7 @@ test_times_report :: proc(runs: []Test_Part_Run, build: time.Duration, started: 
 	if len(runs) > 1 {
 		fmt.printfln("modustool: measure: %d parts, %.1f s in all, in %.1f s of the test; each part, the longest first:", len(runs), seconds_of(parts_whole), seconds_of(whole))
 		for part_run in test_part_runs_by_duration(runs) {
-			fmt.printfln("modustool: measure:     %8.1f s, %3d machines: %s%s", seconds_of(part_run.duration), len(part_run.times.machines), part_run.name, part_run.passed ? "" : " (failed)")
+			fmt.printfln("modustool: measure:     %8.1f s, %3d machines: %s%s", seconds_of(part_run.duration), len(part_run.times.machines), part_run.name, test_part_run_outcome_note(part_run))
 		}
 	}
 	machines_whole, first_lines, stops: time.Duration

@@ -2,6 +2,7 @@ package modustool
 
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:thread"
@@ -37,6 +38,7 @@ Test_Part_Run :: struct {
 	screen_text_kept:   string, // The text that the last step Screen_Text read: a later machine of the part types it.
 	screen_text_before: string, // The text that the step Screen_Text before the last one read.
 	times:              Test_Times,
+	started:            bool, // A worker took the part: after a failure, the parts that no worker took did not start.
 	passed:             bool,
 	duration:           time.Duration, // A measure: from the start of its first machine to the end of its last one.
 }
@@ -244,10 +246,56 @@ test_parts_at_once :: proc(part_count: int, processors: int) -> int {
 	return max(1, min(part_count, processors / MACHINE_PROCESSOR_COUNT))
 }
 
+// test_processors_of gives the processors that the test counts on: the
+// processors of the host, or fewer when the sandbox of Nix gives the build
+// fewer (NIX_BUILD_CORES, a number; 0, empty or not a number: no bound).
+test_processors_of :: proc(host_processors: int, nix_build_cores: string) -> int {
+	cores, is_number := strconv.parse_int(nix_build_cores, 10)
+	if !is_number || cores <= 0 {
+		return host_processors
+	}
+	return min(host_processors, cores)
+}
+
+// The pictures that the parts of this run saved, by name, with the part of
+// each: all go to one folder, so two parts that save one name would leave
+// the picture of whichever part ended last.
+Picture_Names :: struct {
+	lock:  sync.Mutex,
+	parts: map[string]string, // The name of a picture -> the name of its part.
+}
+
+picture_names: Picture_Names
+
+// picture_name_claim takes a name of a picture for a part. It refuses a
+// name that another part of the run took, and gives that part; the same
+// part can save one name again (a later picture replaces the earlier one).
+picture_name_claim :: proc(part: string, picture: string) -> (owner: string, ok: bool) {
+	sync.mutex_lock(&picture_names.lock)
+	defer sync.mutex_unlock(&picture_names.lock)
+	if owner_part, taken := picture_names.parts[picture]; taken {
+		return owner_part, owner_part == part
+	}
+	picture_names.parts[strings.clone(picture)] = strings.clone(part)
+	return part, true
+}
+
+// picture_names_forget forgets the names of an earlier run.
+picture_names_forget :: proc() {
+	sync.mutex_lock(&picture_names.lock)
+	defer sync.mutex_unlock(&picture_names.lock)
+	for picture, part in picture_names.parts {
+		delete(picture)
+		delete(part)
+	}
+	clear(&picture_names.parts)
+}
+
 // The parts that the worker threads of the whole test share.
 Test_Parts_Pool :: struct {
 	parts:  []Test_Part,
 	runs:   []Test_Part_Run, // By place in parts.
+	start:  proc(part: ^Test_Part_Run) -> bool, // What a part needs before its first machine.
 	next:   int, // The next place in parts to take (atomic).
 	failed: bool, // A part failed: no new part starts (atomic).
 }
@@ -255,11 +303,13 @@ Test_Parts_Pool :: struct {
 // test_parts_run runs each part of a list, at most `at_once` at the same
 // time, each on a worker thread of its own. After a failure no new part
 // starts; the parts that run end. It prints the time of each part as a
-// measure. The caller frees the runs, which have the order of the parts.
-test_parts_run :: proc(parts: []Test_Part, at_once: int) -> (runs: []Test_Part_Run, passed: bool) {
+// measure. start prepares a part before its first machine: its new data
+// disk. The caller frees the runs, which have the order of the parts.
+test_parts_run :: proc(parts: []Test_Part, at_once: int, start: proc(part: ^Test_Part_Run) -> bool = test_part_run_start) -> (runs: []Test_Part_Run, passed: bool) {
 	pool := Test_Parts_Pool {
 		parts = parts,
 		runs  = make([]Test_Part_Run, len(parts)),
+		start = start,
 	}
 	for part, place in parts {
 		pool.runs[place] = test_part_run_make(part.name)
@@ -298,8 +348,9 @@ test_parts_worker :: proc(pool: ^Test_Parts_Pool) {
 		}
 		part := pool.parts[place]
 		part_run := &pool.runs[place]
+		part_run.started = true
 		started := time.tick_now()
-		part_run.passed = test_part_run_start(part_run) && part.run(part_run)
+		part_run.passed = pool.start(part_run) && part.run(part_run)
 		part_run.duration = time.tick_since(started)
 		free_all(context.temp_allocator)
 		fmt.printfln("modustool: measure: the part %s %s, %d machines, %.1f s", part.name, part_run.passed ? "passed" : "failed", len(part_run.times.machines), time.duration_seconds(part_run.duration))
