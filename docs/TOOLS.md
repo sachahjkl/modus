@@ -896,7 +896,7 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 
 | Target | Kind | What it checks |
 |---|---|---|
-| `module_file`, `module_generated` | raw, generated | A module file that `validate` accepts gives no read out of bounds through any reader of `contract/module`; a module built by the rules passes `validate` |
+| `module_file`, `module_generated` | raw, generated | A module file that `validate` accepts gives no read out of bounds through any reader of `src/library/contract/module`; a module built by the rules passes `validate` |
 | `debug_object`, `debug_object_generated` | raw, generated | A debug object that `check` accepts gives each reader with no fault, and `encode` of its tables gives its bytes back |
 | `storage_tree` | generated | The B-tree against a sorted model, its walk after each commit, then damaged nodes |
 | `storage_mount` | generated | The open of a disk gives back each object of the writer of the tool; the open of a damaged disk never gives a wrong object as whole |

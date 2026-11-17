@@ -1,3 +1,4 @@
+#+build !freestanding
 package module
 
 import "core:testing"
