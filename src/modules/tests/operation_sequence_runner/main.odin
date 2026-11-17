@@ -60,7 +60,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if byte_count > operation_sequence.SEQUENCE_BYTES_MOST {
 		system.stop(operation_sequence.RUNNER_SEQUENCE_REFUSED_CODE)
 	}
-	bytes := ([^]u8)(uintptr(operation_sequence.RUNNER_SEQUENCE_ADDRESS))[:byte_count]
+	sequence_bytes := ([^]u8)(uintptr(operation_sequence.RUNNER_SEQUENCE_ADDRESS))
+	bytes := sequence_bytes[:byte_count]
 	if refusal := operation_sequence.check(bytes, &sequence); refusal.problem != .None {
 		system.stop(operation_sequence.RUNNER_SEQUENCE_REFUSED_CODE)
 	}
@@ -81,7 +82,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for first < sequence.step_count {
 		// A batch: the step `first`, then each step after it with Same_Entry.
 		end := first + 1
-		for end < sequence.step_count && .Same_Entry in sequence.steps[end].flags {
+		for end < sequence.step_count && (.Same_Entry in sequence.steps[end].flags) {
 			end += 1
 		}
 		commands: [ring.CAPACITY]ring.Record
