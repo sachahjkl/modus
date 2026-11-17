@@ -203,6 +203,14 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 			return nil, 0, .Bad_State // One service for one device, and for all the devices behind one conventional bridge.
 		}
 	}
+	// The layout of the context first, before the device is armed: a
+	// refusal then leaves the device as it was, with no bus master and no
+	// message interrupt.
+	trial := pci.service_context_trial(kind.ring_role)
+	no_values: system.Context_Values
+	if context_refused(kind.name, &trial, &no_values) {
+		return nil, 0, .Bad_State
+	}
 	for &item in started {
 		if place_is_free(&item) {
 			driver = &item
@@ -221,9 +229,14 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 			system.close(handle)
 		}
 	}
-	grants: [op.CONTEXT_HANDLES]system.Grant
-	grants[op.CONTEXT_LOG] = log_grant(role_of(kind.name))
-	grants[pci.GRANT_MACHINE] = {machine, {.Physical}}
+	// The slots of a device service are the layout of package pci and of
+	// the ring of its contract: each handle takes its own slot, so a new
+	// handle of the layout cannot take the slot of another in silence.
+	role := role_of(kind.name)
+	context_grants: system.Context_Grants
+	values: system.Context_Values
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role))
+	system.grant_put(&context_grants, pci.GRANT_MACHINE, {machine, {.Physical}})
 
 	// Behind a conventional bridge, the registers of each other device
 	// there: no other service can then drive a device that reaches what
@@ -242,7 +255,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		}
 		for handle, index in bridge_devices {
 			if handle != 0 {
-				grants[pci.GRANT_BRIDGE_DEVICE + index] = {handle, {.Read, .Write}}
+				system.grant_put(&context_grants, pci.GRANT_BRIDGE_DEVICE + index, {handle, {.Read, .Write}})
 			}
 		}
 	}
@@ -276,7 +289,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		return nil, 0, status
 	}
 	made[0] = interrupt
-	grants[pci.GRANT_INTERRUPT] = {interrupt, {.Read}}
+	system.grant_put(&context_grants, pci.GRANT_INTERRUPT, {interrupt, {.Read}})
 	{
 		// Entry 0 of the table of the device: the address, the value, not masked.
 		page := (bars[table_bar].address + u64(table_place &~ 7)) &~ (system.PAGE_SIZE - 1)
@@ -313,7 +326,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		windows &&= .Windows in transmute(op.Device_Memory_Facts)facts[1]
 		read_a_range = true
 		made[2 + index] = memory
-		grants[pci.GRANT_BAR + index] = {memory, {.Read, .Write}}
+		system.grant_put(&context_grants, pci.GRANT_BAR + index, {memory, {.Read, .Write}})
 	}
 	if kind.device == pci.DEVICE_VIRTIO_NETWORK {
 		network_device_windows = windows && read_a_range
@@ -325,15 +338,19 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		([^][pci.CONFIGURATION_SIZE]u8)(address)[0] = bytes
 		system.memory_unmap(address)
 	}
-	grants[pci.GRANT_CONFIGURATION] = {copied, {.Read}}
+	system.grant_put(&context_grants, pci.GRANT_CONFIGURATION, {copied, {.Read}})
 	// The queues: this service keeps the memory until the device stops
 	// using it (driver_end).
 	driver.queues = system.memory_create(pci.QUEUE_PAGES, 0, {.Contiguous}) or_return // The device reads and writes it.
-	grants[pci.GRANT_QUEUES] = {driver.queues, {.Read, .Write}}
+	system.grant_put(&context_grants, pci.GRANT_QUEUES, {driver.queues, {.Read, .Write}})
 	ring_memory, status = system.memory_create(ring.pages(kind.ring_capacity))
 	if status == .Ok {
-		grants[kind.ring_role] = {ring_memory, {.Read, .Write}}
-		driver.program, status = system.program_start(system.image_find(image, kind.name), kind.name, grants, random.values_with_seed(&program_generator, {}), budget_of(system.image_find(image, kind.name), kind.name))
+		system.grant_put(&context_grants, kind.ring_role, {ring_memory, {.Read, .Write}})
+		if context_refused(kind.name, &context_grants, &values) {
+			status = .Bad_State
+		} else {
+			driver.program, status = system.program_start(system.image_find(image, kind.name), kind.name, context_grants.grants, random.values_with_seed(&program_generator, values.values), budget_of(system.image_find(image, kind.name), kind.name))
+		}
 	}
 	if status != .Ok {
 		pci.write_16(place, pci.OFFSET_COMMAND, command &~ pci.COMMAND_BUS_MASTER)
@@ -349,7 +366,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	if behind_conventional_bridge {
 		driver.bridge_group = group
 	}
-	driver.role = {grants = {.System_Part}}
+	driver.role = role
 	driver.granted = {.Log}
 	copy(driver.name[:len(driver.name) - 1], kind.name)
 	if place.bus == 0 {

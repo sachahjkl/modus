@@ -1,6 +1,6 @@
 package kernel
 
-// A register trial (docs/GLOSSARY.md, "Register trial"): one access of the
+// A register trial (docs/glossary/running_code.md, "Register trial"): one access of the
 // kernel to a model-specific register that the processor can refuse with a
 // protection fault. A hypervisor can list a register in CPUID and refuse
 // each access to it, and a protection fault of the kernel stops the

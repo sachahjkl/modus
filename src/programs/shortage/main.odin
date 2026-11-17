@@ -25,7 +25,7 @@
 // **Start**: no reader starts it. The root service starts it in place of
 // the desktop when the boot image has the program `shortage` and no
 // program `input`: the tool builds that image for the test of the shortage.
-// It is not named in `grants_of`: `shortage_start` in the root service
+// Its row of `program_roles` has no grant: `shortage_start` in the root service
 // gives it the machine and nearly all the pages of the root service.
 //
 // **What a reader sees**: no window. The log has three lines of counts,

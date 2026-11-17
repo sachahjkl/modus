@@ -502,6 +502,7 @@ Pair :: struct {
 	stop:   u32,
 	rounds: [2]u64,
 	lost:   [2]u64,
+	refused: [2]u64, // The batches of a wake and a wait that the library refused: a fault of this program.
 }
 
 pair: Pair
@@ -510,13 +511,14 @@ pair_round :: proc "contextless" (side: int, turn: u32) {
 	next := turn + 1
 	intrinsics.atomic_store(&pair.turn, next)
 	word := op.Word{address = u64(uintptr(&pair.turn)), value = u64(next)}
-	kernel := system.kernel_ring()
-	ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Word_Wake), values = {0 = u64(uintptr(&pair.turn)), 1 = 1}})
-	ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(&word)), 1 = 1}})
+	// The wake and the wait in one kernel entry.
+	commands := [2]ring.Record{{kind = u32(op.Operation.Word_Wake), values = {0 = u64(uintptr(&pair.turn)), 1 = 1}}, {kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(&word)), 1 = 1}}}
+	completions: [2]ring.Record
 	deadline := system.time() + LOST_WAIT
-	now := system.enter(deadline)
-	ring.pop(&kernel.completions)
-	ring.pop(&kernel.completions)
+	now, status := system.commands_call(commands[:], completions[:], deadline)
+	if status != .Ok {
+		pair.refused[side] += 1
+	}
 	if now >= deadline && intrinsics.atomic_load(&pair.turn) != next {
 		pair.lost[side] += 1
 	}
@@ -563,6 +565,9 @@ pair_stop :: proc "contextless" () {
 		thread = {}
 	}
 	lost_wakes += pair.lost[0] + pair.lost[1]
+	if pair.refused[0] + pair.refused[1] != 0 {
+		fail("the library refused a batch of a wake and a wait")
+	}
 }
 
 // The thread whose wake delay is measured: it sleeps SLEEP_TIME, and

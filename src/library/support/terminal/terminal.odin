@@ -61,6 +61,7 @@ package terminal_records
 import "modus:contract/enum_word"
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/text_encoding"
 import "modus:support/system"
@@ -77,6 +78,35 @@ VALUE_NAME :: system.GRANT_VALUE_TERMINAL_NAME // 4 values: the name of the prog
 VALUE_COLUMNS :: system.GRANT_VALUE_TERMINAL_COLUMNS // The columns of the window, at most COLUMNS_LIMIT.
 VALUE_ROWS :: system.GRANT_VALUE_TERMINAL_ROWS // The rows of the window, at most ROWS_LIMIT.
 VALUE_MEASURE :: system.GRANT_VALUE_TERMINAL_MEASURE // 1: the window shows the rates of the program.
+// The handles that a terminal receives from its starter, the root service.
+Terminal_Handles :: struct {
+	display: system.Handle, // The ring to the compositor.
+	ring:    system.Handle, // The terminal ring.
+	text:    system.Handle, // The text region.
+	writer:  system.Handle, // The program that writes in it.
+	log:     system.Grant, // The log, with the rights that the starter chose.
+}
+
+// context_of writes the handles and the values of the context of a
+// terminal through the checked writes of the context, so that a test reads
+// the layout that the root service starts it with: the display ring, the
+// terminal ring and the program with the rights that the terminal needs, the
+// text region with Read only, the name of the program and the size of the
+// window. A slot or a value that the caller wrote already is refused, and
+// its refusal stays in the record.
+context_of :: proc "contextless" (grants: ^system.Context_Grants, values: ^system.Context_Values, handles: Terminal_Handles, name: [4]u64, columns, rows: u64, measure: bool) {
+	system.grant_put(grants, system.GRANT_DISPLAY, {handles.display, {.Read, .Write}})
+	system.grant_put(grants, GRANT_RING, {handles.ring, {.Read, .Write}})
+	system.grant_put(grants, GRANT_TEXT, {handles.text, {.Read}})
+	system.grant_put(grants, GRANT_PROGRAM, {handles.writer, {.Read}})
+	system.grant_put(grants, op.CONTEXT_LOG, handles.log)
+	words := name
+	system.values_put(values, VALUE_NAME, words[:])
+	system.value_put(values, VALUE_COLUMNS, columns)
+	system.value_put(values, VALUE_ROWS, rows)
+	system.value_put(values, VALUE_MEASURE, u64(measure))
+}
+
 COLUMNS_LIMIT :: 104 // The most columns of a terminal window.
 ROWS_LIMIT :: 32 // The most rows of a terminal window.
 
@@ -159,8 +189,8 @@ NO_CHOICE :: max(u64) // A List record with no chosen row.
 LIST_ROWS :: 8 // The rows of a completion list.
 
 // What a row of a completion list is: the terminal draws the kind icon of
-// it before the name, as a row of the palette has one (docs/GLOSSARY.md,
-// "Kind icon"). The program says what the name is; the terminal
+// it before the name, as a row of the palette has one
+// (docs/glossary/desktop.md, "Kind icon"). The program says what the name is; the terminal
 // chooses the form and the color. None: the row has no icon, and a list
 // with no icon in any row keeps no room for one.
 List_Icon :: enum u8 {

@@ -207,9 +207,7 @@ manual_link_pages_of_targets :: proc(targets: []string, readers: Manual_Page_Rea
 		case .Term:
 			if !glossary_read_done {
 				glossary_read_done = true
-				if content, read_ok := read(SITE_GLOSSARY_FILE); read_ok {
-					glossary, _ = glossary_read(content)
-				}
+				glossary, _ = glossary_load(read)
 			}
 			page, found = manual_term_page(glossary, target)
 		case .Guide:
@@ -246,7 +244,7 @@ manual_term_page :: proc(glossary: Glossary, target: string) -> (page: manual_pa
 			}
 			text := term.definition
 			if term.explanation != "" {
-				explanation := manual_markdown_of_guide(site_lines(term.explanation), SITE_GLOSSARY_FILE)
+				explanation := manual_markdown_of_guide(site_lines(term.explanation), term.file)
 				text = strings.concatenate({text, "\n\n", explanation}, context.temp_allocator)
 			}
 			return {target = target, title = manual_title_of(term.name), text = text}, true

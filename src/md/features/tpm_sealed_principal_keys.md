@@ -6,7 +6,7 @@ The keys of a named principal were sealed under a key that Argon2id derives from
 
 This design seals the keys by the TPM, to the measure of the system and to the passphrase together. A copy of the disk then allows no try away from the TPM of the machine. The TPM counts each wrong passphrase, and after too many it limits the rate of the tries; this holds only while the lockout hierarchy of the TPM has an authorization value that the attacker does not know, so the TPM service sets a random one, which nobody keeps, when it finds an empty one (see "The count holds only with a lockout authorization value"). A recovery key, shown one time at the creation, opens a copy of the keys when the TPM refuses or when the passphrase is lost.
 
-The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The keys sealed by the TPM". The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md): "Authorization value", "TPM secret", "Recovery key". The design of the seal itself (the TPM service, the proof of the creation, who may seal) is [tpm_sealed_machine_key.md](tpm_sealed_machine_key.md); this file states only what differs.
+The guide is [`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The keys sealed by the TPM". The terms are in [`docs/glossary/trusted_boot.md`](../../../docs/glossary/trusted_boot.md): "Authorization value", "TPM secret", "Recovery key". The design of the seal itself (the TPM service, the proof of the creation, who may seal) is [tpm_sealed_machine_key.md](tpm_sealed_machine_key.md); this file states only what differs.
 
 ## Constraints
 

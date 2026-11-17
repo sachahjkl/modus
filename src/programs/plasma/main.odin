@@ -7,8 +7,8 @@
 // for the compositor.
 //
 // **Start**: `start("plasma")` in the console, or the bar of the desktop.
-// The log has "plasma: ok" after the first picture. It has no grant of
-// `grants_of`: a window is all that it needs.
+// The log has "plasma: ok" after the first picture. Its row of
+// `program_roles` has no grant: a window is all that it needs.
 //
 // **How it computes**: a table of the sine in 256 steps, from the
 // approximation of Bhaskara in integers, and a palette of 256 colors from

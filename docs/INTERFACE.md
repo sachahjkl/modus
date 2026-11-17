@@ -2,7 +2,7 @@
 
 The interface package (`src/library/support/interface`) is the shared logic of the interface of the programs: the draw records, the damage, the layout, the input and focus, and the text. The system draws in software, and this logic is still a foundation of its own. The package takes ideas from `gui_toolkit` and none of its code (section 11).
 
-The terms of this document are in `GLOSSARY.md`, section "Desktop": interface package, draw record, draw table, element, element identity, damage by difference, interface state, action bar, keycap.
+The terms of this document are in `glossary/desktop.md`: interface package, draw record, draw table, element, element identity, damage by difference, interface state, action bar, keycap.
 
 **The idea in plain words.** A program describes its window again at each frame, as a table of draw records of one size. The package compares that table with the table of the frame before, record by record, and draws only the rectangles that changed. So a program keeps no tree of widgets, and a tool can read, compare or record the table of any frame.
 
@@ -223,7 +223,7 @@ if moved.changed {
 
 ### 4.2 Act names
 
-An element can name what it acts on: its act name (`GLOSSARY.md`), a text of at most 32 bytes such as `settings.set:font`. A palette entry that does the same thing has the same act name, so the palette offers to go to the element (`DESIGN.md`, "Palette"). A program writes no code for go to: it names an element when it builds it.
+An element can name what it acts on: its act name (`glossary/desktop.md`), a text of at most 32 bytes such as `settings.set:font`. A palette entry that does the same thing has the same act name, so the palette offers to go to the element (`DESIGN.md`, "Palette"). A program writes no code for go to: it names an element when it builds it.
 
 - **The call**: `element_act_name(frame, element, "settings.set:font")`, in each frame that draws the element, with its element identity. The first element of a frame with one act name keeps it: the program names the element that go to must reach. `settings` names the button of the value in use of each setting, `scheduler` the tile of the strategy in use (`strategy`).
 - **The bounds**: a frame keeps 6 act names (`display.ACT_NAME_SET_CAPACITY`). An empty name, a name of more than 32 bytes and a name past the six are counted in `Frame.act_names_dropped`; the window layer writes one line for the life of the window.
@@ -233,7 +233,7 @@ An element can name what it acts on: its act name (`GLOSSARY.md`), a text of at 
 
 ### 4.3 Element names
 
-An element can have an element name (`GLOSSARY.md`), a text of at most 32 bytes such as `frame 0`: a machine test presses the element by it, not at a place that the scenario computes (`TOOLS.md`, "How a step presses an element").
+An element can have an element name (`glossary/desktop.md`), a text of at most 32 bytes such as `frame 0`: a machine test presses the element by it, not at a place that the scenario computes (`TOOLS.md`, "How a step presses an element").
 
 - **The names that come alone**: a button is named by its label, a text input by its placeholder. A scroll bar that the caller names (the last argument of `scroll_bar`, or `List_Rows_Options.scroll_bar_name`) names its arrow buttons "<name> arrow up" and "<name> arrow down", or "arrow left" and "arrow right"; its thumb has no name, because it moves each time the content grows.
 - **The call**: `element_name(frame, area, "frame 0")`, in each frame that draws the element, with the area where it takes a press. The first element of a frame with a name keeps it.
@@ -243,7 +243,7 @@ An element can have an element name (`GLOSSARY.md`), a text of at most 32 bytes 
 
 ### 4.4 The action bar
 
-The action bar (`GLOSSARY.md`) is the band at the bottom of a window that names its keys: `action_bar` (`src/library/support/interface/action_bar.odin`). Each window that lists its keys uses it. Its look is in `DESIGN.md`, "The action bar"; the design and the refused forms are in `src/md/features/action_bar.md`.
+The action bar (`glossary/desktop.md`) is the band at the bottom of a window that names its keys: `action_bar` (`src/library/support/interface/action_bar.odin`). Each window that lists its keys uses it. Its look is in `DESIGN.md`, "The action bar"; the design and the refused forms are in `src/md/features/action_bar.md`.
 
 ```odin
 // A procedure: an item is made by a call, and a freestanding program runs
@@ -360,7 +360,7 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 | The difference of two draw tables, the execution of a draw table, the pictures, the text of the cells and of the interface font, the blends | 1 for the difference, then 1 for the draw of all the damage rectangles: 2 | The drawing module, `src/modules/drawing` | Three procedures hold most of the bytes (the execution with the blends and the glyphs inlined in it, the draw of a glyph, the difference): about 20 KiB in each program. A border crossed 2 times for a frame costs nothing that a frame can show |
 | The elements, the layout, the input, the measure of a text, the draw table | 30 to 200 | Each program, compiled in | They take a `^Frame` (three addresses) and slices, which a description cannot carry, and they are small and often inlined. One element call through an adapter costs about 100 ns more (below) |
 
-**The drawing module** (`GLOSSARY.md`, "Drawing module"; `MODULE_CONTRACT.md`, "A library as a module"). Two exports, each with an error record:
+**The drawing module** (`glossary/desktop.md`, "Drawing module"; `MODULE_CONTRACT.md`, "A library as a module"). Two exports, each with an error record:
 
 | Export | Parameters | Result |
 |---|---|---|

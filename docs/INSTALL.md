@@ -1,6 +1,6 @@
 # Install
 
-This guide says how to get the disk image of a release, how to verify it, how to write it to a USB key, and how to set the firmware of a machine to start it. The terms are in `docs/GLOSSARY.md`, sections "Trusted boot" and "Project".
+This guide says how to get the disk image of a release, how to verify it, how to write it to a USB key, and how to set the firmware of a machine to start it. The terms are in `docs/glossary/trusted_boot.md` and `docs/glossary/project.md`.
 
 **For whom.** A principal who starts the system on a real machine, with no build of their own.
 

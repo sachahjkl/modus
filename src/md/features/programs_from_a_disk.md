@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A developer adds a program to a machine with no new boot image. The module file of the program is an object in a store of the storage service. The root service reads it, checks it, and starts it. Such a program is a disk program ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Disk program").
+A developer adds a program to a machine with no new boot image. The module file of the program is an object in a store of the storage service. The root service reads it, checks it, and starts it. Such a program is a disk program ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Disk program").
 
 The guide is [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "A program from a disk".
 
@@ -78,7 +78,7 @@ Nothing in the file gives a grant. The root service reads no table of the file t
 
 A disk program imports by hash, as each module does. Its load source is the boot image, the replacement table of the machine, and the module files of the store `programs` of its principal that the root service found and checked for this load. A developer then adds a program and its library modules to a machine that runs, with no new boot image.
 
-**The import scan.** The root service finds an import that the boot image does not hold by an import scan ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Import scan"): it lists the root tree of the store `programs`, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. The scan is a stage of the load of the program, after the check of the hash of the program file and before the start:
+**The import scan.** The root service finds an import that the boot image does not hold by an import scan ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Import scan"): it lists the root tree of the store `programs`, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. The scan is a stage of the load of the program, after the check of the hash of the program file and before the start:
 
 | State | The root service waits for | Then |
 |---|---|---|
@@ -120,7 +120,7 @@ The storage service starts on demand, after the root service, as before. The roo
 
 Two ways: the network, on a machine that runs, or a disk that the tool writes.
 
-**The network.** The module file service ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Module file service") is the program `programs` of the boot image. Its private store is the store `programs` of its principal: the root service names the private store of a program by the name of the program, and the store of the module files has the name `programs`. So the service writes there with the grant `Store` that each program with a store has, and with no grant of a new kind. Its other grants: `Network`, a client grant of TCP to one web server (10.0.2.100 port 80, the address that QEMU gives to a server of the host), and `Serve`.
+**The network.** The module file service ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Module file service") is the program `programs` of the boot image. Its private store is the store `programs` of its principal: the root service names the private store of a program by the name of the program, and the store of the module files has the name `programs`. So the service writes there with the grant `Store` that each program with a store has, and with no grant of a new kind. Its other grants: `Network`, a client grant of TCP to one web server (10.0.2.100 port 80, the address that QEMU gives to a server of the host), and `Serve`.
 
 The console calls its two exports through a connection, as for each service (`connect("programs")`):
 
@@ -148,7 +148,7 @@ The principal gives a disk program a grant with a command. The rules of the tabl
 
 **The nickname.** The name of the entry of a file in the store `programs` is its nickname: the principal chooses it, and the file never does. The root service names the program by its nickname (the slot, the log, `grants`, `stop`, the monitor), and the log writes the hash of the file beside it.
 
-**The disk grant table.** The root service keeps one disk grant table for each principal ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Disk grant table"). A row binds a nickname to the hash of one file, and holds the grants of that file. 16 rows at most. It is apart from the tables by name of the root service (`grants_of`), which a disk program never reaches.
+**The disk grant table.** The root service keeps one disk grant table for each principal ([`docs/glossary/access.md`](../../../docs/glossary/access.md), "Disk grant table"). A row binds a nickname to the hash of one file, and holds the grants of that file. 16 rows at most. It is apart from the table of the roles by name of the root service (`program_roles`), which a disk program never reaches.
 
 **Two hashes never share a nickname.** The rule holds in the root service, at `start_from_disk`, and not in the storage service:
 
@@ -173,10 +173,10 @@ The size of the store is a line of the budget that the module asks for (`src/md/
 
 **The update.** `nickname_move(nickname, hash)` points the nickname to another file. Its grants and its store follow. Before the change, the log says "root: the file <hash> will get the data of <nickname>". A program of the nickname that runs keeps the grants of its start.
 
-**The nickname in the windows.** The monitor and the menu of the windows show a disk program by its nickname, with the hash prefix of its file faded beside it ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Hash prefix"): on the same line in the menu, on the line under the nickname in the monitor, whose column of names holds a nickname and no more. A reader then sees which file runs under a name. The nickname and the hash come from the root service, the one party that checked the bytes, on two paths that exist already:
+**The nickname in the windows.** The monitor and the menu of the windows show a disk program by its nickname, with the hash prefix of its file faded beside it ([`docs/glossary/access.md`](../../../docs/glossary/access.md), "Hash prefix"): on the same line in the menu, on the line under the nickname in the monitor, whose column of names holds a nickname and no more. A reader then sees which file runs under a name. The nickname and the hash come from the root service, the one party that checked the bytes, on two paths that exist already:
 
 - **The menu of the windows.** The root service tells the compositor of each new window in the record `Client_Add` of the control ring between them. For a disk program the record also holds the nickname (values 1 to 3) and the first 8 bytes of the hash (value 4). The compositor names the window by that nickname: in the menu, in the title bar and in the palette. The title that the program sends with its surface is not read: the window of a disk program cannot have the title `console`. The menu and the palette show the hash prefix after the nickname, the palette for the window and for its close: a nickname that looks like the name of a program of the system (`consoIe`, `console_`) passes the rule of the names, and the prefix tells it apart.
-- **The monitor.** The root service writes the disk program page ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Disk program page"): one page with one row for each disk program that runs, its program slot, its program serial, its nickname and its whole hash. It maps the page read-only, at its fixed range, into each program that it starts with the right Inspect of the machine, as it maps the date page. The monitor reads the program slot and the program serial of each program from the kernel, as before, and the row of the page with the same two numbers gives it the nickname and the hash.
+- **The monitor.** The root service writes the disk program page ([`docs/glossary/access.md`](../../../docs/glossary/access.md), "Disk program page"): one page with one row for each disk program that runs, its program slot, its program serial, its nickname and its whole hash. It maps the page read-only, at its fixed range, into each program that it starts with the right Inspect of the machine, as it maps the date page. The monitor reads the program slot and the program serial of each program from the kernel, as before, and the row of the page with the same two numbers gives it the nickname and the hash.
 
 **The hash in the exports of the monitor.** `monitor.programs()` gives what the window shows, so the console and the host read it as a table. A row of a disk program has its nickname from the page in the field `name`, and the whole hash of its file, 64 hexadecimal digits, in the field `hash`. A row of any other program has an empty `hash`. The match is the match of the window: the program slot and the program serial. So a row has a hash only when the root service started that program from a disk.
 
@@ -200,13 +200,13 @@ A table of 1008 bytes is a table of the format 1, which had no client keys: the 
 
 The name `grant_table` is kept, as the name `programs` is: no disk program has it, so the table is never read as a module file and never written over one.
 
-**Principal 0 and the machine passphrase.** Principal 0 is the machine, and a passphrase for it is optional ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Machine passphrase"):
+**Principal 0 and the machine passphrase.** Principal 0 is the machine, and a passphrase for it is optional ([`docs/glossary/access.md`](../../../docs/glossary/access.md), "Machine passphrase"):
 
 - **No machine passphrase.** No key signs the table of principal 0: it lasts until the machine stops. Its data stays: the store of a nickname is on the disk, and the next grant of `store` finds it.
 - **A machine key sealed by the TPM** (`machine_seal()`). The TPM releases the machine key at each start of the same system, with no typing, and the table of principal 0 is read and written as with a machine passphrase. A changed system asks for the recovery key ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md)).
 - **A machine passphrase.** The table of principal 0 is read after the passphrase is typed at the start, and written after each change.
 
-The record of the machine passphrase is the object `machine` of the store of `unlock` (a store of principal 0), beside the file of a named principal. It holds the salt of Argon2id, with the parameters of a named principal, and the machine key sealed with ChaCha20-Poly1305 under the key that Argon2id derives ([`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Machine key"). The machine key is 32 random bytes. A wrong passphrase does not open the seal, so it never gives a wrong key that would write a table no one can read.
+The record of the machine passphrase is the object `machine` of the store of `unlock` (a store of principal 0), beside the file of a named principal. It holds the salt of Argon2id, with the parameters of a named principal, and the machine key sealed with ChaCha20-Poly1305 under the key that Argon2id derives ([`docs/glossary/access.md`](../../../docs/glossary/access.md), "Machine key"). The machine key is 32 random bytes. A wrong passphrase does not open the seal, so it never gives a wrong key that would write a table no one can read.
 
 **Who holds which key.** `unlock` derives the key of the seal, opens the machine key, and derives from it the key of the tag: keyed BLAKE2b of the machine key over the text `modus disk grant table` (`disk_program.table_key_of_machine_key`). It gives the root service the key of the tag only, in one record of its ring (`Machine_Key`), erases the other keys, and stops. The root service holds the key of the tag in its own memory until the machine stops. So the program that writes the table holds no key that opens the seal or that could sign another thing; the machine key stays a key that the TPM can seal later, with its other uses outside the root service.
 
@@ -319,7 +319,7 @@ The read and the write are states of the loop of the root service, as the load o
 - **The name of the caller of the connection is `programs`.** The root service is no row of its own table of started programs, so the connection has a caller record of its own. Its grant is the limit of the store, with no grant to act for a principal.
 - **The connection ends with the load.** The root service holds no handle of the storage service between two loads.
 - **The rule of the debug access needs no change.** It reads the grants that a program received at its start. A disk program with no grant can be debugged by a caller that acts for its principal. A disk program with the grant `store` cannot: a store is a grant of one program.
-- **The root service finds a disk program by a flag of its slot, not by its name.** The connection of a disk program to the storage service gets the store of its nickname and the limit of that store, from the grants of its start, and never the grants that `grants_of` gives a name.
+- **The root service finds a disk program by a flag of its slot, not by its name.** The connection of a disk program to the storage service gets the store of its nickname and the limit of that store, from the grants of its start, and never the grants that `program_roles` gives a name.
 - **A move does not change a program that runs.** It keeps its grants and its connections. The next start reads the row again.
 - **A read makes no commit.** The storage service writes the limit of a store at a change only. A machine whose disk has no store `programs` gets no new store from a refused command.
 - **The tag does not stop an older table.** The storage service keeps the versions of `grant_table`, and a caller that acts for the principal of the table can restore one in its store `programs`. The tag of an older version verifies: a grant that `disallow` took can come back. A counter that only grows, in the TPM, ends it; it is not built.

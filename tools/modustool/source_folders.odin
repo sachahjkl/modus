@@ -23,7 +23,7 @@ SOURCE_FOLDER_SUPPORT :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_SUPPORT // T
 SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_PROGRAMS, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT}
 
 // The name of the one source library of the system: the word before the
-// ":" of an import line (docs/GLOSSARY.md, "Source library"). The name is
+// ":" of an import line (docs/glossary/communication.md, "Source library"). The name is
 // not the folder: the flag of the compiler joins the two.
 SOURCE_LIBRARY_NAME :: "modus"
 

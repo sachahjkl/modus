@@ -179,7 +179,7 @@ Site :: struct {
 	firmware_certificate_present: bool, // The repository holds the certificate of the firmware signing key of the publisher (site_download.odin).
 	build_time:   string,
 	documents:    map[string]string, // A Markdown file ("docs/NETWORK.md" and "NETWORK.md") to its page.
-	glossary:     Glossary, // docs/GLOSSARY.md, as glossary_read gives it.
+	glossary:     Glossary, // The folder docs/glossary, as glossary_read gives it.
 	terms:        []Site_Term,
 	not_rendered: [dynamic]string,
 	copies:       map[string]string, // A path in the site to the file of the repository that it copies.
@@ -225,6 +225,7 @@ Site :: struct {
 	declaration_spans: Site_Declaration_Span_Counts, // What became of the code spans that have the form of a name.
 	byte_layouts: map[string]Byte_Layout, // Each byte layout that a fence of a guide can name (docs/SITE.md, "The byte layouts").
 	byte_layout_problems: [dynamic]string, // The faults of the fences of byte layouts: each one stops the command.
+	diagram_problems: [dynamic]string, // The diagrams of the guides that the tool cannot draw: each one stops the command.
 }
 
 run_site :: proc(args: []string) -> int {
@@ -578,7 +579,6 @@ site_build :: proc(address: string) -> bool {
 
 	properties_text := site_read(SITE_PROPERTIES_FILE) or_return
 	readme_text := site_read(SITE_README_FILE) or_return
-	glossary_text := site_read("docs/GLOSSARY.md") or_return
 	properties_problem, readme_problem: string
 	site.principles, properties_problem = site_properties_parse(properties_text)
 	site.readme, readme_problem = site_readme_parse(readme_text)
@@ -608,7 +608,7 @@ site_build :: proc(address: string) -> bool {
 	site.build_time = fmt.tprintf("%04d-%02d-%02d %02d:%02d UTC", year, int(month), day, hour, minute)
 
 	// The guides: each document of docs/ but the working records. The
-	// glossary is a page of the reference.
+	// glossary, a folder of docs/, is pages of the reference.
 	document_paths := files_with_suffix("docs", ".md") or_return
 	for path in document_paths {
 		name := site_file_name(path)
@@ -620,18 +620,20 @@ site_build :: proc(address: string) -> bool {
 		if working {
 			continue
 		}
-		page := site_page_file(name == "GLOSSARY.md" ? SITE_GLOSSARY_FOLDER : strings.concatenate({SITE_GUIDE_FOLDER, "/", name[:len(name) - len(".md")]}, context.temp_allocator))
+		page := site_page_file(strings.concatenate({SITE_GUIDE_FOLDER, "/", name[:len(name) - len(".md")]}, context.temp_allocator))
 		site.documents[path] = page
 		site.documents[name] = page
 	}
 	glossary_problems: []string
-	site.glossary, glossary_problems = glossary_read(glossary_text)
-	if len(glossary_problems) > 0 {
+	glossary_ok: bool
+	site.glossary, glossary_problems, glossary_ok = glossary_read_folder()
+	if !glossary_ok || len(glossary_problems) > 0 {
 		for problem in glossary_problems {
-			fmt.eprintfln("modustool: site: %s, %s", SITE_GLOSSARY_FILE, problem)
+			fmt.eprintfln("modustool: site: %s", problem)
 		}
 		return false
 	}
+	site_glossary_documents_add(&site)
 	site.terms = site_glossary_terms(site.glossary)
 	// The sources of the reference tables are read before any guide is
 	// rendered: a code span of a guide links to their rows.
@@ -643,6 +645,7 @@ site_build :: proc(address: string) -> bool {
 	// names them.
 	site.byte_layouts = byte_layouts_read() or_return
 	site.byte_layout_problems = make([dynamic]string, context.temp_allocator)
+	site.diagram_problems = make([dynamic]string, context.temp_allocator)
 
 	if !reset_folder(SITE_FOLDER) {
 		return false
@@ -680,6 +683,14 @@ site_build :: proc(address: string) -> bool {
 	// of the file of the repository, which `modustool check` compares.
 	mark_font := mark_font_of_the_repository() or_return
 	site_write_file(&site, SITE_MARK_FONT, mark_font) or_return
+	// The font of the text of the diagrams of the guides: the file whose
+	// advances the layout of each diagram measured (site_diagram.odin).
+	diagram_font, diagram_font_error := os.read_entire_file(SITE_DIAGRAM_FONT_SOURCE, context.temp_allocator)
+	if diagram_font_error != nil {
+		fmt.eprintfln("modustool: site: cannot read %s", SITE_DIAGRAM_FONT_SOURCE)
+		return false
+	}
+	site_write_file(&site, SITE_DIAGRAM_FONT, diagram_font) or_return
 	// The public key of the release signing key, for a reader who verifies
 	// the files of a release with no tool, and the certificate that a
 	// principal enrols for Secure Boot.
@@ -755,6 +766,15 @@ site_build :: proc(address: string) -> bool {
 			fmt.eprintfln("modustool: site: %s", problem)
 		}
 		fmt.eprintfln("modustool: site: %d fences of byte layouts are wrong; no page is written", len(site.byte_layout_problems))
+		return false
+	}
+	// A diagram that the tool cannot draw would be a picture with a part
+	// missing, or its text in place of the picture.
+	if len(site.diagram_problems) > 0 {
+		for problem in site.diagram_problems {
+			fmt.eprintfln("modustool: site: %s", problem)
+		}
+		fmt.eprintfln("modustool: site: %d diagrams cannot be drawn; no page is written", len(site.diagram_problems))
 		return false
 	}
 	pointer_problems := site_document_pointer_problems(&site)

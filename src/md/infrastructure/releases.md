@@ -11,7 +11,7 @@ What changed: a release was a section of the changelog only, with its day, and t
 - A tag never goes out without its commit, and a commit of a release never goes out without its tag.
 - Two sessions that release at the same time never publish one release number twice.
 - The time of a release is the true time of its commit. The tool never writes a time that no record holds.
-- The release number keeps the rule of the project: `0.N.0` for new work, `0.N.1`, `0.N.2` for a correction after it (`docs/GLOSSARY.md`, "Release number").
+- The release number keeps the rule of the project: `0.N.0` for new work, `0.N.1`, `0.N.2` for a correction after it (`docs/glossary/project.md`, "Release number").
 - The automation is a command of `modustool` that uses the Odin standard library only. It runs `git`; a test never runs `git`.
 - The published boot image and its signatures are not part of this design: the release workflow builds them from the tag.
 

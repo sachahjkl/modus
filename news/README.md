@@ -1,6 +1,6 @@
 # news
 
-This folder holds the news of the system: one file for each news entry (`docs/GLOSSARY.md`, "News entry"). The site shows them on the page News, the three newest on the home, and in the feed `news.xml` (`docs/SITE.md`, "The news").
+This folder holds the news of the system: one file for each news entry (`docs/glossary/project.md`, "News entry"). The site shows them on the page News, the three newest on the home, and in the feed `news.xml` (`docs/SITE.md`, "The news").
 
 The changelog and the news are two records:
 

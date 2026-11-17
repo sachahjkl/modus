@@ -16,7 +16,7 @@
 // of the system.
 //
 // **Start**: `start("vector_glyphs")` in the console, or the bar of the
-// desktop. It has no grant of `grants_of`.
+// desktop. Its row of `program_roles` has no grant.
 //
 // **What a reader sees**: one block for each candidate and one for Spleen
 // 8x16. The log has:

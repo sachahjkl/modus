@@ -28,7 +28,7 @@ site_glossary_group_page :: proc(group_id: string) -> string {
 }
 
 // site_glossary_page_paths gives the pages of the glossary: the index, then
-// the page of each group in the order of the file.
+// the page of each group in the order of the index of the folder.
 site_glossary_page_paths :: proc(glossary: Glossary) -> []string {
 	paths := make([dynamic]string, context.temp_allocator)
 	append(&paths, site_page_file(SITE_GLOSSARY_FOLDER))
@@ -36,6 +36,17 @@ site_glossary_page_paths :: proc(glossary: Glossary) -> []string {
 		append(&paths, site_glossary_group_page(group.id))
 	}
 	return paths[:]
+}
+
+// site_glossary_documents_add gives each file of the glossary its page: the
+// index of the folder is the index of the glossary, and the file of a group
+// is the page of the group. A file of the glossary is named by its path
+// from the root only: its name alone is the name of other files.
+site_glossary_documents_add :: proc(site: ^Site) {
+	site.documents[GLOSSARY_INDEX_FILE] = site_page_file(SITE_GLOSSARY_FOLDER)
+	for group in site.glossary.groups {
+		site.documents[group.file] = site_glossary_group_page(group.id)
+	}
 }
 
 // site_glossary_group_of_page gives the place of the group whose page is
@@ -181,7 +192,7 @@ site_glossary_letter_id :: proc(letter: string) -> string {
 // script of the page goes on to the entry.
 site_glossary_index_write :: proc(site: ^Site, index_page: string) -> string {
 	glossary := site.glossary
-	renderer := site_renderer_make(site, index_page, SITE_GLOSSARY_FILE)
+	renderer := site_renderer_make(site, index_page, GLOSSARY_INDEX_FILE)
 	// The index links each term by its own row: no word of a definition
 	// links a term, so that a link to a term never names the index.
 	for term in site.terms {
@@ -268,7 +279,7 @@ site_glossary_pages_add :: proc(site: ^Site) -> Site_Reference_Entry {
 
 	for group, group_index in glossary.groups {
 		path := site_glossary_group_page(group.id)
-		renderer := site_renderer_make(site, path, SITE_GLOSSARY_FILE)
+		renderer := site_renderer_make(site, path, group.file)
 		renderer.glossary = true
 		renderer.ids[group.id] = true
 		site_glossary_write(&renderer, group)
@@ -293,12 +304,12 @@ site_glossary_pages_add :: proc(site: ^Site) -> Site_Reference_Entry {
 		}
 		strings.write_string(&b, "</nav>\n")
 		description := site_description_cut(fmt.tprintf("The group %s of the glossary of %s: %s, each with its definition, what it is for, how it differs from the word of other systems, and the words that it replaces.", group.name, SITE_SYSTEM_NAME, site_glossary_term_count_words(len(group.terms))))
-		site_page_add(site, Site_Page{path = path, title = fmt.tprintf("%s: %s", title, group.name), description = description, section = .Reference, crumbs = group_crumbs[:], body = strings.to_string(b), sources = site_sources(SITE_GLOSSARY_FILE), layout = .Documentation})
+		site_page_add(site, Site_Page{path = path, title = fmt.tprintf("%s: %s", title, group.name), description = description, section = .Reference, crumbs = group_crumbs[:], body = strings.to_string(b), sources = site_sources(group.file), layout = .Documentation})
 	}
 
 	description := site_description_cut(fmt.tprintf("The %d terms of %s from A to Z: one term for each concept, with its short definition and a link to its entry in one of the %d groups.", term_count, SITE_SYSTEM_NAME, len(glossary.groups)))
-	site_page_add(site, Site_Page{path = index_page, title = title, description = description, section = .Reference, crumbs = site_crumbs(.Reference), body = site_glossary_index_write(site, index_page), sources = site_sources(SITE_GLOSSARY_FILE), layout = .Documentation, script = SITE_GLOSSARY_SCRIPT})
-	return Site_Reference_Entry{path = index_page, title = title, what = "Each term of the project: its definition, what it is for, and how it works. A term on another page links here.", source = SITE_GLOSSARY_FILE, count = term_count, kind = .Term}
+	site_page_add(site, Site_Page{path = index_page, title = title, description = description, section = .Reference, crumbs = site_crumbs(.Reference), body = site_glossary_index_write(site, index_page), sources = site_sources(GLOSSARY_INDEX_FILE), layout = .Documentation, script = SITE_GLOSSARY_SCRIPT})
+	return Site_Reference_Entry{path = index_page, title = title, what = "Each term of the project: its definition, what it is for, and how it works. A term on another page links here.", source = GLOSSARY_INDEX_FILE, count = term_count, kind = .Term}
 }
 
 // site_glossary_problems checks the pages of the glossary as the command

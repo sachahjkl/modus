@@ -236,6 +236,59 @@ hostile_counters_are_refused :: proc(t: ^testing.T) {
 	}
 }
 
+// full says what the next push answers, and reads no byte past the
+// counters: a queue at its capacity and each false count are full, and so
+// refuse a push; one place of room, across the wrap too, is not full and
+// takes one push. The kernel runs a command only when the completion queue
+// is not full, so the two must agree at each edge.
+@(test)
+full_says_what_the_next_push_answers :: proc(t: ^testing.T) {
+	memory := memory_of_pages(PAGE_COUNT)
+	defer delete(memory)
+	ring, opened := open(raw_data(memory), PAGE_COUNT)
+	testing.expect(t, opened)
+	queue := &ring.completions
+	Counts :: struct {
+		write: u32,
+		read:  u32,
+	}
+	full_counts := [?]Counts {
+		{write = CAPACITY, read = 0}, // The capacity.
+		{write = CAPACITY + 1, read = 0}, // One past the capacity: a false count.
+		{write = max(u32), read = 0}, // The largest distance.
+		{write = 0, read = 1}, // The read one past the write.
+		{write = CAPACITY - 1, read = max(u32)}, // The capacity, across the wrap.
+		{write = CAPACITY, read = max(u32)}, // One past the capacity, across the wrap.
+	}
+	for counts in full_counts {
+		queue.counters.write = counts.write
+		queue.counters.read = counts.read
+		before := slice.clone(memory)
+		testing.expectf(t, full(queue), "write %v and read %v are full", counts.write, counts.read)
+		testing.expect(t, slice.equal(before, memory), "full writes no byte")
+		testing.expectf(t, !push(queue, numbered_record(1)), "write %v and read %v refuse a push", counts.write, counts.read)
+		testing.expect(t, slice.equal(before, memory), "the refused push writes no byte")
+		delete(before)
+	}
+	// The successful cases last: 0, one record, and one place of room, at
+	// the start and across the wrap. Each takes one push.
+	room_counts := [?]Counts {
+		{write = 0, read = 0},
+		{write = 1, read = 0},
+		{write = CAPACITY - 1, read = 0}, // One place of room.
+		{write = CAPACITY - 2, read = max(u32)}, // One place of room, across the wrap.
+		{write = max(u32), read = max(u32)}, // Empty at the top of the type.
+	}
+	for counts in room_counts {
+		queue.counters.write = counts.write
+		queue.counters.read = counts.read
+		testing.expectf(t, !full(queue), "write %v and read %v have room", counts.write, counts.read)
+		testing.expectf(t, push(queue, numbered_record(2)), "write %v and read %v take a push", counts.write, counts.read)
+		testing.expect_value(t, queue.counters.write, counts.write + 1)
+	}
+	testing.expect(t, empty(&ring.commands), "full and push of the completions touch no command")
+}
+
 // A record is one slot of 64 bytes: a push writes the bytes of its slot and
 // its counter, and no byte of another slot, of the other queue or past the
 // ring.

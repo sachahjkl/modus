@@ -1,6 +1,9 @@
 // modustool: all the automation of the project, in one program.
 //
-//   odin run tools/modustool -out:build/modustool -- <command>
+//   nix develop -c modustool <command>
+//
+// The command of the development shell runs build/tool/modustool, which
+// compiles itself again when its sources changed (tool_build.odin).
 //
 // The project has no scripts. Each build step, each test and each call to a
 // third-party program is a command of this tool, so that the way a third-party
@@ -50,7 +53,7 @@ ROOT_MARK :: "flake.nix"
 
 BUILD_FOLDER :: "build"
 
-// The one source library of the project (docs/GLOSSARY.md, "Source
+// The one source library of the project (docs/glossary/communication.md, "Source
 // library"). An import names the library, then one of its two parts:
 // "modus:contract/ring", "modus:support/system".
 //   contract   what two parties agree on: records, numbers, and the code
@@ -62,9 +65,13 @@ BUILD_FOLDER :: "build"
 // source_folders.odin; the rule of the kernel is held by
 // library_imports_check.odin.
 
-// The folders whose host tests `modustool check` runs, in the order of
-// the run: `odin test` on each.
+// The folders whose host tests `modustool check` runs: `odin test` on
+// each, several at once (host_tests.odin). The pool starts them in this
+// order, and reports them in it: the tool comes first, because its
+// compile and its tests are the longest, and a long folder that starts
+// last makes the whole run longer.
 HOST_TEST_FOLDERS :: [?]string {
+	TOOL_SOURCE_FOLDER,
 	SOURCE_FOLDER_RUNTIME,
 	SOURCE_FOLDER_CONTRACT + "/blake3",
 	SOURCE_FOLDER_CONTRACT + "/module",
@@ -119,7 +126,6 @@ HOST_TEST_FOLDERS :: [?]string {
 	SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
 	SOURCE_FOLDER_SUPPORT + "/random",
 	SOURCE_FOLDER_CONTRACT + "/entropy_service",
-	TOOL_SOURCE_FOLDER,
 	SOURCE_FOLDER_CONTRACT + "/fixed_addresses",
 	SOURCE_FOLDER_CONTRACT + "/settings",
 	SOURCE_FOLDER_MODULES + "/text_shaping",
@@ -679,7 +685,8 @@ COMMANDS :: [?]Command {
 	// command, with `screenshots`.
 	//
 	// In order: `odin check -vet` of the tool, each package of the contract
-	// alone, the host tests of each library, the origin of the cryptography,
+	// alone, the host tests of each folder (several at once, each with its
+	// log in `build/host_tests/`), the origin of the cryptography,
 	// the mark, the pictures of the README, the fixed addresses, the bounds
 	// of the tests, the rule on comments, the form of the glossary, the
 	// file index of the intent, the source paths in the documents, the
@@ -730,6 +737,9 @@ main :: proc() {
 	// folder of the build in it (NIX_LDFLAGS). The linker would write it in
 	// each module, and the hash of a module would depend on that folder.
 	_ = os.unset_env("NIX_LDFLAGS")
+	when TOOL_BUILDS_ITSELF {
+		tool_build_current()
+	}
 	if len(os.args) < 2 || os.args[1] == "help" || os.args[1] == "-h" || os.args[1] == "--help" {
 		usage()
 		return
@@ -1118,24 +1128,9 @@ run_check :: proc(args: []string) -> int {
 	if !operation_count_check() || !allocator_check() || !export_error_record_check() || !choice_constant_check() {
 		return EXIT_FAILURE
 	}
-	// The tests of the memory procedures in assembly link the form of the
-	// host: the compiler assembles memory_for_host_tests.asm itself and
-	// links its object by its path (a library found through `-L/` is
-	// refused by the linker of the Nix sandbox).
 	host_test_folders := HOST_TEST_FOLDERS
-	for folder in host_test_folders {
-		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
-		test_command := make([dynamic]string, context.temp_allocator)
-		append(&test_command, "odin", "test", folder, "-vet", SOURCE_LIBRARY_FLAG)
-		// The kernel parts only for the folders that import them: a host
-		// test of the library that names one then fails to compile.
-		if source_folder_takes_kernel_library(folder) {
-			append(&test_command, KERNEL_LIBRARY_FLAG)
-		}
-		append(&test_command, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator))
-		if !run(test_command[:]) {
-			return EXIT_FAILURE
-		}
+	if !host_tests_run(host_test_folders[:]) {
+		return EXIT_FAILURE
 	}
 	// The fuzz targets: their corpus, then a fixed count of new executions
 	// with the seed of the sources (src/md/infrastructure/fuzzing.md).

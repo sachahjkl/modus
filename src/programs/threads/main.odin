@@ -20,7 +20,7 @@
 // the first thread reads the sum in the shared memory.
 //
 // **Start**: `start("threads")` in the console, or the bar of the desktop.
-// It has no grant of `grants_of`; its budget has room for 6 threads.
+// Its row of `program_roles` has no grant; its budget has room for 6 threads.
 //
 // **What a reader sees**: four squares, each with its thread and its count
 // of frames, or "stopped". The log has "threads: a thread added the numbers

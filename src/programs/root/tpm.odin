@@ -47,14 +47,20 @@ tpm_service_start :: proc "contextless" () {
 		region_memory, status = system.memory_create(1)
 	}
 	program: system.Handle
+	role := role_of("tpm")
 	if status == .Ok {
-		grants: [op.CONTEXT_HANDLES]system.Grant
-		grants[op.CONTEXT_LOG] = log_grant(role_of("tpm"))
-		grants[tpm_service.SERVICE_RING] = {ring_memory, {.Read, .Write}}
-		grants[tpm_service.SERVICE_REGION] = {region_memory, {.Read, .Write}}
-		grants[tpm_service.SERVICE_REGISTERS] = {registers, {.Read, .Write}}
-		file := system.image_find(image, "tpm")
-		program, status = system.program_start(file, "tpm", grants, random.values_with_seed(&program_generator, {}), budget_of(file, "tpm"))
+		context_grants: system.Context_Grants
+		values: system.Context_Values
+		system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role))
+		system.grant_put(&context_grants, tpm_service.SERVICE_RING, {ring_memory, {.Read, .Write}})
+		system.grant_put(&context_grants, tpm_service.SERVICE_REGION, {region_memory, {.Read, .Write}})
+		system.grant_put(&context_grants, tpm_service.SERVICE_REGISTERS, {registers, {.Read, .Write}})
+		if context_refused("tpm", &context_grants, &values) {
+			status = .Bad_State
+		} else {
+			file := system.image_find(image, "tpm")
+			program, status = system.program_start(file, "tpm", context_grants.grants, random.values_with_seed(&program_generator, values.values), budget_of(file, "tpm"))
+		}
 	}
 	if status != .Ok {
 		for handle in ([2]system.Handle{ring_memory, region_memory}) {
@@ -67,7 +73,7 @@ tpm_service_start :: proc "contextless" () {
 	}
 	slot^ = {}
 	slot.program = program
-	slot.role = {grants = {.System_Part}}
+	slot.role = role
 	slot.granted = {.Log}
 	copy(slot.name[:len(slot.name) - 1], "tpm")
 	tpm_ring, tpm_region, tpm_program = ring_memory, region_memory, slot

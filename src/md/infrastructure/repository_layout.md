@@ -4,7 +4,7 @@ Everything that becomes the system is in one folder, `src`. A program of a third
 
 What changed: the private half of a single module and the kernel logic leave the shared library, the programs and the other modules become one folder of modules by group, and the tool becomes packages behind one command. The source library `modus` and its one flag stay as they are.
 
-The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md): "Source library", "Private part", "Kernel part", "Module group", "Test module". The flag of the compiler for a source library is `-collection`.
+The terms are in [`docs/glossary/communication.md`](../../../docs/glossary/communication.md): "Source library", "Private part", "Kernel part", "Module group", "Test module". The flag of the compiler for a source library is `-collection`.
 
 ## Purpose
 
@@ -41,7 +41,7 @@ src/
     tests/                     the test modules
 tools/modustool/               the tool: one command, in packages
   foundation/ build/ checks/ resources/ fuzz/ similarity/ machine/ site/
-docs/                          the guides, the research, the pictures, the films, the measures
+docs/                          the guides, the glossary, the research, the pictures, the films, the measures
 news/  changelog.d/  CHANGELOG.md  ROADMAP.md
 resources/                     the sources of the resources of the boot image, with their licenses
 secrets/                       the keys of the publisher, encrypted with sops
@@ -53,7 +53,7 @@ build/                         the output, which git ignores
 
 ### What stays at the root, and why
 
-- **`tools/`.** The tool is not a part of the system: it is a program of the host that builds the system. It must build before anything of `src` does. The command of each project is `odin run tools/<tool>`.
+- **`tools/`.** The tool is not a part of the system: it is a program of the host that builds the system. It must build before anything of `src` does. The command of each project is the program of `tools/<tool>`; here `nix develop -c modustool <command>` runs it.
 - **`docs/`.** The guides are the documentation, and the site publishes them at addresses made from their names.
 - **`news/`, `changelog.d/`, `CHANGELOG.md`, `ROADMAP.md`.** They report the project to a reader.
 - **`resources/`.** A resource is not written here: the tool converts it from a source of another party (a font, a pointer theme) or from the mark, and each has its license.
@@ -202,9 +202,37 @@ Refused forms:
 
 ### The tool built once
 
-The wrapper of the flake compiles the whole tool at each call. The check of the flake builds the tool as a derivation of its own, from the folders that its compile reads, and runs the binary: Nix builds it again only when one of those folders changes. In the development shell, the binary compares the hash of its own sources with the hash that its build wrote beside it, and compiles itself again when they differ, before it runs the command. A time of a file is not the identity of a source, so the hash, and not the modification time, decides.
+What changed: the command of the flake compiled the whole tool at each call (`odin run`). It now runs a binary that is compiled once for each change of its sources.
 
-The compile time of the tool is measured before this change and after the split: no claim of speed is made without the number.
+**In the check of the flake.** The tool is a derivation of its own, `modustoolBinary`. Its source is the set of files that its compile reads: the `.odin` files that are not tests of `tools/modustool`, of `src/library`, of each folder under `src/kernel` (the kernel parts, not the kernel), of `src/modules/cryptography` (the peer imports it by a relative path), and the font that a fuzz target loads (`resources/fonts/commit_mono.ttf`). The check `boot-test` and the release shell run its binary. Nix builds it again only when one of those files changes: a change of a guide, a test or a program does not compile the tool. The binary is compiled with `-define:TOOL_BUILDS_ITSELF=false`, and never compiles itself: its sources are the inputs of its derivation.
+
+**In the development shell.** The command `modustool` runs `build/tool/modustool`. When the file is absent, the command compiles it first. Before each command, the binary compares the build key of its sources with the key of its build record, `build/tool/modustool.build_record`, as the incremental build does for a module ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The incremental build"). When the two keys differ, it compiles the tool again, then runs the new binary with the same arguments and ends with its status. The key covers:
+
+- the list of the files that the compiler read (`-export-dependencies`): the sources of the tool, of the two source libraries, of `src/modules/cryptography`, of the libraries of the compiler, and the files of `#load`;
+- every other file of the folder of each of those sources, so a new file in a package is a change;
+- the command of the compiler with each flag, and the program `odin` (its path in the store, its size and its time).
+
+So the sources of the tool are what its compiler read, not a list that the tool writes: an import of a new package is in the next list with no change of the tool.
+
+**The one way to call it** stays `nix develop -c modustool <command>`.
+
+**The measure.** Each compile of the binary of the shell prints `modustool: measure: the compile of the tool: <seconds> s`. The derivation compiles with `-show-timings`, so its build log gives the time of each phase of the compiler. Each is a measure: nothing reads it. No claim of speed is made without such a number.
+
+Refused forms:
+
+- **The binary compares the time of each source with the time of the binary.** A time of a file is not the identity of a source: a checkout, a copy or a branch switch sets times that say nothing of the bytes. The key, and not a time, decides. A time is read only to refuse a record when a source changed during the compile, as for a module.
+- **The command of the flake hashes the sources.** The hash would then be a second implementation of the build key, in a script of the shell, and the two must agree. The tool has the build key; the command only makes the first binary.
+- **One hash over the folders of the tool and of its imports** (the identity of the tool that the build keys of the modules hold). It holds the host tests, so each change of a test compiles the tool, and it does not hold a file of `#load` outside those folders.
+- **The binary of the store in the development shell.** Each change of a source then builds a new derivation, which copies the sources to the store first, and a binary in the store cannot be a build of a work tree that has changes.
+- **The check that runs the command of the shell.** The check then compiles the tool in its sandbox at each run, also when no source of the tool changed.
+
+Subtle points:
+
+- **A process that a command starts does not check again.** The first process of a command sets `MODUSTOOL_SOURCES_CHECKED` after its check, and each process that it starts inherits it: a step of a module, a boot volume, a fuzz child, the binary that it compiled. Each would otherwise hash the sources again.
+- **The binary of the store and the instrumented child of the fuzzing never compile themselves.** Each is a build at another place than `build/tool/modustool`, and has no folder of sources of its own; the child is compiled with the same flag as the store binary.
+- **A compile writes files of its process.** The new binary and the list of the compiler go to files whose names hold the number of the process, then the binary moves to its place. Two commands that start at once after a change then never write one file; the one that moves last leaves its binary.
+- **The first command of a new work tree compiles the tool two times.** The command of the flake makes the first binary with no record, because only the tool computes a key, and it must compute the key before the compile starts. That binary finds no record and compiles again, with its record.
+- **A failed compile runs nothing.** The record of the binary before is removed before the compile, so the next command tries again; the old binary does not run code of older sources in silence.
 
 ## The rules of the imports
 
@@ -261,7 +289,7 @@ Each step is one commit that builds and passes its checks. Steps 1 and 2 went in
 2. **The kernel parts.** Built. `git mv` of four folders, 10 files, from `src/library/contract/` to `src/kernel/`: `acpi_processors`, `debug_exception`, `iommu`, `processor_counters`. One rewrite of 9 import lines (6 in 6 files of the kernel, 3 in 2 files of the tool) from `"modus:contract/<part>"` to `"kernel:<part>"`. By hand in the tool: the source library `kernel` and its flag on the three compiles, the 4 folders of the host tests, the 4 exceptions of the choice check, the packages of the fuzz targets (each now a folder from the root, made from its constant, by one rewrite of the 38 lines of the list), the rules of a kernel part in the check of the imports, the flag of the tool in the flake. Paths of the documents: 6 spans in 4 files with the folder, and 4 spans of the old folder of `iommu` in 3 intent files. No relative path. Expected: the two kernels change their hash (their package order changes); each other module keeps it.
 3. **The private parts.** `git mv` of 16 folders, 49 files and 19 343 lines, from `src/library/support/` to `src/library/private/<module>/`: `addresses` (`inspect`); `bar`, `palette` (`compositor`); `console_language`, `console_results` (`console`); `debugging` (`debugger`); `information`, `manual_navigation`, `source_comment_markdown` (`manual`); `kernel_events_rounds` (`kernel_events`); `keyboard_layout` (`input`); `replacement_signature` (`root`); `storage_mount`, `storage_object`, `storage_retention`, `storage_tree` (`storage`). One rewrite of 52 import lines in 37 files (38 lines in 27 files of `src`, 14 lines in 10 files of the tool) from `"modus:support/<part>"` to `"modus:private/<module>/<part>"`, from one list of the 16 pairs. By hand in the tool: 18 lines that name a part by its constant (the folders of the host tests, the choice check, the fuzz targets), and the owner rules of the check. One relative `#load` of a font, in the test of `bar`, gets one `../` more. Paths of the documents: 73 spans in 37 files. Expected: the 9 modules that import a part change their hash (`compositor`, `console`, `debugger`, `input`, `inspect`, `kernel_events`, `manual`, `root`, `storage`); each other module keeps it.
 4. **The module groups.** `git mv` of 101 folders, 176 files: the 85 of `src/programs` and the 16 of `src/modules`, to `src/modules/<group>/`. The group of each module is written once, in the rows of the table of the modules; the moves and the rewrites are made from that table. One rewrite of the 101 sources of the table, and of the paths: 234 spans in 80 files (17 guides, 8 intent files, the README, 32 sources of `src`, 22 files of the tool). Relative paths: 10 `#load` of a font one level deeper (7 in `vector_glyphs`, 3 in the tests of `drawing` and `text_shaping`), and the 2 relative imports of the module `cryptography` in the peer of the tool. The 5 `#load` of the portraits of `hall_of_fame` are inside its folder and stay. Expected: each module keeps its hash, because a module folder stays after `src/library` in the order of the paths; the debug objects change; view the windows that show a path (hazard 4).
-5. **The tool built once.** Measure the compile time of the tool. The flake builds the tool as a derivation and the check runs the binary; in the development shell the binary compiles itself again when the hash of its sources changes. No file of `src` changes, so each module keeps its hash.
+5. **The tool built once.** Built. The flake builds the tool as a derivation and the check runs the binary; in the development shell the binary compiles itself again when the build key of its sources changes ("The tool built once"). Each compile prints its time as a measure. No file of `src` changes, so each module keeps its hash.
 6. **The tool in packages.** One commit for each package, from the bottom of the list: `foundation` first, then each package that imports only the packages that exist. In each commit: `git mv` of the files of the package, a rewrite of their package clause, and the prefix of the package on each name that another package reads, from the list of the declarations that the declaration index of the tool gives. The count of those names is measured by the first commit; no count exists before it. The paths of the documents: 168 spans of a file of the tool in 54 files. No file of `src` changes, so each module keeps its hash. Measure the compile time of the tool again.
 
 The full check runs after the last step. A step whose expected hashes do not hold is read to its cause before the next step.
@@ -275,6 +303,6 @@ The full check runs after the last step. A step whose expected hashes do not hol
 
 ## The state
 
-Built: the folders under `src`, the one source library `modus`, the check of the imports with the rules of the kernel and of the contract packages, the constants of the paths of the tool, the check of the source paths in the documents, and the command `module-hashes`. The rule of a bridge as the contract package `bridge_requester`. The kernel parts `iommu`, `acpi_processors`, `debug_exception` and `processor_counters` under `src/kernel`, the source library `kernel` with its flag on the compile of the kernel, the host tests of its folders and the compile of the tool, the refusal of `kernel:` and of a relative path into `src/kernel` in each file of `src/` outside `src/kernel`, and the check that a kernel part is pure. The fuzz targets name each package by its folder from the root, so a kernel part is a target as a contract package is. The check of the fixed addresses reads the kernel and its parts.
+Built: the folders under `src`, the one source library `modus`, the check of the imports with the rules of the kernel and of the contract packages, the constants of the paths of the tool, the check of the source paths in the documents, and the command `module-hashes`. The rule of a bridge as the contract package `bridge_requester`. The kernel parts `iommu`, `acpi_processors`, `debug_exception` and `processor_counters` under `src/kernel`, the source library `kernel` with its flag on the compile of the kernel, the host tests of its folders and the compile of the tool, the refusal of `kernel:` and of a relative path into `src/kernel` in each file of `src/` outside `src/kernel`, and the check that a kernel part is pure. The fuzz targets name each package by its folder from the root, so a kernel part is a target as a contract package is. The check of the fixed addresses reads the kernel and its parts. The tool built once: the derivation of the check, and the binary of the development shell that compiles itself again when the build key of its sources changes.
 
-Left: steps 3 to 6 above, then the boot image of a release with no test module. Each is an entry of [`ROADMAP.md`](../../../ROADMAP.md).
+Left: steps 3, 4 and 6 above, then the boot image of a release with no test module. Each is an entry of [`ROADMAP.md`](../../../ROADMAP.md).

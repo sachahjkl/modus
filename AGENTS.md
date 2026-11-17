@@ -17,7 +17,7 @@ Each kind of content has one place. The intent of a design is in `src/md`. A gui
 ## Intent
 
 - This project follows <https://srcmd.org>, with the Markdown in `src/md`, as the standard suggests. Read `src/md/README.md` first.
-- A file of `src/md` is an intent file (`docs/GLOSSARY.md`): it records the intent of a part of the system: its purpose, its design, the forms that were refused and why, its subtle points. It is not a guide: a guide of `docs/` says what the system does and how to use it, and the site shows it.
+- A file of `src/md` is an intent file (`docs/glossary/project.md`): it records the intent of a part of the system: its purpose, its design, the forms that were refused and why, its subtle points. It is not a guide: a guide of `docs/` says what the system does and how to use it, and the site shows it.
 - A design goes in `src/md` before its code. A change of design changes its intent file in the same commit as the code.
 - Never write a design in a folder outside the repository. A review, a log and a measure of one run are process documents: they do not go in the repository.
 - `src/md/README.md` has the section `## File Index`. It lists and links every other file of the folder, one line each, with paths relative to `src/md`. `modustool check` checks it (`intent_index_check`).
@@ -30,7 +30,7 @@ Each kind of content has one place. The intent of a design is in `src/md`. A gui
 - The file is plain Markdown that a reader understands without a tool: no YAML, no front matter, no metadata field, no HTML.
 - Its shape: the title `# Roadmap`, then the sections `## Now`, `## Next` and `## Later`, in this order. Each section is a list. `Now` is the work in progress, `Next` the work that is decided and comes after, `Later` the work that is wanted and has no order. Give no dates.
 - An optional last section `## Maybe`, after `## Later`, holds what may be done one day and is not decided: each entry says the ways open and what each waits for.
-- A roadmap entry (`docs/GLOSSARY.md`) is `- **<summary>.** <one or two sentences>`: a short bold summary, then what the work gives the user of the system, or the developer who builds on it. Do not say how the code changes. Name no person.
+- A roadmap entry (`docs/glossary/project.md`) is `- **<summary>.** <one or two sentences>`: a short bold summary, then what the work gives the user of the system, or the developer who builds on it. Do not say how the code changes. Name no person.
 - If an intent file holds the design of the work, end the entry with its design link: `[Design](src/md/<file>.md)`.
 - When you plan a work, add its entry. When a work starts or is decided, move its entry to its section.
 - When a work is done, the agent or the coordinator who commits it removes its entry in the same commit as its changelog fragment. Give that fragment the summary of the entry as its bold summary: `modustool roadmap check` then fails until the entry is removed. If a part of the work is left, keep an entry whose summary names that part.
@@ -48,7 +48,7 @@ Each kind of content has one place. The intent of a design is in `src/md`. A gui
 ## Work
 
 - Documents, code and comments are in English, so that one term keeps one concept. The conversation is in the language of the owner.
-- One term for one concept. Define a term in `docs/GLOSSARY.md` before its first use.
+- One term for one concept. Define a term in `docs/glossary/`, in the file of its group, before its first use.
 - A term of the glossary is a heading of level 3 in its group: a short definition of one sentence that stands alone, then an explanation (what it is for, how it is used, what it is not, an example, a reference to its design), then "Do not use:" (`docs/SITE.md`, "The glossary").
 - Each step adds one capability to a system that works. Each step is a tested commit on `master`.
 - Finished work is merged into `master` and pushed, and its branch is deleted. No branch stays after its work is done.

@@ -107,7 +107,7 @@ The ring, the copy of the sequence and the result area are in no area. A sequenc
 
 ### The sequence format and the grammar
 
-The format is the contract package `operation_sequence`. The tool writes it, and `operation_fuzzing` and the runner read it. In this file, a step is a sequence step (`docs/GLOSSARY.md`). A sequence has a header (the magic, the format, the count of steps, at most `STEPS_MOST`, which is 64, and the count of sequence areas, at most 8), then a record for each area, then the steps, then the content of the areas. An area has 1 to 16 pages and the bytes of its start, at most 4096 for all the areas together. A step has:
+The format is the contract package `operation_sequence`. The tool writes it, and `operation_fuzzing` and the runner read it. In this file, a step is a sequence step (`docs/glossary/project.md`). A sequence has a header (the magic, the format, the count of steps, at most `STEPS_MOST`, which is 64, and the count of sequence areas, at most 8), then a record for each area, then the steps, then the content of the areas. An area has 1 to 16 pages and the bytes of its start, at most 4096 for all the areas together. A step has:
 
 - the operation word, as it passes to the kernel;
 - its flags: no table of error details, or the same kernel entry as the step before, which tests several records of one entry;

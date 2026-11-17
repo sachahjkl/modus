@@ -2,7 +2,7 @@
 
 The kernel is off the data path, and the network stack is a library in the program. One network device with one pair of queues still needs a multiplexer in user space: the network service. This file records what that service is allowed to do to the bytes of a packet, why one copy stays, and the layers that take the service off the data path. The exception of property 5 for TCP is removed by these layers, not kept as a note.
 
-What the service does today is in [`docs/NETWORK.md`](../../../docs/NETWORK.md), "Property 5 as it is built". The terms are in [`docs/GLOSSARY.md`](../../../docs/GLOSSARY.md), "Data path".
+What the service does today is in [`docs/NETWORK.md`](../../../docs/NETWORK.md), "Property 5 as it is built". The terms are in [`docs/glossary/network.md`](../../../docs/glossary/network.md), "Data path".
 
 ## Two terms
 

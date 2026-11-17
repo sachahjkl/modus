@@ -42,8 +42,9 @@
 // **How it starts.** The root service starts it at each boot, before the
 // compositor, with a context of its own: handle 0 is the input ring, which
 // it shares with the compositor; handles 1 to 3 are the ports and the two
-// interrupts. It has no grant of `grants_of`, no connection, and no
-// service: it cannot reach another program.
+// interrupts. Its row of `program_roles` has the grant System_Part only:
+// no connection, and no service, so it cannot reach another program. The
+// root service names these slots INPUT_GRANT_ too.
 //
 // **What it does not prove.** It works with the PS/2 controller that QEMU
 // emulates, with two keyboard layouts (src/library/support/keyboard_layout);

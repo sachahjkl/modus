@@ -25,7 +25,7 @@
 // - a revocation of a handle that the program does not have: `Bad_Handle`.
 //
 // **Start**: `start("origin")` in the console, or the bar of the desktop.
-// It has no grant of `grants_of`: everything that it uses, it makes. Its
+// Its row of `program_roles` has no grant: everything that it uses, it makes. Its
 // budget has room for two programs: itself and the program "held", which
 // never runs and only receives.
 //

@@ -58,8 +58,8 @@
 // of the screen. The root service also maps its own file (for its exports),
 // two [pointer themes](term:pointer-theme), the
 // [settings page](term:settings-page), the glyph caches and the
-// [date page](term:date-page). It has no grant of `grants_of`: the root
-// service gives these handles by name.
+// [date page](term:date-page). Its row of `program_roles` has the grants
+// Serve and System_Part: the root service gives these handles by name.
 //
 // **Its exports**: `pointer` and `windows`, to a caller that
 // [acts for the principal](term:acts-for-the-principal) (`exports.odin`).

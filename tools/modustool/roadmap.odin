@@ -1,4 +1,4 @@
-// The roadmap of the system (docs/GLOSSARY.md, "Roadmap", "Roadmap entry").
+// The roadmap of the system (docs/glossary/project.md, "Roadmap", "Roadmap entry").
 // ROADMAP.md holds the planned work, in three sections: what is in work
 // now, what comes next, what comes later; then, optional, what may be done
 // one day and is not decided. It is plain Markdown that a
