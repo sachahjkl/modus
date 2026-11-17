@@ -45,10 +45,13 @@ a_bad_entry_is_named :: proc(t: ^testing.T) {
 	defer delete(memory)
 	entry := (^Entry)(&memory[ENTRIES_OFFSET + 4 * size_of(Entry)])
 	entry.reserved = 1
+	// A stable generation that is not 0: a refusal must not give it.
+	(^Header)(raw_data(memory)).change_count = 4
 	problem, index := snapshot_take(memory, snapshot)
 	testing.expect_value(t, problem, Problem.Bad_Kind)
 	testing.expect_value(t, index, 4)
 	testing.expect_value(t, snapshot.entry_count, 0)
+	testing.expect_value(t, snapshot.generation, 0)
 	entry.reserved = 0
 	entry.signature_length = 2 // Shorter than the name.
 	problem, index = snapshot_take(memory, snapshot)

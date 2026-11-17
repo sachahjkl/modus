@@ -440,6 +440,10 @@ snapshot_take :: proc "contextless" (memory: []u8, snapshot: ^Snapshot) -> (prob
 	}
 	for &entry, number in snapshot.entries[:count] {
 		if found := entry_problem(&entry); found != .None {
+			// A refused table gives no generation either: a caller that
+			// keeps the generation of its last snapshot would take this one
+			// for read, and never read the table again.
+			snapshot.generation = 0
 			return found, number
 		}
 	}
