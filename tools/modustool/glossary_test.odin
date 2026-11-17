@@ -120,7 +120,7 @@ glossary_read_refuses_an_explanation_over_its_bound :: proc(t: ^testing.T) {
 @(test)
 glossary_read_refuses_what_has_not_the_form :: proc(t: ^testing.T) {
 	code := "## Code\n\n### Module\n\nA module.\n"
-	code_path := GLOSSARY_FOLDER + "/code.md"
+	code_path :: GLOSSARY_FOLDER + "/code.md"
 	cases := [?]struct {
 		about:   string,
 		index:   string,
