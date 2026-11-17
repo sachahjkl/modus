@@ -218,8 +218,10 @@
     # sources of its package, of the source library, of the kernel parts
     # (each folder under src/kernel, not the kernel), of the module
     # cryptography that the peer imports by a relative path, and the font
-    # that a fuzz target loads. A host test is not a source of the binary.
-    sourcesOfOdin = inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "odin" && !(inputs.nixpkgs.lib.hasSuffix "_test.odin" file.name));
+    # that a fuzz target loads. A host test is not a source of the binary:
+    # its name ends with _test, before the suffixes of a platform that the
+    # compiler reads (blend_vectors_test_amd64.odin).
+    sourcesOfOdin = inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "odin" && builtins.match ".*_test(_[a-z0-9]+)*\\.odin" file.name == null);
     kernelParts = map (name: ./src/kernel + "/${name}") (builtins.attrNames (inputs.nixpkgs.lib.filterAttrs (_: type: type == "directory") (builtins.readDir ./src/kernel)));
     toolSources = inputs.nixpkgs.lib.fileset.unions ([(sourcesOfOdin ./tools/modustool) (sourcesOfOdin ./src/library) (sourcesOfOdin ./src/modules/cryptography) ./resources/fonts/commit_mono.ttf] ++ map sourcesOfOdin kernelParts);
 
