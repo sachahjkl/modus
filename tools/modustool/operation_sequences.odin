@@ -336,7 +336,7 @@ operation_budget_read_findings :: proc(sequence: ^operation_sequence.Sequence, r
 // operation_seed_step gives a step of an operation whose arguments fit
 // their forms where a start handle or an area can: a handle of the budget,
 // of the log or of the first area, an address at the start of the first
-// area, a count of 1, no flag, the choice 1. A handle that no start handle
+// area, a count of 1, no flag, the first member of a set. A handle that no start handle
 // can be, and a handle that can be 0, names no handle: 0 names the caller,
 // and a step must not hold the thread of the runner.
 operation_seed_step :: proc(chosen: operation.Operation) -> operation_sequence.Sequence_Step {
