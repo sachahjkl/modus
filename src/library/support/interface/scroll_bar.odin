@@ -199,7 +199,9 @@ scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 		state.scroll_bar_grab = press_along - geometry.thumb_start
 		state.scroll_bar_repeat_at = 0
 		result.pressed_now = part
-		#partial switch part {
+		switch part {
+		case .None, .Thumb:
+			// The thumb moves with the pointer below; no part moves nothing.
 		case .Arrow_Back:
 			first -= line_step
 		case .Arrow_Forward:
@@ -233,7 +235,9 @@ scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 	held := state.pressed == element ? state.scroll_bar_part : Scroll_Bar_Part.None
 	if held != .None {
 		frame.scroll_bar_held_drawn = true
-		#partial switch held {
+		switch held {
+		case .None, .Track_Back, .Track_Forward:
+			// A press on the track moved one page; holding it repeats nothing.
 		case .Thumb:
 			// A thumb that the pointer did not move keeps its unit: the
 			// place of a thumb is coarser than the units of a long content.

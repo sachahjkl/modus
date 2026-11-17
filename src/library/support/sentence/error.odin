@@ -36,7 +36,10 @@ object_name :: proc "contextless" (value: i64) -> string {
 error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record, operation: string, argument: string) {
 	write_part(writer, operation)
 	write_part(writer, ": ")
-	unit := errors.unit_known(record.unit) ? errors.UNIT_NAMES[errors.Unit(record.unit)] : "units"
+	unit := "units"
+	if unit_member, unit_ok := errors.unit_of_word(record.unit); unit_ok {
+		unit = errors.UNIT_NAMES[unit_member]
+	}
 	subject :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record, argument: string) {
 		if record.argument == 0 {
 			write_part(writer, "the call")
@@ -62,13 +65,14 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, unit)
 		}
 	}
-	if !errors.kind_known(record.kind) {
+	kind, kind_ok := errors.kind_of_word(record.kind)
+	if !kind_ok {
 		write_part(writer, "an error of the kind ")
 		write_part(writer, record.kind)
 		write_part(writer, ", which this program does not know")
 		return
 	}
-	switch errors.Kind(record.kind) {
+	switch kind {
 	case .None:
 		write_part(writer, "no error")
 	case .Empty:
@@ -89,7 +93,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		amount(writer, record.limit, unit)
 	case .Bad_Value:
 		subject(writer, record, argument)
-		if errors.Unit(record.unit) == .Trees {
+		if record.unit == i64(errors.Unit.Trees) {
 			write_part(writer, " is inside the tree that moves: a tree cannot move inside itself")
 			return
 		}
@@ -128,22 +132,25 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		subject(writer, record, argument)
 		write_part(writer, ", ")
 		write_number(writer, u64(record.value))
-		if errors.Unit(record.unit) == .Lent_Handles {
+		if record.unit == i64(errors.Unit.Lent_Handles) {
 			write_part(writer, ", names no handle that the caller lent for this call through the call ring")
 		} else {
 			write_part(writer, ", names no handle of this program")
 		}
 	case .Handle_Ended:
 		handle(writer, record, argument)
-		switch errors.End(record.found) {
+		end, end_ok := errors.end_of_word(record.found)
+		if !end_ok {
+			write_part(writer, " ended")
+			return
+		}
+		switch end {
 		case .Closed:
 			write_part(writer, " was closed")
 		case .Revoked:
 			write_part(writer, " was revoked")
 		case .Unknown:
 			write_part(writer, " ended, and its place has a newer handle")
-		case:
-			write_part(writer, " ended")
 		}
 	case .Handle_Kind:
 		handle(writer, record, argument)
@@ -181,10 +188,10 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	case .Over_Limit:
 		write_part(writer, "the call needs ")
 		amount(writer, record.value, unit)
-		write_part(writer, errors.Unit(record.unit) == .Blocks ? " in all, with no earlier version kept; the limit is " : " in all; the limit is ")
+		write_part(writer, record.unit == i64(errors.Unit.Blocks) ? " in all, with no earlier version kept; the limit is " : " in all; the limit is ")
 		amount(writer, record.limit, unit)
 	case .Full:
-		if errors.Unit(record.unit) == .Commit_Blocks {
+		if record.unit == i64(errors.Unit.Commit_Blocks) {
 			write_part(writer, "the call needs more blocks in one commit than one commit can change: ")
 			write_part(writer, record.limit)
 			return
@@ -204,7 +211,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, "; the call needs a program that is created, and not started")
 		}
 	case .Absent:
-		if errors.Unit(record.unit) == .Region {
+		if record.unit == i64(errors.Unit.Region) {
 			write_part(writer, "the ring has no data region: send Attach first, with a memory handle that came through the ring")
 			return
 		}
@@ -214,17 +221,17 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, " of ")
 		}
 		subject(writer, record, argument)
-		if errors.Unit(record.unit) == .Bytes {
+		if record.unit == i64(errors.Unit.Bytes) {
 			write_part(writer, ", ")
 			write_number(writer, u64(record.value))
 			write_part(writer, ", names nothing that the program has")
-		} else if errors.Unit(record.unit) == .Objects {
+		} else if record.unit == i64(errors.Unit.Objects) {
 			write_part(writer, ": the store has no object with this name")
-		} else if errors.Unit(record.unit) == .Places {
+		} else if record.unit == i64(errors.Unit.Places) {
 			write_part(writer, ": the place is not a place of this connection, or its tree was removed or renamed")
-		} else if errors.Unit(record.unit) == .Trees {
+		} else if record.unit == i64(errors.Unit.Trees) {
 			write_part(writer, ": the tree has no tree with this name")
-		} else if errors.Unit(record.unit) == .Versions {
+		} else if record.unit == i64(errors.Unit.Versions) {
 			write_part(writer, ": the object has no version of the generation ")
 			write_part(writer, record.value)
 		} else if record.unit != 0 {
@@ -234,11 +241,11 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, " names nothing that exists")
 		}
 	case .Damaged:
-		if errors.Unit(record.unit) == .Counts {
+		if record.unit == i64(errors.Unit.Counts) {
 			write_part(writer, "the counts of the blocks of the private store are not trusted after a fault of the storage service: it makes no change in the store until its next start; its objects can still be read")
 			return
 		}
-		if errors.Unit(record.unit) == .Stores {
+		if record.unit == i64(errors.Unit.Stores) {
 			write_part(writer, "the private store is damaged: a node of one of its trees, or its store block, has a wrong check")
 		} else {
 			write_part(writer, "the object of ")
@@ -246,7 +253,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, " is damaged: a block of it has a wrong check")
 		}
 	case .Device:
-		if errors.Unit(record.unit) == .Dropped_Writes {
+		if record.unit == i64(errors.Unit.Dropped_Writes) {
 			write_part(writer, "the disk did not keep ")
 			write_part(writer, record.found)
 			write_part(writer, record.found == 1 ? " block of the commit" : " blocks of the commit")
@@ -259,13 +266,13 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, record.found)
 		}
 	case .No_Grant:
-		if errors.Unit(record.unit) == .Endpoint && record.found != 0 {
+		if record.unit == i64(errors.Unit.Endpoint) && record.found != 0 {
 			write_part(writer, "the local port ")
 			write_part(writer, record.found)
 			write_part(writer, " of the segment is not a port of this endpoint")
 			return
 		}
-		if errors.Unit(record.unit) == .Endpoint {
+		if record.unit == i64(errors.Unit.Endpoint) {
 			subject(writer, record, argument)
 			write_part(writer, ", ")
 			endpoint_text(writer, record.value)
@@ -280,7 +287,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		}
 		write_part(writer, "the caller has no grant for this: ")
 		write_part(writer, unit)
-		if errors.Unit(record.unit) == .Debug_Access && record.found != 0 {
+		if record.unit == i64(errors.Unit.Debug_Access) && record.found != 0 {
 			// The words of the log of the root service for the same refusal.
 			// A number that names no start grant comes from a root service of
 			// a later build: the sentence gives the number and says so.
@@ -306,7 +313,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, " names memory that no one other program maps or holds: the handle has no program to go to")
 	case .Overlap:
 		subject(writer, record, argument)
-		if errors.Unit(record.unit) == .Region {
+		if record.unit == i64(errors.Unit.Region) {
 			// An isolated call: an offset in the call region (isolated.decode).
 			write_part(writer, ": the bytes from offset ")
 			write_part(writer, record.value)
@@ -503,7 +510,7 @@ kernel_error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_
 			argument = form.parameters[record.argument - 1].name
 		}
 	}
-	if errors.Kind(record.kind) == .Refused && record.found >= 0 && record.found <= i64(max(op.Status)) {
+	if record.kind == i64(errors.Kind.Refused) && record.found >= 0 && record.found <= i64(max(op.Status)) {
 		write_part(writer, name)
 		write_part(writer, ": refused with the status ")
 		write_part(writer, op.STATUS_NAMES[op.Status(record.found)])

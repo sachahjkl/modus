@@ -195,12 +195,16 @@ find :: proc "contextless" (ctx: ^system.Context, configuration: []u8) -> (devic
 			if memory == 0 {
 				return 0, 0
 			}
+			pages, size_status := system.memory_size(memory)
+			if size_status != .Ok {
+				return 0, 0
+			}
 			address, status := system.memory_map(memory, {.Write})
 			if status != .Ok {
 				return 0, 0
 			}
 			mapped[bar] = uintptr(address)
-			sizes[bar] = system.memory_size(memory) * system.PAGE_SIZE
+			sizes[bar] = pages * system.PAGE_SIZE
 		}
 		return mapped[bar], sizes[bar]
 	}

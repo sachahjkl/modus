@@ -1432,7 +1432,9 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 	calls, ring_status := system.ring_open(sandbox.ring_memory)
 	bytes, region_status := system.memory_map(sandbox.region_memory)
 	sandbox.ring = calls
-	sandbox.region = ([^]u8)(bytes)[:region_status == .Ok ? system.memory_size(sandbox.region_memory) * system.PAGE_SIZE : 0]
+	// A refused handle has no pages: the region is empty.
+	region_pages, _ := system.memory_size(sandbox.region_memory)
+	sandbox.region = ([^]u8)(bytes)[:region_status == .Ok ? region_pages * system.PAGE_SIZE : 0]
 	// After the first connection, the commands are those of one file.
 	if ring_status != .Ok || region_status != .Ok || sandbox.hash != {} && sandbox.hash != hash {
 		service_disconnect(sandbox)
@@ -2917,7 +2919,9 @@ buffer_create :: proc "contextless" (arguments: []Value) -> Value {
 buffer_byte :: proc "contextless" (arguments: []Value) -> Value {
 	memory := system.Handle(arguments[0].integer)
 	kind, _, _ := system.handle_state(memory)
-	size := kind == .Memory ? system.memory_size(memory) * system.PAGE_SIZE : 0
+	// A refused handle has no pages, so it has no byte.
+	pages, _ := system.memory_size(memory)
+	size := kind == .Memory ? pages * system.PAGE_SIZE : 0
 	if arguments[1].integer < 0 || u64(arguments[1].integer) >= size {
 		return fail(kind == .Memory ? "the memory object has no byte " : "the handle names no memory object: byte ", arguments[1].integer)
 	}
@@ -2944,7 +2948,9 @@ buffer_bytes :: proc "contextless" (arguments: []Value) -> Value {
 	if count < 0 || count > BYTES_MOST {
 		return fail("bytes: the count is ", count, "; it is 0 to ", i64(BYTES_MOST))
 	}
-	size := system.memory_size(memory) * system.PAGE_SIZE
+	// A refused handle has no pages, so it has no byte.
+	pages, _ := system.memory_size(memory)
+	size := pages * system.PAGE_SIZE
 	if first < 0 || u64(first) > size || u64(count) > size - u64(first) {
 		return fail("bytes: the memory object has ", size, " bytes; it does not have ", count, " bytes from the byte ", first)
 	}

@@ -494,25 +494,46 @@ key_character_of :: proc "contextless" (value: u64) -> rune {
 	return value <= text_encoding.CODE_POINT_LAST ? rune(value) : 0
 }
 
-// next_event gives the next input event of the window, if there is one.
+// next_event gives the next input event of the window, if there is one. A
+// record that event_of_record refuses is not an event: it costs one line of
+// the log, and the next record is read.
 next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
-	record := system.receive(&window.ring.completions) or_return
-	event.kind = Event_Kind(record.kind)
-	#partial switch event.kind {
+	for {
+		record := system.receive(&window.ring.completions) or_return
+		read, read_ok := event_of_record(record)
+		if !read_ok {
+			system.log_in("programs", .Warning, "display: ", string(window.title[:window.title_count]), ": the compositor sent a record of the kind ", u64(record.kind), ", which names no event: it is refused")
+			continue
+		}
+		if read.kind == .Settings_Changed {
+			text_settings_apply()
+		}
+		return read, true
+	}
+}
+
+// event_of_record is the border of an input record of the compositor: the
+// event, or false for a kind that names no event, None included. It reads
+// and changes no state, so a host test gives it each refused kind.
+event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok: bool) {
+	kind := system.member_of_word(Event_Kind, u64(record.kind)) or_return
+	event.kind = kind
+	switch kind {
+	case .None:
+		return {}, false
 	case .Key:
 		event.code = u32(record.values[0])
 		event.character = key_character_of(record.values[1])
 		event.pressed = record.values[2] != 0
 		event.modifiers = u32(record.values[3])
 	case .Pointer:
-		event.x = int(i64(record.values[0]))
-		event.y = int(i64(record.values[1]))
-		event.buttons = u32(record.values[2])
+		event.x = int(i64(record.values[key_path.POINTER_RECORD_X]))
+		event.y = int(i64(record.values[key_path.POINTER_RECORD_Y]))
+		event.buttons = u32(record.values[key_path.POINTER_RECORD_BUTTONS])
 		// The compositor writes the notches: a count past the limit is cut,
 		// so that a sum of them stays far inside an int.
-		event.wheel = int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
+		event.wheel = int(clamp(i64(record.values[key_path.POINTER_RECORD_WHEEL]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
 	case .Settings_Changed:
-		text_settings_apply()
 	case .Go_To:
 		event.act = record.values[0]
 	}

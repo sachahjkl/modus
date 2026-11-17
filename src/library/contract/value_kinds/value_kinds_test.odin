@@ -113,7 +113,23 @@ hostile_runs_are_refused :: proc(t: ^testing.T) {
 	// A reader of a record checks a run before it indexes the text.
 	_, _, ok := value_run_in_text({start = 150, length = 10, kind = .Size}, TEST_RECORD_TEXT)
 	testing.expect(t, !ok)
-	testing.expect_value(t, value_kind_of(200), Value_Kind.None)
+}
+
+// A byte that names no kind is refused: one past the last kind, and the
+// largest byte. Each kind comes back from its own byte.
+@(test)
+value_kind_of_refuses_a_byte_that_names_no_kind :: proc(t: ^testing.T) {
+	refused_bytes := [?]u8{u8(max(Value_Kind)) + 1, 200, max(u8)}
+	for value in refused_bytes {
+		kind, ok := value_kind_of(value)
+		testing.expectf(t, !ok, "the byte %d names no kind, and it is taken", value)
+		testing.expect_value(t, kind, Value_Kind.None)
+	}
+	for member in Value_Kind {
+		kind, ok := value_kind_of(u8(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, kind, member)
+	}
 }
 
 // Each kind has a name, and no two kinds have one name.

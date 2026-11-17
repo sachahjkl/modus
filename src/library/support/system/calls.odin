@@ -86,7 +86,10 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 	slices: [module.PARAMETER_CAPACITY]isolated.Slice
 	for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
 		argument := &arguments[index]
-		#partial switch type {
+		// record_size refused each byte that names no type, and the type None.
+		switch type {
+		case .None, .Integer, .Handle:
+			integers[index] = argument.integer
 		case .Text:
 			slices[index] = {u64(uintptr(raw_data(argument.text))), u64(len(argument.text))}
 			integers[index] = u64(uintptr(&slices[index]))
@@ -105,8 +108,6 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 			}
 			places[index] = {address = u64(uintptr(raw_data(argument.table.records))), count = argument.table.count, capacity = capacity}
 			integers[index] = u64(uintptr(&places[index]))
-		case:
-			integers[index] = argument.integer
 		}
 	}
 	// record_size checked that an argument of the call form is free for it.
@@ -197,7 +198,7 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 			if completion.tag != connection.tag {
 				continue
 			}
-			if isolated.Status(completion.kind) != .Ok {
+			if completion.kind != u32(isolated.Status.Ok) {
 				// The values of a refusal hold its error record.
 				if error != nil {
 					error^ = transmute(errors.Error_Record)completion.values
@@ -322,7 +323,7 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 			if completion.tag != 0 {
 				continue
 			}
-			if isolated.Status(completion.kind) == .Ok {
+			if completion.kind == u32(isolated.Status.Ok) {
 				return connection, .Ok
 			}
 			if load_error != nil {
@@ -354,16 +355,18 @@ service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: 
 			if record.tag != tag {
 				continue
 			}
-			if Status(record.kind) != .Ok {
-				return {}, Status(record.kind)
+			if record.kind != u32(Status.Ok) {
+				refused, _ := status_of_word(record.kind)
+				return {}, refused
 			}
 			connection = {program = Handle(record.values[0]), ring_memory = Handle(record.values[1]), region_memory = Handle(record.values[2])}
 			defer if status != .Ok {
 				call_connection_end(&connection)
 			}
 			connection.calls = ring_open(connection.ring_memory) or_return
+			region_pages := memory_size(connection.region_memory) or_return
 			address := memory_map(connection.region_memory) or_return
-			connection.region = ([^]u8)(address)[:memory_size(connection.region_memory) * PAGE_SIZE]
+			connection.region = ([^]u8)(address)[:region_pages * PAGE_SIZE]
 			return connection, .Ok
 		}
 		wait: Wait

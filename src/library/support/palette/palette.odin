@@ -342,8 +342,11 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, program_name
 			flags += {.Needs_Arguments}
 		}
 		destroys := .Destroys in flags && .Needs_Arguments not_in flags
-		kind := Entry_Kind.Export
-		#partial switch given.kind {
+		// snapshot_take refused each kind past the last member.
+		kind: Entry_Kind
+		switch given.kind {
+		case .Export:
+			kind = .Export
 		case .Command:
 			kind = .Command
 		case .Setting, .Provider_Setting:
@@ -529,9 +532,10 @@ panel_drawn :: proc "contextless" (panel: ^Panel) {
 // action_runs says if an action runs, sends or opens an entry: such an
 // action does nothing while the choice is not drawn (Panel.choice_undrawn).
 action_runs :: proc "contextless" (action: Action) -> bool {
-	#partial switch action {
+	switch action {
 	case .Run, .Confirm, .Submit, .Submit_All, .Open_In_Console, .Go_To:
 		return true
+	case .None, .Open, .Close, .Edit, .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After, .Back, .Field_Edit, .Field_Next, .Field_Previous, .Candidate_Previous, .Candidate_Next, .Value_Previous, .Value_Next:
 	}
 	return false
 }

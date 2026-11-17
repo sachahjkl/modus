@@ -48,8 +48,11 @@ import "modus:support/system"
 // the rest of the 10240 pages that it had before the tool counted.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1829, programs = 1, threads = 1}
 
-ERROR_ACTS_FOR_PRINCIPAL :: answers.ERROR_ACTS_FOR_PRINCIPAL
-ERROR_PLACE :: answers.ERROR_PLACE
+// failure gives the result of an export that fails with an answer: the
+// word of the member (answers.Export_Error), which the client reads back.
+failure :: proc "contextless" (answer: answers.Export_Error) -> i64 {
+	return i64(answer)
+}
 
 // ---------------------------------------------------------------------
 // Connections, places and shares.
@@ -210,7 +213,7 @@ place_path :: proc "contextless" (caller: ^Caller, place: i64, error: ^errors.Er
 	index := int(place & 0xFFFF_FFFF) - 1
 	generation := u32(u64(place) >> 32)
 	if place < 0 || index < 0 || index >= PLACE_CAPACITY || places[index].holder == 0 || places[index].holder != caller.connection.ring_memory || places[index].generation != generation {
-		errors.fail(error, ERROR_PLACE, .Absent, .Places, argument, place)
+		errors.fail(error, failure(.Place), .Absent, .Places, argument, place)
 		return {}, false
 	}
 	item := &places[index]
@@ -222,7 +225,7 @@ place_path :: proc "contextless" (caller: ^Caller, place: i64, error: ^errors.Er
 		// Another store: its limit is the one of its last grant.
 		store_index := store_find(name)
 		if store_index < 0 {
-			errors.fail(error, ERROR_PLACE, .Absent, .Places, argument, place)
+			errors.fail(error, failure(.Place), .Absent, .Places, argument, place)
 			return {}, false
 		}
 		path.store = {system.name_of(root.stores[store_index].name[:]), root.stores[store_index].limit}
@@ -290,10 +293,10 @@ place_new :: proc "contextless" (caller: ^Caller, path: ^Path) -> (place: i64, o
 // The refusals that each export of a change makes first.
 change_refusal :: proc "contextless" (caller: ^Caller, error: ^errors.Error_Record) -> (refused: bool, result: i64) {
 	if caller.connection == nil || caller.store.limit == 0 {
-		return true, errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store)
+		return true, errors.fail(error, failure(.No_Store), .No_Grant, .Store)
 	}
 	if caller.read_only {
-		return true, errors.fail(error, ERROR_PLACE, .No_Grant, .Changes)
+		return true, errors.fail(error, failure(.Place), .No_Grant, .Changes)
 	}
 	return false, 0
 }
@@ -313,20 +316,20 @@ named_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_R
 			return named, refusal
 		}
 	} else if named.caller.connection == nil {
-		return named, errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store)
+		return named, errors.fail(error, failure(.No_Store), .No_Grant, .Store)
 	}
 	ok: bool
 	if named.path, ok = place_path(&named.caller, place, error, place_argument); !ok {
-		return named, ERROR_PLACE
+		return named, failure(.Place)
 	}
 	if named.path.own && named.path.store.limit == 0 {
-		return named, errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store)
+		return named, errors.fail(error, failure(.No_Store), .No_Grant, .Store)
 	}
 	if change && !named.path.own {
-		return named, errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store, place_argument)
+		return named, errors.fail(error, failure(.No_Store), .No_Grant, .Store, place_argument)
 	}
 	if named.name, ok = name_keep(name, error, place_argument + 1); !ok {
-		return named, ERROR_NAME
+		return named, failure(.Name)
 	}
 	return named, 0
 }
@@ -430,10 +433,10 @@ add :: proc "c" (place: i64, rows: ^system.Table_To_Read(Add_Row_Export), names:
 	}
 	path, ok := place_path(&caller, place, error, 1)
 	if !ok {
-		return ERROR_PLACE
+		return failure(.Place)
 	}
 	if !path.own {
-		return errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store, 1)
+		return errors.fail(error, failure(.No_Store), .No_Grant, .Store, 1)
 	}
 	records := system.table_records(rows)
 	given := ([^]Add_Row)(raw_data(records))[:len(records)]
@@ -458,27 +461,27 @@ open :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> i64
 		return refused
 	}
 	if named.path.depth >= NESTING_LIMIT {
-		return errors.fail(error, ERROR_NAME, .Too_Long, .Trees, 1, NESTING_LIMIT + 1, NESTING_LIMIT)
+		return errors.fail(error, failure(.Name), .Too_Long, .Trees, 1, NESTING_LIMIT + 1, NESTING_LIMIT)
 	}
 	store_index := store_find(named.path.store.name)
 	if store_index < 0 {
-		return errors.fail(error, ERROR_ABSENT, .Absent, .Trees, 2)
+		return errors.fail(error, failure(.Absent), .Absent, .Trees, 2)
 	}
 	if store_damaged[store_index] {
-		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Stores)
+		return errors.fail(error, failure(.Damaged), .Damaged, .Stores)
 	}
 	value, outcome := entry_of(store_index, path_names(&named.path), named.name.key)
 	if outcome == .Device || outcome == .Wrong {
 		return lookup_refusal(outcome, error, 2)
 	}
 	if outcome != .Found || value.kind != .Tree {
-		return errors.fail(error, ERROR_ABSENT, .Absent, .Trees, 2)
+		return errors.fail(error, failure(.Absent), .Absent, .Trees, 2)
 	}
 	named.path.names[named.path.depth] = named.name.key
 	named.path.depth += 1
 	opened_place, ok := place_new(&named.caller, &named.path)
 	if !ok {
-		return errors.fail(error, ERROR_FULL, .Full, .Places, 0, 0, PLACE_CAPACITY)
+		return errors.fail(error, failure(.Full), .Full, .Places, 0, 0, PLACE_CAPACITY)
 	}
 	return opened_place
 }
@@ -492,10 +495,10 @@ open :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> i64
 close :: proc "c" (place: i64, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
 	if caller.connection == nil || place == 0 {
-		return errors.fail(error, ERROR_PLACE, .Absent, .Places, 1, place)
+		return errors.fail(error, failure(.Place), .Absent, .Places, 1, place)
 	}
 	if _, ok := place_path(&caller, place, error, 1); !ok {
-		return ERROR_PLACE
+		return failure(.Place)
 	}
 	item := &places[int(place & 0xFFFF_FFFF) - 1]
 	item.holder = 0
@@ -525,18 +528,18 @@ Listed :: struct {
 list :: proc "c" (place: i64, after: ^string, rows: ^system.Table_To_Append(Listed), names: ^system.Bytes_To_Append, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
 	if caller.connection == nil || caller.store.limit == 0 {
-		return errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store)
+		return errors.fail(error, failure(.No_Store), .No_Grant, .Store)
 	}
 	path, ok := place_path(&caller, place, error, 1)
 	if !ok {
-		return ERROR_PLACE
+		return failure(.Place)
 	}
 	cursor: Entry_Name
 	from_after := len(after^) != 0
 	if from_after {
 		kept, kept_ok := name_keep(after^, error, 2)
 		if !kept_ok {
-			return ERROR_NAME
+			return failure(.Name)
 		}
 		cursor = kept.key
 	}
@@ -545,12 +548,12 @@ list :: proc "c" (place: i64, after: ^string, rows: ^system.Table_To_Append(List
 		return 0 // A store with no commit has no entry.
 	}
 	if store_damaged[store_index] {
-		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Stores)
+		return errors.fail(error, failure(.Damaged), .Damaged, .Stores)
 	}
 	root_node, outcome := tree_of(store_index, path_names(&path))
 	if outcome != .Found {
 		if outcome == .Absent {
-			return errors.fail(error, ERROR_ABSENT, .Absent, .Places, 1)
+			return errors.fail(error, failure(.Absent), .Absent, .Places, 1)
 		}
 		return lookup_refusal(outcome, error, 1)
 	}
@@ -594,14 +597,14 @@ rename :: proc "c" (place: i64, name: ^string, to_place: i64, to_name: ^string, 
 	}
 	to_path, ok := place_path(&named.caller, to_place, error, 3)
 	if !ok {
-		return ERROR_PLACE
+		return failure(.Place)
 	}
 	if !to_path.own {
-		return errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store, 3)
+		return errors.fail(error, failure(.No_Store), .No_Grant, .Store, 3)
 	}
 	to, to_ok := name_keep(to_name^, error, 4)
 	if !to_ok {
-		return ERROR_NAME
+		return failure(.Name)
 	}
 	return entry_rename(named.caller.store, path_names(&named.path), named.name, path_names(&to_path), to, error)
 }
@@ -625,14 +628,14 @@ Shared :: struct {
 share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
 	if caller.connection == nil || caller.store.limit == 0 {
-		return errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store)
+		return errors.fail(error, failure(.No_Store), .No_Grant, .Store)
 	}
 	path, ok := place_path(&caller, place, error, 1)
 	if !ok {
-		return ERROR_PLACE
+		return failure(.Place)
 	}
 	if !path.own {
-		return errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store, 1)
+		return errors.fail(error, failure(.No_Store), .No_Grant, .Store, 1)
 	}
 	free: ^Share
 	for &item in shares {
@@ -642,22 +645,22 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 		}
 	}
 	if free == nil {
-		return errors.fail(error, ERROR_FULL, .Full, .Connections, 0, 0, SHARE_CAPACITY)
+		return errors.fail(error, failure(.Full), .Full, .Connections, 0, 0, SHARE_CAPACITY)
 	}
 	ring_memory, ring_status := system.memory_create(ring.PAGE_COUNT)
 	if ring_status != .Ok {
-		return errors.fail(error, ERROR_DISK, .Refused, .None, 0, 0, 0, i64(ring_status))
+		return errors.fail(error, failure(.Disk), .Refused, .None, 0, 0, 0, i64(ring_status))
 	}
 	region_memory, region_status := system.memory_create(isolated.REGION_PAGES)
 	if region_status != .Ok {
 		system.close(ring_memory)
-		return errors.fail(error, ERROR_DISK, .Refused, .None, 0, 0, 0, i64(region_status))
+		return errors.fail(error, failure(.Disk), .Refused, .None, 0, 0, 0, i64(region_status))
 	}
 	connection, connection_ok := system.connection_make(ring_memory, region_memory, system.name_unpack(system.name_pack(caller.store.name)))
 	if !connection_ok {
 		system.close(ring_memory)
 		system.close(region_memory)
-		return errors.fail(error, ERROR_DISK, .Refused)
+		return errors.fail(error, failure(.Disk), .Refused)
 	}
 	given_ring, give_status := system.give(caller.connection.ring_memory, ring_memory, {.Read, .Write})
 	given_region: system.Handle
@@ -667,7 +670,7 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 	if give_status != .Ok {
 		system.handle_revoke(ring_memory)
 		system.connection_end(&connection)
-		return errors.fail(error, ERROR_DISK, .Refused, .None, 0, 0, 0, i64(give_status))
+		return errors.fail(error, failure(.Disk), .Refused, .None, 0, 0, 0, i64(give_status))
 	}
 	free^ = {connection = connection, maker = caller.connection.ring_memory, read_only = read_only != 0 || caller.read_only, depth = path.depth}
 	copy(free.path[:], path.names[:path.depth])
@@ -705,11 +708,11 @@ share_end :: proc "contextless" (item: ^Share) {
 unshare :: proc "c" (number: i64, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
 	if caller.connection == nil || number < 1 || number > SHARE_CAPACITY {
-		return errors.fail(error, ERROR_PLACE, .Absent, .Connections, 1, number)
+		return errors.fail(error, failure(.Place), .Absent, .Connections, 1, number)
 	}
 	item := &shares[number - 1]
 	if item.connection.calls.head == nil || item.maker != caller.connection.ring_memory {
-		return errors.fail(error, ERROR_PLACE, .Absent, .Connections, 1, number)
+		return errors.fail(error, failure(.Place), .Absent, .Connections, 1, number)
 	}
 	share_end(item)
 	system.log("storage: the share ", number, " ended")
@@ -769,7 +772,7 @@ usage :: proc "c" (result: ^[]Usage) -> i64 {
 stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
 	if !caller.acts_for_principal {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return errors.fail(error, failure(.Acts_For_Principal), .No_Grant, .Acts_For_Principal)
 	}
 	writer := system.Writer{buffer = result^}
 	parts := [?]system.Part{"generation ", root.generation, ", ", opened.in_use_count, " of ", root.disk_blocks, " blocks in use, ", commits, " commits, ", commits_refused, " commits refused, ", commits_undecided, " commits for the next open to decide, ", blocks_written, " blocks written and ", blocks_read_back, " blocks read back in ", read_back_nanoseconds / 1000, " microseconds since the start"}
@@ -825,23 +828,23 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
 	if caller.connection == nil {
-		return errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store)
+		return errors.fail(error, failure(.No_Store), .No_Grant, .Store)
 	}
 	// The name is copied one time: the caller can change the call region.
 	copied: system.Name
 	count := copy(copied[:len(copied) - 1], store^)
 	name := string(copied[:count])
 	if !may_name_store(&caller, name) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return errors.fail(error, failure(.Acts_For_Principal), .No_Grant, .Acts_For_Principal)
 	}
 	index := store_find(name)
 	if index < 0 || len(store^) >= len(copied) {
-		return errors.fail(error, ERROR_ABSENT, .Absent, .Stores, 1)
+		return errors.fail(error, failure(.Absent), .Absent, .Stores, 1)
 	}
 	path := Path{store = {system.name_of(root.stores[index].name[:]), root.stores[index].limit}}
 	opened_place, ok := place_new(&caller, &path)
 	if !ok {
-		return errors.fail(error, ERROR_FULL, .Full, .Places, 0, 0, PLACE_CAPACITY)
+		return errors.fail(error, failure(.Full), .Full, .Places, 0, 0, PLACE_CAPACITY)
 	}
 	return opened_place
 }
@@ -934,7 +937,7 @@ restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.
 		return refused
 	}
 	if named.caller.read_only {
-		return errors.fail(error, ERROR_PLACE, .No_Grant, .Changes)
+		return errors.fail(error, failure(.Place), .No_Grant, .Changes)
 	}
 	_, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
 	if located < 0 {
@@ -943,7 +946,7 @@ restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.
 	if generation == i64(object.generation) && state_damaged(object.pointer) {
 		// The current version is damaged: a restore of it would keep the
 		// damage, and say that the object is whole.
-		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 2)
+		return errors.fail(error, failure(.Damaged), .Damaged, .Objects, 2)
 	}
 	state, state_refused := state_at(&object, generation, 3, error)
 	if state_refused < 0 {
@@ -965,18 +968,18 @@ clone :: proc "c" (place: i64, name: ^string, new_name: ^string, error: ^errors.
 		return refused
 	}
 	if named.caller.read_only {
-		return errors.fail(error, ERROR_PLACE, .No_Grant, .Changes)
+		return errors.fail(error, failure(.Place), .No_Grant, .Changes)
 	}
 	_, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
 	if located < 0 {
 		return located
 	}
 	if state_damaged(object.pointer) {
-		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 2)
+		return errors.fail(error, failure(.Damaged), .Damaged, .Objects, 2)
 	}
 	target, target_ok := name_keep(new_name^, error, 3)
 	if !target_ok {
-		return ERROR_NAME
+		return failure(.Name)
 	}
 	return object_change(named.path.store, path_names(&named.path), target, .Clone, nil, current_state(&object), reaches_whole_store(&named.caller), error, 3)
 }
@@ -1007,7 +1010,7 @@ compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result:
 	}
 	for state, index in states {
 		if state.size > format.OBJECT_SIZE_LIMIT || state_damaged(state.root) {
-			return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 3 + i64(index))
+			return errors.fail(error, failure(.Damaged), .Damaged, .Objects, 3 + i64(index))
 		}
 	}
 	ranges: i64
@@ -1026,7 +1029,7 @@ compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result:
 			found_at[side] = end_blocks
 			index, pointer, found, outcome := block_tree.next_block(&object_source, trees[side], at, &object_nodes)
 			if outcome != .Good {
-				return errors.fail(error, outcome == .Device ? ERROR_DISK : ERROR_DAMAGED, outcome == .Device ? .Device : .Damaged, .Objects, 3 + i64(side))
+				return errors.fail(error, outcome == .Device ? failure(.Disk) : failure(.Damaged), outcome == .Device ? .Device : .Damaged, .Objects, 3 + i64(side))
 			}
 			if found {
 				found_at[side], found_pointer[side] = index, pointer
@@ -1053,7 +1056,7 @@ compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result:
 					continue
 				}
 				if _, outcome := block_tree.block_check(&object_source, here[side], next, &compare_blocks[side]); outcome != .Good {
-					return errors.fail(error, outcome == .Device ? ERROR_DISK : ERROR_DAMAGED, outcome == .Device ? .Device : .Damaged, .Objects, 3 + i64(side))
+					return errors.fail(error, outcome == .Device ? failure(.Disk) : failure(.Damaged), outcome == .Device ? .Device : .Damaged, .Objects, 3 + i64(side))
 				}
 			}
 			for offset in 0 ..< i64(BLOCK_SIZE) {
@@ -1105,14 +1108,14 @@ erase_versions :: proc "c" (place: i64, name: ^string, result: ^[]Erase_Measure,
 	}
 	// A share is lent for the bytes of one tree, and ends no history.
 	if share_of(named.caller.connection) != nil {
-		return errors.fail(error, ERROR_PLACE, .No_Grant, .Changes)
+		return errors.fail(error, failure(.Place), .No_Grant, .Changes)
 	}
 	// The versions protect the principal against a fault of the program of
 	// the store: only a program that the root service allows ends them, for
 	// a secret that an earlier version must not keep (docs/PROPERTIES.md,
 	// "Persistence: no save action, and versions for all programs").
 	if !named.caller.erases_versions {
-		return errors.fail(error, ERROR_PLACE, .No_Grant, .Versions_Erase)
+		return errors.fail(error, failure(.Place), .No_Grant, .Versions_Erase)
 	}
 	measure, erased := versions_erase(named.caller.store, path_names(&named.path), named.name, error)
 	if erased < 0 {

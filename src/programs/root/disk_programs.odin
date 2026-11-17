@@ -355,13 +355,13 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		system.wait_records(wait, &load.client.calls.completions)
 		return
 	}
-	if status == .Failed && value == storage.ERROR_ABSENT && (load.stage == .Import_Size || load.stage == .Import_Bytes) {
+	if storage.export_failed_with(status, value, .Absent) && (load.stage == .Import_Size || load.stage == .Import_Bytes) {
 		// An entry of the list that left the store since: the scan goes on
 		// without it.
 		disk_import_entry_skip(wait)
 		return
 	}
-	if status == .Failed && value == storage.ERROR_ABSENT {
+	if storage.export_failed_with(status, value, .Absent) {
 		disk_load_end(.Bad_Handle, disk_refused(name, errors.ring_fail(kind, .Absent, .Objects, 1), "the store ", disk_program.STORE_NAME, " has no object with this name"))
 		return
 	}
@@ -369,7 +369,7 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		sentence: [240]u8
 		writer := system.Writer{buffer = sentence[:]}
 		storage.error_text(&writer, &load.client, &error)
-		disk_load_end(.Bad_State, disk_refused(name, errors.ring_fail(kind, value == storage.ERROR_DAMAGED ? errors.Kind.Damaged : errors.Kind.Refused, .Objects, 1, 0, 0, value), "the storage service refused the read: ", system.written(&writer)))
+		disk_load_end(.Bad_State, disk_refused(name, errors.ring_fail(kind, storage.export_failed_with(status, value, .Damaged) ? errors.Kind.Damaged : errors.Kind.Refused, .Objects, 1, 0, 0, value), "the storage service refused the read: ", system.written(&writer)))
 		return
 	}
 	if status != .Ok || value < 0 {

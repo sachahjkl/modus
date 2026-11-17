@@ -71,7 +71,9 @@ Input :: struct {
 // input_add adds one display event to the input of a frame. It gives false
 // for an event that it does not take (a key released).
 input_add :: proc "contextless" (input: ^Input, event: display.Event) -> bool {
-	#partial switch event.kind {
+	switch event.kind {
+	case .None, .Settings_Changed, .Go_To:
+		// The window layer takes these events itself (window_events).
 	case .Pointer:
 		input.pointer_x, input.pointer_y = event.x, event.y
 		input.pointer_known = true

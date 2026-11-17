@@ -111,7 +111,16 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 			break
 		}
 		ring_memory, region_memory := Handle(command.values[0]), Handle(command.values[1])
-		#partial switch isolated.Service_Command(command.kind) {
+		// A word that names no command holds no handle that this program
+		// knows of: it closes nothing.
+		service_command, known := member_of_word(isolated.Service_Command, u64(command.kind))
+		if !known {
+			log_in("programs", .Warning, "service: the root service sent a command of the kind ", u64(command.kind), ", which names no service command: it is refused")
+			continue
+		}
+		switch service_command {
+		case .None:
+			log_in("programs", .Warning, "service: the root service sent the service command None: it is refused")
 		case .Connect:
 			if !connection_add(service, ring_memory, region_memory, name_unpack({command.values[2], command.values[3], command.values[4], command.values[5]}), command.values[6]) {
 				close(ring_memory)
@@ -161,6 +170,10 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 // connections that the root service names: the program keeps it, serves it
 // with connection_serve, and ends it with connection_end.
 connection_make :: proc "contextless" (ring_memory, region_memory: Handle, caller: Name) -> (connection: Connection, ok: bool) {
+	region_pages, size_status := memory_size(region_memory)
+	if size_status != .Ok {
+		return {}, false
+	}
 	calls, ring_status := ring_open(ring_memory)
 	if ring_status != .Ok {
 		return {}, false
@@ -170,7 +183,7 @@ connection_make :: proc "contextless" (ring_memory, region_memory: Handle, calle
 		ring_close(&calls)
 		return {}, false
 	}
-	return {ring_memory = ring_memory, region_memory = region_memory, calls = calls, region = ([^]u8)(bytes)[:memory_size(region_memory) * PAGE_SIZE], caller = caller}, true
+	return {ring_memory = ring_memory, region_memory = region_memory, calls = calls, region = ([^]u8)(bytes)[:region_pages * PAGE_SIZE], caller = caller}, true
 }
 
 // connection_end closes a connection that connection_make opened.
@@ -210,6 +223,10 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 		if connection.calls.head != nil {
 			continue
 		}
+		region_pages, size_status := memory_size(region_memory)
+		if size_status != .Ok {
+			return false
+		}
 		calls, ring_status := ring_open(ring_memory)
 		if ring_status != .Ok {
 			return false
@@ -223,7 +240,7 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 			ring_memory   = ring_memory,
 			region_memory = region_memory,
 			calls         = calls,
-			region        = ([^]u8)(bytes)[:memory_size(region_memory) * PAGE_SIZE],
+			region        = ([^]u8)(bytes)[:region_pages * PAGE_SIZE],
 			caller        = caller,
 			grant         = grant,
 		}
@@ -322,7 +339,12 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 	// Only the pages of the records, at the same address at each call.
 	for item, index in prepared.mappings[:prepared.mapping_count] {
 		memory := Handle(item.handle)
-		object_size := memory_size(memory) * PAGE_SIZE
+		object_pages, object_status := memory_size(memory)
+		if object_status != .Ok {
+			// The kernel refused the handle: the record says which argument.
+			return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Absent, .None, i64(item.parameter + 1), i64(item.handle)))
+		}
+		object_size := object_pages * PAGE_SIZE
 		if item.start > object_size || item.size > object_size - item.start {
 			return refused(&completion, .Bad_Arguments, errors.error_make(.Out_Of_Range, .Bytes, i64(item.parameter + 1), i64(min(item.start, 1 << 62) + min(item.size, 1 << 62)), i64(object_size)))
 		}
@@ -407,7 +429,9 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 		return give(ring_memory, copy, wanted)
 	}
 	each: for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
-		#partial switch type {
+		switch type {
+		case .None, .Integer, .Text:
+			// No handle and no memory object: nothing to lend.
 		case .Handle:
 			result: Handle
 			result, status = lend_one_handle(ring_memory, Handle(arguments[index].integer), transmute(Rights)function.parameter_details[index], lending)

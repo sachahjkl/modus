@@ -92,11 +92,13 @@ integer_part :: proc "contextless" (item: module.Field) -> (part: Part, unit: st
 	if item.type != .Integer || !value_kinds.integer_unit_valid(item.integer_unit) {
 		return .Number, ""
 	}
-	#partial switch item.integer_unit.kind {
+	switch item.integer_unit.kind {
 	case .Size:
 		return .Size, value_kinds.integer_unit_text(item.integer_unit)
 	case .Time:
 		return .Time, value_kinds.integer_unit_text(item.integer_unit)
+	case .None, .Number, .Handle, .Value, .Grant, .Status, .Type, .Operation, .Command, .Module, .File, .Guide, .Term, .Version, .Yes, .No, .Procedure, .Constant, .Variable:
+		// integer_unit_valid takes no other kind: a plain number.
 	}
 	return .Number, ""
 }
@@ -104,7 +106,9 @@ integer_part :: proc "contextless" (item: module.Field) -> (part: Part, unit: st
 // cell_of gives the text of one field of a record. The text of a number is
 // in buffer; the text of a Text field is in the record.
 cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> Cell {
-	#partial switch item.type {
+	switch item.type {
+	case .None, .Record, .Table, .Bytes:
+		// A record holds no such field (module.field_size): an empty cell.
 	case .Integer:
 		value := module.field_integer(row, item)
 		part, unit := integer_part(item)
@@ -481,8 +485,8 @@ draw_failure :: proc "contextless" (sink: ^Sink, failure: Failure) {
 	number: [24]u8
 	sink.continuation = COLUMN_GAP + FAILURE_LABEL_WIDTH + COLUMN_GAP
 	failure_label(sink, "kind")
-	if errors.kind_known(record.kind) {
-		sink.write(sink, ERROR_KIND_NAMES[errors.Kind(record.kind)], .Status)
+	if kind, kind_ok := errors.kind_of_word(record.kind); kind_ok {
+		sink.write(sink, ERROR_KIND_NAMES[kind], .Status)
 	} else {
 		sink.write(sink, "an unknown kind, ", .Note)
 		sink.write(sink, sentence.format(number[:], record.kind), .Number)
@@ -511,8 +515,8 @@ draw_failure :: proc "contextless" (sink: ^Sink, failure: Failure) {
 	sink.write(sink, sentence.format(number[:], record.found), .Number)
 	if record.unit != 0 {
 		sink.write(sink, ", unit ", .Label)
-		if errors.unit_known(record.unit) {
-			sink.write(sink, errors.UNIT_NAMES[errors.Unit(record.unit)], .Plain)
+		if unit, unit_ok := errors.unit_of_word(record.unit); unit_ok {
+			sink.write(sink, errors.UNIT_NAMES[unit], .Plain)
 		} else {
 			sink.write(sink, sentence.format(number[:], record.unit), .Number)
 		}

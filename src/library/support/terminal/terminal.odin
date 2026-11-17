@@ -118,7 +118,7 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           name. values[2], values[3]: the places of the name that matched
 //           what the input typed (bit n: byte n of the name; values[2]
 //           holds bytes 0 to 63). values[4]: a List_Icon, what the name
-//           is; a number that is no List_Icon is None.
+//           is; the terminal refuses a row whose number names no List_Icon.
 //   List    The completion list that the terminal shows over its text, at
 //           the edit line: the rows that List_Row gave before. values[0]:
 //           the count of rows, at most LIST_ROWS; 0 removes the list.
@@ -151,11 +151,6 @@ Kind :: enum u32 {
 	List      = 7, // Show the completion list.
 	Code_Runs = 8, // The runs of code of the next record of a target.
 }
-
-// A new kind of record, or a new field, is a new version. 2: the kind
-// Code_Runs, and the byte Style.code, which was the first byte of
-// Style.reserved: a program of version 1 writes 0 there, the kind None.
-TERMINAL_RECORD_VERSION :: 2
 
 NO_CURSOR :: max(u64) // An Edit record with no cursor.
 NO_CHOICE :: max(u64) // A List record with no chosen row.
@@ -263,10 +258,12 @@ open :: proc "contextless" (ctx: ^system.Context, error: ^errors.Error_Record = 
 		errors.fail(error, 0, .No_Grant, .Terminal)
 		return {}, false
 	}
-	if size := system.memory_size(ctx.handles[GRANT_TEXT], error); size != TEXT_PAGES {
-		if size != 0 {
-			errors.fail(error, 0, .Bad_Value, .Pages, 1, i64(size), TEXT_PAGES) // The text region of the grant has another size.
-		}
+	size, size_status := system.memory_size(ctx.handles[GRANT_TEXT], error)
+	if size_status != .Ok {
+		return {}, false // memory_size wrote the record of the kernel.
+	}
+	if size != TEXT_PAGES {
+		errors.fail(error, 0, .Bad_Value, .Pages, 1, i64(size), TEXT_PAGES) // The text region of the grant has another size.
 		return {}, false
 	}
 	status: system.Status
@@ -448,16 +445,24 @@ List_Keeping :: struct {
 	pending:      [LIST_ROWS]Code_Runs, // The runs that the next List_Row of each row takes.
 	shown:        List_Shown, // The list on the screen.
 	runs_refused: u64, // The lists of runs that were refused: each one left its row plain.
+	rows_refused: u64, // The List_Row records whose icon named no List_Icon: none of them was kept.
 }
 
 // list_keep_row keeps the row of a List_Row record: values[0] its number,
 // values[1] the bytes of its name, values[2] and values[3] the matched
-// places. The text is in two parts (the text region starts again at its
-// first byte). A number past the rows is not kept. The row takes the runs
-// of code that came for its number since its last List_Row, when they fit
-// its text; if not, it is plain and the refusal is counted.
+// places, values[4] its icon. The text is in two parts (the text region
+// starts again at its first byte). A number past the rows is not kept. An
+// icon that names no List_Icon is refused: the row is not kept, its runs
+// wait for the next List_Row, and the refusal is counted. The row takes the
+// runs of code that came for its number since its last List_Row, when they
+// fit its text; if not, it is plain and the refusal is counted.
 list_keep_row :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64, first, second: []u8) {
 	if values[0] >= LIST_ROWS {
+		return
+	}
+	icon, icon_ok := system.member_of_word(List_Icon, values[4])
+	if !icon_ok {
+		keeping.rows_refused += 1
 		return
 	}
 	row := &keeping.next[values[0]]
@@ -465,8 +470,7 @@ list_keep_row :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64, fir
 	row.length += copy(row.text[row.length:], second)
 	row.name_length = int(min(values[1], u64(row.length)))
 	row.matched = {values[2], values[3]}
-	// The number comes from the program: a number that names no icon is no icon.
-	row.icon = values[4] <= u64(max(List_Icon)) ? List_Icon(values[4]) : .None
+	row.icon = icon
 	row.code = keeping.pending[values[0]]
 	keeping.pending[values[0]] = {}
 	if row.code.count != 0 && !code_runs_check(&row.code, row.length) {
@@ -548,8 +552,13 @@ record_part :: proc "contextless" (text: string, room: int) -> int {
 key :: proc "contextless" (terminal: ^Terminal) -> (pressed: Key, ok: bool) {
 	for {
 		record := system.receive(&terminal.ring.completions) or_return
-		if Input(record.kind) == .Key {
-			return {code = record.tag, character = key_character_of(record.values[0]), modifiers = u32(record.values[1])}, true
+		given, given_ok := input_of_record(record)
+		if !given_ok {
+			input_refusal_log(record)
+			continue
+		}
+		if given.kind == .Key {
+			return given.key, true
 		}
 	}
 }
@@ -564,20 +573,43 @@ key_character_of :: proc "contextless" (value: u64) -> rune {
 // input gives the next input record: a key, or what the pointer asked of
 // the scroll bar of the completion list. false: no record waits. A program
 // with a completion list reads its input here; a program that reads only
-// keys uses `key`. A record of a kind that the package does not know is
-// skipped.
+// keys uses `key`. A record that input_of_record refuses costs one line of
+// the log, and the next record is read.
 input :: proc "contextless" (terminal: ^Terminal) -> (given: Input_Record, ok: bool) {
 	for {
 		record := system.receive(&terminal.ring.completions) or_return
-		#partial switch Input(record.kind) {
-		case .Key:
-			return {kind = .Key, key = {code = record.tag, character = key_character_of(record.values[0]), modifiers = u32(record.values[1])}}, true
-		case .List_First:
-			// The number is the number of another program: the reader
-			// cuts it to its own list.
-			return {kind = .List_First, list_first = int(min(record.values[0], u64(max(i32))))}, true
+		read, read_ok := input_of_record(record)
+		if read_ok {
+			return read, true
 		}
+		input_refusal_log(record)
 	}
+}
+
+// input_of_record is the border of an input record of the terminal: the
+// record, or false for a kind that names no input, None included. It reads
+// and changes no state, so a host test gives it each refused kind.
+input_of_record :: proc "contextless" (record: ring.Record) -> (given: Input_Record, ok: bool) {
+	kind := system.member_of_word(Input, u64(record.kind)) or_return
+	switch kind {
+	case .None:
+		return {}, false
+	case .Key:
+		return {kind = .Key, key = {code = record.tag, character = key_character_of(record.values[0]), modifiers = u32(record.values[1])}}, true
+	case .List_First:
+		// The number is the number of another program: the reader
+		// cuts it to its own list.
+		return {kind = .List_First, list_first = int(min(record.values[0], u64(max(i32))))}, true
+	}
+	return {}, false
+}
+
+// input_refusal_log writes the line of an input record that names no
+// input. The log counts the lines of each second of the budget, so a
+// terminal that writes such records with no end costs its reader no wait.
+@(private)
+input_refusal_log :: proc "contextless" (record: ring.Record) {
+	system.log_in("programs", .Warning, "terminal: the terminal sent an input record of the kind ", u64(record.kind), ", which names no input: it is refused")
 }
 
 // clear tells the terminal to forget all the lines.

@@ -70,7 +70,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("host: no call ring or no call region")
 		system.stop(1)
 	}
-	region = ([^]u8)(bytes)[:system.memory_size(region_memory) * system.PAGE_SIZE]
+	region_pages, size_status := system.memory_size(region_memory)
+	if size_status != .Ok {
+		system.log("host: the call region has no size")
+		system.stop(1)
+	}
+	region = ([^]u8)(bytes)[:region_pages * system.PAGE_SIZE]
 
 	// The caller mapped the files of the module and of its imports, and the
 	// replacements that apply. This program loads the module: the loader

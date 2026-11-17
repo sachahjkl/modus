@@ -57,9 +57,22 @@ code_colors_keep_their_contrast :: proc(t: ^testing.T) {
 	testing.expect_value(t, code_kind_color(.Number, 0), graphics.code_class_color(.Literal, graphics.appearance))
 	// A text still typed has the color of a text: no change at each key.
 	testing.expect_value(t, code_kind_color(.Text_Unfinished, 0), code_kind_color(.Text, 0))
-	// A kind past the known ones is plain.
-	testing.expect_value(t, code_kind_of(200), Code_Kind.None)
-	testing.expect_value(t, code_kind_of(u8(Code_Kind.Arrow)), Code_Kind.Arrow)
+}
+
+// A byte that names no kind is refused: one past the last kind, and the
+// largest byte. Each kind comes back from its own byte.
+@(test)
+code_kind_of_refuses_a_byte_that_names_no_kind :: proc(t: ^testing.T) {
+	refused_bytes := [?]u8{u8(max(Code_Kind)) + 1, 200, max(u8)}
+	for value in refused_bytes {
+		_, ok := code_kind_of(value)
+		testing.expectf(t, !ok, "the byte %d names no kind, and it is taken", value)
+	}
+	for member in Code_Kind {
+		kind, ok := code_kind_of(u8(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, kind, member)
+	}
 }
 
 // The runs of a row: inside it, in order, with no overlap, at least one

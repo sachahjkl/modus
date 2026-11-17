@@ -86,6 +86,17 @@ Value_Kind :: enum u8 {
 	Bytes   = 6,
 }
 
+// value_kind_of_word is the border of the kind of a value in a word of a
+// record: the member, or false for a word that names none.
+value_kind_of_word :: proc "contextless" (word: u64) -> (kind: Value_Kind, ok: bool) {
+	for member in Value_Kind {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
 // One entry: 536 bytes.
 //
 // The integer unit of a parameter says what its Integer counts, a size or
@@ -216,6 +227,17 @@ Outcome :: enum u64 {
 	Edit_Opened      = 5, // The edit line of the provider holds the entry.
 	Candidates_Ready = 6, // The candidate area holds the candidates. values[1]: a Candidate_Kind. values[2]: their count. values[3]: CANDIDATES_CLOSED when they are the only values of the parameter, else 0.
 	Manual_Opened    = 7, // The window of the manual shows the page.
+}
+
+// outcome_of_word is the border of the outcome word of an answer of the
+// provider: the member, or false for a word that names none.
+outcome_of_word :: proc "contextless" (word: u64) -> (outcome: Outcome, ok: bool) {
+	for member in Outcome {
+		if u64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
 }
 
 // The result area holds lines of runs. One run: a byte Run_Part, a byte
@@ -564,7 +586,11 @@ argument_unpack :: proc "contextless" (values: [7]u64) -> (parameter: int, argum
 	if values[0] >> 24 != 0 || parameter >= PARAMETER_CAPACITY {
 		return 0, {}, false
 	}
-	switch Value_Kind(kind) {
+	value_kind, value_kind_ok := value_kind_of_word(kind)
+	if !value_kind_ok {
+		return 0, {}, false
+	}
+	switch value_kind {
 	case .Integer:
 		return parameter, {kind = .Integer, integer = i64(values[1])}, length == 0
 	case .Text:

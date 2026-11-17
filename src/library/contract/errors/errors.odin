@@ -198,6 +198,37 @@ unanswered_of_word :: proc "contextless" (word: i64) -> (unanswered: Unanswered,
 	return {}, false
 }
 
+// kind_of_word, unit_of_word and end_of_word are the borders of the words
+// of an error record that another program wrote: the member, or false for
+// a word that names none. A reader then switches on the member, never on a
+// cast of the word.
+kind_of_word :: proc "contextless" (word: i64) -> (kind: Kind, ok: bool) {
+	for member in Kind {
+		if i64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
+unit_of_word :: proc "contextless" (word: i64) -> (unit: Unit, ok: bool) {
+	for member in Unit {
+		if i64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
+end_of_word :: proc "contextless" (word: i64) -> (end: End, ok: bool) {
+	for member in End {
+		if i64(member) == word {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
 // What value, limit and found count.
 //
 // With the kinds `No_Grant`, `Absent`, `Damaged` and `Handle_Absent` the
@@ -296,22 +327,6 @@ fail :: proc "contextless" (error: ^Error_Record, result: i64, kind: Kind, unit:
 		error^ = error_make(kind, unit, argument, value, limit, found)
 	}
 	return result
-}
-
-// The text of a kind and of a unit, for a sentence. A value out of the
-// enumeration has no text: the reader says "unknown".
-//
-// kind_known says if a kind from a record is a member of `Kind` other than
-// `None`. A reader calls it before it indexes a table with the kind: a
-// record from another program can hold any value.
-kind_known :: proc "contextless" (kind: i64) -> bool {
-	return kind > 0 && kind <= i64(max(Kind))
-}
-
-// unit_known says if a unit from a record is a member of `Unit`, `None`
-// included. A reader calls it before it indexes `UNIT_NAMES`.
-unit_known :: proc "contextless" (unit: i64) -> bool {
-	return unit >= 0 && unit <= i64(max(Unit))
 }
 
 // The words of each unit in a sentence: "the budget holds 10 pages". `None`

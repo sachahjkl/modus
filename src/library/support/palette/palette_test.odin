@@ -1195,6 +1195,20 @@ running_and_result :: proc(t: ^testing.T) {
 		testing.expectf(t, panel.state == .Result && panel.result.outcome == .Refused, "hostile answer %d is refused", number)
 		testing.expect(t, palette_table.result_valid(panel.result.runs[:panel.result.count]))
 	}
+	// A valid area with a word that names no outcome or no kind: the
+	// panel refuses the answer, and the kind of the result before goes.
+	valid_length := write(result_area, {{"", "42"}})
+	words := [?][2]u64 {
+		{u64(max(palette_table.Outcome)) + 1, u64(palette_table.Value_Kind.Integer)},
+		{max(u64), u64(palette_table.Value_Kind.Integer)},
+		{u64(palette_table.Outcome.Shown_In_Panel), u64(max(palette_table.Value_Kind)) + 1},
+		{u64(palette_table.Outcome.Shown_In_Panel), max(u64)},
+	}
+	for word, number in words {
+		panel.state = .Running
+		result_set(panel, word[0], word[1], table, valid_length)
+		testing.expectf(t, panel.state == .Result && panel.result.outcome == .Refused && panel.result.kind == .None, "the answer of words %d is refused", number)
+	}
 	// The provider left while the panel waited.
 	panel.state = .Running
 	result_sentence(panel, "the console stopped")

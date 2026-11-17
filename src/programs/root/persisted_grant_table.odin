@@ -633,7 +633,7 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 	switch table.call {
 	case .None:
 	case .Read:
-		absent := status == .Failed && value == storage.ERROR_ABSENT
+		absent := storage.export_failed_with(status, value, .Absent)
 		if !absent && status != .Ok {
 			sentence: [240]u8
 			writer := system.Writer{buffer = sentence[:]}

@@ -1019,11 +1019,13 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 			ring_status: system.Status
 			connection.calls, ring_status = system.ring_open(connection.ring_memory)
 			address, map_status := system.memory_map(connection.region_memory)
-			if ring_status != .Ok || map_status != .Ok {
+			region_pages, size_status := system.memory_size(connection.region_memory)
+			if ring_status != .Ok || map_status != .Ok || size_status != .Ok {
 				connection_end(connection, false)
-				return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(ring_status != .Ok ? ring_status : map_status))
+				refused := ring_status != .Ok ? ring_status : map_status != .Ok ? map_status : size_status
+				return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused))
 			}
-			connection.region = ([^]u8)(address)[:system.memory_size(connection.region_memory) * system.PAGE_SIZE]
+			connection.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
 			system.log("remote: connected to the service ", name, ", for principal ", client.principal)
 			return connection, {}
 		}
@@ -1237,7 +1239,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no endpoint: the program has no grant of the network")
 	}
 	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
-	if map_status != .Ok || system.memory_size(ctx.handles[datagram.GRANT_REGION]) < datagram.REGION_PAGES {
+	region_pages, size_status := system.memory_size(ctx.handles[datagram.GRANT_REGION])
+	if map_status != .Ok || size_status != .Ok || region_pages < datagram.REGION_PAGES {
 		fail("no datagram region")
 	}
 	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]

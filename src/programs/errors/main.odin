@@ -219,9 +219,9 @@ case_rights :: proc "contextless" (writer: ^system.Writer) -> bool {
 
 // size_case asks the size of a memory object of a handle that must fail.
 size_case :: proc "contextless" (writer: ^system.Writer, handle: system.Handle, expected: errors.Kind) -> (record: errors.Error_Record, right: bool) {
-	pages := system.memory_size(handle, &record)
+	pages, status := system.memory_size(handle, &record)
 	system.kernel_error_text(writer, &record)
-	return record, pages == 0 && errors.Kind(record.kind) == expected
+	return record, status != .Ok && pages == 0 && record.kind == i64(expected)
 }
 
 case_revoked :: proc "contextless" (writer: ^system.Writer) -> bool {

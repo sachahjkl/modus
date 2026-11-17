@@ -928,7 +928,7 @@ child_delegate :: proc "contextless" (ctx: ^system.Context) -> ! {
 			ranges := [1]op.Page_Range{{first = 34, page_count = 1}}
 			_, result.status = system.memory_commit(memory, ranges[:], budget, &result.record)
 			// The object that B made with the Spend handle before the revocation.
-			result.value = system.memory_size(made)
+			result.value, _ = system.memory_size(made)
 		case 7:
 			ranges := [1]op.Page_Range{{first = 0, page_count = 32}}
 			_, result.status = system.memory_decommit(memory, ranges[:], &result.record)

@@ -74,7 +74,7 @@ root_check :: format.root_check
 
 // Damage: a block that a valid root names has a wrong check. The service
 // does not use the block. An object with such an object node or such data is
-// damaged: a read of it gives ERROR_DAMAGED, and a write or a remove
+// damaged: a read of it gives the answer Damaged, and a write or a remove
 // replaces it; the open and each read keep the wrong blocks in
 // `opened.wrong_blocks`. A store with such a store block or node is
 // damaged: the service does not know its entries, and refuses each call
@@ -423,18 +423,6 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 	}
 	return result
 }
-
-// The ERROR_ numbers are in src/library/support/storage: the client reads them too.
-ERROR_NO_STORE :: answers.ERROR_NO_STORE
-ERROR_NO_BUDGET :: answers.ERROR_NO_BUDGET
-ERROR_NAME :: answers.ERROR_NAME
-ERROR_TOO_LARGE :: answers.ERROR_TOO_LARGE
-ERROR_FULL :: answers.ERROR_FULL
-ERROR_DISK :: answers.ERROR_DISK
-ERROR_ABSENT :: answers.ERROR_ABSENT
-ERROR_DAMAGED :: answers.ERROR_DAMAGED
-ERROR_NO_VERSION :: answers.ERROR_NO_VERSION
-ERROR_EXISTS :: answers.ERROR_EXISTS
 
 store_find :: proc "contextless" (name: string) -> int {
 	for &store, index in root.stores {
@@ -1139,7 +1127,7 @@ cache_later :: proc "contextless" (pointer: Pointer, bytes: ^Block) {
 }
 
 // plan_commit writes the blocks of the plan, then the root, and gives the
-// new state to the service. It gives the generation, or an ERROR_ number
+// new state to the service. It gives the generation, or the word of an Export_Error
 // with the record.
 plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	plan_trees_failure_take()
@@ -1147,29 +1135,29 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		plan_drop()
 		store_damaged[plan.store_index] = true
 		system.log_in("storage", .Warning, "storage: a node of a tree of the store ", system.name_of(plan.next.stores[plan.store_index].name[:]), " has a wrong check or breaks a rule of the format: the service changes nothing more in the store")
-		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Stores)
+		return errors.fail(error, failure(.Damaged), .Damaged, .Stores)
 	}
 	if plan.device {
 		plan_drop()
-		return errors.fail(error, ERROR_DISK, .Device)
+		return errors.fail(error, failure(.Disk), .Device)
 	}
 	if plan.count_fault {
 		plan_drop()
 		store_faulty[plan.store_index] = true
 		system.log_in("storage", .Error, "storage: a fault of the engine: a commit would take a count of names of a block below 0; the service makes no change in the store ", system.name_of(plan.next.stores[plan.store_index].name[:]), " until its next start, which counts again")
-		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Counts)
+		return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
 	}
 	if plan.capacity_reached {
 		plan_drop()
-		return errors.fail(error, ERROR_FULL, .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit))
+		return errors.fail(error, failure(.Full), .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit))
 	}
 	if plan.count_overflow {
 		plan_drop()
-		return errors.fail(error, ERROR_FULL, .Over_Limit, .References, 0, i64(REFERENCE_LIMIT) + 1, i64(REFERENCE_LIMIT))
+		return errors.fail(error, failure(.Full), .Over_Limit, .References, 0, i64(REFERENCE_LIMIT) + 1, i64(REFERENCE_LIMIT))
 	}
 	if plan.full {
 		plan_drop()
-		return errors.fail(error, ERROR_FULL, .Full) // The disk: no number, because the free blocks are a fact of all the stores.
+		return errors.fail(error, failure(.Full), .Full) // The disk: no number, because the free blocks are a fact of all the stores.
 	}
 	entry := &plan.next.stores[plan.store_index]
 	entry.used = u64(i64(entry.used) + plan.used_change)
@@ -1184,13 +1172,13 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		}
 		if !transfer(.Write, requests[:len(part)]) {
 			plan_drop()
-			return errors.fail(error, ERROR_DISK, .Device)
+			return errors.fail(error, failure(.Disk), .Device)
 		}
 		blocks_written += u64(len(part))
 	}
 	if !flush() {
 		plan_drop()
-		return errors.fail(error, ERROR_DISK, .Device)
+		return errors.fail(error, failure(.Disk), .Device)
 	}
 	plan.next.generation = root.generation + 1
 	// The device answered Ok to each write; a disk that did not keep one
@@ -1208,13 +1196,13 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		plan_drop()
 		commits_refused += 1
 		system.log_in("storage", .Error, "storage: the read back of the commit of generation ", plan.next.generation, " found ", differ, differ == 1 ? string(" block with other bytes: the disk did not keep it") : string(" blocks with other bytes: the disk did not keep them"), "; the commit is refused before its root, and the service goes on from generation ", root.generation)
-		return errors.fail(error, ERROR_DISK, .Device, .Dropped_Writes, 0, 0, 0, i64(differ))
+		return errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, i64(differ))
 	case .Device:
 		// No root names the blocks: the disk holds the state before.
 		plan_drop()
 		commits_refused += 1
 		system.log_in("storage", .Error, "storage: the read back of the commit of generation ", plan.next.generation, " failed on the device: the commit is refused before its root")
-		return errors.fail(error, ERROR_DISK, .Device)
+		return errors.fail(error, failure(.Disk), .Device)
 	}
 	plan.next.time = time_now()
 	plan.next.date = date_now()
@@ -1226,7 +1214,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		// cannot know. It stops serving changes.
 		plan_drop()
 		root_undecided(plan.next.generation, "its write failed on the device")
-		return errors.fail(error, ERROR_DISK, .Device)
+		return errors.fail(error, failure(.Disk), .Device)
 	}
 	blocks_written += 1
 	// The root too: if the disk did not keep it, the root before is still
@@ -1242,12 +1230,12 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		commits_refused += 1
 		system.log_in("storage", .Error, "storage: the read back of the root of the commit of generation ", plan.next.generation, " found other bytes: the disk did not keep it; the commit is refused, and the service goes on from generation ", root.generation)
 		root_refused_in_a_row()
-		return errors.fail(error, ERROR_DISK, .Device, .Dropped_Writes, 0, 0, 0, 1)
+		return errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, 1)
 	case .Device:
 		// The root can be on the disk: as for a failed write of a root.
 		plan_drop()
 		root_undecided(plan.next.generation, "its read back failed on the device")
-		return errors.fail(error, ERROR_DISK, .Device)
+		return errors.fail(error, failure(.Disk), .Device)
 	}
 	roots_refused_in_a_row = 0
 	// The commit is on the disk: the service takes its state.

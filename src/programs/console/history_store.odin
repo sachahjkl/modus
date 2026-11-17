@@ -76,16 +76,18 @@ history_store_open :: proc "contextless" () -> (opened: bool) {
 		return false
 	}
 	client.file = file
-	ring_status, region_status: system.Status
+	ring_status, region_status, size_status: system.Status
 	client.calls, ring_status = system.ring_open(client.ring_memory)
 	address: rawptr
 	address, region_status = system.memory_map(client.region_memory)
-	if ring_status != .Ok || region_status != .Ok {
+	region_pages: u64
+	region_pages, size_status = system.memory_size(client.region_memory)
+	if ring_status != .Ok || region_status != .Ok || size_status != .Ok {
 		system.log("console: the line history stays in memory: the call ring or the call region does not map")
 		history_store_close(&client)
 		return false
 	}
-	client.region = ([^]u8)(address)[:system.memory_size(client.region_memory) * system.PAGE_SIZE]
+	client.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
 	history_client = client
 	history_connected = true
 	return true
@@ -196,7 +198,7 @@ history_clear :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	error: errors.Error_Record
 	result, status := storage.remove(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, &error)
-	if status == .Ok || status == .Failed && result == storage.ERROR_ABSENT {
+	if status == .Ok || storage.export_failed_with(status, result, .Absent) {
 		return {kind = .Integer, integer = i64(count)}
 	}
 	text: [240]u8
