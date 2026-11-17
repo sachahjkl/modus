@@ -6695,7 +6695,7 @@ Do not use: build cache, cached build, partial build.
 
 ### Build key
 
-A build key is one BLAKE3 hash over the inputs of the build of one thing (one step of a module, or one boot volume), in a fixed order.
+A build key is one BLAKE3 hash over the inputs of the build of one thing (one step of a module, one boot volume, or the binary of the tool in the development shell), in a fixed order.
 
 A module has two keys, one for each step of its build. The key of the compile step covers each source file that the compiler reads, the commands with each flag, the programs of the build and the tool. The key of the conversion covers the key of the compile step, the linked file and the module file of each import. The tool never records and never compares a key with an input that it cannot read. It is not the hash of a module, which names the output.
 
@@ -6707,7 +6707,7 @@ Do not use: cache key, fingerprint, input hash (for the whole key).
 
 A build record is the small text file that the tool writes after it built one thing: its build key, the hash of each output, and the list of the files that the compiler read.
 
-A module has one for each step of its build, in `build/modules/`; a boot volume has one in `build/boot/`. At the next build, the tool computes the build key again from the recorded files as they are now, and keeps the outputs when the key is the same and each output has its recorded hash. A record that is absent or damaged is no record: the tool builds, with no error.
+A module has one for each step of its build, in `build/modules/`; a boot volume has one in `build/boot/`; the binary of the tool has one in `build/tool/`. At the next build, the tool computes the build key again from the recorded files as they are now, and keeps the outputs when the key is the same and each output has its recorded hash. A record that is absent or damaged is no record: the tool builds, with no error.
 
 It is not the measure record and not the line of the reproducible build that the site quotes.
 
