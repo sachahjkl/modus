@@ -59,10 +59,34 @@ The two parts of the call are pure procedures on a ring (`kernel_commands_push`,
 - **The check and the push in the kernel.** The kernel checks the room, runs the command, then pushes. The push fails only after a write of the ring by another thread of the program, and the answer is then lost by the program itself. The kernel does not trust the counters for anything else: `ring.full` reads a count that is past the capacity as full, as `push` does.
 - **The test of a full queue uses the operation `None`.** It changes nothing, so the answers differ only by their tags, and the test reads that each tag arrives once, in order. It leaves one place, which a `Word_Wait` on a word that keeps its value takes in the next entry, with a held command behind it: the entry must not wait on that word.
 - **A held command and `system.log`.** `system.log` calls `command_call`. Code that leaves a record in its kernel ring cannot write a line of the log until it reads its completions: the machine test computes its results first, empties the ring, then writes its lines.
-- **`system.stop` on a ring that holds records.** It calls `Program_Stop` through `command_call`, which refuses it, and then loops. Only code that writes the kernel ring itself leaves records there; it empties the ring before it can stop.
+
+## The stop of a program
+
+A program that asks to stop must stop, whatever its kernel ring holds. `system.stop` cannot use the rule of `commands_call` alone: on a ring that holds records it would get `Busy`, and a stop that returns has nowhere to go.
+
+The chosen form, in rounds:
+
+1. Drop each completion that waits. The program ends, so no answer is wanted.
+2. If the ring is empty, send `Program_Stop` with the code of the program through `command_call`.
+3. Else enter the kernel with no deadline, so that the held commands run, and go back to 1.
+4. Stop the program by a fault when the ring does not empty: after a number of rounds equal to the capacity of the ring, or at once when a completion stays after the drop. A completion stays only when the program wrote false counters, and no entry changes them.
+
+The bound is a count, never a time. With room in the completion queue, each entry runs at least one held command, so an honest ring is empty after at most one round for each place.
+
+**The fault.** `stop` writes to the time page. A program can only read that page, so the write is a page fault at an address at or above `THREAD_AREA_BASE`. The kernel never gives a fault at such an address to a fault handler or a debugger, so it stops the program at once. It writes its report and one line of the log, with the stop code of a page fault (`STOP_CODE_FAULT` plus the vector 14). The same fault ends the program when `Program_Stop` itself is refused.
+
+The refused forms:
+
+- **A loop after the refusal.** It is the fault that made this design: a program that asked to stop ran for ever.
+- **An instruction that the processor refuses (`ud2`).** A fault handler or a debugger of the program can ask for that kind, and the program then goes on.
+- **A reset of the counters by the program.** The program writes only the write counter of its command queue and the read counter of its completion queue. A reset would drop held commands that the kernel has not seen, and false counters stay false.
+- **A new kernel operation, or a stop with no ring.** The kernel has one entry, through the ring, and its operations are counted. The fault already ends a program, with no change of the kernel.
+- **A wait with a time as the bound.** A test would then depend on the speed of the machine, and a time is no proof that the ring cannot empty.
+
+The decision of each round is a pure procedure (`stop_step`), which the host tests. The machine case is the child of the program `errors`: it fills its completion queue, holds one command, and stops with its own code. Its starter reads that code with `Program_State`.
 
 ## State
 
-Built: the check of the kernel before each command, the entry that ends with no wait when a command waits, `ring.full`, `system.commands_call` as the one path of the library with its pure parts and their host tests, `wait_end` and the batches of the programs `locks` and `scheduler` on it, and the machine case of the program `errors` that fills its completion queue, holds a command behind a `Word_Wait`, and reads each answer once.
+Built: the check of the kernel before each command, the entry that ends with no wait when a command waits, `ring.full`, `system.commands_call` as the one path of the library with its pure parts and their host tests, `wait_end` and the batches of the programs `locks` and `scheduler` on it, and the machine case of the program `errors` that fills its completion queue, holds a command behind a `Word_Wait`, and reads each answer once, and `system.stop` that ends the program whatever its ring holds, with `stop_step` and its host tests and the stop of the child of `errors`.
 
 Left: nothing of this part.

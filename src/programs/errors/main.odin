@@ -59,7 +59,8 @@
 // word of a `Word_Wait` of the same entry; a kernel call of the library is
 // refused with `Busy` and does not run; a wait of the library ends at once
 // and pushes nothing; and after the read each answer has come once, in
-// order, and the kept command runs once.
+// order, and the kept command runs once. Its child stops on a kernel ring
+// that holds records, and must stop with its own stop code.
 //
 // **The measures**, printed and never compared to a bound: a kernel
 // operation that succeeds and one that fails with its record; a direct
@@ -955,7 +956,15 @@ lock_takes :: proc "contextless" (machine: system.Handle) -> (control, frame: u6
 	return report.locks[op.Lock_Kind.Control].takes, report.locks[op.Lock_Kind.Frame].takes
 }
 
-// child runs REFUSALS refused Log operations, writes their time, and stops.
+// The stop code of the child: not 0 and not a code of a fault, so that the
+// starter sees that the child stopped with its own stop, not by a fault.
+CHILD_STOP_CODE :: 7
+
+// child runs REFUSALS refused Log operations, writes their time, and stops
+// on a kernel ring that holds records: a full completion queue, unread, and
+// one command held behind it. A stop must end the program whatever its ring
+// holds (src/md/api/kernel_ring_completion_room.md, "The stop of a
+// program").
 child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	page := (^Child_Page)(uintptr(MEASURE_ADDRESS))
 	log := u64(ctx.handles[op.CONTEXT_LOG])
@@ -966,7 +975,15 @@ child :: proc "contextless" (ctx: ^system.Context) -> ! {
 	}
 	page.log_ns = (system.time() - start) * 1_000_000 / REFUSALS
 	intrinsics.atomic_store(&page.done, 1)
-	system.stop(0)
+	// The pushes write the kernel ring itself, on purpose. A refused push
+	// leaves a ring that holds less, which the stop must end too.
+	kernel := system.kernel_ring()
+	for _ in 0 ..< ring.capacity(&kernel.completions) {
+		_ = ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.None)})
+	}
+	system.enter(0)
+	_ = ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.None)})
+	system.stop(CHILD_STOP_CODE)
 }
 
 // refusals measures the two refusals; the machine handle reads the counts of
@@ -991,6 +1008,25 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 				break
 			}
 			system.sleep(system.time() + 10)
+		}
+		// The child then stops on a kernel ring that holds records. The
+		// event word of this thread changes when a program that it holds
+		// stops; the hang bound only ends a stop that never comes.
+		deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+		child_state: op.Program_State
+		child_code: u32
+		for {
+			wait := system.wait_begin()
+			child_state, child_code = system.program_state(program)
+			if child_state == .Stopped || system.time() >= deadline {
+				break
+			}
+			system.wait_end(&wait, deadline)
+		}
+		if child_state == .Stopped && child_code == CHILD_STOP_CODE {
+			system.log("errors: a stop on a kernel ring that holds records ends the program with its own stop code: as it must")
+		} else {
+			system.log("errors: WRONG: a stop on a kernel ring that holds records left the child in the state ", u64(child_state), " with the code ", u64(child_code))
 		}
 		system.close(program)
 	}

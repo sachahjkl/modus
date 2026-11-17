@@ -2953,6 +2953,9 @@ scenario := [?]Step {
 	{kind = .Record, program = "errors", level = "info", text = " records name no cause (Refused)", any_order = true},
 	{kind = .Wait, text = " handles; 0 records contradict their status, "},
 	{kind = .Wait, text = "errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", any_order = true},
+	// The child of errors stops on a kernel ring that holds records
+	// (src/md/api/kernel_ring_completion_room.md, "The stop of a program").
+	{kind = .Wait, text = "errors: a stop on a kernel ring that holds records ends the program with its own stop code: as it must"},
 	{kind = .Wait, text = " refused Memory_Create: "},
 	{kind = .Wait, text = "errors: a kernel command and its table of error details: accepted with no table "},
 	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},

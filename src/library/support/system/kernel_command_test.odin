@@ -175,6 +175,78 @@ kernel_completions_take_refuses_an_answer_that_is_not_its_own :: proc(t: ^testin
 	}
 }
 
+// stop_step on a ring that does not empty: completion counters that the
+// program wrote false (the read one past the write, one past the capacity)
+// stop by a fault at once, with the counters as they were; held commands
+// past the bound of the rounds (the capacity, the largest round) stop by a
+// fault, also with command counters that the kernel refuses to read, which
+// no entry empties.
+@(test)
+stop_step_stops_by_a_fault_when_the_ring_does_not_empty :: proc(t: ^testing.T) {
+	Counts :: struct {
+		command_write, command_read, completion_write, completion_read: u32,
+		round:                                                             int,
+	}
+	fault_cases := [?]Counts {
+		{completion_write = 0, completion_read = 1}, // The read one past the write.
+		{completion_write = ring.CAPACITY + 1}, // One past the capacity.
+		{command_write = 1, completion_write = ring.CAPACITY + 1}, // A held command behind false completion counters.
+		{command_write = 1, round = ring.CAPACITY}, // The bound of the rounds.
+		{command_write = 1, round = max(int)},
+		{command_write = max(u32), round = ring.CAPACITY}, // Command counters that the kernel refuses: no entry empties them.
+	}
+	for counts in fault_cases {
+		memory := kernel_ring_memory()
+		defer delete(memory)
+		kernel := kernel_ring_of(t, memory)
+		kernel.head.commands.write = counts.command_write
+		kernel.head.commands.read = counts.command_read
+		kernel.head.completions.write = counts.completion_write
+		kernel.head.completions.read = counts.completion_read
+		step := stop_step(&kernel, counts.round)
+		testing.expectf(t, step == .Stop_By_Fault, "%v at round %v gives %v", counts, counts.round, step)
+		testing.expect_value(t, kernel.head.commands.write, counts.command_write)
+		testing.expect_value(t, kernel.head.commands.read, counts.command_read)
+	}
+	// Below the bound, the same false command counters ask for an entry:
+	// the bound, not the counters, ends the rounds.
+	memory := kernel_ring_memory()
+	defer delete(memory)
+	kernel := kernel_ring_of(t, memory)
+	kernel.head.commands.write = max(u32)
+	testing.expect_value(t, stop_step(&kernel, ring.CAPACITY - 1), Stop_Step.Enter_For_Held_Commands)
+}
+
+// The successful cases last. stop_step drops each completion that waits
+// (one, the capacity) and, with no command, sends the stop; with held
+// commands, it asks for an entry from round 0 to the last round below the
+// bound, and leaves the commands as they were for the kernel.
+@(test)
+stop_step_drops_the_completions_then_runs_the_held_commands :: proc(t: ^testing.T) {
+	for completions in ([?]u32{0, 1, ring.CAPACITY}) {
+		memory := kernel_ring_memory()
+		defer delete(memory)
+		kernel := kernel_ring_of(t, memory)
+		kernel.head.completions.write = completions
+		step := stop_step(&kernel, 0)
+		testing.expectf(t, step == .Send_Stop, "%v completions give %v", completions, step)
+		testing.expect_value(t, kernel.head.completions.read, completions)
+		testing.expect(t, ring.empty(&kernel.commands), "a step wrote a command")
+	}
+	for round in ([?]int{0, ring.CAPACITY - 1}) {
+		memory := kernel_ring_memory()
+		defer delete(memory)
+		kernel := kernel_ring_of(t, memory)
+		testing.expect(t, ring.push(&kernel.commands, TEST_COMMAND))
+		kernel.head.completions.write = ring.CAPACITY
+		step := stop_step(&kernel, round)
+		testing.expectf(t, step == .Enter_For_Held_Commands, "a held command at round %v gives %v", round, step)
+		testing.expect(t, ring.empty(&kernel.completions), "the completions are not dropped")
+		testing.expect_value(t, ring.count(&kernel.commands), 1)
+		testing.expect_value(t, kernel.commands.records[0], TEST_COMMAND)
+	}
+}
+
 // What wait_end pushes: the command Word_Wait with the address of its list
 // and the count of its words, at the edges 0, 1 and the capacity.
 @(test)

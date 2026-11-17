@@ -306,9 +306,74 @@ sleep :: proc "contextless" (deadline: u64) -> u64 {
 // its memory and its handles end. A holder of its program handle reads the
 // code with `Program_State`. It does not return.
 //
+// It stops the program whatever its kernel ring holds: it drops each
+// completion that waits, as the program ends and wants no answer, and
+// enters the kernel so that each held command runs, at most one round for
+// each place of the ring. Then it sends its stop. A ring that still cannot
+// take the stop ends the program with a fault that no handler can take,
+// and the stop code is then the one of a page fault
+// (src/md/api/kernel_ring_completion_room.md, "The stop of a program").
+//
 // Example: `system.stop(1)` after a check of a test that failed.
 stop :: proc "contextless" (code: u32 = 0) -> ! {
-	call(.Program_Stop, 0, u64(code))
+	kernel := kernel_ring()
+	for round := 0; ; round += 1 {
+		switch stop_step(&kernel, round) {
+		case .Enter_For_Held_Commands:
+			enter(0)
+		case .Send_Stop:
+			if _, status := call(.Program_Stop, 0, u64(code)); status == .Ok {
+				// The kernel ends this thread when it leaves its processor.
+				for {}
+			}
+			stop_by_fault()
+		case .Stop_By_Fault:
+			stop_by_fault()
+		}
+	}
+}
+
+// What stop does next with its kernel ring.
+@(private = "package")
+Stop_Step :: enum u8 {
+	Send_Stop,               // The ring is empty: the stop command fits.
+	Enter_For_Held_Commands, // Commands wait: an entry runs them, and their completions are dropped at the next step.
+	Stop_By_Fault,           // The ring does not empty: counters that the program wrote false, or the bound of the rounds.
+}
+
+// stop_step drops each completion that waits in the kernel ring, then
+// says what stop does: send its stop on an empty ring, enter the kernel for
+// the held commands while round is below the capacity of the ring, else
+// stop by a fault. Each entry with room runs at least one command, so an
+// honest ring is empty within that count of rounds. A pure part of stop, so
+// the host tests it.
+@(private = "package")
+stop_step :: proc "contextless" (kernel: ^ring.Ring, round: int) -> Stop_Step {
+	for _ in 0 ..< ring.capacity(&kernel.completions) {
+		if _, popped := ring.pop(&kernel.completions); !popped {
+			break
+		}
+	}
+	commands_empty := ring.empty(&kernel.commands)
+	completions_empty := ring.empty(&kernel.completions)
+	switch {
+	case commands_empty && completions_empty:
+		return .Send_Stop
+	case !completions_empty || round >= int(ring.capacity(&kernel.commands)):
+		// A completion that pop refuses stays: the counters are false, and
+		// no entry changes them.
+		return .Stop_By_Fault
+	}
+	return .Enter_For_Held_Commands
+}
+
+// stop_by_fault ends the program with a write to the time page, which a
+// program can only read. The kernel serves no fault at that address to a
+// fault handler or a debugger, so it stops the program, with the stop code
+// of a page fault and its report.
+@(private = "file")
+stop_by_fault :: proc "contextless" () -> ! {
+	intrinsics.volatile_store((^u64)(uintptr(op.TIME_ADDRESS)), 0)
 	for {}
 }
 
