@@ -299,7 +299,7 @@ Connection :: struct {
 	retry_source_connection_id_length: int, // The bytes of that identifier.
 	retry_token:                       [RETRY_TOKEN_LIMIT]u8, // A client: the Retry token, which each Initial packet after the Retry carries. A server does not use it.
 	retry_token_length:                int, // The bytes of the token. 0: no Retry, and the Initial packets carry an empty token.
-	local_parameters:                  Transport_Parameters, // The transport parameters that this side sends: `connection_tls_start` writes them from the configuration and the table of streams.
+	local_parameters:                  Sent_Transport_Parameters, // The transport parameters that this side sends: `connection_tls_start` writes them from the configuration and the table of streams.
 	peer_parameters:                   Transport_Parameters, // The transport parameters of the peer, read and checked. They have a meaning when `peer_parameters_applied` is true.
 	peer_parameters_applied:           bool, // The transport parameters of the peer were checked and took effect: its limits of flow control and of streams, its ack delay, its idle timeout.
 	handshake_confirmed:               bool, // The handshake is confirmed (RFC 9001, section 4.1.2): a server when its handshake completes, a client when HANDSHAKE_DONE comes. The Handshake space is then discarded, and the probe timeout of the 1-RTT space can run.
@@ -598,7 +598,7 @@ connection_initial_keys_install :: proc "contextless" (connection: ^Connection, 
 @(private)
 connection_tls_start :: proc "contextless" (connection: ^Connection, error: ^errors.Error_Record) -> bool {
 	parameters := &connection.local_parameters
-	parameters^ = transport_parameters_default()
+	parameters^ = sent_transport_parameters_default()
 	parameters.max_idle_timeout = connection.configuration.idle_timeout_milliseconds
 	parameters.max_udp_payload_size = DATAGRAM_LIMIT
 	parameters.initial_max_data = connection.receive_window
@@ -608,7 +608,6 @@ connection_tls_start :: proc "contextless" (connection: ^Connection, error: ^err
 	// for each of its records, a client allows the server none.
 	parameters.initial_max_streams_bidirectional = connection.streams_limit_given
 	parameters.initial_source_connection_id_length = copy(parameters.initial_source_connection_id[:], connection.local_connection_id[:])
-	parameters.has_initial_source_connection_id = true
 	if connection.configuration.tls.role == .Server {
 		// A server of this library finds a connection by its identifier and
 		// by the address and port of its client: the client must not move

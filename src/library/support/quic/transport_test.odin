@@ -707,23 +707,212 @@ transport_parameters_of_a_peer :: proc(t: ^testing.T) {
 		result := transport_parameters_read(bytes_of(item.bytes), item.sender, &parameters)
 		testing.expectf(t, result == item.expected, "%s: %v, not %v", item.name, result, item.expected)
 	}
-	// What this side writes, it reads back.
-	written: Transport_Parameters = transport_parameters_default()
-	written.initial_max_data = 65536
-	written.max_idle_timeout = 30_000
-	written.initial_source_connection_id_length = copy(written.initial_source_connection_id[:], []u8{1, 2, 3, 4, 5, 6, 7, 8})
-	written.has_initial_source_connection_id = true
-	written.original_destination_connection_id_length = copy(written.original_destination_connection_id[:], []u8{9, 9, 9, 9, 9, 9, 9, 9})
-	written.has_original_destination_connection_id = true
-	buffer: [TRANSPORT_PARAMETERS_LIMIT]u8
-	length := transport_parameters_write(&written, .Server, buffer[:])
-	testing.expect(t, length > 0)
-	read: Transport_Parameters
-	testing.expect_value(t, transport_parameters_read(buffer[:length], .Server, &read), Transport_Error.No_Error)
-	testing.expect_value(t, read.initial_max_data, 65536)
-	testing.expect_value(t, read.max_idle_timeout, 30_000)
-	testing.expect_value(t, read.initial_source_connection_id_length, 8)
-	testing.expect_value(t, read.original_destination_connection_id_length, 8)
+}
+
+// The sent transport parameters of a side that `transport_parameters_write`
+// takes: an identifier of 4 bytes, a limit of data, and for a server the
+// first identifier of its client.
+sent_parameters_of_a_side :: proc(role: Tls_Role) -> Sent_Transport_Parameters {
+	parameters := sent_transport_parameters_default()
+	parameters.initial_max_data = 65536
+	parameters.initial_source_connection_id_length = copy(parameters.initial_source_connection_id[:], []u8{1, 2, 3, 4})
+	if role == .Server {
+		parameters.original_destination_connection_id_length = copy(parameters.original_destination_connection_id[:], []u8{9, 9, 9, 9})
+		parameters.has_original_destination_connection_id = true
+	}
+	return parameters
+}
+
+// The writer of the transport parameters refuses each record whose bytes
+// would not read back to it, and writes nothing then. A record that it
+// takes reads back to `transport_parameters_of_sent` of that record, the
+// edges of each range first.
+@(test)
+transport_parameters_that_this_side_sends :: proc(t: ^testing.T) {
+	// A byte that no encoding of the test writes at that place, so a byte
+	// that changed shows a write.
+	UNWRITTEN_BYTE :: 0xee
+	Change :: proc(parameters: ^Sent_Transport_Parameters)
+	Case :: struct {
+		name:   string,
+		role:   Tls_Role,
+		change: Change,
+	}
+	refused := []Case {
+		{"a client with original_destination_connection_id", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.has_original_destination_connection_id = true
+			}},
+		{"a client with retry_source_connection_id", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.has_retry_source_connection_id = true
+			}},
+		{"a server with no original_destination_connection_id", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.has_original_destination_connection_id = false
+				parameters.original_destination_connection_id_length = 0
+				parameters.original_destination_connection_id = {}
+			}},
+		{"an initial_source_connection_id of length -1", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_source_connection_id_length = -1
+			}},
+		{"an initial_source_connection_id one byte over the limit", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_source_connection_id_length = CONNECTION_ID_LIMIT + 1
+			}},
+		{"an initial_source_connection_id of the largest length", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_source_connection_id_length = max(int)
+			}},
+		{"an original_destination_connection_id of length -1", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.original_destination_connection_id_length = -1
+			}},
+		{"an original_destination_connection_id one byte over the limit", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.original_destination_connection_id_length = CONNECTION_ID_LIMIT + 1
+			}},
+		{"a retry_source_connection_id one byte over the limit", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.has_retry_source_connection_id = true
+				parameters.retry_source_connection_id_length = CONNECTION_ID_LIMIT + 1
+			}},
+		{"a retry_source_connection_id with a length and no has_ field", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.retry_source_connection_id_length = 1
+				parameters.retry_source_connection_id[0] = 7
+			}},
+		{"a retry_source_connection_id with bytes and no has_ field", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.retry_source_connection_id[0] = 7
+			}},
+		{"an original_destination_connection_id with a length and no has_ field", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.original_destination_connection_id_length = 1
+			}},
+		{"a byte after the length of initial_source_connection_id", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_source_connection_id[parameters.initial_source_connection_id_length] = 5
+			}},
+		{"a byte in the last place after the length of an identifier", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.original_destination_connection_id[CONNECTION_ID_LIMIT - 1] = 5
+			}},
+		{"max_udp_payload_size of 0", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.max_udp_payload_size = 0
+			}},
+		{"max_udp_payload_size one under the least", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.max_udp_payload_size = SMALLEST_MAX_UDP_PAYLOAD_SIZE - 1
+			}},
+		{"max_udp_payload_size over the largest integer", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.max_udp_payload_size = VARIABLE_LENGTH_INTEGER_LARGEST + 1
+			}},
+		{"initial_max_streams_bidi one over the limit", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_max_streams_bidirectional = STREAMS_LIMIT + 1
+			}},
+		{"initial_max_streams_bidi of the largest value of its type", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_max_streams_bidirectional = max(u64)
+			}},
+		{"max_idle_timeout one over the largest integer", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.max_idle_timeout = VARIABLE_LENGTH_INTEGER_LARGEST + 1
+			}},
+		{"initial_max_data of the largest value of its type", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_max_data = max(u64)
+			}},
+		{"initial_max_stream_data_bidi_local one over the largest integer", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_max_stream_data_bidirectional_local = VARIABLE_LENGTH_INTEGER_LARGEST + 1
+			}},
+		{"initial_max_stream_data_bidi_remote one over the largest integer", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_max_stream_data_bidirectional_remote = VARIABLE_LENGTH_INTEGER_LARGEST + 1
+			}},
+	}
+	for item in refused {
+		parameters := sent_parameters_of_a_side(item.role)
+		item.change(&parameters)
+		before := parameters
+		buffer: [TRANSPORT_PARAMETERS_LIMIT]u8
+		for &value in buffer {
+			value = UNWRITTEN_BYTE
+		}
+		length := transport_parameters_write(&parameters, item.role, buffer[:])
+		testing.expectf(t, length == 0, "%s: the writer wrote %d bytes", item.name, length)
+		testing.expectf(t, parameters == before, "%s: the writer changed the record", item.name)
+		untouched := true
+		for value in buffer {
+			if value != UNWRITTEN_BYTE {
+				untouched = false
+			}
+		}
+		testing.expectf(t, untouched, "%s: the writer wrote into the buffer", item.name)
+	}
+
+	// A buffer with no room: none, and one byte short of the encoding.
+	for role in Tls_Role {
+		parameters := sent_parameters_of_a_side(role)
+		buffer: [TRANSPORT_PARAMETERS_LIMIT]u8
+		needed := transport_parameters_write(&parameters, role, buffer[:])
+		if !testing.expectf(t, needed > 0, "%v: the writer refused the record of a side", role) {
+			continue
+		}
+		testing.expect_value(t, transport_parameters_write(&parameters, role, buffer[:0]), 0)
+		testing.expect_value(t, transport_parameters_write(&parameters, role, buffer[:needed - 1]), 0)
+		testing.expect_value(t, transport_parameters_write(&parameters, role, buffer[:needed]), needed)
+	}
+
+	// The edges that the writer takes, then the record of each side: each
+	// reads back to `transport_parameters_of_sent` of the record.
+	taken := []Case {
+		{"an initial_source_connection_id of no byte", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_source_connection_id = {}
+				parameters.initial_source_connection_id_length = 0
+			}},
+		{"an initial_source_connection_id of the limit", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				for &value, index in parameters.initial_source_connection_id {
+					value = u8(index + 1)
+				}
+				parameters.initial_source_connection_id_length = CONNECTION_ID_LIMIT
+			}},
+		{"an original_destination_connection_id of no byte", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.original_destination_connection_id = {}
+				parameters.original_destination_connection_id_length = 0
+			}},
+		{"a retry_source_connection_id of no byte", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.has_retry_source_connection_id = true
+			}},
+		{"a retry_source_connection_id of the limit", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				for &value in parameters.retry_source_connection_id {
+					value = 3
+				}
+				parameters.retry_source_connection_id_length = CONNECTION_ID_LIMIT
+				parameters.has_retry_source_connection_id = true
+			}},
+		{"max_udp_payload_size of the least", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.max_udp_payload_size = SMALLEST_MAX_UDP_PAYLOAD_SIZE
+			}},
+		{"max_udp_payload_size one over its default", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.max_udp_payload_size = DEFAULT_MAX_UDP_PAYLOAD_SIZE + 1
+			}},
+		{"max_udp_payload_size of the largest integer", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.max_udp_payload_size = VARIABLE_LENGTH_INTEGER_LARGEST
+			}},
+		{"initial_max_streams_bidi of the limit", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.initial_max_streams_bidirectional = STREAMS_LIMIT
+			}},
+		{"max_idle_timeout of 1", .Client, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.max_idle_timeout = 1
+			}},
+		{"each integer of the largest value", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.max_idle_timeout = VARIABLE_LENGTH_INTEGER_LARGEST
+				parameters.initial_max_data = VARIABLE_LENGTH_INTEGER_LARGEST
+				parameters.initial_max_stream_data_bidirectional_local = VARIABLE_LENGTH_INTEGER_LARGEST
+				parameters.initial_max_stream_data_bidirectional_remote = VARIABLE_LENGTH_INTEGER_LARGEST
+			}},
+		{"disable_active_migration", .Server, proc(parameters: ^Sent_Transport_Parameters) {
+				parameters.disable_active_migration = true
+			}},
+		{"the record of a client", .Client, proc(_: ^Sent_Transport_Parameters) {}},
+		{"the record of a server", .Server, proc(_: ^Sent_Transport_Parameters) {}},
+	}
+	for item in taken {
+		parameters := sent_parameters_of_a_side(item.role)
+		item.change(&parameters)
+		buffer: [TRANSPORT_PARAMETERS_LIMIT]u8
+		length := transport_parameters_write(&parameters, item.role, buffer[:])
+		if !testing.expectf(t, length > 0, "%s: the writer refused it", item.name) {
+			continue
+		}
+		read: Transport_Parameters
+		result := transport_parameters_read(buffer[:length], item.role, &read)
+		testing.expectf(t, result == .No_Error, "%s: the reader refused it: %v", item.name, result)
+		testing.expectf(t, read == transport_parameters_of_sent(parameters), "%s: the record read back differs", item.name)
+	}
 }
 
 // authentic_packet_receive seals frames in a 1-RTT packet with the keys of

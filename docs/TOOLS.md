@@ -903,7 +903,7 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 | `quic_datagram` | raw | One datagram to a server that waits for its client |
 | `quic_connection` | generated | A client and a server in memory, with datagrams changed or resealed with new frames; with no change, the handshake completes |
 | `tls_messages` | raw | The messages of TLS 1.3 to a client or a server, level by level |
-| `quic_transport_parameters` | raw | The transport parameters that the reader accepts write and read again to the same record |
+| `quic_transport_parameters` | raw | The part of the transport parameters that this system sends, from a record that the reader accepts, writes and reads again to that part, with the defaults of RFC 9000 in the other parameters |
 | `tcp_segment`, `tcp_connection` | raw, generated | The header reader and its writer agree; two tables in memory with injected segments, and the bytes arrive in order |
 | `http_request` | raw | The reader of a request head: its fields stay in their limits, and the head reads the same from its own bytes |
 

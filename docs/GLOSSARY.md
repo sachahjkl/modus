@@ -6374,6 +6374,8 @@ The transport parameters are the values that each side of QUIC gives the other i
 
 They ride in the extension `quic_transport_parameters`, so the handshake authenticates them. Examples: the flow control limits, the limit of streams, the idle timeout, max_ack_delay, `disable_active_migration`, and `original_destination_connection_id` and `retry_source_connection_id` after a Retry. Each value of the peer is checked: a repeated parameter, a value out of its range, a parameter that only a server sends, or an identifier that is not the one of the packets gives TRANSPORT_PARAMETER_ERROR.
 
+A side writes its own from a record that has a field only for each parameter that the system sends, so no value that it sets is lost; it reads those of the peer into a record that has every parameter.
+
 They are not settings of the system: they belong to one connection.
 
 The design: `docs/QUIC.md`, "5. The transport of one connection (the third layer, built)".
